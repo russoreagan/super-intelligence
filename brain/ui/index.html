@@ -364,78 +364,148 @@
   <!-- Left: Brain + neuromod -->
   <div id="left">
     <div id="brain-wrap">
-      <svg id="brain-svg" viewBox="0 0 500 340" xmlns="http://www.w3.org/2000/svg">
+      <svg id="brain-svg" viewBox="0 0 560 430" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <!-- Clip all cortical lobes to the brain outline -->
+          <clipPath id="cortex-clip">
+            <path d="M 92,210 C 88,168 87,118 96,86 C 111,52 138,28 176,16 C 214,4 264,2 314,14 C 362,26 404,56 432,97 C 456,134 460,174 452,210 C 444,240 426,258 405,266 C 384,274 360,274 338,266 C 320,260 302,252 290,254 C 274,256 258,268 240,282 C 220,296 194,304 170,304 C 148,304 128,296 114,282 C 100,268 90,248 88,226 C 87,217 89,212 92,210 Z"/>
+          </clipPath>
+          <clipPath id="cb-clip">
+            <ellipse cx="432" cy="360" rx="75" ry="56"/>
+          </clipPath>
+        </defs>
 
-        <!-- Outer brain silhouette (left-hemisphere side view, facing right) -->
-        <path id="outline" d="
-          M 90 270
-          C 60 250, 45 210, 48 175
-          C 50 140, 60 110, 75 90
-          C 95 62, 125 42, 160 34
-          C 190 26, 230 28, 265 36
-          C 305 46, 338 68, 360 100
-          C 382 130, 390 162, 388 195
-          C 386 222, 375 245, 358 258
-          C 338 273, 310 278, 280 276
-          C 255 274, 238 268, 220 270
-          C 195 273, 170 278, 145 278
-          C 122 278, 100 278, 90 270
-          Z
-        "/>
+        <!-- ── Sub-cortical structures (outside cortex clip) ── -->
 
-        <!-- Cerebellum bump — lower right -->
-        <ellipse id="region-cerebellum" class="region" cx="390" cy="295" rx="58" ry="44"/>
-
-        <!-- Brainstem -->
-        <rect id="region-brainstem" class="region" x="214" y="268" width="54" height="70" rx="10"/>
-
-        <!-- ── Outer lobes (order matters for overlap) ── -->
-
-        <!-- Occipital lobe — back (rightmost) -->
-        <ellipse id="region-occipital" class="region" cx="368" cy="138" rx="72" ry="72"/>
-
-        <!-- Parietal lobe — top center -->
-        <ellipse id="region-parietal" class="region" cx="268" cy="88" rx="88" ry="70"/>
-
-        <!-- Temporal lobe — lower center -->
-        <ellipse id="region-temporal" class="region" cx="210" cy="228" rx="108" ry="54"/>
-
-        <!-- Frontal lobe — front (leftmost, largest) -->
-        <ellipse id="region-frontal" class="region" cx="152" cy="138" rx="112" ry="90"/>
-
-        <!-- ── Inner / limbic regions ── -->
-
-        <!-- Hippocampus — inner, horizontal banana shape -->
-        <ellipse id="region-hippocampus" class="region-inner" cx="298" cy="220" rx="58" ry="22"/>
-
-        <!-- Thalamus — central inner -->
-        <ellipse id="region-thalamus" class="region-inner" cx="252" cy="185" rx="34" ry="26"/>
-
-        <!-- Hypothalamus — below thalamus -->
-        <ellipse id="region-hypothalamus" class="region-inner" cx="238" cy="222" rx="26" ry="18"/>
-
-        <!-- Faint sulci / fold lines for texture -->
-        <g stroke="rgba(255,255,255,0.04)" stroke-width="1" fill="none">
-          <path d="M 110 120 Q 130 95 160 100"/>
-          <path d="M 155 75 Q 185 60 210 70"/>
-          <path d="M 200 50 Q 240 38 270 55"/>
-          <path d="M 100 180 Q 120 195 140 185"/>
-          <path d="M 140 215 Q 170 210 185 225"/>
-          <path d="M 320 100 Q 345 115 355 140"/>
-          <path d="M 340 160 Q 360 175 368 195"/>
+        <!-- Cerebellum — lower right, separate structure -->
+        <ellipse id="region-cerebellum" class="region" cx="432" cy="360" rx="75" ry="56"/>
+        <!-- Cerebellum fold lines -->
+        <g clip-path="url(#cb-clip)" stroke="rgba(0,200,255,0.09)" stroke-width="1.2" fill="none">
+          <path d="M 362,355 Q 432,336 502,355"/>
+          <path d="M 360,368 Q 432,348 504,368"/>
+          <path d="M 362,381 Q 432,360 502,381"/>
+          <path d="M 365,394 Q 432,374 500,394"/>
         </g>
 
-        <!-- Region labels (always visible, small) -->
-        <g font-family="monospace" font-size="9" fill="rgba(160,180,240,0.35)" text-anchor="middle">
-          <text x="138" y="105">frontal</text>
-          <text x="268" y="62">parietal</text>
-          <text x="378" y="112">occipital</text>
-          <text x="195" y="253">temporal</text>
-          <text x="390" y="300">cerebellum</text>
-          <text x="241" y="325">brainstem</text>
-          <text x="252" y="182">thal.</text>
-          <text x="238" y="246">hypo.</text>
-          <text x="298" y="217">hippo.</text>
+        <!-- Brainstem — cylindrical stalk -->
+        <rect id="region-brainstem" class="region" x="278" y="262" width="62" height="118" rx="16"/>
+        <!-- Brainstem horizontal stripe texture -->
+        <g clip-path="url(#cortex-clip)" stroke="rgba(255,102,0,0.07)" stroke-width="1.5" fill="none">
+          <line x1="278" y1="285" x2="340" y2="285"/>
+          <line x1="278" y1="300" x2="340" y2="300"/>
+          <line x1="278" y1="315" x2="340" y2="315"/>
+        </g>
+
+        <!-- ── Cortical lobes (all clipped to brain outline) ── -->
+        <g clip-path="url(#cortex-clip)">
+
+          <!-- TEMPORAL LOBE (yellow-orange) — below Sylvian fissure, the "tongue" -->
+          <path id="region-temporal" class="region" d="
+            M 92,210
+            L 140,210 L 282,210 L 412,210
+            C 412,225 410,240 406,254
+            C 400,265 390,272 374,274
+            C 358,276 340,268 338,266
+            C 320,260 302,252 290,254
+            C 274,256 258,268 240,282
+            C 220,296 194,304 170,304
+            C 148,304 128,296 114,282
+            C 100,268 90,248 88,226
+            C 88,218 90,213 92,210 Z
+          "/>
+
+          <!-- OCCIPITAL LOBE (purple) — back of brain -->
+          <path id="region-occipital" class="region" d="
+            M 432,97
+            C 456,134 460,174 452,210
+            C 444,240 426,258 405,266
+            C 384,274 360,274 338,266
+            C 350,258 364,252 378,248
+            C 392,244 402,240 408,230
+            C 411,222 412,216 412,210
+            C 424,182 428,148 430,118
+            C 431,108 432,102 432,97 Z
+          "/>
+
+          <!-- PARIETAL LOBE (green) — top, behind frontal -->
+          <path id="region-parietal" class="region" d="
+            M 306,14
+            C 340,20 370,36 396,54
+            C 412,66 424,82 432,97
+            C 430,112 426,140 420,165
+            C 416,188 413,202 412,210
+            L 340,210 L 282,210
+            C 285,176 288,144 292,112
+            C 297,78 302,44 306,14 Z
+          "/>
+
+          <!-- FRONTAL LOBE (blue) — front, largest region -->
+          <path id="region-frontal" class="region" d="
+            M 92,210
+            C 88,168 87,118 96,86
+            C 111,52 138,28 176,16
+            C 214,4 264,2 306,14
+            C 302,44 297,78 292,112
+            C 288,144 285,176 282,210
+            L 140,210 L 92,210 Z
+          "/>
+
+          <!-- ── Inner / deep structures ── -->
+
+          <!-- Thalamus — central relay hub -->
+          <ellipse id="region-thalamus" class="region-inner" cx="268" cy="178" rx="40" ry="28"/>
+
+          <!-- Hypothalamus — drives & affect, below thalamus -->
+          <ellipse id="region-hypothalamus" class="region-inner" cx="256" cy="214" rx="26" ry="18"/>
+
+          <!-- Hippocampus — memory, curved medial temporal -->
+          <path id="region-hippocampus" class="region-inner" d="
+            M 302,244 C 322,234 354,232 382,240 C 396,245 403,255 397,265
+            C 389,272 364,270 340,262 C 318,255 298,254 302,244 Z
+          "/>
+
+          <!-- ── Sulcal boundary lines ── -->
+          <g stroke="rgba(8,10,24,0.85)" stroke-width="2" fill="none" stroke-linecap="round">
+            <!-- Central sulcus (frontal ↔ parietal) -->
+            <path d="M 306,14 C 302,44 297,78 292,112 C 288,144 285,176 282,210"/>
+            <!-- Parieto-occipital sulcus -->
+            <path d="M 432,97 C 430,118 426,148 420,175 C 416,196 413,206 412,210"/>
+            <!-- Sylvian fissure (frontal+parietal ↔ temporal) -->
+            <path d="M 92,210 C 160,212 225,212 282,212 C 340,212 390,212 412,210"/>
+            <!-- Lower temporal-occipital junction -->
+            <path d="M 412,210 C 411,224 408,240 402,252 C 395,262 382,268 364,270 C 350,270 338,266 338,266"/>
+          </g>
+
+          <!-- ── Cortical fold texture (sulci) ── -->
+          <g stroke="rgba(255,255,255,0.04)" stroke-width="1.2" fill="none" stroke-linecap="round">
+            <path d="M 118,118 Q 148,94 180,102"/>
+            <path d="M 162,74 Q 198,56 232,70"/>
+            <path d="M 210,44 Q 252,30 286,50"/>
+            <path d="M 105,176 Q 132,194 155,184"/>
+            <path d="M 150,238 Q 180,226 200,240"/>
+            <path d="M 220,268 Q 252,258 270,272"/>
+            <path d="M 344,104 Q 366,118 374,148"/>
+            <path d="M 360,164 Q 382,180 386,208"/>
+            <path d="M 445,148 Q 452,168 448,192"/>
+          </g>
+
+          <!-- ── Region labels ── -->
+          <g font-family="monospace" font-size="9" fill="rgba(148,175,235,0.30)" text-anchor="middle">
+            <text x="168" y="108">frontal</text>
+            <text x="348" y="80">parietal</text>
+            <text x="447" y="165">occipital</text>
+            <text x="205" y="268">temporal</text>
+            <text x="268" y="174">thal.</text>
+            <text x="256" y="236">hypo.</text>
+            <text x="348" y="254">hippo.</text>
+          </g>
+
+        </g><!-- end cortex clip -->
+
+        <!-- Labels outside clip (brainstem, cerebellum) -->
+        <g font-family="monospace" font-size="9" fill="rgba(148,175,235,0.30)" text-anchor="middle">
+          <text x="432" y="368">cerebellum</text>
+          <text x="309" y="328">brainstem</text>
         </g>
 
       </svg>
@@ -489,7 +559,7 @@
 // ── Region config ──────────────────────────────────────────────────────────────
 const REGIONS = {
   frontal:      { color: '#4488ff', label: 'Frontal lobe — executive & response' },
-  parietal:     { color: '#22ccff', label: 'Parietal lobe — context & session state' },
+  parietal:     { color: '#44cc66', label: 'Parietal lobe — context & session state' },
   occipital:    { color: '#cc44ff', label: 'Occipital lobe — vision processing' },
   temporal:     { color: '#ff8822', label: 'Temporal lobe — language understanding' },
   hippocampus:  { color: '#00ffaa', label: 'Hippocampus — memory recall & encoding' },
