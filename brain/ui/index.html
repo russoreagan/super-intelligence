@@ -1,0 +1,901 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Brain</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #080810;
+    --surface: #0e0e1a;
+    --border: #1e1e38;
+    --text: #c8d4f0;
+    --text-dim: #5a6080;
+    --accent: #2244aa;
+    --input-bg: #12121e;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 13px;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* ── Top bar ── */
+  #topbar {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 8px 18px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+  #topbar .brand { color: var(--text); font-weight: 600; letter-spacing: 0.08em; }
+  #topbar .sep { color: var(--border); }
+  #emotion-badge {
+    padding: 2px 10px;
+    border-radius: 99px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    background: #333355;
+    color: #aab;
+    transition: background 0.6s, color 0.6s;
+  }
+  #topbar .stat { color: var(--text-dim); }
+  #topbar .stat span { color: #7090d0; }
+  #ws-indicator {
+    margin-left: auto;
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: #333;
+    transition: background 0.4s;
+  }
+  #ws-indicator.connected { background: #22dd88; box-shadow: 0 0 6px #22dd88; }
+
+  /* ── Main layout ── */
+  #main {
+    display: grid;
+    grid-template-columns: 540px 1fr;
+    flex: 1;
+    overflow: hidden;
+  }
+
+  /* ── Left panel ── */
+  #left {
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid var(--border);
+    overflow: hidden;
+  }
+
+  /* ── Brain SVG area ── */
+  #brain-wrap {
+    position: relative;
+    flex-shrink: 0;
+    padding: 10px 10px 0;
+  }
+  #brain-svg {
+    display: block;
+    width: 100%;
+    height: auto;
+  }
+
+  /* Region base styles */
+  .region {
+    fill: rgba(18, 28, 70, 0.6);
+    stroke: rgba(255,255,255,0.10);
+    stroke-width: 1;
+    cursor: default;
+    transition: fill 0.25s ease, filter 0.25s ease, stroke 0.25s ease;
+    filter: brightness(1);
+  }
+  .region-inner {
+    fill: rgba(10, 18, 50, 0.7);
+    stroke: rgba(255,255,255,0.08);
+    stroke-width: 0.8;
+    transition: fill 0.25s ease, filter 0.25s ease, stroke 0.25s ease;
+  }
+
+  /* Per-region glow colors — set via JS */
+  .region.active, .region-inner.active {
+    stroke: rgba(255,255,255,0.55);
+    stroke-width: 1.5;
+  }
+
+  /* Brain outline */
+  #outline {
+    fill: rgba(12, 20, 55, 0.5);
+    stroke: rgba(80, 100, 180, 0.25);
+    stroke-width: 1.5;
+  }
+
+  /* Active label */
+  #active-label {
+    text-align: center;
+    padding: 6px 0 4px;
+    font-size: 11px;
+    color: var(--text-dim);
+    min-height: 22px;
+    letter-spacing: 0.04em;
+    transition: color 0.3s;
+  }
+  #active-label.lit { color: #88aaff; }
+
+  /* ── Neuromod bars ── */
+  #neuromod {
+    padding: 10px 14px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    border-top: 1px solid var(--border);
+    margin-top: 6px;
+  }
+  .nm-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .nm-label {
+    width: 36px;
+    font-size: 11px;
+    color: var(--text-dim);
+    text-align: right;
+    font-weight: 600;
+  }
+  .nm-track {
+    flex: 1;
+    height: 5px;
+    background: rgba(255,255,255,0.06);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .nm-fill {
+    height: 100%;
+    border-radius: 3px;
+    width: 0%;
+    transition: width 0.5s ease;
+  }
+  .nm-value {
+    width: 34px;
+    font-size: 10px;
+    color: var(--text-dim);
+    text-align: right;
+  }
+
+  /* ── Right panel — Chat ── */
+  #chat-panel {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  #messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    scroll-behavior: smooth;
+  }
+  #messages::-webkit-scrollbar { width: 4px; }
+  #messages::-webkit-scrollbar-track { background: transparent; }
+  #messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  .msg {
+    max-width: 82%;
+    padding: 9px 13px;
+    border-radius: 10px;
+    line-height: 1.55;
+    font-size: 13px;
+    animation: fadein 0.2s ease;
+  }
+  @keyframes fadein { from { opacity:0; transform: translateY(4px); } to { opacity:1; transform: none; } }
+
+  .msg-user {
+    align-self: flex-end;
+    background: #1a2a60;
+    color: #ccd8ff;
+    border-bottom-right-radius: 3px;
+  }
+  .msg-brain {
+    align-self: flex-start;
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-bottom-left-radius: 3px;
+  }
+  .msg-meta {
+    font-size: 10px;
+    color: var(--text-dim);
+    margin-top: 3px;
+  }
+  .msg-system {
+    align-self: center;
+    color: var(--text-dim);
+    font-size: 11px;
+    font-style: italic;
+  }
+  .msg-thought {
+    align-self: flex-start;
+    color: #445580;
+    font-size: 11px;
+    font-style: italic;
+    padding: 4px 10px;
+    border-left: 2px solid #222244;
+  }
+
+  /* Typing indicator */
+  #typing {
+    align-self: flex-start;
+    display: none;
+    gap: 5px;
+    padding: 10px 14px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    border-bottom-left-radius: 3px;
+  }
+  #typing.visible { display: flex; }
+  #typing span {
+    width: 6px; height: 6px;
+    background: #445580;
+    border-radius: 50%;
+    animation: bounce 1.2s infinite;
+  }
+  #typing span:nth-child(2) { animation-delay: 0.2s; }
+  #typing span:nth-child(3) { animation-delay: 0.4s; }
+  @keyframes bounce {
+    0%, 60%, 100% { transform: translateY(0); }
+    30% { transform: translateY(-5px); background: #8899cc; }
+  }
+
+  /* ── Input bar ── */
+  #input-bar {
+    display: flex;
+    gap: 8px;
+    padding: 10px 14px;
+    border-top: 1px solid var(--border);
+    background: var(--surface);
+    flex-shrink: 0;
+  }
+  #msg-input {
+    flex: 1;
+    background: var(--input-bg);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    color: var(--text);
+    font-family: inherit;
+    font-size: 13px;
+    padding: 8px 12px;
+    outline: none;
+    resize: none;
+    line-height: 1.4;
+    max-height: 120px;
+  }
+  #msg-input:focus { border-color: #334488; }
+  #msg-input::placeholder { color: var(--text-dim); }
+  #send-btn {
+    background: #1a3080;
+    border: none;
+    border-radius: 7px;
+    color: #8899cc;
+    cursor: pointer;
+    font-size: 16px;
+    padding: 0 14px;
+    transition: background 0.2s, color 0.2s;
+    flex-shrink: 0;
+  }
+  #send-btn:hover { background: #2244aa; color: #ccd8ff; }
+  #send-btn:disabled { opacity: 0.35; cursor: default; }
+
+  /* ── Mic button ── */
+  #mic-btn {
+    background: #1a1a2e;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    color: var(--text-dim);
+    cursor: pointer;
+    font-size: 15px;
+    padding: 0 13px;
+    transition: background 0.2s, color 0.2s, border-color 0.2s, box-shadow 0.2s;
+    flex-shrink: 0;
+    position: relative;
+  }
+  #mic-btn:hover { background: #22223a; color: var(--text); }
+  #mic-btn.listening {
+    background: #2a0a0a;
+    border-color: #cc2222;
+    color: #ff5555;
+    box-shadow: 0 0 10px rgba(200,30,30,0.4);
+    animation: mic-pulse 1.2s ease-in-out infinite;
+  }
+  #mic-btn.unsupported { opacity: 0.3; cursor: not-allowed; }
+  @keyframes mic-pulse {
+    0%, 100% { box-shadow: 0 0 8px rgba(200,30,30,0.35); }
+    50%       { box-shadow: 0 0 18px rgba(220,40,40,0.65); }
+  }
+
+  /* ── Live transcript badge ── */
+  #transcript-bar {
+    display: none;
+    padding: 5px 14px;
+    background: rgba(30,10,10,0.7);
+    border-top: 1px solid #3a1a1a;
+    font-size: 11px;
+    color: #cc6666;
+    font-style: italic;
+    min-height: 22px;
+    letter-spacing: 0.02em;
+  }
+  #transcript-bar.visible { display: block; }
+</style>
+</head>
+<body>
+
+<!-- Top bar -->
+<div id="topbar">
+  <span class="brand">&#x1F9E0; Brain</span>
+  <span class="sep">·</span>
+  <span class="stat">session <span id="stat-session">—</span></span>
+  <span class="sep">·</span>
+  <span id="emotion-badge">neutral</span>
+  <span class="sep">·</span>
+  <span class="stat"><span id="stat-calls">0</span> LLM calls</span>
+  <span class="sep">·</span>
+  <span class="stat"><span id="stat-elapsed">—</span></span>
+  <div id="ws-indicator" title="WebSocket"></div>
+</div>
+
+<!-- Main -->
+<div id="main">
+
+  <!-- Left: Brain + neuromod -->
+  <div id="left">
+    <div id="brain-wrap">
+      <svg id="brain-svg" viewBox="0 0 500 340" xmlns="http://www.w3.org/2000/svg">
+
+        <!-- Outer brain silhouette (left-hemisphere side view, facing right) -->
+        <path id="outline" d="
+          M 90 270
+          C 60 250, 45 210, 48 175
+          C 50 140, 60 110, 75 90
+          C 95 62, 125 42, 160 34
+          C 190 26, 230 28, 265 36
+          C 305 46, 338 68, 360 100
+          C 382 130, 390 162, 388 195
+          C 386 222, 375 245, 358 258
+          C 338 273, 310 278, 280 276
+          C 255 274, 238 268, 220 270
+          C 195 273, 170 278, 145 278
+          C 122 278, 100 278, 90 270
+          Z
+        "/>
+
+        <!-- Cerebellum bump — lower right -->
+        <ellipse id="region-cerebellum" class="region" cx="390" cy="295" rx="58" ry="44"/>
+
+        <!-- Brainstem -->
+        <rect id="region-brainstem" class="region" x="214" y="268" width="54" height="70" rx="10"/>
+
+        <!-- ── Outer lobes (order matters for overlap) ── -->
+
+        <!-- Occipital lobe — back (rightmost) -->
+        <ellipse id="region-occipital" class="region" cx="368" cy="138" rx="72" ry="72"/>
+
+        <!-- Parietal lobe — top center -->
+        <ellipse id="region-parietal" class="region" cx="268" cy="88" rx="88" ry="70"/>
+
+        <!-- Temporal lobe — lower center -->
+        <ellipse id="region-temporal" class="region" cx="210" cy="228" rx="108" ry="54"/>
+
+        <!-- Frontal lobe — front (leftmost, largest) -->
+        <ellipse id="region-frontal" class="region" cx="152" cy="138" rx="112" ry="90"/>
+
+        <!-- ── Inner / limbic regions ── -->
+
+        <!-- Hippocampus — inner, horizontal banana shape -->
+        <ellipse id="region-hippocampus" class="region-inner" cx="298" cy="220" rx="58" ry="22"/>
+
+        <!-- Thalamus — central inner -->
+        <ellipse id="region-thalamus" class="region-inner" cx="252" cy="185" rx="34" ry="26"/>
+
+        <!-- Hypothalamus — below thalamus -->
+        <ellipse id="region-hypothalamus" class="region-inner" cx="238" cy="222" rx="26" ry="18"/>
+
+        <!-- Faint sulci / fold lines for texture -->
+        <g stroke="rgba(255,255,255,0.04)" stroke-width="1" fill="none">
+          <path d="M 110 120 Q 130 95 160 100"/>
+          <path d="M 155 75 Q 185 60 210 70"/>
+          <path d="M 200 50 Q 240 38 270 55"/>
+          <path d="M 100 180 Q 120 195 140 185"/>
+          <path d="M 140 215 Q 170 210 185 225"/>
+          <path d="M 320 100 Q 345 115 355 140"/>
+          <path d="M 340 160 Q 360 175 368 195"/>
+        </g>
+
+        <!-- Region labels (always visible, small) -->
+        <g font-family="monospace" font-size="9" fill="rgba(160,180,240,0.35)" text-anchor="middle">
+          <text x="138" y="105">frontal</text>
+          <text x="268" y="62">parietal</text>
+          <text x="378" y="112">occipital</text>
+          <text x="195" y="253">temporal</text>
+          <text x="390" y="300">cerebellum</text>
+          <text x="241" y="325">brainstem</text>
+          <text x="252" y="182">thal.</text>
+          <text x="238" y="246">hypo.</text>
+          <text x="298" y="217">hippo.</text>
+        </g>
+
+      </svg>
+    </div>
+
+    <!-- Active cluster label -->
+    <div id="active-label">—</div>
+
+    <!-- Neuromod bars -->
+    <div id="neuromod">
+      <div class="nm-row">
+        <span class="nm-label">ACh</span>
+        <div class="nm-track"><div class="nm-fill" id="nm-ACh" style="background:#00ccff;width:20%"></div></div>
+        <span class="nm-value" id="nmv-ACh">0.20</span>
+      </div>
+      <div class="nm-row">
+        <span class="nm-label">DA</span>
+        <div class="nm-track"><div class="nm-fill" id="nm-DA" style="background:#ffcc00;width:50%"></div></div>
+        <span class="nm-value" id="nmv-DA">0.50</span>
+      </div>
+      <div class="nm-row">
+        <span class="nm-label">GABA</span>
+        <div class="nm-track"><div class="nm-fill" id="nm-GABA" style="background:#ff4444;width:5%"></div></div>
+        <span class="nm-value" id="nmv-GABA">0.05</span>
+      </div>
+      <div class="nm-row">
+        <span class="nm-label">Glu</span>
+        <div class="nm-track"><div class="nm-fill" id="nm-Glu" style="background:#44ff88;width:30%"></div></div>
+        <span class="nm-value" id="nmv-Glu">0.30</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Right: Chat -->
+  <div id="chat-panel">
+    <div id="messages">
+      <div class="msg msg-system">Brain online. Say something.</div>
+    </div>
+    <div id="typing"><span></span><span></span><span></span></div>
+    <div id="transcript-bar"></div>
+    <div id="input-bar">
+      <button id="mic-btn" title="Hold to speak (or click to toggle)">&#x1F3A4;</button>
+      <textarea id="msg-input" rows="1" placeholder="Type or speak a message..."></textarea>
+      <button id="send-btn">&#x2192;</button>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ── Region config ──────────────────────────────────────────────────────────────
+const REGIONS = {
+  frontal:      { color: '#4488ff', label: 'Frontal lobe — executive & response' },
+  parietal:     { color: '#22ccff', label: 'Parietal lobe — context & session state' },
+  occipital:    { color: '#cc44ff', label: 'Occipital lobe — vision processing' },
+  temporal:     { color: '#ff8822', label: 'Temporal lobe — language understanding' },
+  hippocampus:  { color: '#00ffaa', label: 'Hippocampus — memory recall & encoding' },
+  thalamus:     { color: '#ffffff', label: 'Thalamus — routing & attention' },
+  hypothalamus: { color: '#ffaa00', label: 'Hypothalamus — drives & affect' },
+  brainstem:    { color: '#ff6600', label: 'Brainstem — autonomic & articulation' },
+  cerebellum:   { color: '#00ccff', label: 'Cerebellum — learned sequences' },
+};
+
+// Cluster → region mapping (some clusters map to same visual region)
+const CLUSTER_MAP = {
+  frontal:      'frontal',
+  parietal:     'parietal',
+  occipital:    'occipital',
+  temporal:     'temporal',
+  hippocampus:  'hippocampus',
+  thalamus:     'thalamus',
+  hypothalamus: 'hypothalamus',
+  brainstem:    'brainstem',
+  dmn:          'frontal',       // DMN pulses through frontal
+  metacognition:'parietal',
+};
+
+// Emotion → badge color
+const EMOTION_COLORS = {
+  joy:            { bg: '#1a4020', color: '#44ff88' },
+  excited:        { bg: '#1a3a10', color: '#88ff44' },
+  enthusiasm:     { bg: '#1a3a10', color: '#aaff44' },
+  curious:        { bg: '#102040', color: '#44aaff' },
+  'curious-uncertain': { bg: '#102030', color: '#4488cc' },
+  warm:           { bg: '#2a2010', color: '#ffcc44' },
+  confident:      { bg: '#101a40', color: '#6688ff' },
+  thoughtful:     { bg: '#141428', color: '#8899cc' },
+  content:        { bg: '#121224', color: '#7788aa' },
+  neutral:        { bg: '#1a1a2a', color: '#7788aa' },
+  flat:           { bg: '#141414', color: '#555566' },
+  restless:       { bg: '#201810', color: '#cc8844' },
+  anxious:        { bg: '#2a1a10', color: '#ffaa44' },
+  inhibited:      { bg: '#1a1020', color: '#9966aa' },
+  'cautious-agitated': { bg: '#2a1010', color: '#ff8844' },
+  agitated:       { bg: '#2a1010', color: '#ff4444' },
+};
+
+// ── State ──────────────────────────────────────────────────────────────────────
+let ws = null;
+let pendingResponse = null;
+let lastTurnId = null;
+let totalCalls = 0;
+let activeGlows = {};   // regionId → timeout handle
+let sessionId = '—';
+
+// ── WebSocket ──────────────────────────────────────────────────────────────────
+function connect() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(`${proto}://${location.host}/ws`);
+
+  ws.onopen = () => {
+    document.getElementById('ws-indicator').classList.add('connected');
+  };
+
+  ws.onclose = () => {
+    document.getElementById('ws-indicator').classList.remove('connected');
+    setTimeout(connect, 2000);  // auto-reconnect
+  };
+
+  ws.onerror = () => ws.close();
+
+  ws.onmessage = (ev) => {
+    const msg = JSON.parse(ev.data);
+    handle(msg);
+  };
+}
+
+function sendMessage(text) {
+  if (!ws || ws.readyState !== 1) return;
+  ws.send(JSON.stringify({ type: 'user_message', text }));
+}
+
+// ── Event handler ──────────────────────────────────────────────────────────────
+function handle(msg) {
+  switch (msg.type) {
+
+    case 'activation': {
+      const regionId = CLUSTER_MAP[msg.cluster];
+      if (!regionId) break;
+      const cfg = REGIONS[regionId];
+      if (!cfg) break;
+      activateRegion(regionId, msg.intensity, cfg.color, cfg.label, msg.note);
+      break;
+    }
+
+    case 'neuromod': {
+      ['ACh', 'DA', 'GABA', 'Glu'].forEach(ch => {
+        const v = msg[ch];
+        if (v === undefined) return;
+        const pct = Math.round(v * 100);
+        document.getElementById(`nm-${ch}`).style.width = pct + '%';
+        document.getElementById(`nmv-${ch}`).textContent = v.toFixed(2);
+      });
+      break;
+    }
+
+    case 'emotion': {
+      const badge = document.getElementById('emotion-badge');
+      badge.textContent = msg.emotion;
+      const theme = EMOTION_COLORS[msg.emotion] || EMOTION_COLORS['neutral'];
+      badge.style.background = theme.bg;
+      badge.style.color = theme.color;
+      break;
+    }
+
+    case 'turn_start': {
+      lastTurnId = msg.turn_id;
+      if (msg.user_input) {
+        appendMessage('user', msg.user_input);
+      }
+      setTyping(true);
+      document.getElementById('send-btn').disabled = true;
+      if (msg.session_id) {
+        sessionId = msg.session_id;
+        document.getElementById('stat-session').textContent = sessionId;
+      }
+      break;
+    }
+
+    case 'turn_end': {
+      setTyping(false);
+      document.getElementById('send-btn').disabled = false;
+      if (msg.response) {
+        const calls = msg.llm_calls || 0;
+        const elapsed = msg.elapsed_s ? msg.elapsed_s.toFixed(1) + 's' : '';
+        totalCalls += calls;
+        document.getElementById('stat-calls').textContent = totalCalls;
+        document.getElementById('stat-elapsed').textContent = elapsed;
+        appendMessage('brain', msg.response, calls ? `${calls} LLM calls · ${elapsed}` : elapsed);
+      }
+      // Fade all active regions after turn ends
+      setTimeout(() => {
+        Object.keys(REGIONS).forEach(r => deactivateRegion(r));
+        setActiveLabel('—', false);
+      }, 800);
+      break;
+    }
+
+    case 'stream_thought': {
+      if (msg.thought) {
+        appendThought(msg.thought);
+      }
+      break;
+    }
+    case 'transcript': {
+      handleTranscriptEvent(msg);
+      break;
+    }
+    case 'transcript_error': {
+      handleTranscriptError(msg);
+      break;
+    }
+  }
+}
+
+// ── SVG region activation ──────────────────────────────────────────────────────
+function activateRegion(regionId, intensity, color, label, note) {
+  const el = document.getElementById('region-' + regionId);
+  if (!el) return;
+
+  // Cancel pending deactivation
+  if (activeGlows[regionId]) {
+    clearTimeout(activeGlows[regionId]);
+    delete activeGlows[regionId];
+  }
+
+  const brightness = 1 + intensity * 2.5;       // 1.0 → 3.5
+  const blurPx = Math.round(intensity * 22);     // 0 → 22px
+  const opacity = 0.35 + intensity * 0.65;       // 0.35 → 1.0
+  const hex = color;
+
+  el.style.fill = hexWithAlpha(hex, opacity);
+  el.style.filter = `brightness(${brightness}) drop-shadow(0 0 ${blurPx}px ${hex})`;
+  el.classList.add('active');
+
+  const displayLabel = note ? `${label.split('—')[0].trim()} — ${note}` : label;
+  setActiveLabel(displayLabel, true);
+
+  // Auto-deactivate after a short hold if intensity > 0
+  if (intensity > 0) {
+    activeGlows[regionId] = setTimeout(() => {
+      deactivateRegion(regionId);
+    }, 1800);
+  } else {
+    deactivateRegion(regionId);
+  }
+}
+
+function deactivateRegion(regionId) {
+  const el = document.getElementById('region-' + regionId);
+  if (!el) return;
+  el.style.fill = '';
+  el.style.filter = '';
+  el.classList.remove('active');
+  delete activeGlows[regionId];
+}
+
+function setActiveLabel(text, lit) {
+  const el = document.getElementById('active-label');
+  el.textContent = text;
+  el.className = lit ? 'lit' : '';
+}
+
+function hexWithAlpha(hex, alpha) {
+  // Convert #rrggbb to rgba()
+  const r = parseInt(hex.slice(1,3),16);
+  const g = parseInt(hex.slice(3,5),16);
+  const b = parseInt(hex.slice(5,7),16);
+  return `rgba(${r},${g},${b},${alpha.toFixed(2)})`;
+}
+
+// ── Chat rendering ─────────────────────────────────────────────────────────────
+function appendMessage(role, text, meta) {
+  const msgs = document.getElementById('messages');
+
+  const div = document.createElement('div');
+  div.className = `msg msg-${role}`;
+  div.textContent = text;
+
+  if (meta) {
+    const m = document.createElement('div');
+    m.className = 'msg-meta';
+    m.textContent = meta;
+    div.appendChild(m);
+  }
+
+  msgs.appendChild(div);
+  msgs.scrollTop = msgs.scrollHeight;
+}
+
+function appendThought(text) {
+  const msgs = document.getElementById('messages');
+  const div = document.createElement('div');
+  div.className = 'msg msg-thought';
+  div.textContent = '· ' + text;
+  msgs.appendChild(div);
+  msgs.scrollTop = msgs.scrollHeight;
+}
+
+function setTyping(visible) {
+  document.getElementById('typing').className = visible ? 'visible' : '';
+  const msgs = document.getElementById('messages');
+  msgs.scrollTop = msgs.scrollHeight;
+}
+
+// ── Input handling ─────────────────────────────────────────────────────────────
+function send() {
+  const input = document.getElementById('msg-input');
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = '';
+  input.style.height = 'auto';
+  sendMessage(text);
+}
+
+document.getElementById('send-btn').addEventListener('click', send);
+
+document.getElementById('msg-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    send();
+  }
+});
+
+// Auto-resize textarea
+document.getElementById('msg-input').addEventListener('input', function() {
+  this.style.height = 'auto';
+  this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+});
+
+// ── Voice input (Deepgram via server) ────────────────────────────────────────
+const micBtn = document.getElementById('mic-btn');
+const transcriptBar = document.getElementById('transcript-bar');
+const msgInput = document.getElementById('msg-input');
+let micActive = false;
+let mediaRecorder = null;
+let micStream = null;
+let finalTranscript = '';
+
+function _micReset() {
+  micActive = false;
+  micBtn.classList.remove('listening');
+  micBtn.title = 'Click to speak (or press Space)';
+  transcriptBar.classList.remove('visible');
+  transcriptBar.textContent = '';
+}
+
+async function startListening() {
+  if (micActive) return;
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    transcriptBar.textContent = 'Not connected — wait for reconnect.';
+    transcriptBar.classList.add('visible');
+    setTimeout(() => transcriptBar.classList.remove('visible'), 2500);
+    return;
+  }
+  try {
+    micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (err) {
+    transcriptBar.textContent = 'Microphone access denied — check browser permissions.';
+    transcriptBar.classList.add('visible');
+    setTimeout(() => transcriptBar.classList.remove('visible'), 3000);
+    return;
+  }
+
+  // Tell server to open Deepgram session
+  ws.send(JSON.stringify({ type: 'voice_start' }));
+
+  finalTranscript = '';
+  msgInput.value = '';
+
+  // Pick best supported mimeType
+  const mime = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus']
+    .find(m => MediaRecorder.isTypeSupported(m)) || '';
+
+  mediaRecorder = new MediaRecorder(micStream, mime ? { mimeType: mime } : {});
+
+  mediaRecorder.ondataavailable = (e) => {
+    if (e.data && e.data.size > 0 && ws && ws.readyState === WebSocket.OPEN) {
+      e.data.arrayBuffer().then(buf => ws.send(buf));
+    }
+  };
+
+  mediaRecorder.start(250);  // 250 ms chunks
+
+  micActive = true;
+  micBtn.classList.add('listening');
+  micBtn.title = 'Listening… click to stop';
+  transcriptBar.textContent = 'Listening…';
+  transcriptBar.classList.add('visible');
+}
+
+function stopListening(autoSend = false) {
+  if (!micActive) return;
+  _micReset();
+
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    mediaRecorder.stop();
+  }
+  mediaRecorder = null;
+
+  if (micStream) {
+    micStream.getTracks().forEach(t => t.stop());
+    micStream = null;
+  }
+
+  // Tell server to close Deepgram session
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'voice_stop' }));
+  }
+
+  const text = finalTranscript.trim() || msgInput.value.trim();
+  finalTranscript = '';
+
+  if (autoSend && text) {
+    msgInput.value = '';
+    msgInput.style.height = 'auto';
+    sendMessage(text);
+    appendMessage('user', text);
+  }
+}
+
+// Handle transcript events coming back from server
+function handleTranscriptEvent(msg) {
+  if (!micActive) return;
+  if (msg.is_final) {
+    finalTranscript += (finalTranscript ? ' ' : '') + msg.text;
+    msgInput.value = finalTranscript.trim();
+    msgInput.style.height = 'auto';
+    msgInput.style.height = Math.min(msgInput.scrollHeight, 120) + 'px';
+    transcriptBar.textContent = '✓ ' + finalTranscript.trim();
+  } else {
+    transcriptBar.textContent = msg.text || (finalTranscript ? '✓ ' + finalTranscript : 'Listening…');
+  }
+}
+
+function handleTranscriptError(msg) {
+  transcriptBar.textContent = '⚠ ' + (msg.msg || 'Voice error');
+  transcriptBar.classList.add('visible');
+  stopListening(false);
+  setTimeout(() => transcriptBar.classList.remove('visible'), 3000);
+}
+
+micBtn.addEventListener('click', () => {
+  if (micActive) stopListening(true);
+  else startListening();
+});
+
+// Space bar while input is not focused toggles mic
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'Space' && document.activeElement !== msgInput && !e.repeat) {
+    e.preventDefault();
+    if (micActive) stopListening(true);
+    else startListening();
+  }
+});
+
+micBtn.title = 'Click to speak (or press Space)';
+
+// ── Boot ───────────────────────────────────────────────────────────────────────
+connect();
+</script>
+</body>
+</html>

@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+dist/
+build/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# LanceDB (binary vector store — large, session-specific)
+second_brain/episodes/
+
+# Langfuse / observability local data
+observability/
+
+# macOS
+.DS_Store
