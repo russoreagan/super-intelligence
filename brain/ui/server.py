@@ -14,7 +14,22 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
+
+# FastAPI/WebSocket imports at module level so that `from __future__ import annotations`
+# (PEP 563 lazy strings) doesn't prevent FastAPI's dependency injector from resolving
+# the `WebSocket` annotation in ws_endpoint. When these are imported only inside
+# _build_app(), the string 'WebSocket' can't be found in the module globals and FastAPI
+# misclassifies the parameter as a query param, causing an immediate 403 on every
+# WebSocket connection attempt.
+try:
+    from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+    from fastapi.responses import HTMLResponse
+except ImportError:
+    FastAPI = None  # type: ignore[assignment,misc]
+    WebSocket = None  # type: ignore[assignment]
+    WebSocketDisconnect = None  # type: ignore[assignment]
+    HTMLResponse = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
 
@@ -23,9 +38,11 @@ HTML_PATH = Path(__file__).parent / "index.html"
 
 class UIServer:
     def __init__(self, emitter_queue: asyncio.Queue,
-                 on_user_message: Callable[[str], None] | None = None) -> None:
+                 on_user_message: Callable[[str], None] | None = None,
+                 on_voice_change: Callable[[str], None] | None = None) -> None:
         self._queue = emitter_queue
         self._on_user_message = on_user_message
+        self._on_voice_change = on_voice_change
         self._clients: set = set()
         self._last_neuromod: dict = {}
         self._app = None
@@ -33,16 +50,41 @@ class UIServer:
     def set_message_handler(self, fn: Callable[[str], None]) -> None:
         self._on_user_message = fn
 
-    def _build_app(self):
-        from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-        from fastapi.responses import HTMLResponse
+    def set_voice_change_handler(self, fn: Callable[[str], None]) -> None:
+        self._on_voice_change = fn
 
+    def _build_app(self):
         app = FastAPI(docs_url=None, redoc_url=None)
 
         @app.get("/")
         async def index():
             html = HTML_PATH.read_text(encoding="utf-8")
             return HTMLResponse(html)
+
+        @app.get("/voices")
+        async def list_voices():
+            """Return the user's custom ElevenLabs voices (non-premade)."""
+            import httpx
+            api_key = os.environ.get("ELEVENLABS_API_KEY", "")
+            if not api_key:
+                return {"voices": []}
+            try:
+                async with httpx.AsyncClient(timeout=8) as client:
+                    r = await client.get(
+                        "https://api.elevenlabs.io/v1/voices",
+                        headers={"xi-api-key": api_key},
+                    )
+                    r.raise_for_status()
+                    data = r.json()
+                voices = [
+                    {"voice_id": v["voice_id"], "name": v["name"]}
+                    for v in data.get("voices", [])
+                    if v.get("category", "premade") != "premade"
+                ]
+                return {"voices": voices}
+            except Exception as e:
+                logger.warning("Failed to fetch ElevenLabs voices: %s", e)
+                return {"voices": []}
 
         @app.websocket("/ws")
         async def ws_endpoint(websocket: WebSocket):
@@ -75,11 +117,16 @@ class UIServer:
         return app
 
     async def _start_deepgram(self, websocket) -> object | None:
-        """Open a Deepgram live-transcription session for one browser client."""
+        """
+        Open a Deepgram live-transcription session for one browser client.
+        Compatible with deepgram-sdk v7+ which uses an async context-manager API.
+        Returns a DGSession handle with .send(bytes) and .finish() methods.
+        """
         try:
-            from deepgram import DeepgramClient, LiveOptions, LiveTranscriptionEvents
+            from deepgram import AsyncDeepgramClient
+            from deepgram.listen.v1.types import ListenV1Results
         except ImportError:
-            logger.warning("deepgram-sdk not installed; voice disabled")
+            logger.warning("deepgram-sdk not installed — mic disabled. Run 'uv sync' to install.")
             return None
 
         api_key = os.environ.get("DEEPGRAM_API_KEY", "")
@@ -92,45 +139,78 @@ class UIServer:
                 pass
             return None
 
-        client = DeepgramClient(api_key)
-        conn = client.listen.asynclive.v("1")
+        client = AsyncDeepgramClient()     # picks up DEEPGRAM_API_KEY from env
+        audio_queue: asyncio.Queue = asyncio.Queue()
 
-        async def _on_transcript(_conn, result, **kwargs):
+        class DGSession:
+            """Thin wrapper so _receive_loop can call .send() and .finish()."""
+            def __init__(self) -> None:
+                self._task: asyncio.Task | None = None
+
+            async def send(self, data: bytes) -> None:
+                await audio_queue.put(data)
+
+            async def finish(self) -> None:
+                await audio_queue.put(None)   # sentinel → closes the connection
+                if self._task:
+                    try:
+                        await asyncio.wait_for(asyncio.shield(self._task), timeout=2.0)
+                    except Exception:
+                        self._task.cancel()
+
+        session = DGSession()
+
+        async def _run_session() -> None:
             try:
-                alt = result.channel.alternatives[0]
-                text = alt.transcript
-                is_final = result.is_final
-                if text:
-                    await websocket.send_text(json.dumps({
-                        "type": "transcript",
-                        "text": text,
-                        "is_final": is_final,
-                    }))
+                async with client.listen.v1.connect(
+                    model="nova-3",
+                    language="en-US",
+                    smart_format=True,
+                    punctuate=True,
+                    interim_results=True,
+                    endpointing=300,
+                ) as conn:
+                    logger.info("UI: Deepgram live session started for client")
+
+                    async def _listen() -> None:
+                        async for msg in conn:
+                            if isinstance(msg, ListenV1Results):
+                                try:
+                                    alt = msg.channel.alternatives[0]
+                                    if alt.transcript:
+                                        await websocket.send_text(json.dumps({
+                                            "type": "transcript",
+                                            "text": alt.transcript,
+                                            "is_final": msg.is_final,
+                                        }))
+                                except Exception as e:
+                                    logger.debug("Deepgram transcript handler: %s", e)
+
+                    listen_task = asyncio.create_task(_listen())
+                    try:
+                        while True:
+                            chunk = await audio_queue.get()
+                            if chunk is None:
+                                break
+                            await conn.send_media(chunk)
+                    finally:
+                        listen_task.cancel()
+                        logger.info("UI: Deepgram live session closed")
             except Exception as e:
-                logger.debug("Deepgram transcript handler: %s", e)
+                logger.warning("Deepgram session error — voice input unavailable: %s", e)
+                try:
+                    await websocket.send_text(json.dumps(
+                        {"type": "transcript_error", "msg": str(e)}
+                    ))
+                except Exception:
+                    pass
 
-        conn.on(LiveTranscriptionEvents.Transcript, _on_transcript)
-
-        options = LiveOptions(
-            model="nova-3",
-            language="en-US",
-            smart_format=True,
-            punctuate=True,
-            interim_results=True,
-            endpointing=300,
-        )
-        started = await conn.start(options)
-        if not started:
-            try:
-                await websocket.send_text(json.dumps(
-                    {"type": "transcript_error", "msg": "Deepgram connection failed"}
-                ))
-            except Exception:
-                pass
-            return None
-
-        logger.info("UI: Deepgram live session started for client")
-        return conn
+        session._task = asyncio.create_task(_run_session())
+        # Give the connection a moment to establish before we declare success
+        await asyncio.sleep(0.3)
+        if session._task.done():
+            return None   # connection failed immediately
+        return session
 
     async def _receive_loop(self, websocket) -> None:
         dg_conn = None  # per-client Deepgram live connection
@@ -145,6 +225,10 @@ class UIServer:
                         text = data.get("text", "").strip()
                         if text:
                             await self._on_user_message(text)
+                    elif t == "set_voice" and self._on_voice_change:
+                        vid = data.get("voice_id", "").strip()
+                        if vid:
+                            self._on_voice_change(vid)
                     elif t == "voice_start":
                         if dg_conn is None:
                             dg_conn = await self._start_deepgram(websocket)
@@ -155,7 +239,6 @@ class UIServer:
                             except Exception:
                                 pass
                             dg_conn = None
-                            logger.info("UI: Deepgram live session closed")
 
                 elif "bytes" in msg and msg["bytes"] and dg_conn is not None:
                     await dg_conn.send(msg["bytes"])

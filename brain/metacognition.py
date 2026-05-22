@@ -21,6 +21,7 @@ from statistics import mean, stdev
 from brain.bus import Bus
 from brain.cell import IntegratorCell
 from brain.model_router import ModelRouter
+from brain.security import sanitize_fact
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +58,8 @@ class MetacognitionCell:
             system_prompt=SELF_REFLECTION_SYSTEM,
             topics=["meta.reflection"],
             max_calls_per_turn=1,
+            locality="local",
+            sensitivity="sensitive",
         )
         self._reflector.set_router(router)
 
@@ -114,9 +117,9 @@ class MetacognitionCell:
 
     async def start(self) -> None:
         if not META_ENABLED:
-            logger.debug("Metacognition disabled (BRAIN_METACOGNITION not set)")
+            logger.debug("[Self-monitor] Disabled — set BRAIN_METACOGNITION=true to enable periodic self-reflection")
             return
-        logger.info("Metacognition: starting (interval=%.0fs)", META_INTERVAL)
+        logger.info("[Self-monitor] Active — will reflect on behaviour every %.0fs", META_INTERVAL)
         asyncio.create_task(self._loop())
 
     async def _loop(self) -> None:
@@ -154,7 +157,7 @@ class MetacognitionCell:
 
         if reflection:
             await self._bus.publish_dict("meta.reflection", reflection, source="metacognition")
-            logger.info("Metacognition: %s", reflection.get("reflection", "")[:120])
+            logger.info("[Self-monitor] %s", reflection.get("reflection", "")[:120])
 
             # Update self.md with current mood signature
             if self._schema:
@@ -164,7 +167,9 @@ class MetacognitionCell:
                     f"ACh={stats['neuromod_averages'].get('ACh', 0):.2f} "
                     f"dominant={stats['dominant_emotion']}"
                 )
-                self._schema.append_fact("self.md", f"Mood signature: {mood_line}")
+                fact = sanitize_fact(f"Mood signature: {mood_line}")
+                if fact:
+                    await self._schema.aappend_fact("self.md", fact)
 
     def summary(self) -> dict:
         return self._compute_stats()

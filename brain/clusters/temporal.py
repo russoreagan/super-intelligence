@@ -24,19 +24,22 @@ CLUSTER = "temporal"
 UNDERSTANDING_SYSTEM = """You are the temporal lobe of a biologically-inspired AI brain.
 Your sole job: parse the user's input and return a JSON object with exactly these fields:
 {
-  "intent": string,           // one of: greeting, chitchat, question, memory_recall, task, hostile, epistemic_action, other
-  "register": string,         // casual | formal | terse | emotional
-  "entities": [string],       // named things mentioned
-  "tense": string,            // past | present | future | mixed
-  "time_reference": string,   // e.g. "last week", "now", none
-  "requires_memory": bool,    // needs recall from long-term store?
-  "requires_vision": bool,    // references an image or visual?
-  "requires_action": bool,    // requests a tool call / action?
-  "epistemic_action": bool,   // is user using this brain as a cognitive tool / thinking out loud?
-  "hostility": float,         // 0.0 to 1.0
-  "sentiment": float,         // -1.0 (negative) to 1.0 (positive)
-  "salience": float,          // 0.0 to 1.0 — how important/novel is this?
-  "topic_summary": string     // 5 words max describing the topic
+  "intent": string,              // one of: greeting, chitchat, question, memory_recall, task, hostile, epistemic_action, other
+  "register": string,            // casual | formal | terse | emotional
+  "entities": [string],          // named things mentioned
+  "tense": string,               // past | present | future | mixed
+  "time_reference": string,      // e.g. "last week", "now", none
+  "requires_memory": bool,       // needs recall from long-term store?
+  "requires_vision": bool,       // references an image or visual?
+  "requires_action": bool,       // requests a tool call / action?
+  "epistemic_action": bool,      // is user using this brain as a cognitive tool / thinking out loud?
+  "hostility": float,            // 0.0 to 1.0 — general hostility in the message
+  "sentiment": float,            // -1.0 (negative) to 1.0 (positive) — message sentiment about its topic
+  "salience": float,             // 0.0 to 1.0 — how important/novel is this?
+  "topic_summary": string,       // 5 words max describing the topic
+  "user_tone_toward_ai": string  // how is the user treating the AI specifically:
+                                 // "warm" | "joking" | "praising" | "polite" | "neutral" |
+                                 // "dismissive" | "impatient" | "insulting" | "testing"
 }
 Return ONLY the JSON object. No explanation."""
 
@@ -112,7 +115,7 @@ class TemporalCluster:
         try:
             msg: Message = await asyncio.wait_for(self._inbox.get(), timeout=25.0)
         except asyncio.TimeoutError:
-            logger.warning("Temporal: no sensory input received")
+            logger.warning("[Input parser] Timed out waiting for user message — no input arrived within 25s")
             return None
 
         if msg.expired:
@@ -146,7 +149,7 @@ class TemporalCluster:
                 "switch_only": True,
             }
             await self._bus.publish_dict("temporal.features", features, source=CLUSTER)
-            logger.debug("Temporal: trivial match → canned response, 0 LLM calls")
+            logger.debug("[Input parser] Trivial input detected (%s) — using canned response, skipping LLM", trivial_type)
             return features
 
         words = text.split()
@@ -186,7 +189,7 @@ class TemporalCluster:
             }
             self._predictor.record(sig, length_tag)
             await self._bus.publish_dict("temporal.features", features, source=CLUSTER)
-            logger.debug("Temporal: predictor confident (%.2f), integrator suppressed", confidence)
+            logger.debug("[Input parser] Skipping LLM parse — predictor confident (%.2f), using fast-path features", confidence)
             return features
 
         # --- Integrator (LLM) ---
@@ -207,7 +210,7 @@ class TemporalCluster:
                 except Exception:
                     pass
             if not features:
-                logger.warning("Temporal: could not parse integrator output: %s", raw[:200])
+                logger.warning("[Input parser] LLM returned invalid JSON — using fallback feature defaults. Raw output: %s", raw[:200])
                 features = {"intent": "other", "salience": 0.5, "requires_memory": False,
                             "requires_vision": False, "requires_action": False,
                             "epistemic_action": False, "hostility": 0.0, "sentiment": 0.5,
@@ -233,6 +236,6 @@ class TemporalCluster:
                 source=CLUSTER,
             )
 
-        logger.debug("Temporal: features published (intent=%s, salience=%.2f)",
+        logger.debug("[Input parser] Features: intent=%s salience=%.2f",
                      features.get("intent"), features.get("salience", 0))
         return features

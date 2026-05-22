@@ -5,6 +5,7 @@ Ring buffer of recent turns, entity tracker, topic tracker.
 from __future__ import annotations
 
 import logging
+import re
 from collections import deque
 
 from brain.bus import Bus
@@ -41,13 +42,21 @@ class ParietalCluster:
     def recent_turns(self, n: int = 4) -> list[dict]:
         return list(self._ring)[-n:]
 
+    @staticmethod
+    def _strip_role_tags(text: str) -> str:
+        """Remove lines that start with 'User:' or 'Brain:' to prevent role spoofing."""
+        return "\n".join(
+            line for line in text.splitlines()
+            if not re.match(r"^\s*(User|Brain)\s*:", line)
+        )
+
     def recent_turns_text(self, n: int = 4) -> str:
         turns = self.recent_turns(n)
         lines = []
         for t in turns:
-            lines.append(f"User: {t['user']}")
+            lines.append(f"User: {self._strip_role_tags(t['user'])}")
             if t.get("response"):
-                lines.append(f"Brain: {t['response']}")
+                lines.append(f"Brain: {self._strip_role_tags(t['response'])}")
         return "\n".join(lines)
 
     def session_summary(self) -> dict:

@@ -80,7 +80,10 @@ class Brainstem:
     def check_budget(self) -> bool:
         """Returns True if we're still within budget."""
         if self._current_turn and self._current_turn.budget_exhausted():
-            logger.warning("LLM budget exhausted for turn %s", self._current_turn.turn_id)
+            logger.warning(
+                "Turn %s: per-turn LLM call limit reached (max=%d) — set BRAIN_MAX_LLM_CALLS_PER_TURN to allow more",
+                self._current_turn.turn_id, MAX_LLM_CALLS,
+            )
             return False
         return True
 
@@ -112,7 +115,7 @@ class Brainstem:
         while not turn.committed:
             await asyncio.sleep(0.1)
             if turn.timed_out():
-                logger.warning("Turn %s: T_max timeout — blurting best available draft", turn.turn_id)
+                logger.warning("Turn %s: hit max wait time — using best draft ready so far", turn.turn_id)
                 break
             if turn.quiescent() and turn.endorsed:
                 logger.debug("Turn %s: quiescent with endorsed drafts", turn.turn_id)
@@ -148,4 +151,4 @@ class Brainstem:
         """Scheduled keepalive — logs health every 60s during a session."""
         while True:
             await asyncio.sleep(60)
-            logger.info("Brainstem heartbeat: session calls=%d", self._session_cost_calls)
+            logger.info("Heartbeat: %d total LLM calls this session", self._session_cost_calls)

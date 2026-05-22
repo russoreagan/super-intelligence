@@ -15,6 +15,7 @@ import time
 from brain.cell import IntegratorCell
 from brain.model_router import ModelRouter
 from brain.second_brain.store import SchemaStore, EpisodicStore
+from brain.security import sanitize_fact
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +57,8 @@ class SleepConsolidation:
             system_prompt=SELF_UPDATE_SYSTEM,
             topics=[],
             max_calls_per_turn=1,
+            locality="local",
+            sensitivity="sensitive",
         )
         self._self_updater.set_router(router)
 
@@ -66,6 +69,8 @@ class SleepConsolidation:
             system_prompt=EPISODE_SYNTHESIS_SYSTEM,
             topics=[],
             max_calls_per_turn=1,
+            locality="local",
+            sensitivity="sensitive",
         )
         self._synthesizer.set_router(router)
 
@@ -77,7 +82,7 @@ class SleepConsolidation:
         if not session_traces:
             return
 
-        logger.info("Sleep: consolidating %d turns from session %s",
+        logger.info("[Memory consolidation] Processing %d turns from session %s",
                     len(session_traces), session_id)
         start = time.time()
 
@@ -105,9 +110,11 @@ class SleepConsolidation:
                     pass
 
         # Update user.md with discovered facts
-        for fact in synthesis.get("user_facts", []):
-            self._schema.append_fact("user.md", fact)
-            logger.debug("Sleep: user fact → %s", fact[:80])
+        for raw_fact in synthesis.get("user_facts", []):
+            fact = sanitize_fact(raw_fact)
+            if fact:
+                await self._schema.aappend_fact("user.md", fact)
+                logger.debug("[Memory consolidation] Writing user fact: %s", fact[:80])
 
         # 2. Self-model update
         self._self_updater.reset_turn(turn_id + "_self")
@@ -133,12 +140,12 @@ class SleepConsolidation:
                     pass
 
         if updates:
-            self._apply_self_updates(updates)
+            await self._apply_self_updates(updates)
 
         elapsed = time.time() - start
-        logger.info("Sleep: consolidation complete in %.2fs", elapsed)
+        logger.info("[Memory consolidation] Done in %.2fs", elapsed)
 
-    def _apply_self_updates(self, updates: dict) -> None:
+    async def _apply_self_updates(self, updates: dict) -> None:
         existing = self._schema.read("self.md")
         if not existing:
             return
@@ -157,5 +164,5 @@ class SleepConsolidation:
             replacement = f"\\1{content.strip()}\n\\3"
             existing = re.sub(pattern, replacement, existing, flags=re.DOTALL)
 
-        self._schema.write("self.md", existing)
-        logger.debug("Sleep: self.md updated")
+        await self._schema.awrite("self.md", existing)
+        logger.debug("[Memory consolidation] Self-model updated")

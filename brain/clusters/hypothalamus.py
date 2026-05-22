@@ -4,6 +4,7 @@ Consumes temporal features, updates neuromod levels, names emotional state.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from brain.bus import Bus
@@ -27,6 +28,9 @@ class HypothalamusCluster:
         # Inhibitory: receptor desensitization — suppresses novelty on repeated topics
         self._satiation_inhibitor = StatefulSwitch("satiation_inhibitor", CLUSTER,
                                                     decay=0.95, polarity="inhibitory")
+
+        # Auditory prosody input (published by auditory cortex when --ears active)
+        self._prosody_inbox = bus.subscribe("auditory.prosody")
 
     async def process(self, features: dict) -> dict:
         """Update neuromod levels from temporal features. Return affect summary."""
@@ -65,6 +69,29 @@ class HypothalamusCluster:
         else:
             self._satiation_inhibitor.update(-0.1)
 
+        # ── Prosody modulation (from auditory cortex, if active) ──────────────
+        # Drain expired messages; use most recent valid prosody
+        prosody_tone = None
+        while True:
+            try:
+                pros_msg = self._prosody_inbox.get_nowait()
+                if not pros_msg.expired:
+                    prosody_tone = pros_msg.payload.get("tone_label")
+            except asyncio.QueueEmpty:
+                break
+
+        if prosody_tone:
+            if prosody_tone == "stressed":
+                nm.add("GABA", 0.08)
+                nm.add("ACh", 0.05)
+            elif prosody_tone == "energetic":
+                nm.add("Glu", 0.06)
+                nm.add("DA", 0.04)
+            elif prosody_tone == "whisper":
+                nm.add("ACh", 0.10)
+            # "calm" and "monotone" need no correction
+            logger.debug("Hypothalamus: prosody_tone=%s", prosody_tone)
+
         # Name current emotion
         snap = nm.snapshot()
         emotion, tendency = name_emotion(snap["DA"], snap["GABA"], snap["ACh"], snap["Glu"])
@@ -79,6 +106,7 @@ class HypothalamusCluster:
             "neuromod": snap,
             "high_GABA": snap["GABA"] > 0.4,
             "high_ACh": snap["ACh"] > 0.5,
+            "vocal_tone": prosody_tone,
         }
 
         await self._bus.publish_dict("affect.state", affect, source=CLUSTER)

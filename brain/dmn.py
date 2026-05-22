@@ -81,7 +81,7 @@ class DefaultModeNetwork:
     async def start(self, session_id: str) -> None:
         self._session_id = session_id
         self._running = True
-        logger.info("DMN: stream of consciousness active (interval=%.0fs)", DMN_INTERVAL)
+        logger.info("[Background reflection] Active — brain will think between turns every %.0fs", DMN_INTERVAL)
         asyncio.create_task(self._loop())
 
     def pause(self) -> None:
@@ -122,7 +122,7 @@ class DefaultModeNetwork:
                 {"thought": thought, "ts": time.time(), "count": self._thought_count},
                 source="dmn",
             )
-            logger.debug("DMN thought #%d: %s", self._thought_count, thought[:80])
+            logger.debug("[Background reflection] Thought #%d: %s", self._thought_count, thought[:80])
 
         # 2. User simulation / prediction (every 3rd tick)
         if self._thought_count % 3 == 0 and self._parietal:
@@ -137,7 +137,7 @@ class DefaultModeNetwork:
                     self.predicted_next,
                     source="dmn",
                 )
-                logger.debug("DMN prediction: %s (conf=%.2f)",
+                logger.debug("[Background reflection] Anticipating: %s (confidence=%.2f)",
                              self.predicted_next.get("predicted_input", "")[:60],
                              self.predicted_next.get("confidence", 0))
             except Exception:

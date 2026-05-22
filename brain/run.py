@@ -9,12 +9,14 @@ Usage:
     uv run python -m brain.run --ui --dmn        # + stream of consciousness
     uv run python -m brain.run --ui --metacognition
     uv run python -m brain.run --voice           # Deepgram + ElevenLabs
+    uv run python -m brain.run --voice --ears    # + auditory cortex
 
 Environment feature flags:
     BRAIN_UI=true             enable browser UI
     BRAIN_DMN=true            enable Default Mode Network
     BRAIN_METACOGNITION=true  enable metacognition cell
     BRAIN_VOICE_MODE=true     enable voice I/O
+    BRAIN_EARS=true           enable auditory cortex
 """
 from __future__ import annotations
 
@@ -28,13 +30,40 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(override=True)  # override=True so .env values win over empty shell exports
 
 logging.basicConfig(
     level=os.environ.get("BRAIN_LOG_LEVEL", "INFO"),
     format="%(asctime)s %(name)s %(levelname)s %(message)s",
 )
+from brain.security import SecretRedactingFilter
+_redact_filter = SecretRedactingFilter()
+logging.getLogger().addFilter(_redact_filter)
 logger = logging.getLogger("brain.run")
+
+
+_CANCEL_WORDS = frozenset(["never mind", "nevermind", "skip", "cancel", "forget it",
+                            "don't bother", "no thanks", "not now"])
+
+
+def _extract_identity_name(text: str, features: dict) -> str | None:
+    """Extract a person's name from a self-identification utterance."""
+    from brain.clusters.audio_dsp import extract_identity_name
+    name = extract_identity_name(text)
+    if name:
+        return name
+    # Fallback: a single short alphabetic entity from the temporal parse
+    entities = features.get("entities", [])
+    if len(entities) == 1:
+        candidate = entities[0].strip()
+        if 2 <= len(candidate) <= 30 and candidate.replace(" ", "").isalpha():
+            return candidate.title()
+    return None
+
+
+def _is_enrollment_cancellation(text: str) -> bool:
+    """True if the user is declining enrollment."""
+    return text.lower().strip() in _CANCEL_WORDS or any(w in text.lower() for w in _CANCEL_WORDS)
 
 
 async def session(args) -> None:
@@ -55,10 +84,10 @@ async def session(args) -> None:
     logger.info("Session %s starting", session_id)
 
     bus = Bus()
-    router = ModelRouter()
+    obs = ObservabilityLayer(session_id)
+    router = ModelRouter(obs=obs)
     brainstem = Brainstem(bus, router)
     pns = PNS(bus)
-    obs = ObservabilityLayer(session_id)
 
     # Clusters
     thalamus = ThalamusCluster(bus)
@@ -71,6 +100,9 @@ async def session(args) -> None:
 
     # Boot: pre-load core schema
     core_context = await hippocampus.boot(session_id)
+
+    from brain.security import PseudonymizationGateway, EGRESS_MODE
+    egress = PseudonymizationGateway()
 
     # ── UI server (optional) ──────────────────────────────────────────────────
     ui_enabled = args.ui or os.environ.get("BRAIN_UI", "false").lower() == "true"
@@ -87,7 +119,8 @@ async def session(args) -> None:
         async def _on_browser_message(text: str) -> None:
             await ui_message_queue.put(text)
 
-        ui_server = UIServer(emitter.get_queue(), on_user_message=_on_browser_message)
+        ui_server = UIServer(emitter.get_queue(), on_user_message=_on_browser_message,
+                             on_voice_change=pns.set_voice_id)
         asyncio.create_task(ui_server.start(port=8765))
         # Give the server a moment to bind
         await asyncio.sleep(0.3)
@@ -127,14 +160,63 @@ async def session(args) -> None:
         meta = MetacognitionCell(bus, router, hippocampus._schema)
         await meta.start()
 
+    # ── v0.4: Auditory Cortex ─────────────────────────────────────────────────
+    ears = None
+    enrollment_complete_inbox: asyncio.Queue = bus.subscribe("auditory.enrollment_complete")
+    if args.ears or os.environ.get("BRAIN_EARS", "false").lower() == "true":
+        from brain.clusters.auditory_cortex import AuditoryCluster
+        ears = AuditoryCluster(bus)
+        asyncio.create_task(ears.run())
+
     # Brainstem heartbeat
     hb_task = asyncio.create_task(brainstem.heartbeat())
 
     # Session trace accumulator for sleep consolidation
     session_traces: list[dict] = []
 
+    # Background hippocampus encode tasks — must flush at shutdown
+    pending_encodes: set[asyncio.Task] = set()
+
+    def _track_encode(task: asyncio.Task) -> None:
+        pending_encodes.add(task)
+        def _done(t: asyncio.Task) -> None:
+            pending_encodes.discard(t)
+            exc = t.exception() if not t.cancelled() else None
+            if exc:
+                logger.error("Memory write failed for this turn — episode will not be saved to long-term memory: %s", exc)
+        task.add_done_callback(_done)
+
     # ── Core turn processor ───────────────────────────────────────────────────
+    from brain.brainstem import TURN_TIMEOUT
+
     async def process_turn(user_input: str, image_path: str | None = None) -> str:
+        try:
+            return await asyncio.wait_for(
+                _process_turn_body(user_input, image_path),
+                timeout=TURN_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Turn timed out after %.1fs — sending fallback response. "
+                "If Ollama is slow, increase BRAIN_TURN_TIMEOUT_SECONDS (currently %.1fs).",
+                TURN_TIMEOUT, TURN_TIMEOUT,
+            )
+            timeout_msg = "I'm taking too long to think. Let me try again."
+            try:
+                brainstem.end_turn()
+            except Exception:
+                pass
+            if emitter:
+                # Best-effort UI signal that the turn ended
+                try:
+                    await emitter.emit_turn_end("timeout", timeout_msg, TURN_TIMEOUT, 0)
+                except Exception:
+                    pass
+            if dmn:
+                dmn.resume()
+            return timeout_msg
+
+    async def _process_turn_body(user_input: str, image_path: str | None = None) -> str:
         if dmn:
             dmn.pause()
 
@@ -176,14 +258,61 @@ async def session(args) -> None:
                 await emitter.emit_turn_end(turn_id, "...", 0.0, 0)
             return "..."
 
+        # ── Enrollment (multi-speaker, single shared mic) ─────────────────────
+        if ears is not None:
+            # 1. Collect auto-completions the auditory cortex already resolved
+            #    (multi-speaker case — it knows which voice slice said which name).
+            completed: list[dict] = []
+            while True:
+                try:
+                    ec = enrollment_complete_inbox.get_nowait()
+                    if not ec.expired and ec.payload.get("action") in ("enrolled", "merged"):
+                        completed.append(ec.payload)
+                except asyncio.QueueEmpty:
+                    break
+
+            # 2. Deterministic fallback: exactly one pending voice + a name in this
+            #    turn's text → attribute it to that speaker. (Common 1-on-1 case.)
+            pending = ears.enrollment_pending_speakers
+            if pending and not completed:
+                if _is_enrollment_cancellation(user_input):
+                    for spk in pending:
+                        ears.cancel_enrollment(spk.session_key)
+                elif len(pending) == 1:
+                    name = _extract_identity_name(user_input, features)
+                    if name:
+                        result = ears.complete_enrollment(pending[0].session_key, name)
+                        if result.get("action") in ("enrolled", "merged"):
+                            completed.append(result)
+                            logger.info("Enrollment: %s '%s'", result["action"], name)
+
+            if completed:
+                features = dict(features)
+                features["_enrollment_result"] = completed[0]
+                features["_enrollment_results"] = completed
+
         # ── Hypothalamus + Thalamus: parallel ─────────────────────────────────
         await _emit("hypothalamus", 0.6, "updating affect", turn_id)
         await _emit("thalamus", 0.55, "routing attention", turn_id)
         affect_task = asyncio.create_task(hypothalamus.process(features))
         thalamus_task = asyncio.create_task(thalamus.route(features, {}))
-        affect, routing = await asyncio.gather(affect_task, thalamus_task)
+        results = await asyncio.gather(affect_task, thalamus_task, return_exceptions=True)
+        affect, routing = results
+        if isinstance(affect, BaseException):
+            logger.warning("Emotion analysis failed — using neutral defaults: %s", affect)
+            affect = {"emotion": "neutral", "user_emotion": "unknown"}
+        if isinstance(routing, BaseException):
+            logger.warning("Attention routing failed — using defaults: %s", routing)
+            routing = {}
         await _emit_end("hypothalamus", turn_id)
         await _emit_end("thalamus", turn_id)
+
+        # Surface live enrollment state to the frontal lobe (registry is source of truth)
+        if ears is not None and isinstance(affect, dict):
+            pending = ears.enrollment_pending_speakers
+            affect["enrollment_pending"] = len(pending) > 0
+            affect["enrollment_pending_count"] = len(pending)
+            affect["enrollment_closest_match"] = pending[0].closest_match if pending else None
 
         # Emit emotion to UI
         if emitter and affect.get("emotion"):
@@ -205,6 +334,7 @@ async def session(args) -> None:
                 query=user_input,
                 entities=features.get("entities", []),
                 turn_id=turn_id,
+                embedding_fn=router.embed,
             )
             await _emit_end("hippocampus", turn_id)
         else:
@@ -223,12 +353,40 @@ async def session(args) -> None:
             dmn.update_context(parietal_context, affect.get("emotion", "neutral"),
                                core_context.get("self", ""))
 
+        # ── Egress pseudonymisation (Phase 0H) ────────────────────────────────
+        if EGRESS_MODE != "off":
+            ps_memory = dict(memory)
+            ps_schema, _ = egress.pseudonymize(memory.get("schema", ""))
+            ps_episodes, _ = egress.pseudonymize(memory.get("episodes", ""))
+            ps_core_self, _ = egress.pseudonymize(memory.get("core", {}).get("self", ""))
+            ps_core_user, _ = egress.pseudonymize(memory.get("core", {}).get("user", ""))
+            ps_memory["schema"] = ps_schema
+            ps_memory["episodes"] = ps_episodes
+            ps_core = dict(memory.get("core", {}))
+            ps_core["self"] = ps_core_self
+            ps_core["user"] = ps_core_user
+            ps_memory["core"] = ps_core
+            ps_user_input, _ = egress.pseudonymize(user_input)
+            ps_parietal_context, _ = egress.pseudonymize(parietal_context)
+        else:
+            ps_memory = memory
+            ps_user_input = user_input
+            ps_parietal_context = parietal_context
+
         # ── Frontal: Multiple Drafts engine ───────────────────────────────────
         if not brainstem.check_budget():
             response = "I've reached my thinking limit for this turn."
         else:
             await _emit("frontal", 0.9, "drafting response", turn_id)
-            response = await frontal.process(features, affect, memory, parietal_context, turn_id)
+            # Pass pseudonymised context to cloud frontal cells
+            ps_features = dict(features)
+            if EGRESS_MODE != "off":
+                ps_features["raw_text"] = ps_user_input
+            response = await frontal.process(ps_features, affect, ps_memory, ps_parietal_context, turn_id)
+            # Restore real values in response before delivering to user
+            response = egress.depseudonymize(response)
+            if egress.vault_size > 0:
+                logger.debug("Egress: %s", egress.audit_summary())
             await _emit_end("frontal", turn_id)
 
         # ── Brainstem: articulation ───────────────────────────────────────────
@@ -282,9 +440,9 @@ async def session(args) -> None:
             "topic_tags": features.get("entities", []),
         })
 
-        # Hippocampus: encode in background
+        # Hippocampus: encode in background (tracked for shutdown flush)
         await _emit("hippocampus", 0.45, "encoding episode", turn_id)
-        asyncio.create_task(hippocampus.encode(
+        encode_task = asyncio.create_task(hippocampus.encode(
             session_id=session_id,
             turn_id=turn_id,
             user_input=user_input,
@@ -293,7 +451,9 @@ async def session(args) -> None:
             affect=affect,
             neuromod_snap=nm_snap,
             surprise_score=features.get("surprise_score", 0.5),
+            embedding_fn=router.embed,
         ))
+        _track_encode(encode_task)
 
         if dmn:
             dmn.resume()
@@ -330,7 +490,9 @@ async def session(args) -> None:
                     user_input = user_input.replace(m.group(0), "").strip()
 
             response = await process_turn(user_input, image_path)
-            # response already emitted via turn_end event; no stdout needed
+            # response already sent to browser via turn_end event;
+            # also speak it aloud if voice mode is enabled
+            await pns.emit(response)
 
     else:
         # CLI REPL
@@ -370,14 +532,19 @@ async def session(args) -> None:
     # ── Shutdown ──────────────────────────────────────────────────────────────
     hb_task.cancel()
 
+    # Flush pending hippocampus encodes so episodes aren't lost on exit
+    if pending_encodes:
+        logger.info("Waiting for %d in-progress memory writes to finish before exit...", len(pending_encodes))
+        await asyncio.gather(*pending_encodes, return_exceptions=True)
+
     if session_traces:
         try:
             from brain.sleep import SleepConsolidation
             sleep = SleepConsolidation(router, hippocampus._schema, hippocampus._episodic)
-            logger.info("Running sleep consolidation...")
+            logger.info("Running end-of-session memory consolidation (summarising facts, updating self-model)...")
             await sleep.consolidate(session_id, session_traces)
         except Exception as e:
-            logger.warning("Sleep consolidation failed: %s", e)
+            logger.warning("End-of-session memory consolidation failed — recent facts may not be saved: %s", e)
 
     obs.flush()
     logger.info("Session %s complete. Total LLM calls: %d",
@@ -399,6 +566,8 @@ def main() -> None:
     parser.add_argument("--dmn", action="store_true", help="v0.2: Enable Default Mode Network")
     parser.add_argument("--metacognition", action="store_true",
                         help="v0.3: Enable metacognition cell")
+    parser.add_argument("--ears", action="store_true",
+                        help="v0.4: Enable Auditory Cortex (fingerprinting, speaker ID, prosody)")
     args = parser.parse_args()
 
     if args.voice:
@@ -409,6 +578,8 @@ def main() -> None:
         os.environ["BRAIN_METACOGNITION"] = "true"
     if args.ui:
         os.environ["BRAIN_UI"] = "true"
+    if args.ears:
+        os.environ["BRAIN_EARS"] = "true"
 
     asyncio.run(session(args))
 

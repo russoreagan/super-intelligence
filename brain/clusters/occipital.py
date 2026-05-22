@@ -18,6 +18,11 @@ logger = logging.getLogger(__name__)
 
 CLUSTER = "occipital"
 
+IMAGE_ROOT = Path(os.environ.get("BRAIN_IMAGE_DIR", str(Path.home() / "brain_images"))).expanduser().resolve()
+IMAGE_ROOT.mkdir(parents=True, exist_ok=True)
+
+_ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
+
 VISION_SYSTEM = """You are the visual cortex of an AI brain.
 Analyze the provided image and return structured JSON:
 {
@@ -61,14 +66,34 @@ class OccipitalCluster:
             return None
 
         path = Path(image_path)
-        if not path.exists():
-            logger.warning("Occipital: image not found at %s", image_path)
+        resolved = path.expanduser().resolve()
+
+        # Extension allowlist check
+        if resolved.suffix.lower() not in _ALLOWED_EXTENSIONS:
+            logger.warning("[Vision] [Security] Blocked image — file type %r not allowed. Permitted: .jpg, .jpeg, .png, .gif, .webp", resolved.suffix)
             return None
 
-        # Size routing switch
-        size = path.stat().st_size
+        # Containment check — must be inside IMAGE_ROOT
+        if not resolved.is_relative_to(IMAGE_ROOT):
+            logger.warning("[Vision] [Security] Blocked image path — file is outside the allowed image folder (%s). Change the allowed folder with BRAIN_IMAGE_DIR in .env", resolved)
+            return None
+
+        if not resolved.exists():
+            logger.warning("[Vision] Image file not found: %s", resolved)
+            return None
+
+        # Size check BEFORE reading bytes
+        size = resolved.stat().st_size
         if size > MAX_IMAGE_SIZE_BYTES:
-            self._vision_integrator.model = "flash"  # upgrade for large images
+            logger.warning("[Vision] Image too large (%d bytes, limit is %d bytes) — skipping vision analysis: %s", size, MAX_IMAGE_SIZE_BYTES, resolved)
+            return None
+
+        # Use resolved path for all subsequent operations
+        path = resolved
+
+        # Size routing switch: larger files use higher-quality model
+        if size > 1 * 1024 * 1024:  # > 1MB
+            self._vision_integrator.model = "flash"
         else:
             self._vision_integrator.model = "flash-lite"
 
@@ -77,7 +102,7 @@ class OccipitalCluster:
         visual_keywords = ["image", "picture", "photo", "diagram", "chart", "what is this",
                            "what does", "show", "see", "look", "color", "text in"]
         if not any(k in user_text.lower() for k in visual_keywords) and "?" not in user_text:
-            logger.debug("Occipital: vision not needed for this query")
+            logger.debug("[Vision] Skipping image analysis — user's message doesn't reference the image")
             return None
 
         self._vision_integrator.reset_turn(turn_id)
@@ -108,10 +133,10 @@ class OccipitalCluster:
             raw = await self._vision_integrator.call(messages)
             vision_features = json.loads(raw)
         except Exception as e:
-            logger.error("Occipital: vision failed: %s", e)
+            logger.error("[Vision] Image analysis API call failed — continuing without image context: %s", e)
             return None
 
         await self._bus.publish_dict("vision.features", vision_features, source=CLUSTER)
-        logger.debug("Occipital: vision features published: %s",
+        logger.debug("[Vision] Image analysed: %s",
                      vision_features.get("description", "")[:60])
         return vision_features
