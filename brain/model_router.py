@@ -79,7 +79,7 @@ class ModelRouter:
             raise ValueError(f"Unknown model key: {model_key}")
 
         latency = _t.time() - start
-        self._log_call(model_id, messages, in_tok, out_tok, latency)
+        self._log_call(model_id, messages, in_tok, out_tok, latency, cluster=cluster or "", cell=cell or "")
         if self._obs and turn_id:
             try:
                 self._obs.record_llm_call(
@@ -223,10 +223,12 @@ class ModelRouter:
             return None
 
     def _log_call(self, model_id: str, messages: list[dict],
-                   in_tok: int = 0, out_tok: int = 0, latency_s: float = 0.0) -> None:
+                   in_tok: int = 0, out_tok: int = 0, latency_s: float = 0.0,
+                   cluster: str = "", cell: str = "") -> None:
         self._call_log.append({
             "model": model_id, "msgs": len(messages),
             "in": in_tok, "out": out_tok, "latency_s": latency_s,
+            "cluster": cluster, "cell": cell,
         })
 
     @property

@@ -183,12 +183,16 @@ class FrontalCluster:
         self._satiation_inhibitor = SwitchNeuron("satiation_inhibits_repeat", CLUSTER, polarity="inhibitory")
         self._low_DA_inhibits_planner = SwitchNeuron("low_DA_inhibits_planner", CLUSTER, polarity="inhibitory")
 
+        # Eval: populated each turn with critic scores for all drafts — read by run.py
+        self.last_turn_draft_scores: list[dict] = []
+
     async def process(self, features: dict, affect: dict, memory: dict,
                       parietal_context: str, turn_id: str) -> str:
         """
         Run the Multiple Drafts engine. Returns the committed response.
         """
         nm = self._bus.neuromod.snapshot()
+        self.last_turn_draft_scores = []   # reset for this turn
 
         # --- v0.2 Stoic reframer: try to reframe before going defensive ---
         if nm["GABA"] > 0.40:
@@ -211,6 +215,9 @@ class FrontalCluster:
                 response = affect["prosody_prefix"] + response
             self._brainstem.add_draft("switch_draft", response, 1.0)
             self._brainstem.endorse("switch_draft")
+            self.last_turn_draft_scores = [{"draft_id": "switch_draft", "overall": 1.0,
+                                             "coherence": 1.0, "relevance": 1.0,
+                                             "tone_fit": 1.0, "selected": True}]
             return response
 
         # --- Executive: build drafting instruction ---
@@ -269,9 +276,20 @@ class FrontalCluster:
             scored = []
             for draft_id, text in drafts:
                 score = await self._score_draft(text, drafter_prompt, turn_id)
+                empathy_score = 0.5
                 if score.get("veto"):
                     self._brainstem.veto(draft_id)
                     logger.debug("[Response engine] Draft %s rejected by quality check: %s", draft_id, score.get("veto_reason"))
+                    self.last_turn_draft_scores.append({
+                        "draft_id": draft_id,
+                        "coherence": score.get("coherence", 0.5),
+                        "relevance": score.get("relevance", 0.5),
+                        "tone_fit": score.get("tone_fit", 0.5),
+                        "empathy_score": empathy_score,
+                        "overall": score.get("overall", 0.0),
+                        "selected": False,
+                        "vetoed": True,
+                    })
                     continue
 
                 overall = score.get("overall", 0.5)
@@ -282,21 +300,57 @@ class FrontalCluster:
                     if empathy.get("veto"):
                         self._brainstem.veto(draft_id)
                         logger.debug("[Response engine] Draft %s rejected by empathy check — predicted poor emotional landing", draft_id)
+                        self.last_turn_draft_scores.append({
+                            "draft_id": draft_id,
+                            "coherence": score.get("coherence", 0.5),
+                            "relevance": score.get("relevance", 0.5),
+                            "tone_fit": score.get("tone_fit", 0.5),
+                            "empathy_score": empathy.get("empathy_score", 0.5),
+                            "overall": overall,
+                            "selected": False,
+                            "vetoed": True,
+                        })
                         continue
-                    overall = overall * 0.7 + empathy.get("empathy_score", 0.5) * 0.3
+                    empathy_score = empathy.get("empathy_score", 0.5)
+                    overall = overall * 0.7 + empathy_score * 0.3
 
                 self._brainstem.add_draft(draft_id, text, overall)
                 self._brainstem.endorse(draft_id)
                 scored.append((draft_id, text, overall))
+                self.last_turn_draft_scores.append({
+                    "draft_id": draft_id,
+                    "coherence": score.get("coherence", 0.5),
+                    "relevance": score.get("relevance", 0.5),
+                    "tone_fit": score.get("tone_fit", 0.5),
+                    "empathy_score": empathy_score,
+                    "overall": overall,
+                    "selected": False,
+                    "vetoed": False,
+                })
 
             if scored:
                 best = max(scored, key=lambda x: x[2])
+                # Mark the winner
+                for entry in self.last_turn_draft_scores:
+                    if entry["draft_id"] == best[0]:
+                        entry["selected"] = True
+                        break
                 return best[1]
 
         # Single draft — endorse directly
         draft_id, text = drafts[0]
         self._brainstem.add_draft(draft_id, text, 0.8)
         self._brainstem.endorse(draft_id)
+        self.last_turn_draft_scores = [{
+            "draft_id": draft_id,
+            "coherence": 0.8,
+            "relevance": 0.8,
+            "tone_fit": 0.8,
+            "empathy_score": 0.5,
+            "overall": 0.8,
+            "selected": True,
+            "vetoed": False,
+        }]
         return text
 
     async def _run_drafter(self, idx: int, prompt: str, turn_id: str) -> tuple[str, str]:

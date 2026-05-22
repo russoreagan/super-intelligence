@@ -39,10 +39,12 @@ HTML_PATH = Path(__file__).parent / "index.html"
 class UIServer:
     def __init__(self, emitter_queue: asyncio.Queue,
                  on_user_message: Callable[[str], None] | None = None,
-                 on_voice_change: Callable[[str], None] | None = None) -> None:
+                 on_voice_change: Callable[[str], None] | None = None,
+                 on_eval_mode: Callable[[bool], None] | None = None) -> None:
         self._queue = emitter_queue
         self._on_user_message = on_user_message
         self._on_voice_change = on_voice_change
+        self._on_eval_mode = on_eval_mode
         self._clients: set = set()
         self._last_neuromod: dict = {}
         self._app = None
@@ -229,6 +231,9 @@ class UIServer:
                         vid = data.get("voice_id", "").strip()
                         if vid:
                             self._on_voice_change(vid)
+                    elif t == "eval_mode" and self._on_eval_mode:
+                        intensive = bool(data.get("intensive", False))
+                        self._on_eval_mode(intensive)
                     elif t == "voice_start":
                         if dg_conn is None:
                             dg_conn = await self._start_deepgram(websocket)

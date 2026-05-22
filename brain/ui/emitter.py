@@ -75,6 +75,13 @@ class ActivationEmitter:
         except asyncio.QueueFull:
             pass
 
+    async def emit_event(self, event: dict) -> None:
+        """Emit an arbitrary event dict to the UI WebSocket."""
+        try:
+            self._queue.put_nowait(event)
+        except asyncio.QueueFull:
+            pass
+
 
 # Module-level singleton — import and use directly
 emitter = ActivationEmitter()

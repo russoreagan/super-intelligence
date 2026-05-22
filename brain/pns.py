@@ -47,7 +47,8 @@ class PNS:
 
     async def _speak(self, text: str) -> None:
         try:
-            from elevenlabs import AsyncElevenLabs, play
+            from elevenlabs import AsyncElevenLabs
+            from elevenlabs.play import play
             client = AsyncElevenLabs(api_key=os.environ["ELEVENLABS_API_KEY"])
             voice_id = getattr(self, "_voice_id", None) or os.environ.get("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")
             audio_iter = client.text_to_speech.convert(

@@ -84,7 +84,24 @@ async def session(args) -> None:
     logger.info("Session %s starting", session_id)
 
     bus = Bus()
-    obs = ObservabilityLayer(session_id)
+
+    # ── Eval system (always-on JSONL logging; baseline/scorer gated by env flags) ──
+    eval_logger = None
+    baseline_runner = None
+    posthoc_scorer = None
+    try:
+        from eval.turn_logger import EvalLogger
+        from eval.baseline import BaselineRunner
+        from eval.scorer import PostHocScorer
+        eval_logger = EvalLogger()
+        baseline_runner = BaselineRunner(eval_logger)
+        posthoc_scorer = PostHocScorer(eval_logger)
+        baseline_runner._scorer = posthoc_scorer
+        logger.info("Eval: logging to %s", eval_logger._path)
+    except Exception as _eval_err:
+        logger.debug("Eval system unavailable: %s", _eval_err)
+
+    obs = ObservabilityLayer(session_id, eval_logger=eval_logger)
     router = ModelRouter(obs=obs)
     brainstem = Brainstem(bus, router)
     pns = PNS(bus)
@@ -119,8 +136,13 @@ async def session(args) -> None:
         async def _on_browser_message(text: str) -> None:
             await ui_message_queue.put(text)
 
+        def _on_eval_mode(intensive: bool) -> None:
+            if baseline_runner:
+                baseline_runner.set_intensive(intensive)
+
         ui_server = UIServer(emitter.get_queue(), on_user_message=_on_browser_message,
-                             on_voice_change=pns.set_voice_id)
+                             on_voice_change=pns.set_voice_id,
+                             on_eval_mode=_on_eval_mode)
         asyncio.create_task(ui_server.start(port=8765))
         # Give the server a moment to bind
         await asyncio.sleep(0.3)
@@ -374,6 +396,7 @@ async def session(args) -> None:
             ps_parietal_context = parietal_context
 
         # ── Frontal: Multiple Drafts engine ───────────────────────────────────
+        draft_scores: list[dict] = []
         if not brainstem.check_budget():
             response = "I've reached my thinking limit for this turn."
         else:
@@ -383,6 +406,8 @@ async def session(args) -> None:
             if EGRESS_MODE != "off":
                 ps_features["raw_text"] = ps_user_input
             response = await frontal.process(ps_features, affect, ps_memory, ps_parietal_context, turn_id)
+            # Capture draft scores immediately (single-threaded asyncio — no race)
+            draft_scores = list(frontal.last_turn_draft_scores)
             # Restore real values in response before delivering to user
             response = egress.depseudonymize(response)
             if egress.vault_size > 0:
@@ -405,10 +430,44 @@ async def session(args) -> None:
         nm_snap = bus.neuromod.snapshot()
         llm_calls = len(router._call_log)
 
+        # ── Per-cluster token breakdown (from call log accumulated this turn) ─
+        cluster_tokens: dict[str, dict] = {}
+        for _entry in router._call_log:
+            _cl = _entry.get("cluster", "unknown")
+            if _cl not in cluster_tokens:
+                cluster_tokens[_cl] = {"in": 0, "out": 0, "calls": 0}
+            cluster_tokens[_cl]["in"] += _entry.get("in", 0)
+            cluster_tokens[_cl]["out"] += _entry.get("out", 0)
+            cluster_tokens[_cl]["calls"] += 1
+
+        memory_recalled = bool(memory.get("episodes") or memory.get("schema"))
+        memory_hit_count = len([l for l in (memory.get("episodes") or "").splitlines() if l.strip()])
+
+        selected_draft = next((d for d in draft_scores if d.get("selected")), {})
+        selected_coherence = selected_draft.get("coherence", 0.5)
+        selected_emotional_fit = (selected_draft.get("empathy_score")
+                                  or selected_draft.get("tone_fit", 0.5))
+        selected_draft_id = selected_draft.get("draft_id", "")
+
         # Final neuromod push to UI
         if emitter:
             await emitter.emit_neuromod(nm_snap)
             await emitter.emit_turn_end(turn_id, final, turn_result.elapsed(), llm_calls)
+
+        # ── Quality badge to UI (free — from internal critic scores) ─────────
+        if emitter and draft_scores:
+            try:
+                await emitter.emit_event({
+                    "type": "quality_score",
+                    "turn_id": turn_id,
+                    "score": round(selected_draft.get("overall", 0.5), 3),
+                    "coherence": round(selected_coherence, 3),
+                    "emotional_fit": round(selected_emotional_fit, 3),
+                    "drafter_count": len(draft_scores),
+                    "memory_used": memory_recalled,
+                })
+            except Exception as _qe:
+                logger.debug("quality_score emit failed: %s", _qe)
 
         # Observability
         trace = TurnTrace(
@@ -420,8 +479,24 @@ async def session(args) -> None:
             elapsed_s=turn_result.elapsed(),
             emotion=affect.get("emotion", "neutral"),
             neuromod=nm_snap,
+            # Eval fields
+            draft_scores=draft_scores,
+            selected_draft_id=selected_draft_id,
+            drafter_count=len(draft_scores),
+            cluster_tokens=cluster_tokens,
+            memory_recalled=memory_recalled,
+            memory_hit_count=memory_hit_count,
         )
         obs.record_turn(trace)
+
+        # ── Background eval tasks (non-blocking) ─────────────────────────────
+        if baseline_runner:
+            memory_ctx = ((memory.get("episodes") or "") + "\n"
+                          + (memory.get("schema") or ""))
+            baseline_runner.fire(
+                turn_id, user_input, final,
+                memory_ctx[:1000], selected_coherence, selected_emotional_fit,
+            )
 
         if meta:
             meta.record_turn(

@@ -236,6 +236,82 @@
     border-left: 2px solid #222244;
   }
 
+  /* ── Turn log (collapsible thinking steps) ── */
+  .turn-log {
+    align-self: flex-start;
+    width: 90%;
+    border: 1px solid var(--border);
+    border-radius: 7px 7px 0 0;
+    border-bottom: none;
+    font-size: 10px;
+    color: var(--text-dim);
+    background: rgba(14, 14, 26, 0.85);
+  }
+  .turn-log summary {
+    padding: 5px 10px;
+    cursor: pointer;
+    list-style: none;
+    user-select: none;
+    letter-spacing: 0.03em;
+    font-size: 9px;
+  }
+  .turn-log summary::-webkit-details-marker { display: none; }
+  .turn-log summary::before { content: '▶ '; font-size: 8px; }
+  details[open].turn-log summary::before { content: '▼ '; }
+  .turn-log-body {
+    padding: 6px 10px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    border-top: 1px solid var(--border);
+  }
+  .log-step {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 10px;
+    color: #6070a0;
+  }
+  .log-step .log-bar {
+    flex: 0 0 30px;
+    height: 2px;
+    background: rgba(255,255,255,0.05);
+    border-radius: 1px;
+    overflow: hidden;
+  }
+  .log-step .log-bar-fill {
+    height: 100%;
+    border-radius: 1px;
+  }
+
+  /* ── Quality badge ── */
+  .quality-badge {
+    margin-top: 4px;
+    font-size: 9px;
+    color: #4a5478;
+    letter-spacing: 0.04em;
+    min-height: 12px;
+  }
+  .quality-badge .qb-score { color: #6688cc; }
+  .quality-badge .qb-delta-pos { color: #44dd88; }
+  .quality-badge .qb-delta-neg { color: #ff6644; }
+
+  /* ── Eval toggle button ── */
+  #eval-toggle {
+    padding: 2px 8px;
+    border-radius: 99px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-dim);
+    font-size: 10px;
+    cursor: pointer;
+    font-family: inherit;
+    letter-spacing: 0.04em;
+    transition: background 0.2s, color 0.2s, border-color 0.2s;
+  }
+  #eval-toggle:hover { background: #1a1a30; color: var(--text); }
+  #eval-toggle.active { background: #101a10; border-color: #336633; color: #44cc66; }
+
   /* Typing indicator */
   #typing {
     align-self: flex-start;
@@ -398,6 +474,7 @@
   <span class="stat"><span id="stat-calls">0</span> LLM calls</span>
   <span class="sep">·</span>
   <span class="stat"><span id="stat-elapsed">—</span></span>
+  <button id="eval-toggle" title="Toggle intensive eval mode (runs baseline on every turn)">⚗ Eval</button>
   <div id="ws-indicator" title="WebSocket"></div>
 </div>
 
@@ -595,11 +672,24 @@ const EMOTION_COLORS = {
   agitated:       { bg: '#2a1010', color: '#ff4444' },
 };
 
+// ── Cluster icons for turn log ─────────────────────────────────────────────────
+const CLUSTER_ICONS = {
+  frontal: '🎯', temporal: '👁', hippocampus: '💾', hypothalamus: '⚡',
+  thalamus: '🔀', parietal: '📊', occipital: '👀', brainstem: '⚙',
+  cerebellum: '🔄', dmn: '💭', baseline: '📏', scorer: '⚖',
+};
+
 // ── State ──────────────────────────────────────────────────────────────────────
 let ws = null;
 let totalCalls = 0;
 let activeGlows = {};
 let sessionId = '—';
+
+// Eval + turn-log state
+let pendingActivations = [];   // activation events buffered during current turn
+let currentTurnId = null;      // turn_id currently in progress
+let turnQualityScores = {};    // turn_id → quality_score event
+let evalIntensive = false;     // eval mode toggle
 
 // ── ElevenLabs voice list ──────────────────────────────────────────────────────
 async function loadVoices() {
@@ -638,6 +728,13 @@ document.getElementById('voice-select').addEventListener('change', function() {
 
 // ── WebSocket ──────────────────────────────────────────────────────────────────
 function connect() {
+  // Close any existing connection cleanly before opening a new one,
+  // so we never accumulate multiple live connections to the server.
+  if (ws && ws.readyState !== WebSocket.CLOSED) {
+    ws.onclose = null; // prevent the reconnect loop from firing again
+    ws.close();
+  }
+
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   ws = new WebSocket(`${proto}://${location.host}/ws`);
 
@@ -667,10 +764,14 @@ function handle(msg) {
   switch (msg.type) {
     case 'activation': {
       const regionId = CLUSTER_MAP[msg.cluster];
-      if (!regionId) break;
-      const cfg = REGIONS[regionId];
-      if (!cfg) break;
-      activateRegion(regionId, msg.intensity, cfg.color, cfg.label, msg.note);
+      if (regionId) {
+        const cfg = REGIONS[regionId];
+        if (cfg) activateRegion(regionId, msg.intensity, cfg.color, cfg.label, msg.note);
+      }
+      // Buffer for collapsible turn log (skip 'done' pulses)
+      if (currentTurnId && msg.note !== 'done' && msg.intensity > 0) {
+        pendingActivations.push({ cluster: msg.cluster, intensity: msg.intensity, note: msg.note });
+      }
       break;
     }
     case 'neuromod': {
@@ -690,6 +791,8 @@ function handle(msg) {
       break;
     }
     case 'turn_start': {
+      currentTurnId = msg.turn_id || null;
+      pendingActivations = [];
       if (msg.user_input) appendMessage('user', msg.user_input);
       setTyping(true);
       document.getElementById('send-btn').disabled = true;
@@ -708,12 +811,20 @@ function handle(msg) {
         totalCalls += calls;
         document.getElementById('stat-calls').textContent = totalCalls;
         document.getElementById('stat-elapsed').textContent = elapsed;
-        appendMessage('brain', msg.response, calls ? `${calls} LLM calls · ${elapsed}` : elapsed);
+        appendBrainMessage(msg.turn_id, msg.response, calls, elapsed);
       }
+      currentTurnId = null;
       setTimeout(() => {
         Object.keys(REGIONS).forEach(r => deactivateRegion(r));
         setActiveLabel('—', false);
       }, 800);
+      break;
+    }
+    case 'quality_score': {
+      turnQualityScores[msg.turn_id] = msg;
+      // Update badge if message bubble already rendered
+      const badge = document.querySelector(`.quality-badge[data-turn-id="${msg.turn_id}"]`);
+      if (badge) updateQualityBadge(badge, msg);
       break;
     }
     case 'stream_thought': {
@@ -785,6 +896,73 @@ function appendMessage(role, text, meta) {
   }
   msgs.appendChild(div);
   msgs.scrollTop = msgs.scrollHeight;
+}
+
+function appendBrainMessage(turnId, text, calls, elapsed) {
+  const msgs = document.getElementById('messages');
+
+  // ── Collapsible turn log (above the bubble) ────────────────────────────
+  const steps = pendingActivations;
+  if (steps.length > 0) {
+    const details = document.createElement('details');
+    details.className = 'turn-log';
+    const summary = document.createElement('summary');
+    summary.textContent = `⚙ ${steps.length} steps · ${calls} LLM calls · ${elapsed}`;
+    details.appendChild(summary);
+
+    const body = document.createElement('div');
+    body.className = 'turn-log-body';
+    steps.forEach(a => {
+      const icon = CLUSTER_ICONS[a.cluster] || '·';
+      const regionId = CLUSTER_MAP[a.cluster];
+      const clrColor = (regionId && REGIONS[regionId]) ? REGIONS[regionId].color : '#8899cc';
+      const pct = Math.round(a.intensity * 100);
+      const step = document.createElement('div');
+      step.className = 'log-step';
+      step.innerHTML =
+        `<span>${icon} ${a.cluster}${a.note ? ' — ' + a.note : ''}</span>` +
+        `<div class="log-bar"><div class="log-bar-fill" style="width:${pct}%;background:${clrColor}"></div></div>`;
+      body.appendChild(step);
+    });
+    details.appendChild(body);
+    msgs.appendChild(details);
+  }
+
+  // ── Brain response bubble ──────────────────────────────────────────────
+  const div = document.createElement('div');
+  div.className = 'msg msg-brain';
+  if (turnId) div.dataset.turnId = turnId;
+  div.textContent = text;
+
+  if (calls || elapsed) {
+    const m = document.createElement('div');
+    m.className = 'msg-meta';
+    m.textContent = (calls ? `${calls} LLM calls · ` : '') + elapsed;
+    div.appendChild(m);
+  }
+
+  // Quality badge (populated now if quality_score already arrived, else filled in later)
+  const badge = document.createElement('div');
+  badge.className = 'quality-badge';
+  if (turnId) badge.dataset.turnId = turnId;
+  const qs = turnId ? turnQualityScores[turnId] : null;
+  if (qs) updateQualityBadge(badge, qs);
+  div.appendChild(badge);
+
+  msgs.appendChild(div);
+  msgs.scrollTop = msgs.scrollHeight;
+  pendingActivations = [];
+}
+
+function updateQualityBadge(badge, qs) {
+  const score   = typeof qs.score         === 'number' ? qs.score.toFixed(2) : '—';
+  const coh     = typeof qs.coherence     === 'number' ? qs.coherence.toFixed(2) : '—';
+  const fit     = typeof qs.emotional_fit === 'number' ? qs.emotional_fit.toFixed(2) : '—';
+  const count   = qs.drafter_count || 1;
+  const memIcon = qs.memory_used ? ' · 💾' : '';
+  const drafts  = count > 1 ? ` · ${count} drafts` : '';
+  badge.innerHTML =
+    `<span class="qb-score">coh ${coh} · fit ${fit} · overall ${score}</span>${memIcon}${drafts}`;
 }
 
 function appendThought(text) {
@@ -893,7 +1071,7 @@ function stopListening(autoSend = false) {
     msgInput.value = '';
     msgInput.style.height = 'auto';
     sendMessage(text);
-    appendMessage('user', text);
+    // don't appendMessage here — turn_start event from server is the single source of truth
   }
 }
 
@@ -915,7 +1093,7 @@ function handleTranscriptEvent(msg) {
         msgInput.value = '';
         msgInput.style.height = 'auto';
         sendMessage(text);
-        appendMessage('user', text);
+        // don't appendMessage here — turn_start event from server is the single source of truth
         transcriptBar.textContent = 'Listening…';
       }
     }, AUTO_SEND_DELAY_MS);
@@ -944,6 +1122,19 @@ document.addEventListener('keydown', (e) => {
     e.preventDefault();
     if (micActive) stopListening(true);
     else startListening();
+  }
+});
+
+// ── Eval mode toggle ──────────────────────────────────────────────────────────
+const evalToggleBtn = document.getElementById('eval-toggle');
+evalToggleBtn.addEventListener('click', () => {
+  evalIntensive = !evalIntensive;
+  evalToggleBtn.classList.toggle('active', evalIntensive);
+  evalToggleBtn.title = evalIntensive
+    ? 'Intensive eval ON (every turn) — click to disable'
+    : 'Toggle intensive eval mode (runs baseline on every turn)';
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'eval_mode', intensive: evalIntensive }));
   }
 });
 
