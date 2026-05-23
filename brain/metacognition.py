@@ -22,6 +22,7 @@ from brain.bus import Bus
 from brain.cell import IntegratorCell
 from brain.model_router import ModelRouter
 from brain.security import sanitize_fact
+from brain.utils import safe_json_parse
 
 logger = logging.getLogger(__name__)
 
@@ -273,17 +274,7 @@ class MetacognitionCell:
         prompt = f"Recent processing statistics:\n{json.dumps(stats, indent=2)}"
         raw = await self._reflector.call([{"role": "user", "content": prompt}])
 
-        reflection: dict = {}
-        try:
-            reflection = json.loads(raw)
-        except Exception:
-            import re
-            m = re.search(r'\{.*\}', raw, re.DOTALL)
-            if m:
-                try:
-                    reflection = json.loads(m.group(0))
-                except Exception:
-                    pass
+        reflection: dict = safe_json_parse(raw) or {}
 
         if reflection:
             await self._bus.publish_dict("meta.reflection", reflection, source="metacognition")

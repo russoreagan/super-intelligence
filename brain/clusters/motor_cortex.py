@@ -11,10 +11,8 @@ Allowed paths and commands are configured via env vars:
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
-import re
 import shlex
 import subprocess
 from pathlib import Path
@@ -23,6 +21,7 @@ from brain.bus import Bus
 from brain.cell import IntegratorCell
 from brain.model_router import ModelRouter
 from brain.neuron import SwitchNeuron
+from brain.utils import safe_json_parse
 
 logger = logging.getLogger(__name__)
 
@@ -157,16 +156,7 @@ class MotorCortexCluster:
 
         raw = await self._planner.call([{"role": "user", "content": plan_prompt}])
 
-        plan: dict = {}
-        try:
-            plan = json.loads(raw)
-        except json.JSONDecodeError:
-            m = re.search(r'\{.*\}', raw, re.DOTALL)
-            if m:
-                try:
-                    plan = json.loads(m.group(0))
-                except Exception:
-                    pass
+        plan: dict = safe_json_parse(raw) or {}
 
         if not plan or plan.get("tool") == "none":
             logger.debug("[MotorCortex] Planner decided no tool needed: %s", plan.get("reason", ""))

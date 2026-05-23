@@ -241,6 +241,20 @@ async def session(args) -> None:
 
         await dmn.start(session_id)
 
+    # Forward DMN stream-of-consciousness thoughts to the UI panel (shown as
+    # italic, unspeakable thought bubbles between turns).
+    if emitter:
+        _thought_inbox: asyncio.Queue = bus.subscribe("stream.thought")
+
+        async def _forward_thoughts() -> None:
+            while True:
+                msg = await _thought_inbox.get()
+                thought = msg.payload.get("thought", "") if not msg.expired else ""
+                if thought:
+                    await emitter.emit_stream_thought(thought)
+
+        asyncio.create_task(_forward_thoughts())
+
     # ── v0.3: Metacognition ───────────────────────────────────────────────────
     meta = None
     if args.metacognition or os.environ.get("BRAIN_METACOGNITION", "false").lower() == "true":

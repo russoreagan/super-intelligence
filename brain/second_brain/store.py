@@ -114,11 +114,12 @@ class EpisodicStore:
         if not self._ensure_ready():
             return []
         try:
-            # Fetch a window large enough to sort and slice — fine for personal-scale data
-            results = self._table.search().limit(2000).to_list()
-            results.sort(key=lambda r: r.get("ts", 0), reverse=True)
+            import pyarrow.compute as pc  # noqa: F401 (pyarrow already required by lancedb)
+            tbl = self._table.to_arrow()
+            sorted_tbl = tbl.sort_by([("ts", "descending")])
+            rows = sorted_tbl.slice(0, limit).to_pylist()
             episodes = []
-            for r in results[:limit]:
+            for r in rows:
                 ep = dict(r)
                 ep["topic_tags"] = json.loads(ep.get("topic_tags", "[]"))
                 ep["entities"] = json.loads(ep.get("entities", "[]"))
@@ -157,6 +158,8 @@ class EpisodicStore:
             logger.warning("[Episode DB] [Security] Blocked unsafe session ID in memory query: %r", session_id)
             return []
         try:
+            # Safety: session_id is validated by _SESSION_ID_RE above; that regex
+            # must stay in place to prevent SQL injection through this f-string.
             results = self._table.search().where(
                 f"session_id = '{session_id}'"
             ).to_list()

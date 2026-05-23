@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -31,6 +32,7 @@ class ModelRouter:
     def __init__(self, obs=None) -> None:
         self._anthropic_client = None
         self._google_client = None
+        self._http_client = None   # persistent httpx client; reused across Ollama calls
         self._call_log: list[dict] = []
         self._obs = obs
         # Local-first embeddings; flip to "google" if Ollama is unreachable.
@@ -50,10 +52,16 @@ class ModelRouter:
             self._google_client = genai.Client(api_key=os.environ["GOOGLE_API_KEY"])
         return self._google_client
 
+    def _get_http(self):
+        """Lazily-created persistent httpx client; avoids a new TCP connection per Ollama call."""
+        if self._http_client is None:
+            import httpx
+            self._http_client = httpx.AsyncClient()
+        return self._http_client
+
     async def call(self, model_key: str, system_prompt: str, messages: list[dict],
                    *, cluster: str = "", cell: str = "", turn_id: str = "",
-                   locality: str = "either") -> str:
-        import time as _t
+                   locality: str = "either", max_tokens: int = 1024) -> str:
         model_id = MODEL_MAP.get(model_key, model_key)
 
         # Locality enforcement: local cells must never dispatch to cloud APIs
@@ -68,17 +76,17 @@ class ModelRouter:
             model_key = "local"
             model_id = "local"
 
-        start = _t.time()
+        start = time.time()
         if model_id.startswith("claude"):
-            text, in_tok, out_tok = await self._call_anthropic(model_id, system_prompt, messages)
+            text, in_tok, out_tok = await self._call_anthropic(model_id, system_prompt, messages, max_tokens)
         elif model_id.startswith("gemini"):
-            text, in_tok, out_tok = await self._call_google(model_id, system_prompt, messages)
+            text, in_tok, out_tok = await self._call_google(model_id, system_prompt, messages, max_tokens)
         elif model_id == "local":
-            text, in_tok, out_tok = await self._call_local(system_prompt, messages)
+            text, in_tok, out_tok = await self._call_local(system_prompt, messages, max_tokens)
         else:
             raise ValueError(f"Unknown model key: {model_key}")
 
-        latency = _t.time() - start
+        latency = time.time() - start
         self._log_call(model_id, messages, in_tok, out_tok, latency, cluster=cluster or "", cell=cell or "")
         if self._obs and turn_id:
             try:
@@ -93,13 +101,13 @@ class ModelRouter:
         return text
 
     async def _call_anthropic(self, model_id: str, system_prompt: str,
-                              messages: list[dict]) -> tuple[str, int, int]:
+                              messages: list[dict], max_tokens: int = 1024) -> tuple[str, int, int]:
         client = self._get_anthropic()
         anthropic_msgs = [{"role": m["role"], "content": m["content"]} for m in messages]
 
         response = await client.messages.create(
             model=model_id,
-            max_tokens=1024,
+            max_tokens=max_tokens,
             system=[{"type": "text", "text": system_prompt,
                       "cache_control": {"type": "ephemeral"}}],
             messages=anthropic_msgs,
@@ -110,7 +118,7 @@ class ModelRouter:
         return response.content[0].text, in_tok, out_tok
 
     async def _call_google(self, model_id: str, system_prompt: str,
-                           messages: list[dict]) -> tuple[str, int, int]:
+                           messages: list[dict], max_tokens: int = 1024) -> tuple[str, int, int]:
         from google import genai
         from google.genai import types
 
@@ -128,7 +136,7 @@ class ModelRouter:
             contents=contents,
             config=types.GenerateContentConfig(
                 system_instruction=system_prompt,
-                max_output_tokens=1024,
+                max_output_tokens=max_tokens,
             ),
         )
         usage = getattr(response, "usage_metadata", None)
@@ -137,20 +145,19 @@ class ModelRouter:
         return response.text, in_tok, out_tok
 
     async def _call_local(self, system_prompt: str,
-                          messages: list[dict]) -> tuple[str, int, int]:
-        import httpx
+                          messages: list[dict], max_tokens: int = 1024) -> tuple[str, int, int]:
         payload = {
             "model": os.environ.get("OLLAMA_MODEL", "qwen2.5:7b"),
             "messages": [{"role": "system", "content": system_prompt}] + messages,
             "stream": False,
+            "options": {"num_predict": max_tokens},
         }
-        async with httpx.AsyncClient(timeout=60) as client:
-            r = await client.post(f"{OLLAMA_HOST}/api/chat", json=payload)
-            r.raise_for_status()
-            data = r.json()
-            in_tok = int(data.get("prompt_eval_count", 0))
-            out_tok = int(data.get("eval_count", 0))
-            return data["message"]["content"], in_tok, out_tok
+        r = await self._get_http().post(f"{OLLAMA_HOST}/api/chat", json=payload, timeout=60)
+        r.raise_for_status()
+        data = r.json()
+        in_tok = int(data.get("prompt_eval_count", 0))
+        out_tok = int(data.get("eval_count", 0))
+        return data["message"]["content"], in_tok, out_tok
 
     async def embed(self, text: str) -> list[float] | None:
         """
@@ -178,24 +185,23 @@ class ModelRouter:
         return await self._embed_google(text)
 
     async def _embed_ollama(self, text: str) -> list[float] | None:
-        import httpx
         try:
-            async with httpx.AsyncClient(timeout=10) as client:
-                r = await client.post(
-                    f"{OLLAMA_HOST}/api/embeddings",
-                    json={"model": OLLAMA_EMBED_MODEL, "prompt": text},
+            r = await self._get_http().post(
+                f"{OLLAMA_HOST}/api/embeddings",
+                json={"model": OLLAMA_EMBED_MODEL, "prompt": text},
+                timeout=10,
+            )
+            r.raise_for_status()
+            vec = r.json().get("embedding")
+            if vec and len(vec) == EMBEDDING_DIM:
+                return vec
+            if vec:
+                logger.warning(
+                    "Ollama returned %d-dimensional embeddings but %d were expected — "
+                    "wrong model pulled? Check OLLAMA_EMBED_MODEL in .env (should be 'nomic-embed-text').",
+                    len(vec), EMBEDDING_DIM,
                 )
-                r.raise_for_status()
-                vec = r.json().get("embedding")
-                if vec and len(vec) == EMBEDDING_DIM:
-                    return vec
-                if vec:
-                    logger.warning(
-                        "Ollama returned %d-dimensional embeddings but %d were expected — "
-                        "wrong model pulled? Check OLLAMA_EMBED_MODEL in .env (should be 'nomic-embed-text').",
-                        len(vec), EMBEDDING_DIM,
-                    )
-                return None
+            return None
         except Exception as e:
             logger.debug("Ollama embed failed: %s", e)
             return None

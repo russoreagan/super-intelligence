@@ -19,6 +19,7 @@ from brain.second_brain.store import EpisodicStore, SchemaStore, Episode
 from brain.security import sanitize_fact
 from brain.predictor import should_bypass_gating
 from brain.observability.decisions import decisions
+from brain.utils import safe_json_parse
 from brain.wiring import Wiring
 
 logger = logging.getLogger(__name__)
@@ -266,17 +267,7 @@ class HippocampusCluster:
                      f"Context: intent={intent}, emotion={affect.get('emotion', 'neutral')}"}]
         raw = await self._encoder.call(messages)
 
-        encoded = {}
-        try:
-            encoded = json.loads(raw)
-        except Exception:
-            import re
-            m = re.search(r'\{.*\}', raw, re.DOTALL)
-            if m:
-                try:
-                    encoded = json.loads(m.group(0))
-                except Exception:
-                    pass
+        encoded = safe_json_parse(raw) or {}
 
         await self._store_episode(
             session_id, turn_id, user_input, entity_response,

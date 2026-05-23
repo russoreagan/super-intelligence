@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 import os
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Any, TYPE_CHECKING
 
@@ -75,10 +76,15 @@ class TurnTrace:
     fired_path: list[dict] = field(default_factory=list)
 
 
+_TRACE_WINDOW = 500   # max full TurnTrace objects kept in memory per session
+_NEUROMOD_WINDOW = 2000  # lightweight {ts, neuromod} snapshots for history chart
+
+
 class ObservabilityLayer:
     def __init__(self, session_id: str, eval_logger: "EvalLogger | None" = None) -> None:
         self._session_id = session_id
         self._traces: list[TurnTrace] = []
+        self._neuromod_history: deque[dict] = deque(maxlen=_NEUROMOD_WINDOW)
         self._langfuse = None
         self._active_spans: dict[str, Any] = {}
         self._trace_ids: dict[str, str] = {}
@@ -121,6 +127,10 @@ class ObservabilityLayer:
 
     def record_turn(self, trace: TurnTrace) -> None:
         self._traces.append(trace)
+        if len(self._traces) > _TRACE_WINDOW:
+            self._traces = self._traces[-_TRACE_WINDOW:]
+        if trace.neuromod:
+            self._neuromod_history.append({"ts": trace.ts, **trace.neuromod})
         if self._langfuse:
             try:
                 span = self._active_spans.pop(trace.turn_id, None)
@@ -250,11 +260,7 @@ class ObservabilityLayer:
                 }
                 for t in self._traces[-20:]  # last 20 turns
             ],
-            "neuromod_history": [
-                {"ts": t.ts, **t.neuromod}
-                for t in self._traces
-                if t.neuromod
-            ],
+            "neuromod_history": list(self._neuromod_history),
         }
 
     def flush(self) -> None:

@@ -8,7 +8,6 @@ v0.2 feature.
 """
 from __future__ import annotations
 
-import json
 import logging
 import time
 
@@ -16,6 +15,7 @@ from brain.cell import IntegratorCell
 from brain.model_router import ModelRouter
 from brain.second_brain.store import SchemaStore, EpisodicStore
 from brain.security import sanitize_fact
+from brain.utils import safe_json_parse
 from brain.wiring import Wiring
 from brain.emotion_hierarchy import core_of
 from brain.observability.decisions import decisions
@@ -108,17 +108,7 @@ class SleepConsolidation:
         )
         raw = await self._synthesizer.call([{"role": "user", "content": batch_text}])
 
-        synthesis: dict = {}
-        try:
-            synthesis = json.loads(raw)
-        except Exception:
-            import re
-            m = re.search(r'\{.*\}', raw, re.DOTALL)
-            if m:
-                try:
-                    synthesis = json.loads(m.group(0))
-                except Exception:
-                    pass
+        synthesis: dict = safe_json_parse(raw) or {}
 
         # Update user.md with discovered facts
         for raw_fact in synthesis.get("user_facts", []):
@@ -138,17 +128,7 @@ class SleepConsolidation:
         )
         raw_self = await self._self_updater.call([{"role": "user", "content": context}])
 
-        updates: dict = {}
-        try:
-            updates = json.loads(raw_self)
-        except Exception:
-            import re
-            m = re.search(r'\{.*\}', raw_self, re.DOTALL)
-            if m:
-                try:
-                    updates = json.loads(m.group(0))
-                except Exception:
-                    pass
+        updates: dict = safe_json_parse(raw_self) or {}
 
         if updates:
             await self._apply_self_updates(updates)

@@ -24,6 +24,7 @@ from brain.predictor import (
     CompositePredictor, composite_signature, should_bypass_gating,
 )
 from brain.observability.decisions import decisions
+from brain.utils import safe_json_parse
 from brain.wiring import Wiring
 
 logger = logging.getLogger(__name__)
@@ -158,6 +159,16 @@ class FrontalCluster:
         self._router = router
         self._wiring = wiring
         self._wiring_frozen = os.environ.get("BRAIN_WIRING_FROZEN", "false").lower() == "true"
+        # What the entity can actually do — surfaced into drafter prompts so
+        # the drafters don't confabulate when asked "what tools do you have?"
+        # Set by run.py after motor cortex / cloud executor boot.
+        self._capabilities_summary: str = ""
+
+    def set_capabilities(self, summary: str) -> None:
+        """Provide a human-readable list of what the entity can actually do
+        (set by run.py once motor cortex + cloud executor have introspected
+        their available tools and connectors)."""
+        self._capabilities_summary = (summary or "").strip()
         # Predict-and-surprise
         self._exec_predictor = CompositePredictor(
             name="frontal_executive_predictor", cluster=CLUSTER,
@@ -171,7 +182,7 @@ class FrontalCluster:
         self._executive = IntegratorCell(
             name="executive", cluster=CLUSTER, model="haiku",
             system_prompt=EXECUTIVE_SYSTEM, topics=["temporal.features"],
-            max_calls_per_turn=1, locality="cloud",
+            max_calls_per_turn=1, locality="cloud", max_tokens=512,
         )
         self._executive.set_router(router)
 
@@ -179,7 +190,7 @@ class FrontalCluster:
             IntegratorCell(
                 name=f"drafter_{chr(65+i)}", cluster=CLUSTER, model="haiku",
                 system_prompt=DRAFTER_SYSTEMS[i], topics=["motor.draft"],
-                max_calls_per_turn=1, locality="cloud",
+                max_calls_per_turn=1, locality="cloud", max_tokens=2048,
             )
             for i in range(3)
         ]
@@ -189,7 +200,7 @@ class FrontalCluster:
         self._critic = IntegratorCell(
             name="critic", cluster=CLUSTER, model="haiku",
             system_prompt=CRITIC_SYSTEM, topics=["motor.draft"],
-            max_calls_per_turn=2, locality="cloud",
+            max_calls_per_turn=2, locality="cloud", max_tokens=512,
         )
         self._critic.set_router(router)
 
@@ -197,14 +208,14 @@ class FrontalCluster:
         self._reframer = IntegratorCell(
             name="stoic_reframer", cluster=CLUSTER, model="flash-lite",
             system_prompt=REFRAMER_SYSTEM, topics=[],
-            max_calls_per_turn=1, locality="cloud",
+            max_calls_per_turn=1, locality="cloud", max_tokens=512,
         )
         self._reframer.set_router(router)
 
         self._empathy_critic = IntegratorCell(
             name="empathy_critic", cluster=CLUSTER, model="flash-lite",
             system_prompt=EMPATHY_CRITIC_SYSTEM, topics=[],
-            max_calls_per_turn=1, locality="cloud",
+            max_calls_per_turn=1, locality="cloud", max_tokens=256,
         )
         self._empathy_critic.set_router(router)
 
@@ -315,16 +326,7 @@ class FrontalCluster:
             exec_messages = [{"role": "user", "content": exec_context}]
             exec_raw = await self._executive.call(exec_messages)
 
-            try:
-                instruction = json.loads(exec_raw)
-            except Exception:
-                import re
-                m = re.search(r'\{.*\}', exec_raw, re.DOTALL)
-                if m:
-                    try:
-                        instruction = json.loads(m.group(0))
-                    except Exception:
-                        pass
+            instruction = safe_json_parse(exec_raw)
             if not instruction:
                 instruction = {"response_type": "chitchat", "target_length": "medium",
                                "tone": "neutral", "key_points": [], "drafter_count": 1}
@@ -571,17 +573,7 @@ class FrontalCluster:
         critic_prompt = (f"Context:\n{context}\n\nDraft response:\n{draft}\n\n"
                          "Score this draft.")
         raw = await self._critic.call([{"role": "user", "content": critic_prompt}])
-        try:
-            return json.loads(raw)
-        except Exception:
-            import re
-            m = re.search(r'\{.*\}', raw, re.DOTALL)
-            if m:
-                try:
-                    return json.loads(m.group(0))
-                except Exception:
-                    pass
-        return {"overall": 0.5, "veto": False}
+        return safe_json_parse(raw) or {"overall": 0.5, "veto": False}
 
     async def _attempt_reframe(self, features: dict, affect: dict, turn_id: str) -> dict | None:
         self._reframer.reset_turn(turn_id + "_reframe")
@@ -592,17 +584,7 @@ class FrontalCluster:
             "Propose a Stoic reframe."
         )
         raw = await self._reframer.call([{"role": "user", "content": prompt}])
-        try:
-            return json.loads(raw)
-        except Exception:
-            import re
-            m = re.search(r'\{.*\}', raw, re.DOTALL)
-            if m:
-                try:
-                    return json.loads(m.group(0))
-                except Exception:
-                    pass
-        return None
+        return safe_json_parse(raw)
 
     async def _run_empathy_check(self, draft: str, user_emotion: str,
                                   turn_id: str) -> dict:
@@ -613,10 +595,7 @@ class FrontalCluster:
             "Score empathic fit."
         )
         raw = await self._empathy_critic.call([{"role": "user", "content": prompt}])
-        try:
-            return json.loads(raw)
-        except Exception:
-            return {"empathy_score": 0.7, "veto": False}
+        return safe_json_parse(raw) or {"empathy_score": 0.7, "veto": False}
 
     async def _defuse_response(self, features: dict, affect: dict, turn_id: str) -> str:
         """Protective path when GABA is high (threat/hostility detected)."""
@@ -775,6 +754,12 @@ class FrontalCluster:
                                parietal: str, affect: dict, instruction: dict) -> str:
         nonce = str(uuid.uuid4())[:8]
         parts = []
+        # Capabilities block — what the entity can ACTUALLY do this session.
+        # Surfaced verbatim so drafters can accurately answer "what tools do
+        # you have?" and "can you use Claude?" without confabulating.
+        if self._capabilities_summary:
+            parts.append(f"Your capabilities this session:\n"
+                         f"{fence('capabilities', self._capabilities_summary, nonce)}")
         if parietal:
             parts.append(f"Recent conversation:\n{fence('conversation_history', parietal, nonce)}")
         if memory.get("schema"):

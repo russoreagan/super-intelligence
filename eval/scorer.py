@@ -17,11 +17,11 @@ Gated by BRAIN_EVAL_SCORE=true env flag.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
-import re
 from typing import TYPE_CHECKING
+
+from brain.utils import safe_json_parse
 
 if TYPE_CHECKING:
     from eval.turn_logger import EvalLogger
@@ -128,13 +128,4 @@ class PostHocScorer:
 
     @staticmethod
     def _parse(raw: str) -> dict | None:
-        try:
-            return json.loads(raw)
-        except Exception:
-            m = re.search(r'\{.*\}', raw, re.DOTALL)
-            if m:
-                try:
-                    return json.loads(m.group(0))
-                except Exception:
-                    pass
-        return None
+        return safe_json_parse(raw)

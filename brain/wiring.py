@@ -127,11 +127,14 @@ class Wiring:
             {"src": e.source, "tgt": e.target, "w": e.weight, "pol": e.polarity}
             for e in self._edges.values()
         ]
-        WIRING_PATH.write_text(json.dumps(data, indent=2))
+        WIRING_PATH.write_text(json.dumps(data))
+
+    _MAX_HISTORY_SNAPSHOTS = 100
 
     def snapshot_to_history(self, session_id: str) -> Path | None:
         """Write a copy of the wiring graph to wiring_history/{session_id}.json
-        for later evolution charting. Returns the path written, or None on failure."""
+        for later evolution charting. Prunes oldest files beyond _MAX_HISTORY_SNAPSHOTS.
+        Returns the path written, or None on failure."""
         try:
             WIRING_HISTORY_DIR.mkdir(parents=True, exist_ok=True)
             path = WIRING_HISTORY_DIR / f"{session_id}.json"
@@ -143,7 +146,16 @@ class Wiring:
                     for e in self._edges.values()
                 ],
             }
-            path.write_text(json.dumps(data, indent=2))
+            path.write_text(json.dumps(data))
+
+            # Keep history bounded: remove oldest files if over limit
+            snapshots = sorted(WIRING_HISTORY_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime)
+            for old in snapshots[:-self._MAX_HISTORY_SNAPSHOTS]:
+                try:
+                    old.unlink()
+                except Exception:
+                    pass
+
             return path
         except Exception as e:
             logger.warning("Could not snapshot wiring history: %s", e)

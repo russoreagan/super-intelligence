@@ -19,6 +19,7 @@ from brain.model_router import ModelRouter
 from brain.neuron import SwitchNeuron
 from brain.predictor import PredictorSwitch, input_signature, should_bypass_gating
 from brain.observability.decisions import decisions
+from brain.utils import safe_json_parse
 from brain.wiring import Wiring
 
 logger = logging.getLogger(__name__)
@@ -283,25 +284,14 @@ class TemporalCluster:
         messages = [{"role": "user", "content": text}]
         raw = await self._understanding.call(messages)
 
-        features: dict = {}
-        try:
-            features = json.loads(raw)
-        except json.JSONDecodeError:
-            # Try to extract JSON block
-            import re as _re
-            m = _re.search(r'\{.*\}', raw, _re.DOTALL)
-            if m:
-                try:
-                    features = json.loads(m.group(0))
-                except Exception:
-                    pass
-            if not features:
-                logger.warning("[Input parser] LLM returned invalid JSON — using fallback feature defaults. Raw output: %s", raw[:200])
-                features = {"intent": "other", "salience": 0.5, "requires_memory": False,
-                            "requires_vision": False, "requires_action": False,
-                            "epistemic_action": False, "hostility": 0.0, "sentiment": 0.5,
-                            "topic_summary": "unknown", "entities": [], "register": "casual",
-                            "tense": "present", "time_reference": "none"}
+        features: dict = safe_json_parse(raw) or {}
+        if not features:
+            logger.warning("[Input parser] LLM returned invalid JSON — using fallback feature defaults. Raw output: %s", raw[:200])
+            features = {"intent": "other", "salience": 0.5, "requires_memory": False,
+                        "requires_vision": False, "requires_action": False,
+                        "epistemic_action": False, "hostility": 0.0, "sentiment": 0.5,
+                        "topic_summary": "unknown", "entities": [], "register": "casual",
+                        "tense": "present", "time_reference": "none"}
 
         features["switch_only"] = False
         features["surprise_score"] = surprise

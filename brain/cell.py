@@ -27,6 +27,7 @@ class IntegratorCell:
     timeout_seconds: float = 20.0
     locality: str = "either"        # "local" | "cloud" | "either"
     sensitivity: str = "normal"     # "sensitive" | "normal"
+    max_tokens: int = 1024          # upper bound on completion length
 
     _router: ModelRouter = field(default=None, init=False, repr=False)
     _calls_this_turn: int = field(default=0, init=False, repr=False)
@@ -63,7 +64,7 @@ class IntegratorCell:
                 self._router.call(
                     self.model, self.system_prompt, messages,
                     cluster=self.cluster, cell=self.name, turn_id=self._turn_id,
-                    locality=self.locality,
+                    locality=self.locality, max_tokens=self.max_tokens,
                 ),
                 timeout=self.timeout_seconds,
             )
