@@ -17,5 +17,8 @@ second_brain/episodes/
 # Langfuse / observability local data
 observability/
 
+# Claude Code local config
+.claude/
+
 # macOS
 .DS_Store
