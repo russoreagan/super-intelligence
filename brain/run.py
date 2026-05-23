@@ -278,10 +278,24 @@ async def session(args) -> None:
     # Without this bridge, voice utterances accumulate in streaming_mic.utterances
     # forever and the brain appears to ignore everything spoken.
     #
-    # Behaviour: emit a transcript event (so the UI can show the spoken text
-    # in the chat input box as visual feedback) AND auto-dispatch the turn
-    # via ui_message_queue (so the conversation flows without the user
-    # needing to press Enter). The input box clears on turn_start.
+    # Behaviour:
+    #   - If brain is currently speaking (TTS playback): the mic is mostly
+    #     picking up its own bleed-through. Drop the utterance UNLESS the
+    #     transcript contains a barge-in keyword like "stop"/"wait" — in
+    #     which case interrupt TTS and dispatch the utterance as a turn.
+    #   - If brain is NOT speaking: dispatch normally. Emit a transcript
+    #     event so the UI can show the spoken text in the chat input box.
+    #     The input box clears on turn_start.
+    _barge_words_raw = os.environ.get(
+        "BRAIN_BARGE_IN_WORDS",
+        "stop,wait,shut up,hold on,pause,enough,never mind,hey brain,brain stop",
+    )
+    barge_in_words = [w.strip().lower() for w in _barge_words_raw.split(",") if w.strip()]
+
+    def _is_barge_in(text: str) -> bool:
+        t = text.lower().strip()
+        return any(w in t for w in barge_in_words)
+
     voice_bridge_task = None
     if streaming_mic is not None and ui_enabled:
         async def _voice_bridge() -> None:
@@ -297,6 +311,18 @@ async def session(args) -> None:
                 text = (utt.get("transcript") or "").strip()
                 if not text:
                     continue
+
+                brain_is_speaking = pns.is_speaking
+                if brain_is_speaking:
+                    if _is_barge_in(text):
+                        logger.info("[I/O] voice → barge-in keyword detected: %r", text[:80])
+                        pns.interrupt()
+                        # Fall through and dispatch as a turn
+                    else:
+                        logger.debug("[I/O] voice → dropped (TTS playing, no barge-in keyword): %r",
+                                     text[:80])
+                        continue
+
                 logger.info("[I/O] voice → turn: %r", text[:80])
                 if emitter:
                     try:

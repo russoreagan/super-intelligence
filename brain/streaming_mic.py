@@ -291,12 +291,11 @@ class StreamingMicSession:
                     self._utterance_start_s = ts
                     self._pending_words = []
                     logger.debug("[StreamingMic] SpeechStarted @ %.2fs", ts)
-                    # Barge-in: if the entity is mid-speech, cut it off
-                    if self._is_speaking_fn() and self._on_user_interrupt is not None:
-                        try:
-                            self._on_user_interrupt()
-                        except Exception as e:
-                            logger.warning("[StreamingMic] interrupt callback raised: %s", e)
+                    # Note: barge-in is no longer triggered here on raw
+                    # SpeechStarted. The mic picks up its own playback
+                    # bleed-through and was killing TTS every reply. Barge-in
+                    # is now keyword-driven and checked in the voice bridge
+                    # in run.py against the final transcript.
 
                 elif mtype == "Results":
                     if not getattr(message, "is_final", False):

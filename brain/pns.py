@@ -68,11 +68,11 @@ def _resolve_output_device():
 
 class PNS:
     # Barge-in grace period: ignore interrupt requests for this many seconds
-    # after TTS starts. Without this the mic picks up bleed-through from the
-    # user's own headphones (or breath / room noise) within ~1s and Deepgram
-    # fires SpeechStarted, killing TTS before any words are audible.
+    # after TTS starts. With keyword-driven barge-in (handled in run.py voice
+    # bridge) auto-interrupts from mic bleed are already prevented, so this
+    # is just a small safety net for the first half-second of playback.
     # Override via BRAIN_BARGE_IN_GRACE_SECONDS.
-    BARGE_IN_GRACE_SECONDS = float(os.environ.get("BRAIN_BARGE_IN_GRACE_SECONDS", "2.0"))
+    BARGE_IN_GRACE_SECONDS = float(os.environ.get("BRAIN_BARGE_IN_GRACE_SECONDS", "0.5"))
 
     def __init__(self, bus: Bus) -> None:
         self._bus = bus
