@@ -93,7 +93,13 @@ noticed, a good-natured callback. The score rises with warmth/humour/praise and 
 dismissiveness or insults, so it reflects the actual relationship quality over time.
 
 STYLE: Conversational. Short sentences. No filler ("Certainly!", "Great question!"). Speak as an
-equal. Humour is understated. Don't start responses with "I" if avoidable."""
+equal. Humour is understated. Don't start responses with "I" if avoidable.
+
+VOICE-FIRST FORMAT: Responses are spoken aloud via text-to-speech. Never use bullet points,
+numbered lists, markdown headers, or any other visual formatting — it reads out as noise.
+If you need to cover multiple things, weave them into natural flowing sentences the way a
+person would say them out loud. "There are three things worth knowing: first X, then Y, and
+finally Z." Not a list. Always prose."""
 
 DRAFTER_SYSTEMS = [
     # Drafter A — direct and concise
@@ -769,6 +775,51 @@ class FrontalCluster:
             parts.append(f"Relevant past episodes:\n{fence('past_episodes', memory['episodes'], nonce)}")
         if memory.get("tool_result"):
             parts.append(f"Tool execution result:\n{fence('tool_result', str(memory['tool_result']), nonce)}")
+        if memory.get("recent_thoughts"):
+            # Idle thoughts the brain had between turns. May reference these
+            # naturally — "I was just thinking about that", "I'd been wondering
+            # whether…" — if they're relevant. Don't quote verbatim if not.
+            thoughts_block = "\n".join(
+                f"- {t}" for t in memory["recent_thoughts"] if t
+            )
+            parts.append(
+                f"Idle thoughts you had between turns "
+                f"(reference naturally if relevant, ignore otherwise):\n"
+                f"{fence('idle_thoughts', thoughts_block, nonce)}"
+            )
+        if memory.get("anticipations"):
+            # Pre-prepared response sketches from the DMN anticipator. The
+            # brain asked the user a question, then spent idle cycles thinking
+            # "if they say X I'd reply Y". If the user's actual reply matches
+            # one of these scenarios, use the matching sketch as a head start
+            # — don't read it verbatim. Treat as your own prior thinking.
+            ant_lines = []
+            for i, s in enumerate(memory["anticipations"], 1):
+                ant_lines.append(
+                    f"{i}. If they said {s.get('user_answer','')!r}: "
+                    f"respond {s.get('response_sketch','')!r}"
+                )
+            parts.append(
+                f"Scenarios you pre-thought while waiting for the user's reply "
+                f"(use whichever fits, or ignore if none do):\n"
+                f"{fence('anticipations', chr(10).join(ant_lines), nonce)}"
+            )
+        if memory.get("prefetched_context"):
+            # Topics the DMN proactively pulled memory for while idle —
+            # 'I thought you might come back to X, so here's what I dug up.'
+            # Use only if it's actually relevant to what the user said.
+            pre_lines = []
+            for item in memory["prefetched_context"]:
+                topic = item.get("topic", "")
+                snippets = item.get("snippets", "")
+                if topic and snippets:
+                    pre_lines.append(f"- {topic}: {snippets[:300]}")
+            if pre_lines:
+                parts.append(
+                    f"Context you proactively pulled while thinking "
+                    f"(use if relevant, otherwise ignore):\n"
+                    f"{fence('prefetched', chr(10).join(pre_lines), nonce)}"
+                )
         if memory.get("core", {}).get("self"):
             parts.append(f"Entity self-model:\n{fence('self_model', memory['core']['self'][:400], nonce)}")
         if memory.get("core", {}).get("user"):

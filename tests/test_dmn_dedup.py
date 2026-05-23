@@ -38,7 +38,22 @@ def _make_dmn():
     dmn._simulation_cell.reset_turn = MagicMock()
     dmn._simulation_cell.call = AsyncMock(return_value="{}")
 
+    # Anticipator + prefetcher cells added in Phase 3 / 3b
+    dmn._anticipator_cell = MagicMock()
+    dmn._anticipator_cell.reset_turn = MagicMock()
+    dmn._anticipator_cell.call = AsyncMock(return_value="{}")
+
+    dmn._prefetcher_cell = MagicMock()
+    dmn._prefetcher_cell.reset_turn = MagicMock()
+    dmn._prefetcher_cell.call = AsyncMock(return_value="{}")
+
     dmn.predicted_next = None
+    # Phase 3 state
+    dmn.last_was_question = False
+    dmn.last_assistant_message = ""
+    dmn.anticipations = []
+    # Phase 3b state
+    dmn.prefetched = []
     return dmn
 
 

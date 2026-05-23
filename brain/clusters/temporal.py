@@ -143,6 +143,21 @@ class TemporalCluster:
         self._integrator_inhibitor = SwitchNeuron("integrator_inhibitor", CLUSTER, polarity="inhibitory")
 
         self._inbox = bus.subscribe("sensory.text")
+        # DMN's top-down prediction of the user's next message. Drained each
+        # turn — if the actual input matches, predictor confidence is boosted.
+        self._dmn_prediction_inbox = bus.subscribe("stream.prediction")
+
+    def _consume_dmn_prediction(self) -> dict | None:
+        """Drain stream.prediction queue, keep the most recent fresh prediction."""
+        latest: dict | None = None
+        while True:
+            try:
+                m = self._dmn_prediction_inbox.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            if not m.expired:
+                latest = m.payload
+        return latest
 
     async def run(self, turn_id: str) -> dict | None:
         """Process the next sensory input for this turn. Returns parsed features or None."""
@@ -157,6 +172,25 @@ class TemporalCluster:
 
         text: str = msg.payload.get("text", "")
         image_present: bool = msg.payload.get("image_present", False)
+
+        # ── DMN top-down prediction: if the brain's idle "user simulator"
+        # guessed something close to what the user actually said, that's
+        # strong evidence the routine path is correct — boost predictor.
+        dmn_prediction = self._consume_dmn_prediction()
+        dmn_hit_overlap = 0.0
+        if dmn_prediction and dmn_prediction.get("predicted_input"):
+            from brain.voice_bridge import bleed_overlap as _word_overlap
+            dmn_hit_overlap = _word_overlap(text, dmn_prediction["predicted_input"])
+            if dmn_hit_overlap >= 0.5:
+                decisions.log(
+                    "dmn_prediction_hit", turn_id=turn_id, cluster=CLUSTER,
+                    reason=f"DMN guessed {dmn_prediction.get('predicted_input', '')[:60]!r}, "
+                           f"user said {text[:60]!r}, overlap {dmn_hit_overlap:.2f}",
+                    predicted=dmn_prediction.get("predicted_input", "")[:120],
+                    actual=text[:120],
+                    overlap=round(dmn_hit_overlap, 3),
+                    dmn_confidence=dmn_prediction.get("confidence", 0),
+                )
 
         # --- Switch layer (free, fast) ---
 
@@ -219,6 +253,16 @@ class TemporalCluster:
         # High inhibitor weight → easier to skip the integrator. Low → harder.
         inhibitor_weight = self._inhibitor_weight()
         confidence_floor = max(0.4, 0.6 / max(0.5, inhibitor_weight))
+
+        # DMN top-down hit: if the brain already simulated something close to
+        # this input, drop the confidence floor (skip the LLM more readily)
+        # and reduce surprise. This is "compute scales with novelty" extended
+        # with predictive processing — the brain bypasses understanding for
+        # inputs it had already imagined.
+        if dmn_hit_overlap >= 0.5:
+            confidence_floor = max(0.3, confidence_floor - 0.25 * dmn_hit_overlap)
+            surprise = max(0.0, surprise - 0.4 * dmn_hit_overlap)
+            should_wake = self._predictor.should_wake_integrator(surprise)
 
         # Pre-flight bypass check (emotion vetoes are still cheap; we have no
         # affect dict yet, but length/trivial signals are coarse).

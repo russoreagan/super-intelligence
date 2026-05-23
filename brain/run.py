@@ -697,12 +697,60 @@ async def session(args) -> None:
         if dmn:
             dmn.update_context(parietal_context, affect.get("emotion", "neutral"),
                                core_context.get("self", ""))
+            # Surface idle thoughts into this turn's drafter context so the
+            # entity can reference what it was musing about (or quietly use
+            # the priming effect even if it doesn't reference them aloud).
+            thoughts = dmn.recent_thoughts(n=4)
+            if thoughts:
+                memory["recent_thoughts"] = thoughts
+            # Consume any pre-prepared anticipations from the DMN. If the
+            # brain pre-thought "if user says X, respond with Y" and the
+            # user actually said something close to X, the drafter gets a
+            # head start.
+            anticipations = dmn.take_anticipations()
+            if anticipations:
+                memory["anticipations"] = anticipations
+                logger.info("[Anticipator] Surfacing %d pre-prepared scenarios "
+                            "to drafters", len(anticipations))
+            # Consume proactive pre-fetched context the DMN pulled while idle.
+            # Topic-related episodes / schema that might be relevant this turn.
+            prefetched = dmn.take_prefetched()
+            if prefetched:
+                memory["prefetched_context"] = prefetched
+                logger.info("[Prefetcher] Surfacing %d pre-fetched topics to drafters",
+                            len(prefetched))
+                # Phase 2b: if a recent idle thought has high word-overlap
+                # with what the user actually said, the brain was right to
+                # have been thinking about it — encode that thought as a
+                # low-priority episode (autobiographical record of mind-
+                # wandering that proved useful).
+                from brain.voice_bridge import bleed_overlap as _word_overlap
+                useful: list[tuple[str, float]] = []
+                for t in thoughts:
+                    o = _word_overlap(user_input, t)
+                    if o >= 0.35:
+                        useful.append((t, o))
+                if useful:
+                    # Encode each useful thought as a separate idle episode
+                    # in the background so it doesn't block the turn.
+                    for thought_text, overlap in useful:
+                        asyncio.create_task(hippocampus.encode_idle_thought(
+                            session_id=session_id,
+                            thought=thought_text,
+                            overlap_with_user_input=overlap,
+                            user_input=user_input,
+                            embedding_fn=router.embed,
+                        ))
 
         # ── Egress pseudonymisation (Phase 0H) ────────────────────────────────
         if EGRESS_MODE != "off":
             ps_memory = dict(memory)
             ps_schema, _ = egress.pseudonymize(memory.get("schema", ""))
             ps_episodes, _ = egress.pseudonymize(memory.get("episodes", ""))
+            if memory.get("recent_thoughts"):
+                ps_memory["recent_thoughts"] = [
+                    egress.pseudonymize(t)[0] for t in memory["recent_thoughts"]
+                ]
             ps_core_self, _ = egress.pseudonymize(memory.get("core", {}).get("self", ""))
             ps_core_user, _ = egress.pseudonymize(memory.get("core", {}).get("user", ""))
             ps_memory["schema"] = ps_schema
@@ -887,6 +935,10 @@ async def session(args) -> None:
         _track_encode(encode_task)
 
         if dmn:
+            # Record whether our response was a question — if so, the next
+            # DMN tick will fire the anticipator to pre-prepare for likely
+            # user answers.
+            dmn.note_last_response(final)
             dmn.resume()
 
         logger.info("Turn %s: %d LLM calls | %.2fs | emotion=%s",

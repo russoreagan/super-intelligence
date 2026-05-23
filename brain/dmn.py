@@ -56,6 +56,43 @@ likely next message. Return JSON: {
 }
 Return ONLY JSON."""
 
+PREFETCHER_SYSTEM = """You are the proactive context-prefetcher of an AI brain.
+The entity has been musing about the recent conversation. Your job: identify
+which TOPICS or ENTITIES the user is likely to come back to, so the brain can
+proactively pull related memory and have it ready.
+
+Given the recent conversation and self-model, return JSON:
+{
+  "queries": [
+    {"topic": string, "reason": string},
+    ...
+  ]
+}
+
+Return between 0 and 3 queries. Each topic should be a short, search-friendly
+noun phrase (e.g. "audio bleed troubleshooting", "Ableton plugin choices",
+"Russ's kid"). Skip topics already saturated in the immediate conversation
+context. Return ONLY JSON."""
+
+ANTICIPATOR_SYSTEM = """You are the anticipatory thinking process of an AI brain.
+The entity has JUST asked the user a question and is now waiting for the answer.
+Simulate the 2-3 most likely answers the user might give, and for each one sketch
+a short response the brain could give back. This is preparation — not commitment.
+
+Given the recent conversation, the entity's last (question-ending) message, and what
+you know about the user, return JSON:
+{
+  "scenarios": [
+    {
+      "user_answer": string,        // a plausible thing the user says next
+      "response_sketch": string,    // 1-2 sentence sketch of how to respond
+      "context_needed": [string]    // facts/memory that would help — empty if none
+    },
+    ...
+  ]
+}
+Return between 1 and 3 scenarios. Return ONLY JSON."""
+
 
 class DefaultModeNetwork:
     def __init__(self, bus: Bus, router: ModelRouter,
@@ -93,8 +130,39 @@ class DefaultModeNetwork:
         )
         self._simulation_cell.set_router(router)
 
+        self._anticipator_cell = IntegratorCell(
+            name="anticipator",
+            cluster="dmn",
+            model="flash-lite",
+            system_prompt=ANTICIPATOR_SYSTEM,
+            topics=["stream.anticipation"],
+            max_calls_per_turn=1,
+        )
+        self._anticipator_cell.set_router(router)
+
+        self._prefetcher_cell = IntegratorCell(
+            name="prefetcher",
+            cluster="dmn",
+            model="flash-lite",
+            system_prompt=PREFETCHER_SYSTEM,
+            topics=["stream.prefetch"],
+            max_calls_per_turn=1,
+        )
+        self._prefetcher_cell.set_router(router)
+
         # Predicted next input (used by temporal lobe predictor as a warm hint)
         self.predicted_next: dict | None = None
+        # When the brain's last response ended with a question, the DMN runs
+        # an anticipator that pre-generates response sketches for likely
+        # answers. Cleared once the user actually replies.
+        self.last_was_question: bool = False
+        self.last_assistant_message: str = ""
+        # Most recent anticipation scenarios — surfaced to next turn's drafter
+        # as "you already started thinking about this" context.
+        self.anticipations: list[dict] = []
+        # Proactively fetched context: list of {topic, snippets} the prefetcher
+        # pulled from memory while idle. Consumed by next turn's drafter.
+        self.prefetched: list[dict] = []
 
     async def start(self, session_id: str) -> None:
         self._session_id = session_id
@@ -110,6 +178,37 @@ class DefaultModeNetwork:
         """Call when a turn ends — brain is idle, DMN wakes."""
         self._running = True
         asyncio.create_task(self._loop())
+
+    def recent_thoughts(self, n: int = 5) -> list[str]:
+        """Return the last N internal thoughts the brain had between turns.
+        Consumed by run.py to seed the next turn's drafter context — so the
+        entity can reference what it was musing about when the user speaks."""
+        return list(self._recent_thoughts)[-n:]
+
+    def note_last_response(self, response: str) -> None:
+        """Called by run.py after each turn end. Records whether the entity's
+        last message ended with a question — if so, the DMN's next tick will
+        also run the anticipator to pre-prepare for likely user answers."""
+        self.last_assistant_message = (response or "").strip()
+        # Simple heuristic: ends with '?' OR final clause looks like a Q
+        text = self.last_assistant_message
+        self.last_was_question = (
+            text.endswith("?")
+            or any(text.lower().endswith(p) for p in
+                   ("right?", "yeah?", "huh?", "ok?", "okay?", "yes?"))
+        )
+        # New turn arriving = stale anticipations go away (the user already replied)
+        self.anticipations = []
+
+    def take_anticipations(self) -> list[dict]:
+        """Pop the anticipation scenarios so they're consumed exactly once."""
+        out, self.anticipations = self.anticipations, []
+        return out
+
+    def take_prefetched(self) -> list[dict]:
+        """Pop the prefetched-context items so they're consumed exactly once."""
+        out, self.prefetched = self.prefetched, []
+        return out
 
     def update_context(self, parietal_text: str, emotion: str, self_schema: str) -> None:
         self._last_context = (
@@ -193,3 +292,108 @@ class DefaultModeNetwork:
                              self.predicted_next.get("confidence", 0))
             except Exception:
                 pass
+
+        # 3. Anticipator — if the entity's last message ended with a question,
+        # pre-think 2-3 likely user answers and sketch responses for each.
+        # Runs once per question (then anticipations get consumed by the next
+        # actual turn). Skips if we already have anticipations queued.
+        if self.last_was_question and not self.anticipations:
+            await self._run_anticipator(turn_id)
+
+        # 4. Prefetcher — every 4th tick, identify topics likely to come up
+        # again and proactively pull related episodes from memory. Skip if
+        # we already have prefetched context waiting (next turn will use it).
+        if (self._thought_count % 4 == 0
+                and self._hippocampus is not None
+                and not self.prefetched):
+            await self._run_prefetcher(turn_id)
+
+    async def _run_prefetcher(self, turn_id: str) -> None:
+        self._prefetcher_cell.reset_turn(turn_id + "_pre")
+        prompt = self._last_context or "No context yet."
+        raw = await self._prefetcher_cell.call([{"role": "user", "content": prompt}])
+        try:
+            parsed = json.loads(raw)
+            queries = parsed.get("queries", []) or []
+        except Exception as e:
+            logger.debug("[Background reflection] Prefetcher parse failed: %s", e)
+            return
+
+        if not queries:
+            return
+
+        # Run each recall in parallel (capped to 3); pull the schema + episode
+        # text for each topic and cache as prefetched_context.
+        async def _one_query(q: dict) -> dict | None:
+            topic = str(q.get("topic", "")).strip()
+            reason = str(q.get("reason", "")).strip()
+            if not topic:
+                return None
+            try:
+                result = await self._hippocampus.recall(
+                    query=topic,
+                    entities=[topic],
+                    turn_id=turn_id + "_pre",
+                    embedding_fn=self._router.embed,
+                )
+                snippets = []
+                if result.get("episodes"):
+                    snippets.append(result["episodes"][:400])
+                if result.get("schema"):
+                    snippets.append(result["schema"][:300])
+                joined = "\n".join(s for s in snippets if s.strip())
+                if not joined:
+                    return None
+                return {"topic": topic, "reason": reason, "snippets": joined}
+            except Exception as e:
+                logger.debug("[Background reflection] Prefetcher recall failed for %r: %s",
+                             topic, e)
+                return None
+
+        results = await asyncio.gather(
+            *(_one_query(q) for q in queries[:3]),
+            return_exceptions=False,
+        )
+        self.prefetched = [r for r in results if r]
+        if self.prefetched:
+            await self._bus.publish_dict(
+                "stream.prefetch",
+                {"items": self.prefetched, "ts": time.time()},
+                source="dmn",
+            )
+            logger.info("[Background reflection] Prefetched context for %d topics: %s",
+                        len(self.prefetched),
+                        ", ".join(p["topic"][:30] for p in self.prefetched))
+
+    async def _run_anticipator(self, turn_id: str) -> None:
+        self._anticipator_cell.reset_turn(turn_id + "_ant")
+        prompt = (
+            f"{self._last_context or 'No context yet.'}\n\n"
+            f"Your last message (which ended with a question): "
+            f"{self.last_assistant_message[:400]!r}\n\n"
+            "Pre-think the user's likely answers and your responses."
+        )
+        raw = await self._anticipator_cell.call([{"role": "user", "content": prompt}])
+        try:
+            parsed = json.loads(raw)
+            scenarios = parsed.get("scenarios", []) or []
+            # Normalize + cap
+            self.anticipations = [
+                {
+                    "user_answer": str(s.get("user_answer", ""))[:200],
+                    "response_sketch": str(s.get("response_sketch", ""))[:300],
+                    "context_needed": list(s.get("context_needed", []) or [])[:5],
+                }
+                for s in scenarios[:3]
+                if s.get("user_answer") and s.get("response_sketch")
+            ]
+            if self.anticipations:
+                await self._bus.publish_dict(
+                    "stream.anticipation",
+                    {"scenarios": self.anticipations, "ts": time.time()},
+                    source="dmn",
+                )
+                logger.info("[Background reflection] Anticipated %d follow-up scenarios",
+                            len(self.anticipations))
+        except Exception as e:
+            logger.debug("[Background reflection] Anticipator parse failed: %s", e)

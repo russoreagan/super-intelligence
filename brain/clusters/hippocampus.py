@@ -275,6 +275,49 @@ class HippocampusCluster:
             encoded, embedding_fn,
         )
 
+    async def encode_idle_thought(self, session_id: str, thought: str,
+                                   overlap_with_user_input: float,
+                                   user_input: str = "",
+                                   embedding_fn=None) -> None:
+        """Encode a DMN idle thought as a low-priority episode.
+
+        Fires when the user's actual input has high word-overlap with a
+        recent idle thought — the brain was right to think about it, so
+        the thought becomes part of the entity's autobiography (it
+        "remembers" what it was musing about when the user spoke to that
+        topic).
+        """
+        if not thought.strip():
+            return
+        try:
+            vec = None
+            if embedding_fn:
+                try:
+                    vec = await embedding_fn(thought)
+                except Exception as e:
+                    logger.debug("[Memory] Idle-thought embed failed: %s", e)
+            turn_id = f"idle_{int(time.time())}_{uuid.uuid4().hex[:6]}"
+            episode = Episode(
+                session_id=session_id,
+                turn_id=turn_id,
+                ts=time.time(),
+                user_input=user_input[:200] if user_input else "(no user input — idle thought)",
+                entity_response=thought,
+                topic_tags=["idle_thought", "reinforced"],
+                emotion_state="reflective",
+                user_emotion="unknown",
+                entities=[],
+                neuromod_snapshot={"DA": 0.5, "GABA": 0.1, "ACh": 0.4, "Glu": 0.3},
+                surprise_score=max(0.0, 1.0 - overlap_with_user_input),
+                vector=vec,
+            )
+            self._episodic.encode(episode)
+            logger.info("[Memory] Encoded idle thought as episode "
+                        "(overlap %.2f with user): %r",
+                        overlap_with_user_input, thought[:80])
+        except Exception as e:
+            logger.warning("[Memory] Idle-thought encoding failed: %s", e)
+
     async def _store_episode(self, session_id: str, turn_id: str,
                               user_input: str, entity_response: str,
                               features: dict, affect: dict,
