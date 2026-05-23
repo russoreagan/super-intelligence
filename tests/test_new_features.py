@@ -3,6 +3,7 @@ Regression tests for features added in the session covering:
   - parietal.seed() — boot-time ring pre-population from episodic history
   - EpisodicStore.recall_recent() — newest-first sorting
   - audio_dsp.compute_speech_dynamics() — WPM, pace labels, hesitant, burst_score
+  - StreamingMicSession mute/unmute/toggle — no I/O required
   - pns._v3_audio_tag_from_affect() — emotion-name lookup + neuromod fallback
   - pns._add_breath_pauses() — em-dash substitution, early-comma guard
   - pns._shape_for_v3() — pre-tagged passthrough, GABA/DA shaping, tag prepend
@@ -1044,3 +1045,85 @@ class TestEmotionHierarchy:
         affect = {"emotion": "tender", "neuromod": {}}
         guidance = FrontalCluster._expressive_guidance(affect)
         assert guidance is not None
+
+
+# ---------------------------------------------------------------------------
+# StreamingMicSession — mute / unmute / toggle (no I/O)
+# ---------------------------------------------------------------------------
+
+class _FakeBus:
+    async def publish_dict(self, *a, **kw): pass
+
+
+def _make_mic():
+    """Build a StreamingMicSession with no sounddevice or Deepgram started."""
+    from brain.streaming_mic import StreamingMicSession
+    return StreamingMicSession(
+        bus=_FakeBus(),
+        is_speaking_fn=lambda: False,
+        on_user_interrupt=None,
+    )
+
+
+class TestStreamingMicMute:
+    def test_starts_unmuted(self):
+        mic = _make_mic()
+        assert mic.is_muted is False
+
+    def test_mute_sets_flag(self):
+        mic = _make_mic()
+        mic.mute()
+        assert mic.is_muted is True
+
+    def test_unmute_clears_flag(self):
+        mic = _make_mic()
+        mic.mute()
+        mic.unmute()
+        assert mic.is_muted is False
+
+    def test_toggle_mute_returns_new_state(self):
+        mic = _make_mic()
+        result = mic.toggle_mute()
+        assert result is True
+        assert mic.is_muted is True
+
+    def test_toggle_unmute_returns_new_state(self):
+        mic = _make_mic()
+        mic.mute()
+        result = mic.toggle_mute()
+        assert result is False
+        assert mic.is_muted is False
+
+    def test_double_mute_is_idempotent(self):
+        mic = _make_mic()
+        mic.mute()
+        mic.mute()
+        assert mic.is_muted is True
+
+    def test_double_unmute_is_idempotent(self):
+        mic = _make_mic()
+        mic.unmute()
+        assert mic.is_muted is False
+
+    def test_enqueue_chunk_discarded_when_muted(self):
+        mic = _make_mic()
+        mic.mute()
+        mic._enqueue_chunk(b"\x00" * 3200)
+        assert mic._pcm_in.empty()
+
+    def test_enqueue_chunk_accepted_when_unmuted(self):
+        mic = _make_mic()
+        mic._enqueue_chunk(b"\x00" * 3200)
+        assert not mic._pcm_in.empty()
+
+    def test_enqueue_chunk_accepted_after_unmute(self):
+        mic = _make_mic()
+        mic.mute()
+        mic.unmute()
+        mic._enqueue_chunk(b"\x00" * 3200)
+        assert not mic._pcm_in.empty()
+
+    def test_toggle_sequence(self):
+        mic = _make_mic()
+        states = [mic.toggle_mute() for _ in range(4)]
+        assert states == [True, False, True, False]
