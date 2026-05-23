@@ -43,6 +43,7 @@ from brain.clusters.audio_dsp import (
     extract_prosody,
     extract_speaker_audio_segments,
     extract_speaker_embedding,
+    label_prosody_tone,
     match_fingerprint,
     SILENCE_RMS,
 )
@@ -239,6 +240,12 @@ class AuditoryCluster:
         self._speaker_store = SpeakerStore()
         self._registry = SessionSpeakerRegistry(self._speaker_store)
 
+        # Cross-loop state for per-speaker prosody calibration.
+        # The raw loop extracts prosody; the diarized loop identifies the speaker.
+        # We share the last known values so each loop can update the other's work.
+        self._last_speaker_id: str | None = None      # set by diarized loop
+        self._last_prosody_features: dict | None = None  # set by raw loop
+
         # Fingerprint DB (hash_val → [(song_id, ref_time_frame), ...])
         self._fp_db: dict[int, list[tuple[str, int]]] = {}
         self._songs: dict[str, dict] = {}
@@ -322,6 +329,16 @@ class AuditoryCluster:
             await self._bus.publish_dict("auditory.song_match", fp_result, source=CLUSTER)
 
         if not isinstance(pros_result, BaseException):
+            self._last_prosody_features = pros_result
+
+            # Re-label using the current speaker's personal baseline if available.
+            # Falls back to universal thresholds when uncalibrated (< 10 obs).
+            baseline = None
+            if self._last_speaker_id:
+                baseline = self._speaker_store.get_prosody_baseline(self._last_speaker_id)
+            if baseline is not None:
+                pros_result["tone_label"] = label_prosody_tone(pros_result, baseline)
+
             logger.debug("Auditory: prosody tone=%s f0=%.0f energy=%.3f voiced=%.2f",
                          pros_result.get("tone_label"), pros_result.get("f0_mean_hz", 0),
                          pros_result.get("energy_mean", 0), pros_result.get("voiced_fraction", 0))
@@ -420,6 +437,14 @@ class AuditoryCluster:
     ) -> None:
         """Match embedding against registry; handle ID or enrollment."""
         session_spk, is_new = self._registry.match_or_create(embedding)
+
+        # Update cross-loop speaker state and prosody baseline.
+        if session_spk.store_id:
+            self._last_speaker_id = session_spk.store_id
+            if self._last_prosody_features:
+                self._speaker_store.update_prosody_baseline(
+                    session_spk.store_id, self._last_prosody_features
+                )
 
         spk_payload = {
             "session_key": session_spk.session_key,

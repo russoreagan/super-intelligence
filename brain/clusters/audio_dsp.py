@@ -309,27 +309,54 @@ def extract_prosody(audio: np.ndarray, sr: int) -> dict:
     except Exception as e:
         logger.debug("Auditory DSP: prosody extraction error: %s", e)
 
-    # ── Tone label (switch tree, no LLM) ──
-    vf = base["voiced_fraction"]
-    f0_std = base["f0_std_hz"]
-    e_mean = base["energy_mean"]
-    e_std = base["energy_std"]
-    rate = base["speech_rate_hz"]
-    jitter = base["jitter"]
-    shimmer = base["shimmer"]
+    base["tone_label"] = label_prosody_tone(base)
+    return base
+
+
+def label_prosody_tone(features: dict, baseline: dict | None = None) -> str:
+    """
+    Classify a prosody feature dict into a tone label.
+
+    If `baseline` is provided and has >= 10 observations, thresholds for
+    stressed and energetic are computed relative to that speaker's personal
+    baseline rather than universal values. This lets the system adapt to each
+    person's natural speaking style over time.
+
+    baseline dict shape: {"jitter": float, "shimmer": float,
+                          "energy_mean": float, "f0_std": float, "count": int}
+    """
+    vf      = features.get("voiced_fraction", 0.0)
+    f0_std  = features.get("f0_std_hz", 0.0)
+    e_mean  = features.get("energy_mean", 0.0)
+    e_std   = features.get("energy_std", 0.0)
+    rate    = features.get("speech_rate_hz", 0.0)
+    jitter  = features.get("jitter", 0.0)
+    shimmer = features.get("shimmer", 0.0)
+
+    calibrated = baseline is not None and baseline.get("count", 0) >= 10
+
+    # Thresholds — fall back to universal values; baseline raises them
+    # proportionally to the speaker's own normal range.
+    if calibrated:
+        jitter_thresh  = max(0.03, baseline["jitter"]  * 1.8)
+        shimmer_thresh = max(0.05, baseline["shimmer"] * 1.8)
+        energy_thresh  = max(0.12, baseline["energy_mean"] * 1.5)
+    else:
+        jitter_thresh  = 0.03
+        shimmer_thresh = 0.05
+        energy_thresh  = 0.12
 
     if vf < 0.25:
-        base["tone_label"] = "whisper"
+        return "whisper"
     elif f0_std < 15.0 and e_std < 0.02:
-        base["tone_label"] = "monotone"
-    elif e_mean > 0.12 and rate > 4.0:
-        base["tone_label"] = "energetic"
-    elif jitter > 0.03 or shimmer > 0.05:
-        base["tone_label"] = "stressed"
+        return "monotone"
+    elif e_mean > energy_thresh and rate > 4.0:
+        return "energetic"
+    elif jitter > jitter_thresh and shimmer > shimmer_thresh:
+        # Require both to be elevated — either alone is normal variation.
+        return "stressed"
     else:
-        base["tone_label"] = "calm"
-
-    return base
+        return "calm"
 
 
 # Threshold (seconds) above which an inter-word gap counts as a "long pause"

@@ -107,6 +107,33 @@ class SpeakerStore:
             return best_id, best_name, best_score, "recognized"
         return best_id, best_name, best_score, "unknown"
 
+    def update_prosody_baseline(self, speaker_id: str, features: dict) -> None:
+        """Incremental mean update of prosody baseline for a known speaker.
+
+        Tracks jitter, shimmer, energy_mean, and f0_std. Once count >= 10
+        the baseline is considered calibrated and label_prosody_tone will
+        use relative thresholds instead of universal ones.
+        """
+        if speaker_id not in self._profiles:
+            return
+        data = self._profiles[speaker_id]
+        bl = data.get("prosody_baseline") or {
+            "jitter": 0.0, "shimmer": 0.0, "energy_mean": 0.0, "f0_std": 0.0, "count": 0,
+        }
+        n = bl["count"]
+        for key in ("jitter", "shimmer", "energy_mean", "f0_std"):
+            val = features.get(key, 0.0)
+            if val > 0:  # skip zero-padded frames (no signal)
+                bl[key] = (bl[key] * n + val) / (n + 1)
+        bl["count"] = n + 1
+        data["prosody_baseline"] = bl
+        self._save(data)
+
+    def get_prosody_baseline(self, speaker_id: str) -> dict | None:
+        """Return the prosody baseline dict for a speaker, or None if not found."""
+        data = self._profiles.get(speaker_id)
+        return data.get("prosody_baseline") if data else None
+
     def find_by_name(self, name: str) -> str | None:
         """Return speaker_id for the first profile whose name matches (case-insensitive)."""
         name_lower = name.lower().strip()
