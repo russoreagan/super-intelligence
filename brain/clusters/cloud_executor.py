@@ -60,6 +60,7 @@ class CloudExecutor:
         self._schema = schema_store
         self._claude_bin = self._find_claude_binary()
         self._connectors = self._discover_connectors()
+        self._trusted_dirs = self._discover_trusted_dirs()
         self._pending: dict | None = None  # write action awaiting confirmation
 
         if self._claude_bin:
@@ -69,6 +70,9 @@ class CloudExecutor:
                             ", ".join(self._connectors.values()))
             else:
                 logger.info("[CloudExecutor] No MCP extensions detected — Claude will use its base capabilities")
+            if self._trusted_dirs:
+                logger.info("[CloudExecutor] Trusted project dirs: %s",
+                            ", ".join(self._trusted_dirs))
         else:
             logger.warning(
                 "[CloudExecutor] Could not find Claude CLI binary. "
@@ -107,11 +111,32 @@ class CloudExecutor:
                 continue
         return enabled
 
+    def _discover_trusted_dirs(self) -> list[str]:
+        """Read project directories the user has granted Claude access to.
+
+        Reads localAgentModeTrustedFolders from the Claude Desktop config —
+        that's where the user configures which of their projects Claude Code
+        can read and write.
+        """
+        config_path = Path(os.path.expanduser(
+            "~/Library/Application Support/Claude/claude_desktop_config.json"
+        ))
+        try:
+            data = json.loads(config_path.read_text())
+            dirs = data.get("preferences", {}).get("localAgentModeTrustedFolders", [])
+            return [str(Path(d).resolve()) for d in dirs if d]
+        except Exception:
+            return []
+
     def connectors_summary(self) -> str:
-        """Human-readable list of active connectors for the planner prompt."""
-        if not self._connectors:
-            return "no MCP extensions enabled"
-        return ", ".join(sorted(self._connectors.values()))
+        """Human-readable list of active connectors and accessible project dirs."""
+        parts = []
+        if self._connectors:
+            parts.append(", ".join(sorted(self._connectors.values())))
+        if self._trusted_dirs:
+            names = [Path(d).name for d in self._trusted_dirs]
+            parts.append("projects: " + ", ".join(names))
+        return "; ".join(parts) if parts else "no MCP extensions enabled"
 
     # ── Pending confirmation state ─────────────────────────────────────────────
 
@@ -163,11 +188,18 @@ class CloudExecutor:
         prompt = self._build_prompt(task, context_facts)
         start = time.time()
 
+        # Build --add-dir flags for every project directory the user has
+        # granted Claude access to in Claude Desktop settings.
+        add_dir_args: list[str] = []
+        for d in self._trusted_dirs:
+            add_dir_args.extend(["--add-dir", d])
+
         try:
             proc = await asyncio.create_subprocess_exec(
                 self._claude_bin,
                 "--print",          # non-interactive, single-turn
                 "--output-format", "text",
+                *add_dir_args,
                 prompt,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,

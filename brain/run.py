@@ -206,6 +206,12 @@ async def session(args) -> None:
 
         cloud = CloudExecutor(bus, schema_store=hippocampus._schema)
 
+        # If no explicit paths set, inherit whatever the user granted Claude Desktop
+        if not _motor_paths and cloud._trusted_dirs:
+            _motor_paths = cloud._trusted_dirs[:]
+            logger.info("Motor cortex: inheriting trusted dirs from Claude Desktop: %s",
+                        _motor_paths)
+
         motor = MotorCortexCluster(bus, router,
                                    allowed_paths=_motor_paths,
                                    allowed_commands=_motor_cmds,
@@ -214,8 +220,8 @@ async def session(args) -> None:
             logger.info("Motor cortex online. Allowed paths: %s", _motor_paths)
         else:
             logger.warning(
-                "Motor cortex enabled but BRAIN_MOTOR_PATHS is not set — "
-                "filesystem operations will be blocked until paths are configured."
+                "Motor cortex enabled but no project paths are accessible — "
+                "add paths via BRAIN_MOTOR_PATHS or Claude Desktop trusted folders."
             )
 
         # Surface capabilities into drafter prompts so the entity can answer
@@ -936,6 +942,18 @@ async def session(args) -> None:
             try:
                 user_input = await asyncio.wait_for(ui_message_queue.get(), timeout=1.0)
             except asyncio.TimeoutError:
+                # Between turns: speak any proactive thought the DMN queued,
+                # but only when the brain isn't already talking and the user
+                # hasn't queued something (ui_message_queue would be non-empty).
+                if (dmn is not None
+                        and not pns.is_speaking
+                        and ui_message_queue.empty()):
+                    spoken = dmn.take_proactive()
+                    if spoken:
+                        logger.info("[Proactive] Speaking: %r", spoken[:80])
+                        if emitter:
+                            await emitter.emit_proactive_speech(spoken)
+                        await pns.emit(spoken, {"emotion": "curious"})
                 continue
             except asyncio.CancelledError:
                 break

@@ -85,6 +85,7 @@ def _make_cloud_executor(tmp_path=None):
     exe._schema = None
     exe._claude_bin = None        # no real binary
     exe._connectors = {}
+    exe._trusted_dirs = []
     exe._pending = None
     if tmp_path:
         exe._log_path = tmp_path / "tool_log.md"
@@ -452,6 +453,7 @@ class TestMotorCloudDispatch:
         cloud._schema = None
         cloud._claude_bin = "/fake/claude"  # pretend available
         cloud._connectors = {"ext1": "Gmail"}
+        cloud._trusted_dirs = []
         cloud._pending = None
         cloud._calls = []
 
@@ -603,6 +605,7 @@ class TestCloudConnectorDiscovery:
              patch("pathlib.Path.glob", return_value=list(settings_dir.glob("*.json"))):
             # Call directly with real path
             exe._connectors = {}
+            exe._trusted_dirs = []
             for json_file in settings_dir.glob("*.json"):
                 import json as _json
                 ext_id = json_file.stem
@@ -627,6 +630,7 @@ class TestCloudConnectorDiscovery:
         from brain.clusters.cloud_executor import CloudExecutor
         exe = _make_cloud_executor()
         exe._connectors = {}
+        exe._trusted_dirs = []
         assert exe.connectors_summary() == "no MCP extensions enabled"
 
 
@@ -781,6 +785,7 @@ class TestCloudSubprocess:
         exe._schema = None
         exe._claude_bin = "/fake/claude"
         exe._connectors = {}
+        exe._trusted_dirs = []
         exe._pending = None
 
         mock_proc = MagicMock()
@@ -804,6 +809,7 @@ class TestCloudSubprocess:
         exe._schema = None
         exe._claude_bin = "/fake/claude"
         exe._connectors = {}
+        exe._trusted_dirs = []
         exe._pending = None
 
         mock_proc = MagicMock()
@@ -833,6 +839,7 @@ class TestCloudSubprocess:
         exe._schema = None
         exe._claude_bin = "/fake/claude"
         exe._connectors = {}
+        exe._trusted_dirs = []
         exe._pending = {"task": "send the email", "context_facts": ["to Bob"]}
 
         mock_proc = MagicMock()
