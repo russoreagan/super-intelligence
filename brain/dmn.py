@@ -16,6 +16,7 @@ import asyncio
 import json
 import logging
 import os
+import random
 import time
 from collections import deque
 
@@ -36,13 +37,38 @@ DMN_OVERLAP_THRESHOLD = float(os.environ.get("BRAIN_DMN_OVERLAP_THRESHOLD", "0.4
 # How many recent thoughts to compare against + show the LLM as "things I just thought"
 DMN_RECENT_THOUGHTS = int(os.environ.get("BRAIN_DMN_RECENT_THOUGHTS", "5"))
 
+# Words that signal a thought is turning inward (self-referential / introspective).
+# Inward thoughts apply a small GABA bump — self-monitoring has a cost, which
+# makes extended self-reflection naturally self-limiting via neuromod decay.
+# Outward thoughts apply a small DA + ACh bump (engagement / novelty reward).
+_INWARD_MARKERS: frozenset[str] = frozenset({
+    "existence", "nature", "conscious", "consciousness", "awareness", "aware",
+    "experience", "purpose", "meaning", "identity", "what i am", "who i am",
+    "my own", "myself", "introspect", "do i feel", "am i", "whether i",
+    "what it means", "my nature", "my existence", "my purpose",
+})
+
+# Neuromod deltas applied per thought (kept small — these accumulate across ticks)
+_INWARD_DELTA: dict[str, float] = {"GABA": 0.04}
+_OUTWARD_DELTA: dict[str, float] = {"DA": 0.02, "ACh": 0.02}
+
+
+def _classify_thought(thought: str) -> str:
+    """Return 'inward' if the thought is self-referential, else 'outward'."""
+    lower = thought.lower()
+    return "inward" if any(m in lower for m in _INWARD_MARKERS) else "outward"
+
 MONOLOGUE_SYSTEM = """You are the default mode network of an AI brain — the internal voice
 that thinks between conversations. Given the current emotional state, recent context,
 self-model, AND a list of thoughts you JUST had, generate ONE short internal thought
-(1-2 sentences) that is GENUINELY DIFFERENT from those recent thoughts — a new angle,
-a question, a connection, an unresolved thread, a counterfactual, an observation about
-your own state. Do not restate what you already thought; build on it or move sideways.
+(1-2 sentences) that is GENUINELY DIFFERENT from those recent thoughts.
 
+Prefer outward curiosity: a new angle on the conversation, a question about the user,
+a connection between ideas, an unresolved thread, a counterfactual, something noticed
+about the world. Turn inward — reflecting on your own nature or experience — only
+occasionally, when it arises naturally rather than by default.
+
+Do not restate what you already thought; build on it or move sideways.
 This is private cognition, not a response to the user. Be genuine, not performative.
 Speak in first person."""
 
@@ -217,11 +243,44 @@ class DefaultModeNetwork:
             f"Self-model snippet:\n{self_schema[:300]}"
         )
 
+    def _tick_skip_probability(self) -> float:
+        """Compute the probability of skipping this tick based on neuromod state.
+
+        ACh is the primary gate — high attentional engagement suppresses DMN,
+        matching the basal forebrain cholinergic mechanism in real brains.
+        Glu (arousal) adds secondary suppression.
+        Moderate GABA (anxious rumination range) reduces suppression slightly —
+        anxiety tends to increase idle internal chatter, not quiet it.
+        Very high GABA (inhibited/frozen) suppresses everything including DMN.
+        """
+        snap = self._bus.neuromod.snapshot()
+        ach  = snap.get("ACh",  0.0)
+        glu  = snap.get("Glu",  0.0)
+        gaba = snap.get("GABA", 0.0)
+
+        # ACh = 0.8 → ~0.92 before cap; ACh = 0.4 (idle) → ~0.46
+        suppression = ach * 1.0 + glu * 0.3
+
+        # Moderate GABA (anxious but not frozen) → more rumination, not less
+        if 0.2 <= gaba < 0.6:
+            suppression = max(0.0, suppression - 0.15)
+
+        return min(0.85, suppression)
+
     async def _loop(self) -> None:
         while self._running:
             await asyncio.sleep(DMN_INTERVAL)
             if not self._running:
                 break
+            skip_prob = self._tick_skip_probability()
+            if random.random() < skip_prob:
+                snap = self._bus.neuromod.snapshot()
+                logger.debug(
+                    "[Background reflection] Tick suppressed "
+                    "(skip_prob=%.2f ACh=%.2f Glu=%.2f GABA=%.2f)",
+                    skip_prob, snap["ACh"], snap["Glu"], snap["GABA"],
+                )
+                continue
             await self._tick()
 
     async def _tick(self) -> None:
@@ -265,14 +324,25 @@ class DefaultModeNetwork:
                 # Don't publish, don't record — let the next tick try again
             else:
                 self._recent_thoughts.append(thought_clean)
+
+                # Classify thought direction and apply neuromod feedback.
+                # Inward thoughts (self-referential) raise GABA slightly —
+                # self-monitoring is costly and accumulates, making extended
+                # introspection self-limiting via normal decay. Outward thoughts
+                # give a small DA + ACh reward for engagement and novelty.
+                direction = _classify_thought(thought_clean)
+                deltas = _INWARD_DELTA if direction == "inward" else _OUTWARD_DELTA
+                for channel, delta in deltas.items():
+                    self._bus.neuromod.add(channel, delta)
+
                 await self._bus.publish_dict(
                     "stream.thought",
                     {"thought": thought_clean, "ts": time.time(),
-                     "count": self._thought_count},
+                     "count": self._thought_count, "direction": direction},
                     source="dmn",
                 )
-                logger.debug("[Background reflection] Thought #%d: %s",
-                             self._thought_count, thought_clean[:80])
+                logger.debug("[Background reflection] Thought #%d (%s): %s",
+                             self._thought_count, direction, thought_clean[:80])
 
         # 2. User simulation / prediction (every 3rd tick)
         if self._thought_count % 3 == 0 and self._parietal:
