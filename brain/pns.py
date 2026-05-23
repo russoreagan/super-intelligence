@@ -19,16 +19,12 @@ VOICE_MODE = os.environ.get("BRAIN_VOICE_MODE", "false").lower() == "true"
 def _resolve_output_device():
     """Pick the audio output device for TTS.
 
-    Priority:
-      1. BRAIN_AUDIO_OUTPUT_DEVICE env var — accepts an integer index OR a
-         substring of the device name (case-insensitive). E.g. "Mac mini"
-         or "DELL" or "0".
-      2. Auto-avoidance: if the system default output is the same physical
-         device as the system default input (echo loop risk), pick the
-         first output device with "Speakers" in its name. Common case:
-         a USB audio interface with no monitors attached is the default
-         for both input and output — user hears nothing.
-      3. System default (None).
+    BRAIN_AUDIO_OUTPUT_DEVICE env var: integer index OR case-insensitive
+    substring of the device name (e.g. "Scarlett", "Mac mini", "DELL", "0").
+    If unset, returns None and sounddevice uses the system default — which
+    is correct for most setups (USB audio interface with headphones, etc.).
+    Run `python -c "import sounddevice as sd; print(sd.query_devices())"`
+    to list available devices.
     """
     try:
         import sounddevice as sd
@@ -58,24 +54,15 @@ def _resolve_output_device():
         logger.warning("[I/O] BRAIN_AUDIO_OUTPUT_DEVICE=%r not found — using system default", raw)
         return None
 
-    # Auto-avoidance: same device for input AND output is usually wrong
-    default_in, default_out = sd.default.device
-    if default_in == default_out and default_in is not None:
-        default_name = devices[default_out]["name"] if 0 <= default_out < len(devices) else "?"
-        # Hunt for "Speakers" or "Built-in" (laptop / Mac mini)
-        for i, d in enumerate(devices):
-            if d["max_output_channels"] > 0 and any(
-                kw in d["name"].lower() for kw in ("speaker", "built-in", "internal")
-            ):
-                logger.info("[I/O] Audio output: [%d] %s "
-                            "(auto-picked — system default [%d] %s is also the input device)",
-                            i, d["name"], default_out, default_name)
-                return i
-
-    # Fall back to system default
-    if isinstance(default_out, int) and 0 <= default_out < len(devices):
-        logger.info("[I/O] Audio output: [%d] %s (system default)",
-                    default_out, devices[default_out]["name"])
+    # Use system default — most user setups have it pointed at the right
+    # device (headphones, monitors, etc.). Log it so the user can see.
+    try:
+        default_out = sd.default.device[1] if isinstance(sd.default.device, (list, tuple)) else sd.default.device
+        if isinstance(default_out, int) and 0 <= default_out < len(devices):
+            logger.info("[I/O] Audio output: [%d] %s (system default)",
+                        default_out, devices[default_out]["name"])
+    except Exception:
+        pass
     return None
 
 
