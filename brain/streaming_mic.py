@@ -91,10 +91,11 @@ class StreamingMicSession:
         self._main_loop = asyncio.get_running_loop()
 
         # 1. Open Deepgram websocket
-        from deepgram import DeepgramClient
-        client = DeepgramClient(api_key=os.environ["DEEPGRAM_API_KEY"])
-        # Async context manager — keep it open for the session lifetime
-        self._socket_cm = client.listen.v1.connect(
+        # AsyncDeepgramClient.listen.v1._raw_client.connect is @asynccontextmanager.
+        # The sync DeepgramClient.listen.v1.connect is sync-only — wrong for asyncio.
+        from deepgram import AsyncDeepgramClient
+        client = AsyncDeepgramClient(api_key=os.environ["DEEPGRAM_API_KEY"])
+        self._socket_cm = client.listen.v1._raw_client.connect(
             model="nova-3",
             encoding="linear16",
             sample_rate=SAMPLE_RATE,
@@ -108,7 +109,8 @@ class StreamingMicSession:
             diarize=True,
         )
         self._socket = await self._socket_cm.__aenter__()
-        await self._socket.start_listening()
+        # _read_loop uses `async for message in self._socket` directly, so
+        # start_listening() (event-emitter style) is not needed.
         logger.info("[StreamingMic] Deepgram live session open (nova-3, VAD on)")
 
         # 2. Start mic input stream (sounddevice callback runs in PortAudio thread)
