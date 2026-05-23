@@ -14,8 +14,11 @@ build/
 # LanceDB (binary vector store — large, session-specific)
 second_brain/episodes/
 
-# Langfuse / observability local data
-observability/
+# Langfuse / observability local data (top-level only — brain/observability/ is source code)
+/observability/
+
+# Per-session wiring snapshots are large + redundant with the current wiring.json
+second_brain/wiring_history/
 
 # Claude Code local config
 .claude/

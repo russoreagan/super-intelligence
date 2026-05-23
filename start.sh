@@ -1,6 +1,16 @@
 #!/usr/bin/env bash
-# start.sh — one-shot launcher for the brain + UI
-# Usage: ./start.sh
+# start.sh — one-shot launcher for the brain (full stack)
+#
+# Default brings up everything: UI + voice (Deepgram/ElevenLabs) + auditory
+# cortex (speaker enrollment, prosody) + DMN (idle thinking) + metacognition +
+# motor cortex (tool use). Disable any of these with env-var overrides — see
+# the CONFIG block below.
+#
+# Usage:
+#   ./start.sh                   # full stack
+#   FEATURES=minimal ./start.sh  # text-only UI, no voice or background loops
+#   BRAIN_WIRING_FROZEN=true ./start.sh   # disable Hebbian weighted routing
+#
 # Ctrl+C shuts everything down cleanly.
 
 set -euo pipefail
@@ -12,11 +22,52 @@ ok()      { echo -e "${GREEN}[brain]${NC} $*"; }
 warn()    { echo -e "${YELLOW}[brain]${NC} $*"; }
 err()     { echo -e "${RED}[brain]${NC} $*" >&2; }
 
-# ── config ────────────────────────────────────────────────────────────────────
-BRAIN_PORT=8765
-OLLAMA_PORT=11434
-OLLAMA_MODELS=("qwen2.5:7b" "nomic-embed-text")
+# ── CONFIG ────────────────────────────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BRAIN_PORT="${BRAIN_PORT:-8765}"
+OLLAMA_PORT="${OLLAMA_PORT:-11434}"
+OLLAMA_MODELS=("qwen2.5:7b" "nomic-embed-text")
+
+# FEATURES: which optional subsystems to launch.
+#   full     — UI + voice + ears + DMN + metacognition + motor (default)
+#   standard — UI + DMN + metacognition + motor (no voice)
+#   minimal  — UI only (text in, text out)
+#   custom   — honour individual BRAIN_* flags as-is (no flag injection)
+FEATURES="${FEATURES:-full}"
+
+# Optional motor cortex filesystem allowlist (colon-separated absolute paths).
+# Defaults to the project directory so the entity can read/write its own code
+# and second_brain. Remove or override to lock motor down.
+BRAIN_MOTOR_PATHS="${BRAIN_MOTOR_PATHS:-$SCRIPT_DIR}"
+
+# Inject feature flags based on FEATURES preset (unless caller chose 'custom')
+BRAIN_ARGS=()
+case "$FEATURES" in
+    full)
+        BRAIN_ARGS=(--ui --voice --ears --dmn --metacognition --motor)
+        ;;
+    standard)
+        BRAIN_ARGS=(--ui --dmn --metacognition --motor)
+        ;;
+    minimal)
+        BRAIN_ARGS=(--ui)
+        ;;
+    custom)
+        # Caller passes args via BRAIN_EXTRA_ARGS
+        if [[ -n "${BRAIN_EXTRA_ARGS:-}" ]]; then
+            # shellcheck disable=SC2206
+            BRAIN_ARGS=(${BRAIN_EXTRA_ARGS})
+        else
+            BRAIN_ARGS=(--ui)
+        fi
+        ;;
+    *)
+        err "Unknown FEATURES preset: '$FEATURES'. Use full | standard | minimal | custom."
+        exit 1
+        ;;
+esac
+
+export BRAIN_MOTOR_PATHS
 
 # Track background PIDs for clean shutdown
 OLLAMA_STARTED=false
@@ -67,7 +118,6 @@ fi
 # ── 3. Pull any missing models ────────────────────────────────────────────────
 INSTALLED=$(ollama list 2>/dev/null || true)
 for model in "${OLLAMA_MODELS[@]}"; do
-    # ollama list shows "name:tag" — match loosely on the base name
     base="${model%%:*}"
     if echo "$INSTALLED" | grep -q "^${base}"; then
         ok "Model ${model} is already available."
@@ -84,15 +134,26 @@ if ! command -v uv &>/dev/null; then
     exit 1
 fi
 
-# ── 5. Start the brain with UI ────────────────────────────────────────────────
-info "Starting brain with UI on port ${BRAIN_PORT}..."
+# ── 5. Sanity-check API keys for the features we're starting ─────────────────
+if [[ " ${BRAIN_ARGS[*]} " =~ " --voice " ]]; then
+    if [[ -z "${DEEPGRAM_API_KEY:-}" ]]; then
+        warn "DEEPGRAM_API_KEY is not set — voice input (STT) will be disabled at runtime."
+    fi
+    if [[ -z "${ELEVENLABS_API_KEY:-}" ]]; then
+        warn "ELEVENLABS_API_KEY is not set — voice output (TTS) will be disabled at runtime."
+    fi
+fi
+
+# ── 6. Start the brain ────────────────────────────────────────────────────────
+info "Starting brain with: ${BRAIN_ARGS[*]}"
+info "Motor allowlist: ${BRAIN_MOTOR_PATHS}"
 cd "$SCRIPT_DIR"
-uv run python -m brain.run --ui &
+uv run python -m brain.run "${BRAIN_ARGS[@]}" &
 BRAIN_PID=$!
 
-# ── 6. Wait for the UI server to be ready ────────────────────────────────────
-info "Waiting for UI server to be ready..."
-for i in $(seq 1 30); do
+# ── 7. Wait for the UI server to be ready ────────────────────────────────────
+info "Waiting for UI server on port ${BRAIN_PORT}..."
+for i in $(seq 1 45); do
     if curl -sf "http://localhost:${BRAIN_PORT}/" &>/dev/null || \
        nc -z localhost "${BRAIN_PORT}" 2>/dev/null; then
         ok "UI server is ready."
@@ -102,20 +163,20 @@ for i in $(seq 1 30); do
         err "Brain process exited unexpectedly. Check the output above for errors."
         exit 1
     fi
-    if [[ $i -eq 30 ]]; then
+    if [[ $i -eq 45 ]]; then
         warn "UI server didn't respond in time — opening browser anyway."
         break
     fi
     sleep 1
 done
 
-# ── 7. Open the browser ───────────────────────────────────────────────────────
+# ── 8. Open the browser ───────────────────────────────────────────────────────
 info "Opening http://localhost:${BRAIN_PORT} in your browser..."
 open "http://localhost:${BRAIN_PORT}" 2>/dev/null || \
     xdg-open "http://localhost:${BRAIN_PORT}" 2>/dev/null || \
     warn "Could not open browser automatically. Visit http://localhost:${BRAIN_PORT} manually."
 
-ok "Brain is running. Press Ctrl+C to stop everything."
+ok "Brain is running (FEATURES=$FEATURES). Press Ctrl+C to stop everything."
 
-# ── 8. Wait for brain process (keeps logs streaming to terminal) ──────────────
+# ── 9. Wait for brain process (keeps logs streaming to terminal) ──────────────
 wait "$BRAIN_PID"
