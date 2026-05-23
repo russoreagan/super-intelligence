@@ -58,8 +58,9 @@ def classify_utterance(
 
     Returns (decision, info) where decision is one of:
       - "drop_empty" — empty transcript (background noise)
-      - "dispatch"   — brain not speaking, normal turn
-      - "barge_in"   — brain speaking → interrupt + dispatch
+      - "dispatch"   — brain not speaking, send immediately
+      - "barge_in"   — brain speaking + explicit interrupt keyword
+      - "queue"      — brain speaking, hold and flush when TTS ends
     Everything the user says is sent; only empty transcripts are dropped.
     """
     text = (text or "").strip()
@@ -69,6 +70,21 @@ def classify_utterance(
     if not brain_is_speaking:
         return "dispatch", {}
 
-    return "barge_in", {}
+    if is_barge_in(text, barge_words):
+        return "barge_in", {}
+
+    return "queue", {}
+
+
+def pick_dispatch_from_queue(queued: list[str]) -> tuple[str | None, int]:
+    """Join all queued utterances into one block for dispatch.
+
+    Deepgram's endpointing can split a single thought into multiple
+    utterances; joining ensures the brain hears the whole thing at once.
+    """
+    if not queued:
+        return None, 0
+    joined = " ".join(q.strip() for q in queued if q.strip())
+    return joined or None, len(queued)
 
 

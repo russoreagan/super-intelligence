@@ -328,11 +328,14 @@ async def session(args) -> None:
     #   - Brain IS speaking → interrupt TTS and dispatch.
     # Everything the user says is sent; only empty transcripts (background noise)
     # are dropped.
-    from brain.voice_bridge import parse_barge_words, classify_utterance
+    from brain.voice_bridge import parse_barge_words, classify_utterance, pick_dispatch_from_queue
     barge_in_words = parse_barge_words(os.environ.get("BRAIN_BARGE_IN_WORDS"))
 
     voice_bridge_task = None
     if streaming_mic is not None and ui_enabled:
+        pending_during_tts: list[str] = []
+        pending_lock = asyncio.Lock()
+
         async def _dispatch_text(text: str) -> None:
             logger.info("[I/O] voice → turn: %r", text[:80])
             if emitter:
@@ -343,6 +346,24 @@ async def session(args) -> None:
                 except Exception:
                     pass
             await ui_message_queue.put(text)
+
+        async def _drain_pending_when_tts_ends() -> None:
+            """When TTS finishes, flush all queued utterances as one joined block."""
+            was_speaking = False
+            while True:
+                try:
+                    await asyncio.sleep(0.25)
+                except asyncio.CancelledError:
+                    return
+                now_speaking = pns.is_speaking
+                if was_speaking and not now_speaking:
+                    async with pending_lock:
+                        text, n = pick_dispatch_from_queue(pending_during_tts)
+                        pending_during_tts.clear()
+                    if text:
+                        logger.info("[I/O] voice → flushing %d queued utterance(s): %r", n, text[:80])
+                        await _dispatch_text(text)
+                was_speaking = now_speaking
 
         async def _voice_bridge() -> None:
             while True:
@@ -366,9 +387,17 @@ async def session(args) -> None:
                     continue
                 if decision == "barge_in":
                     pns.interrupt()
+                    await _dispatch_text(text)
+                    continue
+                if decision == "queue":
+                    async with pending_lock:
+                        pending_during_tts.append(text)
+                    logger.info("[I/O] voice → queued during TTS: %r", text[:60])
+                    continue
                 await _dispatch_text(text)
 
         voice_bridge_task = asyncio.create_task(_voice_bridge())
+        asyncio.create_task(_drain_pending_when_tts_ends())
 
     # Brainstem heartbeat — also pulses the UI every 60 s
     async def _heartbeat_with_ui() -> None:

@@ -13,6 +13,7 @@ from brain.voice_bridge import (
     classify_utterance,
     is_barge_in,
     parse_barge_words,
+    pick_dispatch_from_queue,
 )
 
 
@@ -126,19 +127,47 @@ def test_classify_barge_in_during_tts():
     assert d == "barge_in"
 
 
-def test_classify_any_speech_during_tts_is_barge_in():
-    # Everything non-empty the user says while brain is speaking interrupts
+def test_classify_genuine_speech_during_tts_is_queued():
     d, _ = classify_utterance(
         "this list of voices does not look correct",
         brain_is_speaking=True, barge_words=WORDS,
     )
-    assert d == "barge_in"
+    assert d == "queue"
 
 
-def test_classify_tts_echo_during_tts_is_still_barge_in():
-    # Even if transcript overlaps heavily with TTS, we send it — user's words, not ours to drop
+def test_classify_any_non_empty_speech_during_tts_queued_not_dropped():
     d, _ = classify_utterance(
         "audio bleed will kill a conversation every single",
         brain_is_speaking=True, barge_words=WORDS,
     )
-    assert d == "barge_in"
+    assert d == "queue"
+
+
+# ── pick_dispatch_from_queue ─────────────────────────────────────────────────
+
+def test_pick_dispatch_empty_queue():
+    text, n = pick_dispatch_from_queue([])
+    assert text is None
+    assert n == 0
+
+
+def test_pick_dispatch_single():
+    text, n = pick_dispatch_from_queue(["only one"])
+    assert text == "only one"
+    assert n == 1
+
+
+def test_pick_dispatch_joins_all_as_one_block():
+    text, n = pick_dispatch_from_queue([
+        "i was thinking",
+        "we should probably",
+        "go ahead and try the calendar",
+    ])
+    assert text == "i was thinking we should probably go ahead and try the calendar"
+    assert n == 3
+
+
+def test_pick_dispatch_skips_empty_strings():
+    text, n = pick_dispatch_from_queue(["hello", "  ", "world", ""])
+    assert text == "hello world"
+    assert n == 4
