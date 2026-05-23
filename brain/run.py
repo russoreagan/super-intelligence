@@ -289,31 +289,10 @@ async def session(args) -> None:
     #     QUEUE it for dispatch once TTS finishes. This is the fix for
     #     "brain ignored me when I asked a follow-up question": queueing
     #     beats dropping for real human speech.
-    _barge_words_raw = os.environ.get(
-        "BRAIN_BARGE_IN_WORDS",
-        "stop,wait,shut up,hold on,pause,enough,never mind,hey brain,"
-        "brain stop,cut it out,knock it off,quiet,be quiet,hush,shush,"
-        "okay enough,that's enough,thats enough",
+    from brain.voice_bridge import (
+        parse_barge_words, classify_utterance, pick_dispatch_from_queue,
     )
-    barge_in_words = [w.strip().lower() for w in _barge_words_raw.split(",") if w.strip()]
-
-    def _is_barge_in(text: str) -> bool:
-        t = text.lower().strip()
-        return any(w in t for w in barge_in_words)
-
-    def _bleed_overlap(transcript: str, speaking_text: str) -> float:
-        """Word-set overlap (Jaccard) between transcript and current TTS text.
-        > 0.4 means the transcript is mostly echoing what the brain is saying.
-        Used to distinguish TTS bleed-through from a genuine user utterance."""
-        if not transcript or not speaking_text:
-            return 0.0
-        import re as _re
-        tokenize = lambda s: set(w for w in _re.findall(r"[a-z']+", s.lower()) if len(w) > 1)
-        a = tokenize(transcript)
-        b = tokenize(speaking_text)
-        if not a or not b:
-            return 0.0
-        return len(a & b) / max(len(a | b), 1)
+    barge_in_words = parse_barge_words(os.environ.get("BRAIN_BARGE_IN_WORDS"))
 
     voice_bridge_task = None
     if streaming_mic is not None and ui_enabled:
@@ -334,7 +313,8 @@ async def session(args) -> None:
 
         async def _drain_pending_when_tts_ends() -> None:
             """Poll pns.is_speaking; when it transitions false, dispatch the
-            most recent queued utterance (older ones are usually stale)."""
+            chosen queued utterance (most recent — older ones tend to be
+            reactions to the in-progress TTS rather than what the user wants now)."""
             was_speaking = False
             while True:
                 try:
@@ -343,19 +323,14 @@ async def session(args) -> None:
                     return
                 now_speaking = pns.is_speaking
                 if was_speaking and not now_speaking:
-                    # TTS just ended — flush queue
                     async with pending_lock:
-                        if pending_during_tts:
-                            # Keep only the most recent — older ones are usually
-                            # reactions to the in-progress TTS, not what the user
-                            # actually wants now.
-                            text = pending_during_tts[-1]
-                            n_dropped = len(pending_during_tts) - 1
-                            pending_during_tts.clear()
-                            logger.info("[I/O] voice → flushing queued utterance after TTS"
-                                        " (kept latest, dropped %d older): %r",
-                                        n_dropped, text[:80])
-                            await _dispatch_text(text)
+                        text, n_dropped = pick_dispatch_from_queue(pending_during_tts)
+                        pending_during_tts.clear()
+                    if text:
+                        logger.info("[I/O] voice → flushing queued utterance after TTS"
+                                    " (kept latest, dropped %d older): %r",
+                                    n_dropped, text[:80])
+                        await _dispatch_text(text)
                 was_speaking = now_speaking
 
         async def _voice_bridge() -> None:
@@ -369,28 +344,33 @@ async def session(args) -> None:
                     await asyncio.sleep(0.5)
                     continue
                 text = (utt.get("transcript") or "").strip()
-                if not text:
+
+                decision, info = classify_utterance(
+                    text,
+                    brain_is_speaking=pns.is_speaking,
+                    speaking_text=pns._speaking_text,  # noqa: SLF001
+                    barge_words=barge_in_words,
+                )
+
+                if decision == "drop_empty":
                     continue
-
-                if pns.is_speaking:
-                    if _is_barge_in(text):
-                        logger.info("[I/O] voice → barge-in keyword detected: %r", text[:80])
-                        pns.interrupt()
-                        await _dispatch_text(text)
-                        continue
-
-                    overlap = _bleed_overlap(text, pns._speaking_text)  # noqa: SLF001
-                    if overlap > 0.4:
-                        logger.debug("[I/O] voice → dropped as TTS bleed (overlap %.2f): %r",
-                                     overlap, text[:80])
-                        continue
-
-                    # Real user utterance during TTS — queue it
+                if decision == "dispatch":
+                    await _dispatch_text(text)
+                    continue
+                if decision == "barge_in":
+                    logger.info("[I/O] voice → barge-in keyword detected: %r", text[:80])
+                    pns.interrupt()
+                    await _dispatch_text(text)
+                    continue
+                if decision == "drop_bleed":
+                    logger.debug("[I/O] voice → dropped as TTS bleed (overlap %.2f): %r",
+                                 info.get("overlap", 0.0), text[:80])
+                    continue
+                if decision == "queue":
                     async with pending_lock:
                         pending_during_tts.append(text)
                     logger.info("[I/O] voice → queued during TTS (overlap %.2f): %r",
-                                overlap, text[:80])
-                    # Echo to UI so user sees it was heard
+                                info.get("overlap", 0.0), text[:80])
                     if emitter:
                         try:
                             await emitter.emit_event({
@@ -398,9 +378,6 @@ async def session(args) -> None:
                             })
                         except Exception:
                             pass
-                    continue
-
-                await _dispatch_text(text)
 
         voice_bridge_task = asyncio.create_task(_voice_bridge())
         voice_drain_task = asyncio.create_task(_drain_pending_when_tts_ends())
