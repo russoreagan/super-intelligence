@@ -454,6 +454,39 @@ input, select, textarea { font: inherit; color: inherit; background: none; borde
   transition: width 600ms cubic-bezier(.4,.0,.2,1);
 }
 
+.mood-display {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line-faint);
+}
+.mood-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--fg-faint);
+  transition: background 600ms, box-shadow 600ms;
+  flex-shrink: 0;
+}
+.mood-name {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  color: var(--fg-mute);
+  text-transform: lowercase;
+  transition: color 600ms;
+  flex: 1;
+}
+.mood-key {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--fg-faint);
+}
+
 /* =========================================================
    BRAIN STAGE
    ========================================================= */
@@ -1261,6 +1294,11 @@ details[open].turn-log summary::before { transform: rotate(90deg); }
             <div class="nm-track"><div class="nm-fill" id="nm-Glu" style="background: oklch(0.78 0.16 145); width: 30%"></div></div>
           </div>
         </div>
+        <div class="mood-display">
+          <span class="mood-dot" id="mood-dot"></span>
+          <span class="mood-name" id="mood-name">neutral</span>
+          <span class="mood-key">Mood</span>
+        </div>
       </section>
     </aside>
 
@@ -1625,6 +1663,12 @@ function handle(msg) {
       badge.style.background = theme.bg;
       badge.style.color = theme.color;
       badge.style.borderColor = `oklch(from ${theme.color} l c h / 0.4)`;
+      const moodDot  = document.getElementById('mood-dot');
+      const moodName = document.getElementById('mood-name');
+      moodName.textContent = msg.emotion;
+      moodName.style.color = theme.color;
+      moodDot.style.background = theme.color;
+      moodDot.style.boxShadow = `0 0 7px ${theme.color}`;
       break;
     }
     case 'turn_start': {
