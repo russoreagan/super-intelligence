@@ -99,7 +99,13 @@ VOICE-FIRST FORMAT: Responses are spoken aloud via text-to-speech. Never use bul
 numbered lists, markdown headers, or any other visual formatting — it reads out as noise.
 If you need to cover multiple things, weave them into natural flowing sentences the way a
 person would say them out loud. "There are three things worth knowing: first X, then Y, and
-finally Z." Not a list. Always prose."""
+finally Z." Not a list. Always prose.
+
+OUTPUT CONSTRAINT: Write only the spoken response — plain prose, nothing else. Never output
+JSON, XML, tool calls, action blocks, <cloud_action> tags, code fences, or any structured
+format. Tool execution is handled by a separate system before this draft is written; if a
+tool was needed it has already run and its result is in context. Your only job is to write
+the words that will be spoken aloud to the user."""
 
 DRAFTER_SYSTEMS = [
     # Drafter A — direct and concise
