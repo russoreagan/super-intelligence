@@ -67,6 +67,13 @@ def _resolve_output_device():
 
 
 class PNS:
+    # Barge-in grace period: ignore interrupt requests for this many seconds
+    # after TTS starts. Without this the mic picks up bleed-through from the
+    # user's own headphones (or breath / room noise) within ~1s and Deepgram
+    # fires SpeechStarted, killing TTS before any words are audible.
+    # Override via BRAIN_BARGE_IN_GRACE_SECONDS.
+    BARGE_IN_GRACE_SECONDS = float(os.environ.get("BRAIN_BARGE_IN_GRACE_SECONDS", "2.0"))
+
     def __init__(self, bus: Bus) -> None:
         self._bus = bus
         self._deepgram_client = None
@@ -76,6 +83,7 @@ class PNS:
         # Trigger side (continuous mic VAD during playback) is a TODO — the
         # current mic_listen() is press-to-talk, not streaming.
         self._speaking: bool = False
+        self._speak_started_at: float = 0.0
         self._interrupt_event: asyncio.Event = asyncio.Event()
 
     async def receive_text(self, text: str, image_path: str | None = None) -> None:
@@ -292,10 +300,19 @@ class PNS:
         return self._speaking
 
     def interrupt(self) -> None:
-        """Signal in-progress TTS playback to stop ASAP. Safe to call any time."""
-        if self._speaking:
-            logger.info("[I/O] Interruption requested — cutting off TTS")
-            self._interrupt_event.set()
+        """Signal in-progress TTS playback to stop ASAP. Safe to call any time.
+        Ignores requests during the barge-in grace period (so TTS isn't killed
+        by mic bleed in the first second of playback)."""
+        if not self._speaking:
+            return
+        import time
+        elapsed = time.time() - self._speak_started_at
+        if elapsed < self.BARGE_IN_GRACE_SECONDS:
+            logger.debug("[I/O] Ignoring barge-in (%.2fs < %.2fs grace period)",
+                         elapsed, self.BARGE_IN_GRACE_SECONDS)
+            return
+        logger.info("[I/O] Interruption requested — cutting off TTS")
+        self._interrupt_event.set()
 
     async def _speak(self, text: str, affect: dict | None = None) -> None:
         """
@@ -347,6 +364,8 @@ class PNS:
             )
 
             self._interrupt_event.clear()
+            import time as _time
+            self._speak_started_at = _time.time()
             self._speaking = True
             try:
                 try:
