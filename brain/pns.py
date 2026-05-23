@@ -377,6 +377,7 @@ class PNS:
             self._speak_started_at = _time.time()
             self._speaking = True
             self._speaking_text = text
+            first_chunk_ts: float | None = None
             try:
                 try:
                     import sounddevice as sd
@@ -393,6 +394,13 @@ class PNS:
                                 logger.debug("[I/O] TTS interrupted mid-stream")
                                 break
                             if chunk:
+                                if first_chunk_ts is None:
+                                    first_chunk_ts = _time.time()
+                                    logger.info(
+                                        "[I/O] TTS first audio chunk in %.2fs (model=%s)",
+                                        first_chunk_ts - self._speak_started_at,
+                                        model_id,
+                                    )
                                 await asyncio.get_event_loop().run_in_executor(
                                     None, stream.write, chunk
                                 )

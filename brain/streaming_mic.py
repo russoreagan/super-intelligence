@@ -141,8 +141,13 @@ class StreamingMicSession:
         from deepgram import AsyncDeepgramClient
         client = AsyncDeepgramClient(api_key=os.environ["DEEPGRAM_API_KEY"])
 
-        endpointing_ms = int(os.environ.get("BRAIN_STT_ENDPOINTING_MS", "800"))
-        utterance_end_ms = int(os.environ.get("BRAIN_STT_UTTERANCE_END_MS", "1500"))
+        # Trade-off: high endpointing = catches whole sentences (no fragments)
+        # but adds latency before each utterance reaches the brain. Voice bridge
+        # joins queued utterances during TTS, so under-endpointing during TTS is
+        # recoverable. 500ms is a compromise between 300 (fragments) and 800
+        # (laggy turn-around). Tune per user via env.
+        endpointing_ms = int(os.environ.get("BRAIN_STT_ENDPOINTING_MS", "500"))
+        utterance_end_ms = int(os.environ.get("BRAIN_STT_UTTERANCE_END_MS", "1200"))
         language = os.environ.get("BRAIN_STT_LANGUAGE", "en").strip() or "en"
         keywords_raw = os.environ.get(
             "BRAIN_STT_KEYWORDS",

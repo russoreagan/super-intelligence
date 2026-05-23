@@ -196,14 +196,22 @@ def test_pick_dispatch_empty_queue():
 def test_pick_dispatch_single():
     text, n = pick_dispatch_from_queue(["only one"])
     assert text == "only one"
-    assert n == 0
+    assert n == 1
 
 
-def test_pick_dispatch_keeps_most_recent_drops_older():
+def test_pick_dispatch_joins_multiple_with_spaces():
+    # Deepgram's endpointing splits a sentence with natural pauses into
+    # multiple utterances; we want all of it as one turn, not just the last.
     text, n = pick_dispatch_from_queue([
-        "first reaction to tts",
-        "second reaction",
-        "what i actually want to ask",
+        "i was thinking",
+        "we should probably",
+        "go ahead and try the calendar",
     ])
-    assert text == "what i actually want to ask"
-    assert n == 2
+    assert text == "i was thinking we should probably go ahead and try the calendar"
+    assert n == 3
+
+
+def test_pick_dispatch_skips_empty_strings():
+    text, n = pick_dispatch_from_queue(["hello", "  ", "world", ""])
+    assert text == "hello world"
+    assert n == 4

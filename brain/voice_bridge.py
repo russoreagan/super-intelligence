@@ -93,12 +93,20 @@ def classify_utterance(
 
 
 def pick_dispatch_from_queue(queued: list[str]) -> tuple[str | None, int]:
-    """When TTS ends, choose which queued utterance to dispatch.
-    Returns (text_or_none, n_dropped). Strategy: most recent wins;
-    older queued utterances are dropped (usually they were reactions to
-    the in-progress TTS rather than what the user actually wants now).
+    """When TTS ends, decide what to dispatch from the queue.
+
+    Strategy: JOIN all queued utterances with spaces. Deepgram's endpointing
+    splits a single sentence with natural pauses into multiple utterances;
+    if the user said one long thing during TTS we want all of it as a single
+    turn, not just the last fragment. Returns (joined_text, count_joined).
+
+    For most cases this is what the user means. If they truly said multiple
+    separate thoughts during TTS, joining them is still a more recoverable
+    failure mode than silently dropping all but the last.
     """
     if not queued:
         return None, 0
-    chosen = queued[-1]
-    return chosen, len(queued) - 1
+    if len(queued) == 1:
+        return queued[0], 1
+    joined = " ".join(q.strip() for q in queued if q.strip())
+    return joined, len(queued)
