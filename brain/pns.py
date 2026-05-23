@@ -347,18 +347,26 @@ class PNS:
             except TypeError:
                 voice_settings = VoiceSettings(**vs_kwargs)
 
-            shaped_text = self._shape_for_v3(text, affect or {})
-            logger.debug(
-                "[I/O] TTS: model=eleven_v3 stability=%.2f style=%.2f speed=%.2f emotion=%s tag=%s",
+            model_id = os.environ.get("ELEVENLABS_MODEL_ID", "eleven_v3").strip() or "eleven_v3"
+            # Only shape the text for v3 (audio tags). Other models would
+            # literally read "[gently]" out loud.
+            if model_id == "eleven_v3":
+                shaped_text = self._shape_for_v3(text, affect or {})
+                tag_preview = shaped_text[: shaped_text.find("]") + 1] if shaped_text.startswith("[") else "—"
+            else:
+                shaped_text = text
+                tag_preview = "—"
+            logger.info(
+                "[I/O] TTS: voice=%s model=%s stability=%.2f style=%.2f speed=%.2f emotion=%s tag=%s",
+                voice_id, model_id,
                 params["stability"], params["style"], params["speed"],
-                (affect or {}).get("emotion"),
-                shaped_text[: shaped_text.find("]") + 1] if shaped_text.startswith("[") else "—",
+                (affect or {}).get("emotion"), tag_preview,
             )
 
             audio_iter = client.text_to_speech.convert(
                 text=shaped_text,
                 voice_id=voice_id,
-                model_id="eleven_v3",
+                model_id=model_id,
                 output_format="pcm_22050",   # raw int16 PCM — no decode overhead
                 voice_settings=voice_settings,
             )
