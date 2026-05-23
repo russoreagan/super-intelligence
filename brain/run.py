@@ -10,6 +10,7 @@ Usage:
     uv run python -m brain.run --ui --metacognition
     uv run python -m brain.run --voice           # Deepgram + ElevenLabs
     uv run python -m brain.run --voice --ears    # + auditory cortex
+    uv run python -m brain.run --motor           # + motor cortex (tool use)
 
 Environment feature flags:
     BRAIN_UI=true             enable browser UI
@@ -17,6 +18,9 @@ Environment feature flags:
     BRAIN_METACOGNITION=true  enable metacognition cell
     BRAIN_VOICE_MODE=true     enable voice I/O
     BRAIN_EARS=true           enable auditory cortex
+    BRAIN_MOTOR=true          enable motor cortex (tool execution)
+    BRAIN_MOTOR_PATHS         colon-separated allowed filesystem roots
+    BRAIN_MOTOR_COMMANDS      colon-separated allowed shell commands (overrides defaults)
 """
 from __future__ import annotations
 
@@ -142,9 +146,21 @@ async def session(args) -> None:
             if baseline_runner:
                 baseline_runner.set_intensive(intensive)
 
+        # Voice mode: determined by --voice flag or BRAIN_VOICE_MODE env.
+        # streaming_mic is assigned later (line ~224) but the closure captures
+        # the outer-scope variable so the callback always sees the live value.
+        _voice_flag = args.voice or os.environ.get("BRAIN_VOICE_MODE", "false").lower() == "true"
+
+        def _on_mic_toggle() -> bool:
+            if streaming_mic is not None:
+                return streaming_mic.toggle_mute()
+            return False
+
         ui_server = UIServer(emitter.get_queue(), on_user_message=_on_browser_message,
                              on_voice_change=pns.set_voice_id,
-                             on_eval_mode=_on_eval_mode)
+                             on_eval_mode=_on_eval_mode,
+                             on_mic_toggle=_on_mic_toggle,
+                             python_voice_mode=_voice_flag)
         asyncio.create_task(ui_server.start(port=8765))
         # Give the server a moment to bind
         await asyncio.sleep(0.3)
@@ -156,6 +172,25 @@ async def session(args) -> None:
     async def _emit_end(cluster: str, turn_id: str = "") -> None:
         if emitter:
             await emitter.emit(cluster, 0.0, "done", turn_id)
+
+    # ── Motor Cortex (tool use) ───────────────────────────────────────────────
+    motor = None
+    if args.motor or os.environ.get("BRAIN_MOTOR", "false").lower() == "true":
+        from brain.clusters.motor_cortex import MotorCortexCluster
+        _motor_paths_raw = os.environ.get("BRAIN_MOTOR_PATHS", "")
+        _motor_paths = [p.strip() for p in _motor_paths_raw.split(":") if p.strip()]
+        _motor_cmds_raw = os.environ.get("BRAIN_MOTOR_COMMANDS", "")
+        _motor_cmds = set(_motor_cmds_raw.split(":")) if _motor_cmds_raw else None
+        motor = MotorCortexCluster(bus, router,
+                                   allowed_paths=_motor_paths,
+                                   allowed_commands=_motor_cmds)
+        if _motor_paths:
+            logger.info("Motor cortex online. Allowed paths: %s", _motor_paths)
+        else:
+            logger.warning(
+                "Motor cortex enabled but BRAIN_MOTOR_PATHS is not set — "
+                "all filesystem operations will be blocked until paths are configured."
+            )
 
     # ── v0.2: Default Mode Network ────────────────────────────────────────────
     dmn = None
@@ -415,6 +450,22 @@ async def session(args) -> None:
                 f"Text in image: {vision_features.get('text_in_image', '')}\n"
                 f"Context: {vision_features.get('context_for_response', '')}"
             )
+
+        # ── Motor Cortex: tool execution (only when action required) ──────────
+        if motor and features.get("requires_action"):
+            await _emit("motor_cortex", 0.85, "executing tool", turn_id)
+            motor.reset_turn(turn_id)
+            try:
+                tool_result = await motor.execute(features, turn_id)
+                if tool_result:
+                    output = tool_result.get("output", "")
+                    tool_name = tool_result.get("tool", "tool")
+                    memory["tool_result"] = f"[{tool_name}]\n{output}"
+                    logger.info("[MotorCortex] %s → %s chars output (success=%s)",
+                                tool_name, len(output), tool_result.get("success"))
+            except Exception as _mc_err:
+                logger.error("Motor cortex failed this turn — tool result will be absent: %s", _mc_err)
+            await _emit_end("motor_cortex", turn_id)
 
         parietal_context = parietal.recent_turns_text()
 
@@ -747,6 +798,8 @@ def main() -> None:
                         help="v0.3: Enable metacognition cell")
     parser.add_argument("--ears", action="store_true",
                         help="v0.4: Enable Auditory Cortex (fingerprinting, speaker ID, prosody)")
+    parser.add_argument("--motor", action="store_true",
+                        help="v0.5: Enable Motor Cortex (tool use: file I/O, shell commands)")
     args = parser.parse_args()
 
     if args.voice:
@@ -759,6 +812,8 @@ def main() -> None:
         os.environ["BRAIN_UI"] = "true"
     if args.ears:
         os.environ["BRAIN_EARS"] = "true"
+    if args.motor:
+        os.environ["BRAIN_MOTOR"] = "true"
 
     asyncio.run(session(args))
 

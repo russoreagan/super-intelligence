@@ -82,6 +82,7 @@ class StreamingMicSession:
         self._reader_task: Optional[asyncio.Task] = None
         self._main_loop: Optional[asyncio.AbstractEventLoop] = None
         self._running = False
+        self._muted = False             # when True, mic audio is discarded
 
     # ── lifecycle ──────────────────────────────────────────────────────────
 
@@ -167,6 +168,29 @@ class StreamingMicSession:
             self._socket_cm = None
         logger.info("[StreamingMic] session closed")
 
+    @property
+    def is_muted(self) -> bool:
+        return self._muted
+
+    def mute(self) -> None:
+        """Discard mic audio until unmute(). Socket stays warm — no reconnect needed."""
+        if not self._muted:
+            self._muted = True
+            logger.info("[StreamingMic] Muted")
+
+    def unmute(self) -> None:
+        if self._muted:
+            self._muted = False
+            logger.info("[StreamingMic] Unmuted")
+
+    def toggle_mute(self) -> bool:
+        """Toggle mute state. Returns new is_muted value."""
+        if self._muted:
+            self.unmute()
+        else:
+            self.mute()
+        return self._muted
+
     async def next_utterance(self) -> dict:
         """Await the next completed utterance. Returns dict with transcript/audio/words."""
         return await self.utterances.get()
@@ -175,6 +199,8 @@ class StreamingMicSession:
 
     def _enqueue_chunk(self, chunk: bytes) -> None:
         # Called on the main asyncio loop via call_soon_threadsafe
+        if self._muted:
+            return
         try:
             self._pcm_in.put_nowait(chunk)
         except asyncio.QueueFull:

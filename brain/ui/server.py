@@ -40,11 +40,15 @@ class UIServer:
     def __init__(self, emitter_queue: asyncio.Queue,
                  on_user_message: Callable[[str], None] | None = None,
                  on_voice_change: Callable[[str], None] | None = None,
-                 on_eval_mode: Callable[[bool], None] | None = None) -> None:
+                 on_eval_mode: Callable[[bool], None] | None = None,
+                 on_mic_toggle: Callable[[], bool] | None = None,
+                 python_voice_mode: bool = False) -> None:
         self._queue = emitter_queue
         self._on_user_message = on_user_message
         self._on_voice_change = on_voice_change
         self._on_eval_mode = on_eval_mode
+        self._on_mic_toggle = on_mic_toggle      # () -> is_muted (bool)
+        self._python_voice_mode = python_voice_mode
         self._clients: set = set()
         self._last_neuromod: dict = {}
         self._app = None
@@ -106,6 +110,17 @@ class UIServer:
             await websocket.accept()
             self._clients.add(websocket)
             logger.info("UI: client connected (%d total)", len(self._clients))
+
+            # Tell the client whether Python voice mode is active so it
+            # switches the mic button from press-to-talk to a persistent toggle.
+            try:
+                await websocket.send_text(json.dumps({
+                    "type": "voice_mode",
+                    "active": self._python_voice_mode,
+                    "muted": False,
+                }))
+            except Exception:
+                pass
 
             # Send current neuromod state immediately on connect
             if self._last_neuromod:
@@ -241,6 +256,17 @@ class UIServer:
                         text = data.get("text", "").strip()
                         if text:
                             await self._on_user_message(text)
+                    elif t == "mic_toggle" and self._on_mic_toggle:
+                        is_muted = self._on_mic_toggle()
+                        # Echo new state back so the button updates
+                        try:
+                            await websocket.send_text(json.dumps({
+                                "type": "voice_mode",
+                                "active": self._python_voice_mode,
+                                "muted": is_muted,
+                            }))
+                        except Exception:
+                            pass
                     elif t == "set_voice" and self._on_voice_change:
                         vid = data.get("voice_id", "").strip()
                         if vid:

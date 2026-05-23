@@ -1717,6 +1717,7 @@ function handle(msg) {
     }
     case 'transcript':       handleTranscriptEvent(msg); break;
     case 'transcript_error': handleTranscriptError(msg); break;
+    case 'voice_mode':       handleVoiceMode(msg); break;
   }
 }
 
@@ -1967,6 +1968,27 @@ let finalTranscript = '';
 let autoSendTimer = null;
 const AUTO_SEND_DELAY_MS = 1500;
 
+// When Python-side voice mode is active, the mic button is a persistent
+// mute/unmute toggle that controls the server-side StreamingMicSession.
+let pythonVoiceMode = false;
+let pythonMicMuted = false;
+
+function handleVoiceMode(msg) {
+  pythonVoiceMode = !!msg.active;
+  pythonMicMuted = !!msg.muted;
+  if (pythonVoiceMode) {
+    if (pythonMicMuted) {
+      micBtn.classList.remove('listening');
+      micBtn.title = 'Mic muted — click to unmute';
+    } else {
+      micBtn.classList.add('listening');
+      micBtn.title = 'Mic active — click to mute';
+      transcriptText.textContent = 'Listening…';
+      transcriptBar.classList.add('visible');
+    }
+  }
+}
+
 function _micReset() {
   micActive = false;
   micBtn.classList.remove('listening');
@@ -2084,6 +2106,11 @@ function handleTranscriptError(msg) {
 }
 
 micBtn.addEventListener('click', () => {
+  if (pythonVoiceMode) {
+    if (ws && ws.readyState === WebSocket.OPEN)
+      ws.send(JSON.stringify({ type: 'mic_toggle' }));
+    return;
+  }
   if (micActive) stopListening(true);
   else startListening();
 });
@@ -2091,6 +2118,11 @@ micBtn.addEventListener('click', () => {
 document.addEventListener('keydown', (e) => {
   if (e.code === 'Space' && document.activeElement !== msgInput && !e.repeat) {
     e.preventDefault();
+    if (pythonVoiceMode) {
+      if (ws && ws.readyState === WebSocket.OPEN)
+        ws.send(JSON.stringify({ type: 'mic_toggle' }));
+      return;
+    }
     if (micActive) stopListening(true);
     else startListening();
   }
