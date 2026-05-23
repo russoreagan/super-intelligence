@@ -498,6 +498,7 @@ input, select, textarea { font: inherit; color: inherit; background: none; borde
   padding: 12px 16px 56px;
   overflow: hidden;
   min-height: 0;
+  isolation: isolate;
 }
 .brain-stage::before {
   content: '';
@@ -519,6 +520,16 @@ input, select, textarea { font: inherit; color: inherit; background: none; borde
   border-radius: 50%;
   pointer-events: none;
   mask-image: linear-gradient(180deg, black, transparent 80%);
+}
+
+#mood-bg {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: -1;
+  background: transparent;
+  transition: background 2.5s ease;
+  border-radius: inherit;
 }
 
 /* ============================================================
@@ -847,6 +858,13 @@ input, select, textarea { font: inherit; color: inherit; background: none; borde
   font-size: 11.5px;
   padding: 2px 0 2px 12px;
   border-left: 2px solid var(--line);
+}
+.proactive-tag {
+  font-size: 8.5px;
+  letter-spacing: 0.12em;
+  color: var(--fg-faint);
+  text-transform: uppercase;
+  opacity: 0.7;
 }
 
 /* turn log (collapsible) */
@@ -1245,6 +1263,58 @@ details[open].turn-log summary::before { transform: rotate(90deg); }
   background: oklch(0.18 0.02 250 / 0.5);
 }
 
+#img-attach-btn {
+  flex-shrink: 0;
+  width: 28px; height: 28px;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--fg-mute);
+  cursor: pointer;
+  border-radius: 6px;
+  transition: color 180ms, background 180ms;
+  margin-right: 4px;
+}
+#img-attach-btn:hover { color: var(--fg-dim); background: var(--bg-2); }
+#img-attach-btn.has-image { color: var(--accent); }
+#img-attach-btn svg { width: 16px; height: 16px; }
+
+#img-preview-chip {
+  display: none;
+  flex-shrink: 0;
+  position: relative;
+  margin-right: 6px;
+}
+#img-preview-chip.visible { display: block; }
+#img-preview-thumb {
+  width: 36px; height: 36px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  display: block;
+}
+#img-remove-btn {
+  position: absolute;
+  top: -5px; right: -5px;
+  width: 16px; height: 16px;
+  border-radius: 50%;
+  background: var(--danger);
+  color: oklch(1 0 0);
+  font-size: 11px;
+  line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  border: none;
+  padding: 0;
+}
+
+.msg-user-img {
+  max-width: 220px;
+  max-height: 180px;
+  border-radius: 8px;
+  display: block;
+  margin-bottom: 6px;
+  object-fit: contain;
+}
+
 </style>
 </head>
 <body>
@@ -1342,6 +1412,7 @@ details[open].turn-log summary::before { transform: rotate(90deg); }
     <!-- ----- CENTER: brain stage ----- -->
     <main class="col col-mid">
       <div class="brain-stage" id="brain-stage">
+        <div id="mood-bg" aria-hidden="true"></div>
         <div class="readout tl">
           Cluster firing
           <strong id="readout-cluster">—</strong>
@@ -1486,6 +1557,18 @@ details[open].turn-log summary::before { transform: rotate(90deg); }
     </button>
 
     <div class="input-wrap">
+      <label id="img-attach-btn" for="img-file-input" title="Attach image">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+          <circle cx="8.5" cy="8.5" r="1.5"/>
+          <polyline points="21 15 16 10 5 21"/>
+        </svg>
+      </label>
+      <input type="file" id="img-file-input" accept="image/*" style="display:none">
+      <div id="img-preview-chip">
+        <img id="img-preview-thumb" src="" alt="attached image">
+        <button id="img-remove-btn" title="Remove image">×</button>
+      </div>
       <textarea id="msg-input" rows="1" placeholder="Type a message, or hold Space to speak…"></textarea>
     </div>
 
@@ -1548,6 +1631,58 @@ const EMOTION_COLORS = {
   'cautious-agitated':  { bg: 'oklch(0.26 0.10 30 / 0.35)',  color: 'oklch(0.85 0.17 30)' },
   agitated:             { bg: 'oklch(0.26 0.12 25 / 0.35)',  color: 'oklch(0.85 0.18 25)' },
 };
+
+const MOOD_BG_COLORS = {
+  joy:              { l: 0.22, c: 0.12, h: 95  },
+  excitement:       { l: 0.22, c: 0.13, h: 70  },
+  enthusiasm:       { l: 0.22, c: 0.12, h: 80  },
+  content:          { l: 0.22, c: 0.08, h: 145 },
+  warm:             { l: 0.22, c: 0.10, h: 65  },
+  confident:        { l: 0.22, c: 0.10, h: 230 },
+  proud:            { l: 0.22, c: 0.11, h: 210 },
+  amused:           { l: 0.22, c: 0.10, h: 100 },
+  playful:          { l: 0.22, c: 0.11, h: 110 },
+  joking:           { l: 0.22, c: 0.09, h: 90  },
+  flirty:           { l: 0.22, c: 0.10, h: 10  },
+  tender:           { l: 0.22, c: 0.08, h: 355 },
+  affectionate:     { l: 0.22, c: 0.09, h: 5   },
+  grateful:         { l: 0.22, c: 0.09, h: 140 },
+  relieved:         { l: 0.22, c: 0.08, h: 170 },
+  sympathetic:      { l: 0.22, c: 0.08, h: 185 },
+  sad:              { l: 0.22, c: 0.09, h: 265 },
+  somber:           { l: 0.22, c: 0.08, h: 258 },
+  melancholy:       { l: 0.22, c: 0.10, h: 272 },
+  wistful:          { l: 0.22, c: 0.08, h: 278 },
+  disappointed:     { l: 0.22, c: 0.09, h: 255 },
+  embarrassed:      { l: 0.22, c: 0.08, h: 20  },
+  shy:              { l: 0.22, c: 0.07, h: 290 },
+  apologetic:       { l: 0.22, c: 0.07, h: 15  },
+  angry:            { l: 0.22, c: 0.13, h: 22  },
+  frustrated:       { l: 0.22, c: 0.11, h: 30  },
+  irritated:        { l: 0.22, c: 0.09, h: 35  },
+  agitated:         { l: 0.22, c: 0.12, h: 28  },
+  defensive:        { l: 0.22, c: 0.09, h: 40  },
+  sarcastic:        { l: 0.22, c: 0.08, h: 55  },
+  anxious:          { l: 0.22, c: 0.10, h: 45  },
+  inhibited:        { l: 0.22, c: 0.07, h: 300 },
+  surprised:        { l: 0.22, c: 0.11, h: 200 },
+  confused:         { l: 0.22, c: 0.08, h: 285 },
+  curious:          { l: 0.22, c: 0.09, h: 220 },
+  thoughtful:       { l: 0.22, c: 0.05, h: 250 },
+  'curious-uncertain': { l: 0.22, c: 0.07, h: 230 },
+  'cautious-agitated': { l: 0.22, c: 0.10, h: 38  },
+  restless:         { l: 0.22, c: 0.08, h: 50  },
+  flat:             { l: 0.20, c: 0.02, h: 250 },
+  neutral:          { l: 0.17, c: 0.01, h: 250 },
+};
+
+function setMoodBackground(emotion) {
+  const moodEl = document.getElementById('mood-bg');
+  if (!moodEl) return;
+  const { l, c, h } = MOOD_BG_COLORS[emotion] || MOOD_BG_COLORS.neutral;
+  const center = `oklch(${l} ${c} ${h} / 0.55)`;
+  moodEl.style.background = `radial-gradient(ellipse 130% 90% at 50% 50%, ${center} 0%, transparent 65%)`;
+}
 
 /* =====================================================================
    STATE
@@ -1754,6 +1889,7 @@ function handle(msg) {
       moodName.style.color = theme.color;
       moodDot.style.background = theme.color;
       moodDot.style.boxShadow = `0 0 7px ${theme.color}`;
+      setMoodBackground(msg.emotion);
       break;
     }
     case 'turn_start': {
@@ -1804,6 +1940,10 @@ function handle(msg) {
     }
     case 'stream_thought': {
       if (msg.thought) appendThought(msg.thought);
+      break;
+    }
+    case 'proactive_speech': {
+      if (msg.text) appendProactiveSpeech(msg.text);
       break;
     }
     case 'transcript':       handleTranscriptEvent(msg); break;
@@ -1992,7 +2132,23 @@ function appendUserMessage(text) {
   const msgs = document.getElementById('messages');
   const div = document.createElement('div');
   div.className = 'msg msg-user';
-  div.textContent = text;
+
+  // Show pending image thumbnail if one was just sent
+  if (_pendingImgUrl) {
+    const img = document.createElement('img');
+    img.src = _pendingImgUrl;
+    img.className = 'msg-user-img';
+    img.alt = 'attached image';
+    div.appendChild(img);
+    _pendingImgUrl = null;
+  }
+
+  const displayText = text.replace(/\[image:[^\]]+\]/g, '').trim();
+  if (displayText) {
+    const t = document.createTextNode(displayText);
+    div.appendChild(t);
+  }
+
   msgs.appendChild(div);
   scrollChat();
 }
@@ -2084,6 +2240,19 @@ function appendThought(text) {
   scrollChat();
 }
 
+function appendProactiveSpeech(text) {
+  const msgs = document.getElementById('messages');
+  const wrap = document.createElement('div');
+  wrap.className = 'msg msg-brain msg-proactive';
+  wrap.innerHTML = `
+    <div class="who">Brain <span class="proactive-tag">↑ unprompted</span></div>
+    <div class="body"></div>
+  `;
+  wrap.querySelector('.body').textContent = text;
+  msgs.appendChild(wrap);
+  scrollChat();
+}
+
 function setTyping(visible) {
   document.getElementById('typing').classList.toggle('visible', !!visible);
   if (visible) scrollChat();
@@ -2127,13 +2296,67 @@ function logActivity(cluster, regionId, intensity, note) {
 const msgInput = document.getElementById('msg-input');
 const sendBtn  = document.getElementById('send-btn');
 
-function send() {
+// Image attachment state
+let pendingImageFile  = null;
+let _pendingImgUrl    = null;
+
+const imgFileInput   = document.getElementById('img-file-input');
+const imgPreviewChip = document.getElementById('img-preview-chip');
+const imgPreviewThumb= document.getElementById('img-preview-thumb');
+const imgRemoveBtn   = document.getElementById('img-remove-btn');
+const imgAttachBtn   = document.getElementById('img-attach-btn');
+
+function clearImagePreview() {
+  pendingImageFile = null;
+  imgPreviewChip.classList.remove('visible');
+  imgPreviewThumb.src = '';
+  imgAttachBtn.classList.remove('has-image');
+  imgFileInput.value = '';
+}
+
+imgFileInput.addEventListener('change', () => {
+  const file = imgFileInput.files && imgFileInput.files[0];
+  if (!file) return;
+  pendingImageFile = file;
+  imgPreviewThumb.src = URL.createObjectURL(file);
+  imgPreviewChip.classList.add('visible');
+  imgAttachBtn.classList.add('has-image');
+  sendBtn.disabled = false;
+});
+
+imgRemoveBtn.addEventListener('click', () => {
+  clearImagePreview();
+  sendBtn.disabled = msgInput.value.trim().length === 0;
+});
+
+async function send() {
   const text = msgInput.value.trim();
-  if (!text) return;
+  if (!text && !pendingImageFile) return;
+
+  let fullText = text;
+
+  if (pendingImageFile) {
+    const objectUrl = URL.createObjectURL(pendingImageFile);
+    const formData = new FormData();
+    formData.append('file', pendingImageFile);
+    clearImagePreview();
+    try {
+      const res = await fetch('/upload_image', { method: 'POST', body: formData });
+      const data = await res.json();
+      if (data.path) {
+        fullText = (text ? text + ' ' : '') + '[image:' + data.path + ']';
+        _pendingImgUrl = objectUrl;
+      }
+    } catch (e) {
+      console.error('Image upload failed:', e);
+    }
+  }
+
+  if (!fullText) return;
   msgInput.value = '';
   msgInput.style.height = 'auto';
   sendBtn.disabled = true;
-  sendMessage(text);
+  sendMessage(fullText);
 }
 
 sendBtn.addEventListener('click', send);
@@ -2143,7 +2366,7 @@ msgInput.addEventListener('keydown', (e) => {
 msgInput.addEventListener('input', function() {
   this.style.height = 'auto';
   this.style.height = Math.min(this.scrollHeight, 80) + 'px';
-  sendBtn.disabled = this.value.trim().length === 0;
+  sendBtn.disabled = this.value.trim().length === 0 && !pendingImageFile;
 });
 
 /* =====================================================================
@@ -2539,6 +2762,7 @@ window.addEventListener('resize', () => { if (leftCollapsed || rightCollapsed) a
    BOOT
    ===================================================================== */
 renderRegionList();
+setMoodBackground('neutral');
 loadVoices();
 connect();
 

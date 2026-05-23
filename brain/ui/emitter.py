@@ -77,6 +77,12 @@ class ActivationEmitter:
         except asyncio.QueueFull:
             pass
 
+    async def emit_proactive_speech(self, text: str) -> None:
+        try:
+            self._queue.put_nowait({"type": "proactive_speech", "text": text, "ts": time.time()})
+        except asyncio.QueueFull:
+            pass
+
     async def emit_event(self, event: dict) -> None:
         """Emit an arbitrary event dict to the UI WebSocket."""
         try:

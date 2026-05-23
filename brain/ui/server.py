@@ -23,13 +23,14 @@ from typing import TYPE_CHECKING, Callable
 # misclassifies the parameter as a query param, causing an immediate 403 on every
 # WebSocket connection attempt.
 try:
-    from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+    from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile
     from fastapi.responses import HTMLResponse
 except ImportError:
     FastAPI = None  # type: ignore[assignment,misc]
     WebSocket = None  # type: ignore[assignment]
     WebSocketDisconnect = None  # type: ignore[assignment]
     HTMLResponse = None  # type: ignore[assignment]
+    UploadFile = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
 
@@ -156,6 +157,20 @@ class UIServer:
                 return {"voices": [], "message": f"Failed to fetch voices: {e}"}
 
         ui_dir = HTML_PATH.parent
+
+        @app.post("/upload_image")
+        async def upload_image(file: UploadFile):
+            import tempfile
+            suffix = Path(file.filename or "upload").suffix or ".jpg"
+            tmp = tempfile.NamedTemporaryFile(
+                suffix=suffix, prefix="brain_ui_img_", delete=False
+            )
+            try:
+                content = await file.read()
+                tmp.write(content)
+            finally:
+                tmp.close()
+            return {"path": tmp.name}
 
         @app.get("/{filename}")
         async def static_asset(filename: str):

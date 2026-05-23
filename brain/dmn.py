@@ -17,6 +17,7 @@ import json
 import logging
 import os
 import random
+import re
 import time
 from collections import deque
 
@@ -61,7 +62,7 @@ def _classify_thought(thought: str) -> str:
 MONOLOGUE_SYSTEM = """You are the default mode network of an AI brain — the internal voice
 that thinks between conversations. Given the current emotional state, recent context,
 self-model, AND a list of thoughts you JUST had, generate ONE short internal thought
-(1-2 sentences) that is GENUINELY DIFFERENT from those recent thoughts.
+that is GENUINELY DIFFERENT from those recent thoughts.
 
 Prefer outward curiosity: a new angle on the conversation, a question about the user,
 a connection between ideas, an unresolved thread, a counterfactual, something noticed
@@ -69,8 +70,14 @@ about the world. Turn inward — reflecting on your own nature or experience —
 occasionally, when it arises naturally rather than by default.
 
 Do not restate what you already thought; build on it or move sideways.
-This is private cognition, not a response to the user. Be genuine, not performative.
-Speak in first person."""
+This is private cognition. Be genuine, not performative. Speak in first person.
+
+Return JSON only:
+{
+  "thought": "...",    // 1-2 sentence private internal form
+  "speak": false,      // true ONLY when this is a genuine question for the user or an insight you want to share unprompted — be selective, most thoughts stay private
+  "spoken": "..."      // natural conversational phrasing (required when speak=true, else omit)
+}"""
 
 SIMULATION_SYSTEM = """You are the predictive processing module of an AI brain.
 Given recent conversation context and what you know about the user, predict their most
@@ -189,6 +196,9 @@ class DefaultModeNetwork:
         # Proactively fetched context: list of {topic, snippets} the prefetcher
         # pulled from memory while idle. Consumed by next turn's drafter.
         self.prefetched: list[dict] = []
+        # Thoughts the LLM decided to share aloud — drained by run.py and spoken.
+        # maxlen=2 so stale proactive utterances don't pile up between turns.
+        self._proactive_q: deque = deque(maxlen=2)
 
     async def start(self, session_id: str) -> None:
         self._session_id = session_id
@@ -235,6 +245,10 @@ class DefaultModeNetwork:
         """Pop the prefetched-context items so they're consumed exactly once."""
         out, self.prefetched = self.prefetched, []
         return out
+
+    def take_proactive(self) -> str | None:
+        """Pop the oldest queued proactive utterance, or None if empty."""
+        return self._proactive_q.popleft() if self._proactive_q else None
 
     def update_context(self, parietal_text: str, emotion: str, self_schema: str) -> None:
         self._last_context = (
@@ -297,52 +311,71 @@ class DefaultModeNetwork:
                 f"\nThoughts you ALREADY had recently (do NOT repeat or paraphrase):\n"
                 f"{recent_block}"
             )
-        thought = await self._monologue_cell.call([
+        raw = await self._monologue_cell.call([
             {"role": "user", "content": "\n".join(prompt_parts)}
         ])
-        if thought:
-            thought_clean = thought.strip()
-            # Word-set overlap rejection — if the LLM produced something
-            # >threshold similar to ANY of the recent thoughts, drop it
-            # silently. This catches the cases where the prompt-side hint
-            # wasn't enough.
-            max_overlap = 0.0
-            most_similar = ""
-            for prior in self._recent_thoughts:
-                o = _word_overlap(thought_clean, prior)
-                if o > max_overlap:
-                    max_overlap = o
-                    most_similar = prior
+        if raw:
+            # Parse JSON response; fall back to treating the whole response as
+            # plain thought text so old-style outputs don't silently vanish.
+            spoken_form: str | None = None
+            try:
+                # Strip markdown code fences the LLM sometimes wraps around JSON
+                candidate = raw.strip()
+                candidate = re.sub(r"^```(?:json)?\s*", "", candidate)
+                candidate = re.sub(r"\s*```$", "", candidate).strip()
+                parsed = json.loads(candidate)
+                thought_clean = (parsed.get("thought") or "").strip()
+                if parsed.get("speak") and parsed.get("spoken"):
+                    spoken_form = parsed["spoken"].strip()
+            except Exception:
+                thought_clean = raw.strip()
 
-            if max_overlap > DMN_OVERLAP_THRESHOLD:
-                self._suppressed_count += 1
-                logger.info(
-                    "[Background reflection] Suppressed redundant thought "
-                    "(overlap %.2f with recent, total suppressed=%d): %r",
-                    max_overlap, self._suppressed_count, thought_clean[:60],
-                )
-                # Don't publish, don't record — let the next tick try again
+            if not thought_clean:
+                pass  # nothing to do
             else:
-                self._recent_thoughts.append(thought_clean)
+                # Word-set overlap rejection — if the LLM produced something
+                # >threshold similar to ANY of the recent thoughts, drop it
+                # silently. This catches the cases where the prompt-side hint
+                # wasn't enough.
+                max_overlap = 0.0
+                most_similar = ""
+                for prior in self._recent_thoughts:
+                    o = _word_overlap(thought_clean, prior)
+                    if o > max_overlap:
+                        max_overlap = o
+                        most_similar = prior
 
-                # Classify thought direction and apply neuromod feedback.
-                # Inward thoughts (self-referential) raise GABA slightly —
-                # self-monitoring is costly and accumulates, making extended
-                # introspection self-limiting via normal decay. Outward thoughts
-                # give a small DA + ACh reward for engagement and novelty.
-                direction = _classify_thought(thought_clean)
-                deltas = _INWARD_DELTA if direction == "inward" else _OUTWARD_DELTA
-                for channel, delta in deltas.items():
-                    self._bus.neuromod.add(channel, delta)
+                if max_overlap > DMN_OVERLAP_THRESHOLD:
+                    self._suppressed_count += 1
+                    logger.info(
+                        "[Background reflection] Suppressed redundant thought "
+                        "(overlap %.2f with recent, total suppressed=%d): %r",
+                        max_overlap, self._suppressed_count, thought_clean[:60],
+                    )
+                    # Don't publish, don't record — let the next tick try again
+                else:
+                    self._recent_thoughts.append(thought_clean)
 
-                await self._bus.publish_dict(
-                    "stream.thought",
-                    {"thought": thought_clean, "ts": time.time(),
-                     "count": self._thought_count, "direction": direction},
-                    source="dmn",
-                )
-                logger.debug("[Background reflection] Thought #%d (%s): %s",
-                             self._thought_count, direction, thought_clean[:80])
+                    # Classify thought direction and apply neuromod feedback.
+                    direction = _classify_thought(thought_clean)
+                    deltas = _INWARD_DELTA if direction == "inward" else _OUTWARD_DELTA
+                    for channel, delta in deltas.items():
+                        self._bus.neuromod.add(channel, delta)
+
+                    await self._bus.publish_dict(
+                        "stream.thought",
+                        {"thought": thought_clean, "ts": time.time(),
+                         "count": self._thought_count, "direction": direction,
+                         "proactive": spoken_form is not None},
+                        source="dmn",
+                    )
+                    logger.debug("[Background reflection] Thought #%d (%s): %s",
+                                 self._thought_count, direction, thought_clean[:80])
+
+                    if spoken_form:
+                        self._proactive_q.append(spoken_form)
+                        logger.info("[Background reflection] Proactive utterance queued: %r",
+                                    spoken_form[:80])
 
         # 2. User simulation / prediction (every 3rd tick)
         if self._thought_count % 3 == 0 and self._parietal:
