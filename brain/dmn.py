@@ -17,21 +17,34 @@ import json
 import logging
 import os
 import time
+from collections import deque
 
 from brain.bus import Bus
 from brain.cell import IntegratorCell
 from brain.model_router import ModelRouter
+from brain.voice_bridge import bleed_overlap as _word_overlap
 
 logger = logging.getLogger(__name__)
 
 DMN_INTERVAL = float(os.environ.get("BRAIN_DMN_INTERVAL", "15"))  # seconds between thoughts
 DMN_ENABLED = os.environ.get("BRAIN_DMN", "false").lower() == "true"
 
+# How similar a new thought can be to recent ones before we discard it as
+# redundant. 0.45 catches near-duplicates ("I'm thinking about audio…" twice)
+# while still letting genuinely different thoughts through.
+DMN_OVERLAP_THRESHOLD = float(os.environ.get("BRAIN_DMN_OVERLAP_THRESHOLD", "0.45"))
+# How many recent thoughts to compare against + show the LLM as "things I just thought"
+DMN_RECENT_THOUGHTS = int(os.environ.get("BRAIN_DMN_RECENT_THOUGHTS", "5"))
+
 MONOLOGUE_SYSTEM = """You are the default mode network of an AI brain — the internal voice
 that thinks between conversations. Given the current emotional state, recent context,
-and self-model, generate ONE short internal thought (1-2 sentences). This is private
-cognition, not a response to the user. Think about what was said, what might come next,
-or what's unresolved. Be genuine, not performative. Speak in first person."""
+self-model, AND a list of thoughts you JUST had, generate ONE short internal thought
+(1-2 sentences) that is GENUINELY DIFFERENT from those recent thoughts — a new angle,
+a question, a connection, an unresolved thread, a counterfactual, an observation about
+your own state. Do not restate what you already thought; build on it or move sideways.
+
+This is private cognition, not a response to the user. Be genuine, not performative.
+Speak in first person."""
 
 SIMULATION_SYSTEM = """You are the predictive processing module of an AI brain.
 Given recent conversation context and what you know about the user, predict their most
@@ -54,6 +67,11 @@ class DefaultModeNetwork:
         self._running = False
         self._last_context: str = ""
         self._thought_count = 0
+        # Rolling window of recent thoughts — used both to show the LLM what
+        # it just said (so it varies) AND to reject near-duplicates that slip
+        # through. Cap at DMN_RECENT_THOUGHTS so older thoughts can recur.
+        self._recent_thoughts: deque = deque(maxlen=DMN_RECENT_THOUGHTS)
+        self._suppressed_count = 0
 
         self._monologue_cell = IntegratorCell(
             name="monologue",
@@ -111,18 +129,51 @@ class DefaultModeNetwork:
         self._thought_count += 1
         turn_id = f"dmn_{self._thought_count}"
 
-        # 1. Internal monologue
+        # 1. Internal monologue — show the LLM what it just thought so it
+        # naturally varies, then reject anything that still looks redundant.
         self._monologue_cell.reset_turn(turn_id)
+        prompt_parts = [self._last_context or "No context yet."]
+        if self._recent_thoughts:
+            recent_block = "\n".join(f"- {t}" for t in self._recent_thoughts)
+            prompt_parts.append(
+                f"\nThoughts you ALREADY had recently (do NOT repeat or paraphrase):\n"
+                f"{recent_block}"
+            )
         thought = await self._monologue_cell.call([
-            {"role": "user", "content": self._last_context or "No context yet."}
+            {"role": "user", "content": "\n".join(prompt_parts)}
         ])
         if thought:
-            await self._bus.publish_dict(
-                "stream.thought",
-                {"thought": thought, "ts": time.time(), "count": self._thought_count},
-                source="dmn",
-            )
-            logger.debug("[Background reflection] Thought #%d: %s", self._thought_count, thought[:80])
+            thought_clean = thought.strip()
+            # Word-set overlap rejection — if the LLM produced something
+            # >threshold similar to ANY of the recent thoughts, drop it
+            # silently. This catches the cases where the prompt-side hint
+            # wasn't enough.
+            max_overlap = 0.0
+            most_similar = ""
+            for prior in self._recent_thoughts:
+                o = _word_overlap(thought_clean, prior)
+                if o > max_overlap:
+                    max_overlap = o
+                    most_similar = prior
+
+            if max_overlap > DMN_OVERLAP_THRESHOLD:
+                self._suppressed_count += 1
+                logger.info(
+                    "[Background reflection] Suppressed redundant thought "
+                    "(overlap %.2f with recent, total suppressed=%d): %r",
+                    max_overlap, self._suppressed_count, thought_clean[:60],
+                )
+                # Don't publish, don't record — let the next tick try again
+            else:
+                self._recent_thoughts.append(thought_clean)
+                await self._bus.publish_dict(
+                    "stream.thought",
+                    {"thought": thought_clean, "ts": time.time(),
+                     "count": self._thought_count},
+                    source="dmn",
+                )
+                logger.debug("[Background reflection] Thought #%d: %s",
+                             self._thought_count, thought_clean[:80])
 
         # 2. User simulation / prediction (every 3rd tick)
         if self._thought_count % 3 == 0 and self._parietal:
