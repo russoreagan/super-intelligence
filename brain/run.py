@@ -218,6 +218,37 @@ async def session(args) -> None:
                 "filesystem operations will be blocked until paths are configured."
             )
 
+        # Surface capabilities into drafter prompts so the entity can answer
+        # "what tools do you have?" accurately instead of confabulating.
+        cap_lines = ["Tool use is ENABLED via the motor cortex. You can:"]
+        if _motor_paths:
+            cap_lines.append(
+                f"- Read / write / list / search files within: {', '.join(_motor_paths)}"
+            )
+            cap_lines.append("- Run safe shell commands (git, ls, grep, etc.) in those paths")
+        else:
+            cap_lines.append(
+                "- (Filesystem tools are blocked — BRAIN_MOTOR_PATHS is unset)"
+            )
+        if cloud and cloud.available:
+            cap_lines.append(
+                "- Invoke Claude Code as a cloud agent for tasks requiring external services "
+                "(email, calendar, messages, web search, documents, etc.). Available "
+                f"connectors: {cloud.connectors_summary()}."
+            )
+            cap_lines.append(
+                "When the user asks to 'use Claude', 'ask Claude', 'access my X', "
+                "'send a message to Y', etc., the brain dispatches a cloud_action and "
+                "you get the result back as 'Tool execution result' in your context."
+            )
+        frontal.set_capabilities("\n".join(cap_lines))
+    else:
+        frontal.set_capabilities(
+            "Tool use is DISABLED this session (motor cortex not enabled). "
+            "If asked to use external tools, explain that you'd need to be "
+            "restarted with --motor."
+        )
+
     # ── v0.2: Default Mode Network ────────────────────────────────────────────
     dmn = None
     if args.dmn or os.environ.get("BRAIN_DMN", "false").lower() == "true":

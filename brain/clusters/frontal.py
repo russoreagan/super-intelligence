@@ -164,11 +164,6 @@ class FrontalCluster:
         # Set by run.py after motor cortex / cloud executor boot.
         self._capabilities_summary: str = ""
 
-    def set_capabilities(self, summary: str) -> None:
-        """Provide a human-readable list of what the entity can actually do
-        (set by run.py once motor cortex + cloud executor have introspected
-        their available tools and connectors)."""
-        self._capabilities_summary = (summary or "").strip()
         # Predict-and-surprise
         self._exec_predictor = CompositePredictor(
             name="frontal_executive_predictor", cluster=CLUSTER,
@@ -237,6 +232,12 @@ class FrontalCluster:
 
         # Eval: populated each turn with critic scores for all drafts — read by run.py
         self.last_turn_draft_scores: list[dict] = []
+
+    def set_capabilities(self, summary: str | None) -> None:
+        """Provide a human-readable list of what the entity can actually do
+        (set by run.py once motor cortex + cloud executor have introspected
+        their available tools and connectors). Surfaced into drafter prompts."""
+        self._capabilities_summary = (summary or "").strip()
 
     async def process(self, features: dict, affect: dict, memory: dict,
                       parietal_context: str, turn_id: str) -> str:
