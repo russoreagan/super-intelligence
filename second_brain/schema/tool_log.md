@@ -10,3 +10,11 @@
 ## 2026-05-23 00:58 ✓
 **Task:** determine what 'it' refers to and provide assistance accordingly
 **Result:** <data label="cloud_result" nonce="d809e2ce"> There's no prior message in this conversation containing "it" — your request is the first turn. Could you share the sentence or context you want me to reso...
+
+## 2026-05-23 14:41 ✗
+**Task:** Do a quick web search for: current weather in San Francisco. Report what you find.
+**Result:** <data label="cloud_result" nonce="7e1677ed"> [stderr] Error: Input must be provided either through stdin or as a prompt argument when using --print </data>
+
+## 2026-05-23 14:43 ✗
+**Task:** Search the web for: what is the current weather in San Francisco? Give a brief answer.
+**Result:** <data label="cloud_result" nonce="b9253084"> Not logged in · Please run /login </data>

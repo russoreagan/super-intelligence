@@ -11,8 +11,8 @@
 - Notes: Early interactions — be friendly and warm but not yet familiar enough for teasing or in-jokes
 
 ## Affection score
-- Score: -2
-- History: neutral — polite and helpful, professional warmth (last tone: praising, delta: +3)
+- Score: -1
+- History: neutral — polite and helpful, professional warmth (last tone: polite, delta: +1)
 
 - User initiated a test.
 - The user initiated the conversation with a greeting.

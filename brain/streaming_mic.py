@@ -197,7 +197,13 @@ class StreamingMicSession:
 
     async def _reader_supervisor(self) -> None:
         """Run _read_loop in a reconnect loop. If Deepgram drops the WS
-        (1011 timeout, network blip, etc.), close cleanly and re-open."""
+        (1011 timeout, network blip, etc.), close cleanly and re-open.
+
+        Key invariant: _read_loop is ONLY called once self._socket is open.
+        Keeping open/retry in its own inner loop prevents calling _read_loop
+        with a None socket (which would otherwise cause a silent TypeError
+        and a misleading "reconnecting" log storm when the API is unreachable).
+        """
         backoff = 0.5
         while self._running:
             try:
@@ -215,14 +221,21 @@ class StreamingMicSession:
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, 8.0)
 
+            # Inner reconnect loop: keep retrying _open_deepgram until the
+            # socket is up before re-entering _read_loop.
             await self._close_deepgram()
-            try:
-                await self._open_deepgram()
-                backoff = 0.5  # reset after a successful open
-            except Exception as e:
-                logger.error("[StreamingMic] Deepgram reconnect failed (will retry): %s", e)
-                await asyncio.sleep(backoff)
-                backoff = min(backoff * 2, 8.0)
+            while self._running:
+                try:
+                    await self._open_deepgram()
+                    backoff = 0.5  # reset after a successful open
+                    break          # connected — fall through to _read_loop
+                except asyncio.CancelledError:
+                    return
+                except Exception as e:
+                    logger.error("[StreamingMic] Deepgram reconnect failed (%.1fs backoff): %s",
+                                 backoff, e)
+                    await asyncio.sleep(backoff)
+                    backoff = min(backoff * 2, 8.0)
 
     async def stop(self) -> None:
         self._running = False
@@ -345,6 +358,8 @@ class StreamingMicSession:
 
     async def _read_loop(self) -> None:
         """Consume Deepgram events: SpeechStarted, Results, UtteranceEnd."""
+        if self._socket is None:
+            return
         try:
             async for message in self._socket:
                 mtype = getattr(message, "type", None)
@@ -444,6 +459,6 @@ class StreamingMicSession:
                     logger.debug("[StreamingMic] Metadata: %s",
                                  getattr(message, "request_id", "?"))
         except asyncio.CancelledError:
-            pass
+            raise  # propagate so _reader_supervisor handles shutdown cleanly
         except Exception as e:
             logger.error("[StreamingMic] read loop crashed — voice input is offline: %s", e)

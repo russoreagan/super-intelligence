@@ -32,11 +32,15 @@ DMN_INTERVAL = float(os.environ.get("BRAIN_DMN_INTERVAL", "15"))  # seconds betw
 DMN_ENABLED = os.environ.get("BRAIN_DMN", "false").lower() == "true"
 
 # How similar a new thought can be to recent ones before we discard it as
-# redundant. 0.45 catches near-duplicates ("I'm thinking about audio…" twice)
-# while still letting genuinely different thoughts through.
-DMN_OVERLAP_THRESHOLD = float(os.environ.get("BRAIN_DMN_OVERLAP_THRESHOLD", "0.45"))
-# How many recent thoughts to compare against + show the LLM as "things I just thought"
-DMN_RECENT_THOUGHTS = int(os.environ.get("BRAIN_DMN_RECENT_THOUGHTS", "5"))
+# redundant. Word-set Jaccard — 0.35 catches near-duplicates while still
+# letting genuinely different thoughts through. (Semantic angle tracking,
+# added below, handles same-idea-different-words cases the word check misses.)
+DMN_OVERLAP_THRESHOLD = float(os.environ.get("BRAIN_DMN_OVERLAP_THRESHOLD", "0.35"))
+# How many recent thoughts/angles to compare against + show the LLM as context.
+# Larger window = more variety forced before an idea can recur.
+DMN_RECENT_THOUGHTS = int(os.environ.get("BRAIN_DMN_RECENT_THOUGHTS", "10"))
+# How many recent thought angles to block (separate from text-overlap window).
+DMN_RECENT_ANGLES = int(os.environ.get("BRAIN_DMN_RECENT_ANGLES", "8"))
 
 # Words that signal a thought is turning inward (self-referential / introspective).
 # Inward thoughts apply a small GABA bump — self-monitoring has a cost, which
@@ -72,11 +76,18 @@ occasionally, when it arises naturally rather than by default.
 Do not restate what you already thought; build on it or move sideways.
 This is private cognition. Be genuine, not performative. Speak in first person.
 
+SPOKEN FORM RULE: The user has NOT heard any of your internal monologue. If speak=true,
+"spoken" must be fully self-contained — written for someone hearing it cold. Open with a
+natural framing that gives context, e.g. "I've been thinking about...", "Something just
+occurred to me —", "I was reflecting on...", "I've been wondering...". Never continue a
+thought mid-stream as if the user was already following along.
+
 Return JSON only:
 {
   "thought": "...",    // 1-2 sentence private internal form
+  "angle": "...",      // 2-4 word label for the conceptual territory this thought covers, e.g. "user-creative-process", "music-identity", "unresolved-question", "world-connection". Used to prevent revisiting the same territory.
   "speak": false,      // true ONLY when this is a genuine question for the user or an insight you want to share unprompted — be selective, most thoughts stay private
-  "spoken": "..."      // natural conversational phrasing (required when speak=true, else omit)
+  "spoken": "..."      // self-contained spoken form (required when speak=true, else omit)
 }"""
 
 SIMULATION_SYSTEM = """You are the predictive processing module of an AI brain.
@@ -141,6 +152,9 @@ class DefaultModeNetwork:
         # it just said (so it varies) AND to reject near-duplicates that slip
         # through. Cap at DMN_RECENT_THOUGHTS so older thoughts can recur.
         self._recent_thoughts: deque = deque(maxlen=DMN_RECENT_THOUGHTS)
+        # Semantic angle labels from recent thoughts — blocks same-territory
+        # ideas even when they use completely different words.
+        self._recent_angles: deque = deque(maxlen=DMN_RECENT_ANGLES)
         self._suppressed_count = 0
 
         self._monologue_cell = IntegratorCell(
@@ -311,6 +325,12 @@ class DefaultModeNetwork:
                 f"\nThoughts you ALREADY had recently (do NOT repeat or paraphrase):\n"
                 f"{recent_block}"
             )
+        if self._recent_angles:
+            angles_block = ", ".join(self._recent_angles)
+            prompt_parts.append(
+                f"\nConceptual territory already covered (choose a DIFFERENT angle):\n"
+                f"{angles_block}"
+            )
         raw = await self._monologue_cell.call([
             {"role": "user", "content": "\n".join(prompt_parts)}
         ])
@@ -318,6 +338,7 @@ class DefaultModeNetwork:
             # Parse JSON response; fall back to treating the whole response as
             # plain thought text so old-style outputs don't silently vanish.
             spoken_form: str | None = None
+            angle: str | None = None
             try:
                 # Strip markdown code fences the LLM sometimes wraps around JSON
                 candidate = raw.strip()
@@ -325,6 +346,7 @@ class DefaultModeNetwork:
                 candidate = re.sub(r"\s*```$", "", candidate).strip()
                 parsed = json.loads(candidate)
                 thought_clean = (parsed.get("thought") or "").strip()
+                angle = (parsed.get("angle") or "").strip().lower() or None
                 if parsed.get("speak") and parsed.get("spoken"):
                     spoken_form = parsed["spoken"].strip()
             except Exception:
@@ -333,28 +355,40 @@ class DefaultModeNetwork:
             if not thought_clean:
                 pass  # nothing to do
             else:
-                # Word-set overlap rejection — if the LLM produced something
-                # >threshold similar to ANY of the recent thoughts, drop it
-                # silently. This catches the cases where the prompt-side hint
-                # wasn't enough.
+                # Two-layer deduplication:
+                # Layer 1 — semantic angle: if the LLM tagged this thought with
+                # an angle we've seen recently, suppress it. This catches
+                # same-idea-different-words repetition that word overlap misses.
+                if angle and angle in self._recent_angles:
+                    self._suppressed_count += 1
+                    logger.info(
+                        "[Background reflection] Suppressed repeated angle %r "
+                        "(total suppressed=%d): %r",
+                        angle, self._suppressed_count, thought_clean[:60],
+                    )
+                    # Don't publish, don't record — let the next tick try again
+                    return
+
+                # Layer 2 — word-set overlap: catch near-duplicate phrasing
+                # even when no angle was tagged.
                 max_overlap = 0.0
-                most_similar = ""
                 for prior in self._recent_thoughts:
                     o = _word_overlap(thought_clean, prior)
                     if o > max_overlap:
                         max_overlap = o
-                        most_similar = prior
 
                 if max_overlap > DMN_OVERLAP_THRESHOLD:
                     self._suppressed_count += 1
                     logger.info(
                         "[Background reflection] Suppressed redundant thought "
-                        "(overlap %.2f with recent, total suppressed=%d): %r",
+                        "(overlap %.2f, total suppressed=%d): %r",
                         max_overlap, self._suppressed_count, thought_clean[:60],
                     )
                     # Don't publish, don't record — let the next tick try again
                 else:
                     self._recent_thoughts.append(thought_clean)
+                    if angle:
+                        self._recent_angles.append(angle)
 
                     # Classify thought direction and apply neuromod feedback.
                     direction = _classify_thought(thought_clean)

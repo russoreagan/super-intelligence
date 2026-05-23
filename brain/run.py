@@ -42,6 +42,7 @@ logging.basicConfig(
 )
 from brain.emotion_hierarchy import core_of
 from brain.security import SecretRedactingFilter
+from brain.utils import get_idle_seconds
 _redact_filter = SecretRedactingFilter()
 logging.getLogger().addFilter(_redact_filter)
 logger = logging.getLogger("brain.run")
@@ -116,6 +117,13 @@ async def session(args) -> None:
     router = ModelRouter(obs=obs)
     brainstem = Brainstem(bus, router)
     pns = PNS(bus)
+
+    # Idle-time gate for proactive TTS: don't speak aloud if the user hasn't
+    # touched the computer in this many seconds. Configurable via env var.
+    # Set to 0 to disable the gate entirely.
+    PROACTIVE_IDLE_THRESHOLD = float(
+        os.environ.get("BRAIN_PROACTIVE_IDLE_THRESHOLD", "180")  # 3 minutes
+    )
 
     # ── Wiring graph (Hebbian edge weights) ───────────────────────────────────
     wiring = Wiring()
@@ -950,10 +958,17 @@ async def session(args) -> None:
                         and ui_message_queue.empty()):
                     spoken = dmn.take_proactive()
                     if spoken:
-                        logger.info("[Proactive] Speaking: %r", spoken[:80])
-                        if emitter:
-                            await emitter.emit_proactive_speech(spoken)
-                        await pns.emit(spoken, {"emotion": "curious"})
+                        idle = get_idle_seconds()
+                        if PROACTIVE_IDLE_THRESHOLD > 0 and idle >= PROACTIVE_IDLE_THRESHOLD:
+                            logger.debug(
+                                "[Proactive] Suppressed — user idle %.0fs (threshold %.0fs)",
+                                idle, PROACTIVE_IDLE_THRESHOLD,
+                            )
+                        else:
+                            logger.info("[Proactive] Speaking (idle=%.0fs): %r", idle, spoken[:80])
+                            if emitter:
+                                await emitter.emit_proactive_speech(spoken)
+                            await pns.emit(spoken, {"emotion": "curious"})
                 continue
             except asyncio.CancelledError:
                 break
