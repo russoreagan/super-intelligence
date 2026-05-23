@@ -206,6 +206,7 @@ class ModelRouter:
             r = await client.aio.models.embed_content(
                 model=GOOGLE_EMBED_MODEL,
                 contents=text,
+                config={"output_dimensionality": EMBEDDING_DIM},
             )
             # google-genai returns ContentEmbedding objects with `.values`
             if r.embeddings and r.embeddings[0].values:
@@ -213,7 +214,7 @@ class ModelRouter:
                 if len(vec) == EMBEDDING_DIM:
                     return vec
                 logger.warning(
-                    "Google returned %d-dimensional embeddings but %d were expected — "
+                    "Google returned %d-dimensional embeddings despite output_dimensionality=%d — "
                     "check GOOGLE_EMBED_MODEL in .env.",
                     len(vec), EMBEDDING_DIM,
                 )

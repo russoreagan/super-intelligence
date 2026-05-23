@@ -57,7 +57,7 @@ class SleepConsolidation:
             system_prompt=SELF_UPDATE_SYSTEM,
             topics=[],
             max_calls_per_turn=1,
-            locality="local",
+            locality="either",
             sensitivity="sensitive",
         )
         self._self_updater.set_router(router)
@@ -69,7 +69,7 @@ class SleepConsolidation:
             system_prompt=EPISODE_SYNTHESIS_SYSTEM,
             topics=[],
             max_calls_per_turn=1,
-            locality="local",
+            locality="either",
             sensitivity="sensitive",
         )
         self._synthesizer.set_router(router)
