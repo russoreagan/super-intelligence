@@ -273,6 +273,38 @@ async def session(args) -> None:
             logger.error("[I/O] Streaming mic failed to start — voice input is offline: %s", e)
             streaming_mic = None
 
+    # ── Voice → UI bridge: pump utterances into the same queue the UI uses ──
+    # In UI+voice mode the browser drives the conversation via ui_message_queue.
+    # Without this bridge, voice utterances accumulate in streaming_mic.utterances
+    # forever and the brain appears to ignore everything spoken.
+    voice_bridge_task = None
+    if streaming_mic is not None and ui_enabled:
+        async def _voice_bridge() -> None:
+            while True:
+                try:
+                    utt = await streaming_mic.next_utterance()
+                except asyncio.CancelledError:
+                    return
+                except Exception as e:
+                    logger.warning("[I/O] voice bridge read failed: %s", e)
+                    await asyncio.sleep(0.5)
+                    continue
+                text = (utt.get("transcript") or "").strip()
+                if not text:
+                    continue
+                logger.info("[I/O] voice → turn: %r", text[:80])
+                if emitter:
+                    try:
+                        await emitter.emit_event({
+                            "type": "transcript",
+                            "text": text,
+                            "final": True,
+                        })
+                    except Exception:
+                        pass
+                await ui_message_queue.put(text)
+        voice_bridge_task = asyncio.create_task(_voice_bridge())
+
     # Brainstem heartbeat — also pulses the UI every 60 s
     async def _heartbeat_with_ui() -> None:
         while True:
@@ -832,6 +864,13 @@ async def session(args) -> None:
 
     # ── Shutdown ──────────────────────────────────────────────────────────────
     hb_task.cancel()
+
+    if voice_bridge_task is not None:
+        voice_bridge_task.cancel()
+        try:
+            await voice_bridge_task
+        except (asyncio.CancelledError, Exception):
+            pass
 
     if streaming_mic is not None:
         try:

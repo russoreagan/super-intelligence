@@ -1101,6 +1101,24 @@ details[open].turn-log summary::before { transform: rotate(90deg); }
   0%   { transform: scale(1); opacity: 0.8; }
   100% { transform: scale(1.45); opacity: 0; }
 }
+#mic-btn.muted {
+  background: oklch(from var(--fg-dim) l c h / 0.10);
+  border-color: oklch(from var(--fg-dim) l c h / 0.4);
+  color: oklch(from var(--fg-dim) l c h / 0.85);
+  opacity: 0.85;
+}
+#mic-btn.muted::before {
+  /* diagonal strike through the mic icon */
+  content: '';
+  position: absolute;
+  left: 8px; right: 8px;
+  top: 50%;
+  height: 2px;
+  background: oklch(0.75 0.18 25);
+  transform: rotate(-30deg);
+  border-radius: 1px;
+  pointer-events: none;
+}
 #mic-btn.unsupported { opacity: 0.4; cursor: not-allowed; }
 
 .input-wrap {
@@ -2111,8 +2129,12 @@ function handleVoiceMode(msg) {
   if (pythonVoiceMode) {
     if (pythonMicMuted) {
       micBtn.classList.remove('listening');
+      micBtn.classList.add('muted');
       micBtn.title = 'Mic muted — click to unmute';
+      transcriptText.textContent = 'Muted';
+      transcriptBar.classList.remove('visible');
     } else {
+      micBtn.classList.remove('muted');
       micBtn.classList.add('listening');
       micBtn.title = 'Mic active — click to mute';
       transcriptText.textContent = 'Listening…';
