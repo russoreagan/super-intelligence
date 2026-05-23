@@ -732,7 +732,7 @@ input, select, textarea { font: inherit; color: inherit; background: none; borde
    ========================================================= */
 .right-stack {
   display: grid;
-  grid-template-rows: 1fr 280px;
+  grid-template-rows: 1fr auto;
   height: 100%;
   min-height: 0;
 }
@@ -987,6 +987,9 @@ details[open].turn-log summary::before { transform: rotate(90deg); }
 /* ---- activity log pane ---- */
 .log-pane {
   border-top: 1px solid var(--line-soft);
+}
+.col-left .pane-body {
+  max-height: 240px;
 }
 #activity-log {
   padding: 8px 0 16px;
@@ -1407,6 +1410,20 @@ details[open].turn-log summary::before { transform: rotate(90deg); }
           <span class="mood-key">Mood</span>
         </div>
       </section>
+
+      <section class="pane log-pane">
+        <header class="pane-head">
+          <h3>Activity Log</h3>
+          <div class="head-meta">
+            <span id="log-count">0 events</span>
+          </div>
+        </header>
+        <div class="pane-body">
+          <div id="activity-log">
+            <div class="log-empty">— no activations yet —</div>
+          </div>
+        </div>
+      </section>
     </aside>
 
     <!-- ----- CENTER: brain stage ----- -->
@@ -1492,20 +1509,6 @@ details[open].turn-log summary::before { transform: rotate(90deg); }
               <div class="msg msg-system">Brain online</div>
             </div>
             <div id="typing"><span>thinking</span><span class="dots"><span></span><span></span><span></span></span></div>
-          </div>
-        </section>
-
-        <section class="pane log-pane">
-          <header class="pane-head">
-            <h3>Activity Log</h3>
-            <div class="head-meta">
-              <span id="log-count">0 events</span>
-            </div>
-          </header>
-          <div class="pane-body">
-            <div id="activity-log">
-              <div class="log-empty">— no activations yet —</div>
-            </div>
           </div>
         </section>
 
