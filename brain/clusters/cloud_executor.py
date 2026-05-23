@@ -199,7 +199,9 @@ class CloudExecutor:
                 self._claude_bin,
                 "--print",          # non-interactive, single-turn
                 "--output-format", "text",
+                "--allowedTools", "WebSearch,WebFetch,Bash,Read,Write,Edit,LS",
                 *add_dir_args,
+                "--",               # separator so prompt isn't parsed as a flag
                 prompt,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
