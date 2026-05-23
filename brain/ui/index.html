@@ -1145,6 +1145,24 @@ details[open].turn-log summary::before { transform: rotate(90deg); }
   padding: 0;
 }
 #msg-input::placeholder { color: var(--fg-faint); }
+/* Voice mode: input box doubles as the listening indicator.
+   A subtle red border-pulse mirrors the mic button's listening state. */
+#msg-input.voice-listening + * ~ *, /* placeholder safe-guard */
+.input-wrap:has(#msg-input.voice-listening) {
+  border-color: oklch(from var(--danger) l c h / 0.55);
+  box-shadow: 0 0 0 3px oklch(from var(--danger) l c h / 0.10);
+  animation: input-listen 2.2s ease-in-out infinite;
+}
+@keyframes input-listen {
+  0%, 100% { box-shadow: 0 0 0 3px oklch(from var(--danger) l c h / 0.08); }
+  50%      { box-shadow: 0 0 0 5px oklch(from var(--danger) l c h / 0.16); }
+}
+/* Flash when a final transcript lands in the box, before the brain
+   picks it up and clears it on turn_start. */
+#msg-input.voice-flash {
+  background: oklch(from var(--danger) l c h / 0.10);
+  transition: background 600ms ease-out;
+}
 
 .voice-pill {
   position: relative;
@@ -1725,6 +1743,12 @@ function handle(msg) {
       currentTurnId = msg.turn_id || null;
       pendingActivations = [];
       if (msg.user_input) appendUserMessage(msg.user_input);
+      // Voice path: clear the input box once the brain officially picks up
+      // the transcribed utterance (the spoken text "flies" into the chat).
+      if (pythonVoiceMode && msgInput.value.trim() === (msg.user_input || '').trim()) {
+        msgInput.value = '';
+        msgInput.style.height = 'auto';
+      }
       setTyping(true);
       document.getElementById('send-btn').disabled = true;
       if (msg.session_id) {
@@ -2126,19 +2150,23 @@ let pythonMicMuted = false;
 function handleVoiceMode(msg) {
   pythonVoiceMode = !!msg.active;
   pythonMicMuted = !!msg.muted;
+  // In Python voice mode the chat input box doubles as the listening
+  // indicator — keep the bottom transcript bar hidden so we don't show the
+  // same info twice. Browser-side MediaRecorder paths still use the bar.
+  transcriptBar.classList.remove('visible');
   if (pythonVoiceMode) {
     if (pythonMicMuted) {
       micBtn.classList.remove('listening');
       micBtn.classList.add('muted');
       micBtn.title = 'Mic muted — click to unmute';
-      transcriptText.textContent = 'Muted';
-      transcriptBar.classList.remove('visible');
+      msgInput.classList.remove('voice-listening');
+      msgInput.placeholder = 'Type a message… (mic muted)';
     } else {
       micBtn.classList.remove('muted');
       micBtn.classList.add('listening');
       micBtn.title = 'Mic active — click to mute';
-      transcriptText.textContent = 'Listening…';
-      transcriptBar.classList.add('visible');
+      msgInput.classList.add('voice-listening');
+      msgInput.placeholder = '🎙  Listening — speak or type a message…';
     }
   }
 }
@@ -2230,25 +2258,17 @@ function handleTranscriptEvent(msg) {
   //   - Browser-side MediaRecorder (micActive=true): user is press-to-talk,
   //     transcripts stream in interim+final, auto-send after a pause.
   //   - Python streaming_mic in pythonVoiceMode: only final transcripts
-  //     arrive (the voice bridge in run.py emits them). Put each one into
-  //     the text input so the user can see and edit before sending — or
-  //     just press Enter to send.
+  //     arrive (the voice bridge in run.py emits them AND auto-dispatches
+  //     the turn). We just visualise the heard text in the chat input box
+  //     — it'll get cleared automatically on turn_start.
   if (pythonVoiceMode && msg.final) {
     const text = (msg.text || '').trim();
     if (!text) return;
-    // Append to whatever's already in the input (lets user dictate over
-    // multiple utterances and then send the whole thing).
-    const existing = msgInput.value.trim();
-    msgInput.value = existing ? (existing + ' ' + text) : text;
+    msgInput.value = text;
     msgInput.style.height = 'auto';
     msgInput.style.height = Math.min(msgInput.scrollHeight, 80) + 'px';
-    msgInput.focus();
-    // Flash the bar briefly so user knows a transcript landed
-    transcriptText.textContent = '✓ ' + text;
-    transcriptBar.classList.add('visible');
-    setTimeout(() => {
-      if (!pythonMicMuted) transcriptText.textContent = 'Listening…';
-    }, 1200);
+    msgInput.classList.add('voice-flash');
+    setTimeout(() => msgInput.classList.remove('voice-flash'), 600);
     return;
   }
 
