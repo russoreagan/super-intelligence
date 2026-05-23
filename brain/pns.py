@@ -83,6 +83,7 @@ class PNS:
         # Trigger side (continuous mic VAD during playback) is a TODO — the
         # current mic_listen() is press-to-talk, not streaming.
         self._speaking: bool = False
+        self._speaking_text: str = ""   # what TTS is currently saying — used for bleed detection
         self._speak_started_at: float = 0.0
         self._interrupt_event: asyncio.Event = asyncio.Event()
 
@@ -375,6 +376,7 @@ class PNS:
             import time as _time
             self._speak_started_at = _time.time()
             self._speaking = True
+            self._speaking_text = text
             try:
                 try:
                     import sounddevice as sd
@@ -410,6 +412,7 @@ class PNS:
                         await asyncio.get_event_loop().run_in_executor(None, play, audio_bytes)
             finally:
                 self._speaking = False
+                self._speaking_text = ""
 
         except Exception as e:
             logger.warning("[I/O] Text-to-speech failed — printing response as text instead: %s", e)
