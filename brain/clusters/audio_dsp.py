@@ -237,6 +237,33 @@ def extract_speaker_embedding(audio: np.ndarray, sr: int) -> np.ndarray | None:
 
 # ── Pipeline 3: Prosody extraction ────────────────────────────────────────────
 
+_smile = None
+_smile_loaded = False
+_smile_lock = threading.Lock()
+
+
+def _get_smile():
+    """Lazy singleton for openSMILE eGeMAPSv02 Functionals extractor."""
+    global _smile, _smile_loaded
+    if _smile_loaded:
+        return _smile
+    with _smile_lock:
+        if _smile_loaded:
+            return _smile
+        try:
+            import opensmile
+            _smile = opensmile.Smile(
+                feature_set=opensmile.FeatureSet.eGeMAPSv02,
+                feature_level=opensmile.FeatureLevel.Functionals,
+            )
+            logger.info("Auditory DSP: openSMILE eGeMAPSv02 loaded")
+        except Exception as e:
+            logger.warning("Auditory DSP: openSMILE unavailable (%s) — using librosa fallback", e)
+            _smile = None
+        _smile_loaded = True
+    return _smile
+
+
 def extract_prosody(audio: np.ndarray, sr: int) -> dict:
     """
     Extract prosodic features from audio.
@@ -294,7 +321,7 @@ def extract_prosody(audio: np.ndarray, sr: int) -> dict:
                 np.mean(np.abs(np.diff(periods))) / np.mean(periods)
             )
 
-        # ── Shimmer (amplitude perturbation) ──
+        # ── Shimmer (amplitude perturbation) — librosa fallback ──
         if len(audio) > 10:
             from scipy.signal import find_peaks as _find_peaks
             peaks_idx, _ = _find_peaks(np.abs(audio), distance=max(1, sr // 500))
@@ -308,6 +335,32 @@ def extract_prosody(audio: np.ndarray, sr: int) -> dict:
         logger.debug("Auditory DSP: librosa not installed — prosody features limited")
     except Exception as e:
         logger.debug("Auditory DSP: prosody extraction error: %s", e)
+
+    # ── openSMILE eGeMAPS: validated jitter, shimmer, F0 ──
+    # Overwrites librosa estimates when available; librosa values above are the fallback.
+    smile = _get_smile()
+    if smile is not None:
+        try:
+            features_df = smile.process_signal(audio, sr)
+            row = features_df.iloc[0]
+
+            f0_st = float(row.get("F0semitoneFrom27.5Hz_sma3nz_amean", 0.0))
+            if f0_st > 0:
+                f0_hz = 27.5 * (2 ** (f0_st / 12))
+                f0_std_norm = float(row.get("F0semitoneFrom27.5Hz_sma3nz_stddevNorm", 0.0))
+                base["f0_mean_hz"] = f0_hz
+                base["f0_std_hz"] = f0_std_norm * f0_hz
+
+            jitter_val = float(row.get("jitterLocal_sma3nz_amean", 0.0))
+            if jitter_val > 0:
+                base["jitter"] = jitter_val
+
+            shimmer_db = float(row.get("shimmerLocaldB_sma3nz_amean", 0.0))
+            if shimmer_db > 0:
+                base["shimmer"] = 10 ** (shimmer_db / 20) - 1
+
+        except Exception as e:
+            logger.debug("Auditory DSP: openSMILE extraction failed: %s", e)
 
     base["tone_label"] = label_prosody_tone(base)
     return base
@@ -339,11 +392,11 @@ def label_prosody_tone(features: dict, baseline: dict | None = None) -> str:
     # proportionally to the speaker's own normal range.
     if calibrated:
         jitter_thresh  = max(0.03, baseline["jitter"]  * 1.8)
-        shimmer_thresh = max(0.05, baseline["shimmer"] * 1.8)
+        shimmer_thresh = max(0.10, baseline["shimmer"] * 1.8)
         energy_thresh  = max(0.12, baseline["energy_mean"] * 1.5)
     else:
         jitter_thresh  = 0.03
-        shimmer_thresh = 0.05
+        shimmer_thresh = 0.10
         energy_thresh  = 0.12
 
     if vf < 0.25:

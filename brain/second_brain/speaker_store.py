@@ -118,10 +118,11 @@ class SpeakerStore:
             return
         data = self._profiles[speaker_id]
         bl = data.get("prosody_baseline") or {
-            "jitter": 0.0, "shimmer": 0.0, "energy_mean": 0.0, "f0_std": 0.0, "count": 0,
+            "jitter": 0.0, "shimmer": 0.0, "energy_mean": 0.0,
+            "f0_std": 0.0, "f0_mean_hz": 0.0, "count": 0,
         }
         n = bl["count"]
-        for key in ("jitter", "shimmer", "energy_mean", "f0_std"):
+        for key in ("jitter", "shimmer", "energy_mean", "f0_std", "f0_mean_hz"):
             val = features.get(key, 0.0)
             if val > 0:  # skip zero-padded frames (no signal)
                 bl[key] = (bl[key] * n + val) / (n + 1)

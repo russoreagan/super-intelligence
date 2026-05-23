@@ -396,7 +396,7 @@ class TestLabelProsodyTone:
         # Only shimmer elevated → not stressed
         assert label_prosody_tone(self._features(jitter=0.01, shimmer=0.08)) == "calm"
         # Both elevated → stressed
-        assert label_prosody_tone(self._features(jitter=0.05, shimmer=0.08)) == "stressed"
+        assert label_prosody_tone(self._features(jitter=0.05, shimmer=0.12)) == "stressed"
 
     def test_uncalibrated_baseline_uses_universal_thresholds(self):
         from brain.clusters.audio_dsp import label_prosody_tone
@@ -404,7 +404,7 @@ class TestLabelProsodyTone:
                     "f0_std": 20.0, "count": 5}  # < 10 → not calibrated
         # Universal stressed threshold still applies
         assert label_prosody_tone(
-            self._features(jitter=0.05, shimmer=0.08), baseline=baseline
+            self._features(jitter=0.05, shimmer=0.12), baseline=baseline
         ) == "stressed"
 
     def test_calibrated_baseline_raises_stressed_threshold(self):
@@ -441,9 +441,9 @@ class TestLabelProsodyTone:
         # Very low baseline values — floors at universal thresholds
         baseline = {"jitter": 0.001, "shimmer": 0.001, "energy_mean": 0.001,
                     "f0_std": 5.0, "count": 20}
-        # jitter=0.04, shimmer=0.06 → above the floor (0.03, 0.05) → stressed
+        # jitter=0.04, shimmer=0.12 → above the floor (0.03, 0.10) → stressed
         assert label_prosody_tone(
-            self._features(jitter=0.04, shimmer=0.06), baseline=baseline
+            self._features(jitter=0.04, shimmer=0.12), baseline=baseline
         ) == "stressed"
 
 
