@@ -51,7 +51,11 @@ class UIServer:
         self._python_voice_mode = python_voice_mode
         self._clients: set = set()
         self._last_neuromod: dict = {}
+        self._wiring_frozen: bool = False
         self._app = None
+
+    def set_wiring_frozen(self, frozen: bool) -> None:
+        self._wiring_frozen = bool(frozen)
 
     def set_message_handler(self, fn: Callable[[str], None]) -> None:
         self._on_user_message = fn
@@ -130,6 +134,15 @@ class UIServer:
                     ))
                 except Exception:
                     pass
+
+            # Tell the client about wiring state (frozen tag in plasticity panel)
+            try:
+                await websocket.send_text(json.dumps({
+                    "type": "wiring_status",
+                    "frozen": self._wiring_frozen,
+                }))
+            except Exception:
+                pass
 
             # Run receive + broadcast concurrently for this client
             receive_task = asyncio.create_task(self._receive_loop(websocket))

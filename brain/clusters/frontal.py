@@ -11,12 +11,20 @@ import logging
 import uuid
 from dataclasses import dataclass
 
+import os
+import random as _random
+
 from brain.brainstem import Brainstem
 from brain.bus import Bus
 from brain.cell import IntegratorCell
 from brain.model_router import ModelRouter
 from brain.neuron import SwitchNeuron, StatefulSwitch
 from brain.security import fence, FENCE_SYSTEM_ADDENDUM
+from brain.predictor import (
+    CompositePredictor, composite_signature, should_bypass_gating,
+)
+from brain.observability.decisions import decisions
+from brain.wiring import Wiring
 
 logger = logging.getLogger(__name__)
 
@@ -143,10 +151,22 @@ Return ONLY JSON.""" + "\n\n" + FENCE_SYSTEM_ADDENDUM
 
 
 class FrontalCluster:
-    def __init__(self, bus: Bus, brainstem: Brainstem, router: ModelRouter) -> None:
+    def __init__(self, bus: Bus, brainstem: Brainstem, router: ModelRouter,
+                 wiring: Wiring | None = None) -> None:
         self._bus = bus
         self._brainstem = brainstem
         self._router = router
+        self._wiring = wiring
+        self._wiring_frozen = os.environ.get("BRAIN_WIRING_FROZEN", "false").lower() == "true"
+        # Predict-and-surprise
+        self._exec_predictor = CompositePredictor(
+            name="frontal_executive_predictor", cluster=CLUSTER,
+            confidence_skip_threshold=0.7,
+        )
+        self._critic_predictor = CompositePredictor(
+            name="frontal_critic_predictor", cluster=CLUSTER,
+            confidence_skip_threshold=0.75,
+        )
 
         self._executive = IntegratorCell(
             name="executive", cluster=CLUSTER, model="haiku",
@@ -241,26 +261,95 @@ class FrontalCluster:
                                              "tone_fit": 1.0, "selected": True}]
             return response
 
-        # --- Executive: build drafting instruction ---
-        self._executive.reset_turn(turn_id)
-        exec_context = self._build_exec_context(features, affect, memory, parietal_context, nm)
-        exec_messages = [{"role": "user", "content": exec_context}]
-        exec_raw = await self._executive.call(exec_messages)
+        # --- Executive: predict-and-surprise gate ---
+        instruction: dict | None = None
+        exec_sig = composite_signature(features, affect)
+        bypass, bypass_reason = should_bypass_gating(affect, features)
 
-        instruction: dict = {}
-        try:
-            instruction = json.loads(exec_raw)
-        except Exception:
-            import re
-            m = re.search(r'\{.*\}', exec_raw, re.DOTALL)
-            if m:
-                try:
-                    instruction = json.loads(m.group(0))
-                except Exception:
-                    pass
-        if not instruction:
-            instruction = {"response_type": "chitchat", "target_length": "medium",
-                           "tone": "neutral", "key_points": [], "drafter_count": 1}
+        if bypass:
+            trace = self._record_trace_bypass()
+            decisions.log("gate_bypassed_emotional", turn_id=turn_id, cluster=CLUSTER,
+                          stage="executive", reason=bypass_reason,
+                          emotional_context={"emotion": affect.get("emotion"),
+                                             "user_emotion": features.get("user_emotion"),
+                                             "DA": round(nm["DA"], 2),
+                                             "GABA": round(nm["GABA"], 2)})
+            if trace is not None:
+                trace.gating_bypassed_count += 1
+        else:
+            predicted, confidence = self._exec_predictor.predict(exec_sig)
+            if predicted and self._exec_predictor.should_skip_integrator(predicted, confidence):
+                # Skip the executive LLM call — synthesize instruction from prediction
+                response_type, target_length, tone = predicted
+                instruction = {
+                    "response_type": response_type,
+                    "target_length": target_length,
+                    "tone": tone,
+                    "key_points": [],
+                    "drafter_count": 1,
+                }
+                trace = self._record_trace_bypass()
+                if trace is not None:
+                    trace.llm_calls_saved += 1
+                    trace.predictor_outcomes.append({
+                        "cluster": CLUSTER, "stage": "executive",
+                        "predicted": list(predicted), "actual": None,
+                        "confidence": round(confidence, 3),
+                        "surprise": None, "integrator_woken": False,
+                        "bypass_reason": None, "correct": None,
+                    })
+                decisions.log(
+                    "skip_executive_integrator",
+                    turn_id=turn_id, cluster=CLUSTER,
+                    reason=f"predictor confidence {confidence:.2f} ≥ {self._exec_predictor.confidence_skip_threshold}",
+                    predicted={"response_type": response_type,
+                               "target_length": target_length, "tone": tone},
+                    emotional_context={"emotion": affect.get("emotion"),
+                                       "user_emotion": features.get("user_emotion")},
+                    cost_saved_est=0.0015,
+                )
+
+        if instruction is None:
+            self._executive.reset_turn(turn_id)
+            exec_context = self._build_exec_context(features, affect, memory, parietal_context, nm)
+            exec_messages = [{"role": "user", "content": exec_context}]
+            exec_raw = await self._executive.call(exec_messages)
+
+            try:
+                instruction = json.loads(exec_raw)
+            except Exception:
+                import re
+                m = re.search(r'\{.*\}', exec_raw, re.DOTALL)
+                if m:
+                    try:
+                        instruction = json.loads(m.group(0))
+                    except Exception:
+                        pass
+            if not instruction:
+                instruction = {"response_type": "chitchat", "target_length": "medium",
+                               "tone": "neutral", "key_points": [], "drafter_count": 1}
+
+            # Record actual for predictor learning
+            actual = (
+                instruction.get("response_type", "chitchat"),
+                instruction.get("target_length", "medium"),
+                instruction.get("tone", "neutral"),
+            )
+            predicted_now, conf_now = self._exec_predictor.predict(exec_sig)
+            surprise_now = self._exec_predictor.surprise(predicted_now, actual, conf_now)
+            self._exec_predictor.record(exec_sig, actual)
+            trace = self._record_trace_bypass()
+            if trace is not None:
+                trace.predictor_outcomes.append({
+                    "cluster": CLUSTER, "stage": "executive",
+                    "predicted": list(predicted_now) if predicted_now else None,
+                    "actual": list(actual),
+                    "confidence": round(conf_now, 3),
+                    "surprise": round(surprise_now, 3),
+                    "integrator_woken": True,
+                    "bypass_reason": bypass_reason if bypass else None,
+                    "correct": (predicted_now == actual) if predicted_now else None,
+                })
 
         drafter_count = min(int(instruction.get("drafter_count", 1)), 3)
         # Arousal switch: low arousal → fewer drafters
@@ -271,9 +360,12 @@ class FrontalCluster:
         drafter_prompt = self._build_drafter_prompt(features, memory, parietal_context,
                                                      affect, instruction)
 
+        # Weighted drafter selection (Hebbian-driven, ε-greedy)
+        drafter_indices = self._select_drafters(drafter_count, turn_id)
+
         draft_tasks = [
             self._run_drafter(i, drafter_prompt, turn_id)
-            for i in range(drafter_count)
+            for i in drafter_indices
         ]
         raw = await asyncio.gather(*draft_tasks, return_exceptions=True)
         drafts = []
@@ -291,6 +383,48 @@ class FrontalCluster:
         # --- Critics (only if ≥2 drafts) ---
         user_emotion = features.get("user_emotion", "neutral")
         run_empathy = user_emotion not in ("neutral", "unknown", "")
+
+        # --- Critic-skip predictor: skip critic call on familiar high-quality patterns ---
+        critic_sig = exec_sig + (instruction.get("response_type", "chitchat"),
+                                  instruction.get("tone", "neutral"))
+        critic_avg = self._critic_predictor.avg_recent_outcome(critic_sig)
+        critic_pred, critic_conf = self._critic_predictor.predict(critic_sig)
+        critic_bypass, critic_bypass_reason = should_bypass_gating(affect, features)
+
+        if (len(drafts) >= 2
+                and not critic_bypass
+                and critic_avg is not None
+                and critic_avg > 0.8
+                and self._critic_predictor.should_skip_integrator(critic_pred, critic_conf)):
+            # Skip critic: endorse the first draft with the predicted score
+            draft_id, text = drafts[0]
+            predicted_score = float(critic_avg)
+            self._brainstem.add_draft(draft_id, text, predicted_score)
+            self._brainstem.endorse(draft_id)
+            self.last_turn_draft_scores = [{
+                "draft_id": draft_id,
+                "coherence": predicted_score, "relevance": predicted_score,
+                "tone_fit": predicted_score, "empathy_score": predicted_score,
+                "overall": predicted_score, "selected": True, "vetoed": False,
+            }]
+            trace = self._record_trace_bypass()
+            if trace is not None:
+                # We skipped 1 critic call (plus N-1 more if all drafts would've been scored)
+                trace.llm_calls_saved += len(drafts)
+                trace.predictor_outcomes.append({
+                    "cluster": CLUSTER, "stage": "critic",
+                    "predicted_score": round(predicted_score, 3),
+                    "confidence": round(critic_conf, 3),
+                    "integrator_woken": False,
+                })
+            decisions.log(
+                "skip_critic", turn_id=turn_id, cluster=CLUSTER,
+                reason=f"avg_score={critic_avg:.2f}, confidence={critic_conf:.2f}",
+                predicted_score=round(predicted_score, 3),
+                drafts_skipped=len(drafts),
+                cost_saved_est=0.001 * len(drafts),
+            )
+            return text
 
         if len(drafts) >= 2:
             self._critic.reset_turn(turn_id)
@@ -356,6 +490,9 @@ class FrontalCluster:
                     if entry["draft_id"] == best[0]:
                         entry["selected"] = True
                         break
+                # Record critic outcome for the critic-skip predictor to learn from
+                self._critic_predictor.record(critic_sig, ("ok",))
+                self._critic_predictor.record_outcome(critic_sig, best[2])
                 return best[1]
 
         # Single draft — endorse directly
@@ -380,6 +517,55 @@ class FrontalCluster:
         draft_id = f"draft_{idx}_{turn_id}"
         text = await drafter.call([{"role": "user", "content": prompt}])
         return draft_id, text
+
+    def _record_trace_bypass(self):
+        """Return the active TurnTrace, or None if no firing-path context is bound."""
+        try:
+            from brain.observability.firing_path import current_turn_trace
+            return current_turn_trace.get()
+        except Exception:
+            return None
+
+    def _select_drafters(self, count: int, turn_id: str) -> list[int]:
+        """Pick which drafter indices to fire, weighted by wiring edge weight.
+        ε-greedy: with prob ε pick uniformly random, otherwise pick top-weight."""
+        all_indices = list(range(len(self._drafters)))
+        count = max(1, min(count, len(self._drafters)))
+
+        if self._wiring is None or self._wiring_frozen:
+            picked = all_indices[:count]
+            return picked
+
+        # Weight per drafter (executive → drafter_X edge weight)
+        names = [f"frontal.drafter_{chr(65+i)}" for i in all_indices]
+        weights = [self._wiring.get_edge_weight("frontal.executive", n) for n in names]
+
+        # ε-greedy exploration
+        epsilon = 0.10
+        if _random.random() < epsilon:
+            # Explore: random pick
+            picked = _random.sample(all_indices, count)
+            roll = "explore"
+        else:
+            # Exploit: top-weight
+            ranked = sorted(all_indices, key=lambda i: weights[i], reverse=True)
+            picked = ranked[:count]
+            roll = "exploit"
+
+        # What would uniform routing have picked?
+        uniform_pick = all_indices[:count]
+        weight_dict = {chr(65+i): round(weights[i], 3) for i in all_indices}
+        diverged = sorted(picked) != sorted(uniform_pick)
+
+        decisions.log(
+            "weighted_drafter_selection", turn_id=turn_id, cluster=CLUSTER,
+            picked=[chr(65+i) for i in picked],
+            weights=weight_dict,
+            would_uniform_pick=[chr(65+i) for i in uniform_pick],
+            epsilon_roll=roll,
+            diverged_from_uniform=diverged,
+        )
+        return picked
 
     async def _score_draft(self, draft: str, context: str, turn_id: str) -> dict:
         critic_prompt = (f"Context:\n{context}\n\nDraft response:\n{draft}\n\n"
@@ -595,6 +781,8 @@ class FrontalCluster:
             parts.append(f"Known facts:\n{fence('known_facts', memory['schema'], nonce)}")
         if memory.get("episodes"):
             parts.append(f"Relevant past episodes:\n{fence('past_episodes', memory['episodes'], nonce)}")
+        if memory.get("tool_result"):
+            parts.append(f"Tool execution result:\n{fence('tool_result', str(memory['tool_result']), nonce)}")
         if memory.get("core", {}).get("self"):
             parts.append(f"Entity self-model:\n{fence('self_model', memory['core']['self'][:400], nonce)}")
         if memory.get("core", {}).get("user"):

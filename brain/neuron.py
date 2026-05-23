@@ -29,6 +29,12 @@ class SwitchNeuron:
         self._last_fired = time.time()
         self._fire_count += 1
         signed = level if self.polarity == "excitatory" else -level
+        # Record on the current turn's firing path (no-op if no trace bound)
+        try:
+            from brain.observability.firing_path import record_switch_fire
+            record_switch_fire(self.name, self.cluster, level, tag, self.polarity)
+        except Exception:
+            pass
         return {
             "type": "activation",
             "level": signed * self.weight,

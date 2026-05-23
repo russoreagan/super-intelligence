@@ -17,6 +17,9 @@ from brain.cell import IntegratorCell
 from brain.model_router import ModelRouter
 from brain.second_brain.store import EpisodicStore, SchemaStore, Episode
 from brain.security import sanitize_fact
+from brain.predictor import should_bypass_gating
+from brain.observability.decisions import decisions
+from brain.wiring import Wiring
 
 logger = logging.getLogger(__name__)
 
@@ -42,11 +45,17 @@ Return ONLY JSON."""
 
 
 class HippocampusCluster:
-    def __init__(self, bus: Bus, router: ModelRouter) -> None:
+    def __init__(self, bus: Bus, router: ModelRouter,
+                 wiring: Wiring | None = None) -> None:
         self._bus = bus
         self._router = router
         self._episodic = EpisodicStore()
         self._schema = SchemaStore()
+        self._wiring = wiring
+        self._wiring_frozen = os.environ.get("BRAIN_WIRING_FROZEN", "false").lower() == "true"
+        # Recent-recall reuse cache (query → last result)
+        self._recent_recall: dict[str, dict] = {}
+        self._recent_recall_order: list[str] = []  # MRU order, capped at 8
 
         self._encoder = IntegratorCell(
             name="encoder",
@@ -97,9 +106,30 @@ class HippocampusCluster:
         Recall from episodic + schema stores.
         Returns combined context for the frontal lobe.
         """
+        # ── Coordinator gate: reuse recent recall if query is near-identical ──
+        cache_key = self._normalize_recall_key(query, entities)
+        cached = self._recent_recall.get(cache_key)
+        if cached is not None:
+            decisions.log(
+                "reuse_recent_recall", turn_id=turn_id, cluster=CLUSTER,
+                reason=f"normalized query key '{cache_key[:60]}' matches recent",
+                cost_saved_est=0.0,
+            )
+            trace = self._record_trace()
+            if trace is not None:
+                trace.predictor_outcomes.append({
+                    "cluster": CLUSTER, "stage": "recall_coordinator",
+                    "integrator_woken": False, "reused": True,
+                })
+            return cached
+
+        # ── Weighted recall fan-out (Hebbian) ────────────────────────────────
+        strategy_weights = self._recall_strategy_weights()
+        schema_k, episode_k = self._allocate_recall_budget(strategy_weights)
+
         # Schema grep (free, fast)
         schema_hits = []
-        for entity in entities[:4]:
+        for entity in entities[:max(2, schema_k)]:
             hits = self._schema.grep(entity)
             schema_hits.extend(hits[:2])
 
@@ -110,7 +140,7 @@ class HippocampusCluster:
         if embedding_fn and query:
             try:
                 vec = await embedding_fn(query)
-                episodes = self._episodic.recall(vec, limit=4)
+                episodes = self._episodic.recall(vec, limit=max(2, episode_k))
             except Exception as e:
                 logger.warning("[Memory] Episode search failed — response won't include relevant past memories: %s", e)
 
@@ -122,11 +152,66 @@ class HippocampusCluster:
                               f"{ep.get('entity_response', '')[:200]}")
             episode_text = "\n".join(parts)
 
-        return {
+        result = {
             "schema": schema_context,
             "episodes": episode_text,
             "core": self._core_context,
         }
+
+        # Cache for potential reuse next turn
+        self._cache_recall(cache_key, result)
+
+        if self._wiring is not None and not self._wiring_frozen:
+            decisions.log(
+                "weighted_recall_fanout", turn_id=turn_id, cluster=CLUSTER,
+                schema_k=schema_k, episode_k=episode_k,
+                weights={k: round(v, 3) for k, v in strategy_weights.items()},
+            )
+        return result
+
+    def _normalize_recall_key(self, query: str, entities: list[str]) -> str:
+        """Cheap normalization for cache key — lowercase, dedupe whitespace, sort entities."""
+        q = " ".join((query or "").lower().split())
+        ents = ",".join(sorted([e.lower().strip() for e in entities if e]))
+        return f"{q}|{ents}"
+
+    def _cache_recall(self, key: str, result: dict) -> None:
+        self._recent_recall[key] = result
+        self._recent_recall_order.append(key)
+        while len(self._recent_recall_order) > 8:
+            old = self._recent_recall_order.pop(0)
+            self._recent_recall.pop(old, None)
+
+    def _recall_strategy_weights(self) -> dict[str, float]:
+        """Edge weights into each recall strategy. Uniform when no wiring."""
+        if self._wiring is None or self._wiring_frozen:
+            return {"cosine_recall": 1.0, "schema_grep": 1.0,
+                    "entity_tracker": 1.0, "time_filter": 1.0}
+        return {
+            "cosine_recall": self._wiring.get_edge_weight("mem.recall", "hippocampus.cosine_recall"),
+            "schema_grep": self._wiring.get_edge_weight("mem.recall", "hippocampus.schema_grep"),
+            "entity_tracker": self._wiring.get_edge_weight("mem.recall", "hippocampus.entity_tracker"),
+            "time_filter": self._wiring.get_edge_weight("mem.recall", "hippocampus.time_filter"),
+        }
+
+    def _allocate_recall_budget(self, weights: dict[str, float]) -> tuple[int, int]:
+        """Divide a fixed total fan-out (8 lookups) across schema vs episodes by weight ratio."""
+        schema_w = weights["schema_grep"] + weights["entity_tracker"]
+        episode_w = weights["cosine_recall"] + weights["time_filter"]
+        total = schema_w + episode_w
+        if total <= 0:
+            return 3, 4
+        schema_share = schema_w / total
+        schema_k = max(1, round(schema_share * 8))
+        episode_k = max(1, 8 - schema_k)
+        return schema_k, episode_k
+
+    def _record_trace(self):
+        try:
+            from brain.observability.firing_path import current_turn_trace
+            return current_turn_trace.get()
+        except Exception:
+            return None
 
     async def encode(self, session_id: str, turn_id: str, user_input: str,
                      entity_response: str, features: dict, affect: dict,
@@ -142,6 +227,38 @@ class HippocampusCluster:
         # Only skip truly trivial turns
         if intent in ("greeting", "farewell", "ack") and salience < 0.1:
             return
+
+        # Encoder gate: skip the LLM encoder when surprise + DA delta + facts
+        # are all low. The episode still gets stored as raw text below, just
+        # without an LLM-generated summary.
+        bypass, bypass_reason = should_bypass_gating(affect, features)
+        da_now = neuromod_snap.get("DA", 0.5) if neuromod_snap else 0.5
+        skip_encoder = (
+            not bypass
+            and surprise_score < 0.25
+            and salience < 0.4
+            and da_now < 0.6
+            and not features.get("entities")
+        )
+
+        if skip_encoder:
+            decisions.log(
+                "skip_encoder", turn_id=turn_id, cluster=CLUSTER,
+                reason=f"surprise={surprise_score:.2f} salience={salience:.2f} DA={da_now:.2f}",
+                cost_saved_est=0.0005,
+            )
+            trace = self._record_trace()
+            if trace is not None:
+                trace.llm_calls_saved += 1
+            encoded = {"topic_tags": [features.get("topic_summary", "low_salience")],
+                       "entities": [], "key_facts": [], "relationship_note": "",
+                       "summary": user_input[:120]}
+            # Skip the LLM call but proceed to embed + store raw episode
+            return await self._store_episode(
+                session_id, turn_id, user_input, entity_response,
+                features, affect, neuromod_snap, surprise_score,
+                encoded, embedding_fn,
+            )
 
         self._encoder.reset_turn(turn_id)
         messages = [{"role": "user", "content":
@@ -161,9 +278,21 @@ class HippocampusCluster:
                 except Exception:
                     pass
 
+        await self._store_episode(
+            session_id, turn_id, user_input, entity_response,
+            features, affect, neuromod_snap, surprise_score,
+            encoded, embedding_fn,
+        )
+
+    async def _store_episode(self, session_id: str, turn_id: str,
+                              user_input: str, entity_response: str,
+                              features: dict, affect: dict,
+                              neuromod_snap: dict, surprise_score: float,
+                              encoded: dict, embedding_fn) -> None:
         topic_tags = (encoded.get("topic_tags") or features.get("entities", []) or
                       [features.get("topic_summary", "misc")])
         entities = encoded.get("entities") or features.get("entities", [])
+        intent = features.get("intent", "other")
 
         # Update schema with any new key facts
         for raw_fact in encoded.get("key_facts", []):

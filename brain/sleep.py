@@ -16,6 +16,9 @@ from brain.cell import IntegratorCell
 from brain.model_router import ModelRouter
 from brain.second_brain.store import SchemaStore, EpisodicStore
 from brain.security import sanitize_fact
+from brain.wiring import Wiring
+from brain.emotion_hierarchy import core_of
+from brain.observability.decisions import decisions
 
 logger = logging.getLogger(__name__)
 
@@ -45,10 +48,11 @@ Return ONLY JSON."""
 
 class SleepConsolidation:
     def __init__(self, router: ModelRouter, schema: SchemaStore,
-                 episodic: EpisodicStore) -> None:
+                 episodic: EpisodicStore, wiring: Wiring | None = None) -> None:
         self._router = router
         self._schema = schema
         self._episodic = episodic
+        self._wiring = wiring
 
         self._self_updater = IntegratorCell(
             name="self_updater",
@@ -74,10 +78,13 @@ class SleepConsolidation:
         )
         self._synthesizer.set_router(router)
 
-    async def consolidate(self, session_id: str, session_traces: list[dict]) -> None:
+    async def consolidate(self, session_id: str, session_traces: list[dict],
+                          full_traces: list | None = None) -> None:
         """
         Run full consolidation after a session ends.
         session_traces: list of {user_input, entity_response, emotion, topic_tags} dicts.
+        full_traces: list of TurnTrace objects (carry fired_path, neuromod, draft_scores)
+                     — used for the Hebbian pass. Pass [] or None to skip Hebbian.
         """
         if not session_traces:
             return
@@ -85,6 +92,10 @@ class SleepConsolidation:
         logger.info("[Memory consolidation] Processing %d turns from session %s",
                     len(session_traces), session_id)
         start = time.time()
+
+        # ── Hebbian pass (independent of LLM consolidation; runs synchronously) ──
+        if full_traces and self._wiring is not None:
+            self._run_hebbian_pass(session_id, full_traces)
 
         # 1. Episode synthesis — extract facts from session
         turn_id = f"sleep_{session_id}"
@@ -166,3 +177,151 @@ class SleepConsolidation:
 
         await self._schema.awrite("self.md", existing)
         logger.debug("[Memory consolidation] Self-model updated")
+
+    # ── Hebbian pass ─────────────────────────────────────────────────────────
+
+    # Valence per core emotion family for user_emotion delta computation
+    _CORE_VALENCE: dict[str, float] = {
+        "happy": +1.0, "sad": -1.0, "anger": -1.0, "fear": -0.5,
+        "disgust": -0.5, "surprise": 0.0, "cognitive": +0.3, "neutral": 0.0,
+    }
+
+    @classmethod
+    def _emotion_valence(cls, emotion: str | None) -> float:
+        return cls._CORE_VALENCE.get(core_of(emotion or "neutral"), 0.0)
+
+    def _composite_outcome(self, trace) -> tuple[float, dict]:
+        """Return (outcome, breakdown) for a single TurnTrace.
+        Outcome in roughly [-1, +1]."""
+        nm = trace.neuromod or {}
+        # DA delta vs neutral baseline (0.5)
+        da = float(nm.get("DA", 0.5))
+        da_delta = (da - 0.5) * 2.0   # rescale to [-1, +1] roughly
+
+        # Critic overall for the selected draft
+        critic_overall = 0.5
+        for d in (trace.draft_scores or []):
+            if d.get("selected"):
+                critic_overall = float(d.get("overall", 0.5))
+                break
+        # Map [0, 1] → [-1, +1] so a 0.5 score is neutral
+        critic_term = (critic_overall - 0.5) * 2.0
+
+        # User emotion valence delta — proxy: current trace's user_emotion vs neutral
+        # (We don't track per-turn deltas yet; use absolute valence as a proxy.)
+        # When user_emotion is recorded in features, we'd compare to prior turn.
+        user_emotion = ""
+        for d in (trace.draft_scores or []):
+            if isinstance(d, dict) and d.get("user_emotion"):
+                user_emotion = d["user_emotion"]
+                break
+        user_term = self._emotion_valence(user_emotion)
+
+        outcome = 0.5 * da_delta + 0.3 * critic_term + 0.2 * user_term
+        # Clamp
+        outcome = max(-1.0, min(1.0, outcome))
+        return outcome, {
+            "da_delta": round(da_delta, 3),
+            "critic": round(critic_term, 3),
+            "user_emotion": round(user_term, 3),
+        }
+
+    def _plasticity_modulator(self, full_traces: list) -> float:
+        """Session-averaged DA + ACh → plasticity scalar in [0.3, 1.2]."""
+        if not full_traces:
+            return 1.0
+        da_avg = sum(float(t.neuromod.get("DA", 0.5)) for t in full_traces) / len(full_traces)
+        ach_avg = sum(float(t.neuromod.get("ACh", 0.3)) for t in full_traces) / len(full_traces)
+        mod = 0.5 + da_avg + 0.5 * ach_avg
+        return max(0.3, min(1.2, mod))
+
+    def _should_skip_hebbian(self, trace, outcome: float) -> tuple[bool, str]:
+        """Skip Hebbian for turns where the entity wasn't in a state worth learning from."""
+        if abs(outcome) < 0.05:
+            return True, "outcome_near_zero"
+        # Defuse path: the response started with "Let's slow down" or similar — a marker
+        # we don't have explicitly. Use a proxy: very high GABA + low critic.
+        gaba = float(trace.neuromod.get("GABA", 0.0))
+        if gaba > 0.55 and len(trace.draft_scores) <= 1:
+            return True, "defuse_path"
+        # Confused/flat AND user negative
+        emotion = (trace.emotion or "").lower()
+        if emotion in ("confused", "flat"):
+            return True, f"dissociated_emotion={emotion}"
+        return False, ""
+
+    def _run_hebbian_pass(self, session_id: str, full_traces: list) -> None:
+        """Apply gentle decay then per-turn Hebbian updates along firing paths."""
+        # Gentle synaptic homeostasis — every edge drifts 1% toward 1.0
+        self._wiring.decay_toward_rest(rest=1.0, rate=0.01)
+
+        plasticity = self._plasticity_modulator(full_traces)
+        gainers: list[tuple[str, float]] = []
+        losers: list[tuple[str, float]] = []
+        total_updated = 0
+        skipped = 0
+
+        for trace in full_traces:
+            if not trace.fired_path:
+                skipped += 1
+                continue
+
+            outcome, breakdown = self._composite_outcome(trace)
+            skip, reason = self._should_skip_hebbian(trace, outcome)
+            if skip:
+                decisions.log("hebbian_update_skipped", turn_id=trace.turn_id,
+                              reason=reason, outcome=round(outcome, 3))
+                skipped += 1
+                continue
+
+            delta = outcome * 0.02 * plasticity
+            path_names = [n["name"] for n in trace.fired_path]
+            # Snapshot weights before to compute per-edge delta for logging
+            before = {(path_names[i], path_names[i+1]):
+                       self._wiring.get_edge_weight(path_names[i], path_names[i+1])
+                      for i in range(len(path_names) - 1)
+                      if self._wiring.has(path_names[i], path_names[i+1])}
+            updated = self._wiring.hebbian_update(path_names, delta)
+            total_updated += updated
+            # Log non-trivial per-edge changes (only when |delta| > tiny)
+            for (src, tgt), prev in before.items():
+                now = self._wiring.get_edge_weight(src, tgt)
+                edge_delta = now - prev
+                if abs(edge_delta) > 0.001:
+                    if edge_delta > 0:
+                        gainers.append((f"{src}→{tgt}", edge_delta))
+                    else:
+                        losers.append((f"{src}→{tgt}", edge_delta))
+                    decisions.log(
+                        "hebbian_update_applied", turn_id=trace.turn_id,
+                        src=src, tgt=tgt,
+                        from_weight=round(prev, 4), to_weight=round(now, 4),
+                        delta=round(edge_delta, 4),
+                        outcome=round(outcome, 3),
+                        breakdown=breakdown,
+                    )
+
+        # Persist
+        try:
+            self._wiring.save()
+        except Exception as e:
+            logger.warning("[Memory consolidation] Wiring save failed: %s", e)
+        # Snapshot for evolution history
+        try:
+            self._wiring.snapshot_to_history(session_id)
+        except Exception as e:
+            logger.debug("[Memory consolidation] Wiring snapshot failed: %s", e)
+
+        # Session summary
+        top_gainers = sorted(gainers, key=lambda x: x[1], reverse=True)[:5]
+        top_losers = sorted(losers, key=lambda x: x[1])[:5]
+        decisions.log(
+            "session_plasticity_summary", session_id=session_id,
+            plasticity_modulator=round(plasticity, 3),
+            edges_updated=total_updated,
+            turns_skipped=skipped,
+            top_gainers=[{"edge": e, "delta": round(d, 4)} for e, d in top_gainers],
+            top_losers=[{"edge": e, "delta": round(d, 4)} for e, d in top_losers],
+        )
+        logger.info("[Memory consolidation] Hebbian: plasticity=%.2f edges_updated=%d turns_skipped=%d",
+                    plasticity, total_updated, skipped)

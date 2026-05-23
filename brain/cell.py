@@ -52,6 +52,12 @@ class IntegratorCell:
             return ""
         self._calls_this_turn += 1
         start = time.time()
+        # Record on the current turn's firing path (no-op if no trace bound)
+        try:
+            from brain.observability.firing_path import record_integrator_call
+            record_integrator_call(self.name, self.cluster)
+        except Exception:
+            pass
         try:
             result = await asyncio.wait_for(
                 self._router.call(

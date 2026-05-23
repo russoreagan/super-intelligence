@@ -38,6 +38,7 @@
 
   /* lobe palette — refined from reference, saturated for the dark canvas */
   --frontal:      oklch(0.72 0.13 235);
+  --motor:        oklch(0.66 0.20 15);
   --parietal:     oklch(0.78 0.16 145);
   --temporal:     oklch(0.80 0.14 75);
   --occipital:    oklch(0.70 0.16 300);
@@ -1260,7 +1261,7 @@ details[open].turn-log summary::before { transform: rotate(90deg); }
     <!-- ----- LEFT: regions + neuromods ----- -->
     <aside class="col col-left">
       <section class="col-section">
-        <div class="section-label">Cortical Lobes <span class="count">4</span></div>
+        <div class="section-label">Cortical Lobes <span class="count">5</span></div>
         <div class="region-list" id="region-list-cortical"></div>
       </section>
 
@@ -1311,7 +1312,7 @@ details[open].turn-log summary::before { transform: rotate(90deg); }
         </div>
         <div class="readout tr">
           Active regions
-          <strong id="readout-active-count">0 / 9</strong>
+          <strong id="readout-active-count">0 / 10</strong>
         </div>
         <div class="readout bl">
           Turn id
@@ -1325,6 +1326,7 @@ details[open].turn-log summary::before { transform: rotate(90deg); }
         <div class="brain-figure">
           <img src="brain-anatomy.png" class="brain-base" alt="Brain anatomy" />
           <img id="region-frontal"    class="region lobe-overlay" src="brain-frontal.png"    alt="" style="--lobe: var(--frontal);    --lobe-glow: oklch(0.72 0.13 235);" />
+          <img id="region-motor"      class="region lobe-overlay" src="brain-motor.png"      alt="" style="--lobe: var(--motor);      --lobe-glow: oklch(0.66 0.20 15);" />
           <img id="region-parietal"   class="region lobe-overlay" src="brain-parietal.png"   alt="" style="--lobe: var(--parietal);   --lobe-glow: oklch(0.78 0.16 145);" />
           <img id="region-occipital"  class="region lobe-overlay" src="brain-occipital.png"  alt="" style="--lobe: var(--occipital);  --lobe-glow: oklch(0.70 0.16 300);" />
           <img id="region-temporal"   class="region lobe-overlay" src="brain-temporal.png"   alt="" style="--lobe: var(--temporal);   --lobe-glow: oklch(0.80 0.14 75);" />
@@ -1399,6 +1401,33 @@ details[open].turn-log summary::before { transform: rotate(90deg); }
             </div>
           </div>
         </section>
+
+        <section class="pane log-pane" id="plasticity-pane">
+          <header class="pane-head">
+            <h3>Plasticity <span id="frozen-tag" style="display:none;color:#f9c46b;font-size:0.7em;margin-left:6px;">[FROZEN]</span></h3>
+            <div class="head-meta">
+              <span id="predictor-saved">0 LLM calls saved</span>
+            </div>
+          </header>
+          <div class="pane-body" style="font-size:0.78em;line-height:1.45;">
+            <div style="display:flex;gap:8px;margin-bottom:6px;">
+              <div style="flex:1;">
+                <div style="opacity:0.6;font-size:0.85em;">Predictor accuracy</div>
+                <div id="predictor-accuracy" style="font-weight:600;">—</div>
+              </div>
+              <div style="flex:1;">
+                <div style="opacity:0.6;font-size:0.85em;">Plasticity</div>
+                <div id="plasticity-meter" style="font-weight:600;">1.00</div>
+              </div>
+            </div>
+            <div style="opacity:0.6;font-size:0.85em;margin-top:6px;">Top edges</div>
+            <div id="wiring-edges" style="font-family:ui-monospace,Menlo,monospace;font-size:0.88em;opacity:0.85;">—</div>
+            <div style="opacity:0.6;font-size:0.85em;margin-top:8px;">Decisions</div>
+            <div id="decisions-log" style="font-family:ui-monospace,Menlo,monospace;font-size:0.78em;max-height:180px;overflow-y:auto;">
+              <div class="log-empty" style="opacity:0.5;">— no decisions yet —</div>
+            </div>
+          </div>
+        </section>
       </div>
     </aside>
 
@@ -1438,6 +1467,7 @@ details[open].turn-log summary::before { transform: rotate(90deg); }
    ===================================================================== */
 const REGIONS = {
   frontal:      { color: 'oklch(0.72 0.13 235)', label: 'Frontal lobe',      role: 'Executive · Response',    initial: 'F',  group: 'cortical' },
+  motor:        { color: 'oklch(0.66 0.20 15)',  label: 'Motor cortex',      role: 'Movement · Articulation', initial: 'M',  group: 'cortical' },
   parietal:     { color: 'oklch(0.78 0.16 145)', label: 'Parietal lobe',     role: 'Context · Session state', initial: 'P',  group: 'cortical' },
   occipital:    { color: 'oklch(0.70 0.16 300)', label: 'Occipital lobe',    role: 'Vision processing',       initial: 'O',  group: 'cortical' },
   temporal:     { color: 'oklch(0.80 0.14 75)',  label: 'Temporal lobe',     role: 'Language understanding',  initial: 'T',  group: 'cortical' },
@@ -1451,6 +1481,8 @@ const REGIONS = {
 // cluster → region mapping (matches the original CLUSTER_MAP)
 const CLUSTER_MAP = {
   frontal:      'frontal',
+  motor:        'motor',
+  motor_cortex: 'motor',
   parietal:     'parietal',
   occipital:    'occipital',
   temporal:     'temporal',
@@ -1718,7 +1750,107 @@ function handle(msg) {
     case 'transcript':       handleTranscriptEvent(msg); break;
     case 'transcript_error': handleTranscriptError(msg); break;
     case 'voice_mode':       handleVoiceMode(msg); break;
+    case 'decision':         handleDecisionEvent(msg); break;
+    case 'wiring_status': {
+      const tag = document.getElementById('frozen-tag');
+      if (tag) tag.style.display = msg.frozen ? 'inline' : 'none';
+      break;
+    }
   }
+}
+
+/* =====================================================================
+   PREDICTOR + HEBBIAN PANEL
+   ===================================================================== */
+const _predictorOutcomes = [];     // running window of {correct: bool}
+let   _llmCallsSaved = 0;
+const _topEdges = new Map();        // name → {weight, delta}
+
+function handleDecisionEvent(msg) {
+  // Update running counters
+  if (msg.decision === 'skip_executive_integrator'
+      || msg.decision === 'skip_critic'
+      || msg.decision === 'skip_temporal_integrator'
+      || msg.decision === 'skip_encoder'
+      || msg.decision === 'reuse_recent_recall') {
+    _llmCallsSaved += (msg.drafts_skipped || 1);
+    document.getElementById('predictor-saved').textContent = `${_llmCallsSaved} LLM calls saved`;
+  }
+  if (msg.decision === 'hebbian_update_applied') {
+    const key = `${msg.src} → ${msg.tgt}`;
+    _topEdges.set(key, {weight: msg.to_weight, delta: msg.delta});
+    renderTopEdges();
+  }
+  if (msg.decision === 'session_plasticity_summary') {
+    const meter = document.getElementById('plasticity-meter');
+    if (meter) meter.textContent = (msg.plasticity_modulator ?? 1).toFixed(2);
+  }
+  appendDecisionLine(msg);
+}
+
+function appendDecisionLine(msg) {
+  const root = document.getElementById('decisions-log');
+  if (!root) return;
+  // Clear placeholder on first event
+  const empty = root.querySelector('.log-empty');
+  if (empty) empty.remove();
+
+  const line = document.createElement('div');
+  line.style.padding = '2px 0';
+  line.style.borderBottom = '1px dotted rgba(255,255,255,0.05)';
+
+  let color = 'inherit';
+  let prefix = '·';
+  if (msg.decision && msg.decision.startsWith('skip_')) { color = '#7bd88f'; prefix = '⏩'; }
+  else if (msg.decision === 'gate_bypassed_emotional')   { color = '#f9c46b'; prefix = '⚠'; }
+  else if (msg.decision === 'hebbian_update_applied')    { color = '#9fb8ff'; prefix = '⇗'; }
+  else if (msg.decision === 'hebbian_update_skipped')    { color = '#bbb';    prefix = '∅'; }
+  else if (msg.decision === 'weighted_drafter_selection'
+        || msg.decision === 'weighted_switch_order'
+        || msg.decision === 'weighted_recall_fanout')   { color = '#c39bd3'; prefix = '⊕'; }
+
+  line.style.color = color;
+  const cluster = msg.cluster ? `[${msg.cluster}]` : '';
+  let detail = msg.reason || '';
+  if (msg.decision === 'weighted_drafter_selection') {
+    detail = `picked ${(msg.picked || []).join(',')} weights=${JSON.stringify(msg.weights || {})}`;
+  } else if (msg.decision === 'hebbian_update_applied') {
+    detail = `${msg.src}→${msg.tgt} Δ${(msg.delta>0?'+':'')}${(msg.delta).toFixed(3)} (w=${msg.to_weight.toFixed(3)})`;
+  } else if (msg.decision === 'session_plasticity_summary') {
+    detail = `plasticity=${(msg.plasticity_modulator||1).toFixed(2)} edges_updated=${msg.edges_updated||0}`;
+  }
+  line.textContent = `${prefix} ${cluster} ${msg.decision} — ${detail}`;
+  root.insertBefore(line, root.firstChild);
+
+  // Cap to 50 lines
+  while (root.childNodes.length > 50) {
+    root.removeChild(root.lastChild);
+  }
+
+  // Update predictor accuracy on outcomes
+  if (typeof msg.correct === 'boolean') {
+    _predictorOutcomes.push({correct: msg.correct});
+    while (_predictorOutcomes.length > 50) _predictorOutcomes.shift();
+    const correct = _predictorOutcomes.filter(o => o.correct).length;
+    const acc = _predictorOutcomes.length ? (correct / _predictorOutcomes.length * 100).toFixed(0) : '—';
+    document.getElementById('predictor-accuracy').textContent =
+      `${acc}% (n=${_predictorOutcomes.length})`;
+  }
+}
+
+function renderTopEdges() {
+  const root = document.getElementById('wiring-edges');
+  if (!root) return;
+  // Sort by current weight desc, top 8
+  const rows = [...(_topEdges.entries())]
+    .sort((a, b) => b[1].weight - a[1].weight)
+    .slice(0, 8);
+  if (!rows.length) { root.textContent = '—'; return; }
+  root.innerHTML = rows.map(([k, v]) => {
+    const sign = v.delta > 0 ? '+' : '';
+    const color = v.delta > 0 ? '#7bd88f' : v.delta < 0 ? '#e8866c' : 'inherit';
+    return `<div>${k.padEnd(48,' ').slice(0,48)} <span style="opacity:0.7;">w=${v.weight.toFixed(3)}</span> <span style="color:${color};">${sign}${v.delta.toFixed(3)}</span></div>`;
+  }).join('');
 }
 
 /* =====================================================================
@@ -2208,16 +2340,16 @@ const DEMO_RESPONSES = [
   },
   {
     keywords: ['hello', 'hi', 'hey', 'there'],
-    clusters: ['temporal', 'frontal', 'hypothalamus', 'brainstem', 'frontal'],
-    notes: ['parse', 'greet', 'warmth', 'speak', 'done'],
+    clusters: ['temporal', 'frontal', 'hypothalamus', 'motor', 'brainstem'],
+    notes: ['parse', 'greet', 'warmth', 'articulate', 'speak'],
     response: "Hi — I'm here and listening. What's on your mind?",
     emotion: 'warm',
     quality: { score: 0.79, coherence: 0.86, emotional_fit: 0.91, drafter_count: 1 },
   },
   {
     keywords: [],  // default
-    clusters: ['thalamus', 'temporal', 'parietal', 'frontal', 'frontal', 'brainstem'],
-    notes: ['route', 'parse', 'context', 'reason', 'compose', 'speak'],
+    clusters: ['thalamus', 'temporal', 'parietal', 'frontal', 'frontal', 'motor', 'brainstem'],
+    notes: ['route', 'parse', 'context', 'reason', 'compose', 'articulate', 'speak'],
     response: "Got it. Working through that now — let me pull the relevant context and put together a response.",
     emotion: 'thoughtful',
     quality: { score: 0.77, coherence: 0.85, emotional_fit: 0.72, drafter_count: 1 },

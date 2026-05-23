@@ -84,6 +84,10 @@ async def session(args) -> None:
     from brain.clusters.hippocampus import HippocampusCluster
     from brain.clusters.frontal import FrontalCluster
     from brain.observability.timeline import ObservabilityLayer, TurnTrace
+    from brain.observability.firing_path import set_current_trace, reset_current_trace
+    from brain.observability.decisions import decisions as decisions_log
+    from brain.wiring import Wiring
+    from brain.wiring_bootstrap import bootstrap as wiring_bootstrap
 
     session_id = str(uuid.uuid4())[:8]
     logger.info("Session %s starting", session_id)
@@ -107,18 +111,33 @@ async def session(args) -> None:
         logger.debug("Eval system unavailable: %s", _eval_err)
 
     obs = ObservabilityLayer(session_id, eval_logger=eval_logger)
+    if posthoc_scorer is not None:
+        posthoc_scorer._obs = obs
     router = ModelRouter(obs=obs)
     brainstem = Brainstem(bus, router)
     pns = PNS(bus)
 
+    # ── Wiring graph (Hebbian edge weights) ───────────────────────────────────
+    wiring = Wiring()
+    wiring_bootstrap(wiring)
+    wiring.snapshot_baseline()
+    wiring_frozen = os.environ.get("BRAIN_WIRING_FROZEN", "false").lower() == "true"
+    if wiring_frozen:
+        logger.info("Wiring FROZEN — weighted routing disabled (BRAIN_WIRING_FROZEN=true)")
+    else:
+        logger.info("Wiring: %d edges loaded", wiring.edge_count())
+
+    # ── Decisions log (predict-and-surprise + Hebbian) ────────────────────────
+    decisions_log.configure(eval_logger=eval_logger)
+
     # Clusters
     thalamus = ThalamusCluster(bus)
-    temporal = TemporalCluster(bus, router)
+    temporal = TemporalCluster(bus, router, wiring=wiring)
     occipital = OccipitalCluster(bus, router)
     hypothalamus = HypothalamusCluster(bus)
     parietal = ParietalCluster(bus)
-    hippocampus = HippocampusCluster(bus, router)
-    frontal = FrontalCluster(bus, brainstem, router)
+    hippocampus = HippocampusCluster(bus, router, wiring=wiring)
+    frontal = FrontalCluster(bus, brainstem, router, wiring=wiring)
 
     # Boot: pre-load core schema + seed parietal with recent episodes
     core_context, recent_episodes = await hippocampus.boot(session_id)
@@ -161,6 +180,7 @@ async def session(args) -> None:
                              on_eval_mode=_on_eval_mode,
                              on_mic_toggle=_on_mic_toggle,
                              python_voice_mode=_voice_flag)
+        ui_server.set_wiring_frozen(wiring_frozen)
         asyncio.create_task(ui_server.start(port=8765))
         # Give the server a moment to bind
         await asyncio.sleep(0.3)
@@ -177,19 +197,25 @@ async def session(args) -> None:
     motor = None
     if args.motor or os.environ.get("BRAIN_MOTOR", "false").lower() == "true":
         from brain.clusters.motor_cortex import MotorCortexCluster
+        from brain.clusters.cloud_executor import CloudExecutor
+
         _motor_paths_raw = os.environ.get("BRAIN_MOTOR_PATHS", "")
         _motor_paths = [p.strip() for p in _motor_paths_raw.split(":") if p.strip()]
         _motor_cmds_raw = os.environ.get("BRAIN_MOTOR_COMMANDS", "")
         _motor_cmds = set(_motor_cmds_raw.split(":")) if _motor_cmds_raw else None
+
+        cloud = CloudExecutor(bus, schema_store=hippocampus._schema)
+
         motor = MotorCortexCluster(bus, router,
                                    allowed_paths=_motor_paths,
-                                   allowed_commands=_motor_cmds)
+                                   allowed_commands=_motor_cmds,
+                                   cloud_executor=cloud)
         if _motor_paths:
             logger.info("Motor cortex online. Allowed paths: %s", _motor_paths)
         else:
             logger.warning(
                 "Motor cortex enabled but BRAIN_MOTOR_PATHS is not set — "
-                "all filesystem operations will be blocked until paths are configured."
+                "filesystem operations will be blocked until paths are configured."
             )
 
     # ── v0.2: Default Mode Network ────────────────────────────────────────────
@@ -261,6 +287,8 @@ async def session(args) -> None:
 
     # Session trace accumulator for sleep consolidation
     session_traces: list[dict] = []
+    # Full TurnTrace objects (carry fired_path, neuromod, draft_scores) for Hebbian pass
+    session_traces_full: list = []
 
     # Background hippocampus encode tasks — must flush at shutdown
     pending_encodes: set[asyncio.Task] = set()
@@ -310,6 +338,16 @@ async def session(args) -> None:
 
         turn = brainstem.begin_turn()
         turn_id = turn.turn_id
+        obs.begin_turn(turn_id, user_input)
+
+        # Bind a fresh TurnTrace as the current firing-path context so every
+        # switch.fire() and integrator.call() this turn appends to its trace.
+        trace = TurnTrace(
+            turn_id=turn_id,
+            session_id=session_id,
+            user_input=user_input,
+        )
+        _ctx_token = set_current_trace(trace)
 
         # Notify UI of turn start
         if emitter:
@@ -452,20 +490,53 @@ async def session(args) -> None:
             )
 
         # ── Motor Cortex: tool execution (only when action required) ──────────
-        if motor and features.get("requires_action"):
-            await _emit("motor_cortex", 0.85, "executing tool", turn_id)
-            motor.reset_turn(turn_id)
-            try:
-                tool_result = await motor.execute(features, turn_id)
-                if tool_result:
-                    output = tool_result.get("output", "")
-                    tool_name = tool_result.get("tool", "tool")
-                    memory["tool_result"] = f"[{tool_name}]\n{output}"
-                    logger.info("[MotorCortex] %s → %s chars output (success=%s)",
-                                tool_name, len(output), tool_result.get("success"))
-            except Exception as _mc_err:
-                logger.error("Motor cortex failed this turn — tool result will be absent: %s", _mc_err)
-            await _emit_end("motor_cortex", turn_id)
+        if motor:
+            cloud = getattr(motor, "_cloud", None)
+
+            # Check if user is responding to a pending write confirmation
+            if cloud and cloud.has_pending:
+                raw_text = features.get("raw_text", user_input)
+                if cloud.is_user_confirming(raw_text):
+                    await _emit("motor_cortex", 0.9, "executing confirmed action", turn_id)
+                    try:
+                        tool_result = await cloud.execute_pending(turn_id)
+                        if tool_result:
+                            output = tool_result.get("output", "")
+                            memory["tool_result"] = f"[cloud_action — confirmed]\n{output}"
+                            logger.info("[CloudExecutor] Confirmed write executed (success=%s)",
+                                        tool_result.get("success"))
+                    except Exception as _ce:
+                        logger.error("Cloud executor failed on confirmed write: %s", _ce)
+                    await _emit_end("motor_cortex", turn_id)
+                elif cloud.is_user_denying(raw_text):
+                    cloud.clear_pending()
+                    memory["tool_result"] = "[cloud_action — cancelled by user]"
+                    logger.info("[CloudExecutor] Pending write action cancelled by user")
+
+            # Normal tool execution when action is required this turn
+            elif features.get("requires_action"):
+                await _emit("motor_cortex", 0.85, "executing tool", turn_id)
+                motor.reset_turn(turn_id)
+                try:
+                    tool_result = await motor.execute(features, turn_id)
+                    if tool_result:
+                        output = tool_result.get("output", "")
+                        tool_name = tool_result.get("tool", "tool")
+                        if tool_result.get("pending"):
+                            # Write action queued — inject confirmation prompt into context
+                            desc = output.replace("CONFIRMATION_NEEDED:", "").strip()
+                            memory["tool_result"] = (
+                                f"[confirmation_needed]\n"
+                                f"You are about to: {desc}\n"
+                                "Ask the user to confirm before proceeding."
+                            )
+                        else:
+                            memory["tool_result"] = f"[{tool_name}]\n{output}"
+                        logger.info("[MotorCortex] %s → %d chars (success=%s)",
+                                    tool_name, len(output), tool_result.get("success"))
+                except Exception as _mc_err:
+                    logger.error("Motor cortex failed this turn: %s", _mc_err)
+                await _emit_end("motor_cortex", turn_id)
 
         parietal_context = parietal.recent_turns_text()
 
@@ -598,26 +669,25 @@ async def session(args) -> None:
             except Exception as _qe:
                 logger.debug("quality_score emit failed: %s", _qe)
 
-        # Observability
-        trace = TurnTrace(
-            turn_id=turn_id,
-            session_id=session_id,
-            user_input=user_input,
-            response=final,
-            llm_calls=llm_calls,
-            elapsed_s=turn_result.elapsed(),
-            emotion=affect.get("emotion", "neutral"),
-            emotion_core=core_of(affect.get("emotion", "neutral")),
-            neuromod=nm_snap,
-            # Eval fields
-            draft_scores=draft_scores,
-            selected_draft_id=selected_draft_id,
-            drafter_count=len(draft_scores),
-            cluster_tokens=cluster_tokens,
-            memory_recalled=memory_recalled,
-            memory_hit_count=memory_hit_count,
-        )
+        # Observability — fill the trace bound at turn start (carries fired_path,
+        # predictor_outcomes, llm_calls_saved, gating_bypassed_count)
+        trace.response = final
+        trace.llm_calls = llm_calls
+        trace.elapsed_s = turn_result.elapsed()
+        trace.emotion = affect.get("emotion", "neutral")
+        trace.emotion_core = core_of(affect.get("emotion", "neutral"))
+        trace.neuromod = nm_snap
+        trace.draft_scores = draft_scores
+        trace.selected_draft_id = selected_draft_id
+        trace.drafter_count = len(draft_scores)
+        trace.cluster_tokens = cluster_tokens
+        trace.memory_recalled = memory_recalled
+        trace.memory_hit_count = memory_hit_count
         obs.record_turn(trace)
+
+        # Append the full trace (with fired_path, neuromod, emotion etc.) so
+        # sleep consolidation can apply Hebbian updates along the path.
+        session_traces_full.append(trace)
 
         # ── Background eval tasks (non-blocking) ─────────────────────────────
         if baseline_runner:
@@ -667,6 +737,13 @@ async def session(args) -> None:
 
         logger.info("Turn %s: %d LLM calls | %.2fs | emotion=%s",
                     turn_id, llm_calls, turn_result.elapsed(), affect.get("emotion"))
+
+        # Release the firing-path context binding for this turn
+        try:
+            reset_current_trace(_ctx_token)
+        except Exception:
+            pass
+
         return final, affect
 
     # ── Run modes ─────────────────────────────────────────────────────────────
@@ -699,11 +776,11 @@ async def session(args) -> None:
             response, affect = await process_turn(user_input, image_path)
             # response already sent to browser via turn_end event;
             # also speak it aloud if voice mode is enabled
+            await _emit("motor", 0.7, "articulating", "speak")
             await _emit("brainstem", 0.35, "speaking", "speak")
-            await _emit("temporal", 0.2, "speaking", "speak")
             await pns.emit(response, affect)
+            await _emit_end("motor", "speak")
             await _emit_end("brainstem", "speak")
-            await _emit_end("temporal", "speak")
 
     else:
         # CLI REPL
@@ -747,11 +824,11 @@ async def session(args) -> None:
                     user_input = user_input.replace(m.group(0), "").strip()
 
             response, affect = await process_turn(user_input, image_path)
+            await _emit("motor", 0.7, "articulating", "speak")
             await _emit("brainstem", 0.35, "speaking", "speak")
-            await _emit("temporal", 0.2, "speaking", "speak")
             await pns.emit(response, affect)
+            await _emit_end("motor", "speak")
             await _emit_end("brainstem", "speak")
-            await _emit_end("temporal", "speak")
 
     # ── Shutdown ──────────────────────────────────────────────────────────────
     hb_task.cancel()
@@ -770,9 +847,10 @@ async def session(args) -> None:
     if session_traces:
         try:
             from brain.sleep import SleepConsolidation
-            sleep = SleepConsolidation(router, hippocampus._schema, hippocampus._episodic)
-            logger.info("Running end-of-session memory consolidation (summarising facts, updating self-model)...")
-            await sleep.consolidate(session_id, session_traces)
+            sleep = SleepConsolidation(router, hippocampus._schema, hippocampus._episodic,
+                                       wiring=wiring)
+            logger.info("Running end-of-session memory consolidation (summarising facts, updating self-model, applying Hebbian updates)...")
+            await sleep.consolidate(session_id, session_traces, full_traces=session_traces_full)
         except Exception as e:
             logger.warning("End-of-session memory consolidation failed — recent facts may not be saved: %s", e)
 

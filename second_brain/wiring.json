@@ -1,0 +1,278 @@
+[
+  {
+    "src": "sensory.text",
+    "tgt": "temporal.template_match",
+    "w": 1.0,
+    "pol": "excitatory"
+  },
+  {
+    "src": "temporal.template_match",
+    "tgt": "temporal.understanding_integrator",
+    "w": 1.0,
+    "pol": "excitatory"
+  },
+  {
+    "src": "sensory.text",
+    "tgt": "temporal.length_bucket",
+    "w": 1.0,
+    "pol": "excitatory"
+  },
+  {
+    "src": "temporal.length_bucket",
+    "tgt": "temporal.understanding_integrator",
+    "w": 1.00385340625,
+    "pol": "excitatory"
+  },
+  {
+    "src": "sensory.text",
+    "tgt": "temporal.salience_prefilter",
+    "w": 1.0,
+    "pol": "excitatory"
+  },
+  {
+    "src": "temporal.salience_prefilter",
+    "tgt": "temporal.understanding_integrator",
+    "w": 1.0,
+    "pol": "excitatory"
+  },
+  {
+    "src": "sensory.text",
+    "tgt": "temporal.self_reference",
+    "w": 1.0,
+    "pol": "excitatory"
+  },
+  {
+    "src": "temporal.self_reference",
+    "tgt": "temporal.understanding_integrator",
+    "w": 1.00479454228,
+    "pol": "excitatory"
+  },
+  {
+    "src": "sensory.text",
+    "tgt": "temporal.epistemic_action",
+    "w": 1.0,
+    "pol": "excitatory"
+  },
+  {
+    "src": "temporal.epistemic_action",
+    "tgt": "temporal.understanding_integrator",
+    "w": 1.0,
+    "pol": "excitatory"
+  },
+  {
+    "src": "sensory.text",
+    "tgt": "temporal.integrator_inhibitor",
+    "w": 1.0,
+    "pol": "excitatory"
+  },
+  {
+    "src": "temporal.integrator_inhibitor",
+    "tgt": "temporal.understanding_integrator",
+    "w": 1.0,
+    "pol": "inhibitory"
+  },
+  {
+    "src": "temporal.understanding_integrator",
+    "tgt": "frontal.executive",
+    "w": 1.00864794853,
+    "pol": "excitatory"
+  },
+  {
+    "src": "temporal.understanding_integrator",
+    "tgt": "hypothalamus",
+    "w": 1.0,
+    "pol": "excitatory"
+  },
+  {
+    "src": "temporal.understanding_integrator",
+    "tgt": "hippocampus.recall",
+    "w": 1.0,
+    "pol": "excitatory"
+  },
+  {
+    "src": "frontal.executive",
+    "tgt": "frontal.drafter_A",
+    "w": 1.00864794853,
+    "pol": "excitatory"
+  },
+  {
+    "src": "frontal.drafter_A",
+    "tgt": "frontal.critic",
+    "w": 1.0,
+    "pol": "excitatory"
+  },
+  {
+    "src": "frontal.drafter_A",
+    "tgt": "frontal.empathy_critic",
+    "w": 1.0,
+    "pol": "excitatory"
+  },
+  {
+    "src": "frontal.executive",
+    "tgt": "frontal.drafter_B",
+    "w": 1.0,
+    "pol": "excitatory"
+  },
+  {
+    "src": "frontal.drafter_B",
+    "tgt": "frontal.critic",
+    "w": 1.0,
+    "pol": "excitatory"
+  },
+  {
+    "src": "frontal.drafter_B",
+    "tgt": "frontal.empathy_critic",
+    "w": 1.0,
+    "pol": "excitatory"
+  },
+  {
+    "src": "frontal.executive",
+    "tgt": "frontal.drafter_C",
+    "w": 1.0,
+    "pol": "excitatory"
+  },
+  {
+    "src": "frontal.drafter_C",
+    "tgt": "frontal.critic",
+    "w": 1.0,
+    "pol": "excitatory"
+  },
+  {
+    "src": "frontal.drafter_C",
+    "tgt": "frontal.empathy_critic",
+    "w": 1.0,
+    "pol": "excitatory"
+  },
+  {
+    "src": "hypothalamus.threat_to_GABA",
+    "tgt": "frontal.drafter_A",
+    "w": 1.0,
+    "pol": "inhibitory"
+  },
+  {
+    "src": "hypothalamus.threat_to_GABA",
+    "tgt": "frontal.drafter_B",
+    "w": 1.0,
+    "pol": "inhibitory"
+  },
+  {
+    "src": "hypothalamus.threat_to_GABA",
+    "tgt": "frontal.drafter_C",
+    "w": 1.0,
+    "pol": "inhibitory"
+  },
+  {
+    "src": "hypothalamus.threat_to_GABA",
+    "tgt": "frontal.stoic_reframer",
+    "w": 1.0,
+    "pol": "excitatory"
+  },
+  {
+    "src": "hypothalamus.valence_to_DA",
+    "tgt": "frontal.executive",
+    "w": 1.0,
+    "pol": "excitatory"
+  },
+  {
+    "src": "hypothalamus.novelty_to_ACh",
+    "tgt": "frontal.executive",
+    "w": 1.0,
+    "pol": "excitatory"
+  },
+  {
+    "src": "hypothalamus.arousal_homeostat",
+    "tgt": "frontal.executive",
+    "w": 1.0,
+    "pol": "excitatory"
+  },
+  {
+    "src": "mem.recall",
+    "tgt": "hippocampus.cosine_recall",
+    "w": 1.0,
+    "pol": "excitatory"
+  },
+  {
+    "src": "hippocampus.cosine_recall",
+    "tgt": "frontal.executive",
+    "w": 1.0,
+    "pol": "excitatory"
+  },
+  {
+    "src": "hippocampus.cosine_recall",
+    "tgt": "hippocampus.recall_aggregator",
+    "w": 1.0,
+    "pol": "excitatory"
+  },
+  {
+    "src": "mem.recall",
+    "tgt": "hippocampus.schema_grep",
+    "w": 1.0,
+    "pol": "excitatory"
+  },
+  {
+    "src": "hippocampus.schema_grep",
+    "tgt": "frontal.executive",
+    "w": 1.0,
+    "pol": "excitatory"
+  },
+  {
+    "src": "hippocampus.schema_grep",
+    "tgt": "hippocampus.recall_aggregator",
+    "w": 1.0,
+    "pol": "excitatory"
+  },
+  {
+    "src": "mem.recall",
+    "tgt": "hippocampus.entity_tracker",
+    "w": 1.0,
+    "pol": "excitatory"
+  },
+  {
+    "src": "hippocampus.entity_tracker",
+    "tgt": "frontal.executive",
+    "w": 1.0,
+    "pol": "excitatory"
+  },
+  {
+    "src": "hippocampus.entity_tracker",
+    "tgt": "hippocampus.recall_aggregator",
+    "w": 1.0,
+    "pol": "excitatory"
+  },
+  {
+    "src": "mem.recall",
+    "tgt": "hippocampus.time_filter",
+    "w": 1.0,
+    "pol": "excitatory"
+  },
+  {
+    "src": "hippocampus.time_filter",
+    "tgt": "frontal.executive",
+    "w": 1.0,
+    "pol": "excitatory"
+  },
+  {
+    "src": "hippocampus.time_filter",
+    "tgt": "hippocampus.recall_aggregator",
+    "w": 1.0,
+    "pol": "excitatory"
+  },
+  {
+    "src": "parietal.recent_turns_ringbuffer",
+    "tgt": "frontal.executive",
+    "w": 1.0,
+    "pol": "excitatory"
+  },
+  {
+    "src": "parietal.topic_vector_holder",
+    "tgt": "frontal.executive",
+    "w": 1.0,
+    "pol": "excitatory"
+  },
+  {
+    "src": "parietal.entity_tracker",
+    "tgt": "frontal.executive",
+    "w": 1.0,
+    "pol": "excitatory"
+  }
+]
