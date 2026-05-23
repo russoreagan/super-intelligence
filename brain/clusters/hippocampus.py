@@ -77,8 +77,8 @@ class HippocampusCluster:
         # Pre-load core schema at boot (extended mind — reliably needed every session)
         self._core_context: dict[str, str] = {}
 
-    async def boot(self, session_id: str) -> dict[str, str]:
-        """Load core schema into working memory at session start."""
+    async def boot(self, session_id: str) -> tuple[dict[str, str], list[dict]]:
+        """Load core schema and recent episodes into working memory at session start."""
         self._session_id = session_id
         self._schema.ensure_self_schema()
         self._schema.ensure_user_schema()
@@ -86,7 +86,10 @@ class HippocampusCluster:
         logger.info("[Memory] Loaded: self-model=%d chars, user-model=%d chars",
                     len(self._core_context.get("self", "")),
                     len(self._core_context.get("user", "")))
-        return self._core_context
+        recent = self._episodic.recall_recent(limit=6)
+        if recent:
+            logger.info("[Memory] Session bridge: seeding parietal with %d recent episodes", len(recent))
+        return self._core_context, recent
 
     async def recall(self, query: str, entities: list[str],
                      turn_id: str, embedding_fn=None) -> dict:

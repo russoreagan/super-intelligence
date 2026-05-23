@@ -1,645 +1,1416 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Brain</title>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Super Intelligence</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
 <style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+/* =====================================================================
+   SUPER INTELLIGENCE — neural control room
+   Drop-in replacement for brain/ui/index.html. Preserves every DOM id
+   and WS event the FastAPI server emits/expects. If the WebSocket fails
+   to open within 1.5s, an offline simulation runs so the UI is alive.
+   ===================================================================== */
 
-  :root {
-    --bg: #080810;
-    --surface: #0e0e1a;
-    --border: #1e1e38;
-    --text: #c8d4f0;
-    --text-dim: #5a6080;
-    --accent: #2244aa;
-    --input-bg: #12121e;
-  }
+:root {
+  --bg-0:        oklch(0.13 0.018 250);
+  --bg-1:        oklch(0.17 0.020 250);
+  --bg-2:        oklch(0.21 0.022 250);
+  --bg-3:        oklch(0.26 0.024 250);
+  --line:        oklch(0.30 0.024 250);
+  --line-soft:   oklch(0.26 0.020 250 / 0.55);
+  --line-faint:  oklch(0.24 0.018 250 / 0.35);
 
-  body {
-    background: var(--bg);
-    color: var(--text);
-    font-family: 'SF Mono', 'Fira Code', monospace;
-    font-size: 13px;
-    height: 100vh;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
+  --fg:          oklch(0.96 0.005 250);
+  --fg-dim:      oklch(0.78 0.014 250);
+  --fg-mute:     oklch(0.55 0.018 250);
+  --fg-faint:    oklch(0.42 0.020 250);
 
-  /* ── Top bar ── */
-  #topbar {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 6px 16px;
-    background: var(--surface);
-    border-bottom: 1px solid var(--border);
-    flex-shrink: 0;
-    font-size: 11px;
-    color: var(--text-dim);
-  }
-  #topbar .brand { color: var(--text); font-weight: 600; letter-spacing: 0.08em; font-size: 12px; }
-  #topbar .sep { color: var(--border); }
-  #emotion-badge {
-    padding: 2px 9px;
-    border-radius: 99px;
-    font-size: 10px;
-    font-weight: 600;
-    letter-spacing: 0.05em;
-    background: #333355;
-    color: #aab;
-    transition: background 0.6s, color 0.6s;
-  }
-  #topbar .stat span { color: #7090d0; }
-  #ws-indicator {
-    margin-left: auto;
-    width: 7px; height: 7px;
-    border-radius: 50%;
-    background: #333;
-    transition: background 0.4s;
-  }
-  #ws-indicator.connected { background: #22dd88; box-shadow: 0 0 6px #22dd88; }
+  --accent:      oklch(0.78 0.140 220);
+  --accent-soft: oklch(0.78 0.140 220 / 0.18);
+  --danger:      oklch(0.70 0.180 25);
+  --ok:          oklch(0.78 0.16 145);
 
-  /* ── Main layout ── */
-  #main {
-    display: grid;
-    grid-template-columns: 1fr 320px;
-    flex: 1;
-    overflow: hidden;
-    min-height: 0;
-  }
+  /* lobe palette — refined from reference, saturated for the dark canvas */
+  --frontal:      oklch(0.72 0.13 235);
+  --parietal:     oklch(0.78 0.16 145);
+  --temporal:     oklch(0.80 0.14 75);
+  --occipital:    oklch(0.70 0.16 300);
+  --hippocampus:  oklch(0.78 0.16 175);
+  --thalamus:     oklch(0.90 0.02 250);
+  --hypothalamus: oklch(0.75 0.20 40);   /* coral/orange — distinct from thalamus */
+  --brainstem:    oklch(0.70 0.15 40);
+  --cerebellum:   oklch(0.78 0.14 200);
 
-  /* ── Brain panel ── */
-  #brain-panel {
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-    position: relative;
-  }
+  --r-1: 6px;
+  --r-2: 10px;
+  --r-3: 14px;
 
-  #brain-wrap {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 16px 20px 8px;
-    min-height: 0;
-  }
-  #brain-svg {
-    display: block;
-    width: 100%;
-    height: 100%;
-    max-width: 680px;
-    object-fit: contain;
-  }
+  --ui:   'Space Grotesk', system-ui, -apple-system, sans-serif;
+  --mono: 'JetBrains Mono', ui-monospace, monospace;
+}
 
-  /* Region base styles */
-  .region {
-    fill: rgba(18, 28, 70, 0.6);
-    stroke: rgba(255,255,255,0.10);
-    stroke-width: 1;
-    cursor: default;
-    transition: fill 0.25s ease, filter 0.25s ease, stroke 0.25s ease;
-    filter: brightness(1);
-  }
-  .region-inner {
-    fill: rgba(10, 18, 50, 0.7);
-    stroke: rgba(255,255,255,0.08);
-    stroke-width: 0.8;
-    transition: fill 0.25s ease, filter 0.25s ease, stroke 0.25s ease;
-  }
-  .region.active, .region-inner.active {
-    stroke: rgba(255,255,255,0.55);
-    stroke-width: 1.5;
-  }
-  #outline {
-    fill: rgba(12, 20, 55, 0.5);
-    stroke: rgba(80, 100, 180, 0.25);
-    stroke-width: 1.5;
-  }
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-  /* Active label */
-  #active-label {
-    text-align: center;
-    padding: 4px 0 6px;
-    font-size: 11px;
-    color: var(--text-dim);
-    min-height: 20px;
-    letter-spacing: 0.04em;
-    transition: color 0.3s;
-    flex-shrink: 0;
-  }
-  #active-label.lit { color: #88aaff; }
+html, body {
+  height: 100%;
+  background: var(--bg-0);
+  color: var(--fg);
+  font-family: var(--ui);
+  font-size: 14px;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
 
-  /* ── Neuromod bars (compact, bottom of brain panel) ── */
-  #neuromod {
-    padding: 6px 16px 8px;
-    display: flex;
-    gap: 12px;
-    border-top: 1px solid var(--border);
-    flex-shrink: 0;
-    align-items: center;
-  }
-  .nm-row {
-    display: flex;
-    align-items: center;
-    gap: 5px;
-    flex: 1;
-  }
-  .nm-label {
-    font-size: 10px;
-    color: var(--text-dim);
-    font-weight: 600;
-    white-space: nowrap;
-    min-width: 28px;
-    text-align: right;
-  }
-  .nm-track {
-    flex: 1;
-    height: 4px;
-    background: rgba(255,255,255,0.06);
-    border-radius: 2px;
-    overflow: hidden;
-  }
-  .nm-fill {
-    height: 100%;
-    border-radius: 2px;
-    width: 0%;
-    transition: width 0.5s ease;
-  }
+body {
+  background:
+    radial-gradient(ellipse 80% 60% at 50% 35%, oklch(0.18 0.025 250) 0%, var(--bg-0) 70%),
+    var(--bg-0);
+}
 
-  /* ── Right panel — Chat ── */
-  #chat-panel {
-    display: flex;
-    flex-direction: column;
-    border-left: 1px solid var(--border);
-    overflow: hidden;
-    font-size: 12px;
-  }
+button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+input, select, textarea { font: inherit; color: inherit; background: none; border: none; outline: none; }
 
-  #messages {
-    flex: 1;
-    overflow-y: auto;
-    padding: 12px 14px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    scroll-behavior: smooth;
-    min-height: 0;
-  }
-  #messages::-webkit-scrollbar { width: 3px; }
-  #messages::-webkit-scrollbar-track { background: transparent; }
-  #messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--line); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--bg-3); }
 
-  .msg {
-    max-width: 90%;
-    padding: 7px 11px;
-    border-radius: 9px;
-    line-height: 1.5;
-    font-size: 12px;
-    animation: fadein 0.2s ease;
-  }
-  @keyframes fadein { from { opacity:0; transform: translateY(3px); } to { opacity:1; transform: none; } }
+/* =========================================================
+   APP SHELL
+   ========================================================= */
+.app {
+  display: grid;
+  grid-template-rows: 56px 1fr auto auto;
+  height: 100vh;
+}
 
-  .msg-user {
-    align-self: flex-end;
-    background: #1a2a60;
-    color: #ccd8ff;
-    border-bottom-right-radius: 3px;
-  }
-  .msg-brain {
-    align-self: flex-start;
-    background: var(--surface);
-    color: var(--text);
-    border: 1px solid var(--border);
-    border-bottom-left-radius: 3px;
-  }
-  .msg-meta {
-    font-size: 9px;
-    color: var(--text-dim);
-    margin-top: 2px;
-  }
-  .msg-system {
-    align-self: center;
-    color: var(--text-dim);
-    font-size: 10px;
-    font-style: italic;
-  }
-  .msg-thought {
-    align-self: flex-start;
-    color: #445580;
-    font-size: 10px;
-    font-style: italic;
-    padding: 3px 8px;
-    border-left: 2px solid #222244;
-  }
+/* ---------- HEADER ---------- */
+.header {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 0 22px;
+  border-bottom: 1px solid var(--line-soft);
+  background: linear-gradient(180deg, oklch(0.16 0.022 250) 0%, var(--bg-0) 100%);
+}
 
-  /* ── Turn log (collapsible thinking steps) ── */
-  .turn-log {
-    align-self: flex-start;
-    width: 90%;
-    border: 1px solid var(--border);
-    border-radius: 7px 7px 0 0;
-    border-bottom: none;
-    font-size: 10px;
-    color: var(--text-dim);
-    background: rgba(14, 14, 26, 0.85);
-  }
-  .turn-log summary {
-    padding: 5px 10px;
-    cursor: pointer;
-    list-style: none;
-    user-select: none;
-    letter-spacing: 0.03em;
-    font-size: 9px;
-  }
-  .turn-log summary::-webkit-details-marker { display: none; }
-  .turn-log summary::before { content: '▶ '; font-size: 8px; }
-  details[open].turn-log summary::before { content: '▼ '; }
-  .turn-log-body {
-    padding: 6px 10px 8px;
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-    border-top: 1px solid var(--border);
-  }
-  .log-step {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 10px;
-    color: #6070a0;
-  }
-  .log-step .log-bar {
-    flex: 0 0 30px;
-    height: 2px;
-    background: rgba(255,255,255,0.05);
-    border-radius: 1px;
-    overflow: hidden;
-  }
-  .log-step .log-bar-fill {
-    height: 100%;
-    border-radius: 1px;
-  }
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.brand-mark {
+  width: 28px; height: 28px;
+  border-radius: 8px;
+  background:
+    radial-gradient(circle at 30% 30%, oklch(1 0 0 / 0.45), transparent 55%),
+    linear-gradient(135deg, var(--accent), oklch(0.55 0.13 285));
+  box-shadow:
+    0 0 18px oklch(0.78 0.14 220 / 0.45),
+    inset 0 0 0 1px oklch(1 0 0 / 0.18);
+}
+.brand-title {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.brand-sub {
+  display: block;
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--fg-mute);
+  letter-spacing: 0.14em;
+  margin-top: 2px;
+  white-space: nowrap;
+}
 
-  /* ── Quality badge ── */
-  .quality-badge {
-    margin-top: 4px;
-    font-size: 9px;
-    color: #4a5478;
-    letter-spacing: 0.04em;
-    min-height: 12px;
-  }
-  .quality-badge .qb-score { color: #6688cc; }
-  .quality-badge .qb-delta-pos { color: #44dd88; }
-  .quality-badge .qb-delta-neg { color: #ff6644; }
+.header-divider {
+  width: 1px;
+  height: 22px;
+  background: var(--line-soft);
+}
 
-  /* ── Eval toggle button ── */
-  #eval-toggle {
-    padding: 2px 8px;
-    border-radius: 99px;
-    border: 1px solid var(--border);
-    background: transparent;
-    color: var(--text-dim);
-    font-size: 10px;
-    cursor: pointer;
-    font-family: inherit;
-    letter-spacing: 0.04em;
-    transition: background 0.2s, color 0.2s, border-color 0.2s;
-  }
-  #eval-toggle:hover { background: #1a1a30; color: var(--text); }
-  #eval-toggle.active { background: #101a10; border-color: #336633; color: #44cc66; }
+.stat-cluster {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--fg-mute);
+  letter-spacing: 0.08em;
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+.stat-cluster .stat { white-space: nowrap; }
+@media (max-width: 1200px) {
+  .stat-cluster .stat.hide-narrow { display: none; }
+}
+.stat-cluster .stat {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.stat-cluster .stat-key {
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--fg-faint);
+}
+.stat-cluster .stat-val {
+  color: var(--fg-dim);
+}
 
-  /* Typing indicator */
-  #typing {
-    align-self: flex-start;
-    display: none;
-    gap: 4px;
-    padding: 8px 12px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 9px;
-    border-bottom-left-radius: 3px;
-    margin: 0 14px 4px;
-  }
-  #typing.visible { display: flex; }
-  #typing span {
-    width: 5px; height: 5px;
-    background: #445580;
-    border-radius: 50%;
-    animation: bounce 1.2s infinite;
-  }
-  #typing span:nth-child(2) { animation-delay: 0.2s; }
-  #typing span:nth-child(3) { animation-delay: 0.4s; }
-  @keyframes bounce {
-    0%, 60%, 100% { transform: translateY(0); }
-    30% { transform: translateY(-4px); background: #8899cc; }
-  }
+#emotion-badge {
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  background: oklch(0.22 0.02 250);
+  color: var(--fg-dim);
+  border: 1px solid var(--line-soft);
+  transition: background 600ms, color 600ms, border-color 600ms;
+}
 
-  /* ── Bottom control bar (full width) ── */
-  #control-bar {
-    display: grid;
-    grid-template-columns: auto auto 1fr auto;
-    gap: 8px;
-    align-items: center;
-    padding: 10px 14px;
-    border-top: 1px solid var(--border);
-    background: var(--surface);
-    flex-shrink: 0;
-    grid-column: 1 / -1;
-  }
+.header-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
 
-  /* Mic button — primary action, larger */
-  #mic-btn {
-    width: 48px;
-    height: 48px;
-    border-radius: 50%;
-    border: 2px solid var(--border);
-    background: #12121e;
-    color: var(--text-dim);
-    cursor: pointer;
-    font-size: 20px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: background 0.2s, color 0.2s, border-color 0.2s, box-shadow 0.2s;
-    flex-shrink: 0;
-  }
-  #mic-btn:hover { background: #1a1a30; color: var(--text); border-color: #334488; }
-  #mic-btn.listening {
-    background: #2a0a0a;
-    border-color: #cc2222;
-    color: #ff5555;
-    box-shadow: 0 0 16px rgba(200,30,30,0.5);
-    animation: mic-pulse 1.2s ease-in-out infinite;
-  }
-  #mic-btn.unsupported { opacity: 0.3; cursor: not-allowed; }
-  @keyframes mic-pulse {
-    0%, 100% { box-shadow: 0 0 10px rgba(200,30,30,0.4); }
-    50%       { box-shadow: 0 0 24px rgba(220,40,40,0.75); }
-  }
+#eval-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--fg-mute);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  transition: background 180ms, color 180ms, border-color 180ms;
+}
+#eval-toggle:hover { background: var(--bg-1); color: var(--fg-dim); }
+#eval-toggle.active {
+  background: oklch(0.22 0.07 145 / 0.18);
+  border-color: oklch(0.7 0.18 145 / 0.5);
+  color: var(--ok);
+}
+#eval-toggle::before {
+  content: '';
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--fg-faint);
+  transition: background 180ms, box-shadow 180ms;
+}
+#eval-toggle.active::before {
+  background: var(--ok);
+  box-shadow: 0 0 8px var(--ok);
+}
 
-  /* Voice dropdown */
-  #voice-select {
-    background: var(--input-bg);
-    border: 1px solid var(--border);
-    border-radius: 7px;
-    color: var(--text-dim);
-    font-family: inherit;
-    font-size: 11px;
-    padding: 6px 10px;
-    cursor: pointer;
-    outline: none;
-    max-width: 160px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  #voice-select:focus { border-color: #334488; color: var(--text); }
-  #voice-select option { background: #12121e; color: var(--text); }
+.ws-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px 6px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--fg-mute);
+}
+#ws-indicator {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--fg-faint);
+  transition: background 280ms, box-shadow 280ms;
+}
+#ws-indicator.connected {
+  background: var(--ok);
+  box-shadow: 0 0 8px var(--ok);
+  animation: dot-pulse 2.4s ease-in-out infinite;
+}
+@keyframes dot-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
 
-  /* Text input */
-  #msg-input {
-    background: var(--input-bg);
-    border: 1px solid var(--border);
-    border-radius: 7px;
-    color: var(--text);
-    font-family: inherit;
-    font-size: 12px;
-    padding: 8px 12px;
-    outline: none;
-    resize: none;
-    line-height: 1.4;
-    max-height: 80px;
-    min-height: 36px;
-  }
-  #msg-input:focus { border-color: #334488; }
-  #msg-input::placeholder { color: var(--text-dim); }
+/* ---------- MAIN ---------- */
+#main {
+  display: grid;
+  grid-template-columns: 232px 1fr 348px;
+  min-height: 0;
+  transition: grid-template-columns 260ms ease;
+}
+@media (min-width: 1400px) {
+  #main { grid-template-columns: 260px 1fr 400px; }
+}
+@media (min-width: 1700px) {
+  #main { grid-template-columns: 288px 1fr 440px; }
+}
 
-  /* Send button */
-  #send-btn {
-    width: 36px;
-    height: 36px;
-    border-radius: 7px;
-    background: #1a3080;
-    border: none;
-    color: #8899cc;
-    cursor: pointer;
-    font-size: 16px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: background 0.2s, color 0.2s;
-    flex-shrink: 0;
-  }
-  #send-btn:hover { background: #2244aa; color: #ccd8ff; }
-  #send-btn:disabled { opacity: 0.35; cursor: default; }
+/* ---- panel collapse ---- */
+.col-left, .col-right {
+  transition: border-color 260ms ease;
+  overflow: hidden;
+}
+.col-left.collapsed  { border-color: transparent; }
+.col-right.collapsed { border-color: transparent; }
 
-  /* ── Live transcript bar ── */
-  #transcript-bar {
-    display: none;
-    padding: 4px 14px;
-    background: rgba(30,10,10,0.8);
-    border-top: 1px solid #3a1a1a;
-    font-size: 10px;
-    color: #cc6666;
-    font-style: italic;
-    letter-spacing: 0.02em;
-    flex-shrink: 0;
-    grid-column: 1 / -1;
-  }
-  #transcript-bar.visible { display: block; }
+/* Toggle buttons sit on the edges of the brain stage */
+.col-toggle {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 20;
+  width: 18px;
+  height: 44px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  color: var(--fg-mute);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 180ms, color 180ms, border-color 180ms;
+}
+.col-toggle:hover { background: var(--bg-3); color: var(--fg); border-color: oklch(0.4 0.04 250); }
+.col-toggle svg { width: 10px; height: 10px; flex-shrink: 0; }
+.col-toggle-left  { left: 0;  border-left: none;  border-radius: 0 6px 6px 0; }
+.col-toggle-right { right: 0; border-right: none; border-radius: 6px 0 0 6px; }
 
-  /* ── Bottom wrapper so transcript + control bar stack correctly ── */
-  #bottom {
-    display: flex;
-    flex-direction: column;
-    grid-column: 1 / -1;
-    flex-shrink: 0;
-  }
+.col {
+  min-height: 0; min-width: 0;
+  display: flex; flex-direction: column;
+}
+.col-left  { border-right: 1px solid var(--line-soft); overflow-y: auto; }
+.col-mid   { position: relative; overflow: hidden; }
+.col-right { border-left: 1px solid var(--line-soft); }
+
+.col-section {
+  padding: 18px 20px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.col-section:last-child { border-bottom: none; }
+
+.section-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.20em;
+  color: var(--fg-mute);
+  text-transform: uppercase;
+  margin-bottom: 12px;
+}
+.section-label .count {
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--fg-faint);
+  letter-spacing: 0.14em;
+}
+
+/* =========================================================
+   LOBE / REGION LEGEND
+   ========================================================= */
+.region-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.region-card {
+  --lobe: var(--frontal);
+  --lobe-glow: var(--frontal);
+  display: grid;
+  grid-template-columns: 22px 1fr auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-2);
+  background: var(--bg-1);
+  transition: border-color 220ms, background 220ms, box-shadow 220ms;
+}
+.region-card.active {
+  border-color: oklch(from var(--lobe) l c h / 0.6);
+  background:
+    linear-gradient(180deg, oklch(from var(--lobe) l c h / 0.10), transparent 60%),
+    var(--bg-1);
+  box-shadow:
+    0 0 0 1px oklch(from var(--lobe) l c h / 0.35),
+    0 14px 36px -18px oklch(from var(--lobe) l c h / 0.6);
+}
+.region-card .swatch {
+  position: relative;
+  width: 22px; height: 22px;
+  border-radius: 6px;
+  background: oklch(from var(--lobe) l c h / 0.12);
+  border: 1px solid oklch(from var(--lobe) l c h / 0.4);
+}
+.region-card .swatch::after {
+  content: '';
+  position: absolute; inset: 4px;
+  border-radius: 3px;
+  background: var(--lobe);
+  opacity: 0.3;
+  transition: opacity 220ms, box-shadow 220ms;
+}
+.region-card.active .swatch::after {
+  opacity: 1;
+  box-shadow: 0 0 12px var(--lobe-glow);
+}
+.region-card .meta { min-width: 0; }
+.region-card .name {
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+.region-card .role {
+  display: block;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: var(--fg-mute);
+  letter-spacing: 0.06em;
+  margin-top: 1px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.region-card .status {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  color: var(--fg-faint);
+}
+.region-card.active .status { color: var(--lobe); }
+
+.region-card.compact {
+  grid-template-columns: 14px 1fr auto;
+  gap: 10px;
+  padding: 7px 12px;
+  background: transparent;
+  border-color: var(--line-faint);
+}
+.region-card.compact .swatch {
+  width: 14px; height: 14px; border-radius: 4px;
+}
+.region-card.compact .swatch::after { inset: 3px; border-radius: 2px; }
+.region-card.compact .name { font-size: 11.5px; font-weight: 500; }
+.region-card.compact .role { font-size: 9px; }
+
+/* =========================================================
+   NEUROMODS
+   ========================================================= */
+.nm-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px 16px;
+}
+.nm-row {
+  display: flex; flex-direction: column;
+  gap: 6px;
+}
+.nm-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+}
+.nm-head .nm-name {
+  color: var(--fg-dim);
+  font-weight: 600;
+}
+.nm-head .nm-num {
+  color: var(--fg-faint);
+  font-size: 9.5px;
+}
+.nm-track {
+  height: 4px;
+  background: oklch(0.25 0.02 250 / 0.7);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.nm-fill {
+  height: 100%;
+  border-radius: 2px;
+  width: 0%;
+  transition: width 600ms cubic-bezier(.4,.0,.2,1);
+}
+
+/* =========================================================
+   BRAIN STAGE
+   ========================================================= */
+.brain-stage {
+  position: relative;
+  width: 100%; height: 100%;
+  display: flex; align-items: center; justify-content: center;
+  padding: 12px 16px 56px;
+  overflow: hidden;
+  min-height: 0;
+}
+.brain-stage::before {
+  content: '';
+  position: absolute; inset: 0;
+  background-image:
+    linear-gradient(oklch(0.3 0.02 250 / 0.16) 1px, transparent 1px),
+    linear-gradient(90deg, oklch(0.3 0.02 250 / 0.16) 1px, transparent 1px);
+  background-size: 56px 56px;
+  mask-image: radial-gradient(circle at center, black 0%, transparent 78%);
+  pointer-events: none;
+}
+.brain-stage::after {
+  /* circular framing reticle behind brain */
+  content: '';
+  position: absolute;
+  width: min(90%, 780px); height: min(90%, 780px);
+  top: 50%; left: 50%; transform: translate(-50%, -50%);
+  border: 1px dashed oklch(0.3 0.02 250 / 0.28);
+  border-radius: 50%;
+  pointer-events: none;
+  mask-image: linear-gradient(180deg, black, transparent 80%);
+}
+
+/* ============================================================
+   BRAIN FIGURE — layered HTML images, one per lobe.
+   Container scales responsively while preserving aspect ratio,
+   bounded by both available width AND available height.
+   ============================================================ */
+
+.brain-figure {
+  position: relative;
+  /* Landscape crop, 942 × 867 — includes full frontal and occipital poles. */
+  aspect-ratio: 942 / 867;
+  height: 100%;
+  width: auto;
+  max-width: 100%;
+  max-height: 100%;
+  margin: 0 auto;
+  filter: drop-shadow(0 22px 44px oklch(0 0 0 / 0.55));
+}
+.brain-figure .brain-base,
+.brain-figure .lobe-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  user-select: none;
+  pointer-events: none;
+  -webkit-user-drag: none;
+  object-fit: contain;
+}
+.brain-figure .brain-base {
+  filter: saturate(0.55) brightness(0.92);
+  transition: filter 400ms ease;
+}
+.brain-figure:has(.lobe-overlay.active) .brain-base {
+  filter: saturate(0.32) brightness(0.7);
+}
+.brain-figure .brain-subcortical {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  overflow: visible;
+}
+
+.lobe-overlay {
+  opacity: 0;
+  transition: opacity 320ms ease, filter 320ms ease;
+}
+/* Inner structures always visible (hypothalamus sits inside thalamus) */
+.inner-always-visible {
+  opacity: 1;
+  transition: opacity 320ms ease, filter 320ms ease;
+  filter:
+    drop-shadow(oklch(0.1 0 0 / 0.7) 0px 0px 1px)
+    brightness(0.85);
+}
+.inner-always-visible.active {
+  filter:
+    drop-shadow(var(--lobe-glow) 0px 0px 14px)
+    drop-shadow(var(--lobe-glow) 0px 0px 28px)
+    saturate(1.6)
+    brightness(1.25);
+}
+/* Per-structure active filters */
+#region-hippocampus.active {
+  filter:
+    saturate(1.4)
+    brightness(1.15)
+    drop-shadow(var(--lobe-glow) 0px 0px 22px)
+    drop-shadow(var(--lobe-glow) 0px 0px 44px);
+}
+#region-thalamus.active {
+  filter:
+    grayscale(1)
+    brightness(1.45)
+    contrast(0.85)
+    drop-shadow(var(--lobe-glow) 0px 0px 22px)
+    drop-shadow(var(--lobe-glow) 0px 0px 44px);
+}
+/* Hypothalamus: always visible, supports CSS-var position tweaks */
+#region-hypothalamus {
+  opacity: 1;
+  transform-origin: 50% 50%;
+  transform:
+    translate(var(--hypo-x, 0px), var(--hypo-y, 0px))
+    rotate(var(--hypo-rotate, 0deg))
+    scale(var(--hypo-scale, 1));
+}
+#region-hypothalamus.active {
+  transform:
+    translate(var(--hypo-x, 0px), var(--hypo-y, 0px))
+    rotate(var(--hypo-rotate, 0deg))
+    scale(var(--hypo-scale, 1));
+  filter:
+    saturate(1.3)
+    brightness(1.2)
+    drop-shadow(var(--lobe-glow) 0px 0px 14px)
+    drop-shadow(var(--lobe-glow) 0px 0px 28px);
+}
+.lobe-overlay.active {
+  opacity: 1;
+  filter:
+    drop-shadow(var(--lobe-glow) 0px 0px 22px)
+    drop-shadow(var(--lobe-glow) 0px 0px 44px)
+    saturate(1.55)
+    brightness(1.18);
+}
+.lobe-overlay.active.pulse {
+  animation: lobe-pulse 1.6s ease-out both;
+}
+@keyframes lobe-pulse {
+  0%   { filter: drop-shadow(var(--lobe-glow) 0px 0px 0px) saturate(1) brightness(1); }
+  30%  { filter: drop-shadow(var(--lobe-glow) 0px 0px 44px) drop-shadow(var(--lobe-glow) 0px 0px 72px) saturate(1.8) brightness(1.3); }
+  100% { filter: drop-shadow(var(--lobe-glow) 0px 0px 22px) drop-shadow(var(--lobe-glow) 0px 0px 44px) saturate(1.55) brightness(1.18); }
+}
+
+/* Subcortical structures — SVG ellipses overlaid on the inner-brain band */
+.region-inner {
+  fill: transparent;
+  stroke: transparent;
+  transition: fill 280ms ease, filter 280ms ease, stroke 280ms ease;
+}
+.region-inner.active {
+  fill: oklch(from var(--lobe) l c h / 0.8);
+  stroke: var(--lobe-glow);
+  stroke-width: 1.5;
+  filter:
+    drop-shadow(var(--lobe-glow) 0px 0px 14px)
+    drop-shadow(var(--lobe-glow) 0px 0px 28px);
+}
+
+/* corner readouts on the brain stage */
+.readout {
+  position: absolute;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.18em;
+  color: var(--fg-faint);
+  text-transform: uppercase;
+  pointer-events: none;
+}
+.readout strong {
+  display: block;
+  font-weight: 500;
+  color: var(--fg-dim);
+  margin-top: 4px;
+  letter-spacing: 0.10em;
+  font-size: 10px;
+}
+.readout.tl { top: 18px; left: 22px; text-align: left; }
+.readout.tr { top: 18px; right: 22px; text-align: right; }
+.readout.bl { bottom: 70px; left: 22px; text-align: left; }
+.readout.br { bottom: 70px; right: 22px; text-align: right; }
+
+/* active label below brain */
+#active-label-wrap {
+  position: absolute;
+  bottom: 14px; left: 0; right: 0;
+  display: flex; justify-content: center;
+  pointer-events: none;
+}
+#active-label {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--fg-mute);
+  padding: 8px 16px;
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  background: oklch(0.16 0.02 250 / 0.7);
+  backdrop-filter: blur(6px);
+  transition: color 280ms, border-color 280ms;
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+#active-label.lit {
+  color: var(--fg);
+  border-color: oklch(0.78 0.14 220 / 0.5);
+}
+#active-label::before {
+  content: '';
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--fg-faint);
+  transition: background 280ms, box-shadow 280ms;
+}
+#active-label.lit::before {
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent);
+}
+
+/* =========================================================
+   RIGHT COLUMN — response + activity log
+   ========================================================= */
+.right-stack {
+  display: grid;
+  grid-template-rows: 1fr 280px;
+  height: 100%;
+  min-height: 0;
+}
+
+.pane {
+  display: flex; flex-direction: column;
+  min-height: 0; min-width: 0;
+}
+.pane-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 22px 12px;
+  border-bottom: 1px solid var(--line-soft);
+  gap: 12px;
+  flex-wrap: nowrap;
+}
+.pane-head h3 { white-space: nowrap; }
+.pane-head .head-meta { flex-shrink: 0; }
+.pane-head h3 {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.20em;
+  color: var(--fg-mute);
+  text-transform: uppercase;
+  font-weight: 600;
+}
+.pane-head .head-meta {
+  display: flex; align-items: center; gap: 12px;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.14em;
+  color: var(--fg-faint);
+  text-transform: uppercase;
+}
+.pane-head .voice-tag {
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--accent);
+  letter-spacing: 0.12em;
+  white-space: nowrap;
+}
+.pane-body {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+/* ---- conversation pane ---- */
+#messages {
+  padding: 16px 22px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+.msg {
+  animation: fadein 240ms ease both;
+}
+@keyframes fadein {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: none; }
+}
+.msg-system {
+  align-self: center;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--fg-faint);
+  padding: 4px 12px;
+  border: 1px dashed var(--line-soft);
+  border-radius: 999px;
+}
+.msg-user {
+  align-self: flex-end;
+  max-width: 88%;
+  padding: 8px 14px;
+  border-radius: 12px 12px 4px 12px;
+  background: oklch(0.22 0.04 230 / 0.65);
+  border: 1px solid oklch(0.4 0.08 230 / 0.4);
+  color: var(--fg);
+  font-size: 13px;
+}
+.msg-brain {
+  align-self: flex-start;
+  max-width: 100%;
+  width: 100%;
+}
+.msg-brain .who {
+  display: flex; align-items: center; gap: 8px;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.18em;
+  color: var(--fg-mute);
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+.msg-brain .who::before {
+  content: '';
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent);
+}
+.msg-brain .body {
+  color: var(--fg);
+  font-size: 13.5px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+.msg-meta {
+  margin-top: 8px;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.10em;
+  color: var(--fg-faint);
+}
+.msg-thought {
+  align-self: flex-start;
+  color: var(--fg-mute);
+  font-style: italic;
+  font-size: 11.5px;
+  padding: 2px 0 2px 12px;
+  border-left: 2px solid var(--line);
+}
+
+/* turn log (collapsible) */
+.turn-log {
+  align-self: flex-start;
+  width: 100%;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-2);
+  background: oklch(0.15 0.018 250 / 0.7);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  overflow: hidden;
+}
+.turn-log summary {
+  list-style: none;
+  padding: 8px 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--fg-dim);
+  letter-spacing: 0.06em;
+}
+.turn-log summary::-webkit-details-marker { display: none; }
+.turn-log summary::before {
+  content: '▸';
+  font-size: 9px;
+  color: var(--fg-mute);
+  transition: transform 200ms;
+}
+details[open].turn-log summary::before { transform: rotate(90deg); }
+.turn-log-body {
+  display: flex;
+  flex-direction: column;
+  padding: 4px 0 6px;
+  border-top: 1px solid var(--line-soft);
+}
+.log-step {
+  display: grid;
+  grid-template-columns: 22px 1fr 56px;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 12px;
+  color: var(--fg-mute);
+}
+.log-step .log-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px;
+  border-radius: 4px;
+  background: oklch(from var(--lobe, var(--accent)) l c h / 0.15);
+  color: var(--lobe, var(--accent));
+  font-family: var(--ui);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+.log-step .log-text { color: var(--fg-dim); font-size: 10.5px; letter-spacing: 0.02em; }
+.log-step .log-text em { color: var(--fg-mute); font-style: normal; }
+.log-step .log-bar {
+  height: 3px;
+  background: oklch(0.25 0.02 250 / 0.6);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.log-step .log-bar-fill {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--lobe, var(--accent));
+  box-shadow: 0 0 6px var(--lobe, var(--accent));
+}
+
+/* quality badge */
+.quality-badge {
+  margin-top: 8px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+}
+.quality-badge .qb-pill {
+  padding: 3px 8px;
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  color: var(--fg-mute);
+}
+.quality-badge .qb-pill strong { color: var(--fg-dim); font-weight: 500; margin-left: 6px; }
+.quality-badge .qb-pill.score { color: var(--accent); border-color: oklch(0.78 0.14 220 / 0.45); }
+.quality-badge .qb-pill.mem   { color: var(--ok); border-color: oklch(0.78 0.16 145 / 0.45); }
+
+/* typing dots */
+#typing {
+  display: none;
+  gap: 5px;
+  align-items: center;
+  padding: 10px 14px;
+  align-self: flex-start;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--fg-mute);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+#typing.visible { display: inline-flex; }
+#typing .dots { display: inline-flex; gap: 4px; }
+#typing .dots span {
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: bounce 1.2s infinite;
+}
+#typing .dots span:nth-child(2) { animation-delay: 0.18s; }
+#typing .dots span:nth-child(3) { animation-delay: 0.36s; }
+@keyframes bounce {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.6; }
+  30% { transform: translateY(-4px); opacity: 1; }
+}
+
+/* ---- activity log pane ---- */
+.log-pane {
+  border-top: 1px solid var(--line-soft);
+}
+#activity-log {
+  padding: 8px 0 16px;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.act-row {
+  display: grid;
+  grid-template-columns: 64px 18px 1fr auto;
+  gap: 10px;
+  align-items: center;
+  padding: 6px 22px;
+  color: var(--fg-mute);
+  animation: log-in 260ms ease-out both;
+  border-bottom: 1px dashed oklch(0.24 0.02 250 / 0.4);
+}
+.act-row:last-child { border-bottom: none; }
+@keyframes log-in {
+  from { opacity: 0; transform: translateY(3px); }
+  to   { opacity: 1; transform: none; }
+}
+.act-time { color: var(--fg-faint); font-size: 10px; letter-spacing: 0.06em; }
+.act-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  margin: 0 auto;
+  background: var(--lobe, var(--accent));
+  box-shadow: 0 0 8px var(--lobe, var(--accent));
+}
+.act-msg { color: var(--fg-dim); letter-spacing: 0.02em; }
+.act-msg .cluster { color: var(--lobe, var(--accent)); font-weight: 600; }
+.act-msg .note { color: var(--fg-mute); }
+.act-intensity {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: var(--fg-faint);
+  letter-spacing: 0.04em;
+}
+
+.log-empty {
+  padding: 20px 22px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--fg-faint);
+  letter-spacing: 0.10em;
+  text-align: center;
+}
+
+/* =========================================================
+   TRANSCRIPT BAR (live mic)
+   ========================================================= */
+#transcript-bar {
+  display: none;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 24px;
+  border-top: 1px solid oklch(from var(--danger) l c h / 0.35);
+  background: oklch(from var(--danger) l c h / 0.10);
+  font-family: var(--mono);
+  font-size: 11px;
+  color: oklch(0.85 0.13 25);
+  letter-spacing: 0.06em;
+}
+#transcript-bar.visible { display: flex; }
+#transcript-bar .tx-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 9.5px;
+  letter-spacing: 0.20em;
+  text-transform: uppercase;
+  color: oklch(0.7 0.18 25);
+}
+#transcript-bar .tx-label::before {
+  content: '';
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: oklch(0.7 0.18 25);
+  box-shadow: 0 0 8px oklch(0.7 0.18 25);
+  animation: dot-pulse 1.1s ease-in-out infinite;
+}
+#transcript-bar .tx-text {
+  flex: 1;
+  color: oklch(0.92 0.06 25);
+  font-style: italic;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* =========================================================
+   INPUT BAR
+   ========================================================= */
+#control-bar {
+  display: grid;
+  grid-template-columns: 56px 1fr auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 22px;
+  border-top: 1px solid var(--line-soft);
+  background: linear-gradient(0deg, oklch(0.16 0.022 250) 0%, var(--bg-0) 100%);
+}
+
+#mic-btn {
+  width: 48px; height: 48px;
+  border-radius: 14px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  display: flex; align-items: center; justify-content: center;
+  position: relative;
+  color: var(--fg-dim);
+  transition: background 200ms, border-color 200ms, box-shadow 200ms, color 200ms;
+}
+#mic-btn:hover { background: var(--bg-3); color: var(--fg); }
+#mic-btn svg { width: 20px; height: 20px; }
+#mic-btn.listening {
+  background: oklch(from var(--danger) l c h / 0.18);
+  border-color: oklch(from var(--danger) l c h / 0.7);
+  color: oklch(0.85 0.16 25);
+  box-shadow: 0 0 0 4px oklch(from var(--danger) l c h / 0.12);
+}
+#mic-btn.listening::after {
+  content: '';
+  position: absolute; inset: -1px;
+  border-radius: 14px;
+  border: 1px solid var(--danger);
+  animation: mic-ring 1.4s ease-out infinite;
+}
+@keyframes mic-ring {
+  0%   { transform: scale(1); opacity: 0.8; }
+  100% { transform: scale(1.45); opacity: 0; }
+}
+#mic-btn.unsupported { opacity: 0.4; cursor: not-allowed; }
+
+.input-wrap {
+  display: flex;
+  align-items: center;
+  height: 48px;
+  padding: 0 18px;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  transition: border-color 200ms, box-shadow 200ms;
+}
+.input-wrap:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px oklch(0.78 0.14 220 / 0.16);
+}
+#msg-input {
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  font-size: 14px;
+  resize: none;
+  line-height: 48px;
+  padding: 0;
+}
+#msg-input::placeholder { color: var(--fg-faint); }
+
+.voice-pill {
+  position: relative;
+  height: 48px;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  cursor: pointer;
+  min-width: 180px;
+  transition: border-color 200ms;
+}
+.voice-pill:hover { border-color: oklch(0.4 0.04 250); }
+.voice-pill .v-icon {
+  width: 26px; height: 26px;
+  border-radius: 7px;
+  background: oklch(0.78 0.14 220 / 0.15);
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--accent);
+}
+.voice-pill .v-icon svg { width: 14px; height: 14px; }
+.voice-pill .v-meta { display: flex; flex-direction: column; min-width: 0; }
+.voice-pill .v-label {
+  font-family: var(--mono);
+  font-size: 8.5px;
+  letter-spacing: 0.18em;
+  color: var(--fg-faint);
+  text-transform: uppercase;
+}
+.voice-pill .v-name {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 130px;
+}
+.voice-pill .v-chev {
+  color: var(--fg-mute);
+}
+#voice-select {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  opacity: 0;
+  cursor: pointer;
+  appearance: none;
+}
+
+#send-btn {
+  height: 48px;
+  padding: 0 20px;
+  background: var(--accent);
+  color: oklch(0.17 0.02 250);
+  border-radius: 14px;
+  font-weight: 600;
+  font-size: 12.5px;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  display: flex; align-items: center; gap: 8px;
+  transition: filter 180ms, transform 100ms;
+}
+#send-btn:hover { filter: brightness(1.08); }
+#send-btn:active { transform: translateY(1px); }
+#send-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+#send-btn svg { width: 16px; height: 16px; }
+
+.kbd-hint {
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--fg-faint);
+  letter-spacing: 0.10em;
+  padding: 2px 6px;
+  border: 1px solid var(--line-soft);
+  border-radius: 4px;
+  background: oklch(0.18 0.02 250 / 0.5);
+}
+
 </style>
 </head>
 <body>
 
-<!-- Top bar -->
-<div id="topbar">
-  <span class="brand">&#x1F9E0; Brain</span>
-  <span class="sep">·</span>
-  <span class="stat">session <span id="stat-session">—</span></span>
-  <span class="sep">·</span>
-  <span id="emotion-badge">neutral</span>
-  <span class="sep">·</span>
-  <span class="stat"><span id="stat-calls">0</span> LLM calls</span>
-  <span class="sep">·</span>
-  <span class="stat"><span id="stat-elapsed">—</span></span>
-  <button id="eval-toggle" title="Toggle intensive eval mode (runs baseline on every turn)">⚗ Eval</button>
-  <div id="ws-indicator" title="WebSocket"></div>
-</div>
+<div class="app">
 
-<!-- Main -->
-<div id="main">
-
-  <!-- Brain panel -->
-  <div id="brain-panel">
-    <div id="brain-wrap">
-      <svg id="brain-svg" viewBox="0 0 560 430" xmlns="http://www.w3.org/2000/svg">
-        <defs>
-          <clipPath id="cortex-clip">
-            <path d="M 92,210 C 88,168 87,118 96,86 C 111,52 138,28 176,16 C 214,4 264,2 314,14 C 362,26 404,56 432,97 C 456,134 460,174 452,210 C 444,240 426,258 405,266 C 384,274 360,274 338,266 C 320,260 302,252 290,254 C 274,256 258,268 240,282 C 220,296 194,304 170,304 C 148,304 128,296 114,282 C 100,268 90,248 88,226 C 87,217 89,212 92,210 Z"/>
-          </clipPath>
-          <clipPath id="cb-clip">
-            <ellipse cx="432" cy="360" rx="75" ry="56"/>
-          </clipPath>
-        </defs>
-
-        <!-- Cerebellum -->
-        <ellipse id="region-cerebellum" class="region" cx="432" cy="360" rx="75" ry="56"/>
-        <g clip-path="url(#cb-clip)" stroke="rgba(0,200,255,0.09)" stroke-width="1.2" fill="none">
-          <path d="M 362,355 Q 432,336 502,355"/>
-          <path d="M 360,368 Q 432,348 504,368"/>
-          <path d="M 362,381 Q 432,360 502,381"/>
-          <path d="M 365,394 Q 432,374 500,394"/>
-        </g>
-
-        <!-- Brainstem -->
-        <rect id="region-brainstem" class="region" x="278" y="262" width="62" height="118" rx="16"/>
-        <g clip-path="url(#cortex-clip)" stroke="rgba(255,102,0,0.07)" stroke-width="1.5" fill="none">
-          <line x1="278" y1="285" x2="340" y2="285"/>
-          <line x1="278" y1="300" x2="340" y2="300"/>
-          <line x1="278" y1="315" x2="340" y2="315"/>
-        </g>
-
-        <!-- Cortical lobes -->
-        <g clip-path="url(#cortex-clip)">
-          <path id="region-temporal" class="region" d="
-            M 92,210 L 140,210 L 282,210 L 412,210
-            C 412,225 410,240 406,254 C 400,265 390,272 374,274
-            C 358,276 340,268 338,266 C 320,260 302,252 290,254
-            C 274,256 258,268 240,282 C 220,296 194,304 170,304
-            C 148,304 128,296 114,282 C 100,268 90,248 88,226
-            C 88,218 90,213 92,210 Z
-          "/>
-          <path id="region-occipital" class="region" d="
-            M 432,97 C 456,134 460,174 452,210 C 444,240 426,258 405,266
-            C 384,274 360,274 338,266 C 350,258 364,252 378,248
-            C 392,244 402,240 408,230 C 411,222 412,216 412,210
-            C 424,182 428,148 430,118 C 431,108 432,102 432,97 Z
-          "/>
-          <path id="region-parietal" class="region" d="
-            M 306,14 C 340,20 370,36 396,54 C 412,66 424,82 432,97
-            C 430,112 426,140 420,165 C 416,188 413,202 412,210
-            L 340,210 L 282,210 C 285,176 288,144 292,112
-            C 297,78 302,44 306,14 Z
-          "/>
-          <path id="region-frontal" class="region" d="
-            M 92,210 C 88,168 87,118 96,86 C 111,52 138,28 176,16
-            C 214,4 264,2 306,14 C 302,44 297,78 292,112
-            C 288,144 285,176 282,210 L 140,210 L 92,210 Z
-          "/>
-          <ellipse id="region-thalamus" class="region-inner" cx="268" cy="178" rx="40" ry="28"/>
-          <ellipse id="region-hypothalamus" class="region-inner" cx="256" cy="214" rx="26" ry="18"/>
-          <path id="region-hippocampus" class="region-inner" d="
-            M 302,244 C 322,234 354,232 382,240 C 396,245 403,255 397,265
-            C 389,272 364,270 340,262 C 318,255 298,254 302,244 Z
-          "/>
-          <g stroke="rgba(8,10,24,0.85)" stroke-width="2" fill="none" stroke-linecap="round">
-            <path d="M 306,14 C 302,44 297,78 292,112 C 288,144 285,176 282,210"/>
-            <path d="M 432,97 C 430,118 426,148 420,175 C 416,196 413,206 412,210"/>
-            <path d="M 92,210 C 160,212 225,212 282,212 C 340,212 390,212 412,210"/>
-            <path d="M 412,210 C 411,224 408,240 402,252 C 395,262 382,268 364,270 C 350,270 338,266 338,266"/>
-          </g>
-          <g stroke="rgba(255,255,255,0.04)" stroke-width="1.2" fill="none" stroke-linecap="round">
-            <path d="M 118,118 Q 148,94 180,102"/>
-            <path d="M 162,74 Q 198,56 232,70"/>
-            <path d="M 210,44 Q 252,30 286,50"/>
-            <path d="M 105,176 Q 132,194 155,184"/>
-            <path d="M 150,238 Q 180,226 200,240"/>
-            <path d="M 220,268 Q 252,258 270,272"/>
-            <path d="M 344,104 Q 366,118 374,148"/>
-            <path d="M 360,164 Q 382,180 386,208"/>
-            <path d="M 445,148 Q 452,168 448,192"/>
-          </g>
-          <g font-family="monospace" font-size="9" fill="rgba(148,175,235,0.30)" text-anchor="middle">
-            <text x="168" y="108">frontal</text>
-            <text x="348" y="80">parietal</text>
-            <text x="447" y="165">occipital</text>
-            <text x="205" y="268">temporal</text>
-            <text x="268" y="174">thal.</text>
-            <text x="256" y="236">hypo.</text>
-            <text x="348" y="254">hippo.</text>
-          </g>
-        </g>
-
-        <g font-family="monospace" font-size="9" fill="rgba(148,175,235,0.30)" text-anchor="middle">
-          <text x="432" y="368">cerebellum</text>
-          <text x="309" y="328">brainstem</text>
-        </g>
-      </svg>
-    </div>
-
-    <!-- Active cluster label -->
-    <div id="active-label">—</div>
-
-    <!-- Neuromod bars (horizontal, compact) -->
-    <div id="neuromod">
-      <div class="nm-row">
-        <span class="nm-label">ACh</span>
-        <div class="nm-track"><div class="nm-fill" id="nm-ACh" style="background:#00ccff;width:20%"></div></div>
-      </div>
-      <div class="nm-row">
-        <span class="nm-label">DA</span>
-        <div class="nm-track"><div class="nm-fill" id="nm-DA" style="background:#ffcc00;width:50%"></div></div>
-      </div>
-      <div class="nm-row">
-        <span class="nm-label">GABA</span>
-        <div class="nm-track"><div class="nm-fill" id="nm-GABA" style="background:#ff4444;width:5%"></div></div>
-      </div>
-      <div class="nm-row">
-        <span class="nm-label">Glu</span>
-        <div class="nm-track"><div class="nm-fill" id="nm-Glu" style="background:#44ff88;width:30%"></div></div>
+  <!-- ====== HEADER ====== -->
+  <header class="header">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true"></div>
+      <div>
+        <div class="brand-title">Super Intelligence</div>
+        <span class="brand-sub">NEURAL CONTROL · v0.4</span>
       </div>
     </div>
+
+    <div class="header-divider"></div>
+
+    <div class="stat-cluster">
+      <div class="stat">
+        <span class="stat-key">Session</span>
+        <span class="stat-val" id="stat-session">—</span>
+      </div>
+      <div class="stat hide-narrow">
+        <span class="stat-key">LLM</span>
+        <span class="stat-val"><span id="stat-calls">0</span> calls</span>
+      </div>
+      <div class="stat hide-narrow">
+        <span class="stat-key">Last</span>
+        <span class="stat-val" id="stat-elapsed">—</span>
+      </div>
+      <div class="stat">
+        <span class="stat-key">Affect</span>
+        <span id="emotion-badge">neutral</span>
+      </div>
+    </div>
+
+    <div class="header-right">
+      <button id="eval-toggle" title="Toggle intensive eval mode (runs baseline on every turn)">Eval</button>
+      <div class="ws-pill">
+        <span id="ws-indicator" title="WebSocket status"></span>
+        <span>Link</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ====== MAIN ====== -->
+  <div id="main">
+
+    <!-- ----- LEFT: regions + neuromods ----- -->
+    <aside class="col col-left">
+      <section class="col-section">
+        <div class="section-label">Cortical Lobes <span class="count">4</span></div>
+        <div class="region-list" id="region-list-cortical"></div>
+      </section>
+
+      <section class="col-section">
+        <div class="section-label">Subcortical <span class="count">3</span></div>
+        <div class="region-list" id="region-list-subcortical"></div>
+      </section>
+
+      <section class="col-section">
+        <div class="section-label">Brainstem · Cerebellum <span class="count">2</span></div>
+        <div class="region-list" id="region-list-passive"></div>
+      </section>
+
+      <section class="col-section">
+        <div class="section-label">Neuromodulators</div>
+        <div class="nm-grid">
+          <div class="nm-row">
+            <div class="nm-head"><span class="nm-name">ACh</span><span class="nm-num" id="nm-num-ACh">0%</span></div>
+            <div class="nm-track"><div class="nm-fill" id="nm-ACh" style="background: oklch(0.78 0.14 200); width: 20%"></div></div>
+          </div>
+          <div class="nm-row">
+            <div class="nm-head"><span class="nm-name">DA</span><span class="nm-num" id="nm-num-DA">50%</span></div>
+            <div class="nm-track"><div class="nm-fill" id="nm-DA" style="background: oklch(0.80 0.16 85); width: 50%"></div></div>
+          </div>
+          <div class="nm-row">
+            <div class="nm-head"><span class="nm-name">GABA</span><span class="nm-num" id="nm-num-GABA">5%</span></div>
+            <div class="nm-track"><div class="nm-fill" id="nm-GABA" style="background: oklch(0.70 0.18 25); width: 5%"></div></div>
+          </div>
+          <div class="nm-row">
+            <div class="nm-head"><span class="nm-name">Glu</span><span class="nm-num" id="nm-num-Glu">30%</span></div>
+            <div class="nm-track"><div class="nm-fill" id="nm-Glu" style="background: oklch(0.78 0.16 145); width: 30%"></div></div>
+          </div>
+        </div>
+      </section>
+    </aside>
+
+    <!-- ----- CENTER: brain stage ----- -->
+    <main class="col col-mid">
+      <div class="brain-stage" id="brain-stage">
+        <div class="readout tl">
+          Cluster firing
+          <strong id="readout-cluster">—</strong>
+        </div>
+        <div class="readout tr">
+          Active regions
+          <strong id="readout-active-count">0 / 9</strong>
+        </div>
+        <div class="readout bl">
+          Turn id
+          <strong id="readout-turn">—</strong>
+        </div>
+        <div class="readout br">
+          Quality
+          <strong id="readout-quality">—</strong>
+        </div>
+
+        <div class="brain-figure">
+          <img src="brain-anatomy.png" class="brain-base" alt="Brain anatomy" />
+          <img id="region-frontal"    class="region lobe-overlay" src="brain-frontal.png"    alt="" style="--lobe: var(--frontal);    --lobe-glow: oklch(0.72 0.13 235);" />
+          <img id="region-parietal"   class="region lobe-overlay" src="brain-parietal.png"   alt="" style="--lobe: var(--parietal);   --lobe-glow: oklch(0.78 0.16 145);" />
+          <img id="region-occipital"  class="region lobe-overlay" src="brain-occipital.png"  alt="" style="--lobe: var(--occipital);  --lobe-glow: oklch(0.70 0.16 300);" />
+          <img id="region-temporal"   class="region lobe-overlay" src="brain-temporal.png"   alt="" style="--lobe: var(--temporal);   --lobe-glow: oklch(0.80 0.14 75);" />
+          <img id="region-cerebellum" class="region lobe-overlay" src="brain-cerebellum.png" alt="" style="--lobe: var(--cerebellum); --lobe-glow: oklch(0.78 0.14 200);" />
+          <img id="region-brainstem"  class="region lobe-overlay" src="brain-brainstem.png"  alt="" style="--lobe: var(--brainstem);  --lobe-glow: oklch(0.70 0.15 40);" />
+
+          <img id="region-thalamus"      class="region lobe-overlay masked-key-color" src="brain-thalamus.png"      alt="" style="--lobe: var(--thalamus);     --lobe-glow: oklch(0.9 0.02 250);" />
+          <img id="region-hypothalamus" class="inner-always-visible lobe-overlay masked-key-color always-keyed" src="brain-hypothalamus.png" alt="" style="--lobe: var(--hypothalamus); --lobe-glow: oklch(0.75 0.20 40);" />
+          <img id="region-hippocampus"  class="region lobe-overlay masked-key-color" src="brain-hippocampus.png"  alt="" style="--lobe: var(--hippocampus);  --lobe-glow: oklch(0.78 0.16 175);" />
+
+          <svg class="brain-subcortical" viewBox="0 0 942 867" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">
+            <!-- No remaining SVG subcortical shapes — all are now PNG images -->
+          </svg>
+        </div>
+
+        <div id="active-label-wrap">
+          <div id="active-label">awaiting input</div>
+        </div>
+
+        <button class="col-toggle col-toggle-left"  id="toggle-left"  title="Toggle left panel"  aria-label="Toggle left panel">
+          <svg id="icon-left" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="6,2 3,5 6,8"/></svg>
+        </button>
+        <button class="col-toggle col-toggle-right" id="toggle-right" title="Toggle right panel" aria-label="Toggle right panel">
+          <svg id="icon-right" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="4,2 7,5 4,8"/></svg>
+        </button>
+      </div>
+    </main>
+
+    <!-- ----- RIGHT: response + activity log ----- -->
+    <aside class="col col-right">
+      <div class="right-stack">
+        <section class="pane">
+          <header class="pane-head">
+            <h3>AI Response</h3>
+            <div class="head-meta">
+              <label class="voice-pill" title="ElevenLabs voice">
+                <span class="v-icon">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M3 10v4"/><path d="M7 6v12"/><path d="M11 3v18"/><path d="M15 7v10"/><path d="M19 10v4"/>
+                  </svg>
+                </span>
+                <span class="v-meta">
+                  <span class="v-name" id="voice-name">Loading…</span>
+                </span>
+                <span class="v-chev">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                </span>
+                <select id="voice-select" title="AI voice">
+                  <option value="">— voice —</option>
+                </select>
+              </label>
+            </div>
+          </header>
+          <div class="pane-body" id="messages-wrap">
+            <div id="messages">
+              <div class="msg msg-system">Brain online</div>
+            </div>
+            <div id="typing"><span>thinking</span><span class="dots"><span></span><span></span><span></span></span></div>
+          </div>
+        </section>
+
+        <section class="pane log-pane">
+          <header class="pane-head">
+            <h3>Activity Log</h3>
+            <div class="head-meta">
+              <span id="log-count">0 events</span>
+            </div>
+          </header>
+          <div class="pane-body">
+            <div id="activity-log">
+              <div class="log-empty">— no activations yet —</div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </aside>
+
   </div>
 
-  <!-- Right: Chat (compact) -->
-  <div id="chat-panel">
-    <div id="messages">
-      <div class="msg msg-system">Brain online.</div>
-    </div>
-    <div id="typing"><span></span><span></span><span></span></div>
+  <!-- ====== TRANSCRIPT BAR (mic) ====== -->
+  <div id="transcript-bar">
+    <span class="tx-label">Listening</span>
+    <span class="tx-text"></span>
   </div>
 
-</div>
-
-<!-- Bottom bar (transcript + controls, full width) -->
-<div id="bottom">
-  <div id="transcript-bar"></div>
+  <!-- ====== INPUT BAR ====== -->
   <div id="control-bar">
-    <button id="mic-btn" title="Click to speak (or press Space)">&#x1F3A4;</button>
-    <select id="voice-select" title="AI voice">
-      <option value="">voice…</option>
-    </select>
-    <textarea id="msg-input" rows="1" placeholder="Type a message…"></textarea>
-    <button id="send-btn">&#x2192;</button>
+    <button id="mic-btn" title="Click to speak (or press Space)" aria-label="Toggle voice input">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="9" y="2" width="6" height="12" rx="3"/>
+        <path d="M5 10v2a7 7 0 0 0 14 0v-2"/>
+        <line x1="12" y1="19" x2="12" y2="22"/>
+      </svg>
+    </button>
+
+    <div class="input-wrap">
+      <textarea id="msg-input" rows="1" placeholder="Type a message, or hold Space to speak…"></textarea>
+    </div>
+
+    <button id="send-btn" disabled>
+      Send
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+    </button>
   </div>
+
 </div>
 
 <script>
-// ── Region config ──────────────────────────────────────────────────────────────
+/* =====================================================================
+   REGION CONFIG (matches the server-side cluster names)
+   ===================================================================== */
 const REGIONS = {
-  frontal:      { color: '#4488ff', label: 'Frontal lobe — executive & response' },
-  parietal:     { color: '#44cc66', label: 'Parietal lobe — context & session state' },
-  occipital:    { color: '#cc44ff', label: 'Occipital lobe — vision processing' },
-  temporal:     { color: '#ff8822', label: 'Temporal lobe — language understanding' },
-  hippocampus:  { color: '#00ffaa', label: 'Hippocampus — memory recall & encoding' },
-  thalamus:     { color: '#ffffff', label: 'Thalamus — routing & attention' },
-  hypothalamus: { color: '#ffaa00', label: 'Hypothalamus — drives & affect' },
-  brainstem:    { color: '#ff6600', label: 'Brainstem — autonomic & articulation' },
-  cerebellum:   { color: '#00ccff', label: 'Cerebellum — learned sequences' },
+  frontal:      { color: 'oklch(0.72 0.13 235)', label: 'Frontal lobe',      role: 'Executive · Response',    initial: 'F',  group: 'cortical' },
+  parietal:     { color: 'oklch(0.78 0.16 145)', label: 'Parietal lobe',     role: 'Context · Session state', initial: 'P',  group: 'cortical' },
+  occipital:    { color: 'oklch(0.70 0.16 300)', label: 'Occipital lobe',    role: 'Vision processing',       initial: 'O',  group: 'cortical' },
+  temporal:     { color: 'oklch(0.80 0.14 75)',  label: 'Temporal lobe',     role: 'Language understanding',  initial: 'T',  group: 'cortical' },
+  hippocampus:  { color: 'oklch(0.78 0.16 175)', label: 'Hippocampus',       role: 'Memory recall · Encoding',initial: 'Hi', group: 'subcortical' },
+  thalamus:     { color: 'oklch(0.90 0.02 250)', label: 'Thalamus',          role: 'Routing · Attention',     initial: 'Th', group: 'subcortical' },
+  hypothalamus: { color: 'oklch(0.78 0.16 65)',  label: 'Hypothalamus',      role: 'Drives · Affect',         initial: 'Hy', group: 'subcortical' },
+  brainstem:    { color: 'oklch(0.70 0.15 40)',  label: 'Brainstem',         role: 'Autonomic · Articulation',initial: 'Bs', group: 'passive' },
+  cerebellum:   { color: 'oklch(0.78 0.14 200)', label: 'Cerebellum',        role: 'Learned sequences',       initial: 'Cb', group: 'passive' },
 };
 
+// cluster → region mapping (matches the original CLUSTER_MAP)
 const CLUSTER_MAP = {
   frontal:      'frontal',
   parietal:     'parietal',
@@ -654,52 +1425,85 @@ const CLUSTER_MAP = {
 };
 
 const EMOTION_COLORS = {
-  joy:            { bg: '#1a4020', color: '#44ff88' },
-  excited:        { bg: '#1a3a10', color: '#88ff44' },
-  enthusiasm:     { bg: '#1a3a10', color: '#aaff44' },
-  curious:        { bg: '#102040', color: '#44aaff' },
-  'curious-uncertain': { bg: '#102030', color: '#4488cc' },
-  warm:           { bg: '#2a2010', color: '#ffcc44' },
-  confident:      { bg: '#101a40', color: '#6688ff' },
-  thoughtful:     { bg: '#141428', color: '#8899cc' },
-  content:        { bg: '#121224', color: '#7788aa' },
-  neutral:        { bg: '#1a1a2a', color: '#7788aa' },
-  flat:           { bg: '#141414', color: '#555566' },
-  restless:       { bg: '#201810', color: '#cc8844' },
-  anxious:        { bg: '#2a1a10', color: '#ffaa44' },
-  inhibited:      { bg: '#1a1020', color: '#9966aa' },
-  'cautious-agitated': { bg: '#2a1010', color: '#ff8844' },
-  agitated:       { bg: '#2a1010', color: '#ff4444' },
+  joy:                  { bg: 'oklch(0.28 0.10 145 / 0.35)', color: 'oklch(0.88 0.18 145)' },
+  excited:              { bg: 'oklch(0.28 0.10 130 / 0.35)', color: 'oklch(0.88 0.18 130)' },
+  enthusiasm:           { bg: 'oklch(0.28 0.10 120 / 0.35)', color: 'oklch(0.88 0.18 120)' },
+  curious:              { bg: 'oklch(0.26 0.08 230 / 0.35)', color: 'oklch(0.85 0.15 220)' },
+  'curious-uncertain':  { bg: 'oklch(0.24 0.06 230 / 0.30)', color: 'oklch(0.80 0.12 220)' },
+  warm:                 { bg: 'oklch(0.28 0.08 80 / 0.35)',  color: 'oklch(0.88 0.16 80)' },
+  confident:            { bg: 'oklch(0.26 0.08 250 / 0.35)', color: 'oklch(0.85 0.15 230)' },
+  thoughtful:           { bg: 'oklch(0.22 0.04 250 / 0.40)', color: 'oklch(0.80 0.06 250)' },
+  content:              { bg: 'oklch(0.22 0.03 250 / 0.40)', color: 'oklch(0.78 0.06 250)' },
+  neutral:              { bg: 'oklch(0.22 0.02 250 / 0.40)', color: 'oklch(0.72 0.02 250)' },
+  flat:                 { bg: 'oklch(0.20 0.01 250 / 0.40)', color: 'oklch(0.60 0.01 250)' },
+  restless:             { bg: 'oklch(0.26 0.08 50 / 0.35)',  color: 'oklch(0.85 0.15 50)' },
+  anxious:              { bg: 'oklch(0.26 0.10 40 / 0.35)',  color: 'oklch(0.85 0.17 40)' },
+  inhibited:            { bg: 'oklch(0.24 0.06 305 / 0.35)', color: 'oklch(0.80 0.13 305)' },
+  'cautious-agitated':  { bg: 'oklch(0.26 0.10 30 / 0.35)',  color: 'oklch(0.85 0.17 30)' },
+  agitated:             { bg: 'oklch(0.26 0.12 25 / 0.35)',  color: 'oklch(0.85 0.18 25)' },
 };
 
-// ── Cluster icons for turn log ─────────────────────────────────────────────────
-const CLUSTER_ICONS = {
-  frontal: '🎯', temporal: '👁', hippocampus: '💾', hypothalamus: '⚡',
-  thalamus: '🔀', parietal: '📊', occipital: '👀', brainstem: '⚙',
-  cerebellum: '🔄', dmn: '💭', baseline: '📏', scorer: '⚖',
-};
-
-// ── State ──────────────────────────────────────────────────────────────────────
+/* =====================================================================
+   STATE
+   ===================================================================== */
 let ws = null;
+let wsConnected = false;
+let demoMode = false;
 let totalCalls = 0;
-let activeGlows = {};
 let sessionId = '—';
+let activeRegions = new Set();
+let activeTimeouts = {};
 
-// Eval + turn-log state
-let pendingActivations = [];   // activation events buffered during current turn
-let currentTurnId = null;      // turn_id currently in progress
-let turnQualityScores = {};    // turn_id → quality_score event
-let evalIntensive = false;     // eval mode toggle
+// turn-log + eval state
+let pendingActivations = [];
+let currentTurnId = null;
+let turnQualityScores = {};
+let evalIntensive = false;
 
-// ── ElevenLabs voice list ──────────────────────────────────────────────────────
-async function loadVoices() {
+let logCount = 0;
+
+/* =====================================================================
+   RENDER: REGION LIST (left column)
+   ===================================================================== */
+function renderRegionList() {
+  const groups = {
+    cortical:    document.getElementById('region-list-cortical'),
+    subcortical: document.getElementById('region-list-subcortical'),
+    passive:     document.getElementById('region-list-passive'),
+  };
+  Object.entries(REGIONS).forEach(([id, cfg]) => {
+    const compact = cfg.group !== 'cortical';
+    const card = document.createElement('div');
+    card.className = 'region-card' + (compact ? ' compact' : '');
+    card.id = `card-${id}`;
+    card.style.setProperty('--lobe', cfg.color);
+    card.style.setProperty('--lobe-glow', cfg.color);
+    card.innerHTML = `
+      <div class="swatch"></div>
+      <div class="meta">
+        <div class="name">${cfg.label}</div>
+        <div class="role">${cfg.role}</div>
+      </div>
+      <div class="status">IDLE</div>
+    `;
+    groups[cfg.group].appendChild(card);
+  });
+}
+
+/* =====================================================================
+   ELEVENLABS VOICE LIST
+   ===================================================================== */
+async function loadVoices({ silent = false } = {}) {
+  const sel = document.getElementById('voice-select');
+  const nameEl = document.getElementById('voice-name');
+
   try {
     const res = await fetch('/voices');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
-    const sel = document.getElementById('voice-select');
     const voices = data.voices || [];
-    if (voices.length === 0) return;
-    // Clear placeholder
+    if (voices.length === 0) throw new Error('no voices returned from server');
+
     sel.innerHTML = '';
     voices.forEach(v => {
       const opt = document.createElement('option');
@@ -707,68 +1511,98 @@ async function loadVoices() {
       opt.textContent = v.name;
       sel.appendChild(opt);
     });
-    // Restore saved selection
+
     const saved = localStorage.getItem('brain_voice_id');
     if (saved && voices.find(v => v.voice_id === saved)) {
       sel.value = saved;
+    } else {
+      localStorage.removeItem('brain_voice_id'); // clear stale/demo ID
+      sel.value = voices[0].voice_id;
     }
+    nameEl.textContent = sel.options[sel.selectedIndex].textContent;
+    // Notify server of the selected voice (handles the race where onopen fired first)
+    sel.dispatchEvent(new Event('change'));
   } catch (e) {
-    console.warn('Could not load voices:', e);
+    console.warn('loadVoices failed:', e.message);
+    // Auto-retry once after 3 s if the server might still be starting up
+    if (!loadVoices._retried) {
+      loadVoices._retried = true;
+      setTimeout(() => loadVoices({ silent: true }), 3000);
+    }
+    if (!silent) {
+      nameEl.textContent = 'No voice';
+    }
   }
 }
 
 document.getElementById('voice-select').addEventListener('change', function() {
   const vid = this.value;
   if (!vid) return;
+  const name = this.options[this.selectedIndex].textContent;
+  document.getElementById('voice-name').textContent = name;
+  // voice-tag span removed; voice-name in the pane header is the display
   localStorage.setItem('brain_voice_id', vid);
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ type: 'set_voice', voice_id: vid }));
   }
 });
 
-// ── WebSocket ──────────────────────────────────────────────────────────────────
+/* =====================================================================
+   WEBSOCKET
+   ===================================================================== */
 function connect() {
-  // Close any existing connection cleanly before opening a new one,
-  // so we never accumulate multiple live connections to the server.
   if (ws && ws.readyState !== WebSocket.CLOSED) {
-    ws.onclose = null; // prevent the reconnect loop from firing again
+    ws.onclose = null;
     ws.close();
   }
-
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  ws = new WebSocket(`${proto}://${location.host}/ws`);
+  try {
+    ws = new WebSocket(`${proto}://${location.host}/ws`);
+  } catch (e) {
+    enterDemoMode();
+    return;
+  }
 
   ws.onopen = () => {
+    wsConnected = true;
+    demoMode = false;
     document.getElementById('ws-indicator').classList.add('connected');
-    // Re-send active voice on reconnect
     const vid = document.getElementById('voice-select').value;
     if (vid) ws.send(JSON.stringify({ type: 'set_voice', voice_id: vid }));
   };
 
   ws.onclose = () => {
+    wsConnected = false;
     document.getElementById('ws-indicator').classList.remove('connected');
-    setTimeout(connect, 2000);
+    if (!demoMode) setTimeout(connect, 2000);
   };
 
-  ws.onerror = () => ws.close();
-  ws.onmessage = (ev) => handle(JSON.parse(ev.data));
+  ws.onerror = () => ws && ws.close();
+  ws.onmessage = (ev) => {
+    try { handle(JSON.parse(ev.data)); }
+    catch (e) { /* ignore */ }
+  };
 }
 
 function sendMessage(text) {
-  if (!ws || ws.readyState !== 1) return;
-  ws.send(JSON.stringify({ type: 'user_message', text }));
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'user_message', text }));
+  } else if (demoMode) {
+    demoRespond(text);
+  }
 }
 
-// ── Event handler ──────────────────────────────────────────────────────────────
+/* =====================================================================
+   EVENT HANDLER
+   ===================================================================== */
 function handle(msg) {
   switch (msg.type) {
     case 'activation': {
       const regionId = CLUSTER_MAP[msg.cluster];
-      if (regionId) {
-        const cfg = REGIONS[regionId];
-        if (cfg) activateRegion(regionId, msg.intensity, cfg.color, cfg.label, msg.note);
+      if (regionId && REGIONS[regionId]) {
+        activateRegion(regionId, msg.intensity, msg.note);
       }
-      // Buffer for collapsible turn log (skip 'done' pulses)
+      logActivity(msg.cluster, regionId, msg.intensity, msg.note);
       if (currentTurnId && msg.note !== 'done' && msg.intensity > 0) {
         pendingActivations.push({ cluster: msg.cluster, intensity: msg.intensity, note: msg.note });
       }
@@ -778,28 +1612,32 @@ function handle(msg) {
       ['ACh', 'DA', 'GABA', 'Glu'].forEach(ch => {
         const v = msg[ch];
         if (v === undefined) return;
-        document.getElementById(`nm-${ch}`).style.width = Math.round(v * 100) + '%';
+        const pct = Math.round(v * 100);
+        document.getElementById(`nm-${ch}`).style.width = pct + '%';
+        document.getElementById(`nm-num-${ch}`).textContent = pct + '%';
       });
       break;
     }
     case 'emotion': {
       const badge = document.getElementById('emotion-badge');
       badge.textContent = msg.emotion;
-      const theme = EMOTION_COLORS[msg.emotion] || EMOTION_COLORS['neutral'];
+      const theme = EMOTION_COLORS[msg.emotion] || EMOTION_COLORS.neutral;
       badge.style.background = theme.bg;
       badge.style.color = theme.color;
+      badge.style.borderColor = `oklch(from ${theme.color} l c h / 0.4)`;
       break;
     }
     case 'turn_start': {
       currentTurnId = msg.turn_id || null;
       pendingActivations = [];
-      if (msg.user_input) appendMessage('user', msg.user_input);
+      if (msg.user_input) appendUserMessage(msg.user_input);
       setTyping(true);
       document.getElementById('send-btn').disabled = true;
       if (msg.session_id) {
         sessionId = msg.session_id;
         document.getElementById('stat-session').textContent = sessionId;
       }
+      document.getElementById('readout-turn').textContent = (currentTurnId || '—').toString().slice(0, 8);
       break;
     }
     case 'turn_end': {
@@ -814,155 +1652,191 @@ function handle(msg) {
         appendBrainMessage(msg.turn_id, msg.response, calls, elapsed);
       }
       currentTurnId = null;
+      // de-activate after a beat
       setTimeout(() => {
         Object.keys(REGIONS).forEach(r => deactivateRegion(r));
-        setActiveLabel('—', false);
+        setActiveLabel('awaiting input', false);
       }, 800);
       break;
     }
     case 'quality_score': {
       turnQualityScores[msg.turn_id] = msg;
-      // Update badge if message bubble already rendered
       const badge = document.querySelector(`.quality-badge[data-turn-id="${msg.turn_id}"]`);
       if (badge) updateQualityBadge(badge, msg);
+      const overall = typeof msg.score === 'number' ? msg.score.toFixed(2) : '—';
+      document.getElementById('readout-quality').textContent = overall;
       break;
     }
     case 'stream_thought': {
       if (msg.thought) appendThought(msg.thought);
       break;
     }
-    case 'transcript': handleTranscriptEvent(msg); break;
+    case 'transcript':       handleTranscriptEvent(msg); break;
     case 'transcript_error': handleTranscriptError(msg); break;
   }
 }
 
-// ── SVG region activation ──────────────────────────────────────────────────────
-function activateRegion(regionId, intensity, color, label, note) {
-  const el = document.getElementById('region-' + regionId);
-  if (!el) return;
-  if (activeGlows[regionId]) { clearTimeout(activeGlows[regionId]); delete activeGlows[regionId]; }
+/* =====================================================================
+   REGION ACTIVATION (SVG + left legend)
+   ===================================================================== */
+function activateRegion(regionId, intensity, note) {
+  const cfg = REGIONS[regionId];
+  if (!cfg) return;
 
-  const brightness = 1 + intensity * 2.5;
-  const blurPx = Math.round(intensity * 22);
-  const opacity = 0.35 + intensity * 0.65;
+  const svgEl   = document.getElementById('region-' + regionId);
+  const sulciEl = document.getElementById('sulci-' + regionId);
+  const groupEl = document.getElementById('region-' + regionId + '-group');
+  const cardEl  = document.getElementById('card-' + regionId);
 
-  el.style.fill = hexWithAlpha(color, opacity);
-  el.style.filter = `brightness(${brightness}) drop-shadow(0 0 ${blurPx}px ${color})`;
-  el.classList.add('active');
+  if (activeTimeouts[regionId]) { clearTimeout(activeTimeouts[regionId]); delete activeTimeouts[regionId]; }
 
-  const displayLabel = note ? `${label.split('—')[0].trim()} — ${note}` : label;
-  setActiveLabel(displayLabel, true);
+  const inten = Math.max(0.15, Math.min(1, intensity ?? 0.6));
+  const alpha = 0.35 + inten * 0.55;
+  const glow  = Math.round(8 + inten * 18);
+  const brightness = 1 + inten * 0.6;
+
+  if (svgEl) {
+    svgEl.classList.remove('pulse');
+    // force reflow so the pulse animation can restart
+    void svgEl.getBoundingClientRect();
+    svgEl.classList.add('active', 'pulse');
+  }
+  if (sulciEl) sulciEl.classList.add('active');
+  if (cardEl) {
+    cardEl.classList.add('active');
+    cardEl.querySelector('.status').textContent = 'FIRING';
+  }
+
+  activeRegions.add(regionId);
+  updateActiveCount();
+
+  const noteText = note && note !== 'done' ? ` — ${note}` : '';
+  setActiveLabel(`${cfg.label}${noteText}`, true);
+  document.getElementById('readout-cluster').textContent = cfg.label;
 
   if (intensity > 0) {
-    activeGlows[regionId] = setTimeout(() => deactivateRegion(regionId), 1800);
+    activeTimeouts[regionId] = setTimeout(() => deactivateRegion(regionId), 1800);
   } else {
     deactivateRegion(regionId);
   }
 }
 
 function deactivateRegion(regionId) {
-  const el = document.getElementById('region-' + regionId);
-  if (!el) return;
-  el.style.fill = '';
-  el.style.filter = '';
-  el.classList.remove('active');
-  delete activeGlows[regionId];
+  const svgEl   = document.getElementById('region-' + regionId);
+  const sulciEl = document.getElementById('sulci-' + regionId);
+  const cardEl  = document.getElementById('card-' + regionId);
+  if (svgEl) {
+    svgEl.classList.remove('active', 'pulse');
+  }
+  if (sulciEl) sulciEl.classList.remove('active');
+  if (cardEl) {
+    cardEl.classList.remove('active');
+    cardEl.querySelector('.status').textContent = 'IDLE';
+  }
+  activeRegions.delete(regionId);
+  updateActiveCount();
+  delete activeTimeouts[regionId];
+}
+
+function updateActiveCount() {
+  document.getElementById('readout-active-count').textContent =
+    `${activeRegions.size} / ${Object.keys(REGIONS).length}`;
 }
 
 function setActiveLabel(text, lit) {
   const el = document.getElementById('active-label');
   el.textContent = text;
-  el.className = lit ? 'lit' : '';
+  el.classList.toggle('lit', !!lit);
 }
 
-function hexWithAlpha(hex, alpha) {
-  const r = parseInt(hex.slice(1,3),16);
-  const g = parseInt(hex.slice(3,5),16);
-  const b = parseInt(hex.slice(5,7),16);
-  return `rgba(${r},${g},${b},${alpha.toFixed(2)})`;
-}
-
-// ── Chat rendering ─────────────────────────────────────────────────────────────
-function appendMessage(role, text, meta) {
+/* =====================================================================
+   CHAT RENDERING
+   ===================================================================== */
+function appendUserMessage(text) {
   const msgs = document.getElementById('messages');
   const div = document.createElement('div');
-  div.className = `msg msg-${role}`;
+  div.className = 'msg msg-user';
   div.textContent = text;
-  if (meta) {
-    const m = document.createElement('div');
-    m.className = 'msg-meta';
-    m.textContent = meta;
-    div.appendChild(m);
-  }
   msgs.appendChild(div);
-  msgs.scrollTop = msgs.scrollHeight;
+  scrollChat();
 }
 
 function appendBrainMessage(turnId, text, calls, elapsed) {
   const msgs = document.getElementById('messages');
 
-  // ── Collapsible turn log (above the bubble) ────────────────────────────
-  const steps = pendingActivations;
+  // turn-log first (above the response)
+  const steps = pendingActivations.slice();
   if (steps.length > 0) {
-    const details = document.createElement('details');
-    details.className = 'turn-log';
-    const summary = document.createElement('summary');
-    summary.textContent = `⚙ ${steps.length} steps · ${calls} LLM calls · ${elapsed}`;
-    details.appendChild(summary);
+    const det = document.createElement('details');
+    det.className = 'turn-log';
+    det.open = false;
+    const sum = document.createElement('summary');
+    sum.textContent = `${steps.length} STEPS · ${calls} LLM CALLS · ${elapsed}`;
+    det.appendChild(sum);
 
     const body = document.createElement('div');
     body.className = 'turn-log-body';
     steps.forEach(a => {
-      const icon = CLUSTER_ICONS[a.cluster] || '·';
       const regionId = CLUSTER_MAP[a.cluster];
-      const clrColor = (regionId && REGIONS[regionId]) ? REGIONS[regionId].color : '#8899cc';
-      const pct = Math.round(a.intensity * 100);
-      const step = document.createElement('div');
-      step.className = 'log-step';
-      step.innerHTML =
-        `<span>${icon} ${a.cluster}${a.note ? ' — ' + a.note : ''}</span>` +
-        `<div class="log-bar"><div class="log-bar-fill" style="width:${pct}%;background:${clrColor}"></div></div>`;
-      body.appendChild(step);
+      const rcfg = regionId ? REGIONS[regionId] : null;
+      const color = rcfg ? rcfg.color : 'var(--accent)';
+      const initial = rcfg ? rcfg.initial : '·';
+      const pct = Math.round((a.intensity || 0) * 100);
+      const row = document.createElement('div');
+      row.className = 'log-step';
+      row.style.setProperty('--lobe', color);
+      row.innerHTML = `
+        <span class="log-icon">${initial}</span>
+        <span class="log-text">${a.cluster}${a.note ? ' <em>— ' + a.note + '</em>' : ''}</span>
+        <span class="log-bar"><span class="log-bar-fill" style="width:${pct}%"></span></span>
+      `;
+      body.appendChild(row);
     });
-    details.appendChild(body);
-    msgs.appendChild(details);
+    det.appendChild(body);
+    msgs.appendChild(det);
   }
 
-  // ── Brain response bubble ──────────────────────────────────────────────
-  const div = document.createElement('div');
-  div.className = 'msg msg-brain';
-  if (turnId) div.dataset.turnId = turnId;
-  div.textContent = text;
+  // brain response bubble
+  const wrap = document.createElement('div');
+  wrap.className = 'msg msg-brain';
+  if (turnId) wrap.dataset.turnId = turnId;
+  wrap.innerHTML = `
+    <div class="who">Brain</div>
+    <div class="body"></div>
+  `;
+  wrap.querySelector('.body').textContent = text;
 
   if (calls || elapsed) {
     const m = document.createElement('div');
     m.className = 'msg-meta';
-    m.textContent = (calls ? `${calls} LLM calls · ` : '') + elapsed;
-    div.appendChild(m);
+    m.textContent = (calls ? `${calls} LLM calls · ` : '') + (elapsed || '');
+    wrap.appendChild(m);
   }
 
-  // Quality badge (populated now if quality_score already arrived, else filled in later)
   const badge = document.createElement('div');
   badge.className = 'quality-badge';
   if (turnId) badge.dataset.turnId = turnId;
   const qs = turnId ? turnQualityScores[turnId] : null;
   if (qs) updateQualityBadge(badge, qs);
-  div.appendChild(badge);
+  wrap.appendChild(badge);
 
-  msgs.appendChild(div);
-  msgs.scrollTop = msgs.scrollHeight;
+  msgs.appendChild(wrap);
+  scrollChat();
   pendingActivations = [];
 }
 
 function updateQualityBadge(badge, qs) {
-  const score   = typeof qs.score         === 'number' ? qs.score.toFixed(2) : '—';
-  const coh     = typeof qs.coherence     === 'number' ? qs.coherence.toFixed(2) : '—';
-  const fit     = typeof qs.emotional_fit === 'number' ? qs.emotional_fit.toFixed(2) : '—';
-  const count   = qs.drafter_count || 1;
-  const memIcon = qs.memory_used ? ' · 💾' : '';
-  const drafts  = count > 1 ? ` · ${count} drafts` : '';
-  badge.innerHTML =
-    `<span class="qb-score">coh ${coh} · fit ${fit} · overall ${score}</span>${memIcon}${drafts}`;
+  const score = typeof qs.score === 'number' ? qs.score.toFixed(2) : '—';
+  const coh   = typeof qs.coherence === 'number' ? qs.coherence.toFixed(2) : '—';
+  const fit   = typeof qs.emotional_fit === 'number' ? qs.emotional_fit.toFixed(2) : '—';
+  const count = qs.drafter_count || 1;
+  badge.innerHTML = `
+    <span class="qb-pill score">Score <strong>${score}</strong></span>
+    <span class="qb-pill">Coh <strong>${coh}</strong></span>
+    <span class="qb-pill">Fit <strong>${fit}</strong></span>
+    ${qs.memory_used ? '<span class="qb-pill mem">Memory used</span>' : ''}
+    ${count > 1 ? `<span class="qb-pill">Drafts <strong>${count}</strong></span>` : ''}
+  `;
 }
 
 function appendThought(text) {
@@ -971,57 +1845,110 @@ function appendThought(text) {
   div.className = 'msg msg-thought';
   div.textContent = '· ' + text;
   msgs.appendChild(div);
-  msgs.scrollTop = msgs.scrollHeight;
+  scrollChat();
 }
 
 function setTyping(visible) {
-  document.getElementById('typing').className = visible ? 'visible' : '';
-  const msgs = document.getElementById('messages');
-  msgs.scrollTop = msgs.scrollHeight;
+  document.getElementById('typing').classList.toggle('visible', !!visible);
+  if (visible) scrollChat();
 }
 
-// ── Input handling ─────────────────────────────────────────────────────────────
+function scrollChat() {
+  const wrap = document.getElementById('messages-wrap');
+  wrap.scrollTop = wrap.scrollHeight;
+}
+
+/* =====================================================================
+   ACTIVITY LOG (right column bottom)
+   ===================================================================== */
+function logActivity(cluster, regionId, intensity, note) {
+  const log = document.getElementById('activity-log');
+  if (log.querySelector('.log-empty')) log.innerHTML = '';
+  const rcfg = regionId ? REGIONS[regionId] : null;
+  const color = rcfg ? rcfg.color : 'oklch(0.78 0.14 220)';
+  const ts = new Date();
+  const time = ts.toTimeString().slice(0, 8);
+  const row = document.createElement('div');
+  row.className = 'act-row';
+  row.style.setProperty('--lobe', color);
+  const pct = Math.round((intensity || 0) * 100);
+  row.innerHTML = `
+    <span class="act-time">${time}</span>
+    <span class="act-dot"></span>
+    <span class="act-msg"><span class="cluster">${cluster}</span> ${note ? '<span class="note">' + note + '</span>' : ''}</span>
+    <span class="act-intensity">${pct}%</span>
+  `;
+  log.insertBefore(row, log.firstChild);
+  logCount++;
+  document.getElementById('log-count').textContent = `${logCount} EVENT${logCount === 1 ? '' : 'S'}`;
+  // keep log capped
+  while (log.children.length > 60) log.removeChild(log.lastChild);
+}
+
+/* =====================================================================
+   INPUT HANDLING
+   ===================================================================== */
+const msgInput = document.getElementById('msg-input');
+const sendBtn  = document.getElementById('send-btn');
+
 function send() {
-  const input = document.getElementById('msg-input');
-  const text = input.value.trim();
+  const text = msgInput.value.trim();
   if (!text) return;
-  input.value = '';
-  input.style.height = 'auto';
+  msgInput.value = '';
+  msgInput.style.height = 'auto';
+  sendBtn.disabled = true;
   sendMessage(text);
 }
 
-document.getElementById('send-btn').addEventListener('click', send);
-document.getElementById('msg-input').addEventListener('keydown', (e) => {
+sendBtn.addEventListener('click', send);
+msgInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
 });
-document.getElementById('msg-input').addEventListener('input', function() {
+msgInput.addEventListener('input', function() {
   this.style.height = 'auto';
   this.style.height = Math.min(this.scrollHeight, 80) + 'px';
+  sendBtn.disabled = this.value.trim().length === 0;
 });
 
-// ── Voice input ────────────────────────────────────────────────────────────────
+/* =====================================================================
+   VOICE INPUT
+   ===================================================================== */
 const micBtn = document.getElementById('mic-btn');
 const transcriptBar = document.getElementById('transcript-bar');
-const msgInput = document.getElementById('msg-input');
+const transcriptText = transcriptBar.querySelector('.tx-text');
 let micActive = false;
 let mediaRecorder = null;
 let micStream = null;
 let finalTranscript = '';
 let autoSendTimer = null;
-const AUTO_SEND_DELAY_MS = 1500; // ms of silence after final transcript before auto-sending
+const AUTO_SEND_DELAY_MS = 1500;
 
 function _micReset() {
   micActive = false;
   micBtn.classList.remove('listening');
   micBtn.title = 'Click to speak (or press Space)';
   transcriptBar.classList.remove('visible');
-  transcriptBar.textContent = '';
+  transcriptText.textContent = '';
 }
 
 async function startListening() {
   if (micActive) return;
   if (!ws || ws.readyState !== WebSocket.OPEN) {
-    transcriptBar.textContent = 'Not connected — wait for reconnect.';
+    if (demoMode) {
+      // simulate listening
+      micActive = true;
+      micBtn.classList.add('listening');
+      transcriptText.textContent = 'Listening… (demo mode)';
+      transcriptBar.classList.add('visible');
+      setTimeout(() => {
+        transcriptText.textContent = '✓ what are you working on right now';
+      }, 1400);
+      setTimeout(() => {
+        stopListening(true);
+      }, 2600);
+      return;
+    }
+    transcriptText.textContent = 'Not connected — wait for reconnect.';
     transcriptBar.classList.add('visible');
     setTimeout(() => transcriptBar.classList.remove('visible'), 2500);
     return;
@@ -1029,7 +1956,7 @@ async function startListening() {
   try {
     micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
   } catch (err) {
-    transcriptBar.textContent = 'Microphone access denied.';
+    transcriptText.textContent = 'Microphone access denied.';
     transcriptBar.classList.add('visible');
     setTimeout(() => transcriptBar.classList.remove('visible'), 3000);
     return;
@@ -1051,7 +1978,7 @@ async function startListening() {
   micActive = true;
   micBtn.classList.add('listening');
   micBtn.title = 'Listening… click to stop';
-  transcriptBar.textContent = 'Listening…';
+  transcriptText.textContent = 'Listening…';
   transcriptBar.classList.add('visible');
 }
 
@@ -1059,19 +1986,22 @@ function stopListening(autoSend = false) {
   if (!micActive) return;
   clearTimeout(autoSendTimer);
   autoSendTimer = null;
+
+  const wasDemo = demoMode && !mediaRecorder;
+  const captured = transcriptText.textContent.replace(/^✓\s*/, '').trim();
+
   _micReset();
   if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
   mediaRecorder = null;
   if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
   if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'voice_stop' }));
 
-  const text = finalTranscript.trim() || msgInput.value.trim();
+  const text = finalTranscript.trim() || msgInput.value.trim() || (wasDemo ? captured : '');
   finalTranscript = '';
   if (autoSend && text) {
     msgInput.value = '';
     msgInput.style.height = 'auto';
     sendMessage(text);
-    // don't appendMessage here — turn_start event from server is the single source of truth
   }
 }
 
@@ -1082,9 +2012,8 @@ function handleTranscriptEvent(msg) {
     msgInput.value = finalTranscript.trim();
     msgInput.style.height = 'auto';
     msgInput.style.height = Math.min(msgInput.scrollHeight, 80) + 'px';
-    transcriptBar.textContent = '✓ ' + finalTranscript.trim();
+    transcriptText.textContent = '✓ ' + finalTranscript.trim();
 
-    // Auto-send after pause — keep mic open for continuous conversation
     clearTimeout(autoSendTimer);
     autoSendTimer = setTimeout(() => {
       const text = finalTranscript.trim();
@@ -1093,20 +2022,18 @@ function handleTranscriptEvent(msg) {
         msgInput.value = '';
         msgInput.style.height = 'auto';
         sendMessage(text);
-        // don't appendMessage here — turn_start event from server is the single source of truth
-        transcriptBar.textContent = 'Listening…';
+        transcriptText.textContent = 'Listening…';
       }
     }, AUTO_SEND_DELAY_MS);
   } else {
-    // Interim result — user still speaking, cancel the auto-send timer
     clearTimeout(autoSendTimer);
     autoSendTimer = null;
-    transcriptBar.textContent = msg.text || (finalTranscript ? '✓ ' + finalTranscript : 'Listening…');
+    transcriptText.textContent = msg.text || (finalTranscript ? '✓ ' + finalTranscript : 'Listening…');
   }
 }
 
 function handleTranscriptError(msg) {
-  transcriptBar.textContent = '⚠ ' + (msg.msg || 'Voice error');
+  transcriptText.textContent = '⚠ ' + (msg.msg || 'Voice error');
   transcriptBar.classList.add('visible');
   stopListening(false);
   setTimeout(() => transcriptBar.classList.remove('visible'), 3000);
@@ -1125,22 +2052,208 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-// ── Eval mode toggle ──────────────────────────────────────────────────────────
-const evalToggleBtn = document.getElementById('eval-toggle');
-evalToggleBtn.addEventListener('click', () => {
+/* =====================================================================
+   EVAL TOGGLE
+   ===================================================================== */
+const evalBtn = document.getElementById('eval-toggle');
+evalBtn.addEventListener('click', () => {
   evalIntensive = !evalIntensive;
-  evalToggleBtn.classList.toggle('active', evalIntensive);
-  evalToggleBtn.title = evalIntensive
-    ? 'Intensive eval ON (every turn) — click to disable'
-    : 'Toggle intensive eval mode (runs baseline on every turn)';
+  evalBtn.classList.toggle('active', evalIntensive);
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ type: 'eval_mode', intensive: evalIntensive }));
   }
 });
 
-// ── Boot ───────────────────────────────────────────────────────────────────────
+/* =====================================================================
+   OFFLINE DEMO MODE — fires realistic events when no backend is present
+   so the UI is fully alive for design review.
+   ===================================================================== */
+function enterDemoMode() {
+  if (demoMode) return;
+  demoMode = true;
+  document.getElementById('ws-indicator').classList.remove('connected');
+  // session id for demo
+  sessionId = 'demo-' + Math.random().toString(36).slice(2, 6);
+  document.getElementById('stat-session').textContent = sessionId;
+  // baseline neuromods
+  handle({ type: 'neuromod', ACh: 0.22, DA: 0.58, GABA: 0.10, Glu: 0.45 });
+  handle({ type: 'emotion', emotion: 'curious' });
+  // periodic idle activations
+  setInterval(() => {
+    if (currentTurnId) return; // don't interfere with a turn
+    const passives = ['cerebellum', 'thalamus'];
+    const pick = passives[Math.floor(Math.random() * passives.length)];
+    handle({ type: 'activation', cluster: pick, intensity: 0.2 + Math.random() * 0.2, note: 'idle' });
+  }, 3500);
+  // slow neuromod drift
+  setInterval(() => {
+    const snap = {
+      ACh:  Math.max(0.05, Math.min(0.9, 0.22 + (Math.random()-0.5)*0.4)),
+      DA:   Math.max(0.10, Math.min(0.9, 0.55 + (Math.random()-0.5)*0.3)),
+      GABA: Math.max(0.02, Math.min(0.6, 0.12 + (Math.random()-0.5)*0.2)),
+      Glu:  Math.max(0.05, Math.min(0.9, 0.45 + (Math.random()-0.5)*0.3)),
+    };
+    handle({ type: 'neuromod', ...snap });
+  }, 5000);
+  // friendly system message
+  setTimeout(() => {
+    const msgs = document.getElementById('messages');
+    const note = document.createElement('div');
+    note.className = 'msg msg-system';
+    note.textContent = 'Offline preview — backend not connected';
+    msgs.appendChild(note);
+  }, 400);
+}
+
+const DEMO_RESPONSES = [
+  {
+    keywords: ['remember', 'recall', 'said', 'before', 'memory', 'who'],
+    clusters: ['thalamus', 'hippocampus', 'temporal', 'frontal', 'frontal'],
+    notes: ['route', 'recall', 'parse', 'compose', 'done'],
+    response: "Yes — you mentioned that earlier in this session. I've pulled the relevant context from working memory and woven it into this response.",
+    emotion: 'thoughtful',
+    quality: { score: 0.84, coherence: 0.91, emotional_fit: 0.77, drafter_count: 1, memory_used: true },
+  },
+  {
+    keywords: ['see', 'look', 'image', 'show', 'screen', 'picture', 'visual'],
+    clusters: ['thalamus', 'occipital', 'parietal', 'frontal', 'frontal'],
+    notes: ['gate', 'decode', 'spatial', 'reason', 'done'],
+    response: "I'm parsing the visual input now. The composition reads as a stylized lateral view of a brain, color-coded by lobe.",
+    emotion: 'curious',
+    quality: { score: 0.81, coherence: 0.88, emotional_fit: 0.74, drafter_count: 2 },
+  },
+  {
+    keywords: ['why', 'plan', 'should', 'think', 'decide', 'how'],
+    clusters: ['thalamus', 'parietal', 'frontal', 'frontal', 'frontal'],
+    notes: ['attend', 'integrate', 'reason', 'compose', 'done'],
+    response: "There are a few ways to approach that. Let me lay out the tradeoffs first, then recommend an order of operations.",
+    emotion: 'confident',
+    quality: { score: 0.88, coherence: 0.93, emotional_fit: 0.82, drafter_count: 3 },
+  },
+  {
+    keywords: ['hello', 'hi', 'hey', 'there'],
+    clusters: ['temporal', 'frontal', 'hypothalamus', 'brainstem', 'frontal'],
+    notes: ['parse', 'greet', 'warmth', 'speak', 'done'],
+    response: "Hi — I'm here and listening. What's on your mind?",
+    emotion: 'warm',
+    quality: { score: 0.79, coherence: 0.86, emotional_fit: 0.91, drafter_count: 1 },
+  },
+  {
+    keywords: [],  // default
+    clusters: ['thalamus', 'temporal', 'parietal', 'frontal', 'frontal', 'brainstem'],
+    notes: ['route', 'parse', 'context', 'reason', 'compose', 'speak'],
+    response: "Got it. Working through that now — let me pull the relevant context and put together a response.",
+    emotion: 'thoughtful',
+    quality: { score: 0.77, coherence: 0.85, emotional_fit: 0.72, drafter_count: 1 },
+  },
+];
+
+function pickDemoResponse(text) {
+  const lower = text.toLowerCase();
+  for (const r of DEMO_RESPONSES) {
+    if (r.keywords.some(k => lower.includes(k))) return r;
+  }
+  return DEMO_RESPONSES[DEMO_RESPONSES.length - 1];
+}
+
+function demoRespond(text) {
+  const r = pickDemoResponse(text);
+  const turnId = 'demo-' + Date.now().toString(36);
+  handle({ type: 'turn_start', turn_id: turnId, user_input: text, session_id: sessionId });
+  handle({ type: 'emotion', emotion: r.emotion });
+
+  let i = 0;
+  const step = () => {
+    if (i >= r.clusters.length) {
+      const elapsed = 0.7 + Math.random() * 1.6;
+      handle({ type: 'turn_end', turn_id: turnId, response: r.response, elapsed_s: elapsed, llm_calls: 1 + (r.quality.drafter_count || 1) });
+      setTimeout(() => {
+        handle({ type: 'quality_score', turn_id: turnId, ...r.quality });
+      }, 320);
+      return;
+    }
+    handle({
+      type: 'activation',
+      cluster: r.clusters[i],
+      intensity: 0.5 + Math.random() * 0.45,
+      note: r.notes[i] || '',
+    });
+    i++;
+    setTimeout(step, 320 + Math.random() * 180);
+  };
+  step();
+}
+
+/* Expose a small probe so design tools can inspect active state externally */
+window.__brain = { activate: activateRegion, deactivate: deactivateRegion, demo: demoRespond, REGIONS };
+
+/* =====================================================================
+   PANEL COLLAPSE
+   ===================================================================== */
+const mainEl      = document.getElementById('main');
+const colLeft     = document.querySelector('.col-left');
+const colRight    = document.querySelector('.col-right');
+const toggleLeft  = document.getElementById('toggle-left');
+const toggleRight = document.getElementById('toggle-right');
+const iconLeft    = document.getElementById('icon-left');
+const iconRight   = document.getElementById('icon-right');
+
+// Default column widths per breakpoint (mirrors the CSS)
+function defaultWidths() {
+  const w = window.innerWidth;
+  if (w >= 1700) return { left: 288, right: 440 };
+  if (w >= 1400) return { left: 260, right: 400 };
+  return { left: 232, right: 348 };
+}
+
+let leftCollapsed  = false;
+let rightCollapsed = false;
+
+function applyGrid() {
+  const { left, right } = defaultWidths();
+  const lw = leftCollapsed  ? '0px' : left  + 'px';
+  const rw = rightCollapsed ? '0px' : right + 'px';
+  mainEl.style.gridTemplateColumns = `${lw} 1fr ${rw}`;
+}
+
+function updateToggleIcons() {
+  // Left chevron: « when expanded (collapse left), » when collapsed (expand left)
+  iconLeft.querySelector('polyline').setAttribute('points',
+    leftCollapsed ? '4,2 7,5 4,8' : '6,2 3,5 6,8');
+  // Right chevron: » when expanded (collapse right), « when collapsed (expand right)
+  iconRight.querySelector('polyline').setAttribute('points',
+    rightCollapsed ? '6,2 3,5 6,8' : '4,2 7,5 4,8');
+}
+
+toggleLeft.addEventListener('click', () => {
+  leftCollapsed = !leftCollapsed;
+  colLeft.classList.toggle('collapsed', leftCollapsed);
+  applyGrid();
+  updateToggleIcons();
+});
+
+toggleRight.addEventListener('click', () => {
+  rightCollapsed = !rightCollapsed;
+  colRight.classList.toggle('collapsed', rightCollapsed);
+  applyGrid();
+  updateToggleIcons();
+});
+
+// Re-apply on resize in case breakpoint changes
+window.addEventListener('resize', () => { if (leftCollapsed || rightCollapsed) applyGrid(); });
+
+/* =====================================================================
+   BOOT
+   ===================================================================== */
+renderRegionList();
 loadVoices();
 connect();
+
+// fall back to demo mode if WS hasn't connected in 1.5s
+setTimeout(() => {
+  if (!wsConnected) enterDemoMode();
+}, 1500);
+
 </script>
 </body>
 </html>

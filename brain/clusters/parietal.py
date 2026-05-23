@@ -23,6 +23,20 @@ class ParietalCluster:
         self._entities: dict[str, int] = {}  # entity -> turn count last seen
         self._turn_count = 0
 
+    def seed(self, episodes: list[dict]) -> None:
+        """Pre-populate the ring from recent episodic history (called once at boot).
+        Episodes arrive newest-first; ring wants oldest-first so we reverse."""
+        for ep in reversed(episodes):
+            entry = {
+                "turn": self._turn_count,
+                "user": ep.get("user_input", ""),
+                "response": ep.get("entity_response", ""),
+                "intent": (ep.get("topic_tags") or [None])[0],
+                "topic": None,
+                "emotion": ep.get("emotion_state"),
+            }
+            self._ring.append(entry)
+
     def update(self, features: dict, user_input: str, entity_response: str = "") -> None:
         self._turn_count += 1
         entry = {

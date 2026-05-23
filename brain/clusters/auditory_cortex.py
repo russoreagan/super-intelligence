@@ -37,6 +37,7 @@ import numpy as np
 
 from brain.bus import Bus
 from brain.clusters.audio_dsp import (
+    compute_speech_dynamics,
     decode_audio,
     extract_identity_name,
     extract_prosody,
@@ -361,6 +362,13 @@ class AuditoryCluster:
             # Fallback: treat entire audio as a single speaker
             await self._process_single_speaker_audio(audio, sr, loop)
             return
+
+        # pace_switch + pause_distribution_switch: derive timing-based features
+        # from the diarized words and publish them for the rest of the brain.
+        dyn = compute_speech_dynamics(diarized_words)
+        logger.debug("Auditory: dynamics wpm=%.0f pace=%s pauses=%d burst=%.2f",
+                     dyn["wpm"], dyn["pace_label"], dyn["long_pause_count"], dyn["burst_score"])
+        await self._bus.publish_dict("auditory.speech_dynamics", dyn, source=CLUSTER)
 
         # Group word dicts by Deepgram speaker label
         by_speaker: dict[int, list[dict]] = defaultdict(list)

@@ -330,3 +330,69 @@ def extract_prosody(audio: np.ndarray, sr: int) -> dict:
         base["tone_label"] = "calm"
 
     return base
+
+
+# Threshold (seconds) above which an inter-word gap counts as a "long pause"
+_LONG_PAUSE_S = 0.5
+
+
+def compute_speech_dynamics(diarized_words: list[dict]) -> dict:
+    """pace_switch + pause_distribution_switch (PLAN.md): convert Deepgram word
+    timestamps into pace + pause-shape features.
+
+    Returns dict with:
+      wpm:               words per minute (0 if not computable)
+      pace_label:        halting | measured | normal | brisk | rushed
+      long_pause_count:  inter-word gaps > 0.5s
+      max_pause_s:       biggest mid-utterance gap
+      burst_score:       std-dev of inter-word gaps (high = bursty/agitated)
+      hesitant:          true if many long pauses for the utterance length
+    """
+    base = {
+        "wpm": 0.0,
+        "pace_label": "normal",
+        "long_pause_count": 0,
+        "max_pause_s": 0.0,
+        "burst_score": 0.0,
+        "hesitant": False,
+    }
+    if not diarized_words or len(diarized_words) < 2:
+        return base
+
+    words = [w for w in diarized_words if w.get("word")]
+    if len(words) < 2:
+        return base
+
+    starts = [float(w.get("start", 0.0)) for w in words]
+    ends = [float(w.get("end", 0.0)) for w in words]
+    duration = max(ends[-1] - starts[0], 0.001)
+
+    base["wpm"] = float(60.0 * len(words) / duration)
+
+    gaps = [max(starts[i + 1] - ends[i], 0.0) for i in range(len(words) - 1)]
+    if gaps:
+        base["max_pause_s"] = float(max(gaps))
+        base["long_pause_count"] = int(sum(1 for g in gaps if g > _LONG_PAUSE_S))
+        mean = sum(gaps) / len(gaps)
+        var = sum((g - mean) ** 2 for g in gaps) / len(gaps)
+        base["burst_score"] = float(var ** 0.5)
+
+    wpm = base["wpm"]
+    if wpm < 90:
+        base["pace_label"] = "halting"
+    elif wpm < 130:
+        base["pace_label"] = "measured"
+    elif wpm < 170:
+        base["pace_label"] = "normal"
+    elif wpm < 220:
+        base["pace_label"] = "brisk"
+    else:
+        base["pace_label"] = "rushed"
+
+    # "hesitant" — long pauses dominate the utterance shape
+    base["hesitant"] = bool(
+        base["long_pause_count"] >= 2
+        and base["long_pause_count"] / max(len(gaps), 1) >= 0.3
+    )
+
+    return base

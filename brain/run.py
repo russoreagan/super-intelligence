@@ -115,8 +115,9 @@ async def session(args) -> None:
     hippocampus = HippocampusCluster(bus, router)
     frontal = FrontalCluster(bus, brainstem, router)
 
-    # Boot: pre-load core schema
-    core_context = await hippocampus.boot(session_id)
+    # Boot: pre-load core schema + seed parietal with recent episodes
+    core_context, recent_episodes = await hippocampus.boot(session_id)
+    parietal.seed(recent_episodes)
 
     from brain.security import PseudonymizationGateway, EGRESS_MODE
     egress = PseudonymizationGateway()
@@ -166,10 +167,13 @@ async def session(args) -> None:
             orig_tick = dmn._tick
 
             async def _dmn_tick_with_ui():
-                await orig_tick()
-                # After tick, surface any new thought to UI
                 if emitter:
                     await emitter.emit("dmn", 0.25, "thinking...", "dmn")
+                    await emitter.emit("hippocampus", 0.15, "consolidating...", "dmn")
+                await orig_tick()
+                if emitter:
+                    await emitter.emit("dmn", 0.0, "done", "dmn")
+                    await emitter.emit("hippocampus", 0.0, "done", "dmn")
 
             dmn._tick = _dmn_tick_with_ui
 
@@ -185,13 +189,39 @@ async def session(args) -> None:
     # ── v0.4: Auditory Cortex ─────────────────────────────────────────────────
     ears = None
     enrollment_complete_inbox: asyncio.Queue = bus.subscribe("auditory.enrollment_complete")
+    speaker_id_inbox: asyncio.Queue = bus.subscribe("auditory.speaker_id")
+    song_match_inbox: asyncio.Queue = bus.subscribe("auditory.song_match")
     if args.ears or os.environ.get("BRAIN_EARS", "false").lower() == "true":
         from brain.clusters.auditory_cortex import AuditoryCluster
         ears = AuditoryCluster(bus)
         asyncio.create_task(ears.run())
 
-    # Brainstem heartbeat
-    hb_task = asyncio.create_task(brainstem.heartbeat())
+    # ── Streaming mic (voice mode): always-on listener with barge-in ─────────
+    streaming_mic = None
+    if args.voice or os.environ.get("BRAIN_VOICE_MODE", "false").lower() == "true":
+        from brain.streaming_mic import StreamingMicSession
+        streaming_mic = StreamingMicSession(
+            bus,
+            is_speaking_fn=lambda: pns.is_speaking,
+            on_user_interrupt=pns.interrupt,
+        )
+        try:
+            await streaming_mic.start()
+        except Exception as e:
+            logger.error("[I/O] Streaming mic failed to start — voice input is offline: %s", e)
+            streaming_mic = None
+
+    # Brainstem heartbeat — also pulses the UI every 60 s
+    async def _heartbeat_with_ui() -> None:
+        while True:
+            await asyncio.sleep(60)
+            logger.info("Heartbeat: %d total LLM calls this session", brainstem._session_cost_calls)
+            if emitter:
+                await emitter.emit("brainstem", 0.2, "heartbeat", "hb")
+                await asyncio.sleep(0.8)
+                await emitter.emit("brainstem", 0.0, "done", "hb")
+
+    hb_task = asyncio.create_task(_heartbeat_with_ui())
 
     # Session trace accumulator for sleep consolidation
     session_traces: list[dict] = []
@@ -211,7 +241,7 @@ async def session(args) -> None:
     # ── Core turn processor ───────────────────────────────────────────────────
     from brain.brainstem import TURN_TIMEOUT
 
-    async def process_turn(user_input: str, image_path: str | None = None) -> str:
+    async def process_turn(user_input: str, image_path: str | None = None) -> tuple[str, dict]:
         try:
             return await asyncio.wait_for(
                 _process_turn_body(user_input, image_path),
@@ -236,28 +266,18 @@ async def session(args) -> None:
                     pass
             if dmn:
                 dmn.resume()
-            return timeout_msg
+            return timeout_msg, {}
 
-    async def _process_turn_body(user_input: str, image_path: str | None = None) -> str:
+    async def _process_turn_body(user_input: str, image_path: str | None = None) -> tuple[str, dict]:
         if dmn:
             dmn.pause()
 
         turn = brainstem.begin_turn()
         turn_id = turn.turn_id
 
-        # Notify UI of turn start (before resetting integrators so session_id is ready)
+        # Notify UI of turn start
         if emitter:
-            await emitter.emit_turn_start(turn_id, user_input)
-            # Attach session_id to the event retroactively via a direct queue push
-            try:
-                emitter.get_queue().put_nowait({
-                    "type": "turn_start",
-                    "turn_id": turn_id,
-                    "user_input": user_input,
-                    "session_id": session_id,
-                })
-            except Exception:
-                pass
+            await emitter.emit_turn_start(turn_id, user_input, session_id=session_id)
 
         # Reset integrators
         temporal._understanding.reset_turn(turn_id)
@@ -312,6 +332,32 @@ async def session(args) -> None:
                 features = dict(features)
                 features["_enrollment_result"] = completed[0]
                 features["_enrollment_results"] = completed
+
+        # ── Surface latest speaker identity + song match into features ────────
+        # Drain whatever the auditory cortex has emitted since the last turn;
+        # keep the most recent valid payload of each kind.
+        latest_speaker = None
+        while True:
+            try:
+                sm = speaker_id_inbox.get_nowait()
+                if not sm.expired and sm.payload.get("identified"):
+                    latest_speaker = sm.payload
+            except asyncio.QueueEmpty:
+                break
+        latest_song = None
+        while True:
+            try:
+                mm = song_match_inbox.get_nowait()
+                if not mm.expired and mm.payload.get("matched"):
+                    latest_song = mm.payload
+            except asyncio.QueueEmpty:
+                break
+        if latest_speaker or latest_song:
+            features = dict(features)
+            if latest_speaker and latest_speaker.get("speaker_name"):
+                features["speaker_name"] = latest_speaker["speaker_name"]
+            if latest_song:
+                features["song_match"] = latest_song
 
         # ── Hypothalamus + Thalamus: parallel ─────────────────────────────────
         await _emit("hypothalamus", 0.6, "updating affect", turn_id)
@@ -403,9 +449,38 @@ async def session(args) -> None:
             await _emit("frontal", 0.9, "drafting response", turn_id)
             # Pass pseudonymised context to cloud frontal cells
             ps_features = dict(features)
+            ps_affect = affect
             if EGRESS_MODE != "off":
                 ps_features["raw_text"] = ps_user_input
-            response = await frontal.process(ps_features, affect, ps_memory, ps_parietal_context, turn_id)
+                # Pseudonymise speaker name + enrollment names so PII never reaches the cloud.
+                if ps_features.get("speaker_name"):
+                    ps_name, _ = egress.pseudonymize(
+                        ps_features["speaker_name"], known_entities=[ps_features["speaker_name"]]
+                    )
+                    ps_features["speaker_name"] = ps_name
+                for key in ("_enrollment_result", "_enrollment_results"):
+                    val = ps_features.get(key)
+                    if not val:
+                        continue
+                    items = val if isinstance(val, list) else [val]
+                    ps_items = []
+                    for item in items:
+                        if isinstance(item, dict) and item.get("name"):
+                            ps_item = dict(item)
+                            ps_item["name"], _ = egress.pseudonymize(
+                                item["name"], known_entities=[item["name"]]
+                            )
+                            ps_items.append(ps_item)
+                        else:
+                            ps_items.append(item)
+                    ps_features[key] = ps_items if isinstance(val, list) else ps_items[0]
+                # affect.appraisal is templated free text that may echo names —
+                # run it through the gateway so vault tokens stay consistent.
+                if affect.get("appraisal"):
+                    ps_appraisal, _ = egress.pseudonymize(affect["appraisal"])
+                    ps_affect = dict(affect)
+                    ps_affect["appraisal"] = ps_appraisal
+            response = await frontal.process(ps_features, ps_affect, ps_memory, ps_parietal_context, turn_id)
             # Capture draft scores immediately (single-threaded asyncio — no race)
             draft_scores = list(frontal.last_turn_draft_scores)
             # Restore real values in response before delivering to user
@@ -423,7 +498,9 @@ async def session(args) -> None:
         await _emit_end("brainstem", turn_id)
 
         # Post-turn housekeeping
+        await _emit("parietal", 0.3, "updating context", turn_id)
         parietal.update(features, user_input, final)
+        await _emit_end("parietal", turn_id)
         hypothalamus.decay_turn()
         turn_result = brainstem.end_turn()
 
@@ -506,6 +583,8 @@ async def session(args) -> None:
                 emotion=affect.get("emotion", "neutral"),
                 neuromod=nm_snap,
                 surprise_score=features.get("surprise_score", 0.5),
+                features=features,
+                draft_scores=draft_scores,
             )
 
         session_traces.append({
@@ -535,12 +614,12 @@ async def session(args) -> None:
 
         logger.info("Turn %s: %d LLM calls | %.2fs | emotion=%s",
                     turn_id, llm_calls, turn_result.elapsed(), affect.get("emotion"))
-        return final
+        return final, affect
 
     # ── Run modes ─────────────────────────────────────────────────────────────
     if args.message:
-        response = await process_turn(args.message)
-        await pns.emit(response)
+        response, affect = await process_turn(args.message)
+        await pns.emit(response, affect)
 
     elif ui_enabled:
         # Browser drives the conversation via WebSocket
@@ -564,10 +643,14 @@ async def session(args) -> None:
                     image_path = m.group(1).strip()
                     user_input = user_input.replace(m.group(0), "").strip()
 
-            response = await process_turn(user_input, image_path)
+            response, affect = await process_turn(user_input, image_path)
             # response already sent to browser via turn_end event;
             # also speak it aloud if voice mode is enabled
-            await pns.emit(response)
+            await _emit("brainstem", 0.35, "speaking", "speak")
+            await _emit("temporal", 0.2, "speaking", "speak")
+            await pns.emit(response, affect)
+            await _emit_end("brainstem", "speak")
+            await _emit_end("temporal", "speak")
 
     else:
         # CLI REPL
@@ -575,7 +658,16 @@ async def session(args) -> None:
         while True:
             try:
                 if args.voice:
-                    user_input = await pns.mic_listen()
+                    if streaming_mic is None:
+                        # Streaming session failed to start — surface the error and exit
+                        print("Voice input is offline. Check DEEPGRAM_API_KEY and mic permissions.")
+                        break
+                    await _emit("temporal", 0.4, "listening...", "mic")
+                    await _emit("brainstem", 0.15, "listening...", "mic")
+                    utt = await streaming_mic.next_utterance()
+                    await _emit_end("temporal", "mic")
+                    await _emit_end("brainstem", "mic")
+                    user_input = (utt.get("transcript") or "").strip()
                     if not user_input:
                         continue
                     print(f"You: {user_input}")
@@ -601,11 +693,21 @@ async def session(args) -> None:
                     image_path = m.group(1).strip()
                     user_input = user_input.replace(m.group(0), "").strip()
 
-            response = await process_turn(user_input, image_path)
-            await pns.emit(response)
+            response, affect = await process_turn(user_input, image_path)
+            await _emit("brainstem", 0.35, "speaking", "speak")
+            await _emit("temporal", 0.2, "speaking", "speak")
+            await pns.emit(response, affect)
+            await _emit_end("brainstem", "speak")
+            await _emit_end("temporal", "speak")
 
     # ── Shutdown ──────────────────────────────────────────────────────────────
     hb_task.cancel()
+
+    if streaming_mic is not None:
+        try:
+            await streaming_mic.stop()
+        except Exception as _e:
+            logger.debug("streaming mic shutdown error: %s", _e)
 
     # Flush pending hippocampus encodes so episodes aren't lost on exit
     if pending_encodes:

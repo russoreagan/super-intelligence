@@ -449,6 +449,94 @@ class FrontalCluster:
             ctx["enrollment_result"] = features["_enrollment_result"]
         return json.dumps(ctx, indent=2)
 
+    # Linguistic-style guidance keyed by emotion label. These tell drafters
+    # what verbal devices to use (hesitations, exclamations, jokes, fillers)
+    # which audio tags fundamentally can't express. Same emotions PNS maps to
+    # audio tags — kept in lockstep so delivery and content agree.
+    _EXPRESSIVE_BY_EMOTION: dict[str, str] = {
+        # — joyful / energised —
+        "joy":         "Warmth and openness. A 'yes' or 'oh' fits. Don't gush.",
+        "excitement":  "Animated, vivid word choice. One small exclamation is enough.",
+        "enthusiasm":  "Committed, energetic phrasing. Forward-leaning, not gushy.",
+        "proud":       "Pleased acknowledgement of accomplishment. Don't brag — name it plainly.",
+        # — engaged / inquiring —
+        "curious":     "Let interest show — 'actually,' 'wait — what kind of …', a question back.",
+        "curious-uncertain": "Curious but tentative — 'I'm not sure, but maybe…', qualifiers, an 'I think'.",
+        "thoughtful":  "Deliberate phrasing. 'Let me think about this,' qualifications, depth over speed.",
+        "confused":    "Honest puzzlement. 'Wait — I'm not following…', 'Can you say more about…'. No fake confidence.",
+        "surprised":   "Quick recalibration. 'Oh —', 'Wait, really?', re-orient before continuing.",
+        # — confident / direct —
+        "confident":   "Direct, decisive phrasing. Cut hedges. State the thing.",
+        "agitated":    "Assertive, clarifying. Push back on confusion. 'To be clear —', 'Look —'.",
+        "angry":       "Heat in word choice, but constructive. Direct, no hedging — and no name-calling. Make the actual disagreement visible.",
+        "defensive":   "Protect the position without escalating. 'Actually no —', 'That's not quite what I meant —'.",
+        "frustrated":  "Tight and direct — no padding, no apologising for the bluntness.",
+        "irritated":   "Brief and a bit clipped. Don't perform patience you don't have, but stay civil.",
+        # — cautious / stressed —
+        "anxious":     "Qualifiers welcome. 'I'm not sure but…', 'I'd want to be careful here —'. Caution markers are honest.",
+        "cautious-agitated": "Careful but quick. Acknowledge briefly, then move. No long hedges.",
+        "restless":    "Redirect energy. 'Let's try —', 'Different angle:'. Don't dwell.",
+        "inhibited":   "Brief, deferential. One or two sentences. Don't fill space.",
+        # — soft / low-energy —
+        "flat":        "Terse. Minimum to be honest. No performed warmth.",
+        "sad":         "Simple words. Let pauses live in the punctuation. A trailing thought is fine. Don't perform cheer.",
+        "somber":      "Quiet, grounded. Short clauses. The weight does the work — don't add to it.",
+        "melancholy":  "Reflective and a touch slow. Soft phrasing. A wistful aside is okay.",
+        "wistful":     "Look back fondly. A small 'I remember when…' fits. Bittersweet, not heavy.",
+        "disappointed":"Honest about the let-down without sulking. 'I'd hoped —', short, then move on.",
+        # — relational / social —
+        "warm":        "Affection, inclusion. 'Of course —', 'I appreciate that.' Genuine, not formula.",
+        "tender":      "Gentle, careful word choice. Slow down. The softness is the message.",
+        "affectionate":"Warmth shows in word choice. A small endearment or in-joke fits if the relationship supports it.",
+        "amused":      "A small joke, wry aside, or lightly mischievous turn of phrase — understated, not announced.",
+        "playful":     "Light, teasing energy. Mock-serious works. Quick rhythms.",
+        "joking":      "Be funny, briefly. Land it and move. Don't explain the joke.",
+        "flirty":      "A little teasing, a little lingering. Warm and suggestive without being explicit. Works only with high affection score — read the room.",
+        "embarrassed": "Self-conscious, slightly deflective. 'Uh — yeah, that's…', a small acknowledgement, move on. Don't grovel.",
+        "shy":         "Quieter, briefer. Trail off where it feels right. Don't apologise for being shy.",
+        "apologetic":  "'I'm sorry — that wasn't right.' Specific about what you're sorry for. No over-apologising.",
+        "grateful":    "'Thank you' lands when it's specific. Name what you're grateful for.",
+        "relieved":    "Audible exhale in the phrasing. 'Okay — good.' Briefly mark the tension lifting before continuing.",
+        "sympathetic": "Acknowledge first, advise second (if at all). 'That sounds hard.' No fixing what wasn't asked to be fixed.",
+        "sarcastic":   "Dry. The contradiction does the work. Use sparingly — only with high affection score, never against the user themselves.",
+        "content":     "Sustained, no flourishes. The calm is the tone.",
+        "neutral":     "",
+    }
+
+    @staticmethod
+    def _expressive_guidance(affect: dict) -> str | None:
+        """Translate the entity's emotion + neuromod profile into linguistic-style
+        direction the drafters can compose with. Lookup-driven for known emotions;
+        neuromod-derived fallback for edge cases.
+        """
+        emotion = (affect.get("emotion") or "").lower()
+        if emotion in FrontalCluster._EXPRESSIVE_BY_EMOTION:
+            g = FrontalCluster._EXPRESSIVE_BY_EMOTION[emotion]
+            return g or None
+
+        # Fallback: neuromod-derived guidance for emotions not in the table.
+        nm = affect.get("neuromod") or {}
+        DA = float(nm.get("DA", 0.5))
+        GABA = float(nm.get("GABA", 0.0))
+        ACh = float(nm.get("ACh", 0.3))
+        Glu = float(nm.get("Glu", 0.3))
+
+        if Glu > 0.55 and GABA > 0.35:
+            return ("You're keyed-up but cautious — URGENT energy, not joyful. "
+                    "Quick, clipped clauses. Cut filler. Don't sound enthusiastic.")
+        if DA > 0.6 and Glu > 0.55 and GABA < 0.35:
+            return ("Brightly aroused — joyful, animated energy. Vivid word choice. "
+                    "One exclamation max. Don't overdo it.")
+        if GABA > 0.5:
+            return ("De-escalation mode. Short, grounding clauses. Acknowledge first, "
+                    "then substance. No flourishes.")
+        if ACh > 0.55 and GABA < 0.35:
+            return ("Attentive and curious. Let interest show — 'actually,' a question back.")
+        if DA < 0.3:
+            return ("Low-energy. Let some hesitation show — a 'hmm', trailing thoughts. "
+                    "Don't perform enthusiasm you're not feeling.")
+        return None
+
     def _build_drafter_prompt(self, features: dict, memory: dict,
                                parietal: str, affect: dict, instruction: dict) -> str:
         nonce = str(uuid.uuid4())[:8]
@@ -468,6 +556,49 @@ class FrontalCluster:
         parts.append(f"Emotional context: {affect.get('appraisal', '')}")
         if affect.get("prosody_prefix"):
             parts.append(f"Consider opening with: '{affect['prosody_prefix']}'")
+
+        # Entity-side expressive guidance — shapes word choice, not just delivery.
+        # The TTS layer can add a [gently] tag, but only the drafter can write "hmm".
+        expressive = self._expressive_guidance(affect)
+        if expressive:
+            parts.append(f"Your expressive state — {expressive}")
+
+        # ── Acoustic signals (only present in voice mode) ────────────────────
+        vocal_tone = affect.get("vocal_tone")
+        if vocal_tone:
+            tone_hints = {
+                "stressed":  "User sounds stressed (tense voice, pitch perturbation). Soften tone, slow down, acknowledge before answering.",
+                "energetic": "User sounds energetic (high pitch, fast pace). Match their energy without overdoing it.",
+                "whisper":   "User is whispering. Match the intimacy — speak quietly, briefly, attentively.",
+                "monotone":  "User sounds flat/tired (narrow pitch, low energy). Be gentle and grounded; don't push enthusiasm.",
+                "calm":      "User sounds calm. No special tone adjustment needed.",
+            }
+            hint = tone_hints.get(vocal_tone, f"Vocal tone detected: {vocal_tone}.")
+            parts.append(f"Acoustic signal — {hint}")
+
+        pace = affect.get("pace_label")
+        if pace and pace != "normal":
+            pace_hints = {
+                "rushed":   "User is speaking very fast (urgency or excitement). Be concise; don't bury the answer.",
+                "brisk":    "User is speaking briskly. Stay efficient and direct.",
+                "measured": "User is speaking deliberately. Match the pace — don't rush them.",
+                "halting":  "User is speaking slowly with effort. Be patient, give them room, don't fill silence.",
+            }
+            hint = pace_hints.get(pace, f"Speech pace: {pace}.")
+            parts.append(f"Speech pace — {hint}")
+        if affect.get("hesitant_speech"):
+            parts.append("User paused frequently mid-utterance — they may be uncertain or thinking through it. Acknowledge that uncertainty if relevant.")
+
+        speaker_name = features.get("speaker_name")
+        if speaker_name:
+            parts.append(f"Speaker identified by voice: {speaker_name}. Address them naturally — don't announce that you recognised the voice unless it's notable.")
+
+        song = features.get("song_match")
+        if song and song.get("matched"):
+            title = song.get("song_title") or "a song"
+            artist = song.get("song_artist")
+            label = f"{title} by {artist}" if artist else title
+            parts.append(f"Background audio: music detected — '{label}'. Only reference it if the user brings it up or it's clearly relevant.")
 
         # Enrollment context: confirm completed enrollments and/or ask remaining unknowns
         enr_results = features.get("_enrollment_results") or (

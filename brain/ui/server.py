@@ -58,6 +58,8 @@ class UIServer:
     def _build_app(self):
         app = FastAPI(docs_url=None, redoc_url=None)
 
+        from fastapi.responses import FileResponse
+
         @app.get("/")
         async def index():
             html = HTML_PATH.read_text(encoding="utf-8")
@@ -87,6 +89,17 @@ class UIServer:
             except Exception as e:
                 logger.warning("Failed to fetch ElevenLabs voices: %s", e)
                 return {"voices": []}
+
+        ui_dir = HTML_PATH.parent
+
+        @app.get("/{filename}")
+        async def static_asset(filename: str):
+            from fastapi.responses import FileResponse
+            from fastapi import HTTPException
+            filepath = ui_dir / filename
+            if filepath.is_file() and filepath.parent == ui_dir:
+                return FileResponse(str(filepath))
+            raise HTTPException(status_code=404)
 
         @app.websocket("/ws")
         async def ws_endpoint(websocket: WebSocket):
@@ -170,7 +183,8 @@ class UIServer:
                     smart_format=True,
                     punctuate=True,
                     interim_results=True,
-                    endpointing=300,
+                    endpointing=150,         # ms of silence before finalising (was 300)
+                    utterance_end_ms=1000,   # also fire on utterance boundary
                 ) as conn:
                     logger.info("UI: Deepgram live session started for client")
 

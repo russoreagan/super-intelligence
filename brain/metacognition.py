@@ -51,6 +51,13 @@ class MetacognitionCell:
         self._neuromod_history: deque[dict] = deque(maxlen=50)
         self._reflection_count = 0
 
+        # Per-emotion cooldown (turns remaining until that override can fire again).
+        # Prevents the entity from being "grateful" on five turns in a row when
+        # the user keeps being warm — the appraisal should mark the moment, not
+        # repeat itself into noise.
+        self._override_cooldowns: dict[str, int] = {}
+        self._cooldown_turns = 3
+
         self._reflector = IntegratorCell(
             name="self_reflector",
             cluster="metacognition",
@@ -65,7 +72,9 @@ class MetacognitionCell:
 
     def record_turn(self, turn_id: str, llm_calls: int, elapsed_s: float,
                     emotion: str, neuromod: dict, surprise_score: float,
-                    drafter_won: str | None = None) -> None:
+                    drafter_won: str | None = None,
+                    features: dict | None = None,
+                    draft_scores: list[dict] | None = None) -> None:
         self._turn_stats.append({
             "turn_id": turn_id,
             "llm_calls": llm_calls,
@@ -76,6 +85,127 @@ class MetacognitionCell:
             "ts": time.time(),
         })
         self._neuromod_history.append({"ts": time.time(), **neuromod})
+
+        # Decrement all cooldowns by one turn
+        self._override_cooldowns = {
+            e: c - 1 for e, c in self._override_cooldowns.items() if c > 1
+        }
+
+        # Appraise this turn for context-driven emotion override.
+        # Fire-and-forget — must not block the run loop.
+        try:
+            asyncio.create_task(self._appraise_and_emit(
+                features or {}, neuromod, draft_scores or [],
+            ))
+        except RuntimeError:
+            # No running loop (e.g. unit test) — appraisal is best-effort
+            pass
+
+    # ── Appraisal: detect context-driven emotions ─────────────────────────
+    # These are emotions that pure neuromods can't produce — they require
+    # self-other appraisal (embarrassed), accomplishment recognition (proud),
+    # relational reading (flirty), or moral inference (apologetic). This is
+    # what the prefrontal cortex does in biology: higher-order thought about
+    # the affective state and the situation that produced it.
+
+    def _affection_score(self) -> int:
+        """Read current affection score from user.md (written by hippocampus)."""
+        if not self._schema:
+            return 0
+        try:
+            import re
+            content = self._schema.read("user.md")
+            m = re.search(r"- Score:\s*(-?\d+)", content)
+            return int(m.group(1)) if m else 0
+        except Exception:
+            return 0
+
+    def _appraise(self, features: dict, neuromod: dict, draft_scores: list[dict]) -> tuple[str | None, str]:
+        """Return (emotion_override, reason). Order matters — first match wins.
+        Reasons go into the bus payload for observability and debugging."""
+        user_tone = (features.get("user_tone_toward_ai") or "neutral").lower()
+        user_emotion = (features.get("user_emotion") or "unknown").lower()
+        intent = (features.get("intent") or "other").lower()
+        affection = self._affection_score()
+
+        # 1. Embarrassed — self-monitoring caught coherence/empathy failures.
+        # Two or more drafts vetoed means the entity is genuinely "off" — the
+        # appraisal of its own bad performance is what produces embarrassment.
+        if draft_scores:
+            vetoed = [d for d in draft_scores if d.get("vetoed")]
+            if len(vetoed) >= 2:
+                return "embarrassed", f"{len(vetoed)} drafts vetoed this turn"
+
+        # 2. Apologetic — user is correcting or expressing displeasure AND
+        # the previous turn shows we said something off.
+        if user_emotion in ("frustrated", "disappointed", "annoyed", "angry") \
+                and user_tone in ("dismissive", "impatient", "insulting"):
+            if len(self._turn_stats) >= 2:
+                prev = self._turn_stats[-2]
+                if prev.get("surprise_score", 0) > 0.5:
+                    return "apologetic", "user pushed back after a surprising prior turn"
+
+        # 3. Sympathetic — user is struggling (regardless of whether they're
+        # warm toward us). The entity should feel for them.
+        if user_emotion in ("sad", "anxious", "distressed", "struggling",
+                            "hurt", "lonely", "scared", "overwhelmed"):
+            return "sympathetic", f"user emotion: {user_emotion}"
+
+        # 4. Proud — well-executed turn (high score) with positive reception.
+        # Must come BEFORE grateful: praise + accomplishment is pride, not just
+        # gratitude. Specific patterns beat general ones.
+        if draft_scores:
+            selected = next((d for d in draft_scores if d.get("selected")), None)
+            if selected and selected.get("overall", 0) > 0.85 \
+                    and user_tone in ("warm", "praising"):
+                return "proud", f"high-quality response (overall={selected['overall']:.2f}) received warmly"
+
+        # 5. Grateful — user is praising without an obvious accomplishment to
+        # be proud of. The entity's appraisal of being valued.
+        if user_tone == "praising":
+            return "grateful", "user praised the entity"
+
+        # 6. Relieved — GABA dropped sharply this turn vs last (tension lifted).
+        if len(self._neuromod_history) >= 2:
+            prev_g = float(self._neuromod_history[-2].get("GABA", 0))
+            cur_g = float(self._neuromod_history[-1].get("GABA", 0))
+            if prev_g > 0.5 and cur_g < prev_g - 0.2:
+                return "relieved", f"GABA dropped {prev_g:.2f}→{cur_g:.2f}"
+
+        # 7. Disappointed — low DA + high salience (we wanted to engage but
+        # the situation deflated).
+        if float(neuromod.get("DA", 0.5)) < 0.25 \
+                and float(features.get("salience", 0.3)) > 0.6:
+            return "disappointed", "low DA on a high-salience turn"
+
+        # 8. Flirty — only with high affection AND warm playful context AND
+        # not a serious/task topic. Read the room.
+        if affection >= 40 and user_tone in ("warm", "joking", "praising") \
+                and user_emotion in ("happy", "playful", "amused", "warm", "affectionate") \
+                and intent not in ("hostile", "task", "informative", "epistemic"):
+            return "flirty", f"high affection ({affection}) + warm playful context"
+
+        return None, ""
+
+    async def _appraise_and_emit(self, features: dict, neuromod: dict,
+                                  draft_scores: list[dict]) -> None:
+        candidate, reason = self._appraise(features, neuromod, draft_scores)
+        if candidate is None:
+            return
+        if candidate in self._override_cooldowns:
+            logger.debug("[Self-monitor] %s on cooldown (%d turns left) — skipped",
+                         candidate, self._override_cooldowns[candidate])
+            return
+        self._override_cooldowns[candidate] = self._cooldown_turns
+        try:
+            await self._bus.publish_dict(
+                "meta.emotion_override",
+                {"emotion": candidate, "reason": reason, "ttl_turns": 1},
+                source="metacognition",
+            )
+            logger.info("[Self-monitor] Appraisal → emotion=%s (%s)", candidate, reason)
+        except Exception as e:
+            logger.debug("[Self-monitor] failed to publish override: %s", e)
 
     def _compute_stats(self) -> dict:
         if not self._turn_stats:

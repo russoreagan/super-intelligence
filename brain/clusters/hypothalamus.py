@@ -31,6 +31,11 @@ class HypothalamusCluster:
 
         # Auditory prosody input (published by auditory cortex when --ears active)
         self._prosody_inbox = bus.subscribe("auditory.prosody")
+        self._dynamics_inbox = bus.subscribe("auditory.speech_dynamics")
+        # Metacognition's per-turn appraisal can override the neuromod-derived
+        # emotion label for context-driven emotions (apologetic, grateful,
+        # embarrassed, flirty, etc.) that pure neuromods can't produce.
+        self._meta_override_inbox = bus.subscribe("meta.emotion_override")
 
     async def process(self, features: dict) -> dict:
         """Update neuromod levels from temporal features. Return affect summary."""
@@ -92,9 +97,62 @@ class HypothalamusCluster:
             # "calm" and "monotone" need no correction
             logger.debug("Hypothalamus: prosody_tone=%s", prosody_tone)
 
+        # ── Speech dynamics (pace + pauses) ───────────────────────────────────
+        dynamics: dict | None = None
+        while True:
+            try:
+                d_msg = self._dynamics_inbox.get_nowait()
+                if not d_msg.expired:
+                    dynamics = d_msg.payload
+            except asyncio.QueueEmpty:
+                break
+
+        if dynamics:
+            pace = dynamics.get("pace_label")
+            if pace == "rushed":
+                nm.add("Glu", 0.08)   # urgency
+                nm.add("ACh", 0.04)
+            elif pace == "brisk":
+                nm.add("Glu", 0.04)
+                nm.add("DA", 0.02)    # mild positive valence — animated
+            elif pace == "halting":
+                nm.add("ACh", 0.06)   # uncertainty → pay attention
+            elif pace == "measured":
+                nm.add("ACh", 0.02)
+            # "normal" → no correction
+
+            if dynamics.get("hesitant"):
+                nm.add("ACh", 0.05)   # frequent long pauses → user is searching
+            if dynamics.get("burst_score", 0.0) > 0.35:
+                nm.add("GABA", 0.04)  # very bursty → mild caution flag (agitation)
+            logger.debug("Hypothalamus: pace=%s pauses=%d hesitant=%s",
+                         pace, dynamics.get("long_pause_count", 0), dynamics.get("hesitant"))
+
         # Name current emotion
         snap = nm.snapshot()
         emotion, tendency = name_emotion(snap["DA"], snap["GABA"], snap["ACh"], snap["Glu"])
+
+        # ── Metacognition appraisal override ──────────────────────────────────
+        # Drain any pending overrides; the most recent fresh one wins. This is
+        # how context-driven emotions (apologetic, grateful, embarrassed, etc.)
+        # enter the system — pure neuromods can't produce them.
+        override_emotion: str | None = None
+        override_reason: str = ""
+        while True:
+            try:
+                ov_msg = self._meta_override_inbox.get_nowait()
+                if not ov_msg.expired:
+                    override_emotion = ov_msg.payload.get("emotion")
+                    override_reason = ov_msg.payload.get("reason", "")
+            except asyncio.QueueEmpty:
+                break
+
+        if override_emotion:
+            emotion = override_emotion
+            tendency = f"metacognition appraisal: {override_reason}"
+            logger.debug("Hypothalamus: emotion override → %s (%s)",
+                         override_emotion, override_reason)
+
         appraisal_str = appraisal(emotion, features.get("topic_summary", "input"))
         prefix = prosody_prefix(emotion)
 
@@ -107,6 +165,10 @@ class HypothalamusCluster:
             "high_GABA": snap["GABA"] > 0.4,
             "high_ACh": snap["ACh"] > 0.5,
             "vocal_tone": prosody_tone,
+            "pace_label": (dynamics or {}).get("pace_label"),
+            "hesitant_speech": bool((dynamics or {}).get("hesitant")),
+            "emotion_source": "metacognition" if override_emotion else "neuromod",
+            "emotion_override_reason": override_reason if override_emotion else None,
         }
 
         await self._bus.publish_dict("affect.state", affect, source=CLUSTER)

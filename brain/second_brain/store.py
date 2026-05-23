@@ -109,6 +109,26 @@ class EpisodicStore:
         except Exception as e:
             logger.error("[Episode DB] Failed to save episode — this turn's memory will be lost: %s", e)
 
+    def recall_recent(self, limit: int = 6) -> list[dict]:
+        """Return the most recent episodes by timestamp (for session bridging at boot)."""
+        if not self._ensure_ready():
+            return []
+        try:
+            # Fetch a window large enough to sort and slice — fine for personal-scale data
+            results = self._table.search().limit(2000).to_list()
+            results.sort(key=lambda r: r.get("ts", 0), reverse=True)
+            episodes = []
+            for r in results[:limit]:
+                ep = dict(r)
+                ep["topic_tags"] = json.loads(ep.get("topic_tags", "[]"))
+                ep["entities"] = json.loads(ep.get("entities", "[]"))
+                ep["neuromod_snapshot"] = json.loads(ep.get("neuromod_snapshot", "{}"))
+                episodes.append(ep)
+            return episodes
+        except Exception as e:
+            logger.error("[Episode DB] Recent recall failed: %s", e)
+            return []
+
     def recall(self, query_vector: list[float], limit: int = 5,
                topic_filter: str | None = None) -> list[dict]:
         if not self._ensure_ready():

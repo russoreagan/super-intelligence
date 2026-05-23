@@ -44,12 +44,14 @@ class ActivationEmitter:
         except asyncio.QueueFull:
             pass
 
-    async def emit_turn_start(self, turn_id: str, user_input: str) -> None:
+    async def emit_turn_start(self, turn_id: str, user_input: str,
+                               session_id: str = "") -> None:
         try:
             self._queue.put_nowait({
                 "type": "turn_start",
                 "turn_id": turn_id,
                 "user_input": user_input,
+                "session_id": session_id,
                 "ts": time.time(),
             })
         except asyncio.QueueFull:

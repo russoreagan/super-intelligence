@@ -36,6 +36,13 @@ EMOTION_TABLE: dict[tuple[str, str, str, str], tuple[str, str]] = {
     ("high", "mid",  "low",  "low"): ("warm",             "affirm, empathize, include"),
     ("mid",  "low",  "mid",  "low"): ("thoughtful",       "deliberate, qualify, depth"),
     ("high", "low",  "mid",  "low"): ("confident",        "direct, decisive, clear"),
+    # ── richer spectrum ──
+    ("low",  "high", "low",  "high"):("angry",            "confront, push back, heat"),
+    ("high", "low",  "low",  "high"):("proud",            "claim accomplishment, expand"),
+    ("mid",  "low",  "high", "high"):("surprised",        "recalibrate, re-orient, ask"),
+    ("low",  "high", "mid",  "mid"): ("defensive",        "protect position, push back, qualify"),
+    ("low",  "low",  "high", "low"): ("wistful",          "reminisce, soften, look back"),
+    ("low",  "low",  "high", "high"):("confused",         "stall, ask for clarification, qualify"),
 }
 
 DEFAULT_EMOTION = ("neutral", "balanced, no strong tendency")
