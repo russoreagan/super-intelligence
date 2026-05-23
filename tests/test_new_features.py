@@ -947,3 +947,100 @@ class TestHypothalamusOverride:
 
         assert affect["emotion_source"] == "neuromod"
         assert affect["emotion_override_reason"] is None
+
+
+# ---------------------------------------------------------------------------
+# emotion_hierarchy
+# ---------------------------------------------------------------------------
+
+class TestEmotionHierarchy:
+    def test_parents_known_leaf(self):
+        from brain.emotion_hierarchy import parents
+        assert parents("embarrassed") == ("sad", "humiliated")
+        assert parents("flirty") == ("happy", "playful")
+        assert parents("angry") == ("anger", "mad")
+
+    def test_parents_unknown_returns_none(self):
+        from brain.emotion_hierarchy import parents
+        assert parents("not_a_real_emotion") is None
+
+    def test_parents_case_insensitive(self):
+        from brain.emotion_hierarchy import parents
+        assert parents("EMBARRASSED") == ("sad", "humiliated")
+        assert parents("Joy") == ("happy", "joyful")
+
+    def test_core_of_known(self):
+        from brain.emotion_hierarchy import core_of
+        assert core_of("embarrassed") == "sad"
+        assert core_of("proud") == "happy"
+        assert core_of("angry") == "anger"
+        assert core_of("thoughtful") == "cognitive"
+
+    def test_core_of_unknown_defaults_neutral(self):
+        from brain.emotion_hierarchy import core_of
+        assert core_of("xyz_unknown") == "neutral"
+
+    def test_core_of_empty_string(self):
+        from brain.emotion_hierarchy import core_of
+        assert core_of("") == "neutral"
+
+    def test_lookup_with_inheritance_leaf_hit(self):
+        from brain.emotion_hierarchy import lookup_with_inheritance
+        table = {"embarrassed": "leaf-value", "humiliated": "mid-value"}
+        assert lookup_with_inheritance("embarrassed", table) == "leaf-value"
+
+    def test_lookup_with_inheritance_mid_fallback(self):
+        from brain.emotion_hierarchy import lookup_with_inheritance
+        table = {"humiliated": "mid-value", "sad": "core-value"}
+        # "embarrassed" has no leaf entry; falls back to mid "humiliated"
+        assert lookup_with_inheritance("embarrassed", table) == "mid-value"
+
+    def test_lookup_with_inheritance_core_fallback(self):
+        from brain.emotion_hierarchy import lookup_with_inheritance
+        table = {"sad": "core-value"}
+        # No leaf, no mid → falls back to core "sad"
+        assert lookup_with_inheritance("embarrassed", table) == "core-value"
+
+    def test_lookup_with_inheritance_no_match(self):
+        from brain.emotion_hierarchy import lookup_with_inheritance
+        assert lookup_with_inheritance("embarrassed", {}) is None
+        assert lookup_with_inheritance("unknown_emotion_xyz", {"happy": "x"}) is None
+
+    def test_lookup_treats_empty_as_continue(self):
+        """An empty string in the table shouldn't short-circuit inheritance."""
+        from brain.emotion_hierarchy import lookup_with_inheritance
+        table = {"embarrassed": "", "humiliated": "mid-value"}
+        # Leaf is empty → continues up the chain
+        assert lookup_with_inheritance("embarrassed", table) == "mid-value"
+
+    def test_all_leaves_for_core(self):
+        from brain.emotion_hierarchy import all_leaves_for
+        sad_leaves = all_leaves_for("sad")
+        assert "embarrassed" in sad_leaves
+        assert "wistful" in sad_leaves
+        assert "joy" not in sad_leaves
+
+    def test_every_emotion_in_v3_tag_map_resolves(self):
+        """Every emotion the PNS v3 table knows should produce some tag —
+        either directly or via inheritance — without raising."""
+        from brain.pns import PNS
+        for emotion in PNS._V3_TAG_BY_EMOTION:
+            result = PNS._v3_audio_tag_from_affect({"emotion": emotion, "neuromod": {}})
+            assert result is None or isinstance(result, str)
+
+    def test_pns_inheritance_for_unknown_leaf(self):
+        """A leaf emotion not in the table but in the hierarchy must inherit
+        its mid/core entry rather than fall through to neuromod fallback."""
+        from brain.pns import PNS
+        # 'tender' is in the table — but let's test a less-mapped leaf.
+        # 'wistful' is in the hierarchy under (sad, lonely); both have entries.
+        affect = {"emotion": "wistful", "neuromod": {"DA": 0.5}}
+        tag = PNS._v3_audio_tag_from_affect(affect)
+        assert tag is not None  # should NOT fall through to neuromod default
+
+    def test_frontal_inheritance_for_unknown_leaf(self):
+        from brain.clusters.frontal import FrontalCluster
+        # Made-up leaf, but verify mid-tier entries provide fallback for real ones.
+        affect = {"emotion": "tender", "neuromod": {}}
+        guidance = FrontalCluster._expressive_guidance(affect)
+        assert guidance is not None

@@ -36,6 +36,7 @@ logging.basicConfig(
     level=os.environ.get("BRAIN_LOG_LEVEL", "INFO"),
     format="%(asctime)s %(name)s %(levelname)s %(message)s",
 )
+from brain.emotion_hierarchy import core_of
 from brain.security import SecretRedactingFilter
 _redact_filter = SecretRedactingFilter()
 logging.getLogger().addFilter(_redact_filter)
@@ -555,6 +556,7 @@ async def session(args) -> None:
             llm_calls=llm_calls,
             elapsed_s=turn_result.elapsed(),
             emotion=affect.get("emotion", "neutral"),
+            emotion_core=core_of(affect.get("emotion", "neutral")),
             neuromod=nm_snap,
             # Eval fields
             draft_scores=draft_scores,

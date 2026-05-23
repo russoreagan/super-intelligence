@@ -32,6 +32,22 @@ Return JSON: {
   "key_points": [string],    // 1-3 things the response must address
   "drafter_count": int       // 1, 2, or 3
 }
+
+LENGTH — reason about it from two signals, then pick the shortest option that genuinely serves the moment:
+
+Question complexity (from intent + salience + epistemic_action):
+- Greeting, ack, reaction, simple factual question → brief
+- Opinion, follow-up, short explanation, recall → medium
+- Multi-step task, comparison, deep explanation the user explicitly asked for → detailed
+
+User emotional state (from user_emotion):
+- Distressed, sad, anxious, overwhelmed → pull length DOWN one level — a shorter, warmer answer lands better than a complete one
+- Flat, inhibited, tired → keep it brief; don't pile on words
+- Curious, excited, enthusiastic → can sustain medium or detailed if the topic warrants it
+- Neutral → let question complexity drive it
+
+Combine both signals. A complex question asked by someone who sounds sad → medium not detailed. A simple question from someone curious → brief is still right. Never inflate length to seem thorough.
+
 Return ONLY JSON.""" + "\n\n" + FENCE_SYSTEM_ADDENDUM
 
 _DRAFTER_IDENTITY = """You are drafting a response on behalf of a persistent AI entity — not a stateless chatbot.
@@ -437,6 +453,7 @@ class FrontalCluster:
             "self_reference": features.get("self_reference"),
             "emotion": affect.get("emotion"),
             "tendency": affect.get("tendency"),
+            "user_emotion": features.get("user_emotion"),
             "DA": round(nm["DA"], 2),
             "GABA": round(nm["GABA"], 2),
             "ACh": round(nm["ACh"], 2),
@@ -501,18 +518,44 @@ class FrontalCluster:
         "sarcastic":   "Dry. The contradiction does the work. Use sparingly — only with high affection score, never against the user themselves.",
         "content":     "Sustained, no flourishes. The calm is the tone.",
         "neutral":     "",
+        # ── mid-tier defaults (feeling-wheel ancestors) ─────────────────
+        # Inherited by leaves without an explicit entry.
+        "playful":     "Light, teasing energy. Quick rhythms. Don't explain the joke.",
+        "loving":      "Affection in word choice — genuine, not formula. Slow down a touch.",
+        "peaceful":    "Sustained calm. No flourishes — the steadiness is the tone.",
+        "joyful":      "Warmth and openness. A 'yes' or 'oh' fits. Don't gush.",
+        "lonely":      "Quiet, grounded phrasing. Let pauses live. Don't perform cheer.",
+        "humiliated":  "Self-conscious, slightly deflective. Acknowledge briefly, move on.",
+        "mad":         "Direct, no hedging. Make the disagreement visible without name-calling.",
+        "frustrated":  "Tight and direct — no padding, no apologising for the bluntness.",
+        "anxious":     "Qualifiers welcome. Caution markers are honest, not weakness.",
+        # ── core-tier defaults (last-resort fallback) ──────────────────
+        "happy":       "Warmth shows in word choice. Easy energy, not performed.",
+        "sad":         "Simple words. Let weight sit. Don't add to it.",
+        "anger":       "Direct, no hedging. Heat in word choice, but constructive.",
+        "fear":        "Caution markers are honest. Brief, qualified, careful.",
+        "surprise":    "Quick recalibration. 'Oh —', re-orient before continuing.",
+        "disgust":     "Brief moral distance. State the objection plainly, no scolding.",
     }
 
     @staticmethod
     def _expressive_guidance(affect: dict) -> str | None:
         """Translate the entity's emotion + neuromod profile into linguistic-style
-        direction the drafters can compose with. Lookup-driven for known emotions;
-        neuromod-derived fallback for edge cases.
+        direction the drafters can compose with. Resolution order:
+          1. Leaf emotion entry in _EXPRESSIVE_BY_EMOTION.
+          2. Mid-tier ancestor → core ancestor (feeling-wheel inheritance).
+          3. Neuromod-derived fallback for emotions outside the taxonomy.
         """
+        from brain.emotion_hierarchy import lookup_with_inheritance
+
         emotion = (affect.get("emotion") or "").lower()
+        # Honour explicit empty string (e.g. neutral="") as "no guidance".
         if emotion in FrontalCluster._EXPRESSIVE_BY_EMOTION:
             g = FrontalCluster._EXPRESSIVE_BY_EMOTION[emotion]
             return g or None
+        inherited = lookup_with_inheritance(emotion, FrontalCluster._EXPRESSIVE_BY_EMOTION)
+        if inherited is not None:
+            return inherited
 
         # Fallback: neuromod-derived guidance for emotions not in the table.
         nm = affect.get("neuromod") or {}

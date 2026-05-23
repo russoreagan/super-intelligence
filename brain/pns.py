@@ -95,23 +95,47 @@ class PNS:
         "disappointed":      "[softly]",
         "sympathetic":       "[gently]",
         "sarcastic":         "[sarcastically]",
+        # — mid-tier defaults (feeling-wheel ancestors) for hierarchy fallback —
+        # When a leaf emotion has no explicit entry, lookup walks leaf → mid → core
+        # and lands on one of these. Lets new leaves inherit a sensible delivery
+        # without forcing an entry per label.
+        "playful":           "[playfully]",
+        "loving":            "[warmly]",
+        "peaceful":          "",
+        "joyful":            "[happy]",
+        "lonely":            "[softly]",
+        "humiliated":        "[bashfully]",
+        "mad":               "[firmly]",
+        "frustrated":        "[firmly]",
+        "anxious":           "[nervously]",
+        "happy":             "[happy]",
+        "sad":               "[sadly]",
+        "anger":             "[firmly]",
+        "fear":              "[nervously]",
+        "surprise":          "[gasps]",
     }
 
     @staticmethod
     def _v3_audio_tag_from_affect(affect: dict) -> str | None:
         """eleven_v3 audio-tag selector: ONE leading tag that shapes the whole
         utterance's inflection. Resolution order:
-          1. If affect.emotion is in the explicit map, use that.
-          2. Otherwise, derive from neuromod profile (handles edge cases the
-             EMOTION_TABLE didn't classify).
-          3. Return None for neutral so the model uses its natural voice.
+          1. Leaf emotion entry in the explicit map.
+          2. Mid-tier ancestor (feeling-wheel) → core ancestor.
+          3. Neuromod-derived fallback for emotions outside the taxonomy.
+          4. None for neutral so the model uses its natural voice.
 
         Stacking tags is unreliable in v3 — pick one and let it land.
         """
+        from brain.emotion_hierarchy import lookup_with_inheritance
+
         emotion = (affect.get("emotion") or "").lower()
+        # Honour explicit empty string (e.g. content="") as "natural voice".
         if emotion in PNS._V3_TAG_BY_EMOTION:
             tag = PNS._V3_TAG_BY_EMOTION[emotion]
-            return tag or None      # empty string → natural voice
+            return tag or None
+        inherited = lookup_with_inheritance(emotion, PNS._V3_TAG_BY_EMOTION)
+        if inherited is not None:
+            return inherited
 
         # Fallback: derive from neuromods for unclassified emotion labels.
         nm = affect.get("neuromod") or {}
