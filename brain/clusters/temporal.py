@@ -88,6 +88,33 @@ def _detect_epistemic_action(text: str) -> bool:
     return any(p in t for p in patterns)
 
 
+# Tool-request signals — when ANY of these appears, never take the fast path.
+# These are strong hints that the user wants the motor cortex / cloud executor
+# to actually do something (not just reply conversationally).
+_TOOL_REQUEST_PATTERNS = [
+    # Service / connector names
+    "claude", "claude code", "github", "ableton", "imessage", "messages",
+    "chrome", "browser", "adobe", "react aria",
+    # Imperative tool verbs
+    "ask claude", "use claude", "tell claude", "have claude",
+    "send a message", "send an imessage", "send a text",
+    "open ", "close ", "play ", "pause ", "search for", "look up",
+    "run ", "execute ", "create ", "make a ", "write a ", "save a ",
+    "read the", "read my", "list ", "find ", "delete ", "move ",
+    # Generic "do X" patterns
+    "can you do", "could you do", "go ahead and", "for me",
+    "try to use", "try using",
+]
+
+
+def _looks_like_tool_request(text: str) -> bool:
+    """True if the text contains signals that the user wants a tool/action,
+    not just a conversational reply. Used to short-circuit predict-and-surprise
+    gating — the fast path would otherwise drop requires_action to false."""
+    t = text.lower()
+    return any(p in t for p in _TOOL_REQUEST_PATTERNS)
+
+
 class TemporalCluster:
     def __init__(self, bus: Bus, router: ModelRouter, wiring: Wiring | None = None) -> None:
         self._bus = bus
@@ -199,6 +226,11 @@ class TemporalCluster:
         if image_present:
             bypass = True
             bypass_reason = "image_present"
+        elif _looks_like_tool_request(text):
+            # Tool-request shape: never short-circuit. The LLM needs to set
+            # requires_action so the motor cortex can fire downstream.
+            bypass = True
+            bypass_reason = "tool_request_pattern"
 
         # If predictor is confident AND input is routine → skip integrator
         if not bypass and not should_wake and not self_ref and not image_present and confidence > confidence_floor:
@@ -276,6 +308,14 @@ class TemporalCluster:
         features["raw_text"] = text
         features["self_reference"] = self_ref or features.get("intent") == "self_inquiry"
         features["epistemic_action"] = epistemic or features.get("epistemic_action", False)
+
+        # Belt-and-braces: if the text clearly looks like a tool request, flip
+        # requires_action true regardless of what the LLM thought. The motor
+        # cortex's own planner makes the final decision (it can still say
+        # "tool: none") so this is a safe override.
+        if _looks_like_tool_request(text) and not features.get("requires_action"):
+            features["requires_action"] = True
+            logger.info("[Input parser] Tool-request pattern detected — forcing requires_action=true")
 
         # Record actual for predictor learning + post-hoc accuracy
         actual_tag = features.get("intent", "other")
