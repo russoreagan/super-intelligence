@@ -123,26 +123,62 @@ class StreamingMicSession:
         self._reader_task = asyncio.create_task(self._reader_supervisor())
 
     async def _open_deepgram(self) -> None:
-        """Open a fresh Deepgram WebSocket session."""
-        # AsyncDeepgramClient.listen.v1._raw_client.connect is @asynccontextmanager.
-        # The sync DeepgramClient.listen.v1.connect is sync-only — wrong for asyncio.
+        """Open a fresh Deepgram WebSocket session.
+
+        Tunables (via env vars) for handling noisy environments:
+          BRAIN_STT_ENDPOINTING_MS   — silence (ms) before utterance ends.
+                                       Default 800 (was 300; 300 cut sentences
+                                       mid-pause for natural-paced speakers).
+          BRAIN_STT_UTTERANCE_END_MS — additional grace period after endpointing
+                                       before emitting UtteranceEnd. Default 1500.
+          BRAIN_STT_LANGUAGE         — language hint (default 'en'). Without this
+                                       Deepgram auto-detects, which is less
+                                       accurate with background noise.
+          BRAIN_STT_KEYWORDS         — comma-separated word:boost pairs to bias
+                                       transcription toward expected vocabulary,
+                                       e.g. 'claude:5,chloé:3,ableton:5'.
+        """
         from deepgram import AsyncDeepgramClient
         client = AsyncDeepgramClient(api_key=os.environ["DEEPGRAM_API_KEY"])
-        self._socket_cm = client.listen.v1._raw_client.connect(
+
+        endpointing_ms = int(os.environ.get("BRAIN_STT_ENDPOINTING_MS", "800"))
+        utterance_end_ms = int(os.environ.get("BRAIN_STT_UTTERANCE_END_MS", "1500"))
+        language = os.environ.get("BRAIN_STT_LANGUAGE", "en").strip() or "en"
+        keywords_raw = os.environ.get(
+            "BRAIN_STT_KEYWORDS",
+            "claude:5,chloé:3,ableton:5,imessage:3,github:3,ollama:3,deepgram:3,elevenlabs:3",
+        )
+        keywords = [k.strip() for k in keywords_raw.split(",") if k.strip()]
+
+        connect_kwargs = dict(
             model="nova-3",
             encoding="linear16",
             sample_rate=SAMPLE_RATE,
             channels=CHANNELS,
             interim_results=True,
             vad_events=True,
-            utterance_end_ms=1000,
-            endpointing=300,
+            utterance_end_ms=utterance_end_ms,
+            endpointing=endpointing_ms,
             punctuate=True,
             smart_format=True,
             diarize=True,
+            language=language,
+            numerals=True,        # "five" → "5"
         )
+        # nova-3 uses `keyterm` (whole phrases, no boost number);
+        # older models use `keywords` (word:boost pairs). Try keyterm first
+        # for nova-3 — strip any :boost suffix.
+        if keywords:
+            keyterms = [k.split(":")[0] for k in keywords if k]
+            connect_kwargs["keyterm"] = keyterms
+
+        self._socket_cm = client.listen.v1._raw_client.connect(**connect_kwargs)
         self._socket = await self._socket_cm.__aenter__()
-        logger.info("[StreamingMic] Deepgram live session open (nova-3, VAD on)")
+        logger.info(
+            "[StreamingMic] Deepgram session open (nova-3, lang=%s, endpointing=%dms, "
+            "utterance_end=%dms, %d keyword boosts)",
+            language, endpointing_ms, utterance_end_ms, len(keywords),
+        )
 
     async def _close_deepgram(self) -> None:
         """Close the current Deepgram session (best-effort)."""
@@ -233,6 +269,13 @@ class StreamingMicSession:
 
     # ── internal: mic side ─────────────────────────────────────────────────
 
+    # Noise gate — drop chunks whose RMS energy is below this threshold.
+    # Helps keep background noise (HVAC hum, distant chatter, keyboard clicks)
+    # from confusing Deepgram's VAD. 0 disables. Tunable per-mic via
+    # BRAIN_NOISE_GATE_RMS env var. For a Scarlett 2i2 with headphone mic at
+    # normal gain, ambient noise is typically ~30–80 RMS; speech peaks 2000+.
+    NOISE_GATE_RMS = float(os.environ.get("BRAIN_NOISE_GATE_RMS", "120"))
+
     def _enqueue_chunk(self, chunk: bytes) -> None:
         # Called on the main asyncio loop via call_soon_threadsafe.
         # When muted we still enqueue *silence* so Deepgram's WS doesn't time
@@ -240,6 +283,21 @@ class StreamingMicSession:
         # have no graceful way to recover mid-conversation.
         if self._muted:
             chunk = b"\x00" * len(chunk)
+        elif self.NOISE_GATE_RMS > 0:
+            # Cheap RMS check — sum of squares over int16 samples.
+            # If the chunk is below the gate, replace with silence so the WS
+            # stays warm but background noise doesn't reach Deepgram.
+            import struct
+            n = len(chunk) // 2
+            if n > 0:
+                samples = struct.unpack(f"<{n}h", chunk)
+                # Sum of squares / n → variance; sqrt → RMS
+                sq_sum = 0
+                for s in samples:
+                    sq_sum += s * s
+                rms = (sq_sum / n) ** 0.5
+                if rms < self.NOISE_GATE_RMS:
+                    chunk = b"\x00" * len(chunk)
         try:
             self._pcm_in.put_nowait(chunk)
         except asyncio.QueueFull:

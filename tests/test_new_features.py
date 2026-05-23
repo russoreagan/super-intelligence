@@ -125,6 +125,11 @@ class TestRecallRecent:
             def search(self_t):
                 return _FakeResult(rows)
 
+            def to_arrow(self_t):
+                # recall_recent uses self._table.to_arrow().sort_by(...).slice(...).to_pylist()
+                import pyarrow as pa
+                return pa.Table.from_pylist(rows) if rows else pa.table({})
+
         store._table = _FakeTable()
         return store
 
