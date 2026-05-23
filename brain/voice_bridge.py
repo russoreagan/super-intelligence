@@ -8,21 +8,12 @@ from __future__ import annotations
 
 import re
 
-# Default set of barge-in keywords. Override via BRAIN_BARGE_IN_WORDS env var
-# (comma-separated, case-insensitive). When the brain is speaking, any
-# utterance containing one of these triggers TTS interrupt + dispatch.
 DEFAULT_BARGE_IN_WORDS = [
     "stop", "wait", "shut up", "hold on", "pause", "enough",
     "never mind", "hey brain", "brain stop",
     "cut it out", "knock it off", "quiet", "be quiet", "hush", "shush",
     "okay enough", "that's enough", "thats enough",
 ]
-
-# Bleed-overlap threshold (Jaccard word-set overlap with current TTS text).
-# Above this, the utterance is treated as TTS bleed-through and dropped.
-# Below, it's treated as a genuine user utterance and queued.
-BLEED_OVERLAP_THRESHOLD = 0.4
-
 
 def parse_barge_words(raw: str | None) -> list[str]:
     """Parse a comma-separated env var into a normalised list of keywords."""
@@ -61,19 +52,15 @@ def classify_utterance(
     text: str,
     *,
     brain_is_speaking: bool,
-    speaking_text: str,
     barge_words: list[str],
-    bleed_threshold: float = BLEED_OVERLAP_THRESHOLD,
 ) -> tuple[str, dict]:
     """Decide what to do with an utterance.
 
     Returns (decision, info) where decision is one of:
-      - "drop_empty"   — empty transcript
-      - "dispatch"     — brain not speaking, normal turn
-      - "barge_in"     — brain speaking + barge-in keyword → interrupt + dispatch
-      - "drop_bleed"   — brain speaking + transcript looks like TTS bleed
-      - "queue"        — brain speaking + genuine user utterance, queue for later
-    info dict carries diagnostic fields (overlap, matched_word, etc.).
+      - "drop_empty" — empty transcript (background noise)
+      - "dispatch"   — brain not speaking, normal turn
+      - "barge_in"   — brain speaking → interrupt + dispatch
+    Everything the user says is sent; only empty transcripts are dropped.
     """
     text = (text or "").strip()
     if not text:
@@ -82,31 +69,6 @@ def classify_utterance(
     if not brain_is_speaking:
         return "dispatch", {}
 
-    if is_barge_in(text, barge_words):
-        return "barge_in", {}
-
-    overlap = bleed_overlap(text, speaking_text)
-    if overlap > bleed_threshold:
-        return "drop_bleed", {"overlap": round(overlap, 3)}
-
-    return "queue", {"overlap": round(overlap, 3)}
+    return "barge_in", {}
 
 
-def pick_dispatch_from_queue(queued: list[str]) -> tuple[str | None, int]:
-    """When TTS ends, decide what to dispatch from the queue.
-
-    Strategy: JOIN all queued utterances with spaces. Deepgram's endpointing
-    splits a single sentence with natural pauses into multiple utterances;
-    if the user said one long thing during TTS we want all of it as a single
-    turn, not just the last fragment. Returns (joined_text, count_joined).
-
-    For most cases this is what the user means. If they truly said multiple
-    separate thoughts during TTS, joining them is still a more recoverable
-    failure mode than silently dropping all but the last.
-    """
-    if not queued:
-        return None, 0
-    if len(queued) == 1:
-        return queued[0], 1
-    joined = " ".join(q.strip() for q in queued if q.strip())
-    return joined, len(queued)

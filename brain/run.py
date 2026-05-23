@@ -324,27 +324,15 @@ async def session(args) -> None:
     # forever and the brain appears to ignore everything spoken.
     #
     # Behaviour:
-    #   - Brain NOT speaking → dispatch normally (also emit a transcript event
-    #     so the UI shows the text in the chat input box).
-    #   - Brain IS speaking AND transcript looks like TTS bleed (high word
-    #     overlap with what the brain is currently saying) → drop silently.
-    #   - Brain IS speaking AND transcript contains a barge-in keyword
-    #     (stop, wait, cut it out, etc.) → interrupt TTS and dispatch.
-    #   - Brain IS speaking AND transcript is a genuine new utterance →
-    #     QUEUE it for dispatch once TTS finishes. This is the fix for
-    #     "brain ignored me when I asked a follow-up question": queueing
-    #     beats dropping for real human speech.
-    from brain.voice_bridge import (
-        parse_barge_words, classify_utterance, pick_dispatch_from_queue,
-    )
+    #   - Brain NOT speaking → dispatch immediately.
+    #   - Brain IS speaking → interrupt TTS and dispatch.
+    # Everything the user says is sent; only empty transcripts (background noise)
+    # are dropped.
+    from brain.voice_bridge import parse_barge_words, classify_utterance
     barge_in_words = parse_barge_words(os.environ.get("BRAIN_BARGE_IN_WORDS"))
 
     voice_bridge_task = None
     if streaming_mic is not None and ui_enabled:
-        # Buffer of utterances received while TTS was playing — drained when TTS ends
-        pending_during_tts: list[str] = []
-        pending_lock = asyncio.Lock()
-
         async def _dispatch_text(text: str) -> None:
             logger.info("[I/O] voice → turn: %r", text[:80])
             if emitter:
@@ -355,28 +343,6 @@ async def session(args) -> None:
                 except Exception:
                     pass
             await ui_message_queue.put(text)
-
-        async def _drain_pending_when_tts_ends() -> None:
-            """Poll pns.is_speaking; when it transitions false, dispatch the
-            chosen queued utterance (most recent — older ones tend to be
-            reactions to the in-progress TTS rather than what the user wants now)."""
-            was_speaking = False
-            while True:
-                try:
-                    await asyncio.sleep(0.25)
-                except asyncio.CancelledError:
-                    return
-                now_speaking = pns.is_speaking
-                if was_speaking and not now_speaking:
-                    async with pending_lock:
-                        text, n_dropped = pick_dispatch_from_queue(pending_during_tts)
-                        pending_during_tts.clear()
-                    if text:
-                        logger.info("[I/O] voice → flushing queued utterance after TTS"
-                                    " (kept latest, dropped %d older): %r",
-                                    n_dropped, text[:80])
-                        await _dispatch_text(text)
-                was_speaking = now_speaking
 
         async def _voice_bridge() -> None:
             while True:
@@ -390,42 +356,19 @@ async def session(args) -> None:
                     continue
                 text = (utt.get("transcript") or "").strip()
 
-                decision, info = classify_utterance(
+                decision, _ = classify_utterance(
                     text,
                     brain_is_speaking=pns.is_speaking,
-                    speaking_text=pns._speaking_text,  # noqa: SLF001
                     barge_words=barge_in_words,
                 )
 
                 if decision == "drop_empty":
                     continue
-                if decision == "dispatch":
-                    await _dispatch_text(text)
-                    continue
                 if decision == "barge_in":
-                    logger.info("[I/O] voice → barge-in keyword detected: %r", text[:80])
                     pns.interrupt()
-                    await _dispatch_text(text)
-                    continue
-                if decision == "drop_bleed":
-                    logger.debug("[I/O] voice → dropped as TTS bleed (overlap %.2f): %r",
-                                 info.get("overlap", 0.0), text[:80])
-                    continue
-                if decision == "queue":
-                    async with pending_lock:
-                        pending_during_tts.append(text)
-                    logger.info("[I/O] voice → queued during TTS (overlap %.2f): %r",
-                                info.get("overlap", 0.0), text[:80])
-                    if emitter:
-                        try:
-                            await emitter.emit_event({
-                                "type": "transcript", "text": text, "final": True,
-                            })
-                        except Exception:
-                            pass
+                await _dispatch_text(text)
 
         voice_bridge_task = asyncio.create_task(_voice_bridge())
-        voice_drain_task = asyncio.create_task(_drain_pending_when_tts_ends())
 
     # Brainstem heartbeat — also pulses the UI every 60 s
     async def _heartbeat_with_ui() -> None:

@@ -351,8 +351,13 @@ class StreamingMicSession:
 
                 if mtype == "SpeechStarted":
                     ts = float(getattr(message, "timestamp", 0.0))
-                    self._utterance_start_s = ts
-                    self._pending_words = []
+                    # Only record the timestamp of the FIRST burst in this utterance.
+                    # Deepgram fires SpeechStarted again when the user resumes after
+                    # a mid-sentence pause — overwriting _utterance_start_s and clearing
+                    # _pending_words here would drop the first fragment, making the brain
+                    # respond only to the tail of what was said.
+                    if self._utterance_start_s is None:
+                        self._utterance_start_s = ts
                     logger.debug("[StreamingMic] SpeechStarted @ %.2fs", ts)
                     # Note: barge-in is no longer triggered here on raw
                     # SpeechStarted. The mic picks up its own playback

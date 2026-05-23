@@ -1,8 +1,7 @@
 """
 Tests for the voice bridge routing logic — the rules that decide what
 happens to each utterance from streaming_mic depending on whether the
-brain is currently speaking, whether the transcript contains a barge-in
-keyword, and how much it overlaps with the in-progress TTS text.
+brain is currently speaking and whether the transcript is empty.
 """
 from __future__ import annotations
 
@@ -14,7 +13,6 @@ from brain.voice_bridge import (
     classify_utterance,
     is_barge_in,
     parse_barge_words,
-    pick_dispatch_from_queue,
 )
 
 
@@ -104,114 +102,43 @@ WORDS = DEFAULT_BARGE_IN_WORDS
 
 
 def test_classify_empty_dropped():
-    d, _ = classify_utterance("", brain_is_speaking=False,
-                              speaking_text="", barge_words=WORDS)
+    d, _ = classify_utterance("", brain_is_speaking=False, barge_words=WORDS)
     assert d == "drop_empty"
 
 
 def test_classify_whitespace_dropped():
-    d, _ = classify_utterance("   ", brain_is_speaking=True,
-                              speaking_text="anything", barge_words=WORDS)
+    d, _ = classify_utterance("   ", brain_is_speaking=True, barge_words=WORDS)
     assert d == "drop_empty"
 
 
 def test_classify_dispatch_when_brain_silent():
-    d, _ = classify_utterance("hello there", brain_is_speaking=False,
-                              speaking_text="", barge_words=WORDS)
+    d, _ = classify_utterance("hello there", brain_is_speaking=False, barge_words=WORDS)
     assert d == "dispatch"
 
 
 def test_classify_dispatch_when_brain_silent_even_with_barge_word():
-    # Barge words only matter while brain is speaking
-    d, _ = classify_utterance("stop the music", brain_is_speaking=False,
-                              speaking_text="", barge_words=WORDS)
+    d, _ = classify_utterance("stop the music", brain_is_speaking=False, barge_words=WORDS)
     assert d == "dispatch"
 
 
 def test_classify_barge_in_during_tts():
-    d, _ = classify_utterance(
-        "stop please",
-        brain_is_speaking=True,
-        speaking_text="Let me explain the architecture briefly",
-        barge_words=WORDS,
-    )
+    d, _ = classify_utterance("stop please", brain_is_speaking=True, barge_words=WORDS)
     assert d == "barge_in"
 
 
-def test_classify_drop_bleed_when_overlap_high():
-    tts = "audio bleed will kill a conversation every single time you know"
-    d, info = classify_utterance(
-        "audio bleed will kill a conversation every single",
-        brain_is_speaking=True, speaking_text=tts, barge_words=WORDS,
-    )
-    assert d == "drop_bleed"
-    assert info["overlap"] > 0.4
-
-
-def test_classify_queue_when_genuine_followup_during_tts():
-    tts = "audio bleed will kill a conversation every single time"
-    d, info = classify_utterance(
+def test_classify_any_speech_during_tts_is_barge_in():
+    # Everything non-empty the user says while brain is speaking interrupts
+    d, _ = classify_utterance(
         "this list of voices does not look correct",
-        brain_is_speaking=True, speaking_text=tts, barge_words=WORDS,
-    )
-    assert d == "queue"
-    assert info["overlap"] < 0.4
-
-
-def test_classify_barge_in_beats_bleed_check():
-    # User says "stop" but their utterance also overlaps with TTS — barge-in wins
-    tts = "stop signs are important to obey while driving on highways"
-    d, _ = classify_utterance(
-        "stop signs are important",   # contains "stop" AND echoes TTS
-        brain_is_speaking=True, speaking_text=tts, barge_words=WORDS,
+        brain_is_speaking=True, barge_words=WORDS,
     )
     assert d == "barge_in"
 
 
-def test_classify_threshold_is_configurable():
-    # Lower threshold makes more things look like bleed
-    tts = "alpha beta gamma delta"
-    text = "alpha beta epsilon"      # overlap = 2/5 = 0.4
-    d_default, _ = classify_utterance(
-        text, brain_is_speaking=True, speaking_text=tts, barge_words=WORDS,
+def test_classify_tts_echo_during_tts_is_still_barge_in():
+    # Even if transcript overlaps heavily with TTS, we send it — user's words, not ours to drop
+    d, _ = classify_utterance(
+        "audio bleed will kill a conversation every single",
+        brain_is_speaking=True, barge_words=WORDS,
     )
-    # 0.4 > 0.4 is False → would queue
-    assert d_default == "queue"
-
-    d_strict, _ = classify_utterance(
-        text, brain_is_speaking=True, speaking_text=tts, barge_words=WORDS,
-        bleed_threshold=0.2,
-    )
-    assert d_strict == "drop_bleed"
-
-
-# ── pick_dispatch_from_queue ────────────────────────────────────────────────
-
-def test_pick_dispatch_empty_queue():
-    text, n = pick_dispatch_from_queue([])
-    assert text is None
-    assert n == 0
-
-
-def test_pick_dispatch_single():
-    text, n = pick_dispatch_from_queue(["only one"])
-    assert text == "only one"
-    assert n == 1
-
-
-def test_pick_dispatch_joins_multiple_with_spaces():
-    # Deepgram's endpointing splits a sentence with natural pauses into
-    # multiple utterances; we want all of it as one turn, not just the last.
-    text, n = pick_dispatch_from_queue([
-        "i was thinking",
-        "we should probably",
-        "go ahead and try the calendar",
-    ])
-    assert text == "i was thinking we should probably go ahead and try the calendar"
-    assert n == 3
-
-
-def test_pick_dispatch_skips_empty_strings():
-    text, n = pick_dispatch_from_queue(["hello", "  ", "world", ""])
-    assert text == "hello world"
-    assert n == 4
+    assert d == "barge_in"
