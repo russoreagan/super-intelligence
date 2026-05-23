@@ -1628,6 +1628,23 @@ async function loadVoices({ silent = false } = {}) {
     nameEl.textContent = sel.options[sel.selectedIndex].textContent;
     // Notify server of the selected voice (handles the race where onopen fired first)
     sel.dispatchEvent(new Event('change'));
+
+    // Surface server-side filtering reasons (e.g. v3 doesn't serve professional
+    // voice clones, so they were hidden from the dropdown).
+    if (data.message) {
+      sel.title = data.message;
+      console.info('[voices]', data.message);
+      // Also append a small note next to the voice-name label
+      const note = document.getElementById('voice-filter-note') || (() => {
+        const span = document.createElement('span');
+        span.id = 'voice-filter-note';
+        span.style.cssText = 'font-size:0.7em;opacity:0.65;margin-left:6px;cursor:help;';
+        span.textContent = 'ⓘ';
+        nameEl.parentNode && nameEl.parentNode.appendChild(span);
+        return span;
+      })();
+      note.title = data.message;
+    }
   } catch (e) {
     console.warn('loadVoices failed:', e.message);
     // Auto-retry once after 3 s if the server might still be starting up
