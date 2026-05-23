@@ -2226,6 +2226,32 @@ function stopListening(autoSend = false) {
 }
 
 function handleTranscriptEvent(msg) {
+  // Two code paths fire this:
+  //   - Browser-side MediaRecorder (micActive=true): user is press-to-talk,
+  //     transcripts stream in interim+final, auto-send after a pause.
+  //   - Python streaming_mic in pythonVoiceMode: only final transcripts
+  //     arrive (the voice bridge in run.py emits them). Put each one into
+  //     the text input so the user can see and edit before sending — or
+  //     just press Enter to send.
+  if (pythonVoiceMode && msg.final) {
+    const text = (msg.text || '').trim();
+    if (!text) return;
+    // Append to whatever's already in the input (lets user dictate over
+    // multiple utterances and then send the whole thing).
+    const existing = msgInput.value.trim();
+    msgInput.value = existing ? (existing + ' ' + text) : text;
+    msgInput.style.height = 'auto';
+    msgInput.style.height = Math.min(msgInput.scrollHeight, 80) + 'px';
+    msgInput.focus();
+    // Flash the bar briefly so user knows a transcript landed
+    transcriptText.textContent = '✓ ' + text;
+    transcriptBar.classList.add('visible');
+    setTimeout(() => {
+      if (!pythonMicMuted) transcriptText.textContent = 'Listening…';
+    }, 1200);
+    return;
+  }
+
   if (!micActive) return;
   if (msg.is_final) {
     finalTranscript += (finalTranscript ? ' ' : '') + msg.text;

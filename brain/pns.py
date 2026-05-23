@@ -16,6 +16,69 @@ logger = logging.getLogger(__name__)
 VOICE_MODE = os.environ.get("BRAIN_VOICE_MODE", "false").lower() == "true"
 
 
+def _resolve_output_device():
+    """Pick the audio output device for TTS.
+
+    Priority:
+      1. BRAIN_AUDIO_OUTPUT_DEVICE env var — accepts an integer index OR a
+         substring of the device name (case-insensitive). E.g. "Mac mini"
+         or "DELL" or "0".
+      2. Auto-avoidance: if the system default output is the same physical
+         device as the system default input (echo loop risk), pick the
+         first output device with "Speakers" in its name. Common case:
+         a USB audio interface with no monitors attached is the default
+         for both input and output — user hears nothing.
+      3. System default (None).
+    """
+    try:
+        import sounddevice as sd
+    except Exception:
+        return None
+
+    raw = os.environ.get("BRAIN_AUDIO_OUTPUT_DEVICE", "").strip()
+    devices = sd.query_devices()
+
+    if raw:
+        # Try int index first
+        try:
+            idx = int(raw)
+            if 0 <= idx < len(devices) and devices[idx]["max_output_channels"] > 0:
+                logger.info("[I/O] Audio output: [%d] %s (BRAIN_AUDIO_OUTPUT_DEVICE)",
+                            idx, devices[idx]["name"])
+                return idx
+        except ValueError:
+            pass
+        # Substring match by name
+        needle = raw.lower()
+        for i, d in enumerate(devices):
+            if d["max_output_channels"] > 0 and needle in d["name"].lower():
+                logger.info("[I/O] Audio output: [%d] %s (matched %r)",
+                            i, d["name"], raw)
+                return i
+        logger.warning("[I/O] BRAIN_AUDIO_OUTPUT_DEVICE=%r not found — using system default", raw)
+        return None
+
+    # Auto-avoidance: same device for input AND output is usually wrong
+    default_in, default_out = sd.default.device
+    if default_in == default_out and default_in is not None:
+        default_name = devices[default_out]["name"] if 0 <= default_out < len(devices) else "?"
+        # Hunt for "Speakers" or "Built-in" (laptop / Mac mini)
+        for i, d in enumerate(devices):
+            if d["max_output_channels"] > 0 and any(
+                kw in d["name"].lower() for kw in ("speaker", "built-in", "internal")
+            ):
+                logger.info("[I/O] Audio output: [%d] %s "
+                            "(auto-picked — system default [%d] %s is also the input device)",
+                            i, d["name"], default_out, default_name)
+                return i
+
+    # Fall back to system default
+    if isinstance(default_out, int) and 0 <= default_out < len(devices):
+        logger.info("[I/O] Audio output: [%d] %s (system default)",
+                    default_out, devices[default_out]["name"])
+    return None
+
+
 class PNS:
     def __init__(self, bus: Bus) -> None:
         self._bus = bus
@@ -302,7 +365,11 @@ class PNS:
                 try:
                     import sounddevice as sd
                     SAMPLE_RATE = 22050
-                    stream = sd.RawOutputStream(samplerate=SAMPLE_RATE, channels=1, dtype="int16")
+                    output_device = _resolve_output_device()
+                    stream = sd.RawOutputStream(
+                        samplerate=SAMPLE_RATE, channels=1, dtype="int16",
+                        device=output_device,
+                    )
                     stream.start()
                     try:
                         async for chunk in audio_iter:

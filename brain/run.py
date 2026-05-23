@@ -273,10 +273,15 @@ async def session(args) -> None:
             logger.error("[I/O] Streaming mic failed to start — voice input is offline: %s", e)
             streaming_mic = None
 
-    # ── Voice → UI bridge: pump utterances into the same queue the UI uses ──
+    # ── Voice → UI bridge: forward utterances as transcript events ───────────
     # In UI+voice mode the browser drives the conversation via ui_message_queue.
     # Without this bridge, voice utterances accumulate in streaming_mic.utterances
     # forever and the brain appears to ignore everything spoken.
+    #
+    # Behaviour: transcripts land in the UI's text input (visible, editable).
+    # The user reviews and presses Enter to send — same flow as typing. This
+    # avoids the "spoke once, brain replied to half-sentence" problem caused
+    # by auto-dispatching every Deepgram utterance segment.
     voice_bridge_task = None
     if streaming_mic is not None and ui_enabled:
         async def _voice_bridge() -> None:
@@ -292,7 +297,7 @@ async def session(args) -> None:
                 text = (utt.get("transcript") or "").strip()
                 if not text:
                     continue
-                logger.info("[I/O] voice → turn: %r", text[:80])
+                logger.info("[I/O] voice → input box: %r", text[:80])
                 if emitter:
                     try:
                         await emitter.emit_event({
@@ -302,7 +307,6 @@ async def session(args) -> None:
                         })
                     except Exception:
                         pass
-                await ui_message_queue.put(text)
         voice_bridge_task = asyncio.create_task(_voice_bridge())
 
     # Brainstem heartbeat — also pulses the UI every 60 s
