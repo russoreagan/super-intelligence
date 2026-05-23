@@ -288,7 +288,9 @@ async def session(args) -> None:
     #     The input box clears on turn_start.
     _barge_words_raw = os.environ.get(
         "BRAIN_BARGE_IN_WORDS",
-        "stop,wait,shut up,hold on,pause,enough,never mind,hey brain,brain stop",
+        "stop,wait,shut up,hold on,pause,enough,never mind,hey brain,"
+        "brain stop,cut it out,knock it off,quiet,be quiet,hush,shush,"
+        "okay enough,that's enough,thats enough",
     )
     barge_in_words = [w.strip().lower() for w in _barge_words_raw.split(",") if w.strip()]
 
