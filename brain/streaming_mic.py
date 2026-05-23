@@ -91,28 +91,8 @@ class StreamingMicSession:
             return
         self._main_loop = asyncio.get_running_loop()
 
-        # 1. Open Deepgram websocket
-        # AsyncDeepgramClient.listen.v1._raw_client.connect is @asynccontextmanager.
-        # The sync DeepgramClient.listen.v1.connect is sync-only — wrong for asyncio.
-        from deepgram import AsyncDeepgramClient
-        client = AsyncDeepgramClient(api_key=os.environ["DEEPGRAM_API_KEY"])
-        self._socket_cm = client.listen.v1._raw_client.connect(
-            model="nova-3",
-            encoding="linear16",
-            sample_rate=SAMPLE_RATE,
-            channels=CHANNELS,
-            interim_results=True,
-            vad_events=True,
-            utterance_end_ms=1000,
-            endpointing=300,
-            punctuate=True,
-            smart_format=True,
-            diarize=True,
-        )
-        self._socket = await self._socket_cm.__aenter__()
-        # _read_loop uses `async for message in self._socket` directly, so
-        # start_listening() (event-emitter style) is not needed.
-        logger.info("[StreamingMic] Deepgram live session open (nova-3, VAD on)")
+        # 1. Open Deepgram websocket (initial)
+        await self._open_deepgram()
 
         # 2. Start mic input stream (sounddevice callback runs in PortAudio thread)
         import sounddevice as sd
@@ -137,10 +117,71 @@ class StreamingMicSession:
         )
         self._stream.start()
 
-        # 3. Launch pumper + reader coroutines
+        # 3. Launch pumper + reader supervisor
         self._running = True
         self._pumper_task = asyncio.create_task(self._pump_loop())
-        self._reader_task = asyncio.create_task(self._read_loop())
+        self._reader_task = asyncio.create_task(self._reader_supervisor())
+
+    async def _open_deepgram(self) -> None:
+        """Open a fresh Deepgram WebSocket session."""
+        # AsyncDeepgramClient.listen.v1._raw_client.connect is @asynccontextmanager.
+        # The sync DeepgramClient.listen.v1.connect is sync-only — wrong for asyncio.
+        from deepgram import AsyncDeepgramClient
+        client = AsyncDeepgramClient(api_key=os.environ["DEEPGRAM_API_KEY"])
+        self._socket_cm = client.listen.v1._raw_client.connect(
+            model="nova-3",
+            encoding="linear16",
+            sample_rate=SAMPLE_RATE,
+            channels=CHANNELS,
+            interim_results=True,
+            vad_events=True,
+            utterance_end_ms=1000,
+            endpointing=300,
+            punctuate=True,
+            smart_format=True,
+            diarize=True,
+        )
+        self._socket = await self._socket_cm.__aenter__()
+        logger.info("[StreamingMic] Deepgram live session open (nova-3, VAD on)")
+
+    async def _close_deepgram(self) -> None:
+        """Close the current Deepgram session (best-effort)."""
+        if self._socket_cm is not None:
+            try:
+                await self._socket_cm.__aexit__(None, None, None)
+            except Exception:
+                pass
+        self._socket = None
+        self._socket_cm = None
+
+    async def _reader_supervisor(self) -> None:
+        """Run _read_loop in a reconnect loop. If Deepgram drops the WS
+        (1011 timeout, network blip, etc.), close cleanly and re-open."""
+        backoff = 0.5
+        while self._running:
+            try:
+                await self._read_loop()
+                # Read loop returned cleanly (socket closed). If we're still
+                # running, that means Deepgram disconnected — reconnect.
+                if not self._running:
+                    return
+                logger.warning("[StreamingMic] Deepgram session ended — reconnecting...")
+            except asyncio.CancelledError:
+                return
+            except Exception as e:
+                logger.error("[StreamingMic] read loop crashed — reconnecting in %.1fs: %s",
+                             backoff, e)
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 8.0)
+
+            await self._close_deepgram()
+            try:
+                await self._open_deepgram()
+                backoff = 0.5  # reset after a successful open
+            except Exception as e:
+                logger.error("[StreamingMic] Deepgram reconnect failed (will retry): %s", e)
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 8.0)
 
     async def stop(self) -> None:
         self._running = False
@@ -160,12 +201,7 @@ class StreamingMicSession:
                     await t
                 except (asyncio.CancelledError, Exception):
                     pass
-        if self._socket_cm is not None:
-            try:
-                await self._socket_cm.__aexit__(None, None, None)
-            except Exception:
-                pass
-            self._socket_cm = None
+        await self._close_deepgram()
         logger.info("[StreamingMic] session closed")
 
     @property
@@ -198,9 +234,12 @@ class StreamingMicSession:
     # ── internal: mic side ─────────────────────────────────────────────────
 
     def _enqueue_chunk(self, chunk: bytes) -> None:
-        # Called on the main asyncio loop via call_soon_threadsafe
+        # Called on the main asyncio loop via call_soon_threadsafe.
+        # When muted we still enqueue *silence* so Deepgram's WS doesn't time
+        # out — Deepgram drops the connection after ~10s of no audio, and we
+        # have no graceful way to recover mid-conversation.
         if self._muted:
-            return
+            chunk = b"\x00" * len(chunk)
         try:
             self._pcm_in.put_nowait(chunk)
         except asyncio.QueueFull:
@@ -212,7 +251,11 @@ class StreamingMicSession:
                 pass
 
     async def _pump_loop(self) -> None:
-        """Pull PCM from mic queue → send to Deepgram + append to rolling buffer."""
+        """Pull PCM from mic queue → send to Deepgram + append to rolling buffer.
+        Drops chunks silently when the WS is being recycled by the supervisor
+        (avoids flooding logs during a reconnect window)."""
+        last_warn_ts = 0.0
+        consecutive_failures = 0
         try:
             while self._running:
                 chunk = await self._pcm_in.get()
@@ -220,9 +263,17 @@ class StreamingMicSession:
                 if self._socket is not None:
                     try:
                         await self._socket.send_media(chunk)
+                        consecutive_failures = 0
                     except Exception as e:
-                        logger.warning("[StreamingMic] send_media failed: %s", e)
-                        # Brief backoff to avoid tight error loop
+                        consecutive_failures += 1
+                        # Throttle: warn at most once per 5s during a reconnect storm
+                        import time as _time
+                        now = _time.time()
+                        if now - last_warn_ts > 5.0:
+                            logger.warning("[StreamingMic] send_media failed "
+                                           "(%d consecutive): %s",
+                                           consecutive_failures, e)
+                            last_warn_ts = now
                         await asyncio.sleep(0.05)
         except asyncio.CancelledError:
             pass

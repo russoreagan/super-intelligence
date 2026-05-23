@@ -1105,11 +1105,18 @@ class TestStreamingMicMute:
         mic.unmute()
         assert mic.is_muted is False
 
-    def test_enqueue_chunk_discarded_when_muted(self):
+    def test_enqueue_chunk_replaced_with_silence_when_muted(self):
+        # Muted chunks are still enqueued (as silence) so the Deepgram WS
+        # doesn't time out — Deepgram drops the connection after ~10s with no
+        # audio and there's no graceful in-band recovery from that.
         mic = _make_mic()
         mic.mute()
-        mic._enqueue_chunk(b"\x00" * 3200)
-        assert mic._pcm_in.empty()
+        live_chunk = bytes([42] * 3200)
+        mic._enqueue_chunk(live_chunk)
+        assert not mic._pcm_in.empty()
+        sent = mic._pcm_in.get_nowait()
+        assert len(sent) == len(live_chunk)
+        assert sent == b"\x00" * len(live_chunk)  # silence, not the live audio
 
     def test_enqueue_chunk_accepted_when_unmuted(self):
         mic = _make_mic()
