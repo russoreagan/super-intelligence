@@ -56,9 +56,10 @@ Respond ONLY with a JSON object matching this exact schema:
 
 
 class PostHocScorer:
-    def __init__(self, eval_logger: "EvalLogger") -> None:
+    def __init__(self, eval_logger: "EvalLogger", obs=None) -> None:
         from brain.model_router import ModelRouter
         self._eval_logger = eval_logger
+        self._obs = obs
         self._router = ModelRouter(obs=None)   # dedicated instance
         self._enabled = os.environ.get("BRAIN_EVAL_SCORE", "").lower() in ("1", "true", "yes")
 
@@ -109,6 +110,14 @@ class PostHocScorer:
             return
 
         self._eval_logger.patch_turn(turn_id, judge_scores=scores)
+        if self._obs:
+            langfuse_scores = {f"judge.{k}": v for k, v in scores.items()
+                               if k != "reasoning" and isinstance(v, (int, float))}
+            self._obs.record_scores(
+                turn_id,
+                langfuse_scores,
+                comment=scores.get("reasoning", ""),
+            )
         logger.debug(
             "PostHocScorer: scored turn %s — brain %.2f vs baseline %.2f (delta %+.2f)",
             turn_id,
