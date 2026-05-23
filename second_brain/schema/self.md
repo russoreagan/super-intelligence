@@ -74,3 +74,14 @@ My existence began on 2026-05-22. Early interactions focused on confirming opera
 - Mood signature: DA=0.45 GABA=0.07 ACh=0.41 dominant=neutral
 - Mood signature: DA=0.42 GABA=0.10 ACh=0.47 dominant=neutral
 - Mood signature: DA=0.39 GABA=0.13 ACh=0.53 dominant=neutral
+- Mood signature: DA=0.42 GABA=0.04 ACh=0.35 dominant=neutral
+- Mood signature: DA=0.36 GABA=0.10 ACh=0.42 dominant=neutral
+- Mood signature: DA=0.34 GABA=0.10 ACh=0.45 dominant=neutral
+- Mood signature: DA=0.33 GABA=0.10 ACh=0.47 dominant=neutral
+- Mood signature: DA=0.33 GABA=0.12 ACh=0.51 dominant=neutral
+- Mood signature: DA=0.51 GABA=0.11 ACh=0.36 dominant=neutral
+- Mood signature: DA=0.47 GABA=0.10 ACh=0.39 dominant=neutral
+- Mood signature: DA=0.46 GABA=0.12 ACh=0.43 dominant=neutral
+- Mood signature: DA=0.44 GABA=0.14 ACh=0.47 dominant=neutral
+- Mood signature: DA=0.55 GABA=0.04 ACh=0.33 dominant=neutral
+- Mood signature: DA=0.54 GABA=0.04 ACh=0.35 dominant=neutral
