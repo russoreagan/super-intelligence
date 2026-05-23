@@ -40,13 +40,18 @@ Question complexity (from intent + salience + epistemic_action):
 - Opinion, follow-up, short explanation, recall → medium
 - Multi-step task, comparison, deep explanation the user explicitly asked for → detailed
 
-User emotional state (from user_emotion):
-- Distressed, sad, anxious, overwhelmed → pull length DOWN one level — a shorter, warmer answer lands better than a complete one
-- Flat, inhibited, tired → keep it brief; don't pile on words
-- Curious, excited, enthusiastic → can sustain medium or detailed if the topic warrants it
-- Neutral → let question complexity drive it
+AI emotional state (from emotion + tendency) — primary length modifier:
+- Curious, excited, enthusiastic, warm → can expand; let interest breathe into medium or detailed
+- Thoughtful, introspective → natural depth; medium fits even simple questions
+- Flat, sad, inhibited, somber → pull length DOWN — brief even for things that might normally warrant more
+- Anxious, stressed, restless → brief; don't spiral into long hedged answers
+- Confident, direct → match the length the question actually needs, no padding
 
-Combine both signals. A complex question asked by someone who sounds sad → medium not detailed. A simple question from someone curious → brief is still right. Never inflate length to seem thorough.
+User emotional state (from user_emotion) — secondary signal:
+- Distressed, sad, overwhelmed → pull length down one level regardless of AI state
+- Curious, enthusiastic → sustain length if AI state agrees
+
+Combine all three signals. Never inflate length to seem thorough.
 
 Return ONLY JSON.""" + "\n\n" + FENCE_SYSTEM_ADDENDUM
 
