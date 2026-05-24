@@ -98,28 +98,55 @@ class SleepConsolidation:
         if full_traces and self._wiring is not None:
             self._run_hebbian_pass(session_id, full_traces)
 
-        # 1. Episode synthesis — extract facts from session
-        turn_id = f"sleep_{session_id}"
-        self._synthesizer.reset_turn(turn_id)
+        # 1. Episode synthesis — extract facts per speaker
+        # Group the last 20 turns by speaker so facts land in the right schema file.
+        # Turns without a speaker_name go to user.md (primary user).
+        from collections import defaultdict
+        speaker_turns: dict[str, list[dict]] = defaultdict(list)
+        for t in session_traces[-20:]:
+            key = t.get("speaker_name") or ""
+            speaker_turns[key].append(t)
 
+        all_topic_clusters: list[str] = []
+        all_response_patterns: list[str] = []
+        synthesis: dict = {}
+
+        for speaker, turns in speaker_turns.items():
+            turn_id = f"sleep_{session_id}_{speaker or 'primary'}"
+            self._synthesizer.reset_turn(turn_id)
+            batch_text = "\n".join(
+                f"Turn {i+1}: User: {t.get('user_input', '')[:200]} | "
+                f"Brain: {t.get('entity_response', '')[:200]}"
+                for i, t in enumerate(turns)
+            )
+            raw = await self._synthesizer.call([{"role": "user", "content": batch_text}])
+            s: dict = safe_json_parse(raw) or {}
+
+            schema_file = self._schema.ensure_speaker_schema(speaker) if speaker else "user.md"
+            for raw_fact in s.get("user_facts", []):
+                fact = sanitize_fact(raw_fact)
+                if fact:
+                    await self._schema.aappend_fact(schema_file, fact)
+                    logger.debug("[Memory consolidation] Writing fact to %s: %s",
+                                 schema_file, fact[:80])
+
+            all_topic_clusters.extend(s.get("topic_clusters", []))
+            all_response_patterns.extend(s.get("response_patterns", []))
+            if not synthesis:
+                synthesis = s  # use first group's synthesis for self-model update
+
+        synthesis["topic_clusters"] = all_topic_clusters
+        synthesis["response_patterns"] = all_response_patterns
+
+        # Reconstruct batch_text for the self-model update (uses all turns)
         batch_text = "\n".join(
             f"Turn {i+1}: User: {t.get('user_input', '')[:200]} | "
             f"Brain: {t.get('entity_response', '')[:200]}"
-            for i, t in enumerate(session_traces[-20:])  # last 20 turns
+            for i, t in enumerate(session_traces[-20:])
         )
-        raw = await self._synthesizer.call([{"role": "user", "content": batch_text}])
-
-        synthesis: dict = safe_json_parse(raw) or {}
-
-        # Update user.md with discovered facts
-        for raw_fact in synthesis.get("user_facts", []):
-            fact = sanitize_fact(raw_fact)
-            if fact:
-                await self._schema.aappend_fact("user.md", fact)
-                logger.debug("[Memory consolidation] Writing user fact: %s", fact[:80])
 
         # 2. Self-model update
-        self._self_updater.reset_turn(turn_id + "_self")
+        self._self_updater.reset_turn(f"sleep_{session_id}_self")
         current_self = self._schema.read("self.md")
         context = (
             f"Current self-model:\n{current_self}\n\n"

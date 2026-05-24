@@ -328,22 +328,29 @@ class HippocampusCluster:
         entities = encoded.get("entities") or features.get("entities", [])
         intent = features.get("intent", "other")
 
+        # Route facts to the current speaker's schema file (or primary user.md)
+        speaker_name = features.get("speaker_name", "")
+        if speaker_name:
+            schema_file = self._schema.ensure_speaker_schema(speaker_name)
+        else:
+            schema_file = "user.md"
+
         # Update schema with any new key facts
         for raw_fact in encoded.get("key_facts", []):
             fact = sanitize_fact(raw_fact)
             if fact:
-                await self._schema.aappend_fact("user.md", fact)
+                await self._schema.aappend_fact(schema_file, fact)
 
         # Record relationship observations so familiarity accumulates over time
         rel_note = encoded.get("relationship_note", "").strip()
         if rel_note:
             rel_fact = sanitize_fact(rel_note)
             if rel_fact:
-                await self._schema.aappend_fact("user.md", f"[relationship] {rel_fact}")
+                await self._schema.aappend_fact(schema_file, f"[relationship] {rel_fact}")
 
         # Update running affection score based on how the user treated the AI this turn
         tone = features.get("user_tone_toward_ai", "neutral")
-        await self._update_affection_score(tone)
+        await self._update_affection_score(tone, speaker_name=speaker_name)
 
         # Build embedding vector
         vec = None
@@ -393,37 +400,38 @@ class HippocampusCluster:
         (-50, "guarded — formal, no warmth, brief answers"),
     ]
 
-    async def _update_affection_score(self, tone: str) -> None:
-        """Read current affection score from user.md, apply delta, write back."""
+    async def _update_affection_score(self, tone: str, speaker_name: str = "") -> None:
+        """Read current affection score for speaker, apply delta, write back."""
         import re
         delta = self._AFFECTION_DELTAS.get(tone, 0)
         if delta == 0:
             return
+        if speaker_name:
+            schema_file = self._schema.ensure_speaker_schema(speaker_name)
+        else:
+            schema_file = "user.md"
         async with self._schema._lock:
-            content = self._schema.read("user.md")
-            # Find current score
+            content = self._schema.read(schema_file)
             m = re.search(r"- Score:\s*(-?\d+)", content)
             current = int(m.group(1)) if m else 0
             new_score = max(-50, min(100, current + delta))
-            # Find tier label
             tier_label = self._AFFECTION_TIERS[-1][1]
             for threshold, label in self._AFFECTION_TIERS:
                 if new_score >= threshold:
                     tier_label = label
                     break
-            # Replace score line
             if m:
                 content = content[:m.start()] + f"- Score: {new_score}" + content[m.end():]
             else:
                 content += f"\n- Score: {new_score}"
-            # Replace or insert history line
             hist_line = f"- History: {tier_label} (last tone: {tone}, delta: {delta:+d})"
             content = re.sub(r"- History:.*", hist_line, content)
             if "- History:" not in content:
                 content += f"\n{hist_line}"
             from brain.second_brain.store import SCHEMA_DIR
-            self._schema._atomic_write(SCHEMA_DIR / "user.md", content)
-            logger.debug("[Memory] Affection score: %d→%d (%s, tone=%s)", current, new_score, tier_label, tone)
+            self._schema._atomic_write(SCHEMA_DIR / schema_file, content)
+            logger.debug("[Memory] Affection score [%s]: %d→%d (%s, tone=%s)",
+                         schema_file, current, new_score, tier_label, tone)
 
     def update_self_schema(self, updates: dict) -> None:
         """Write updates to self.md (called at sleep consolidation)."""

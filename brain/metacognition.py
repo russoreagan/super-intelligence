@@ -110,13 +110,16 @@ class MetacognitionCell:
     # what the prefrontal cortex does in biology: higher-order thought about
     # the affective state and the situation that produced it.
 
-    def _affection_score(self) -> int:
-        """Read current affection score from user.md (written by hippocampus)."""
+    def _affection_score(self, speaker_name: str = "") -> int:
+        """Read current affection score for speaker (written by hippocampus)."""
         if not self._schema:
             return 0
         try:
             import re
-            content = self._schema.read("user.md")
+            if speaker_name:
+                content = self._schema.read(self._schema.speaker_filename(speaker_name))
+            else:
+                content = self._schema.read("user.md")
             m = re.search(r"- Score:\s*(-?\d+)", content)
             return int(m.group(1)) if m else 0
         except Exception:
@@ -128,7 +131,7 @@ class MetacognitionCell:
         user_tone = (features.get("user_tone_toward_ai") or "neutral").lower()
         user_emotion = (features.get("user_emotion") or "unknown").lower()
         intent = (features.get("intent") or "other").lower()
-        affection = self._affection_score()
+        affection = self._affection_score(features.get("speaker_name", ""))
 
         # 1. Embarrassed — self-monitoring caught coherence/empathy failures.
         # Two or more drafts vetoed means the entity is genuinely "off" — the

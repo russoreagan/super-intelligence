@@ -460,6 +460,7 @@ class AuditoryCluster:
             "identified": session_spk.store_id is not None,
             "speaker_id": session_spk.store_id,
             "speaker_name": session_spk.store_name,
+            "closest_match": session_spk.closest_match,
             "enrollment_pending": session_spk.enrollment_pending,
             "is_new_this_session": is_new,
             "match_score": round(match_score, 4),

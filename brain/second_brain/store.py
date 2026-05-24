@@ -275,4 +275,73 @@ class SchemaStore:
             self.write("user.md", f"# User: {user_name}\n\n"
                        "## Known facts\n\n"
                        "## Preferences\n\n"
-                       "## Emotional profile\n")
+                       "## Emotional profile\n\n"
+                       "## Relationship\n"
+                       "- Familiarity: new (conversations so far: ~0)\n\n"
+                       "## Affection score\n"
+                       "- Score: 0\n")
+
+    _SPEAKER_SLUG_RE = re.compile(r"[^a-z0-9]+")
+
+    def speaker_filename(self, name: str) -> str:
+        """Convert a speaker name to a safe per-speaker schema filename."""
+        slug = self._SPEAKER_SLUG_RE.sub("_", name.lower().strip()).strip("_")[:32]
+        slug = slug or "unknown"
+        return f"user_{slug}.md"
+
+    def ensure_speaker_schema(self, name: str) -> str:
+        """Ensure a per-speaker schema file exists. Returns the filename."""
+        filename = self.speaker_filename(name)
+        if not (SCHEMA_DIR / filename).exists():
+            self.write(filename, f"# User: {name}\n\n"
+                       "## Known facts\n\n"
+                       "## Preferences\n\n"
+                       "## Emotional profile\n\n"
+                       "## Relationship\n"
+                       "- Familiarity: new\n\n"
+                       "## Affection score\n"
+                       "- Score: 0\n")
+        return filename
+
+    def load_speaker_context(self, name: str) -> str:
+        """Read (and if needed create) the schema file for a named speaker."""
+        filename = self.ensure_speaker_schema(name)
+        return self.read(filename)
+
+    async def migrate_placeholder(self, placeholder_filename: str, target_filename: str) -> None:
+        """Append facts from a placeholder schema (e.g. user_spk_0.md) into the real one,
+        then delete the placeholder. Called when an unknown speaker is enrolled."""
+        if not self._validate_filename(placeholder_filename):
+            return
+        if not self._validate_filename(target_filename):
+            return
+        placeholder_path = SCHEMA_DIR / placeholder_filename
+        if not placeholder_path.exists():
+            return
+        async with self._lock:
+            src = placeholder_path.read_text()
+            dst = (SCHEMA_DIR / target_filename).read_text() if (SCHEMA_DIR / target_filename).exists() else ""
+            # Extract bullet-point facts from the placeholder (skip header/section lines)
+            facts = [ln.strip() for ln in src.splitlines()
+                     if ln.strip().startswith("- ") and ln.strip() not in dst]
+            if facts:
+                self._atomic_write(SCHEMA_DIR / target_filename,
+                                   dst + "\n" + "\n".join(facts))
+            placeholder_path.unlink(missing_ok=True)
+            logger.info("[Schema] Migrated placeholder %s → %s (%d facts)",
+                        placeholder_filename, target_filename, len(facts))
+
+    def primary_user_name(self) -> str:
+        """Extract the primary user's name from user.md Known facts, or from the header."""
+        content = self.read("user.md")
+        for line in content.splitlines():
+            # Prefer "User's name is X" fact over the header title
+            m = re.match(r"-\s+User['']s name is (.+)", line.strip())
+            if m:
+                return m.group(1).strip()
+        # Fall back to the file header: "# User: X"
+        m = re.match(r"#\s+User:\s+(.+)", content.strip().splitlines()[0] if content else "")
+        if m:
+            name = m.group(1).strip()
+            return name if name.lower() != "user" else ""
+        return ""

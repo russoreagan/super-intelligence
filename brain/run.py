@@ -118,7 +118,11 @@ async def session(args) -> None:
         posthoc_scorer._obs = obs
     router = ModelRouter(obs=obs)
     brainstem = Brainstem(bus, router)
-    pns = PNS(bus)
+    def _on_speaking_change(active: bool) -> None:
+        if emitter:
+            asyncio.ensure_future(emitter.emit_event({"type": "speaking", "active": active}))
+
+    pns = PNS(bus, on_speaking_change=_on_speaking_change)
 
     # Idle-time gate for proactive TTS: don't speak aloud if the user hasn't
     # touched the computer in this many seconds. Configurable via env var.
@@ -197,6 +201,7 @@ async def session(args) -> None:
                              on_voice_change=pns.set_voice_id,
                              on_eval_mode=_on_eval_mode,
                              on_mic_toggle=_on_mic_toggle,
+                             on_interrupt=pns.interrupt,
                              python_voice_mode=_voice_flag,
                              wiring=wiring)
         ui_server.set_wiring_frozen(wiring_frozen)
@@ -565,15 +570,37 @@ async def session(args) -> None:
                 features = dict(features)
                 features["_enrollment_result"] = completed[0]
                 features["_enrollment_results"] = completed
+                # Persist each enrolled name to that speaker's schema file,
+                # migrating any facts from the session_key placeholder if it exists.
+                for _ec in completed:
+                    _enrolled_name = _ec.get("name", "")
+                    _session_key = _ec.get("session_key", "")
+                    if _enrolled_name:
+                        _sf = hippocampus._schema.ensure_speaker_schema(_enrolled_name)
+                        asyncio.ensure_future(
+                            hippocampus._schema.aappend_fact(
+                                _sf, f"User's name is {_enrolled_name}"
+                            )
+                        )
+                        # Migrate facts from placeholder (e.g. user_spk_0.md → user_owen.md)
+                        if _session_key:
+                            _placeholder = hippocampus._schema.speaker_filename(_session_key)
+                            _placeholder_content = hippocampus._schema.read(_placeholder)
+                            if _placeholder_content:
+                                asyncio.ensure_future(
+                                    hippocampus._schema.migrate_placeholder(_placeholder, _sf)
+                                )
 
         # ── Surface latest speaker identity + song match into features ────────
         # Drain whatever the auditory cortex has emitted since the last turn;
         # keep the most recent valid payload of each kind.
+        # Accept all payloads (identified or not) — routing logic below decides
+        # whether this is the primary user, a known person, or an unknown stranger.
         latest_speaker = None
         while True:
             try:
                 sm = speaker_id_inbox.get_nowait()
-                if not sm.expired and sm.payload.get("identified"):
+                if not sm.expired:
                     latest_speaker = sm.payload
             except asyncio.QueueEmpty:
                 break
@@ -587,10 +614,28 @@ async def session(args) -> None:
                 break
         if latest_speaker or latest_song:
             features = dict(features)
-            if latest_speaker and latest_speaker.get("speaker_name"):
-                features["speaker_name"] = latest_speaker["speaker_name"]
             if latest_speaker:
                 features["_speaker_match_score"] = latest_speaker.get("match_score", 0.0)
+                if latest_speaker.get("identified") and latest_speaker.get("speaker_name"):
+                    # Recognized — set name, route to their schema
+                    features["speaker_name"] = latest_speaker["speaker_name"]
+                elif not latest_speaker.get("identified"):
+                    # Unrecognized — decide: primary user, or stranger?
+                    from brain.settings import settings as _settings_ref
+                    _soft_threshold = float(_settings_ref.get("speaker_primary_soft_threshold"))
+                    _match_score = latest_speaker.get("match_score", 0.0)
+                    _closest = latest_speaker.get("closest_match") or ""
+                    _primary = hippocampus._schema.primary_user_name()
+                    if (_primary and _closest.lower() == _primary.lower()
+                            and _match_score >= _soft_threshold):
+                        # Voice is close enough to primary user — don't set speaker_name
+                        # so it falls back to user.md (primary user schema).
+                        pass
+                    else:
+                        # Unknown stranger — use session_key as placeholder identity
+                        _session_key = latest_speaker.get("session_key", "unknown")
+                        features["speaker_name"] = _session_key
+                        features["_speaker_unknown"] = True
             if latest_song:
                 features["song_match"] = latest_song
 
@@ -748,6 +793,16 @@ async def session(args) -> None:
                             user_input=user_input,
                             embedding_fn=router.embed,
                         ))
+
+        # ── Per-turn speaker context injection ───────────────────────────────
+        # Swap in the current speaker's schema so the frontal lobe sees the
+        # right person's facts and affection level, not the generic user.md.
+        _speaker = features.get("speaker_name", "")
+        if _speaker:
+            _speaker_schema = hippocampus._schema.load_speaker_context(_speaker)
+            memory = dict(memory)
+            memory["core"] = dict(memory.get("core", {}))
+            memory["core"]["user"] = _speaker_schema
 
         # ── Egress pseudonymisation (Phase 0H) ────────────────────────────────
         if EGRESS_MODE != "off":
@@ -931,6 +986,7 @@ async def session(args) -> None:
             "entity_response": final,
             "emotion": affect.get("emotion", "neutral"),
             "topic_tags": features.get("entities", []),
+            "speaker_name": features.get("speaker_name", ""),
         })
 
         # Hippocampus: encode in background (tracked for shutdown flush)

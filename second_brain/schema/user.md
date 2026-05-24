@@ -1,6 +1,8 @@
 # User: User
 
 ## Known facts
+- User's name is Russ
+- Primary user and owner of this application
 
 ## Preferences
 
@@ -11,8 +13,8 @@
 - Notes: Early interactions — be friendly and warm but not yet familiar enough for teasing or in-jokes
 
 ## Affection score
-- Score: 3
-- History: neutral — polite and helpful, professional warmth (last tone: praising, delta: +3)
+- Score: -4
+- History: neutral — polite and helpful, professional warmth (last tone: testing, delta: -1)
 
 - User initiated a test.
 - The user initiated the conversation with a greeting.
@@ -28,3 +30,6 @@
 - [relationship] The user seems engaged and curious about the hippocampus's capabilities, indicating a friendly rapport.
 - The AI successfully identified two different speakers.
 - The AI is capable of detecting subtle vocal differences.
+- [relationship] The user seems hesitant or unsure, possibly indicating a close relationship with Russ.
+- [relationship] The conversation indicates a thoughtful and inquisitive relationship with an interest in each other's unique mannerisms.
+- [relationship] User is comfortable discussing their relationship with Russ, indicating a close friendship.

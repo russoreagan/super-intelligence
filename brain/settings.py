@@ -113,6 +113,10 @@ DEFAULTS: dict[str, float | int] = {
     "speaker_store_threshold":     0.70,
     "speaker_session_threshold":   0.62,
     "speaker_min_audio_s":         0.40,
+    # Soft threshold for "could this be the primary user?" check on unrecognized voices.
+    # If an unrecognized voice scores >= this against the primary user's profile, treat
+    # it as the primary user tentatively rather than creating a stranger placeholder.
+    "speaker_primary_soft_threshold": 0.55,
 
     # ── Section 11: Vision / Video ────────────────────────────────────────────
     "video_sample_interval":       5.0,
