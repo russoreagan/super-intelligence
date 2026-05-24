@@ -1,6 +1,7 @@
 """
 Topic-tagged pub/sub blackboard with TTL, activation decay, hop limits.
 Neuromodulator channels (ACh, DA, GABA, Glu) are persistent levels, not message queues.
+Hormonal channels (5HT, CORT, OXT) are a slower endocrine layer that modulates neuromod dynamics.
 """
 from __future__ import annotations
 
@@ -70,6 +71,52 @@ class Neuromodulators:
         return dict(self._levels)
 
 
+class HormonalState:
+    """
+    Slow-timescale endocrine layer. Three channels:
+      5HT  = serotonin  — affective baseline; contentment vs. dysphoria
+      CORT = cortisol   — cumulative stress; builds under sustained threat
+      OXT  = oxytocin   — trust/affiliation; grows with positive exchange
+
+    Decay rates are 10–100× slower than Neuromodulators.
+    Acts as gain-control on neuromod effective values (DA floor, GABA sensitivity).
+    """
+
+    CHANNELS = ("5HT", "CORT", "OXT")
+    _DECAY  = {"5HT": 0.995, "CORT": 0.970, "OXT": 0.998}
+    _FLOORS = {"5HT": 0.20,  "CORT": 0.02,  "OXT": 0.15}
+
+    def __init__(self) -> None:
+        self._levels: dict[str, float] = {"5HT": 0.50, "CORT": 0.05, "OXT": 0.30}
+
+    def add(self, channel: str, delta: float) -> None:
+        self._levels[channel] = max(0.0, min(1.0, self._levels[channel] + delta))
+
+    def get(self, channel: str) -> float:
+        return self._levels[channel]
+
+    def decay(self) -> None:
+        for ch in self.CHANNELS:
+            self._levels[ch] = max(self._FLOORS[ch], self._levels[ch] * self._DECAY[ch])
+
+    def snapshot(self) -> dict[str, float]:
+        return dict(self._levels)
+
+    # ── Modulation helpers (used by hypothalamus) ─────────────────────────────
+
+    def da_offset(self, sht_lift: float, oxt_lift: float, cort_suppress: float) -> float:
+        """Net DA floor shift from hormonal state."""
+        return (self._levels["5HT"] * sht_lift
+                + self._levels["OXT"] * oxt_lift
+                - self._levels["CORT"] * cort_suppress)
+
+    def gaba_scale(self, cort_amplify: float, oxt_buffer: float) -> float:
+        """GABA sensitivity multiplier. 1.0 = no change."""
+        return max(0.5, 1.0
+                   + self._levels["CORT"] * cort_amplify
+                   - self._levels["OXT"] * oxt_buffer)
+
+
 class Bus:
     """
     Async pub/sub blackboard. Each topic has a queue of live messages.
@@ -80,6 +127,7 @@ class Bus:
     def __init__(self) -> None:
         self._subscribers: dict[str, list[asyncio.Queue]] = {}
         self.neuromod = Neuromodulators()
+        self.hormonal = HormonalState()
         self._lock = asyncio.Lock()
 
     def subscribe(self, topic: str) -> asyncio.Queue:

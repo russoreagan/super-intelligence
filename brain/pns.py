@@ -75,7 +75,7 @@ class PNS:
     # Override via BRAIN_BARGE_IN_GRACE_SECONDS.
     BARGE_IN_GRACE_SECONDS = float(os.environ.get("BRAIN_BARGE_IN_GRACE_SECONDS", "0.5"))
 
-    def __init__(self, bus: Bus) -> None:
+    def __init__(self, bus: Bus, on_speaking_change=None) -> None:
         self._bus = bus
         self._deepgram_client = None
         self._elevenlabs_client = None
@@ -87,6 +87,7 @@ class PNS:
         self._speaking_text: str = ""   # what TTS is currently saying — used for bleed detection
         self._speak_started_at: float = 0.0
         self._interrupt_event: asyncio.Event = asyncio.Event()
+        self._on_speaking_change = on_speaking_change  # Callable[[bool], None] | None
 
     async def receive_text(self, text: str, image_path: str | None = None) -> None:
         """Post user input to the bus."""
@@ -382,6 +383,8 @@ class PNS:
             self._speak_started_at = _time.time()
             self._speaking = True
             self._speaking_text = text
+            if self._on_speaking_change:
+                self._on_speaking_change(True)
             first_chunk_ts: float | None = None
             try:
                 try:
@@ -426,6 +429,8 @@ class PNS:
             finally:
                 self._speaking = False
                 self._speaking_text = ""
+                if self._on_speaking_change:
+                    self._on_speaking_change(False)
 
         except Exception as e:
             logger.warning("[I/O] Text-to-speech failed — printing response as text instead: %s", e)

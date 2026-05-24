@@ -114,6 +114,7 @@ class ModelRouter:
         response = await client.messages.create(
             model=model_id,
             max_tokens=max_tokens,
+            cache_control={"type": "ephemeral"},
             system=[{"type": "text", "text": system_prompt,
                       "cache_control": {"type": "ephemeral"}}],
             messages=anthropic_msgs,
@@ -268,6 +269,14 @@ class ModelRouter:
     @property
     def total_calls_this_turn(self) -> int:
         return len(self._call_log)
+
+    def turn_calls_excluding_background(self) -> int:
+        """Count of LLM calls this turn that should count against the turn's
+        budget. DMN-cluster calls happen continuously between *and during*
+        turns and aren't logically part of the current turn's work, so they
+        are excluded here. Used by brainstem.end_turn and run.py telemetry.
+        """
+        return sum(1 for c in self._call_log if c.get("cluster") != "dmn")
 
     def reset_turn_log(self) -> list[dict]:
         log = self._call_log[:]

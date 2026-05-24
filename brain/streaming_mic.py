@@ -262,6 +262,17 @@ class StreamingMicSession:
     def is_muted(self) -> bool:
         return self._muted
 
+    @property
+    def is_user_speaking(self) -> bool:
+        """True while an utterance window is open — Deepgram has fired
+        SpeechStarted but not yet UtteranceEnd. Used by the DMN speak gate
+        to avoid interrupting the user mid-sentence. False when muted (we
+        won't be receiving real audio anyway) and when no utterance has
+        started yet."""
+        if self._muted:
+            return False
+        return self._utterance_start_s is not None or bool(self._pending_words)
+
     def mute(self) -> None:
         """Discard mic audio until unmute(). Socket stays warm — no reconnect needed."""
         if not self._muted:

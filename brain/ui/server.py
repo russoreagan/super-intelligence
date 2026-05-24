@@ -45,6 +45,7 @@ class UIServer:
                  on_voice_change: Callable[[str], None] | None = None,
                  on_eval_mode: Callable[[bool], None] | None = None,
                  on_mic_toggle: Callable[[], bool] | None = None,
+                 on_interrupt: Callable[[], None] | None = None,
                  python_voice_mode: bool = False,
                  wiring=None) -> None:
         self._queue = emitter_queue
@@ -52,6 +53,7 @@ class UIServer:
         self._on_voice_change = on_voice_change
         self._on_eval_mode = on_eval_mode
         self._on_mic_toggle = on_mic_toggle      # () -> is_muted (bool)
+        self._on_interrupt = on_interrupt
         self._python_voice_mode = python_voice_mode
         self._clients: set = set()
         self._last_neuromod: dict = {}
@@ -171,7 +173,11 @@ class UIServer:
                 model_caps = next(
                     (m for m in models_raw if m.get("model_id") == model_id), {}
                 )
-                serves_pro = bool(model_caps.get("serves_pro_voices", True))
+                # Default False: if the model lookup fails or the field is missing,
+                # assume pro voices are NOT served (safe). Allowing them through
+                # when uncertain causes eleven_v3 to silently substitute its own
+                # default voice, which is the exact bug we're guarding against.
+                serves_pro = bool(model_caps.get("serves_pro_voices", False))
 
                 # Categorize the user's voices
                 pro_voices = [v for v in voices_raw if v.get("category") == "professional"]
@@ -415,6 +421,8 @@ class UIServer:
                     elif t == "eval_mode" and self._on_eval_mode:
                         intensive = bool(data.get("intensive", False))
                         self._on_eval_mode(intensive)
+                    elif t == "interrupt" and self._on_interrupt:
+                        self._on_interrupt()
                     elif t == "voice_start":
                         if dg_conn is None:
                             dg_conn = await self._start_deepgram(websocket)

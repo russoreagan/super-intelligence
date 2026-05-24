@@ -17,7 +17,7 @@ from brain.second_brain.store import SchemaStore, EpisodicStore
 from brain.security import sanitize_fact
 from brain.utils import safe_json_parse
 from brain.wiring import Wiring
-from brain.emotion_hierarchy import core_of
+from brain.emotion_hierarchy import core_of, CORE_VALENCE, valence_of
 from brain.observability.decisions import decisions
 from brain.settings import settings
 
@@ -188,15 +188,14 @@ class SleepConsolidation:
 
     # ── Hebbian pass ─────────────────────────────────────────────────────────
 
-    # Valence per core emotion family for user_emotion delta computation
-    _CORE_VALENCE: dict[str, float] = {
-        "happy": +1.0, "sad": -1.0, "anger": -1.0, "fear": -0.5,
-        "disgust": -0.5, "surprise": 0.0, "cognitive": +0.3, "neutral": 0.0,
-    }
+    # Valence per core emotion family — single source of truth now lives in
+    # brain/emotion_hierarchy.py. Keep the classmethod alias so existing call
+    # sites continue to work without refactor.
+    _CORE_VALENCE = CORE_VALENCE  # alias for backward compat with any reader
 
     @classmethod
     def _emotion_valence(cls, emotion: str | None) -> float:
-        return cls._CORE_VALENCE.get(core_of(emotion or "neutral"), 0.0)
+        return valence_of(emotion)
 
     def _composite_outcome(self, trace) -> tuple[float, dict]:
         """Return (outcome, breakdown) for a single TurnTrace.

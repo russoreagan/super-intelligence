@@ -101,14 +101,17 @@ async def session(args) -> None:
     eval_logger = None
     baseline_runner = None
     posthoc_scorer = None
+    emotion_judge = None
     try:
         from eval.turn_logger import EvalLogger
         from eval.baseline import BaselineRunner
         from eval.scorer import PostHocScorer
+        from eval.emotion_judge import EmotionJudge
         eval_logger = EvalLogger()
         baseline_runner = BaselineRunner(eval_logger)
         posthoc_scorer = PostHocScorer(eval_logger)
         baseline_runner._scorer = posthoc_scorer
+        emotion_judge = EmotionJudge(eval_logger)
         logger.info("Eval: logging to %s", eval_logger._path)
     except Exception as _eval_err:
         logger.debug("Eval system unavailable: %s", _eval_err)
@@ -116,6 +119,8 @@ async def session(args) -> None:
     obs = ObservabilityLayer(session_id, eval_logger=eval_logger)
     if posthoc_scorer is not None:
         posthoc_scorer._obs = obs
+    if emotion_judge is not None:
+        emotion_judge._obs = obs
     router = ModelRouter(obs=obs)
     brainstem = Brainstem(bus, router)
     def _on_speaking_change(active: bool) -> None:
@@ -291,7 +296,7 @@ async def session(args) -> None:
     dmn = None
     if args.dmn or os.environ.get("BRAIN_DMN", "false").lower() == "true":
         from brain.dmn import DefaultModeNetwork
-        dmn = DefaultModeNetwork(bus, router, hippocampus, parietal)
+        dmn = DefaultModeNetwork(bus, router, hippocampus, parietal, obs=obs)
 
         # Hook DMN thoughts into UI stream
         if emitter:
@@ -355,6 +360,101 @@ async def session(args) -> None:
         except Exception as e:
             logger.error("[I/O] Streaming mic failed to start — voice input is offline: %s", e)
             streaming_mic = None
+
+    # ── Speak gate (DMN proactive utterance evaluator) ────────────────────────
+    # Drains DMN's candidate queue, applies fast heuristic gates, then asks
+    # the judge LLM to make a yes/wait/drop call on borderline ones. "yes"
+    # promotes the candidate into _proactive_q where the existing main-loop
+    # drain (around line 1037) routes it to TTS.
+    #
+    # Lives here so it can close over pns, streaming_mic, ui_message_queue,
+    # and _last_brain_spoke_ts — the speak-appropriateness signals that
+    # already exist in this function's scope. The gate runs continuously
+    # alongside the DMN's tick loop.
+    if dmn is not None:
+        SPEAK_GATE_INTERVAL = float(_brain_settings.get("speak_gate_poll_interval") or 5.0)
+        SPEAK_CAND_MAX_AGE = float(_brain_settings.get("speak_candidate_max_age_s") or 60.0)
+
+        async def _speak_gate_loop() -> None:
+            while True:
+                try:
+                    await asyncio.sleep(SPEAK_GATE_INTERVAL)
+                    if dmn.candidate_count() == 0:
+                        continue
+                    # Snapshot all the appropriateness signals once per poll.
+                    now = time.time()
+                    since_last_spoke = now - _last_brain_spoke_ts
+                    idle_s = get_idle_seconds()
+                    user_active = (PROACTIVE_IDLE_THRESHOLD <= 0
+                                   or idle_s < PROACTIVE_IDLE_THRESHOLD)
+                    # If the user has been OS-idle past the threshold, we
+                    # don't speak ANY candidate this cycle. Internal thoughts
+                    # keep flowing in the UI — only TTS is suppressed.
+                    if not user_active:
+                        # Drop any candidate that's already aged out; leave
+                        # fresh ones in the queue for when the user returns.
+                        while dmn.candidate_count() > 0:
+                            c = dmn.take_oldest_candidate()
+                            if c is None:
+                                break
+                            age = now - float(c.get("created_ts", now))
+                            if age <= SPEAK_CAND_MAX_AGE:
+                                dmn.return_candidate(c)
+                                break
+                        continue
+                    # Hard heuristic blockers — don't even ask the judge.
+                    if pns.is_speaking or not ui_message_queue.empty():
+                        continue
+                    if streaming_mic is not None and getattr(
+                            streaming_mic, "is_user_speaking", False):
+                        continue
+                    if since_last_spoke < PROACTIVE_RESPONSE_WINDOW:
+                        continue
+                    # All clear — evaluate one candidate per cycle (oldest
+                    # first). Drop expired candidates as we encounter them.
+                    while dmn.candidate_count() > 0:
+                        c = dmn.take_oldest_candidate()
+                        if c is None:
+                            break
+                        age = now - float(c.get("created_ts", now))
+                        if age > SPEAK_CAND_MAX_AGE:
+                            logger.info(
+                                "[Speak gate] Dropping aged candidate "
+                                "(age=%.0fs > %.0fs): %r",
+                                age, SPEAK_CAND_MAX_AGE,
+                                (c.get("spoken") or "")[:60],
+                            )
+                            continue  # discard, look at the next one
+                        verdict, reason = await dmn.judge_candidate(c)
+                        logger.info(
+                            "[Speak gate] verdict=%s reason=%s candidate=%r",
+                            verdict, reason, (c.get("spoken") or "")[:60],
+                        )
+                        if verdict == "yes":
+                            # Local-only bridge rewrite: if the candidate is
+                            # a clear tangent, rewrite the spoken form via
+                            # Ollama so the change-of-subject lands smoothly.
+                            # Returns the original on any failure — never
+                            # blocks the commit.
+                            try:
+                                bridged = await dmn.bridge_if_needed(c)
+                                if bridged and bridged != c.get("spoken"):
+                                    c["spoken"] = bridged
+                            except Exception as _bridge_err:
+                                logger.debug("[Speak gate] Bridge step failed: %s",
+                                             _bridge_err)
+                            dmn.commit_candidate_to_speech(c)
+                        elif verdict == "wait":
+                            dmn.return_candidate(c)
+                        # "drop" → already popped, just don't return
+                        break  # one judge call per poll cycle
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    logger.error("[Speak gate] Loop error: %s", e, exc_info=True)
+                    await asyncio.sleep(2.0)
+
+        asyncio.create_task(_speak_gate_loop())
 
     # ── Voice → UI bridge: forward utterances as turns ──────────────────────
     # In UI+voice mode the browser drives the conversation via ui_message_queue.
@@ -498,7 +598,25 @@ async def session(args) -> None:
 
     async def _process_turn_body(user_input: str, image_path: str | None = None) -> tuple[str, dict]:
         if dmn:
+            # pause() is now a no-op (continuous-thought design); call kept
+            # for backward compat in case anything still reaches for it.
             dmn.pause()
+            # Seed the DMN with the IN-PROGRESS user input so any ticks that
+            # fire while we're drafting see fresh context, not the prior turn.
+            # Speaker + relationship will be refreshed near the end of the
+            # turn (we don't have a speaker_name yet at this point).
+            try:
+                _interim_context = (
+                    f"{parietal.recent_turns_text()}\n\nUser just said: {user_input}"
+                )
+                # Upsert semantics: only refresh the parietal slice. The
+                # previously-stored self-schema, emotion, speaker, and
+                # relationship persist until the post-turn call replaces
+                # them with the freshly appraised set.
+                dmn.update_context(_interim_context)
+            except Exception:
+                # Best-effort — don't let a context refresh derail the turn.
+                pass
 
         turn = brainstem.begin_turn()
         turn_id = turn.turn_id
@@ -666,6 +784,8 @@ async def session(args) -> None:
         if emitter and affect.get("emotion"):
             await emitter.emit_emotion(affect["emotion"])
             await emitter.emit_neuromod(bus.neuromod.snapshot())
+            if affect.get("hormonal"):
+                await emitter.emit_hormonal(affect["hormonal"])
 
         # ── Occipital: vision (any time an image is present) ─────────────────
         vision_features = None
@@ -747,8 +867,21 @@ async def session(args) -> None:
         parietal_context = parietal.recent_turns_text()
 
         if dmn:
+            # Pull relationship signals for this speaker so the DMN's speak
+            # gate has them as structured inputs. Affection + familiarity
+            # come from the per-speaker schema; for unknown speakers we let
+            # the readers return their reserved defaults (0 / "new").
+            from brain.metacognition import read_affection_score, read_familiarity
+            _speaker_name_for_dmn = features.get("speaker_name") if isinstance(features, dict) else None
+            _schema_for_dmn = getattr(hippocampus, "_schema", None) if hippocampus else None
+            _relationship = {
+                "score": read_affection_score(_schema_for_dmn, _speaker_name_for_dmn or ""),
+                "familiarity": read_familiarity(_schema_for_dmn, _speaker_name_for_dmn or ""),
+            }
             dmn.update_context(parietal_context, affect.get("emotion", "neutral"),
-                               core_context.get("self", ""))
+                               core_context.get("self", ""),
+                               speaker_name=_speaker_name_for_dmn,
+                               relationship=_relationship)
             # Surface idle thoughts into this turn's drafter context so the
             # entity can reference what it was musing about (or quietly use
             # the priming effect even if it doesn't reference them aloud).
@@ -892,7 +1025,9 @@ async def session(args) -> None:
         turn_result = brainstem.end_turn()
 
         nm_snap = bus.neuromod.snapshot()
-        llm_calls = len(router._call_log)
+        # Match brainstem.end_turn — exclude background DMN calls so turn
+        # telemetry reflects work done for the turn itself.
+        llm_calls = router.turn_calls_excluding_background()
 
         # ── Per-cluster token breakdown (from call log accumulated this turn) ─
         cluster_tokens: dict[str, dict] = {}
@@ -913,9 +1048,11 @@ async def session(args) -> None:
                                   or selected_draft.get("tone_fit", 0.5))
         selected_draft_id = selected_draft.get("draft_id", "")
 
-        # Final neuromod push to UI
+        # Final neuromod + hormonal push to UI
         if emitter:
             await emitter.emit_neuromod(nm_snap)
+            h_snap_final = bus.hormonal.snapshot()
+            await emitter.emit_hormonal(h_snap_final)
             await emitter.emit_turn_end(turn_id, final, turn_result.elapsed(), llm_calls)
 
         # ── Quality badge to UI (free — from internal critic scores) ─────────
@@ -941,6 +1078,7 @@ async def session(args) -> None:
         trace.emotion = affect.get("emotion", "neutral")
         trace.emotion_core = core_of(affect.get("emotion", "neutral"))
         trace.neuromod = nm_snap
+        trace.hormonal = affect.get("hormonal") or bus.hormonal.snapshot()
         trace.draft_scores = draft_scores
         trace.selected_draft_id = selected_draft_id
         trace.drafter_count = len(draft_scores)
@@ -961,12 +1099,16 @@ async def session(args) -> None:
         session_traces_full.append(trace)
 
         # ── Background eval tasks (non-blocking) ─────────────────────────────
+        if emotion_judge:
+            emotion_judge.fire(trace)
+
         if baseline_runner:
             memory_ctx = ((memory.get("episodes") or "") + "\n"
                           + (memory.get("schema") or ""))
             baseline_runner.fire(
                 turn_id, user_input, final,
                 memory_ctx[:1000], selected_coherence, selected_emotional_fit,
+                trace=trace,
             )
 
         if meta:

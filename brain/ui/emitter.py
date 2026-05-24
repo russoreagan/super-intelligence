@@ -38,6 +38,13 @@ class ActivationEmitter:
         except asyncio.QueueFull:
             pass
 
+    async def emit_hormonal(self, snapshot: dict[str, float]) -> None:
+        event = {"type": "hormonal", **{k: round(v, 3) for k, v in snapshot.items()}}
+        try:
+            self._queue.put_nowait(event)
+        except asyncio.QueueFull:
+            pass
+
     async def emit_emotion(self, emotion: str) -> None:
         try:
             self._queue.put_nowait({"type": "emotion", "emotion": emotion})

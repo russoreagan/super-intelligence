@@ -28,6 +28,46 @@ from brain.settings import settings
 logger = logging.getLogger(__name__)
 
 META_ENABLED = os.environ.get("BRAIN_METACOGNITION", "false").lower() == "true"
+
+
+# ── Module-level relationship readers ────────────────────────────────────
+# Standalone helpers so callers without a MetacognitionCell (e.g. run.py
+# building the DMN's relationship context) can read the same fields the
+# instance methods read. Pure regex-on-schema, no LLM, no side effects.
+
+def read_affection_score(schema, speaker_name: str = "") -> int:
+    """Read the current numeric affection score from a speaker's schema.
+    Returns 0 on any failure or missing field (the neutral default)."""
+    if schema is None:
+        return 0
+    try:
+        import re
+        if speaker_name:
+            content = schema.read(schema.speaker_filename(speaker_name))
+        else:
+            content = schema.read("user.md")
+        m = re.search(r"- Score:\s*(-?\d+)", content)
+        return int(m.group(1)) if m else 0
+    except Exception:
+        return 0
+
+
+def read_familiarity(schema, speaker_name: str = "") -> str:
+    """Read the familiarity tier ("new" / "acquainted" / "close") from a
+    speaker's schema. Returns "new" on any failure — the most-reserved
+    default for unknown speakers."""
+    if schema is None:
+        return "new"
+    try:
+        import re
+        if speaker_name:
+            content = schema.read(schema.speaker_filename(speaker_name))
+        else:
+            content = schema.read("user.md")
+        m = re.search(r"- Familiarity:\s*(\w+)", content)
+        return m.group(1).lower() if m else "new"
+    except Exception:
+        return "new"
 META_INTERVAL = float(os.environ.get("BRAIN_META_INTERVAL", "30"))  # seconds
 
 SELF_REFLECTION_SYSTEM = """You are the metacognitive layer of an AI brain — the part that
@@ -111,19 +151,18 @@ class MetacognitionCell:
     # the affective state and the situation that produced it.
 
     def _affection_score(self, speaker_name: str = "") -> int:
-        """Read current affection score for speaker (written by hippocampus)."""
-        if not self._schema:
-            return 0
-        try:
-            import re
-            if speaker_name:
-                content = self._schema.read(self._schema.speaker_filename(speaker_name))
-            else:
-                content = self._schema.read("user.md")
-            m = re.search(r"- Score:\s*(-?\d+)", content)
-            return int(m.group(1)) if m else 0
-        except Exception:
-            return 0
+        return read_affection_score(self._schema, speaker_name)
+
+    def _familiarity(self, speaker_name: str = "") -> str:
+        return read_familiarity(self._schema, speaker_name)
+
+    # Public read-only accessors so external callers can fetch
+    # affection/familiarity without poking at name-mangled helpers.
+    def affection_score(self, speaker_name: str = "") -> int:
+        return self._affection_score(speaker_name)
+
+    def familiarity(self, speaker_name: str = "") -> str:
+        return self._familiarity(speaker_name)
 
     def _appraise(self, features: dict, neuromod: dict, draft_scores: list[dict]) -> tuple[str | None, str]:
         """Return (emotion_override, reason). Order matters — first match wins.

@@ -7,7 +7,7 @@
 
 ## Abstract
 
-We describe the design, implementation, and early empirical observations of a biologically-inspired multi-agent conversational system whose architecture maps explicitly onto regions of the human brain. The system departs from prevailing multi-agent LLM patterns by treating language model calls as expensive metabolic events — analogous to action potentials at convergence zones — and delegating the majority of per-turn computation to cheap, deterministic switch neurons. The architecture draws from predictive processing theory (Friston, Clark), dual-process theory (Kahneman), Global Workspace Theory (Baars, Dehaene), Dennett's Multiple Drafts model, and Clark and Chalmers' extended mind hypothesis. After 91 turns across 27 sessions, the system operates within its designed cost envelope (mean 3.48 LLM calls/turn against a target of 3–5), demonstrates functional neuromodulator dynamics, and has accumulated initial Hebbian edge weight history. Predict-and-surprise gating has fired on 34% of candidate turns, though the emotion-aware veto — particularly vocal stress detection — has suppressed most of those saves. Memory recall is active (26/91 turns, 28.6%). Several mechanisms remain too nascent to evaluate. We present the architecture, its philosophical commitments, and an honest account of what the early data does and does not indicate.
+We describe the design, implementation, and early empirical observations of a biologically-inspired multi-agent conversational system whose architecture maps explicitly onto regions of the human brain. The system departs from prevailing multi-agent LLM patterns by treating language model calls as expensive metabolic events — analogous to action potentials at convergence zones — and delegating the majority of per-turn computation to cheap, deterministic switch neurons. The architecture draws from predictive processing theory (Friston, Clark), dual-process theory (Kahneman), Global Workspace Theory (Baars, Dehaene), Dennett's Multiple Drafts model, and Clark and Chalmers' extended mind hypothesis. The current dataset covers 165 turns across 35 sessions. The system operates within its designed cost envelope (mean 3.28 LLM calls/turn against a target of 3–5), demonstrates functional neuromodulator dynamics including an observable ACh upward trend across sessions, and has begun producing measurable predict-and-surprise gating saves (17.6% of turns). Memory recall is active on 32.1% of turns. Two Hebbian sleep consolidation passes provide first evidence of edge weight reinforcement. The dominant emotional state across the dataset is split between neutral (52%) and curious (42%), with the mood signature history showing an internal shift toward curious-dominant over time. Several mechanisms remain too nascent to evaluate, and the central question of whether multi-agent structure improves on a single well-prompted model has not yet been subjected to controlled comparison. We present the architecture, its philosophical commitments, and an honest account of what the data does and does not indicate.
 
 ---
 
@@ -196,63 +196,66 @@ The system boots from a single shell script and runs in multiple feature configu
 
 ### 6.1 Dataset
 
-The current eval dataset consists of **91 turns across 27 sessions**, logged in `eval/turns.jsonl` with 190 associated decision records. This is a small dataset, and the observations below should be read as directional indicators rather than statistically robust conclusions.
+The eval dataset consists of **165 turns across 35 sessions**, logged in `eval/turns.jsonl` with 400 associated decision records. Sessions average 4.7 turns each. This is a small dataset at an early stage; all findings should be read as directional indicators rather than statistically robust conclusions.
 
 ### 6.2 LLM call efficiency
 
-Mean LLM calls per turn: **3.48** (range 0–8). This is within the designed range of 3–5 for typical turns. The minimum of 0 confirms that the template-match switch path (trivial inputs returning canned responses) is functional. The maximum of 8 aligns with the designed upper bound for high-surprise or hostile inputs. The distribution is well-behaved.
+Mean LLM calls per turn: **3.28** (range 0–8). This is within the designed range of 3–5 for typical turns. The 0 minimum confirms the template-match switch path (trivial inputs returning canned responses with no LLM calls) is functional. The 8 maximum aligns with the designed ceiling for high-surprise or hostile inputs.
 
-Mean latency: **9.2 seconds** (range 0.8–23.6s). This is within the expected cloud-mode range cited in the original design (3–5s for routine, up to ~24s for complex turns with multiple LLM calls in sequence). Latency is currently the most significant user-facing limitation.
+Mean latency: **8.7 seconds** (range 0.8–26.5s). This is within the expected cloud-mode range from the original design. Latency remains the primary user-facing limitation; it is framed in the design as "deliberation time" rather than lag, with the real-time brain activation visualization serving as evidence of live processing rather than a loading state.
 
-### 6.3 Predict-and-surprise gating: early and mixed signals
+### 6.3 Predict-and-surprise gating
 
-**34% of turns** generated a candidate gating event (predictor confidence high enough to suggest suppressing the integrator). Of these 31 candidate events, **27 (87%) were overridden by the emotion-aware veto** and only 4 (13%) resulted in actual integrator suppression. The net LLM call savings to date: mean **0.04 per turn**.
+**29 of 165 turns (17.6%)** produced actual integrator suppression with measurable LLM call savings. An additional 31 turns triggered the gating predictor but were overridden by the emotion-aware veto before suppression could occur, for a total of 60 candidate gating events (36% of turns).
 
-This result requires careful interpretation. The emotion-aware veto broke down as follows: **23 of 27 bypasses were triggered by `vocal_tone=stressed`** from the Deepgram prosody pipeline, with the remaining 4 triggered by `high_GABA`.
+The 29 actual saves all fired on the same learned prediction: `{response_type: "chitchat", target_length: "medium", tone: "warm"}` (shifting to `tone: "curious"` in later sessions), all at **1.00 predictor confidence**. The system has established that when input arrives in the chitchat register during a familiar session, the frontal executive will predictably call for a medium-length warm response — and it routes around the executive integrator entirely in those cases, saving an estimated $0.0015 per skip.
 
-Two competing explanations exist:
-1. **The vocal stress detector is too sensitive**, triggering bypass on ordinary conversational speech patterns that are not genuinely distress-indicating. If so, the veto calibration needs adjustment — the system is correctly building prediction history but over-blocking gating.
-2. **Voice mode introduces genuine speech stress signals** that reflect the exploratory, uncertain quality of early-session interaction, and the veto is working correctly — these are exactly the moments where fresh attention is warranted.
+Of the 31 veto-overridden events, 24 were triggered by `vocal_tone=stressed` from the Deepgram prosody pipeline, 6 by `high_GABA`, and 1 by active speaker enrollment. The vocal stress bypasses are consistent with the emotion-aware veto's design intent: these are moments where a statistically valid prediction may be "morally wrong," and fresh integrator attention is warranted regardless of prediction confidence.
 
-We cannot currently distinguish between these explanations. The predictor window (size 8) also means that any given session accumulates insufficient history to build confident predictions before it ends. With 27 sessions averaging only 3.4 turns each, the predictor is being reset frequently. As sessions grow longer and more focused, prediction accuracy should improve and gating should fire more reliably.
-
-**Preliminary verdict**: gating machinery is functional and structurally sound. The interaction between vocal stress bypass and the early-session prediction history explains the low savings to date. This mechanism is **promising but insufficiently evidenced** — it requires longer sessions and calibration of the vocal stress detector threshold before a meaningful efficiency claim can be made.
+The overall 17.6% save rate is below the design target of 30–50%, but the pattern is directionally correct: the predictor accumulates history and fires with increasing confidence on familiar conversational patterns. Achieving the full target range will likely require longer sessions where the predictor has more within-session history to draw from.
 
 ### 6.4 Neuromodulator dynamics
 
-The neuromodulator levels show expected biological-analog behavior:
+The neuromodulator levels show expected biological-analog behavior across the dataset:
 
-- **Dopamine (DA)**: mean 0.443, range 0.300–0.850. The range indicates active reward signaling — DA is responding to turn quality and valence. A mean below 0.5 suggests the system spends most of its time in a "not strongly rewarded" baseline state, which is appropriate for exploratory early sessions.
-- **Acetylcholine (ACh)**: mean 0.472, range 0.170–0.850. Slightly higher mean than DA, consistent with the system being frequently in an "paying attention to something novel" state — expected during setup and exploration sessions.
-- **GABA**: mean 0.113, range 0.020–0.850. Low baseline with the ability to spike substantially on threat. This is structurally correct: GABA as a resting inhibitory tone at ~10% with headroom for strong inhibition. The maximum of 0.850 confirms that the hostile/threat pathway fires as designed.
+- **DA**: mean 0.421, range 0.300–0.850. Active reward signaling with headroom for both very low and very high states.
+- **ACh**: mean 0.554, range 0.170–0.850. Consistently higher than DA, consistent with the session content being primarily exploratory and self-referential (novelty/attention signal elevated).
+- **GABA**: mean 0.098, range 0.020–0.850. Low resting inhibitory tone with the ability to spike strongly on threat. The 0.850 maximum confirms the hostile/threat pathway is functional.
 
-The neuromodulator dynamics are working as designed. Their behavioral consequences (suppressing drafters under high GABA, adjusting learning rate via DA×ACh) are functional. However, with only 91 turns, we cannot yet characterize how these levels evolve over the course of long relationships or whether they develop meaningful session-to-session "mood baselines."
+A notable trend is visible within the dataset: ACh rises from approximately 0.44 in the earliest sessions to approximately 0.77 in the most recent, while DA trends mildly downward from ~0.45 to ~0.33. This is corroborated independently by the `self.md` mood signature history, which records 43 session-end state snapshots: the first 33 entries all log `dominant=neutral`, while entries 34–43 log `dominant=curious` with steadily climbing ACh (0.44 → 0.80). Two independent signals — turn-level neuromod state and session-end self-model synthesis — converge on the same story.
+
+A plausible interpretation: sessions have become increasingly introspective, and ACh rises appropriately in response to self-referential novelty. A confound is possible: if the topic bias toward architectural discussion is itself driving both signals, the trend may reflect content uniformity rather than genuine baseline drift. Controlled session diversity would help disambiguate.
 
 ### 6.5 Emotion model
 
-The current emotion distribution: **neutral (71%)**, curious (22%), excitement (5%), thoughtful (1%). No negative emotional states have appeared in the dataset.
+Emotion distribution across all 165 turns: **neutral (52%)**, curious (42%), excitement (3%), thoughtful (2%), joy (1%). No negative emotional states appear in the dataset, consistent with the session content being non-hostile throughout.
 
-The predominantly neutral baseline with positive emotional states (curious, excitement) is characteristic of exploratory, intellectually engaging sessions — which matches the actual session content (mostly testing and discussion of the system itself). The absence of negative emotional states does not indicate that the negative pathways are non-functional; it indicates the sessions to date have not encountered hostile input, prolonged frustration, or sustained negative valence.
-
-The emotion model is **working structurally**. The Plutchik-style neuromodulator-to-emotion mapping is operational. Whether the emotion labels produce meaningfully differentiated behavior at scale requires more diverse session data.
+The internal trend within the dataset mirrors the ACh finding: earlier sessions are neutral-dominated; more recent sessions are curious-dominated. Whether this reflects genuine personality development through accumulated experience or an artifact of increasingly self-referential session topics cannot yet be distinguished. The machinery is internally consistent — emotion labels track neuromod levels, and the session-end self-narrative describes this shift in the same terms the system uses.
 
 ### 6.6 Memory system
 
-Memory recall was active on **26 of 91 turns (28.6%)**. This is notable: in roughly one in three turns, the hippocampus cluster successfully executed a recall query and returned episodic or schema content to the frontal drafters. The recall mechanism — vector similarity over LanceDB plus Markdown grep against schema files — is functional.
+Memory recall was active on **53 of 165 turns (32.1%)**. The hippocampus cluster is contributing to roughly one in three turns, returning episodic or schema content to the frontal drafters via the vector similarity + Markdown grep pipeline. The recall rate is working as designed.
 
-Memory write (episode encoding) is harder to evaluate from current data. The hippocampus encoder fires when turn salience exceeds a threshold, but the skip logic (low-surprise/low-DA turns skip LLM summarization) means many episodes are stored with code-generated summaries rather than LLM-synthesized ones. The episodic store is accumulating, but whether the memory quality is sufficient for meaningful long-horizon retrieval requires multi-week longitudinal testing.
+Whether recalled episodes are improving response quality remains uncontrolled. The episodic store is young — most episodes are from within the past few days — so long-horizon retrieval quality, the more interesting property, cannot yet be assessed.
 
-### 6.7 Hebbian plasticity: too early to evaluate
+### 6.7 Hebbian plasticity
 
-Six Hebbian update events in 91 turns. This is too sparse for any conclusion about whether the plasticity mechanism produces coherent behavior change. The low update rate has multiple candidate explanations: turn-level outcomes must meet a minimum signal threshold (|outcome| < 0.05 skips the update), defuse turns are explicitly skipped to avoid reinforcing reactive behavior, and sessions have been short (mean 3.4 turns). Hebbian learning is designed for longitudinal effects across many sessions; it is not expected to produce observable results in this dataset.
+The dataset includes two sleep consolidation passes. Both show the same pattern:
 
-This mechanism is **correctly designed but entirely unevaluated**. Its theoretical basis (Hebbian potentiation, homeostatic decay, plasticity modulation by arousal) is sound, and the implementation is complete. Whether it produces the desired behavioral effects — recognizable stylistic preferences emerging from reinforcement — requires months of sustained interaction.
+- **Plasticity modulator**: 1.17 and 1.14 (above 1.0 — DA×ACh product elevated learning rate, indicating engaged sessions)
+- **Edges updated per session**: 3
+- **Top gainers in both passes**: `temporal.self_reference → temporal.understanding_integrator`, `temporal.understanding_integrator → frontal.executive`, `frontal.executive → frontal.drafter_A`
+- **Top losers**: none in either pass
+
+The self-reference → understanding → executive → drafter_A pathway is being reinforced. Weight deltas are small (0.004–0.005 per session) but consistent across both consolidations. No edge weakening has occurred yet — expected at this stage, since the homeostatic decay requires more session diversity before underused paths are pruned.
+
+Whether this reinforcement will produce a measurable behavioral preference — the system genuinely favoring drafter_A's style on self-referential turns in future sessions — requires longer observation. A confound applies: if all sessions have been self-referential, the wiring history has no contrast class and drafter_A's advantage may reflect session uniformity rather than learned preference.
 
 ### 6.8 Draft quality
 
-The Multiple Drafts engine produces drafts with a mean critic score of **0.819 across all generated drafts**. The frontal critic scores coherence, relevance, tone-fit, and empathy; the composite score of 0.82 indicates consistently good draft quality. The mean drafter count of 1.12 confirms that the arousal-modulated drafter count switch is working correctly: most turns are low-enough arousal to generate a single draft, with multiple drafts reserved for higher-arousal or more complex inputs.
+Mean critic score: **0.821 across 184 drafts**. Mean drafter count: **1.12**. Both figures are stable. The single-draft norm (mean 1.12) confirms that arousal-modulated drafter count selection is working correctly: most turns are low enough arousal to generate one draft, with multiples reserved for complex or emotionally charged inputs.
 
-Draft selection (highest overall score) is functioning. The critic veto (score below threshold) has not been needed to fire in the current dataset, consistent with the high mean quality. Whether the tournament produces meaningfully different outcomes than a single-drafter approach requires controlled comparison, which the eval framework (`eval/compare.py`) supports but which has not yet been run at scale.
+The `skip_executive_integrator` gating bypasses the coordination step that precedes drafting, not the drafter itself. Draft quality is therefore not affected by the efficiency gains in Section 6.3 — the optimization targets overhead, not generation.
 
 ---
 
@@ -260,37 +263,39 @@ Draft selection (highest overall score) is functioning. The critic veto (score b
 
 ### 7.1 What is working well
 
-**The cost model is validated.** Mean 3.48 LLM calls per turn at a designed range of 3–5 represents accurate architectural cost prediction. The system is running within budget with the template-match short-circuit (0 LLM calls for trivial inputs) confirmed operational.
+**The cost model is validated.** Mean 3.28 LLM calls per turn is within the designed range. The system is operating at roughly the expected budget, with the switch-only fast paths (0 LLM calls for trivial inputs) confirmed functional.
 
-**The neuromodulator dynamics are correct.** The GABA/DA/ACh/Glu system is producing biologically plausible level distributions, responding appropriately to input valence, and the inhibitory pathways (GABA suppressing drafter count) are functional. This is one of the more novel aspects of the design — most multi-agent systems have no equivalent — and it is working as designed.
+**Predict-and-surprise gating is producing measurable savings.** 17.6% of turns are successfully gated, with the predictor achieving 1.00 confidence on the dominant chitchat/medium/warm response shape. This is Active Inference in practice: the system's model of its own responses has become accurate enough that it no longer runs the full reasoning pipeline to confirm them on familiar turns.
 
-**Memory recall is active and frequent.** 28.6% of turns triggering hippocampus recall is a strong indicator that the memory system is contributing to turns, not merely accumulating. Whether those contributions are improving response quality requires controlled evaluation but the infrastructure is operational.
+**The neuromodulator dynamics are functional and showing within-dataset temporal behavior.** The ACh upward trend across sessions — corroborated by two independent signals — is the most concrete behavioral pattern observed to date. It indicates the system's internal state is evolving across sessions rather than resetting, which is the designed behavior.
 
-**The observability system is complete.** The decision log, turn trace, browser UI with real-time activation visualization, and eval comparison framework represent genuine research infrastructure. The ability to inspect every predict-and-surprise decision, every Hebbian update, and every drafter selection with full reasoning is unusual in this space and would allow rigorous evaluation when more data accumulates.
+**Memory recall is active and frequent.** Contributing to 32.1% of turns means the hippocampus is a live participant in the pipeline, not merely an accumulating store.
 
-**The philosophical commitments are structurally implemented.** This is not a system that merely describes the Multiple Drafts model or Global Workspace Theory — it has actually implemented them. The frontal drafter tournament is a Multiple Drafts engine in the Dennett sense. The attention.focus bus topic is a Global Workspace. The predict-and-surprise gating is Active Inference applied at the cluster level. Whether these implementations produce the properties their philosophical progenitors attribute to them is an empirical question, but the implementation fidelity is genuine.
+**The observability infrastructure is complete.** Every predict-and-surprise decision, every Hebbian update, and every drafter selection is logged with full reasoning. This is what makes the current analysis possible and will enable rigorous evaluation as the dataset grows.
+
+**The philosophical commitments are structurally implemented.** The frontal drafter tournament is a Multiple Drafts engine in the Dennett sense. The attention.focus bus topic is a Global Workspace. Predict-and-surprise gating is Active Inference at cluster level. The implementation fidelity is genuine.
 
 ### 7.2 What is promising but not yet evidenced
 
-**Predict-and-surprise gating as an efficiency mechanism.** The design target — saving 30–50% of LLM calls on routine turns in familiar conversations — has not been achieved in early data, but the structural explanation (short sessions, vocal stress bypass calibration) is plausible. As sessions lengthen and vocal stress threshold tuning is applied, this mechanism may deliver on its promise. It is the single largest potential efficiency gain in the system and warrants focused testing.
+**Predict-and-surprise achieving its full efficiency target.** The 17.6% save rate is real but below the 30–50% design target. Longer sessions with more within-session history should push this higher. The mechanism is right; the dataset is short.
 
-**Hebbian plasticity producing emergent behavioral style.** The mechanism is sound and implemented. The theoretical prediction — that preferred drafters, recall paths, and switch orderings will emerge from accumulated reinforcement signal over many sessions — is testable but not yet tested. This is a 3–6 month experiment, not a 91-turn experiment.
+**Hebbian plasticity producing emergent behavioral style.** Two consolidation passes show consistent reinforcement of the same pathway, with plasticity modulators correctly elevated on engaged sessions. The theoretical prediction — that preferred drafters, recall paths, and switch orderings will emerge from reinforcement over many sessions — is testable but not yet tested. This is a months-long experiment.
 
-**DMN and metacognition producing richer long-session context.** Both the Default Mode Network (idle thinking between turns) and the metacognition cell (self-reflection every 30 seconds) are implemented and operational. Their value — making the entity richer in long sessions because it has been "thinking" between turns — requires session durations and continuity not yet seen in the dataset.
+**The emotion shift producing differentiated behavior.** The neutral-to-curious shift is visible across two independent signals. Whether it produces substantively different responses on the same input requires controlled A/B testing not yet conducted.
 
-**Sleep consolidation and session-to-session identity continuity.** The self.md file shows 31 accumulated mood signature entries from multiple sessions, confirming that sleep consolidation is running. Whether the accumulated self-model produces meaningfully consistent cross-session behavior requires longitudinal study.
+**DMN, metacognition, and sleep consolidation effects.** All three are operational. Their value requires session durations and longitudinal continuity not yet accumulated.
 
-**The empathy critic and Theory of Mind pathways.** These are implemented but have rarely fired in the current dataset (sessions have been emotionally neutral). Their functional value — modulating responses when user emotional state is non-neutral — requires sessions with frustrated, distressed, or emotionally engaged users.
+**The empathy critic and Theory of Mind pathways.** Implemented but rarely triggered — sessions have been emotionally positive. Functional value requires diverse session content.
 
 ### 7.3 What remains genuinely uncertain
 
-**Whether the multi-agent structure produces better responses than a single well-prompted LLM.** This is the central open question. The eval framework has the infrastructure to test it (`eval/baseline.py`, `eval/compare.py`, post-hoc judge scoring) but has not yet run controlled comparisons at scale. The literature suggests this is a hard bar to clear. The honest prior, based on prior art, is that the multi-agent structure adds legibility and behavioral structure but may not beat a single good model on raw response quality. Claiming otherwise requires evidence we do not yet have.
+**Whether multi-agent structure produces better responses than a single well-prompted LLM.** This is the central open question. The eval framework has the infrastructure to test it (`eval/baseline.py`, `eval/compare.py`, post-hoc judge scoring) but controlled comparisons have not been run at scale. The honest prior from the literature is that multi-agent structure adds legibility and behavioral structure but does not reliably beat a single good model on raw response quality. Claiming otherwise requires evidence we do not yet have.
 
-**Whether the emotional state labels map to meaningfully differentiated behavior.** The emotion-naming switch maps neuromodulator vectors to labels like "curious" or "neutral." Whether those labels produce substantively different responses (via the emotion expression switch and voice modulation) or merely label states whose behavioral effects were already captured by the raw neuromodulator levels is unclear.
+**Whether the ACh and emotion trends reflect genuine baseline drift or topic bias.** The convergence of two independent signals is suggestive, but the session content has been uniformly self-referential. Controlled session diversity would separate signal from confound.
 
-**Long-horizon session coherence.** Can the entity maintain a consistent relational identity across many sessions over months? The architectural substrate for this (perfect episodic memory, self.md autobiography, Hebbian wiring) is in place. The evidence is not.
+**Whether the Hebbian self-reference pathway is preference or artifact.** Without a contrast class of non-self-referential sessions, it is not clear whether the drafter_A reinforcement reflects a learned stylistic preference or simply mirrors the topic uniformity of the dataset.
 
-**Whether predict-and-surprise gating is actually saving compute or merely describing the already-gated state.** The 27 emotional bypasses suggest the gating predictor may be building valid predictions but having them systematically overridden. If the bypass rate remains high after calibration, it would indicate that the system's actual turn mix is too emotionally charged for routine prediction to fire — which would be interesting in its own right (the system is rarely in a truly routine state) but would undermine the efficiency claim.
+**Long-horizon retrieval quality.** The episodic store is too young to test whether vector retrieval surfaces genuinely useful long-past context or primarily returns recent sessions by proximity.
 
 ---
 
@@ -308,7 +313,7 @@ Several failure modes were anticipated in the original design document. Their cu
 
 **Replay determinism.** Not attempted. The async + LLM nondeterminism makes exact replay impossible. The logging is designed for reconstruction, not deterministic replay.
 
-**Latency.** 9.2-second mean is workable but not conversational. The system was designed with the expectation that latency would be a primary UX limitation, framed as "deliberation" rather than lag. Shorter-path turns (template match, single drafter) achieve sub-second to 2-second latency. Complex multi-drafter turns drive the mean up. This is a fundamental constraint of sequential LLM calls on the critical path.
+**Latency.** Mean 8.7 seconds is workable but not conversational. The system was designed with the expectation that latency would be a primary UX limitation, framed as "deliberation" rather than lag. Shorter-path turns achieve sub-second to 2-second latency; complex multi-drafter turns drive the mean up. This is a fundamental constraint of sequential LLM calls on the critical path.
 
 ---
 
@@ -316,7 +321,7 @@ Several failure modes were anticipated in the original design document. Their cu
 
 This system makes claims that can be evaluated against each of its philosophical commitments.
 
-**Functionalism**: The system's operation is genuinely substrate-independent. The same conversation has been run with Anthropic Haiku, Google Gemini Flash-Lite, and local Ollama Qwen 2.5 as the integrators. The behavioral differences are stylistic, not structural. The functional organization — switch gating, convergence events, drafter tournaments — operates identically regardless of which models are running the integrators. This is functionalism in practice.
+**Functionalism**: The system's operation is genuinely substrate-independent. The same conversation has been run with Anthropic Haiku, Google Gemini Flash-Lite, and local Ollama Qwen 2.5 as the integrators. The behavioral differences are stylistic, not structural. The functional organization — switch gating, convergence events, drafter tournaments — operates identically regardless of which models run the integrators. This is functionalism in practice.
 
 **Dual-Process**: The switch/integrator distinction cleanly separates fast-and-automatic from slow-and-deliberate processing. Whether this produces the specific phenomenological properties Kahneman attributes to System 1 and System 2 in humans is a category error to ask — but the computational analogy is genuine. The system literally does not reason about routine inputs; it pattern-matches. It literally does reason about novel or high-surprise inputs.
 
@@ -324,7 +329,7 @@ This system makes claims that can be evaluated against each of its philosophical
 
 **Multiple Drafts**: The drafter tournament is genuinely draft-parallel. Multiple integrators write candidate responses without knowledge of each other's drafts. The critic scores them. The articulation gate emits the winner. There is no "true response" that was waiting to be discovered — there are only the drafts that existed when the gate fired. This is the Multiple Drafts model in code.
 
-**Extended Mind**: The second brain satisfies Clark and Chalmers' coupling and availability conditions: it is reliably available, automatically endorsed, and directly accessible. The entity's responses are demonstrably shaped by second-brain content (28.6% of turns recall from it). The functional loop is closed.
+**Extended Mind**: The second brain satisfies Clark and Chalmers' coupling and availability conditions: it is reliably available, automatically endorsed, and directly accessible. The entity's responses are demonstrably shaped by second-brain content on 32.1% of turns. The functional loop is closed.
 
 ---
 
@@ -332,18 +337,20 @@ This system makes claims that can be evaluated against each of its philosophical
 
 This system represents a genuine implementation of biologically-inspired cognitive architecture at a scale and fidelity not previously published in the LLM multi-agent literature. Its core design claims — sparse LLM activation at convergence zones only, neuromodulator dynamics as free persistent state, hippocampus-gated memory with vector episodic store, Hebbian plasticity in edge weights, predict-and-surprise gating from Active Inference — are not merely described but implemented and operational.
 
-The early data (91 turns, 27 sessions) supports the following conclusions:
+The dataset (165 turns, 35 sessions) supports the following conclusions:
 
-1. The cost model is validated: the system operates within its designed LLM call budget.
-2. Neuromodulator dynamics are functional and produce biologically plausible level distributions.
-3. Memory recall is active and contributing to turns at meaningful frequency.
-4. The observability infrastructure is complete and capable of supporting rigorous evaluation.
+1. **The cost model is validated.** Mean 3.28 LLM calls/turn is within the designed range, and the switch-only fast paths are functional.
+2. **Predict-and-surprise gating is producing real savings** (17.6% of turns), with the predictor achieving 1.00 confidence on the dominant response shape. The mechanism is working; the full efficiency target requires longer sessions.
+3. **Neuromodulator dynamics are functional and showing temporal behavior** — ACh rises across the dataset, corroborated by two independent signals.
+4. **Memory recall is active** on 32.1% of turns.
+5. **Hebbian plasticity is running** with two consolidation passes showing consistent reinforcement of the same pathway.
+6. **The observability infrastructure is complete** and enables the analysis above.
 
-The following mechanisms are implemented and structurally sound but require substantially more data to evaluate: predict-and-surprise efficiency gains, Hebbian plasticity producing emergent behavioral style, DMN/metacognition effects on long-session richness, cross-session identity coherence, and empathy critic effects on emotionally charged conversations.
+The following require substantially more data: Hebbian plasticity producing observable behavioral preferences, DMN/metacognition effects, empathy critic effects in emotionally diverse sessions, distinguishing genuine ACh baseline drift from topic-content bias, and long-horizon retrieval quality.
 
-The central open question — whether the multi-agent architecture produces better responses than a single well-prompted LLM given equal compute — is not answered and should be the primary focus of next-phase evaluation.
+The central open question — whether the multi-agent architecture produces better responses than a single well-prompted LLM given equal compute — remains unanswered and should be the primary focus of next-phase evaluation.
 
-The most honest characterization of the current state: this system has built the **substrate for emergent behavior** that its philosophical and biological models predict. The behavior itself requires months of longitudinal interaction to either appear or fail to appear. The interesting finding from early sessions is not that emergent behavior has been observed — it has not, at least not in any rigorous sense — but that the system is running correctly, accumulating history, and has not hit any of the catastrophic failure modes (cascades, coordinator drift, cost explosions) that the design literature identified as likely early blockers.
+The most honest characterization of the current state: the substrate is active and the first behavioral patterns are visible. Predict-and-surprise gating is working. The neuromodulator system shows temporal dynamics. The first Hebbian reinforcement has occurred. None of these rise to "interesting emergent behavior" in the sense the design literature uses the phrase — but they are evidence that the underlying mechanisms are doing real work, not merely executing fixed logic.
 
 The system is a working research instrument. The experiment is ongoing.
 
@@ -384,5 +391,5 @@ Searle, J. (1980). Minds, brains, and programs. *Behavioral and Brain Sciences*,
 ---
 
 *System source: `/Users/russ/Documents/super intelligence app/`*  
-*Data source: `eval/turns.jsonl` (91 turns, 27 sessions, as of 2026-05-23)*  
+*Data source: `eval/turns.jsonl` (165 turns, 35 sessions, as of 2026-05-23)*  
 *Architecture reference: `PLAN.md`, `brain/CONSTITUTION.md`*

@@ -44,7 +44,8 @@ class BaselineRunner:
         logger.info("BaselineRunner: intensive mode %s", "ON" if value else "OFF")
 
     def fire(self, turn_id: str, user_input: str, brain_response: str,
-             memory_context: str, coherence: float, emotional_fit: float) -> None:
+             memory_context: str, coherence: float, emotional_fit: float,
+             trace=None) -> None:
         """Schedule a baseline call if this turn is sampled. Non-blocking."""
         if not self._enabled:
             return
@@ -54,13 +55,14 @@ class BaselineRunner:
             return
         asyncio.create_task(
             self._run(turn_id, user_input, brain_response, memory_context,
-                      coherence, emotional_fit)
+                      coherence, emotional_fit, trace)
         )
 
     # ── Private ─────────────────────────────────────────────────────────────
 
     async def _run(self, turn_id: str, user_input: str, brain_response: str,
-                   memory_context: str, coherence: float, emotional_fit: float) -> None:
+                   memory_context: str, coherence: float, emotional_fit: float,
+                   trace=None) -> None:
         start = time.time()
         try:
             baseline_response = await self._router.call(
@@ -94,4 +96,5 @@ class BaselineRunner:
                 memory_context=memory_context,
                 coherence=coherence,
                 emotional_fit=emotional_fit,
+                trace=trace,
             )

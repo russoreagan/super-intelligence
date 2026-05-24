@@ -29,6 +29,7 @@ class TurnTrace:
     emotion: str = "neutral"
     emotion_core: str = "neutral"   # feeling-wheel parent (happy/sad/anger/…)
     neuromod: dict = field(default_factory=dict)
+    hormonal: dict = field(default_factory=dict)  # 5HT, CORT, OXT snapshot
     cluster_activations: dict[str, float] = field(default_factory=dict)
     ts: float = field(default_factory=time.time)
 
@@ -139,7 +140,10 @@ class ObservabilityLayer:
         if len(self._traces) > _TRACE_WINDOW:
             self._traces = self._traces[-_TRACE_WINDOW:]
         if trace.neuromod:
-            self._neuromod_history.append({"ts": trace.ts, **trace.neuromod})
+            entry = {"ts": trace.ts, **trace.neuromod}
+            if trace.hormonal:
+                entry["hormonal"] = trace.hormonal
+            self._neuromod_history.append(entry)
         if self._langfuse:
             try:
                 span = self._active_spans.pop(trace.turn_id, None)
@@ -155,6 +159,8 @@ class ObservabilityLayer:
                             "memory_hit_count": trace.memory_hit_count,
                             "drafter_count": trace.drafter_count,
                             "llm_calls_saved": trace.llm_calls_saved,
+                            # hormonal state (slow-timescale endocrine layer)
+                            **({"hormonal": trace.hormonal} if trace.hormonal else {}),
                             # voice / prosody (non-empty only when --ears active)
                             **({"speaker_name": trace.speaker_name} if trace.speaker_name else {}),
                             **({"speaker_score": trace.speaker_score} if trace.speaker_score else {}),
@@ -239,6 +245,30 @@ class ObservabilityLayer:
                 )
             except Exception as e:
                 logger.debug("Langfuse create_score(%s) failed: %s", name, e)
+
+    def record_thought(self, thought: str, direction: str, angle: str | None,
+                       count: int, neuromod: dict | None = None) -> None:
+        """Create a standalone Langfuse trace for one DMN internal thought."""
+        if not self._langfuse:
+            return
+        try:
+            from langfuse import propagate_attributes
+            with propagate_attributes(session_id=self._session_id,
+                                      trace_name="dmn-thought"):
+                span = self._langfuse.start_observation(
+                    name="dmn-thought",
+                    as_type="span",
+                    input={"thought": thought},
+                    metadata={
+                        "direction": direction,
+                        "angle": angle or "",
+                        "count": count,
+                        **({"neuromod": neuromod} if neuromod else {}),
+                    },
+                )
+            span.end()
+        except Exception as e:
+            logger.debug("Langfuse record_thought failed: %s", e)
 
     def record_llm_call(self, turn_id: str, cluster: str, cell: str,
                          model: str, prompt_tokens: int, completion_tokens: int,

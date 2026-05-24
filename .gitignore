@@ -13,6 +13,7 @@ build/
 
 # LanceDB (binary vector store — large, session-specific)
 second_brain/episodes/
+second_brain/archive/
 
 # Langfuse / observability local data (top-level only — brain/observability/ is source code)
 /observability/

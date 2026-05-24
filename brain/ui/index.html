@@ -170,10 +170,17 @@ input, select, textarea { font: inherit; color: inherit; background: none; borde
   color: var(--fg-dim);
 }
 
-#emotion-badge {
+/* Centered group: mood badge + active region */
+.header-center {
   position: absolute;
   left: 50%;
   transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none;
+}
+#emotion-badge {
   padding: 5px 16px;
   border-radius: 999px;
   font-family: var(--mono);
@@ -186,7 +193,38 @@ input, select, textarea { font: inherit; color: inherit; background: none; borde
   border: 1px solid var(--line-soft);
   transition: background 2s ease, color 2s ease, border-color 2s ease;
   white-space: nowrap;
-  pointer-events: none;
+}
+#active-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--fg-faint);
+  padding: 5px 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  background: oklch(0.20 0.01 250 / 0.5);
+  transition: color 280ms, border-color 280ms, background 280ms;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+#active-label.lit {
+  color: var(--fg-dim);
+  border-color: oklch(0.78 0.14 220 / 0.4);
+}
+#active-label::before {
+  content: '';
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: var(--fg-faint);
+  transition: background 280ms, box-shadow 280ms;
+  flex-shrink: 0;
+}
+#active-label.lit::before {
+  background: var(--accent);
+  box-shadow: 0 0 6px var(--accent);
 }
 
 .header-right {
@@ -306,7 +344,75 @@ input, select, textarea { font: inherit; color: inherit; background: none; borde
   min-height: 0; min-width: 0;
   display: flex; flex-direction: column;
 }
-.col-left  { border-right: 1px solid var(--line-soft); overflow-y: auto; }
+.col-left  { border-right: 1px solid var(--line-soft); overflow: hidden; }
+
+/* ---- Left panel tabs ---- */
+.left-tabs {
+  display: flex;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--bg-1);
+}
+.left-tab {
+  flex: 1;
+  padding: 10px 0;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--fg-faint);
+  border-bottom: 2px solid transparent;
+  transition: color 180ms, border-color 180ms, background 180ms;
+  cursor: pointer;
+}
+.left-tab:hover { color: var(--fg-mute); background: var(--bg-2); }
+.left-tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  background: transparent;
+}
+@keyframes tab-flash-anim {
+  0%, 100% { color: var(--fg-faint); }
+  50% { color: var(--ok); }
+}
+.left-tab.tab-flash { animation: tab-flash-anim 0.8s ease; }
+.left-tab-content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+.left-tab-content.hidden { display: none; }
+
+/* ---- Thoughts feed ---- */
+#thoughts-feed {
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1;
+}
+.thought-item {
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--fg-mute);
+  font-style: italic;
+  padding: 8px 12px;
+  border-left: 2px solid var(--line);
+  border-radius: 0 var(--r-1) var(--r-1) 0;
+  background: var(--bg-1);
+  animation: fadein 240ms ease both;
+}
+.thought-ts {
+  display: block;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  color: var(--fg-faint);
+  margin-bottom: 4px;
+  font-style: normal;
+}
 .col-mid   { position: relative; overflow: hidden; }
 .col-right { border-left: 1px solid var(--line-soft); }
 
@@ -776,44 +882,6 @@ input, select, textarea { font: inherit; color: inherit; background: none; borde
 .readout.br { bottom: 70px; right: 22px; text-align: right; }
 
 /* active label below brain */
-#active-label-wrap {
-  position: absolute;
-  bottom: 14px; left: 0; right: 0;
-  display: flex; justify-content: center;
-  pointer-events: none;
-}
-#active-label {
-  font-family: var(--mono);
-  font-size: 11px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: var(--fg-mute);
-  padding: 8px 16px;
-  border: 1px solid var(--line-soft);
-  border-radius: 999px;
-  background: oklch(0.16 0.02 250 / 0.7);
-  backdrop-filter: blur(6px);
-  transition: color 280ms, border-color 280ms;
-  min-height: 32px;
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-}
-#active-label.lit {
-  color: var(--fg);
-  border-color: oklch(0.78 0.14 220 / 0.5);
-}
-#active-label::before {
-  content: '';
-  width: 6px; height: 6px;
-  border-radius: 50%;
-  background: var(--fg-faint);
-  transition: background 280ms, box-shadow 280ms;
-}
-#active-label.lit::before {
-  background: var(--accent);
-  box-shadow: 0 0 8px var(--accent);
-}
 
 /* =========================================================
    RIGHT COLUMN — response + input
@@ -1259,8 +1327,35 @@ details[open].turn-log summary::before { transform: rotate(90deg); }
 #input-mode-bar {
   display: flex;
   align-items: center;
+  gap: 8px;
   padding: 0 2px;
 }
+
+/* ---- Interrupt / stop-speaking button ---- */
+#interrupt-btn {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  height: 36px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: oklch(0.22 0.06 25 / 0.7);
+  border: 1px solid oklch(0.42 0.12 25 / 0.7);
+  color: oklch(0.82 0.14 25);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  transition: background 180ms, border-color 180ms, opacity 180ms;
+  white-space: nowrap;
+}
+#interrupt-btn svg { width: 12px; height: 12px; flex-shrink: 0; }
+#interrupt-btn:hover {
+  background: oklch(0.28 0.10 25 / 0.85);
+  border-color: oklch(0.52 0.16 25 / 0.9);
+}
+#interrupt-btn.visible { display: inline-flex; }
 
 .input-wrap {
   display: flex;
@@ -1828,7 +1923,10 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
       </div>
     </div>
 
-    <span id="emotion-badge">neutral</span>
+    <div class="header-center">
+      <span id="emotion-badge">neutral</span>
+      <div id="active-label">awaiting input</div>
+    </div>
 
     <div class="header-right">
       <button id="eval-toggle" title="Toggle intensive eval mode (runs baseline on every turn)">Eval</button>
@@ -1851,51 +1949,60 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
   <!-- ====== MAIN ====== -->
   <div id="main">
 
-    <!-- ----- LEFT: regions + neuromods ----- -->
+    <!-- ----- LEFT: brain components + thoughts tabs ----- -->
     <aside class="col col-left">
-      <section class="col-section">
-        <div class="section-label">Cortical Lobes <span class="count">5</span></div>
-        <div class="region-list" id="region-list-cortical"></div>
-      </section>
 
-      <section class="col-section">
-        <div class="section-label">Subcortical <span class="count">3</span></div>
-        <div class="region-list" id="region-list-subcortical"></div>
-      </section>
+      <!-- Tab nav -->
+      <div class="left-tabs">
+        <button class="left-tab active" data-tab="brain">Brain</button>
+        <button class="left-tab" data-tab="thoughts">Thoughts</button>
+      </div>
 
-      <section class="col-section">
-        <div class="section-label">Brainstem · Cerebellum <span class="count">2</span></div>
-        <div class="region-list" id="region-list-passive"></div>
-      </section>
+      <!-- Brain tab -->
+      <div class="left-tab-content" id="tab-brain">
+        <section class="col-section">
+          <div class="section-label">Cortical Lobes <span class="count">5</span></div>
+          <div class="region-list" id="region-list-cortical"></div>
+        </section>
 
-      <section class="col-section">
-        <div class="section-label">Neuromodulators</div>
-        <div class="nm-grid">
-          <div class="nm-row">
-            <div class="nm-head"><span class="nm-name">ACh</span><span class="nm-num" id="nm-num-ACh">0%</span></div>
-            <div class="nm-track"><div class="nm-fill" id="nm-ACh" style="background: oklch(0.78 0.14 200); width: 20%"></div></div>
-          </div>
-          <div class="nm-row">
-            <div class="nm-head"><span class="nm-name">DA</span><span class="nm-num" id="nm-num-DA">50%</span></div>
-            <div class="nm-track"><div class="nm-fill" id="nm-DA" style="background: oklch(0.80 0.16 85); width: 50%"></div></div>
-          </div>
-          <div class="nm-row">
-            <div class="nm-head"><span class="nm-name">GABA</span><span class="nm-num" id="nm-num-GABA">5%</span></div>
-            <div class="nm-track"><div class="nm-fill" id="nm-GABA" style="background: oklch(0.70 0.18 25); width: 5%"></div></div>
-          </div>
-          <div class="nm-row">
-            <div class="nm-head"><span class="nm-name">Glu</span><span class="nm-num" id="nm-num-Glu">30%</span></div>
-            <div class="nm-track"><div class="nm-fill" id="nm-Glu" style="background: oklch(0.78 0.16 145); width: 30%"></div></div>
-          </div>
-        </div>
-        <div class="mood-display">
-          <span class="mood-dot" id="mood-dot"></span>
-          <span class="mood-name" id="mood-name">neutral</span>
-          <span class="mood-key">Mood</span>
-        </div>
-      </section>
+        <section class="col-section">
+          <div class="section-label">Subcortical <span class="count">3</span></div>
+          <div class="region-list" id="region-list-subcortical"></div>
+        </section>
 
-      <section class="pane log-pane" id="plasticity-pane">
+        <section class="col-section">
+          <div class="section-label">Brainstem · Cerebellum <span class="count">2</span></div>
+          <div class="region-list" id="region-list-passive"></div>
+        </section>
+
+        <section class="col-section">
+          <div class="section-label">Neuromodulators</div>
+          <div class="nm-grid">
+            <div class="nm-row">
+              <div class="nm-head"><span class="nm-name">ACh</span><span class="nm-num" id="nm-num-ACh">0%</span></div>
+              <div class="nm-track"><div class="nm-fill" id="nm-ACh" style="background: oklch(0.78 0.14 200); width: 20%"></div></div>
+            </div>
+            <div class="nm-row">
+              <div class="nm-head"><span class="nm-name">DA</span><span class="nm-num" id="nm-num-DA">50%</span></div>
+              <div class="nm-track"><div class="nm-fill" id="nm-DA" style="background: oklch(0.80 0.16 85); width: 50%"></div></div>
+            </div>
+            <div class="nm-row">
+              <div class="nm-head"><span class="nm-name">GABA</span><span class="nm-num" id="nm-num-GABA">5%</span></div>
+              <div class="nm-track"><div class="nm-fill" id="nm-GABA" style="background: oklch(0.70 0.18 25); width: 5%"></div></div>
+            </div>
+            <div class="nm-row">
+              <div class="nm-head"><span class="nm-name">Glu</span><span class="nm-num" id="nm-num-Glu">30%</span></div>
+              <div class="nm-track"><div class="nm-fill" id="nm-Glu" style="background: oklch(0.78 0.16 145); width: 30%"></div></div>
+            </div>
+          </div>
+          <div class="mood-display">
+            <span class="mood-dot" id="mood-dot"></span>
+            <span class="mood-name" id="mood-name">neutral</span>
+            <span class="mood-key">Mood</span>
+          </div>
+        </section>
+
+        <section class="pane log-pane" id="plasticity-pane">
           <header class="pane-head">
             <h3>Plasticity <span id="frozen-tag" style="display:none;color:#f9c46b;font-size:0.7em;margin-left:6px;">[FROZEN]</span></h3>
           </header>
@@ -1922,6 +2029,15 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
             </div>
           </div>
         </section>
+      </div><!-- /#tab-brain -->
+
+      <!-- Thoughts tab -->
+      <div class="left-tab-content hidden" id="tab-thoughts">
+        <div id="thoughts-feed">
+          <div class="log-empty">No thoughts yet…</div>
+        </div>
+      </div>
+
     </aside>
 
     <!-- ----- CENTER: brain stage ----- -->
@@ -1962,10 +2078,6 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
           <svg class="brain-subcortical" viewBox="0 0 942 867" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">
             <!-- No remaining SVG subcortical shapes — all are now PNG images -->
           </svg>
-        </div>
-
-        <div id="active-label-wrap">
-          <div id="active-label">awaiting input</div>
         </div>
 
         <button class="col-toggle col-toggle-left"  id="toggle-left"  title="Toggle left panel"  aria-label="Toggle left panel">
@@ -2016,6 +2128,12 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
           <!-- input bar — now part of the right panel -->
           <div id="control-bar">
             <div id="input-mode-bar">
+              <button id="interrupt-btn" title="Stop AI speaking" aria-label="Interrupt">
+                <svg viewBox="0 0 24 24" fill="currentColor" stroke="none">
+                  <rect x="5" y="5" width="14" height="14" rx="2"/>
+                </svg>
+                Stop
+              </button>
               <button id="mic-btn" title="Toggle voice / text input" aria-label="Input mode">
                 <div class="mode-thumb"></div>
                 <span class="mode-side mode-mic">
@@ -2952,6 +3070,11 @@ function handle(msg) {
       if (msg.text) appendProactiveSpeech(msg.text);
       break;
     }
+    case 'speaking': {
+      const btn = document.getElementById('interrupt-btn');
+      btn.classList.toggle('visible', !!msg.active);
+      break;
+    }
     case 'transcript':       handleTranscriptEvent(msg); break;
     case 'transcript_error': handleTranscriptError(msg); break;
     case 'voice_mode':       handleVoiceMode(msg); break;
@@ -3243,12 +3366,28 @@ function updateQualityBadge(badge, qs) {
 }
 
 function appendThought(text) {
-  const msgs = document.getElementById('messages');
+  const feed = document.getElementById('thoughts-feed');
+  // Remove the empty placeholder if present
+  const empty = feed.querySelector('.log-empty');
+  if (empty) empty.remove();
+
+  const now = new Date();
+  const ts = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   const div = document.createElement('div');
-  div.className = 'msg msg-thought';
-  div.textContent = '· ' + text;
-  msgs.appendChild(div);
-  scrollChat();
+  div.className = 'thought-item';
+  div.innerHTML = `<span class="thought-ts">${ts}</span>${text}`;
+  feed.appendChild(div);
+
+  // Auto-scroll — the overflow container is the parent tab panel, not the feed itself
+  const tabPanel = feed.parentElement;
+  if (tabPanel) tabPanel.scrollTop = tabPanel.scrollHeight;
+
+  // Flash the Thoughts tab badge if it's not active
+  const thoughtsTab = document.querySelector('.left-tab[data-tab="thoughts"]');
+  if (thoughtsTab && !thoughtsTab.classList.contains('active')) {
+    thoughtsTab.classList.add('tab-flash');
+    setTimeout(() => thoughtsTab.classList.remove('tab-flash'), 800);
+  }
 }
 
 function appendProactiveSpeech(text) {
@@ -3591,6 +3730,13 @@ micBtn.addEventListener('click', () => {
   }
   if (micActive) stopListening(true);
   else startListening();
+});
+
+const interruptBtn = document.getElementById('interrupt-btn');
+interruptBtn.addEventListener('click', () => {
+  if (ws && ws.readyState === WebSocket.OPEN)
+    ws.send(JSON.stringify({ type: 'interrupt' }));
+  interruptBtn.classList.remove('visible');
 });
 
 document.addEventListener('keydown', (e) => {
@@ -4070,6 +4216,20 @@ settingsReset.addEventListener('click', async () => {
     console.warn('Settings: reset failed', e);
   }
 });
+
+// ---- Left panel tab switching ----
+(function initLeftTabs() {
+  const tabs = document.querySelectorAll('.left-tab');
+  tabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      tabs.forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      document.querySelectorAll('.left-tab-content').forEach(c => c.classList.add('hidden'));
+      const target = document.getElementById('tab-' + tab.dataset.tab);
+      if (target) target.classList.remove('hidden');
+    });
+  });
+})();
 
 renderRegionList();
 setMoodBackground('neutral');

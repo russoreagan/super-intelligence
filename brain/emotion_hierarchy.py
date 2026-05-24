@@ -108,6 +108,29 @@ def core_of(emotion: str) -> str:
     return p[0] if p else "neutral"
 
 
+# ── Valence per core emotion family ──────────────────────────────────────
+# Maps each core in CORES to a scalar valence in roughly [-1, +1]. Used by
+# Hebbian plasticity (sleep.py) AND the DMN speak gate to read whether the
+# current emotion biases toward staying on topic (positive) or deflecting
+# (negative). Single source of truth — DO NOT duplicate this table.
+CORE_VALENCE: dict[str, float] = {
+    "happy":    +1.0,
+    "sad":      -1.0,
+    "anger":    -1.0,
+    "fear":     -0.5,
+    "disgust":  -0.5,
+    "surprise":  0.0,
+    "cognitive": +0.3,
+    "neutral":   0.0,
+}
+
+
+def valence_of(emotion: str | None) -> float:
+    """Return the valence (≈[-1, +1]) for any emotion label by resolving its
+    core family. Unknown emotions and None map to 0.0 (neutral)."""
+    return CORE_VALENCE.get(core_of(emotion or "neutral"), 0.0)
+
+
 def lookup_with_inheritance(emotion: str, table: dict[str, str]) -> str | None:
     """Walk leaf → mid → core, returning the first non-empty hit in `table`.
 

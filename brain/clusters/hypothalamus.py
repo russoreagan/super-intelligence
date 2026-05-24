@@ -8,7 +8,9 @@ import asyncio
 import logging
 
 from brain.bus import Bus
-from brain.emotion_vocabulary import name_emotion, appraisal, prosody_prefix
+from brain.emotion_vocabulary import (
+    name_emotion, apply_hormonal_color, appraisal, prosody_prefix, compute_affect_dims,
+)
 from brain.neuron import StatefulSwitch
 from brain.settings import settings
 
@@ -133,9 +135,65 @@ class HypothalamusCluster:
             logger.debug("Hypothalamus: pace=%s pauses=%d hesitant=%s",
                          pace, dynamics.get("long_pause_count", 0), dynamics.get("hesitant"))
 
-        # Name current emotion
         snap = nm.snapshot()
-        emotion, tendency = name_emotion(snap["DA"], snap["GABA"], snap["ACh"], snap["Glu"])
+
+        # ── Endocrine (hormonal) updates ──────────────────────────────────────
+        hs = self._bus.hormonal
+
+        # OXT: build on warm positive exchange; drain under hostility
+        if sentiment > 0.3 and hostility < 0.2:
+            hs.add("OXT", settings.get("oxt_positive_increment"))
+        elif hostility > settings.get("hostility_GABA_threshold_high"):
+            hs.add("OXT", -settings.get("oxt_hostility_drain"))
+
+        # CORT: accumulates under sustained social threat (direct hostility, not prosody).
+        # Decoupled from GABA so that animated/focused voice patterns don't trigger
+        # false cortisol build — prosody raises GABA for alertness, not social stress.
+        if hostility > settings.get("cort_hostility_threshold"):
+            hs.add("CORT", settings.get("cort_threat_increment"))
+
+        # 5HT: slow lift from rewarding interaction; drain under hostility
+        if sentiment > settings.get("sht_reward_sentiment_min") and hostility < 0.1:
+            hs.add("5HT", settings.get("sht_reward_increment"))
+        elif hostility > settings.get("hostility_GABA_threshold_high"):
+            hs.add("5HT", -settings.get("sht_hostility_drain"))
+
+        # OXT buffers CORT (cross-channel antagonism)
+        if hs.get("OXT") > settings.get("oxt_cort_buffer_threshold"):
+            hs.add("CORT", -hs.get("OXT") * settings.get("oxt_cort_buffer_rate"))
+
+        h_snap = hs.snapshot()
+        logger.debug(
+            "Hypothalamus hormonal: 5HT=%.3f CORT=%.3f OXT=%.3f",
+            h_snap["5HT"], h_snap["CORT"], h_snap["OXT"],
+        )
+
+        # Apply hormonal modulation to effective neuromod values for emotion naming.
+        # Raw accumulator levels are unchanged; only the values passed to name_emotion
+        # are adjusted so hormonal state shapes the emotion without touching the bus.
+        da_offset = hs.da_offset(
+            settings.get("sht_da_floor_lift"),
+            settings.get("oxt_da_lift"),
+            settings.get("cort_da_suppress"),
+        )
+        gaba_scale = hs.gaba_scale(
+            settings.get("cort_gaba_amplify"),
+            settings.get("oxt_gaba_buffer"),
+        )
+        eff_DA   = max(0.0, min(1.0, snap["DA"]   + da_offset))
+        eff_GABA = max(0.0, min(1.0, snap["GABA"] * gaba_scale))
+
+        # Name current emotion (using hormone-adjusted effective values)
+        emotion, tendency = name_emotion(eff_DA, eff_GABA, snap["ACh"], snap["Glu"])
+
+        # Overlay hormonal color (connected / withdrawn / guarded / dysphoric)
+        emotion, tendency = apply_hormonal_color(
+            emotion, tendency, h_snap,
+            oxt_connected=settings.get("hormonal_oxt_connected_threshold"),
+            cort_withdrawn=settings.get("hormonal_cort_withdrawn_threshold"),
+            oxt_guarded=settings.get("hormonal_oxt_guarded_threshold"),
+            sht_dysphoric=settings.get("hormonal_sht_dysphoric_threshold"),
+        )
 
         # ── Metacognition appraisal override ──────────────────────────────────
         # Drain any pending overrides; the most recent fresh one wins. This is
@@ -160,13 +218,16 @@ class HypothalamusCluster:
 
         appraisal_str = appraisal(emotion, features.get("topic_summary", "input"))
         prefix = prosody_prefix(emotion)
+        affect_dims = compute_affect_dims(snap, h_snap)
 
         affect = {
             "emotion": emotion,
             "tendency": tendency,
             "appraisal": appraisal_str,
             "prosody_prefix": prefix,
+            "affect_dims": affect_dims,
             "neuromod": snap,
+            "hormonal": h_snap,
             "high_GABA": snap["GABA"] > 0.4,
             "high_ACh": snap["ACh"] > 0.5,
             "vocal_tone": prosody_tone,
@@ -187,3 +248,4 @@ class HypothalamusCluster:
 
     def decay_turn(self) -> None:
         self._bus.neuromod.decay()
+        self._bus.hormonal.decay()

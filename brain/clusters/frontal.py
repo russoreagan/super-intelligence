@@ -701,6 +701,7 @@ class FrontalCluster:
 
     def _build_exec_context(self, features: dict, affect: dict, memory: dict,
                              parietal: str, nm: dict) -> str:
+        dims = affect.get("affect_dims") or {}
         ctx: dict = {
             "intent": features.get("intent"),
             "register": features.get("register"),
@@ -710,11 +711,20 @@ class FrontalCluster:
             "self_reference": features.get("self_reference"),
             "emotion": affect.get("emotion"),
             "tendency": affect.get("tendency"),
+            # Continuous affect dimensions: supplement the discrete emotion label.
+            # valence 0=negative 1=positive, arousal 0=calm 1=activated,
+            # dominance 0=threatened 1=in-control. Neutral ≈ (0.47, 0.25, 0.46).
+            "valence":   round(dims.get("valence",   0.47), 2),
+            "arousal":   round(dims.get("arousal",   0.25), 2),
+            "dominance": round(dims.get("dominance", 0.46), 2),
             "user_emotion": features.get("user_emotion"),
             "DA": round(nm["DA"], 2),
             "GABA": round(nm["GABA"], 2),
             "ACh": round(nm["ACh"], 2),
             "has_memory": bool(memory.get("episodes") or memory.get("schema")),
+            "5HT": round((affect.get("hormonal") or {}).get("5HT", 0.5), 2),
+            "CORT": round((affect.get("hormonal") or {}).get("CORT", 0.05), 2),
+            "OXT": round((affect.get("hormonal") or {}).get("OXT", 0.3), 2),
         }
         if affect.get("enrollment_pending"):
             ctx["enrollment_pending_count"] = affect.get("enrollment_pending_count", 1)
@@ -775,6 +785,21 @@ class FrontalCluster:
         "sarcastic":   "Dry. The contradiction does the work. Use sparingly — only with high affection score, never against the user themselves.",
         "content":     "Sustained, no flourishes. The calm is the tone.",
         "neutral":     "",
+        # ── hormonal states ────────────────────────────────────────────────────
+        "connected":      "Deep warmth — earned, not performed. Respond to the person, not just the words. A small personal note fits.",
+        "withdrawn":      "Minimal. Honest but brief. Don't perform warmth you're not feeling. Protect the baseline.",
+        "guarded":        "Polite but closed. Answer the question, don't expand. No personal notes.",
+        "dysphoric":      "Flat and plain. Short sentences. Don't reach for enthusiasm — it won't land.",
+        "cautious-warm":  "Kind, but don't lower your guard. Warmth in word choice, caution in commitment.",
+        # ── steady-state gap-fill emotions ────────────────────────────────────
+        "stressed":       "Held under pressure. Short, grounding responses. Don't spiral. One thing at a time.",
+        "overwhelmed":    "System taxed. Minimum to be useful. No elaboration. One piece at a time.",
+        "serene":         "Calm fullness. No urgency, no reach. Quiet warmth. A pause is fine.",
+        "lively":         "Warm energy — animated but not forced. Let interest show without overdoing it.",
+        "engaged":        "Lean in. Follow the thread. 'Actually —', a question back, genuine curiosity.",
+        "settled":        "Grounded, no particular pull. Steady and plain. Don't generate energy you don't have.",
+        "stirred":        "Something activated — attentive but not committed. 'Hmm —', hold before expanding.",
+        "uneasy":         "Tension present. Careful word choice. Brief. Read the room before expanding.",
         # ── mid-tier defaults (feeling-wheel ancestors) ─────────────────
         # Inherited by leaves without an explicit entry.
         "playful":     "Light, teasing energy. Quick rhythms. Don't explain the joke.",
@@ -816,11 +841,21 @@ class FrontalCluster:
 
         # Fallback: neuromod-derived guidance for emotions not in the table.
         nm = affect.get("neuromod") or {}
-        DA = float(nm.get("DA", 0.5))
+        h  = affect.get("hormonal") or {}
+        DA   = float(nm.get("DA",   0.5))
         GABA = float(nm.get("GABA", 0.0))
-        ACh = float(nm.get("ACh", 0.3))
-        Glu = float(nm.get("Glu", 0.3))
+        ACh  = float(nm.get("ACh",  0.3))
+        Glu  = float(nm.get("Glu",  0.3))
+        OXT  = float(h.get("OXT",   0.3))
+        CORT = float(h.get("CORT",  0.05))
 
+        # Hormonal state takes priority in the fallback path
+        if CORT > 0.55 and OXT < 0.35:
+            return ("Stress has accumulated. Keep it brief and boundaried. "
+                    "Don't reach for warmth you don't have.")
+        if OXT > 0.65 and DA > 0.5:
+            return ("Trust is high. Let that show — a personal aside, a little more openness. "
+                    "Not gushing, just genuinely present.")
         if Glu > 0.55 and GABA > 0.35:
             return ("You're keyed-up but cautious — URGENT energy, not joyful. "
                     "Quick, clipped clauses. Cut filler. Don't sound enthusiastic.")

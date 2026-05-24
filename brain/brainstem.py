@@ -69,7 +69,9 @@ class Brainstem:
 
     def end_turn(self) -> TurnState:
         t = self._current_turn
-        t.llm_calls = len(self._router._call_log)
+        # Exclude DMN-cluster calls — those tick continuously during/between
+        # turns and shouldn't inflate this turn's budget or telemetry.
+        t.llm_calls = self._router.turn_calls_excluding_background()
         self._session_cost_calls += t.llm_calls
         logger.debug(
             "Turn %s ended: %d LLM calls, %.2fs, response length %d",

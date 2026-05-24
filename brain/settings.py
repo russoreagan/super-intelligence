@@ -52,12 +52,23 @@ DEFAULTS: dict[str, float | int] = {
     "gaba_skip_threshold_high":    0.55,
 
     # ── Section 4: Default Mode Network ──────────────────────────────────────
-    "dmn_interval":                15.0,
+    "dmn_interval":                8.0,    # active baseline (was 15s)
+    "dmn_idle_interval":           25.0,   # when get_idle_seconds > 60s
     "dmn_overlap_threshold":       0.35,
     "ach_suppression_weight":      1.00,
     "glu_suppression_weight":      0.30,
     "gaba_suppression_reduction":  0.15,
     "suppression_skip_prob_max":   0.85,
+    "speak_gate_poll_interval":    5.0,    # how often the speak gate evaluates candidates
+    "speak_candidate_max_age_s":   60.0,   # drop unspoken candidates older than this
+    # Bridge rewriter (local Ollama only — no paid LLM calls). When a
+    # candidate is approved AND its topic-overlap with the live conversation
+    # is below `speak_bridge_overlap_threshold`, the brain rewrites the
+    # spoken form locally so the change-of-subject doesn't feel abrupt.
+    # Set enabled=0 to disable bridging; set threshold=1.0 to bridge every
+    # approved candidate (most polish, most local-LLM latency).
+    "speak_bridge_enabled":          1,    # 1 = on, 0 = off (kept int for settings UI sliders)
+    "speak_bridge_overlap_threshold": 0.20,
 
     # ── Section 5: Metacognition ──────────────────────────────────────────────
     "meta_interval":               30.0,
@@ -96,8 +107,11 @@ DEFAULTS: dict[str, float | int] = {
     "da_softly_threshold":         0.30,
 
     # ── Section 8: Proactive Behavior ─────────────────────────────────────────
-    "proactive_idle_threshold":    180.0,
-    "proactive_response_window":   8.0,
+    # idle_threshold is now INVERTED in spirit: the brain STOPS speaking
+    # proactively when the user has been OS-idle for more than this. Internal
+    # thoughts still flow to the UI; only TTS interjections are suppressed.
+    "proactive_idle_threshold":    300.0,  # was 180
+    "proactive_response_window":   10.0,   # was 8 — min gap between brain utterances
 
     # ── Section 9: Attention & Routing ───────────────────────────────────────
     "hippocampus_priority_base":   0.60,
@@ -122,6 +136,31 @@ DEFAULTS: dict[str, float | int] = {
     "video_sample_interval":       5.0,
     "video_max_frames":            8,
     "video_change_threshold":      8.0,
+
+    # ── Section 12: Endocrine / Hormonal System ───────────────────────────────
+    # Update rates (added per turn when condition is met)
+    "oxt_positive_increment":      0.008,   # OXT gain per warm/positive exchange (~50 turns to connected)
+    "oxt_hostility_drain":         0.008,   # OXT drain per hostile exchange (symmetric)
+    "cort_threat_increment":       0.022,   # CORT gain when hostility > threshold
+    "cort_hostility_threshold":    0.35,    # hostility score that triggers CORT build (text-based, not prosody)
+    "sht_reward_increment":        0.003,   # 5HT gain per rewarding interaction
+    "sht_reward_sentiment_min":    0.40,    # min sentiment to earn 5HT
+    "sht_hostility_drain":         0.004,   # 5HT drain per hostile exchange (enables dysphoric state)
+    # OXT ↔ CORT antagonism
+    "oxt_cort_buffer_rate":        0.020,   # OXT level × this = CORT drain per turn (~60% offset at OXT=0.5)
+    "oxt_cort_buffer_threshold":   0.40,    # OXT must exceed this to buffer CORT
+    # Hormonal → DA modulation (effective DA = raw DA + offset)
+    "sht_da_floor_lift":           0.12,    # 5HT × this added to effective DA
+    "oxt_da_lift":                 0.05,    # OXT × this added to effective DA
+    "cort_da_suppress":            0.08,    # CORT × this subtracted from effective DA
+    # Hormonal → GABA modulation (effective GABA = raw GABA × scale)
+    "cort_gaba_amplify":           0.30,    # CORT × this amplifies GABA scale
+    "oxt_gaba_buffer":             0.15,    # OXT × this reduces GABA scale
+    # Hormonal color thresholds (when to override base emotion)
+    "hormonal_oxt_connected_threshold":   0.60,   # OXT > this + positive base → connected
+    "hormonal_cort_withdrawn_threshold":  0.45,   # CORT > this → withdrawn/guarded (~17 hostile turns)
+    "hormonal_oxt_guarded_threshold":     0.35,
+    "hormonal_sht_dysphoric_threshold":   0.25,
 }
 
 
