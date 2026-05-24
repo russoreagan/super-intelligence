@@ -355,22 +355,11 @@ class DefaultModeNetwork:
             if not thought_clean:
                 pass  # nothing to do
             else:
-                # Two-layer deduplication:
-                # Layer 1 — semantic angle: if the LLM tagged this thought with
-                # an angle we've seen recently, suppress it. This catches
-                # same-idea-different-words repetition that word overlap misses.
-                if angle and angle in self._recent_angles:
-                    self._suppressed_count += 1
-                    logger.info(
-                        "[Background reflection] Suppressed repeated angle %r "
-                        "(total suppressed=%d): %r",
-                        angle, self._suppressed_count, thought_clean[:60],
-                    )
-                    # Don't publish, don't record — let the next tick try again
-                    return
-
-                # Layer 2 — word-set overlap: catch near-duplicate phrasing
-                # even when no angle was tagged.
+                # Word-set overlap rejection — angles are used as prompt-level
+                # hints only (the LLM sees blocked angles and picks a different
+                # one). A hard angle block would exhaust the LLM's label space
+                # and silence all thoughts. The overlap check catches near-
+                # duplicate phrasing as a safety net.
                 max_overlap = 0.0
                 for prior in self._recent_thoughts:
                     o = _word_overlap(thought_clean, prior)

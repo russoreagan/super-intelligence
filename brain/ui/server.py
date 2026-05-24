@@ -121,6 +121,15 @@ class UIServer:
             asyncio.create_task(_do_restart())
             return {"ok": True}
 
+        @app.post("/shutdown")
+        async def shutdown_brain():
+            """Gracefully shut down the brain process."""
+            async def _do_shutdown():
+                await asyncio.sleep(0.4)
+                os.kill(os.getpid(), __import__("signal").SIGTERM)
+            asyncio.create_task(_do_shutdown())
+            return {"ok": True}
+
         @app.get("/voices")
         async def list_voices():
             """Return voices compatible with the configured ElevenLabs model.

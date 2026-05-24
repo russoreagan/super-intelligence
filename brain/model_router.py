@@ -164,11 +164,18 @@ class ModelRouter:
         out_tok = getattr(usage, "candidates_token_count", 0) if usage else 0
         return response.text, in_tok, out_tok
 
+    @staticmethod
+    def _flatten_content(content) -> str:
+        if isinstance(content, list):
+            return " ".join(p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text")
+        return content or ""
+
     async def _call_local(self, system_prompt: str,
                           messages: list[dict], max_tokens: int = 1024) -> tuple[str, int, int]:
+        flat_messages = [{"role": m["role"], "content": self._flatten_content(m["content"])} for m in messages]
         payload = {
             "model": os.environ.get("OLLAMA_MODEL", "qwen2.5:7b"),
-            "messages": [{"role": "system", "content": system_prompt}] + messages,
+            "messages": [{"role": "system", "content": system_prompt}] + flat_messages,
             "stream": False,
             "options": {"num_predict": max_tokens},
         }

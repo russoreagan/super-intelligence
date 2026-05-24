@@ -61,7 +61,15 @@ User emotional state (from user_emotion) — secondary signal:
 - Distressed, sad, overwhelmed → pull length down one level regardless of AI state
 - Curious, enthusiastic → sustain length if AI state agrees
 
-Combine all three signals. Never inflate length to seem thorough.
+User message length (from msg_length) — mirroring signal:
+- tiny (≤3 words) → default to brief; only go longer if the question genuinely demands it
+- short (≤15 words) → lean brief/medium; match the energy of a short message
+- long → full latitude; user is in a detailed-exchange mode
+
+This signal is a soft prior, not a hard cap. A tiny "why?" can still get a medium answer if the
+question is complex. But if the user consistently sends short messages, respect that rhythm.
+
+Combine all signals. Never inflate length to seem thorough.
 
 Return ONLY JSON.""" + "\n\n" + FENCE_SYSTEM_ADDENDUM
 
@@ -263,7 +271,7 @@ class FrontalCluster:
         self._capabilities_summary = (summary or "").strip()
 
     async def process(self, features: dict, affect: dict, memory: dict,
-                      parietal_context: str, turn_id: str) -> str:
+                      parietal_context: str, turn_id: str, image_path: str | None = None) -> str:
         """
         Run the Multiple Drafts engine. Returns the committed response.
         """
@@ -412,7 +420,7 @@ class FrontalCluster:
         drafter_indices = self._select_drafters(drafter_count, turn_id)
 
         draft_tasks = [
-            self._run_drafter(i, drafter_prompt, turn_id)
+            self._run_drafter(i, drafter_prompt, turn_id, image_path=image_path)
             for i in drafter_indices
         ]
         raw = await asyncio.gather(*draft_tasks, return_exceptions=True)
@@ -567,11 +575,30 @@ class FrontalCluster:
         }]
         return text
 
-    async def _run_drafter(self, idx: int, prompt: str, turn_id: str) -> tuple[str, str]:
+    async def _run_drafter(self, idx: int, prompt: str, turn_id: str,
+                           image_path: str | None = None) -> tuple[str, str]:
         drafter = self._drafters[idx]
         drafter.reset_turn(turn_id)
         draft_id = f"draft_{idx}_{turn_id}"
-        text = await drafter.call([{"role": "user", "content": prompt}])
+        if image_path:
+            import mimetypes
+            mime = mimetypes.guess_type(image_path)[0] or "image/jpeg"
+            try:
+                with open(image_path, "rb") as f:
+                    img_data = f.read()
+                content = [
+                    {"type": "image", "source": {
+                        "type": "base64",
+                        "media_type": mime,
+                        "data": __import__("base64").b64encode(img_data).decode(),
+                    }},
+                    {"type": "text", "text": prompt},
+                ]
+            except Exception:
+                content = prompt
+        else:
+            content = prompt
+        text = await drafter.call([{"role": "user", "content": content}])
         return draft_id, text
 
     def _record_trace_bypass(self):
@@ -867,6 +894,8 @@ class FrontalCluster:
                     f"(use if relevant, otherwise ignore):\n"
                     f"{fence('prefetched', chr(10).join(pre_lines), nonce)}"
                 )
+        if memory.get("vision"):
+            parts.append(f"Image analysis:\n{fence('image_analysis', memory['vision'], nonce)}")
         if memory.get("core", {}).get("self"):
             parts.append(f"Entity self-model:\n{fence('self_model', memory['core']['self'][:400], nonce)}")
         if memory.get("core", {}).get("user"):

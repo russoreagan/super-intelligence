@@ -620,9 +620,9 @@ async def session(args) -> None:
             await emitter.emit_emotion(affect["emotion"])
             await emitter.emit_neuromod(bus.neuromod.snapshot())
 
-        # ── Occipital: vision (only if image present) ─────────────────────────
+        # ── Occipital: vision (any time an image is present) ─────────────────
         vision_features = None
-        if image_path and features.get("requires_vision"):
+        if image_path:
             await _emit("occipital", 0.9, "processing image", turn_id)
             vision_features = await occipital.process(image_path, user_input, turn_id)
             await _emit_end("occipital", turn_id)
@@ -810,7 +810,7 @@ async def session(args) -> None:
                     ps_appraisal, _ = egress.pseudonymize(affect["appraisal"])
                     ps_affect = dict(affect)
                     ps_affect["appraisal"] = ps_appraisal
-            response = await frontal.process(ps_features, ps_affect, ps_memory, ps_parietal_context, turn_id)
+            response = await frontal.process(ps_features, ps_affect, ps_memory, ps_parietal_context, turn_id, image_path=image_path)
             # Capture draft scores immediately (single-threaded asyncio — no race)
             draft_scores = list(frontal.last_turn_draft_scores)
             # Restore real values in response before delivering to user

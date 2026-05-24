@@ -19,6 +19,7 @@ from brain.bus import Bus
 from brain.cell import IntegratorCell
 from brain.model_router import ModelRouter
 from brain.neuron import SwitchNeuron
+from brain.settings import settings as _settings
 
 logger = logging.getLogger(__name__)
 
@@ -28,13 +29,6 @@ IMAGE_ROOT = Path(os.environ.get("BRAIN_IMAGE_DIR", str(Path.home() / "brain_ima
 IMAGE_ROOT.mkdir(parents=True, exist_ok=True)
 
 _ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
-
-# How often (seconds) to sample a frame from a live video stream
-VIDEO_SAMPLE_INTERVAL = float(os.environ.get("BRAIN_VIDEO_SAMPLE_INTERVAL", "3.0"))
-# Max frames to include in one Gemini call
-VIDEO_MAX_FRAMES = int(os.environ.get("BRAIN_VIDEO_MAX_FRAMES", "8"))
-# Pixel-diff RMS threshold below which a frame is considered unchanged
-VIDEO_CHANGE_THRESHOLD = float(os.environ.get("BRAIN_VIDEO_CHANGE_THRESHOLD", "8.0"))
 
 MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024
 
@@ -106,7 +100,9 @@ class OccipitalCluster:
             logger.warning("[Vision] Blocked image — file type %r not allowed.", resolved.suffix)
             return None
 
-        if not resolved.is_relative_to(IMAGE_ROOT):
+        import tempfile
+        _tmp = Path(tempfile.gettempdir()).resolve()
+        if not resolved.is_relative_to(IMAGE_ROOT) and not resolved.is_relative_to(_tmp):
             logger.warning("[Vision] Blocked image path — outside allowed folder (%s).", IMAGE_ROOT)
             return None
 
@@ -117,12 +113,6 @@ class OccipitalCluster:
         size = resolved.stat().st_size
         if size > MAX_IMAGE_SIZE_BYTES:
             logger.warning("[Vision] Image too large (%d bytes) — skipping.", size)
-            return None
-
-        visual_keywords = ["image", "picture", "photo", "diagram", "chart", "what is this",
-                           "what does", "show", "see", "look", "color", "text in"]
-        if not any(k in user_text.lower() for k in visual_keywords) and "?" not in user_text:
-            logger.debug("[Vision] Skipping — user message doesn't reference the image.")
             return None
 
         self._vision_integrator.model = "flash" if size > 1 * 1024 * 1024 else "flash-lite"
@@ -168,23 +158,27 @@ class OccipitalCluster:
         Samples at VIDEO_SAMPLE_INTERVAL, drops unchanged frames, buffers the rest.
         Non-blocking — actual VLM call is triggered by flush_frames().
         """
+        sample_interval = _settings.get("video_sample_interval")
+        max_frames = int(_settings.get("video_max_frames"))
+        change_threshold = _settings.get("video_change_threshold")
+
         now = time.monotonic()
-        if now - self._last_sample_time < VIDEO_SAMPLE_INTERVAL:
+        if now - self._last_sample_time < sample_interval:
             return
         self._last_sample_time = now
 
         # Skip if scene hasn't changed meaningfully
         if self._last_frame is not None:
             diff = _rms_diff(self._last_frame, frame_bytes)
-            if diff < VIDEO_CHANGE_THRESHOLD:
+            if diff < change_threshold:
                 logger.debug("[Vision] Frame unchanged (RMS %.1f) — skipping.", diff)
                 return
 
         self._last_frame = frame_bytes
         self._frame_buffer.append((frame_bytes, mime))
 
-        if len(self._frame_buffer) > VIDEO_MAX_FRAMES:
-            self._frame_buffer = self._frame_buffer[-VIDEO_MAX_FRAMES:]
+        if len(self._frame_buffer) > max_frames:
+            self._frame_buffer = self._frame_buffer[-max_frames:]
 
     async def flush_frames(self, context: str, turn_id: str) -> dict | None:
         """

@@ -205,6 +205,7 @@ class TemporalCluster:
             self._template_switch.fire(1.0, trivial_type, {"text": text[:40]})
             import random
             canned = random.choice(CANNED_RESPONSES.get(trivial_type, ["..."]))
+            _words = text.split()
             features = {
                 "intent": trivial_type,
                 "register": "casual",
@@ -222,6 +223,7 @@ class TemporalCluster:
                 "raw_text": text,
                 "canned_response": canned,
                 "switch_only": True,
+                "msg_length": "tiny" if len(_words) <= 3 else "short" if len(_words) <= 15 else "long",
             }
             await self._bus.publish_dict("temporal.features", features, source=CLUSTER)
             logger.debug("[Input parser] Trivial input detected (%s) — using canned response, skipping LLM", trivial_type)
@@ -297,6 +299,7 @@ class TemporalCluster:
                 "raw_text": text,
                 "switch_only": True,
                 "surprise_score": surprise,
+                "msg_length": length_tag,
             }
             self._predictor.record(sig, length_tag)
             await self._bus.publish_dict("temporal.features", features, source=CLUSTER)
@@ -342,6 +345,7 @@ class TemporalCluster:
         features["raw_text"] = text
         features["self_reference"] = self_ref or features.get("intent") == "self_inquiry"
         features["epistemic_action"] = epistemic or features.get("epistemic_action", False)
+        features["msg_length"] = length_tag
 
         # Belt-and-braces: if the text clearly looks like a tool request, flip
         # requires_action true regardless of what the LLM thought. The motor

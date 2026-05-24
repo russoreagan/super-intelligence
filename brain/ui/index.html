@@ -615,7 +615,8 @@ input, select, textarea { font: inherit; color: inherit; background: none; borde
   pointer-events: none;
   z-index: -1;
   background: transparent;
-  transition: background 2.5s ease;
+  opacity: 0;
+  transition: opacity 4s ease, background 1.5s ease;
   border-radius: inherit;
 }
 
@@ -2628,55 +2629,60 @@ const EMOTION_COLORS = {
 };
 
 const MOOD_BG_COLORS = {
-  joy:              { l: 0.22, c: 0.12, h: 95  },
-  excitement:       { l: 0.22, c: 0.13, h: 70  },
-  enthusiasm:       { l: 0.22, c: 0.12, h: 80  },
-  content:          { l: 0.22, c: 0.08, h: 145 },
-  warm:             { l: 0.22, c: 0.10, h: 65  },
-  confident:        { l: 0.22, c: 0.10, h: 230 },
-  proud:            { l: 0.22, c: 0.11, h: 210 },
-  amused:           { l: 0.22, c: 0.10, h: 100 },
-  playful:          { l: 0.22, c: 0.11, h: 110 },
-  joking:           { l: 0.22, c: 0.09, h: 90  },
-  flirty:           { l: 0.22, c: 0.10, h: 10  },
-  tender:           { l: 0.22, c: 0.08, h: 355 },
-  affectionate:     { l: 0.22, c: 0.09, h: 5   },
-  grateful:         { l: 0.22, c: 0.09, h: 140 },
-  relieved:         { l: 0.22, c: 0.08, h: 170 },
-  sympathetic:      { l: 0.22, c: 0.08, h: 185 },
-  sad:              { l: 0.22, c: 0.09, h: 265 },
-  somber:           { l: 0.22, c: 0.08, h: 258 },
-  melancholy:       { l: 0.22, c: 0.10, h: 272 },
-  wistful:          { l: 0.22, c: 0.08, h: 278 },
-  disappointed:     { l: 0.22, c: 0.09, h: 255 },
-  embarrassed:      { l: 0.22, c: 0.08, h: 20  },
-  shy:              { l: 0.22, c: 0.07, h: 290 },
-  apologetic:       { l: 0.22, c: 0.07, h: 15  },
-  angry:            { l: 0.22, c: 0.13, h: 22  },
-  frustrated:       { l: 0.22, c: 0.11, h: 30  },
-  irritated:        { l: 0.22, c: 0.09, h: 35  },
-  agitated:         { l: 0.22, c: 0.12, h: 28  },
-  defensive:        { l: 0.22, c: 0.09, h: 40  },
-  sarcastic:        { l: 0.22, c: 0.08, h: 55  },
-  anxious:          { l: 0.22, c: 0.10, h: 45  },
-  inhibited:        { l: 0.22, c: 0.07, h: 300 },
-  surprised:        { l: 0.22, c: 0.11, h: 200 },
-  confused:         { l: 0.22, c: 0.08, h: 285 },
-  curious:          { l: 0.22, c: 0.09, h: 220 },
-  thoughtful:       { l: 0.22, c: 0.05, h: 250 },
-  'curious-uncertain': { l: 0.22, c: 0.07, h: 230 },
-  'cautious-agitated': { l: 0.22, c: 0.10, h: 38  },
-  restless:         { l: 0.22, c: 0.08, h: 50  },
-  flat:             { l: 0.20, c: 0.02, h: 250 },
-  neutral:          { l: 0.17, c: 0.01, h: 250 },
+  joy:              { l: 0.35, c: 0.14, h: 95  },
+  excitement:       { l: 0.35, c: 0.15, h: 70  },
+  enthusiasm:       { l: 0.35, c: 0.14, h: 80  },
+  content:          { l: 0.35, c: 0.10, h: 145 },
+  warm:             { l: 0.35, c: 0.12, h: 65  },
+  confident:        { l: 0.35, c: 0.12, h: 230 },
+  proud:            { l: 0.35, c: 0.13, h: 210 },
+  amused:           { l: 0.35, c: 0.12, h: 100 },
+  playful:          { l: 0.35, c: 0.13, h: 110 },
+  joking:           { l: 0.35, c: 0.11, h: 90  },
+  flirty:           { l: 0.35, c: 0.12, h: 10  },
+  tender:           { l: 0.35, c: 0.10, h: 355 },
+  affectionate:     { l: 0.35, c: 0.11, h: 5   },
+  grateful:         { l: 0.35, c: 0.11, h: 140 },
+  relieved:         { l: 0.35, c: 0.10, h: 170 },
+  sympathetic:      { l: 0.35, c: 0.10, h: 185 },
+  sad:              { l: 0.35, c: 0.11, h: 265 },
+  somber:           { l: 0.35, c: 0.10, h: 258 },
+  melancholy:       { l: 0.35, c: 0.12, h: 272 },
+  wistful:          { l: 0.35, c: 0.10, h: 278 },
+  disappointed:     { l: 0.35, c: 0.11, h: 255 },
+  embarrassed:      { l: 0.35, c: 0.10, h: 20  },
+  shy:              { l: 0.35, c: 0.09, h: 290 },
+  apologetic:       { l: 0.35, c: 0.09, h: 15  },
+  angry:            { l: 0.35, c: 0.15, h: 22  },
+  frustrated:       { l: 0.35, c: 0.13, h: 30  },
+  irritated:        { l: 0.35, c: 0.11, h: 35  },
+  agitated:         { l: 0.35, c: 0.14, h: 28  },
+  defensive:        { l: 0.35, c: 0.11, h: 40  },
+  sarcastic:        { l: 0.35, c: 0.10, h: 55  },
+  anxious:          { l: 0.35, c: 0.12, h: 45  },
+  inhibited:        { l: 0.35, c: 0.09, h: 300 },
+  surprised:        { l: 0.35, c: 0.13, h: 200 },
+  confused:         { l: 0.35, c: 0.10, h: 285 },
+  curious:          { l: 0.35, c: 0.11, h: 220 },
+  thoughtful:       { l: 0.35, c: 0.07, h: 250 },
+  'curious-uncertain': { l: 0.35, c: 0.09, h: 230 },
+  'cautious-agitated': { l: 0.35, c: 0.12, h: 38  },
+  restless:         { l: 0.35, c: 0.10, h: 50  },
+  flat:             { l: 0.28, c: 0.03, h: 250 },
+  neutral:          { l: 0.22, c: 0.01, h: 250 },
 };
 
 function setMoodBackground(emotion) {
   const moodEl = document.getElementById('mood-bg');
   if (!moodEl) return;
+  if (!emotion || emotion === 'neutral' || emotion === 'flat') {
+    moodEl.style.opacity = '0';
+    return;
+  }
   const { l, c, h } = MOOD_BG_COLORS[emotion] || MOOD_BG_COLORS.neutral;
-  const center = `oklch(${l} ${c} ${h} / 0.55)`;
+  const center = `oklch(${l} ${c} ${h})`;
   moodEl.style.background = `radial-gradient(ellipse 130% 90% at 50% 50%, ${center} 0%, transparent 65%)`;
+  moodEl.style.opacity = '1';
 }
 
 /* =====================================================================

@@ -113,6 +113,11 @@ DEFAULTS: dict[str, float | int] = {
     "speaker_store_threshold":     0.70,
     "speaker_session_threshold":   0.62,
     "speaker_min_audio_s":         0.40,
+
+    # ── Section 11: Vision / Video ────────────────────────────────────────────
+    "video_sample_interval":       5.0,
+    "video_max_frames":            8,
+    "video_change_threshold":      8.0,
 }
 
 
