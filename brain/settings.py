@@ -162,7 +162,16 @@ DEFAULTS: dict[str, float | int] = {
     "hormonal_oxt_guarded_threshold":     0.35,
     "hormonal_sht_dysphoric_threshold":   0.25,
 
-    # ── Section 13: Norepinephrine (NE) ──────────────────────────────────────
+    # ── Section 13: Time-weighted decay ──────────────────────────────────────
+    # decay_turn() measures wall-clock seconds since the last turn and applies
+    # rate ** (elapsed / reference_interval_s) instead of a fixed rate ** 1.
+    # This makes emotional state decay proportional to real time, not message count:
+    # slow conversations decay faster between turns; rapid exchanges stay stickier.
+    "decay_reference_interval_s":  60.0,   # elapsed seconds that equals 1 decay turn
+    "decay_min_turns":              0.25,   # floor — even instant replies apply some decay
+    "decay_max_turns":             10.0,   # cap — silence > 10 min treated as 10 turns
+
+    # ── Section 14: Norepinephrine (NE) ──────────────────────────────────────
     # NE = focused alertness signal; inverted-U curve (optimal 0.20–0.55)
     # Per-turn update weights (applied before er_scale)
     "ne_salience_weight":          0.10,   # NE gain per unit salience (alert to what matters)
@@ -175,7 +184,7 @@ DEFAULTS: dict[str, float | int] = {
     "ne_high_threshold":           0.55,   # NE > this → heightened vigilance modifier
     "ne_scatter_threshold":        0.75,   # NE > this → attention narrowed, scattered
 
-    # ── Section 14: Anandamide / AEA (endocannabinoid) ───────────────────────
+    # ── Section 15: Anandamide / AEA (endocannabinoid) ───────────────────────
     # AEA = homeostatic buffer; medium-speed (decay 0.90 vs. neuromod 0.85 / hormone 0.97+)
     # Rises automatically when Glu + NE arousal sum exceeds threshold
     "aea_arousal_threshold":       0.80,   # Glu + NE sum that triggers homeostatic AEA rise

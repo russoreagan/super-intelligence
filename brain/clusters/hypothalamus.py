@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 
 from brain.bus import Bus
 from brain.emotion_vocabulary import (
@@ -23,6 +24,7 @@ CLUSTER = "hypothalamus"
 class HypothalamusCluster:
     def __init__(self, bus: Bus) -> None:
         self._bus = bus
+        self._last_decay_time: float = time.monotonic()
 
         # Stateful switches with decay
         self._valence_switch = StatefulSwitch("valence_to_DA", CLUSTER, decay=settings.get("valence_to_DA_decay"))
@@ -289,5 +291,23 @@ class HypothalamusCluster:
         return affect
 
     def decay_turn(self) -> None:
-        self._bus.neuromod.decay()
-        self._bus.hormonal.decay()
+        """Time-weighted decay: channels decay proportionally to real elapsed time.
+
+        A 60-second gap applies 1.0 turns of decay (the designed baseline).
+        A 10-second gap applies 0.25 turns (minimum — rapid exchanges stay stickier).
+        A 10-minute gap applies 10.0 turns (maximum — state resets to near-floor).
+
+        This means emotional state decays with wall-clock time rather than with
+        message count, so a slow thoughtful conversation doesn't preserve arousal
+        the same way a fast back-and-forth does.
+        """
+        now = time.monotonic()
+        elapsed = now - self._last_decay_time
+        self._last_decay_time = now
+
+        ref   = settings.get("decay_reference_interval_s")
+        turns = elapsed / ref
+        turns = max(settings.get("decay_min_turns"), min(turns, settings.get("decay_max_turns")))
+
+        self._bus.neuromod.decay(turns)
+        self._bus.hormonal.decay(turns)

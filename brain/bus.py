@@ -68,9 +68,15 @@ class Neuromodulators:
     def get(self, channel: str) -> float:
         return self._levels[channel]
 
-    def decay(self) -> None:
+    def decay(self, turns: float = 1.0) -> None:
+        """Decay all channels by DECAY**turns toward their floors.
+
+        turns > 1.0 means more time passed than the reference interval (slow
+        conversation); turns < 1.0 means less (rapid back-and-forth).
+        """
+        rate = self.DECAY ** turns
         for ch in self.CHANNELS:
-            self._levels[ch] = max(self._FLOORS[ch], self._levels[ch] * self.DECAY)
+            self._levels[ch] = max(self._FLOORS[ch], self._levels[ch] * rate)
 
     def snapshot(self) -> dict[str, float]:
         return dict(self._levels)
@@ -107,9 +113,11 @@ class HormonalState:
     def get(self, channel: str) -> float:
         return self._levels[channel]
 
-    def decay(self) -> None:
+    def decay(self, turns: float = 1.0) -> None:
+        """Decay all channels by their individual rates ** turns toward their floors."""
         for ch in self.CHANNELS:
-            self._levels[ch] = max(self._FLOORS[ch], self._levels[ch] * self._DECAY[ch])
+            self._levels[ch] = max(self._FLOORS[ch],
+                                   self._levels[ch] * (self._DECAY[ch] ** turns))
 
     def snapshot(self) -> dict[str, float]:
         return dict(self._levels)
