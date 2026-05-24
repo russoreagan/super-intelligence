@@ -99,6 +99,7 @@ input, select, textarea { font: inherit; color: inherit; background: none; borde
   padding: 0 22px;
   border-bottom: 1px solid var(--line-soft);
   background: linear-gradient(180deg, oklch(0.16 0.022 250) 0%, var(--bg-0) 100%);
+  position: relative;
 }
 
 .brand {
@@ -170,17 +171,22 @@ input, select, textarea { font: inherit; color: inherit; background: none; borde
 }
 
 #emotion-badge {
-  padding: 4px 12px;
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 5px 16px;
   border-radius: 999px;
   font-family: var(--mono);
   font-size: 10px;
   font-weight: 600;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
-  background: oklch(0.22 0.02 250);
+  background: oklch(0.20 0.01 250 / 0.5);
   color: var(--fg-dim);
   border: 1px solid var(--line-soft);
-  transition: background 600ms, color 600ms, border-color 600ms;
+  transition: background 2s ease, color 2s ease, border-color 2s ease;
+  white-space: nowrap;
+  pointer-events: none;
 }
 
 .header-right {
@@ -1434,6 +1440,11 @@ details[open].turn-log summary::before { transform: rotate(90deg); }
    SETTINGS PAGE
    ===================================================================== */
 
+/* Power / reset buttons */
+.icon-btn-power:hover  { background: var(--bg-2); color: oklch(0.65 0.18 25);  border-color: oklch(0.45 0.12 25); }
+.icon-btn-reset:hover  { background: var(--bg-2); color: oklch(0.72 0.14 200); border-color: oklch(0.45 0.10 200); }
+.icon-btn-power.active { color: oklch(0.65 0.18 25);  border-color: oklch(0.45 0.12 25); }
+
 /* Gear button in header */
 .icon-btn {
   display: inline-flex;
@@ -1814,14 +1825,18 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
         <span class="stat-key">Last</span>
         <span class="stat-val" id="stat-elapsed">—</span>
       </div>
-      <div class="stat">
-        <span class="stat-key">Affect</span>
-        <span id="emotion-badge">neutral</span>
-      </div>
     </div>
+
+    <span id="emotion-badge">neutral</span>
 
     <div class="header-right">
       <button id="eval-toggle" title="Toggle intensive eval mode (runs baseline on every turn)">Eval</button>
+      <button id="restart-btn" title="Restart brain" class="icon-btn icon-btn-reset">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.5"/></svg>
+      </button>
+      <button id="power-btn" title="Shut down brain" class="icon-btn icon-btn-power">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg>
+      </button>
       <button id="settings-btn" title="Brain settings" class="icon-btn">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
       </button>
@@ -2411,6 +2426,32 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
         </div>
       </div>
 
+      <!-- S11: Vision / Video -->
+      <div class="settings-section" id="sec-11">
+        <div class="settings-section-head">
+          <span class="settings-section-num">11</span>
+          <div style="flex:1">
+            <div class="settings-section-title">Vision / Video</div>
+            <div class="settings-section-desc">Live video frame sampling and change detection for the occipital lobe</div>
+          </div>
+          <svg class="settings-section-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </div>
+        <div class="settings-section-body">
+          <div class="ctrl-row">
+            <div class="ctrl-header"><span class="ctrl-label">Sample Interval (s)</span><span class="ctrl-hint">how often to grab a frame from the video stream</span><span class="ctrl-value-display" id="val-video_sample_interval">5.0</span></div>
+            <input type="range" class="brain-slider" data-key="video_sample_interval" min="1.0" max="30.0" step="0.5" value="5.0">
+          </div>
+          <div class="ctrl-row">
+            <div class="ctrl-header"><span class="ctrl-label">Max Frames per Call</span><span class="ctrl-hint">max frames batched into one Gemini vision call</span><span class="ctrl-value-display" id="val-video_max_frames">8</span></div>
+            <input type="range" class="brain-slider" data-key="video_max_frames" min="1" max="16" step="1" value="8">
+          </div>
+          <div class="ctrl-row">
+            <div class="ctrl-header"><span class="ctrl-label">Change Threshold (RMS)</span><span class="ctrl-hint">minimum pixel difference to treat a frame as new</span><span class="ctrl-value-display" id="val-video_change_threshold">8.0</span></div>
+            <input type="range" class="brain-slider" data-key="video_change_threshold" min="1.0" max="30.0" step="0.5" value="8.0">
+          </div>
+        </div>
+      </div>
+
     </div><!-- /.settings-grid -->
   </div><!-- /#settings-page -->
 
@@ -2835,16 +2876,19 @@ function handle(msg) {
     case 'emotion': {
       const badge = document.getElementById('emotion-badge');
       badge.textContent = msg.emotion;
-      const theme = EMOTION_COLORS[msg.emotion] || EMOTION_COLORS.neutral;
-      badge.style.background = theme.bg;
-      badge.style.color = theme.color;
-      badge.style.borderColor = `oklch(from ${theme.color} l c h / 0.4)`;
+      // Derive badge colors from MOOD_BG_COLORS so it matches the background glow
+      const moodCfg = MOOD_BG_COLORS[msg.emotion] || MOOD_BG_COLORS.neutral;
+      const { l: ml, c: mc, h: mh } = moodCfg;
+      const badgeText  = `oklch(${Math.min(ml + 0.62, 0.88)} ${Math.min(mc * 1.3, 0.20)} ${mh})`;
+      badge.style.background   = `oklch(${ml} ${mc} ${mh} / 0.35)`;
+      badge.style.color        = badgeText;
+      badge.style.borderColor  = `oklch(${Math.min(ml + 0.28, 0.50)} ${mc} ${mh} / 0.6)`;
       const moodDot  = document.getElementById('mood-dot');
       const moodName = document.getElementById('mood-name');
       moodName.textContent = msg.emotion;
-      moodName.style.color = theme.color;
-      moodDot.style.background = theme.color;
-      moodDot.style.boxShadow = `0 0 7px ${theme.color}`;
+      moodName.style.color = badgeText;
+      moodDot.style.background = badgeText;
+      moodDot.style.boxShadow  = `0 0 7px ${badgeText}`;
       setMoodBackground(msg.emotion);
       break;
     }
@@ -3758,28 +3802,58 @@ const mainPage      = document.getElementById('main');
 const controlBar    = document.getElementById('control-bar');
 // transcriptBar already declared above
 const settingsBtn   = document.getElementById('settings-btn');
+const restartBtn    = document.getElementById('restart-btn');
+const powerBtn      = document.getElementById('power-btn');
 const settingsBack  = document.getElementById('settings-back-btn');
 const settingsSave  = document.getElementById('settings-save-btn');
 const settingsReset = document.getElementById('settings-reset-btn');
 const restartBanner = document.getElementById('settings-restart-banner');
 
-restartBanner.addEventListener('click', async () => {
-  if (restartBanner.classList.contains('restarting')) return;
-  restartBanner.classList.add('restarting');
-  restartBanner.textContent = 'Restarting…';
-  try {
-    await fetch('/restart', { method: 'POST' });
-  } catch (_) { /* process died before responding — that's fine */ }
-  // Poll until the server responds again, then reload
+function tickerMsg(text, color) {
+  const track = document.getElementById('ticker-track');
+  if (!track) return;
+  const item = document.createElement('span');
+  item.className = 'tick-item';
+  item.style.setProperty('--lobe', color || 'oklch(0.72 0.14 200)');
+  item.innerHTML = `<span class="tick-dot"></span><span class="tick-cluster">system</span><span class="tick-note">${text}</span>`;
+  track.appendChild(item);
+  while (track.children.length > 120) track.removeChild(track.firstChild);
+  const scroll = document.getElementById('ticker-scroll');
+  if (scroll) scroll.scrollLeft = scroll.scrollWidth;
+}
+
+async function doRestart(btn) {
+  if (btn) { btn.disabled = true; btn.style.opacity = '0.5'; }
+  tickerMsg('restarting…', 'oklch(0.72 0.14 200)');
+  await new Promise(r => setTimeout(r, 600));
+  try { await fetch('/restart', { method: 'POST' }); } catch (_) {}
+  tickerMsg('waiting for brain…', 'oklch(0.72 0.14 200)');
   const poll = setInterval(async () => {
     try {
       const r = await fetch('/settings', { method: 'GET' });
       if (r.ok) {
         clearInterval(poll);
-        window.location.reload();
+        tickerMsg('back online — reloading', 'oklch(0.72 0.18 145)');
+        setTimeout(() => window.location.reload(), 400);
       }
-    } catch (_) { /* still restarting */ }
+    } catch (_) {}
   }, 800);
+}
+
+restartBtn.addEventListener('click', () => doRestart(restartBtn));
+
+powerBtn.addEventListener('click', async () => {
+  if (!confirm('Shut down the brain?')) return;
+  powerBtn.disabled = true;
+  powerBtn.style.opacity = '0.5';
+  try { await fetch('/shutdown', { method: 'POST' }); } catch (_) {}
+});
+
+restartBanner.addEventListener('click', async () => {
+  if (restartBanner.classList.contains('restarting')) return;
+  restartBanner.classList.add('restarting');
+  restartBanner.textContent = 'Restarting…';
+  doRestart(null);
 });
 
 // Current in-memory settings (loaded from /settings on open)
