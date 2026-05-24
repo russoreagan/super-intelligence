@@ -399,7 +399,8 @@ class TestHypothalamusHormonalIntegration:
         affect = asyncio.run(hyp.process(_hostile_features()))
         assert affect["emotion"] in ("guarded", "withdrawn", "angry", "inhibited",
                                      "cautious-agitated", "defensive",
-                                     "stressed", "overwhelmed", "uneasy"), (
+                                     "stressed", "overwhelmed", "uneasy",
+                                     "vigilant", "scattered", "eased"), (
             f"Expected a stress-state emotion after sustained hostility, got: {affect['emotion']}"
         )
 
@@ -492,3 +493,183 @@ class TestHormonalTracing:
         asyncio.run(em.emit_hormonal({"5HT": 0.12345678, "CORT": 0.0, "OXT": 0.0}))
         event = em.get_queue().get_nowait()
         assert event["5HT"] == pytest.approx(0.123, abs=1e-3)
+
+
+# ── Norepinephrine (NE) tests ────────────────────────────────────────────────
+
+class TestNorepinephrine:
+    """Unit tests for NE as 5th neuromod channel and apply_ne_color()."""
+
+    def test_ne_present_in_neuromod_snapshot(self):
+        from brain.bus import Bus
+        bus = Bus()
+        snap = bus.neuromod.snapshot()
+        assert "NE" in snap
+        assert snap["NE"] == pytest.approx(0.25)
+
+    def test_ne_floor_respected_on_decay(self):
+        from brain.bus import Neuromodulators
+        nm = Neuromodulators()
+        for _ in range(200):
+            nm.decay()
+        assert nm.get("NE") >= Neuromodulators._FLOORS["NE"]
+
+    def test_ne_add_clamps_at_one(self):
+        from brain.bus import Neuromodulators
+        nm = Neuromodulators()
+        nm.add("NE", 10.0)
+        assert nm.get("NE") == pytest.approx(1.0)
+
+    def test_apply_ne_color_no_change_in_optimal_range(self):
+        from brain.emotion_vocabulary import apply_ne_color
+        e, t = apply_ne_color("curious", "investigate", ne=0.40)
+        assert e == "curious"
+        assert t == "investigate"
+
+    def test_apply_ne_color_high_ne_anxious_to_vigilant(self):
+        from brain.emotion_vocabulary import apply_ne_color
+        e, _ = apply_ne_color("anxious", "caution", ne=0.65)
+        assert e == "vigilant"
+
+    def test_apply_ne_color_high_ne_stressed_to_vigilant(self):
+        from brain.emotion_vocabulary import apply_ne_color
+        e, _ = apply_ne_color("stressed", "careful", ne=0.62)
+        assert e == "vigilant"
+
+    def test_apply_ne_color_high_ne_curious_to_alert_curious(self):
+        from brain.emotion_vocabulary import apply_ne_color
+        e, _ = apply_ne_color("curious", "investigate", ne=0.70)
+        assert e == "alert-curious"
+
+    def test_apply_ne_color_very_high_ne_scattered(self):
+        from brain.emotion_vocabulary import apply_ne_color
+        # Above ne_scatter_threshold (0.75), any emotion becomes scattered
+        e, _ = apply_ne_color("joy", "approach", ne=0.80)
+        assert e == "scattered"
+
+    def test_ne_rises_from_salience_in_hypothalamus(self):
+        bus, hyp = _make_hyp()
+        before = bus.neuromod.get("NE")
+        # High-salience warm turn should raise NE
+        asyncio.run(hyp.process(_warm_features(salience=0.9)))
+        assert bus.neuromod.get("NE") > before
+
+    def test_ne_rises_from_hostility_in_hypothalamus(self):
+        bus, hyp = _make_hyp()
+        before = bus.neuromod.get("NE")
+        asyncio.run(hyp.process(_hostile_features()))
+        assert bus.neuromod.get("NE") > before
+
+    def test_ne_in_affect_dims(self):
+        from brain.emotion_vocabulary import compute_affect_dims
+        # High NE should raise arousal dimension
+        low_ne  = compute_affect_dims(
+            {"DA": 0.5, "GABA": 0.05, "ACh": 0.2, "Glu": 0.3, "NE": 0.20},
+            {"5HT": 0.5, "CORT": 0.05, "OXT": 0.3, "AEA": 0.3},
+        )
+        high_ne = compute_affect_dims(
+            {"DA": 0.5, "GABA": 0.05, "ACh": 0.2, "Glu": 0.3, "NE": 0.75},
+            {"5HT": 0.5, "CORT": 0.05, "OXT": 0.3, "AEA": 0.3},
+        )
+        assert high_ne["arousal"] > low_ne["arousal"]
+        assert high_ne["dominance"] > low_ne["dominance"]
+
+
+# ── Anandamide / AEA tests ───────────────────────────────────────────────────
+
+class TestAnandamide:
+    """Unit tests for AEA as 4th hormonal channel and its homeostatic effects."""
+
+    def test_aea_present_in_hormonal_snapshot(self):
+        from brain.bus import Bus
+        bus = Bus()
+        snap = bus.hormonal.snapshot()
+        assert "AEA" in snap
+        assert snap["AEA"] == pytest.approx(0.30)
+
+    def test_aea_floor_respected_on_decay(self):
+        from brain.bus import HormonalState
+        hs = HormonalState()
+        for _ in range(500):
+            hs.decay()
+        assert hs.get("AEA") >= HormonalState._FLOORS["AEA"]
+
+    def test_aea_decays_faster_than_oxt(self):
+        from brain.bus import HormonalState
+        hs = HormonalState()
+        hs.add("AEA", 0.4)
+        hs.add("OXT", 0.4)
+        for _ in range(20):
+            hs.decay()
+        # AEA decays at 0.90, OXT at 0.998 — AEA should be much lower
+        assert hs.get("AEA") < hs.get("OXT")
+
+    def test_aea_suppress_no_effect_at_baseline(self):
+        from brain.bus import HormonalState
+        hs = HormonalState()
+        # AEA at 0.30 (baseline) → no suppression
+        ne_scale, glu_scale = hs.aea_suppress(ne_rate=0.50, glu_rate=0.35)
+        assert ne_scale == pytest.approx(1.0)
+        assert glu_scale == pytest.approx(1.0)
+
+    def test_aea_suppress_reduces_scales_above_baseline(self):
+        from brain.bus import HormonalState
+        hs = HormonalState()
+        hs._levels["AEA"] = 0.70
+        ne_scale, glu_scale = hs.aea_suppress(ne_rate=0.50, glu_rate=0.35)
+        assert ne_scale < 1.0, "Elevated AEA should reduce NE scale"
+        assert glu_scale < 1.0, "Elevated AEA should reduce Glu scale"
+        assert ne_scale >= 0.5, "NE scale floor should be respected"
+
+    def test_aea_suppress_never_below_floor(self):
+        from brain.bus import HormonalState
+        hs = HormonalState()
+        hs._levels["AEA"] = 1.0
+        ne_scale, glu_scale = hs.aea_suppress(ne_rate=5.0, glu_rate=5.0)
+        assert ne_scale >= 0.5
+        assert glu_scale >= 0.5
+
+    def test_aea_rises_from_high_arousal(self):
+        bus, hyp = _make_hyp()
+        # Drive NE + Glu above aea_arousal_threshold by using high salience + surprise
+        before = bus.hormonal.get("AEA")
+        features = _warm_features(salience=0.95, surprise_score=0.9, sentiment=0.0)
+        # May need a few turns to push Glu + NE past threshold
+        for _ in range(5):
+            asyncio.run(hyp.process(features))
+        assert bus.hormonal.get("AEA") >= before, "AEA should not decrease from high-arousal turns"
+
+    def test_aea_positive_increment_on_warm_turn(self):
+        bus, hyp = _make_hyp()
+        before = bus.hormonal.get("AEA")
+        asyncio.run(hyp.process(_warm_features(sentiment=0.8)))
+        assert bus.hormonal.get("AEA") > before
+
+    def test_aea_eased_buffers_stress_emotion(self):
+        from brain.emotion_vocabulary import apply_hormonal_color
+        # High AEA + stressed base → "eased"
+        h = {"OXT": 0.3, "CORT": 0.1, "5HT": 0.5, "AEA": 0.70}
+        e, _ = apply_hormonal_color(
+            "stressed", "careful", h,
+            oxt_connected=0.60, cort_withdrawn=0.45,
+            oxt_guarded=0.35, sht_dysphoric=0.25, aea_eased=0.58,
+        )
+        assert e == "eased"
+
+    def test_aea_no_eased_below_threshold(self):
+        from brain.emotion_vocabulary import apply_hormonal_color
+        h = {"OXT": 0.3, "CORT": 0.1, "5HT": 0.5, "AEA": 0.40}
+        e, _ = apply_hormonal_color(
+            "stressed", "careful", h,
+            oxt_connected=0.60, cort_withdrawn=0.45,
+            oxt_guarded=0.35, sht_dysphoric=0.25, aea_eased=0.58,
+        )
+        assert e != "eased"
+
+    def test_aea_lifts_valence_in_affect_dims(self):
+        from brain.emotion_vocabulary import compute_affect_dims
+        nm = {"DA": 0.5, "GABA": 0.05, "ACh": 0.2, "Glu": 0.3, "NE": 0.25}
+        low_aea  = compute_affect_dims(nm, {"5HT": 0.5, "CORT": 0.05, "OXT": 0.3, "AEA": 0.10})
+        high_aea = compute_affect_dims(nm, {"5HT": 0.5, "CORT": 0.05, "OXT": 0.3, "AEA": 0.90})
+        assert high_aea["valence"] > low_aea["valence"]
+        assert high_aea["arousal"] < low_aea["arousal"]

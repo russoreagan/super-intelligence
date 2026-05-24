@@ -9,7 +9,8 @@ import logging
 
 from brain.bus import Bus
 from brain.emotion_vocabulary import (
-    name_emotion, apply_hormonal_color, appraisal, prosody_prefix, compute_affect_dims,
+    name_emotion, apply_ne_color, apply_hormonal_color,
+    appraisal, prosody_prefix, compute_affect_dims,
 )
 from brain.neuron import StatefulSwitch
 from brain.settings import settings
@@ -73,6 +74,16 @@ class HypothalamusCluster:
             arousal_delta += settings.get("hostile_intent_Glu_bonus")
         nm.add("Glu", arousal_delta)
 
+        # NE: focused alertness — rises with salience, surprise, and threat.
+        # Distinct from Glu (general arousal): NE is the sharp attentional spotlight,
+        # with an inverted-U performance curve (too much narrows attention).
+        ne_delta = (
+            salience  * settings.get("ne_salience_weight") +
+            surprise  * settings.get("ne_surprise_weight") +
+            hostility * settings.get("ne_hostility_weight")
+        ) * er_scale
+        nm.add("NE", ne_delta)
+
         # Satiation: if salience is low (routine), desensitize
         if salience < settings.get("salience_satiation_threshold"):
             self._satiation_inhibitor.update(settings.get("salience_satiation_increase"))
@@ -96,6 +107,7 @@ class HypothalamusCluster:
             if prosody_tone == "stressed":
                 nm.add("GABA", 0.08)
                 nm.add("ACh", 0.05)
+                nm.add("NE", settings.get("ne_prosody_stressed"))
             elif prosody_tone == "energetic":
                 nm.add("Glu", 0.06)
                 nm.add("DA", 0.04)
@@ -119,6 +131,7 @@ class HypothalamusCluster:
             if pace == "rushed":
                 nm.add("Glu", 0.08)   # urgency
                 nm.add("ACh", 0.04)
+                nm.add("NE", settings.get("ne_rush_increment"))
             elif pace == "brisk":
                 nm.add("Glu", 0.04)
                 nm.add("DA", 0.02)    # mild positive valence — animated
@@ -162,37 +175,66 @@ class HypothalamusCluster:
         if hs.get("OXT") > settings.get("oxt_cort_buffer_threshold"):
             hs.add("CORT", -hs.get("OXT") * settings.get("oxt_cort_buffer_rate"))
 
+        # AEA: homeostatic buffer — rises when Glu + NE arousal exceeds threshold.
+        # Also gets a small positive lift from warm exchanges (social afterglow),
+        # and drains slightly when CORT is sustained (stress antagonises AEA).
+        if snap["Glu"] + snap["NE"] > settings.get("aea_arousal_threshold"):
+            hs.add("AEA", settings.get("aea_arousal_increment"))
+        if sentiment > 0.4 and hostility < 0.1:
+            hs.add("AEA", settings.get("aea_positive_increment"))
+        if hs.get("CORT") > settings.get("cort_hostility_threshold"):
+            hs.add("AEA", -settings.get("aea_cort_drain"))
+
         h_snap = hs.snapshot()
         logger.debug(
-            "Hypothalamus hormonal: 5HT=%.3f CORT=%.3f OXT=%.3f",
-            h_snap["5HT"], h_snap["CORT"], h_snap["OXT"],
+            "Hypothalamus hormonal: 5HT=%.3f CORT=%.3f OXT=%.3f AEA=%.3f",
+            h_snap["5HT"], h_snap["CORT"], h_snap["OXT"], h_snap["AEA"],
         )
 
         # Apply hormonal modulation to effective neuromod values for emotion naming.
         # Raw accumulator levels are unchanged; only the values passed to name_emotion
-        # are adjusted so hormonal state shapes the emotion without touching the bus.
+        # and the color functions are adjusted so hormonal state shapes the emotion
+        # without touching the bus.
+
+        # AEA suppresses effective NE and Glu when elevated above resting baseline.
+        ne_scale, glu_scale = hs.aea_suppress(
+            settings.get("aea_ne_suppression"),
+            settings.get("aea_glu_suppression"),
+        )
+        eff_NE  = max(0.0, min(1.0, snap["NE"]  * ne_scale))
+        eff_Glu = max(0.0, min(1.0, snap["Glu"] * glu_scale))
+
+        # DA: hormonal offset + AEA afterglow lift
         da_offset = hs.da_offset(
             settings.get("sht_da_floor_lift"),
             settings.get("oxt_da_lift"),
             settings.get("cort_da_suppress"),
         )
-        gaba_scale = hs.gaba_scale(
+        eff_DA   = max(0.0, min(1.0, snap["DA"] + da_offset
+                                     + h_snap["AEA"] * settings.get("aea_da_lift")))
+        eff_GABA = max(0.0, min(1.0, snap["GABA"] * hs.gaba_scale(
             settings.get("cort_gaba_amplify"),
             settings.get("oxt_gaba_buffer"),
+        )))
+
+        # Name current emotion (using fully-adjusted effective values)
+        emotion, tendency = name_emotion(eff_DA, eff_GABA, snap["ACh"], eff_Glu)
+
+        # NE color: inverted-U modifier (vigilant / alert-curious / scattered)
+        emotion, tendency = apply_ne_color(
+            emotion, tendency, eff_NE,
+            ne_high=settings.get("ne_high_threshold"),
+            ne_scatter=settings.get("ne_scatter_threshold"),
         )
-        eff_DA   = max(0.0, min(1.0, snap["DA"]   + da_offset))
-        eff_GABA = max(0.0, min(1.0, snap["GABA"] * gaba_scale))
 
-        # Name current emotion (using hormone-adjusted effective values)
-        emotion, tendency = name_emotion(eff_DA, eff_GABA, snap["ACh"], snap["Glu"])
-
-        # Overlay hormonal color (connected / withdrawn / guarded / dysphoric)
+        # Hormonal color: connected / withdrawn / guarded / eased / dysphoric
         emotion, tendency = apply_hormonal_color(
             emotion, tendency, h_snap,
             oxt_connected=settings.get("hormonal_oxt_connected_threshold"),
             cort_withdrawn=settings.get("hormonal_cort_withdrawn_threshold"),
             oxt_guarded=settings.get("hormonal_oxt_guarded_threshold"),
             sht_dysphoric=settings.get("hormonal_sht_dysphoric_threshold"),
+            aea_eased=settings.get("aea_eased_threshold"),
         )
 
         # ── Metacognition appraisal override ──────────────────────────────────

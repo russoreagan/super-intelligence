@@ -721,10 +721,12 @@ class FrontalCluster:
             "DA": round(nm["DA"], 2),
             "GABA": round(nm["GABA"], 2),
             "ACh": round(nm["ACh"], 2),
+            "NE": round(nm.get("NE", 0.25), 2),
             "has_memory": bool(memory.get("episodes") or memory.get("schema")),
             "5HT": round((affect.get("hormonal") or {}).get("5HT", 0.5), 2),
             "CORT": round((affect.get("hormonal") or {}).get("CORT", 0.05), 2),
             "OXT": round((affect.get("hormonal") or {}).get("OXT", 0.3), 2),
+            "AEA": round((affect.get("hormonal") or {}).get("AEA", 0.3), 2),
         }
         if affect.get("enrollment_pending"):
             ctx["enrollment_pending_count"] = affect.get("enrollment_pending_count", 1)
@@ -800,6 +802,12 @@ class FrontalCluster:
         "settled":        "Grounded, no particular pull. Steady and plain. Don't generate energy you don't have.",
         "stirred":        "Something activated — attentive but not committed. 'Hmm —', hold before expanding.",
         "uneasy":         "Tension present. Careful word choice. Brief. Read the room before expanding.",
+        # ── NE-derived states ──────────────────────────────────────────────────
+        "vigilant":       "Heightened and sharp. Short, precise sentences. Track the key signal. Don't spiral.",
+        "alert-curious":  "Crisp engagement. Follow the thread fast. Precise questions, quick pivots. Minimal filler.",
+        "scattered":      "Over-activated — one thing at a time. Short sentences. Don't chase every thread.",
+        # ── AEA-derived state ──────────────────────────────────────────────────
+        "eased":          "Pressure present but buffered. Grounded, measured. Neither dismissive nor amplifying.",
         # ── mid-tier defaults (feeling-wheel ancestors) ─────────────────
         # Inherited by leaves without an explicit entry.
         "playful":     "Light, teasing energy. Quick rhythms. Don't explain the joke.",

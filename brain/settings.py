@@ -161,6 +161,34 @@ DEFAULTS: dict[str, float | int] = {
     "hormonal_cort_withdrawn_threshold":  0.45,   # CORT > this → withdrawn/guarded (~17 hostile turns)
     "hormonal_oxt_guarded_threshold":     0.35,
     "hormonal_sht_dysphoric_threshold":   0.25,
+
+    # ── Section 13: Norepinephrine (NE) ──────────────────────────────────────
+    # NE = focused alertness signal; inverted-U curve (optimal 0.20–0.55)
+    # Per-turn update weights (applied before er_scale)
+    "ne_salience_weight":          0.10,   # NE gain per unit salience (alert to what matters)
+    "ne_surprise_weight":          0.08,   # NE gain per unit surprise (re-orient fast)
+    "ne_hostility_weight":         0.10,   # NE gain per unit hostility (threat → vigilance)
+    # Prosody / dynamics contributions
+    "ne_prosody_stressed":         0.06,   # NE gain when tone_label == "stressed"
+    "ne_rush_increment":           0.05,   # NE gain when pace == "rushed"
+    # Inverted-U thresholds (above high → vigilant; above scatter → degraded focus)
+    "ne_high_threshold":           0.55,   # NE > this → heightened vigilance modifier
+    "ne_scatter_threshold":        0.75,   # NE > this → attention narrowed, scattered
+
+    # ── Section 14: Anandamide / AEA (endocannabinoid) ───────────────────────
+    # AEA = homeostatic buffer; medium-speed (decay 0.90 vs. neuromod 0.85 / hormone 0.97+)
+    # Rises automatically when Glu + NE arousal sum exceeds threshold
+    "aea_arousal_threshold":       0.80,   # Glu + NE sum that triggers homeostatic AEA rise
+    "aea_arousal_increment":       0.018,  # AEA gain per turn when arousal is high (~15 turns to effect)
+    "aea_positive_increment":      0.005,  # AEA gain per warm/positive turn (social afterglow)
+    "aea_cort_drain":              0.004,  # AEA drain per turn under sustained stress (CORT antagonism)
+    # AEA → effective NE / Glu suppression (applied above resting baseline of 0.30)
+    "aea_ne_suppression":          0.50,   # excess AEA × this reduces effective NE scale
+    "aea_glu_suppression":         0.35,   # excess AEA × this reduces effective Glu scale
+    # AEA → DA lift ("afterglow": elevated AEA adds mild positive valence)
+    "aea_da_lift":                 0.04,   # AEA × this added to effective DA
+    # AEA color threshold (when elevated AEA buffers a stress state → "eased")
+    "aea_eased_threshold":         0.58,   # AEA > this + stress base emotion → eased
 }
 
 

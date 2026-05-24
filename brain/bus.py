@@ -43,16 +43,24 @@ class Message:
 
 class Neuromodulators:
     """
-    Four persistent scalar channels with exponential decay.
-    ACh = attention/novelty, DA = reward/valence, GABA = inhibition/threat,
-    Glu = arousal/excitation.
+    Five persistent scalar channels with exponential decay.
+    ACh  = attention/novelty (broad curiosity signal)
+    DA   = reward/valence
+    GABA = inhibition/threat
+    Glu  = general arousal/excitation
+    NE   = norepinephrine — focused alertness; inverted-U performance curve
+           (distinct from Glu: NE is threat-/salience-driven sharp focus,
+            not just general activation)
     """
 
     DECAY = 0.85  # per-turn decay multiplier
-    CHANNELS = ("ACh", "DA", "GABA", "Glu")
+    CHANNELS = ("ACh", "DA", "GABA", "Glu", "NE")
+    _FLOORS  = {"ACh": 0.10, "DA": 0.30, "GABA": 0.02, "Glu": 0.15, "NE": 0.15}
 
     def __init__(self) -> None:
-        self._levels: dict[str, float] = {"ACh": 0.2, "DA": 0.5, "GABA": 0.05, "Glu": 0.3}
+        self._levels: dict[str, float] = {
+            "ACh": 0.20, "DA": 0.50, "GABA": 0.05, "Glu": 0.30, "NE": 0.25,
+        }
 
     def add(self, channel: str, delta: float) -> None:
         self._levels[channel] = max(0.0, min(1.0, self._levels[channel] + delta))
@@ -62,10 +70,7 @@ class Neuromodulators:
 
     def decay(self) -> None:
         for ch in self.CHANNELS:
-            self._levels[ch] *= self.DECAY
-            # floor at baseline resting levels
-            floors = {"ACh": 0.1, "DA": 0.3, "GABA": 0.02, "Glu": 0.15}
-            self._levels[ch] = max(floors[ch], self._levels[ch])
+            self._levels[ch] = max(self._FLOORS[ch], self._levels[ch] * self.DECAY)
 
     def snapshot(self) -> dict[str, float]:
         return dict(self._levels)
@@ -73,21 +78,28 @@ class Neuromodulators:
 
 class HormonalState:
     """
-    Slow-timescale endocrine layer. Three channels:
-      5HT  = serotonin  — affective baseline; contentment vs. dysphoria
-      CORT = cortisol   — cumulative stress; builds under sustained threat
-      OXT  = oxytocin   — trust/affiliation; grows with positive exchange
+    Slow-timescale endocrine layer. Four channels:
+      5HT  = serotonin      — affective baseline; contentment vs. dysphoria
+      CORT = cortisol       — cumulative stress; builds under sustained threat
+      OXT  = oxytocin       — trust/affiliation; grows with positive exchange
+      AEA  = anandamide     — homeostatic buffer; rises when arousal is high,
+                              suppresses NE + Glu, adds mild DA lift ("afterglow")
+                              Decay ~0.90 — faster than other hormones but slower
+                              than neurotransmitters; responds within a few turns.
 
-    Decay rates are 10–100× slower than Neuromodulators.
-    Acts as gain-control on neuromod effective values (DA floor, GABA sensitivity).
+    Decay rates are 5–100× slower than Neuromodulators.
+    Acts as gain-control on neuromod effective values (DA floor, GABA sensitivity,
+    NE/Glu suppression from AEA).
     """
 
-    CHANNELS = ("5HT", "CORT", "OXT")
-    _DECAY  = {"5HT": 0.995, "CORT": 0.970, "OXT": 0.998}
-    _FLOORS = {"5HT": 0.20,  "CORT": 0.02,  "OXT": 0.15}
+    CHANNELS = ("5HT", "CORT", "OXT", "AEA")
+    _DECAY  = {"5HT": 0.995, "CORT": 0.970, "OXT": 0.998, "AEA": 0.900}
+    _FLOORS = {"5HT": 0.20,  "CORT": 0.02,  "OXT": 0.15,  "AEA": 0.10}
 
     def __init__(self) -> None:
-        self._levels: dict[str, float] = {"5HT": 0.50, "CORT": 0.05, "OXT": 0.30}
+        self._levels: dict[str, float] = {
+            "5HT": 0.50, "CORT": 0.05, "OXT": 0.30, "AEA": 0.30,
+        }
 
     def add(self, channel: str, delta: float) -> None:
         self._levels[channel] = max(0.0, min(1.0, self._levels[channel] + delta))
@@ -115,6 +127,18 @@ class HormonalState:
         return max(0.5, 1.0
                    + self._levels["CORT"] * cort_amplify
                    - self._levels["OXT"] * oxt_buffer)
+
+    def aea_suppress(self, ne_rate: float, glu_rate: float,
+                     base: float = 0.30) -> tuple[float, float]:
+        """
+        Compute NE and Glu scale factors from AEA homeostatic suppression.
+        Only activates above the resting AEA baseline (default 0.30) so that
+        normal-level AEA has no effect. Returns (ne_scale, glu_scale), both ≥ 0.5.
+        """
+        excess = max(0.0, self._levels["AEA"] - base)
+        ne_scale  = max(0.5, 1.0 - excess * ne_rate)
+        glu_scale = max(0.5, 1.0 - excess * glu_rate)
+        return ne_scale, glu_scale
 
 
 class Bus:

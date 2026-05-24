@@ -67,11 +67,38 @@ def name_emotion(DA: float, GABA: float, ACh: float, Glu: float) -> tuple[str, s
     return EMOTION_TABLE.get(key, DEFAULT_EMOTION)
 
 
+def apply_ne_color(emotion: str, tendency: str, ne: float,
+                   ne_high: float = 0.55,
+                   ne_scatter: float = 0.75) -> tuple[str, str]:
+    """
+    NE (norepinephrine) modifier — fires outside the optimal range (0.20–0.55).
+    Most turns are unaffected; only high or very-high NE changes the output.
+
+    Very high NE: attention narrows past useful focus → "scattered".
+    High NE + anxious/stressed base: becomes "vigilant" (sharp threat-awareness,
+      not helpless anxiety).
+    High NE + engaged/curious base: becomes "alert-curious" (crisp, fast engagement).
+    Low NE has no explicit label change — it shows through affect_dims (low arousal).
+    """
+    if ne > ne_scatter:
+        return ("scattered",
+                "over-activated — one thing at a time, slow down, don't chase every signal")
+    if ne > ne_high:
+        if emotion in ("anxious", "cautious-agitated", "stressed", "uneasy", "restless"):
+            return ("vigilant",
+                    "heightened and tight — track the key signals, stay precise, don't spiral")
+        if emotion in ("curious", "engaged", "stirred", "alert-curious"):
+            return ("alert-curious",
+                    "sharp attention on this — follow fast, precise questions, quick pivots")
+    return emotion, tendency
+
+
 def apply_hormonal_color(emotion: str, tendency: str, h: dict,
                           oxt_connected: float = 0.65,
                           cort_withdrawn: float = 0.55,
                           oxt_guarded: float = 0.35,
-                          sht_dysphoric: float = 0.25) -> tuple[str, str]:
+                          sht_dysphoric: float = 0.25,
+                          aea_eased: float = 0.58) -> tuple[str, str]:
     """
     Overlay slow-timescale hormonal state onto the base emotion.
     Only fires when a hormone is outside its normal operating range,
@@ -80,6 +107,7 @@ def apply_hormonal_color(emotion: str, tendency: str, h: dict,
     oxt  = h.get("OXT",  0.30)
     cort = h.get("CORT", 0.05)
     sht  = h.get("5HT",  0.50)
+    aea  = h.get("AEA",  0.30)
 
     # High trust + positive base → connected (warmest relational state)
     if oxt > oxt_connected and emotion in ("warm", "joy", "content", "confident", "thoughtful"):
@@ -95,6 +123,10 @@ def apply_hormonal_color(emotion: str, tendency: str, h: dict,
         # High CORT even with moderate OXT → edge off warmth
         if emotion == "warm":
             return ("cautious-warm", "be kind but don't lower guard fully")
+
+    # AEA elevated during a stress state → homeostatic buffer is working; "eased"
+    if aea > aea_eased and emotion in ("stressed", "overwhelmed", "vigilant", "anxious", "uneasy"):
+        return ("eased", "activation present but buffered — hold steady, grounded under pressure")
 
     # Low serotonin drags baseline states negative
     if sht < sht_dysphoric and emotion in ("flat", "neutral", "content"):
@@ -125,6 +157,10 @@ def appraisal(emotion: str, situation: str) -> str:
         "settled":       f"stable, low arousal — grounded engagement with: {situation}",
         "stirred":       f"Glu elevated — something activating, watching: {situation}",
         "uneasy":        f"Glu + GABA rising — tension present on: {situation}",
+        "vigilant":      f"NE elevated, attention sharp — tracking threat on: {situation}",
+        "alert-curious": f"NE + ACh elevated — crisp focused engagement with: {situation}",
+        "scattered":     f"NE excessive — over-activated, attention fragmented on: {situation}",
+        "eased":         f"AEA buffering arousal — stress present but held on: {situation}",
     }
     for key, template in templates.items():
         if key in emotion:
@@ -155,6 +191,10 @@ PROSODY_MARKERS: dict[str, list[str]] = {
     "settled":        ["Sure.", "Of course."],
     "stirred":        ["Hm.", "Wait —"],
     "uneasy":         ["...okay.", "I'd want to be careful here —"],
+    "vigilant":       ["Wait —", "Hold on —", "To be precise:"],
+    "alert-curious":  ["Oh —", "Wait, actually —", "Interesting —"],
+    "scattered":      ["...okay.", "Right —"],
+    "eased":          ["Okay.", "Right."],
 }
 
 
@@ -166,37 +206,44 @@ def prosody_prefix(emotion: str) -> str:
 
 def compute_affect_dims(nm: dict, hormones: dict) -> dict:
     """
-    Map all 7 neuromod+hormonal channels to three continuous PAD dimensions.
+    Map all 9 neuromod+hormonal channels to three continuous PAD dimensions.
 
     Returns valence, arousal, dominance each in [0.0, 1.0].
-    Neutral state (DA=0.3, GABA=0.05, ACh=0.3, Glu=0.3, 5HT=0.5, CORT=0.05, OXT=0.3)
-    yields approximately valence≈0.47, arousal≈0.25, dominance≈0.46.
+    Neutral state (DA=0.5, GABA=0.05, ACh=0.2, Glu=0.3, NE=0.25,
+                   5HT=0.5, CORT=0.05, OXT=0.3, AEA=0.3)
+    yields approximately valence≈0.56, arousal≈0.25, dominance≈0.54.
 
     These supplement the discrete emotion label — pass both to drafters so they
     can distinguish "mildly stressed" from "deeply stressed" without needing
     separate table entries for every intensity level.
+
+    NE raises arousal (focused activation) and dominance (sharpens agency).
+    AEA lifts valence slightly (afterglow) and dampens arousal (homeostasis).
     """
-    DA   = float(nm.get("DA",   0.3))
+    DA   = float(nm.get("DA",   0.50))
     GABA = float(nm.get("GABA", 0.05))
-    ACh  = float(nm.get("ACh",  0.3))
-    Glu  = float(nm.get("Glu",  0.3))
-    sht  = float(hormones.get("5HT",  0.5))
+    ACh  = float(nm.get("ACh",  0.20))
+    Glu  = float(nm.get("Glu",  0.30))
+    NE   = float(nm.get("NE",   0.25))
+    sht  = float(hormones.get("5HT",  0.50))
     cort = float(hormones.get("CORT", 0.05))
-    oxt  = float(hormones.get("OXT",  0.3))
+    oxt  = float(hormones.get("OXT",  0.30))
+    aea  = float(hormones.get("AEA",  0.30))
 
-    # Valence: pleasant ← DA, 5HT, OXT; unpleasant ← GABA, CORT
+    # Valence: pleasant ← DA, 5HT, OXT, AEA; unpleasant ← GABA, CORT
     valence = max(0.0, min(1.0,
-        0.40 * DA + 0.25 * sht + 0.15 * oxt
-        - 0.20 * GABA - 0.10 * cort + 0.20))
+        0.38 * DA + 0.23 * sht + 0.13 * oxt + 0.05 * aea
+        - 0.20 * GABA - 0.10 * cort + 0.18))
 
-    # Arousal: activated ← Glu, ACh, DA; sedated ← GABA (at high levels)
+    # Arousal: activated ← NE (focused), Glu (general), ACh; dampened ← GABA, AEA
     arousal = max(0.0, min(1.0,
-        0.40 * Glu + 0.35 * ACh + 0.10 * DA - 0.05 * GABA))
+        0.30 * NE + 0.30 * Glu + 0.25 * ACh + 0.08 * DA
+        - 0.05 * GABA - 0.03 * aea))
 
-    # Dominance: in-control ← DA, OXT; threatened ← GABA, CORT
+    # Dominance: in-control ← DA, OXT, NE (sharpened agency); threatened ← GABA, CORT
     dominance = max(0.0, min(1.0,
-        0.40 * DA + 0.20 * oxt
-        - 0.30 * GABA - 0.20 * cort + 0.30))
+        0.35 * DA + 0.15 * oxt + 0.15 * NE
+        - 0.28 * GABA - 0.18 * cort + 0.28))
 
     return {
         "valence":   round(valence, 3),
