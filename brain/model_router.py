@@ -61,7 +61,8 @@ class ModelRouter:
 
     async def call(self, model_key: str, system_prompt: str, messages: list[dict],
                    *, cluster: str = "", cell: str = "", turn_id: str = "",
-                   locality: str = "either", max_tokens: int = 1024) -> str:
+                   locality: str = "either", max_tokens: int = 1024,
+                   skills: list[str] | None = None) -> str:
         model_id = MODEL_MAP.get(model_key, model_key)
 
         # Locality enforcement: local cells must never dispatch to cloud APIs
@@ -82,6 +83,11 @@ class ModelRouter:
         elif model_id.startswith("gemini"):
             text, in_tok, out_tok = await self._call_google(model_id, system_prompt, messages, max_tokens)
         elif model_id == "local":
+            if skills:
+                from brain.skill_loader import SkillLoader
+                skill_block = SkillLoader.load_many(skills)
+                if skill_block:
+                    system_prompt = f"{system_prompt}\n\n{skill_block}"
             text, in_tok, out_tok = await self._call_local(system_prompt, messages, max_tokens)
         else:
             raise ValueError(f"Unknown model key: {model_key}")
@@ -126,10 +132,24 @@ class ModelRouter:
         contents = []
         for m in messages:
             role = "user" if m["role"] == "user" else "model"
-            contents.append(types.Content(
-                role=role,
-                parts=[types.Part(text=m["content"])]
-            ))
+            raw = m["content"]
+            # Multimodal: content may be a list of parts like
+            #   [{"type": "text", "text": "..."}, {"type": "image", "data": bytes, "mime": "image/jpeg"}, ...]
+            if isinstance(raw, list):
+                parts = []
+                for part in raw:
+                    if part.get("type") == "text":
+                        parts.append(types.Part(text=part["text"]))
+                    elif part.get("type") == "image":
+                        parts.append(types.Part(
+                            inline_data=types.Blob(mime_type=part["mime"], data=part["data"])
+                        ))
+                contents.append(types.Content(role=role, parts=parts))
+            else:
+                contents.append(types.Content(
+                    role=role,
+                    parts=[types.Part(text=raw)]
+                ))
 
         response = await client.aio.models.generate_content(
             model=model_id,

@@ -8,6 +8,7 @@ import logging
 from collections import defaultdict
 
 from brain.bus import Bus
+from brain.settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -34,8 +35,9 @@ class ThalamusCluster:
         intent = features.get("intent", "other")
 
         # Update topic activations with decay
+        decay = settings.get("topic_activation_decay")
         for topic in self._topic_activation:
-            self._topic_activation[topic] *= 0.7
+            self._topic_activation[topic] *= decay
 
         # Compute priority hints
         priorities = {
@@ -45,13 +47,13 @@ class ThalamusCluster:
         }
 
         if features.get("requires_memory") or features.get("epistemic_action"):
-            priorities["hippocampus"] += 0.6 + salience * 0.3
+            priorities["hippocampus"] += settings.get("hippocampus_priority_base") + salience * settings.get("hippocampus_salience_weight")
         if features.get("requires_vision"):
-            priorities["occipital"] += 0.8
+            priorities["occipital"] += settings.get("occipital_priority_base")
         if intent in ("hostile", "task"):
-            priorities["frontal"] += 0.3
-        if nm["ACh"] > 0.5:  # high novelty → more frontal engagement
-            priorities["frontal"] += nm["ACh"] * 0.2
+            priorities["frontal"] += settings.get("frontal_hostile_priority")
+        if nm["ACh"] > settings.get("ach_threshold_frontal"):
+            priorities["frontal"] += nm["ACh"] * settings.get("frontal_ach_weight")
 
         top_cluster = max(priorities, key=priorities.get)
         focus_topic = f"cluster.{top_cluster}"
@@ -66,7 +68,7 @@ class ThalamusCluster:
             logger.debug("Thalamus: attention → %s (salience=%.2f)", top_cluster, salience)
 
         # Promote TTL for high-salience topics (soft spotlight)
-        if salience > 0.6:
+        if salience > settings.get("salience_workspace_threshold"):
             self._topic_activation["temporal.features"] = salience
             logger.debug("Thalamus: promoting temporal.features to global workspace")
 

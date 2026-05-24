@@ -25,6 +25,7 @@ from brain.bus import Bus
 from brain.cell import IntegratorCell
 from brain.model_router import ModelRouter
 from brain.voice_bridge import bleed_overlap as _word_overlap
+from brain.settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -286,18 +287,17 @@ class DefaultModeNetwork:
         glu  = snap.get("Glu",  0.0)
         gaba = snap.get("GABA", 0.0)
 
-        # ACh = 0.8 → ~0.92 before cap; ACh = 0.4 (idle) → ~0.46
-        suppression = ach * 1.0 + glu * 0.3
+        suppression = ach * settings.get("ach_suppression_weight") + glu * settings.get("glu_suppression_weight")
 
         # Moderate GABA (anxious but not frozen) → more rumination, not less
         if 0.2 <= gaba < 0.6:
-            suppression = max(0.0, suppression - 0.15)
+            suppression = max(0.0, suppression - settings.get("gaba_suppression_reduction"))
 
-        return min(0.85, suppression)
+        return min(settings.get("suppression_skip_prob_max"), suppression)
 
     async def _loop(self) -> None:
         while self._running:
-            await asyncio.sleep(DMN_INTERVAL)
+            await asyncio.sleep(settings.get("dmn_interval") or DMN_INTERVAL)
             if not self._running:
                 break
             skip_prob = self._tick_skip_probability()
@@ -377,7 +377,7 @@ class DefaultModeNetwork:
                     if o > max_overlap:
                         max_overlap = o
 
-                if max_overlap > DMN_OVERLAP_THRESHOLD:
+                if max_overlap > settings.get("dmn_overlap_threshold"):
                     self._suppressed_count += 1
                     logger.info(
                         "[Background reflection] Suppressed redundant thought "

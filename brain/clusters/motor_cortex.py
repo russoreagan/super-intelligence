@@ -22,6 +22,7 @@ from brain.cell import IntegratorCell
 from brain.model_router import ModelRouter
 from brain.neuron import SwitchNeuron
 from brain.utils import safe_json_parse
+from brain.clusters.motor_subsystem import MotorSubsystem
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +79,8 @@ class MotorCortexCluster:
         self._bus = bus
         self._router = router
         self._cloud = cloud_executor
+        self._pending_task = None  # set post-init via set_pending_task()
+        self._subsystems: list[MotorSubsystem] = []
 
         # Resolve and normalise allowed path roots at startup
         self._allowed_paths: list[str] = []
@@ -110,6 +113,7 @@ class MotorCortexCluster:
             max_calls_per_turn=2,
             timeout_seconds=45.0,
             locality="local",
+            skills=["quality-debugging", "dev-process", "devops-git-advanced-workflows"],
         )
         self._planner.set_router(router)
 
@@ -125,6 +129,13 @@ class MotorCortexCluster:
 
         self._calls_this_turn: int = 0
 
+    def set_pending_task(self, pending_task) -> None:
+        self._pending_task = pending_task
+
+    def register_subsystem(self, subsystem: MotorSubsystem) -> None:
+        self._subsystems.append(subsystem)
+        logger.info("[MotorCortex] Registered subsystem: %s", subsystem.name)
+
     def reset_turn(self, turn_id: str) -> None:
         self._calls_this_turn = 0
         self._planner.reset_turn(turn_id)
@@ -133,54 +144,261 @@ class MotorCortexCluster:
 
     async def execute(self, features: dict, turn_id: str) -> dict | None:
         """
-        Plan and execute a tool based on the user's request.
-        Returns a result dict with {tool, args, output, success} or None if no tool needed.
+        Plan and execute tools based on the user's request.
+
+        Two modes:
+        - Task mode: frontal deposited a goal → reactive loop runs until tool="none"
+          or the 3-call budget is exhausted. Fires after_job hooks on completion.
+        - Reactive mode: no task goal → single tool call, return result immediately.
         """
         if not self._action_gate.should_fire(1.0):
             return None
-
-        # Budget gate: allow at most 3 tool calls per turn
         if self._calls_this_turn >= 3:
             logger.warning("[MotorCortex] Tool call budget exhausted for this turn")
             return None
 
         raw_text = features.get("raw_text", features.get("topic_summary", ""))
 
-        # Build planner context
-        plan_prompt = (
-            f"User said: {raw_text}\n"
-            f"Intent: {features.get('intent', 'task')}\n"
-            f"Entities: {features.get('entities', [])}\n"
-            "Select the right tool and arguments."
+        # Pick up a goal deposited by the frontal task subsystem (if any)
+        task_goal: str | None = None
+        if self._pending_task and self._pending_task.has_pending():
+            task_goal = self._pending_task.take()
+            logger.info("[MotorCortex] Task goal received: %s", task_goal[:80])
+
+        work_goal = task_goal or raw_text
+
+        # Gather subsystem context (e.g. muscle memory prior procedures)
+        subsystem_context = ""
+        for sub in self._subsystems:
+            try:
+                ctx = await sub.before_plan(work_goal, self._router)
+                if ctx:
+                    subsystem_context += ctx + "\n\n"
+            except Exception as e:
+                logger.debug("[MotorCortex] Subsystem %s before_plan failed: %s", sub.name, e)
+
+        # Check whether any subsystem has a high-confidence procedure we can run open-loop
+        best_proc: dict | None = None
+        best_sim: float = 0.0
+        for sub in self._subsystems:
+            try:
+                proc, sim = await sub.recall_procedure(work_goal, self._router)
+                if sim > best_sim:
+                    best_proc, best_sim = proc, sim
+            except Exception as e:
+                logger.debug("[MotorCortex] Subsystem %s recall_procedure failed: %s", sub.name, e)
+
+        if best_proc is not None:
+            logger.info("[MotorCortex] Running open-loop (sim=%.3f, uses=%d): %s",
+                        best_sim, best_proc.get("use_count", 0), work_goal[:60])
+            return await self._execute_open_loop(best_proc, task_goal, turn_id)
+
+        steps_taken: list[dict] = []
+        results_log: list[str] = []
+        last_result: dict | None = None
+
+        while self._calls_this_turn < 3:
+            plan_prompt = self._build_plan_prompt(
+                work_goal, features, subsystem_context, steps_taken, results_log
+            )
+            raw = await self._planner.call([{"role": "user", "content": plan_prompt}])
+            plan: dict = safe_json_parse(raw) or {}
+
+            if not plan or plan.get("tool") == "none":
+                logger.debug("[MotorCortex] Planner done: %s", plan.get("reason", ""))
+                break
+
+            tool = plan.get("tool", "none")
+            args = plan.get("args", {})
+            reason = plan.get("reason", "")
+            logger.info("[MotorCortex] Step %d: %s(%s) — %s",
+                        len(steps_taken) + 1, tool, list(args.keys()), reason)
+
+            self._calls_this_turn += 1
+
+            if tool == "cloud_action":
+                last_result = await self._dispatch_cloud(args, turn_id)
+                output = (last_result or {}).get("output", "")
+            else:
+                output = await self._dispatch(tool, args)
+                last_result = {
+                    "tool": tool, "args": args, "reason": reason, "output": output,
+                    "success": not output.startswith("[error]") and not output.startswith("[blocked]"),
+                }
+                await self._bus.publish_dict("motor.result", last_result, source=CLUSTER)
+
+            steps_taken.append({"tool": tool, "args": args, "reason": reason})
+            results_log.append(output[:500] if output else "")
+
+            if not task_goal:
+                # Reactive mode: one tool per turn
+                break
+
+        # Fire completion hooks for task-mode jobs
+        if task_goal and steps_taken:
+            success = all(
+                not r.startswith("[error]") and not r.startswith("[blocked]")
+                for r in results_log
+            )
+            await self._notify_job_complete(task_goal, steps_taken, results_log, success)
+            step_summary = "; ".join(
+                f"{s['tool']}→{'ok' if not results_log[i].startswith('[error]') else 'err'}"
+                for i, s in enumerate(steps_taken)
+            )
+            if last_result is None:
+                last_result = {}
+            last_result["task_goal"] = task_goal
+            last_result["steps_taken"] = len(steps_taken)
+            last_result["step_summary"] = step_summary
+
+        return last_result
+
+    async def _execute_open_loop(self, procedure: dict, goal: str | None,
+                                  turn_id: str) -> dict | None:
+        """
+        Execute a familiar procedure without per-step LLM planning — analogous to
+        how M1 fires pre-planned motor commands once a movement is well-learned.
+
+        Validates each step's output against stored expected results. On significant
+        divergence (error status mismatch or wildly different output length), marks
+        the procedure as stale so it falls back to reactive planning next time.
+        """
+        steps = procedure.get("steps", [])
+        expected_results = procedure.get("results", [])
+        proc_id = procedure.get("id", "")
+
+        steps_taken: list[dict] = []
+        results_log: list[str] = []
+        prediction_errors: int = 0
+        last_result: dict | None = None
+
+        for i, step in enumerate(steps):
+            if self._calls_this_turn >= 3:
+                logger.warning("[MotorCortex] Open-loop budget exhausted at step %d/%d",
+                               i + 1, len(steps))
+                break
+
+            tool = step.get("tool", "none")
+            args = step.get("args", {})
+            reason = step.get("reason", "")
+            logger.info("[MotorCortex] Open-loop step %d/%d: %s — %s",
+                        i + 1, len(steps), tool, reason)
+
+            self._calls_this_turn += 1
+
+            if tool == "cloud_action":
+                last_result = await self._dispatch_cloud(args, turn_id)
+                output = (last_result or {}).get("output", "")
+            else:
+                output = await self._dispatch(tool, args)
+                last_result = {
+                    "tool": tool, "args": args, "reason": reason, "output": output,
+                    "success": not output.startswith("[error]") and not output.startswith("[blocked]"),
+                }
+                await self._bus.publish_dict("motor.result", last_result, source=CLUSTER)
+
+            steps_taken.append({"tool": tool, "args": args, "reason": reason})
+            results_log.append(output[:500] if output else "")
+
+            # Outcome validation — three-level prediction hierarchy:
+            # 1. predict_outcome() from any subsystem (generalises across procedures)
+            # 2. Embedded _sig in the stored step (specific to this procedure)
+            # 3. Raw error-status check (always available as last resort)
+            prediction: dict | None = None
+            for sub in self._subsystems:
+                try:
+                    p = await sub.predict_outcome(tool, args, results_log, self._router)
+                    if p is not None:
+                        prediction = p
+                        break
+                except Exception:
+                    pass
+            if prediction is None:
+                prediction = step.get("_sig")  # embedded at record time
+
+            actual_error = output.startswith("[error]") or output.startswith("[blocked]")
+            if prediction is not None:
+                if actual_error != (not prediction.get("expected_success", True)):
+                    prediction_errors += 1
+                    logger.warning("[MotorCortex] Prediction error at step %d: "
+                                   "expected %s, got %s (source: %s)",
+                                   i + 1,
+                                   "ok" if prediction.get("expected_success") else "error",
+                                   "error" if actual_error else "ok",
+                                   "learned" if "sample_count" in prediction else "stored")
+                elif not actual_error and not prediction.get("is_empty", False):
+                    n = len(output)
+                    if n < prediction.get("length_min", 0) or n > prediction.get("length_max", float("inf")):
+                        prediction_errors += 1
+                        logger.warning("[MotorCortex] Length divergence at step %d: "
+                                       "expected %d–%d chars, got %d",
+                                       i + 1, prediction["length_min"], prediction["length_max"], n)
+            elif actual_error:
+                # Fallback: unexpected error with no prior prediction is always a divergence
+                prediction_errors += 1
+                logger.warning("[MotorCortex] Unexpected error at step %d (no prior prediction)",
+                               i + 1)
+
+        success = all(
+            not r.startswith("[error]") and not r.startswith("[blocked]")
+            for r in results_log
         )
 
-        raw = await self._planner.call([{"role": "user", "content": plan_prompt}])
+        if prediction_errors > 0:
+            logger.warning("[MotorCortex] Open-loop diverged (%d prediction error(s)) — "
+                           "marking procedure stale", prediction_errors)
+            for sub in self._subsystems:
+                if hasattr(sub, "mark_diverged"):
+                    try:
+                        sub.mark_diverged(proc_id)
+                    except Exception:
+                        pass
 
-        plan: dict = safe_json_parse(raw) or {}
+        if steps_taken:
+            await self._notify_job_complete(goal or "", steps_taken, results_log, success)
 
-        if not plan or plan.get("tool") == "none":
-            logger.debug("[MotorCortex] Planner decided no tool needed: %s", plan.get("reason", ""))
-            return None
+        if last_result is None:
+            last_result = {}
+        last_result["task_goal"] = goal
+        last_result["steps_taken"] = len(steps_taken)
+        last_result["open_loop"] = True
+        last_result["prediction_errors"] = prediction_errors
+        return last_result
 
-        tool = plan.get("tool", "none")
-        args = plan.get("args", {})
-        reason = plan.get("reason", "")
+    def _build_plan_prompt(self, goal: str, features: dict, subsystem_context: str,
+                           steps_done: list[dict], results: list[str]) -> str:
+        parts = [
+            f"Goal: {goal}",
+            f"Intent: {features.get('intent', 'task')}",
+            f"Entities: {features.get('entities', [])}",
+        ]
+        if subsystem_context.strip():
+            parts.append(subsystem_context.strip())
+        if steps_done:
+            history = ["Steps completed so far:"]
+            for i, (step, result) in enumerate(zip(steps_done, results), 1):
+                preview = result[:200] + "..." if len(result) > 200 else result
+                history.append(f"  {i}. {step['tool']}({list(step['args'].keys())}) → {preview}")
+            parts.append("\n".join(history))
+            parts.append('Based on the above, what is the next tool call? '
+                         'Return {"tool": "none"} if the goal is achieved.')
+        else:
+            parts.append("Select the right tool and arguments.")
+        return "\n".join(parts)
 
-        logger.info("[MotorCortex] Planned: %s(%s) — %s", tool, list(args.keys()), reason)
-
-        self._calls_this_turn += 1
-
-        # Route cloud actions through CloudExecutor
-        if tool == "cloud_action":
-            return await self._dispatch_cloud(args, turn_id)
-
-        output = await self._dispatch(tool, args)
-
-        result = {"tool": tool, "args": args, "reason": reason, "output": output,
-                  "success": not output.startswith("[error]") and not output.startswith("[blocked]")}
-
-        await self._bus.publish_dict("motor.result", result, source=CLUSTER)
-        return result
+    async def _notify_job_complete(self, goal: str, steps: list[dict],
+                                   results: list[str], success: bool) -> None:
+        """Fire after_job hooks on all motor subsystems."""
+        for sub in self._subsystems:
+            try:
+                import inspect
+                sig = inspect.signature(sub.after_job)
+                if "router" in sig.parameters:
+                    await sub.after_job(goal, steps, results, success, router=self._router)
+                else:
+                    await sub.after_job(goal, steps, results, success)
+            except Exception as e:
+                logger.warning("[MotorCortex] Subsystem %s after_job failed: %s", sub.name, e)
 
     async def _dispatch_cloud(self, args: dict, turn_id: str) -> dict | None:
         """Route to CloudExecutor, applying the confirmation gate for write actions."""

@@ -26,6 +26,7 @@ from brain.predictor import (
 from brain.observability.decisions import decisions
 from brain.utils import safe_json_parse
 from brain.wiring import Wiring
+from brain.clusters.frontal_subsystem import FrontalSubsystem
 
 logger = logging.getLogger(__name__)
 
@@ -170,6 +171,11 @@ class FrontalCluster:
         self._brainstem = brainstem
         self._router = router
         self._wiring = wiring
+        # Frontal subsystems — checked in order after the executive classifies a turn.
+        # First subsystem whose can_handle() returns True wins; conversational path
+        # (drafter/critic) fires as the implicit fallback if none match.
+        # Register new subsystems here.
+        self._subsystems: list[FrontalSubsystem] = []
         self._wiring_frozen = os.environ.get("BRAIN_WIRING_FROZEN", "false").lower() == "true"
         # What the entity can actually do — surfaced into drafter prompts so
         # the drafters don't confabulate when asked "what tools do you have?"
@@ -197,7 +203,7 @@ class FrontalCluster:
             IntegratorCell(
                 name=f"drafter_{chr(65+i)}", cluster=CLUSTER, model="haiku",
                 system_prompt=DRAFTER_SYSTEMS[i], topics=["motor.draft"],
-                max_calls_per_turn=1, locality="cloud", max_tokens=2048,
+                max_calls_per_turn=1, locality="cloud", max_tokens=768,
             )
             for i in range(3)
         ]
@@ -244,6 +250,11 @@ class FrontalCluster:
 
         # Eval: populated each turn with critic scores for all drafts — read by run.py
         self.last_turn_draft_scores: list[dict] = []
+
+    def register_subsystem(self, subsystem: FrontalSubsystem) -> None:
+        """Register a frontal subsystem. Called once at boot before any turns fire."""
+        self._subsystems.append(subsystem)
+        logger.info("[Frontal] Registered subsystem: %s", subsystem.name)
 
     def set_capabilities(self, summary: str | None) -> None:
         """Provide a human-readable list of what the entity can actually do
@@ -366,6 +377,28 @@ class FrontalCluster:
                     "correct": (predicted_now == actual) if predicted_now else None,
                 })
 
+        # --- Subsystem dispatch ---
+        # Check registered subsystems before the conversational path.
+        # First match wins; conversational drafter/critic fires as fallback.
+        response_type = instruction.get("response_type", "chitchat")
+        for subsystem in self._subsystems:
+            if subsystem.can_handle(response_type, features):
+                logger.info("[Frontal] Dispatching to subsystem: %s", subsystem.name)
+                result = await subsystem.process(
+                    features, affect, memory, parietal_context, instruction, turn_id
+                )
+                if result.response:
+                    draft_id = f"subsystem_{subsystem.name}_{turn_id}"
+                    self._brainstem.add_draft(draft_id, result.response, 0.9)
+                    self._brainstem.endorse(draft_id)
+                    self.last_turn_draft_scores = [{
+                        "draft_id": draft_id, "overall": 0.9,
+                        "coherence": 0.9, "relevance": 0.9, "tone_fit": 0.9,
+                        "selected": True, "subsystem": subsystem.name,
+                    }]
+                    return result.response
+                break  # subsystem matched but returned no response — fall through
+
         drafter_count = min(int(instruction.get("drafter_count", 1)), 3)
         # Arousal switch: low arousal → fewer drafters
         if nm["Glu"] < 0.25:
@@ -444,12 +477,42 @@ class FrontalCluster:
         if len(drafts) >= 2:
             self._critic.reset_turn(turn_id)
             scored = []
-            for draft_id, text in drafts:
+
+            async def _score_one(draft_id: str, text: str):
                 score = await self._score_draft(text, drafter_prompt, turn_id)
                 empathy_score = 0.5
                 if score.get("veto"):
+                    return draft_id, text, score, None, True
+                overall = score.get("overall", 0.5)
+                if run_empathy:
+                    empathy = await self._run_empathy_check(text, user_emotion, turn_id)
+                    if empathy.get("veto"):
+                        return draft_id, text, score, empathy, True
+                    empathy_score = empathy.get("empathy_score", 0.5)
+                    overall = overall * 0.7 + empathy_score * 0.3
+                    return draft_id, text, score, empathy, False
+                return draft_id, text, score, None, False
+
+            results = await asyncio.gather(
+                *[_score_one(did, txt) for did, txt in drafts],
+                return_exceptions=True,
+            )
+
+            for r in results:
+                if isinstance(r, BaseException):
+                    logger.warning("[Response engine] Draft scoring failed: %s", r)
+                    continue
+                draft_id, text, score, empathy, vetoed = r
+                empathy_score = (empathy or {}).get("empathy_score", 0.5) if empathy else 0.5
+                overall = score.get("overall", 0.5)
+                if run_empathy and empathy and not vetoed:
+                    empathy_score = empathy.get("empathy_score", 0.5)
+                    overall = score.get("overall", 0.5) * 0.7 + empathy_score * 0.3
+
+                if vetoed:
                     self._brainstem.veto(draft_id)
-                    logger.debug("[Response engine] Draft %s rejected by quality check: %s", draft_id, score.get("veto_reason"))
+                    reason = score.get("veto_reason") or (empathy or {}).get("veto_reason", "")
+                    logger.debug("[Response engine] Draft %s vetoed: %s", draft_id, reason)
                     self.last_turn_draft_scores.append({
                         "draft_id": draft_id,
                         "coherence": score.get("coherence", 0.5),
@@ -461,28 +524,6 @@ class FrontalCluster:
                         "vetoed": True,
                     })
                     continue
-
-                overall = score.get("overall", 0.5)
-
-                # v0.2: empathy check when user emotion is salient
-                if run_empathy:
-                    empathy = await self._run_empathy_check(text, user_emotion, turn_id)
-                    if empathy.get("veto"):
-                        self._brainstem.veto(draft_id)
-                        logger.debug("[Response engine] Draft %s rejected by empathy check — predicted poor emotional landing", draft_id)
-                        self.last_turn_draft_scores.append({
-                            "draft_id": draft_id,
-                            "coherence": score.get("coherence", 0.5),
-                            "relevance": score.get("relevance", 0.5),
-                            "tone_fit": score.get("tone_fit", 0.5),
-                            "empathy_score": empathy.get("empathy_score", 0.5),
-                            "overall": overall,
-                            "selected": False,
-                            "vetoed": True,
-                        })
-                        continue
-                    empathy_score = empathy.get("empathy_score", 0.5)
-                    overall = overall * 0.7 + empathy_score * 0.3
 
                 self._brainstem.add_draft(draft_id, text, overall)
                 self._brainstem.endorse(draft_id)

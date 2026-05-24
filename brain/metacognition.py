@@ -23,6 +23,7 @@ from brain.cell import IntegratorCell
 from brain.model_router import ModelRouter
 from brain.security import sanitize_fact
 from brain.utils import safe_json_parse
+from brain.settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +58,7 @@ class MetacognitionCell:
         # the user keeps being warm — the appraisal should mark the moment, not
         # repeat itself into noise.
         self._override_cooldowns: dict[str, int] = {}
-        self._cooldown_turns = 3
+        self._cooldown_turns = int(settings.get("meta_cooldown_turns"))
 
         self._reflector = IntegratorCell(
             name="self_reflector",
@@ -170,12 +171,12 @@ class MetacognitionCell:
         if len(self._neuromod_history) >= 2:
             prev_g = float(self._neuromod_history[-2].get("GABA", 0))
             cur_g = float(self._neuromod_history[-1].get("GABA", 0))
-            if prev_g > 0.5 and cur_g < prev_g - 0.2:
+            if prev_g > 0.5 and cur_g < prev_g - settings.get("gaba_drop_threshold"):
                 return "relieved", f"GABA dropped {prev_g:.2f}→{cur_g:.2f}"
 
         # 7. Disappointed — low DA + high salience (we wanted to engage but
         # the situation deflated).
-        if float(neuromod.get("DA", 0.5)) < 0.25 \
+        if float(neuromod.get("DA", 0.5)) < settings.get("da_threshold_disappointed") \
                 and float(features.get("salience", 0.3)) > 0.6:
             return "disappointed", "low DA on a high-salience turn"
 
@@ -255,7 +256,7 @@ class MetacognitionCell:
 
     async def _loop(self) -> None:
         while True:
-            await asyncio.sleep(META_INTERVAL)
+            await asyncio.sleep(settings.get("meta_interval") or META_INTERVAL)
             await self._reflect()
 
     async def _reflect(self) -> None:

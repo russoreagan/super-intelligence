@@ -29,6 +29,7 @@ import asyncio
 import logging
 import os
 import sys
+import time
 import uuid
 from pathlib import Path
 
@@ -43,6 +44,7 @@ logging.basicConfig(
 from brain.emotion_hierarchy import core_of
 from brain.security import SecretRedactingFilter
 from brain.utils import get_idle_seconds
+from brain.settings import settings as _brain_settings
 _redact_filter = SecretRedactingFilter()
 logging.getLogger().addFilter(_redact_filter)
 logger = logging.getLogger("brain.run")
@@ -121,9 +123,17 @@ async def session(args) -> None:
     # Idle-time gate for proactive TTS: don't speak aloud if the user hasn't
     # touched the computer in this many seconds. Configurable via env var.
     # Set to 0 to disable the gate entirely.
-    PROACTIVE_IDLE_THRESHOLD = float(
+    PROACTIVE_IDLE_THRESHOLD = _brain_settings.get("proactive_idle_threshold") or float(
         os.environ.get("BRAIN_PROACTIVE_IDLE_THRESHOLD", "180")  # 3 minutes
     )
+
+    # Response-window gate: after the brain finishes speaking, hold proactive
+    # thoughts for this many seconds so the user has time to reply — especially
+    # important when the brain just asked a question.
+    PROACTIVE_RESPONSE_WINDOW = _brain_settings.get("proactive_response_window") or float(
+        os.environ.get("BRAIN_PROACTIVE_RESPONSE_WINDOW", "8")
+    )
+    _last_brain_spoke_ts: float = 0.0  # updated every time pns.emit completes
 
     # ── Wiring graph (Hebbian edge weights) ───────────────────────────────────
     wiring = Wiring()
@@ -187,7 +197,8 @@ async def session(args) -> None:
                              on_voice_change=pns.set_voice_id,
                              on_eval_mode=_on_eval_mode,
                              on_mic_toggle=_on_mic_toggle,
-                             python_voice_mode=_voice_flag)
+                             python_voice_mode=_voice_flag,
+                             wiring=wiring)
         ui_server.set_wiring_frozen(wiring_frozen)
         asyncio.create_task(ui_server.start(port=8765))
         # Give the server a moment to bind
@@ -231,6 +242,14 @@ async def session(args) -> None:
                 "Motor cortex enabled but no project paths are accessible — "
                 "add paths via BRAIN_MOTOR_PATHS or Claude Desktop trusted folders."
             )
+
+        # Register frontal and motor subsystems
+        from brain.clusters.frontal_task import FrontalTaskSubsystem, PendingTask
+        from brain.clusters.motor_memory import MuscleMemorySubsystem
+        pending_task = PendingTask()
+        motor.set_pending_task(pending_task)
+        frontal.register_subsystem(FrontalTaskSubsystem(pending_task))
+        motor.register_subsystem(MuscleMemorySubsystem())
 
         # Surface capabilities into drafter prompts so the entity can answer
         # "what tools do you have?" accurately instead of confabulating.
@@ -951,11 +970,15 @@ async def session(args) -> None:
                 user_input = await asyncio.wait_for(ui_message_queue.get(), timeout=1.0)
             except asyncio.TimeoutError:
                 # Between turns: speak any proactive thought the DMN queued,
-                # but only when the brain isn't already talking and the user
-                # hasn't queued something (ui_message_queue would be non-empty).
+                # but only when the brain isn't already talking, the user
+                # hasn't queued something, AND enough time has passed since
+                # the brain last spoke (response window — gives the user a
+                # chance to reply before we jump in with a new thought).
+                since_last_spoke = time.time() - _last_brain_spoke_ts
                 if (dmn is not None
                         and not pns.is_speaking
-                        and ui_message_queue.empty()):
+                        and ui_message_queue.empty()
+                        and since_last_spoke >= PROACTIVE_RESPONSE_WINDOW):
                     spoken = dmn.take_proactive()
                     if spoken:
                         idle = get_idle_seconds()
@@ -965,10 +988,12 @@ async def session(args) -> None:
                                 idle, PROACTIVE_IDLE_THRESHOLD,
                             )
                         else:
-                            logger.info("[Proactive] Speaking (idle=%.0fs): %r", idle, spoken[:80])
+                            logger.info("[Proactive] Speaking (idle=%.0fs, since_spoke=%.0fs): %r",
+                                        idle, since_last_spoke, spoken[:80])
                             if emitter:
                                 await emitter.emit_proactive_speech(spoken)
                             await pns.emit(spoken, {"emotion": "curious"})
+                            _last_brain_spoke_ts = time.time()
                 continue
             except asyncio.CancelledError:
                 break
@@ -990,6 +1015,7 @@ async def session(args) -> None:
             await _emit("motor", 0.7, "articulating", "speak")
             await _emit("brainstem", 0.35, "speaking", "speak")
             await pns.emit(response, affect)
+            _last_brain_spoke_ts = time.time()
             await _emit_end("motor", "speak")
             await _emit_end("brainstem", "speak")
 
@@ -1038,6 +1064,7 @@ async def session(args) -> None:
             await _emit("motor", 0.7, "articulating", "speak")
             await _emit("brainstem", 0.35, "speaking", "speak")
             await pns.emit(response, affect)
+            _last_brain_spoke_ts = time.time()
             await _emit_end("motor", "speak")
             await _emit_end("brainstem", "speak")
 

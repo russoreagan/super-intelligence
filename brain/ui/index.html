@@ -87,7 +87,7 @@ input, select, textarea { font: inherit; color: inherit; background: none; borde
    ========================================================= */
 .app {
   display: grid;
-  grid-template-rows: 56px 1fr auto auto;
+  grid-template-rows: 56px 1fr auto;
   height: 100vh;
 }
 
@@ -416,6 +416,87 @@ input, select, textarea { font: inherit; color: inherit; background: none; borde
 .region-card.compact .name { font-size: 11.5px; font-weight: 500; }
 .region-card.compact .role { font-size: 9px; }
 
+/* ---- Region detail popup ---- */
+.region-card { cursor: pointer; }
+.region-card.expanded {
+  border-color: oklch(from var(--lobe) l c h / 0.6);
+  box-shadow: inset 3px 0 0 oklch(from var(--lobe) l c h / 0.7);
+}
+#region-detail-popup {
+  display: none;
+  position: fixed;
+  z-index: 200;
+  width: 288px;
+  background: var(--bg-1);
+  border: 1px solid oklch(from var(--lobe) l c h / 0.5);
+  border-radius: var(--r-2);
+  box-shadow: 0 8px 32px -4px oklch(0 0 0 / 0.5), 0 0 0 1px oklch(from var(--lobe) l c h / 0.2);
+  overflow: hidden;
+  animation: popup-in 140ms ease-out both;
+  --lobe: oklch(0.72 0.13 235);
+}
+#region-detail-popup.open { display: block; }
+@keyframes popup-in {
+  from { opacity: 0; transform: translateX(-6px); }
+  to   { opacity: 1; transform: none; }
+}
+#region-detail-popup .rd-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 9px 12px 8px;
+  border-bottom: 1px solid var(--line-soft);
+  background: oklch(from var(--lobe) l c h / 0.08);
+}
+#region-detail-popup .rd-header-name {
+  font-size: 11px; font-weight: 600; color: oklch(from var(--lobe) 0.88 0.12 h);
+  letter-spacing: 0.04em;
+}
+#region-detail-popup .rd-close {
+  width: 18px; height: 18px; border-radius: 4px;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--fg-faint); font-size: 14px; line-height: 1;
+  cursor: pointer; transition: background 120ms, color 120ms;
+}
+#region-detail-popup .rd-close:hover { background: var(--bg-3); color: var(--fg); }
+.rd-body { padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 10px; }
+.rd-section-label {
+  font-family: var(--mono);
+  font-size: 8.5px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--fg-faint);
+  margin-bottom: 4px;
+}
+.rd-text {
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--fg-mute);
+}
+.rd-does { color: var(--fg-dim); }
+.rd-hist { display: flex; flex-direction: column; gap: 2px; }
+.rd-empty {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--fg-faint);
+  letter-spacing: 0.06em;
+  padding: 4px 0;
+}
+.rd-hist-row {
+  display: grid;
+  grid-template-columns: 54px 1fr auto auto;
+  gap: 6px;
+  align-items: baseline;
+  font-family: var(--mono);
+  font-size: 10px;
+  padding: 3px 0;
+  border-bottom: 1px dashed oklch(0.24 0.02 250 / 0.35);
+  color: var(--fg-mute);
+}
+.rd-hist-row:last-child { border-bottom: none; }
+.rd-hist-time { color: var(--fg-faint); font-size: 9px; }
+.rd-hist-cluster { color: oklch(from var(--lobe) 0.85 0.12 h); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rd-hist-note { color: var(--fg-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 9.5px; }
+.rd-hist-pct { color: var(--fg-faint); font-size: 9px; flex-shrink: 0; }
+
 /* =========================================================
    NEUROMODS
    ========================================================= */
@@ -728,11 +809,11 @@ input, select, textarea { font: inherit; color: inherit; background: none; borde
 }
 
 /* =========================================================
-   RIGHT COLUMN — response + activity log
+   RIGHT COLUMN — response + input
    ========================================================= */
 .right-stack {
-  display: grid;
-  grid-template-rows: 1fr auto;
+  display: flex;
+  flex-direction: column;
   height: 100%;
   min-height: 0;
 }
@@ -955,6 +1036,11 @@ details[open].turn-log summary::before { transform: rotate(90deg); }
 .quality-badge .qb-pill strong { color: var(--fg-dim); font-weight: 500; margin-left: 6px; }
 .quality-badge .qb-pill.score { color: var(--accent); border-color: oklch(0.78 0.14 220 / 0.45); }
 .quality-badge .qb-pill.mem   { color: var(--ok); border-color: oklch(0.78 0.16 145 / 0.45); }
+.turn-log-body .quality-badge {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line-soft);
+}
 
 /* typing dots */
 #typing {
@@ -984,51 +1070,6 @@ details[open].turn-log summary::before { transform: rotate(90deg); }
   30% { transform: translateY(-4px); opacity: 1; }
 }
 
-/* ---- activity log pane ---- */
-.log-pane {
-  border-top: 1px solid var(--line-soft);
-}
-.col-left .pane-body {
-  max-height: 240px;
-}
-#activity-log {
-  padding: 8px 0 16px;
-  font-family: var(--mono);
-  font-size: 11px;
-}
-.act-row {
-  display: grid;
-  grid-template-columns: 64px 18px 1fr auto;
-  gap: 10px;
-  align-items: center;
-  padding: 6px 22px;
-  color: var(--fg-mute);
-  animation: log-in 260ms ease-out both;
-  border-bottom: 1px dashed oklch(0.24 0.02 250 / 0.4);
-}
-.act-row:last-child { border-bottom: none; }
-@keyframes log-in {
-  from { opacity: 0; transform: translateY(3px); }
-  to   { opacity: 1; transform: none; }
-}
-.act-time { color: var(--fg-faint); font-size: 10px; letter-spacing: 0.06em; }
-.act-dot {
-  width: 8px; height: 8px;
-  border-radius: 50%;
-  margin: 0 auto;
-  background: var(--lobe, var(--accent));
-  box-shadow: 0 0 8px var(--lobe, var(--accent));
-}
-.act-msg { color: var(--fg-dim); letter-spacing: 0.02em; }
-.act-msg .cluster { color: var(--lobe, var(--accent)); font-weight: 600; }
-.act-msg .note { color: var(--fg-mute); }
-.act-intensity {
-  font-family: var(--mono);
-  font-size: 9.5px;
-  color: var(--fg-faint);
-  letter-spacing: 0.04em;
-}
-
 .log-empty {
   padding: 20px 22px;
   font-family: var(--mono);
@@ -1038,20 +1079,81 @@ details[open].turn-log summary::before { transform: rotate(90deg); }
   text-align: center;
 }
 
+/* ---- Plasticity pane ---- */
+.plast-stats {
+  display: flex;
+  border-bottom: 1px solid var(--line-soft);
+}
+.plast-stat {
+  flex: 1;
+  padding: 12px 16px;
+  border-right: 1px solid var(--line-soft);
+}
+.plast-stat:last-child { border-right: none; }
+.plast-stat-val {
+  font-family: var(--mono);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--fg);
+  line-height: 1;
+  margin-bottom: 4px;
+}
+.plast-stat-label {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--fg-faint);
+}
+.plast-sub-label {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--fg-faint);
+  padding: 10px 16px 6px;
+}
+#wiring-edges {
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 10.5px;
+  padding: 0 16px;
+}
+.wiring-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  border-bottom: 1px dashed oklch(0.24 0.02 250 / 0.4);
+  color: var(--fg-dim);
+}
+.wiring-row:last-child { border-bottom: none; }
+.wiring-edge { color: var(--fg-mute); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }
+.wiring-delta { flex-shrink: 0; font-weight: 600; }
+#decisions-log {
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 10px;
+  padding: 0 16px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+#decisions-log .log-empty { padding: 10px 0; text-align: left; }
+
 /* =========================================================
-   TRANSCRIPT BAR (live mic)
+   TRANSCRIPT BAR (live mic) — inline strip inside chat panel
    ========================================================= */
 #transcript-bar {
   display: none;
   align-items: center;
   gap: 14px;
-  padding: 10px 24px;
+  padding: 7px 16px;
   border-top: 1px solid oklch(from var(--danger) l c h / 0.35);
   background: oklch(from var(--danger) l c h / 0.10);
   font-family: var(--mono);
   font-size: 11px;
   color: oklch(0.85 0.13 25);
   letter-spacing: 0.06em;
+  flex-shrink: 0;
 }
 #transcript-bar.visible { display: flex; }
 #transcript-bar .tx-label {
@@ -1081,72 +1183,83 @@ details[open].turn-log summary::before { transform: rotate(90deg); }
 }
 
 /* =========================================================
-   INPUT BAR
+   INPUT BAR — now inside the right panel
    ========================================================= */
 #control-bar {
-  display: grid;
-  grid-template-columns: 56px 1fr auto auto;
-  align-items: center;
-  gap: 12px;
-  padding: 14px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 14px 12px;
   border-top: 1px solid var(--line-soft);
-  background: linear-gradient(0deg, oklch(0.16 0.022 250) 0%, var(--bg-0) 100%);
+  flex-shrink: 0;
 }
 
+/* ---- Input mode toggle (replaces old mic button) ---- */
 #mic-btn {
-  width: 48px; height: 48px;
-  border-radius: 14px;
+  display: inline-flex;
+  align-items: center;
+  padding: 3px;
+  border-radius: 999px;
   background: var(--bg-2);
   border: 1px solid var(--line);
-  display: flex; align-items: center; justify-content: center;
   position: relative;
-  color: var(--fg-dim);
-  transition: background 200ms, border-color 200ms, box-shadow 200ms, color 200ms;
+  cursor: pointer;
+  transition: border-color 200ms;
+  gap: 0;
 }
-#mic-btn:hover { background: var(--bg-3); color: var(--fg); }
-#mic-btn svg { width: 20px; height: 20px; }
-#mic-btn.listening {
-  background: oklch(from var(--danger) l c h / 0.18);
-  border-color: oklch(from var(--danger) l c h / 0.7);
-  color: oklch(0.85 0.16 25);
-  box-shadow: 0 0 0 4px oklch(from var(--danger) l c h / 0.12);
-}
-#mic-btn.listening::after {
-  content: '';
-  position: absolute; inset: -1px;
-  border-radius: 14px;
-  border: 1px solid var(--danger);
-  animation: mic-ring 1.4s ease-out infinite;
-}
-@keyframes mic-ring {
-  0%   { transform: scale(1); opacity: 0.8; }
-  100% { transform: scale(1.45); opacity: 0; }
-}
-#mic-btn.muted {
-  background: oklch(from var(--fg-dim) l c h / 0.10);
-  border-color: oklch(from var(--fg-dim) l c h / 0.4);
-  color: oklch(from var(--fg-dim) l c h / 0.85);
-  opacity: 0.85;
-}
-#mic-btn.muted::before {
-  /* diagonal strike through the mic icon */
-  content: '';
+#mic-btn:hover { border-color: oklch(0.4 0.04 250); }
+.mode-thumb {
   position: absolute;
-  left: 8px; right: 8px;
-  top: 50%;
-  height: 2px;
-  background: oklch(0.75 0.18 25);
-  transform: rotate(-30deg);
-  border-radius: 1px;
+  top: 3px; bottom: 3px;
+  left: 3px;
+  width: calc(50% - 3px);
+  border-radius: 999px;
+  background: oklch(0.28 0.04 250);
+  border: 1px solid oklch(0.38 0.05 250);
+  transition: left 220ms cubic-bezier(.4,0,.2,1), background 200ms, border-color 200ms;
   pointer-events: none;
 }
+#mic-btn.muted .mode-thumb {
+  left: calc(50%);
+  background: oklch(0.24 0.03 250);
+  border-color: oklch(0.35 0.04 250);
+}
+#mic-btn.listening .mode-thumb {
+  background: oklch(from var(--danger) l c h / 0.30);
+  border-color: oklch(from var(--danger) l c h / 0.6);
+  box-shadow: 0 0 8px oklch(from var(--danger) l c h / 0.25);
+}
+.mode-side {
+  display: flex; align-items: center; justify-content: center; gap: 5px;
+  padding: 0 12px;
+  height: 30px;
+  border-radius: 999px;
+  position: relative; z-index: 1;
+  color: var(--fg-faint);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  transition: color 200ms;
+  white-space: nowrap;
+  user-select: none;
+}
+.mode-side svg { width: 13px; height: 13px; flex-shrink: 0; }
+/* Active side highlights */
+#mic-btn:not(.muted) .mode-mic { color: var(--fg); }
+#mic-btn.muted .mode-kbd       { color: var(--fg-dim); }
+#mic-btn.listening:not(.muted) .mode-mic { color: oklch(0.85 0.16 25); }
 #mic-btn.unsupported { opacity: 0.4; cursor: not-allowed; }
+#input-mode-bar {
+  display: flex;
+  align-items: center;
+  padding: 0 2px;
+}
 
 .input-wrap {
   display: flex;
-  align-items: center;
-  height: 48px;
-  padding: 0 18px;
+  align-items: flex-end;
+  min-height: 80px;
+  padding: 10px 18px;
   background: var(--bg-1);
   border: 1px solid var(--line);
   border-radius: 14px;
@@ -1159,11 +1272,11 @@ details[open].turn-log summary::before { transform: rotate(90deg); }
 #msg-input {
   flex: 1;
   width: 100%;
-  height: 100%;
   font-size: 14px;
   resize: none;
-  line-height: 48px;
-  padding: 0;
+  line-height: 1.55;
+  padding: 2px 0;
+  overflow-y: auto;
 }
 #msg-input::placeholder { color: var(--fg-faint); }
 /* Voice mode: input box doubles as the listening indicator.
@@ -1238,22 +1351,21 @@ details[open].turn-log summary::before { transform: rotate(90deg); }
 }
 
 #send-btn {
-  height: 48px;
-  padding: 0 20px;
+  align-self: flex-end;
+  flex-shrink: 0;
+  width: 34px; height: 34px;
+  border-radius: 10px;
   background: var(--accent);
   color: oklch(0.17 0.02 250);
-  border-radius: 14px;
-  font-weight: 600;
-  font-size: 12.5px;
-  letter-spacing: 0.10em;
-  text-transform: uppercase;
-  display: flex; align-items: center; gap: 8px;
+  display: flex; align-items: center; justify-content: center;
   transition: filter 180ms, transform 100ms;
+  margin-left: 8px;
+  margin-bottom: 1px;
 }
-#send-btn:hover { filter: brightness(1.08); }
-#send-btn:active { transform: translateY(1px); }
-#send-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-#send-btn svg { width: 16px; height: 16px; }
+#send-btn:hover { filter: brightness(1.12); }
+#send-btn:active { transform: scale(0.94); }
+#send-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+#send-btn svg { width: 15px; height: 15px; }
 
 .kbd-hint {
   font-family: var(--mono);
@@ -1318,6 +1430,359 @@ details[open].turn-log summary::before { transform: rotate(90deg); }
   object-fit: contain;
 }
 
+/* =====================================================================
+   SETTINGS PAGE
+   ===================================================================== */
+
+/* Gear button in header */
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px; height: 32px;
+  border-radius: var(--r-1);
+  border: 1px solid var(--line);
+  color: var(--fg-mute);
+  transition: background 180ms, color 180ms, border-color 180ms;
+  flex-shrink: 0;
+}
+.icon-btn:hover { background: var(--bg-2); color: var(--fg); border-color: oklch(0.4 0.04 250); }
+.icon-btn.active { background: var(--accent-soft); color: var(--accent); border-color: oklch(0.6 0.10 220 / 0.5); }
+
+/* Settings page container */
+#settings-page {
+  display: none;
+  flex-direction: column;
+  height: calc(100vh - 56px);  /* below header */
+  overflow-y: auto;
+  background: var(--bg-0);
+}
+#settings-page.visible { display: flex; }
+
+/* Settings page header bar */
+.settings-topbar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 28px;
+  border-bottom: 1px solid var(--line-soft);
+  background: linear-gradient(180deg, oklch(0.16 0.022 250) 0%, var(--bg-0) 100%);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+.settings-back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: var(--r-1);
+  border: 1px solid var(--line);
+  color: var(--fg-mute);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  transition: background 180ms, color 180ms;
+}
+.settings-back-btn:hover { background: var(--bg-2); color: var(--fg); }
+.settings-title {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+}
+.settings-title-sub {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--fg-faint);
+  margin-top: 1px;
+}
+.settings-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.settings-restart-banner {
+  display: none;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: oklch(0.22 0.07 75 / 0.18);
+  border: 1px solid oklch(0.7 0.14 75 / 0.4);
+  color: oklch(0.82 0.14 75);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.10em;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.settings-restart-banner.visible { display: flex; }
+.settings-restart-banner:hover {
+  background: oklch(0.28 0.10 75 / 0.30);
+  border-color: oklch(0.8 0.16 75 / 0.6);
+}
+.settings-restart-banner:active { opacity: 0.75; }
+.settings-restart-banner.restarting {
+  cursor: default;
+  opacity: 0.6;
+  animation: pulse 1s ease-in-out infinite;
+}
+.settings-restart-banner::before {
+  content: '';
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: oklch(0.82 0.14 75);
+  flex-shrink: 0;
+}
+.btn-save {
+  padding: 7px 18px;
+  border-radius: var(--r-1);
+  background: var(--accent-soft);
+  border: 1px solid oklch(0.6 0.10 220 / 0.5);
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  transition: background 180ms, color 180ms;
+}
+.btn-save:hover { background: oklch(0.78 0.14 220 / 0.25); color: oklch(0.90 0.10 220); }
+.btn-save:active { background: oklch(0.78 0.14 220 / 0.35); }
+.btn-reset {
+  padding: 7px 14px;
+  border-radius: var(--r-1);
+  border: 1px solid var(--line);
+  color: var(--fg-faint);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  transition: background 180ms, color 180ms;
+}
+.btn-reset:hover { background: var(--bg-2); color: var(--fg-mute); }
+
+/* Settings grid */
+.settings-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+  padding: 24px 28px 40px;
+  max-width: 1400px;
+}
+@media (max-width: 1100px) { .settings-grid { grid-template-columns: 1fr; } }
+
+/* Section card */
+.settings-section {
+  background: var(--bg-1);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-2);
+  overflow: hidden;
+}
+.settings-section-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 13px 18px;
+  border-bottom: 1px solid var(--line-soft);
+  cursor: pointer;
+  user-select: none;
+  transition: background 150ms;
+}
+.settings-section-head:hover { background: var(--bg-2); }
+.settings-section-num {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  color: var(--fg-faint);
+  min-width: 20px;
+}
+.settings-section-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg);
+  flex: 1;
+}
+.settings-section-desc {
+  font-size: 11px;
+  color: var(--fg-faint);
+  font-style: italic;
+}
+.settings-section-chevron {
+  color: var(--fg-faint);
+  transition: transform 200ms;
+  flex-shrink: 0;
+}
+.settings-section.collapsed .settings-section-chevron { transform: rotate(-90deg); }
+.settings-section-body {
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.settings-section.collapsed .settings-section-body { display: none; }
+
+/* Master slider row */
+.ctrl-master {
+  padding: 10px 12px;
+  background: var(--bg-2);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-1);
+}
+.ctrl-master .ctrl-label { color: var(--accent); font-weight: 600; }
+
+/* Regular control row */
+.ctrl-row {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.ctrl-row.child-row { margin-left: 14px; border-left: 2px solid var(--line-faint); padding-left: 12px; }
+.ctrl-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.ctrl-label {
+  font-size: 11.5px;
+  color: var(--fg-dim);
+  font-weight: 500;
+}
+.ctrl-hint {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: var(--fg-faint);
+  white-space: nowrap;
+}
+.ctrl-value-display {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--accent);
+  min-width: 36px;
+  text-align: right;
+}
+
+/* Range slider */
+input[type=range].brain-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--bg-3);
+  outline: none;
+  cursor: pointer;
+}
+input[type=range].brain-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--bg-1);
+  box-shadow: 0 0 6px oklch(0.78 0.14 220 / 0.4);
+  cursor: pointer;
+  transition: box-shadow 150ms;
+}
+input[type=range].brain-slider::-webkit-slider-thumb:hover {
+  box-shadow: 0 0 10px oklch(0.78 0.14 220 / 0.7);
+}
+input[type=range].brain-slider.child-slider::-webkit-slider-thumb {
+  background: var(--fg-mute);
+  box-shadow: none;
+}
+input[type=range].brain-slider.child-slider { opacity: 0.75; }
+
+/* Step input (integer) */
+input[type=number].brain-number {
+  width: 64px;
+  padding: 4px 8px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-1);
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--fg);
+  text-align: center;
+}
+input[type=number].brain-number:focus { border-color: var(--accent); outline: none; }
+
+/* =========================================================
+   ACTIVITY TICKER — scrolling strip at bottom of app
+   ========================================================= */
+#activity-ticker {
+  display: flex;
+  align-items: center;
+  height: 34px;
+  border-top: 1px solid var(--line-soft);
+  background: oklch(0.13 0.018 250);
+  overflow: hidden;
+  flex-shrink: 0;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+}
+#ticker-label {
+  flex-shrink: 0;
+  padding: 0 12px;
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--fg-faint);
+  border-right: 1px solid var(--line-soft);
+  height: 100%;
+  display: flex;
+  align-items: center;
+}
+#ticker-scroll {
+  flex: 1;
+  overflow-x: auto;
+  overflow-y: hidden;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  scrollbar-width: none;
+}
+#ticker-scroll::-webkit-scrollbar { display: none; }
+#ticker-track {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 0 12px;
+  white-space: nowrap;
+}
+.tick-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 14px 0 0;
+  color: var(--fg-mute);
+  animation: tick-in 200ms ease-out both;
+}
+.tick-item + .tick-item::before {
+  content: '·';
+  color: var(--fg-faint);
+  margin-right: 14px;
+}
+@keyframes tick-in {
+  from { opacity: 0; transform: translateX(8px); }
+  to   { opacity: 1; transform: none; }
+}
+.tick-dot {
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: var(--lobe, var(--accent));
+  flex-shrink: 0;
+}
+.tick-cluster { color: var(--lobe, var(--accent)); }
+.tick-note { color: var(--fg-faint); }
+.tick-pct { color: var(--fg-faint); font-size: 9px; }
+
 </style>
 </head>
 <body>
@@ -1357,6 +1822,9 @@ details[open].turn-log summary::before { transform: rotate(90deg); }
 
     <div class="header-right">
       <button id="eval-toggle" title="Toggle intensive eval mode (runs baseline on every turn)">Eval</button>
+      <button id="settings-btn" title="Brain settings" class="icon-btn">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      </button>
       <div class="ws-pill">
         <span id="ws-indicator" title="WebSocket status"></span>
         <span>Link</span>
@@ -1411,19 +1879,33 @@ details[open].turn-log summary::before { transform: rotate(90deg); }
         </div>
       </section>
 
-      <section class="pane log-pane">
-        <header class="pane-head">
-          <h3>Activity Log</h3>
-          <div class="head-meta">
-            <span id="log-count">0 events</span>
+      <section class="pane log-pane" id="plasticity-pane">
+          <header class="pane-head">
+            <h3>Plasticity <span id="frozen-tag" style="display:none;color:#f9c46b;font-size:0.7em;margin-left:6px;">[FROZEN]</span></h3>
+          </header>
+          <div class="pane-body">
+            <div class="plast-stats">
+              <div class="plast-stat">
+                <div class="plast-stat-val" id="predictor-accuracy">—</div>
+                <div class="plast-stat-label">Predictor</div>
+              </div>
+              <div class="plast-stat">
+                <div class="plast-stat-val" id="plasticity-meter">1.00</div>
+                <div class="plast-stat-label">Plasticity</div>
+              </div>
+              <div class="plast-stat">
+                <div class="plast-stat-val" id="predictor-saved">0</div>
+                <div class="plast-stat-label">LLM saved</div>
+              </div>
+            </div>
+            <div class="plast-sub-label">Weight changes this session</div>
+            <div id="wiring-edges"></div>
+            <div class="plast-sub-label" style="margin-top:10px;">Decisions</div>
+            <div id="decisions-log">
+              <div class="log-empty">— no decisions yet —</div>
+            </div>
           </div>
-        </header>
-        <div class="pane-body">
-          <div id="activity-log">
-            <div class="log-empty">— no activations yet —</div>
-          </div>
-        </div>
-      </section>
+        </section>
     </aside>
 
     <!-- ----- CENTER: brain stage ----- -->
@@ -1479,10 +1961,10 @@ details[open].turn-log summary::before { transform: rotate(90deg); }
       </div>
     </main>
 
-    <!-- ----- RIGHT: response + activity log ----- -->
+    <!-- ----- RIGHT: response + input ----- -->
     <aside class="col col-right">
       <div class="right-stack">
-        <section class="pane">
+        <section class="pane" style="flex:1;min-height:0;">
           <header class="pane-head">
             <h3>AI Response</h3>
             <div class="head-meta">
@@ -1510,76 +1992,427 @@ details[open].turn-log summary::before { transform: rotate(90deg); }
             </div>
             <div id="typing"><span>thinking</span><span class="dots"><span></span><span></span><span></span></span></div>
           </div>
-        </section>
+          <!-- transcript bar — shown above input when mic is active -->
+          <div id="transcript-bar">
+            <span class="tx-label">Listening</span>
+            <span class="tx-text"></span>
+          </div>
+          <!-- input bar — now part of the right panel -->
+          <div id="control-bar">
+            <div id="input-mode-bar">
+              <button id="mic-btn" title="Toggle voice / text input" aria-label="Input mode">
+                <div class="mode-thumb"></div>
+                <span class="mode-side mode-mic">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="9" y="2" width="6" height="12" rx="3"/>
+                    <path d="M5 10v2a7 7 0 0 0 14 0v-2"/>
+                    <line x1="12" y1="19" x2="12" y2="22"/>
+                  </svg>
+                  Mic
+                </span>
+                <span class="mode-side mode-kbd">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="2" y="6" width="20" height="12" rx="2"/>
+                    <path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8"/>
+                  </svg>
+                  Text
+                </span>
+              </button>
+            </div>
 
-        <section class="pane log-pane" id="plasticity-pane">
-          <header class="pane-head">
-            <h3>Plasticity <span id="frozen-tag" style="display:none;color:#f9c46b;font-size:0.7em;margin-left:6px;">[FROZEN]</span></h3>
-            <div class="head-meta">
-              <span id="predictor-saved">0 LLM calls saved</span>
-            </div>
-          </header>
-          <div class="pane-body" style="font-size:0.78em;line-height:1.45;">
-            <div style="display:flex;gap:8px;margin-bottom:6px;">
-              <div style="flex:1;">
-                <div style="opacity:0.6;font-size:0.85em;">Predictor accuracy</div>
-                <div id="predictor-accuracy" style="font-weight:600;">—</div>
+            <div class="input-wrap">
+              <label id="img-attach-btn" for="img-file-input" title="Attach image">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                  <circle cx="8.5" cy="8.5" r="1.5"/>
+                  <polyline points="21 15 16 10 5 21"/>
+                </svg>
+              </label>
+              <input type="file" id="img-file-input" accept="image/*" style="display:none">
+              <div id="img-preview-chip">
+                <img id="img-preview-thumb" src="" alt="attached image">
+                <button id="img-remove-btn" title="Remove image">×</button>
               </div>
-              <div style="flex:1;">
-                <div style="opacity:0.6;font-size:0.85em;">Plasticity</div>
-                <div id="plasticity-meter" style="font-weight:600;">1.00</div>
-              </div>
-            </div>
-            <div style="opacity:0.6;font-size:0.85em;margin-top:6px;">Top edges</div>
-            <div id="wiring-edges" style="font-family:ui-monospace,Menlo,monospace;font-size:0.88em;opacity:0.85;">—</div>
-            <div style="opacity:0.6;font-size:0.85em;margin-top:8px;">Decisions</div>
-            <div id="decisions-log" style="font-family:ui-monospace,Menlo,monospace;font-size:0.78em;max-height:180px;overflow-y:auto;">
-              <div class="log-empty" style="opacity:0.5;">— no decisions yet —</div>
+              <textarea id="msg-input" rows="4" placeholder="Type a message, or hold Space to speak…"></textarea>
+              <button id="send-btn" disabled title="Send (Enter)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+              </button>
             </div>
           </div>
         </section>
       </div>
     </aside>
 
+  </div><!-- /#main -->
+
+  <!-- ====== ACTIVITY TICKER ====== -->
+  <div id="activity-ticker">
+    <span id="ticker-label">Activity</span>
+    <div id="ticker-scroll">
+      <div id="ticker-track"></div>
+    </div>
   </div>
 
-  <!-- ====== TRANSCRIPT BAR (mic) ====== -->
-  <div id="transcript-bar">
-    <span class="tx-label">Listening</span>
-    <span class="tx-text"></span>
-  </div>
+  <!-- ====== SETTINGS PAGE ====== -->
+  <div id="settings-page">
 
-  <!-- ====== INPUT BAR ====== -->
-  <div id="control-bar">
-    <button id="mic-btn" title="Click to speak (or press Space)" aria-label="Toggle voice input">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <rect x="9" y="2" width="6" height="12" rx="3"/>
-        <path d="M5 10v2a7 7 0 0 0 14 0v-2"/>
-        <line x1="12" y1="19" x2="12" y2="22"/>
-      </svg>
-    </button>
-
-    <div class="input-wrap">
-      <label id="img-attach-btn" for="img-file-input" title="Attach image">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
-          <circle cx="8.5" cy="8.5" r="1.5"/>
-          <polyline points="21 15 16 10 5 21"/>
-        </svg>
-      </label>
-      <input type="file" id="img-file-input" accept="image/*" style="display:none">
-      <div id="img-preview-chip">
-        <img id="img-preview-thumb" src="" alt="attached image">
-        <button id="img-remove-btn" title="Remove image">×</button>
+    <div class="settings-topbar">
+      <button class="settings-back-btn" id="settings-back-btn">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+        Back
+      </button>
+      <div>
+        <div class="settings-title">Brain Settings</div>
+        <div class="settings-title-sub">Tune system parameters · Changes apply on restart</div>
       </div>
-      <textarea id="msg-input" rows="1" placeholder="Type a message, or hold Space to speak…"></textarea>
+      <div class="settings-actions">
+        <button class="settings-restart-banner" id="settings-restart-banner">Restart required</button>
+        <button class="btn-reset" id="settings-reset-btn">Reset defaults</button>
+        <button class="btn-save" id="settings-save-btn">Save Settings</button>
+      </div>
     </div>
 
-    <button id="send-btn" disabled>
-      Send
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
-    </button>
-  </div>
+    <div class="settings-grid">
+
+      <!-- S1: Emotional Reactivity -->
+      <div class="settings-section" id="sec-1">
+        <div class="settings-section-head">
+          <span class="settings-section-num">01</span>
+          <div style="flex:1">
+            <div class="settings-section-title">Emotional Reactivity</div>
+            <div class="settings-section-desc">How strongly sensory input drives neuromodulator changes</div>
+          </div>
+          <svg class="settings-section-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </div>
+        <div class="settings-section-body">
+          <div class="ctrl-row ctrl-master">
+            <div class="ctrl-header">
+              <span class="ctrl-label">Emotional Reactivity</span>
+              <span class="ctrl-hint">MASTER — runtime multiplier on all input weights</span>
+              <span class="ctrl-value-display" id="val-emotional_reactivity_scale">1.00</span>
+            </div>
+            <input type="range" class="brain-slider" data-key="emotional_reactivity_scale" min="0.2" max="3.0" step="0.05" value="1.0">
+          </div>
+          <div class="ctrl-row child-row">
+            <div class="ctrl-header"><span class="ctrl-label">Sentiment → DA</span><span class="ctrl-value-display" id="val-sentiment_DA_weight">0.15</span></div>
+            <input type="range" class="brain-slider child-slider" data-key="sentiment_DA_weight" min="0.0" max="0.5" step="0.01" value="0.15">
+          </div>
+          <div class="ctrl-row child-row">
+            <div class="ctrl-header"><span class="ctrl-label">Surprise → ACh</span><span class="ctrl-value-display" id="val-surprise_ACh_weight">0.12</span></div>
+            <input type="range" class="brain-slider child-slider" data-key="surprise_ACh_weight" min="0.0" max="0.4" step="0.01" value="0.12">
+          </div>
+          <div class="ctrl-row child-row">
+            <div class="ctrl-header"><span class="ctrl-label">Salience → ACh</span><span class="ctrl-value-display" id="val-salience_ACh_weight">0.08</span></div>
+            <input type="range" class="brain-slider child-slider" data-key="salience_ACh_weight" min="0.0" max="0.3" step="0.01" value="0.08">
+          </div>
+          <div class="ctrl-row child-row">
+            <div class="ctrl-header"><span class="ctrl-label">Salience → Glu</span><span class="ctrl-value-display" id="val-salience_Glu_weight">0.08</span></div>
+            <input type="range" class="brain-slider child-slider" data-key="salience_Glu_weight" min="0.0" max="0.3" step="0.01" value="0.08">
+          </div>
+          <div class="ctrl-row">
+            <div class="ctrl-header"><span class="ctrl-label">Threat Sensitivity</span><span class="ctrl-hint">lower = responds to subtler hostility</span><span class="ctrl-value-display" id="val-hostility_GABA_threshold_high">0.50</span></div>
+            <input type="range" class="brain-slider" data-key="hostility_GABA_threshold_high" min="0.2" max="0.9" step="0.05" value="0.50">
+          </div>
+        </div>
+      </div>
+
+      <!-- S2: Neuromodulator Homeostasis -->
+      <div class="settings-section" id="sec-2">
+        <div class="settings-section-head">
+          <span class="settings-section-num">02</span>
+          <div style="flex:1">
+            <div class="settings-section-title">Neuromodulator Homeostasis</div>
+            <div class="settings-section-desc">How quickly neuromodulator levels decay back to baseline</div>
+          </div>
+          <svg class="settings-section-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </div>
+        <div class="settings-section-body">
+          <div class="ctrl-row ctrl-master">
+            <div class="ctrl-header">
+              <span class="ctrl-label">Homeostasis Speed</span>
+              <span class="ctrl-hint">MASTER — higher = slower return to rest</span>
+            </div>
+            <input type="range" class="brain-slider" id="master-homeostasis" min="0.5" max="0.99" step="0.01" value="0.876">
+          </div>
+          <div class="ctrl-row child-row">
+            <div class="ctrl-header"><span class="ctrl-label">DA decay</span><span class="ctrl-value-display" id="val-valence_to_DA_decay">0.85</span></div>
+            <input type="range" class="brain-slider child-slider" data-key="valence_to_DA_decay" min="0.5" max="0.99" step="0.01" value="0.85">
+          </div>
+          <div class="ctrl-row child-row">
+            <div class="ctrl-header"><span class="ctrl-label">GABA decay</span><span class="ctrl-value-display" id="val-threat_to_GABA_decay">0.80</span></div>
+            <input type="range" class="brain-slider child-slider" data-key="threat_to_GABA_decay" min="0.5" max="0.99" step="0.01" value="0.80">
+          </div>
+          <div class="ctrl-row child-row">
+            <div class="ctrl-header"><span class="ctrl-label">ACh decay</span><span class="ctrl-value-display" id="val-novelty_to_ACh_decay">0.90</span></div>
+            <input type="range" class="brain-slider child-slider" data-key="novelty_to_ACh_decay" min="0.5" max="0.99" step="0.01" value="0.90">
+          </div>
+          <div class="ctrl-row child-row">
+            <div class="ctrl-header"><span class="ctrl-label">Arousal decay</span><span class="ctrl-value-display" id="val-arousal_homeostat_decay">0.88</span></div>
+            <input type="range" class="brain-slider child-slider" data-key="arousal_homeostat_decay" min="0.5" max="0.99" step="0.01" value="0.88">
+          </div>
+          <div class="ctrl-row child-row">
+            <div class="ctrl-header"><span class="ctrl-label">Satiation decay</span><span class="ctrl-value-display" id="val-satiation_inhibitor_decay">0.95</span></div>
+            <input type="range" class="brain-slider child-slider" data-key="satiation_inhibitor_decay" min="0.5" max="0.99" step="0.01" value="0.95">
+          </div>
+          <div class="ctrl-row">
+            <div class="ctrl-header"><span class="ctrl-label">Satiation Threshold</span><span class="ctrl-hint">below this, interest desensitizes</span><span class="ctrl-value-display" id="val-salience_satiation_threshold">0.30</span></div>
+            <input type="range" class="brain-slider" data-key="salience_satiation_threshold" min="0.1" max="0.7" step="0.05" value="0.30">
+          </div>
+        </div>
+      </div>
+
+      <!-- S3: Plasticity & Learning -->
+      <div class="settings-section" id="sec-3">
+        <div class="settings-section-head">
+          <span class="settings-section-num">03</span>
+          <div style="flex:1">
+            <div class="settings-section-title">Plasticity &amp; Learning</div>
+            <div class="settings-section-desc">Hebbian weight changes — learning rate and stability are linked</div>
+          </div>
+          <svg class="settings-section-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </div>
+        <div class="settings-section-body">
+          <div class="ctrl-row">
+            <div class="ctrl-header"><span class="ctrl-label">Learning Rate</span><span class="ctrl-hint">↑ this nudges ↓ Weight Stability</span><span class="ctrl-value-display" id="val-hebbian_delta">0.020</span></div>
+            <input type="range" class="brain-slider" data-key="hebbian_delta" min="0.001" max="0.1" step="0.001" value="0.02">
+          </div>
+          <div class="ctrl-row">
+            <div class="ctrl-header"><span class="ctrl-label">Sleep Learning Rate</span><span class="ctrl-hint">outcome × plasticity × this</span><span class="ctrl-value-display" id="val-hebbian_outcome_delta">0.020</span></div>
+            <input type="range" class="brain-slider" data-key="hebbian_outcome_delta" min="0.001" max="0.1" step="0.001" value="0.02">
+          </div>
+          <div class="ctrl-row">
+            <div class="ctrl-header"><span class="ctrl-label">Weight Stability</span><span class="ctrl-hint">↑ this nudges ↓ Learning Rate</span><span class="ctrl-value-display" id="val-decay_toward_rest_rate">0.010</span></div>
+            <input type="range" class="brain-slider" data-key="decay_toward_rest_rate" min="0.001" max="0.05" step="0.001" value="0.01">
+          </div>
+          <div class="ctrl-row">
+            <div class="ctrl-header"><span class="ctrl-label">Weight Floor</span><span class="ctrl-value-display" id="val-weight_min">0.10</span></div>
+            <input type="range" class="brain-slider" data-key="weight_min" min="0.01" max="0.5" step="0.01" value="0.10">
+          </div>
+          <div class="ctrl-row">
+            <div class="ctrl-header"><span class="ctrl-label">Weight Ceiling</span><span class="ctrl-value-display" id="val-weight_max">3.00</span></div>
+            <input type="range" class="brain-slider" data-key="weight_max" min="1.0" max="6.0" step="0.1" value="3.0">
+          </div>
+          <div class="ctrl-row">
+            <div class="ctrl-header"><span class="ctrl-label">High-Inhibition Learning Cutoff</span><span class="ctrl-hint">skip Hebbian when GABA &gt; this</span><span class="ctrl-value-display" id="val-gaba_skip_threshold_high">0.55</span></div>
+            <input type="range" class="brain-slider" data-key="gaba_skip_threshold_high" min="0.3" max="0.9" step="0.05" value="0.55">
+          </div>
+        </div>
+      </div>
+
+      <!-- S4: Default Mode Network -->
+      <div class="settings-section" id="sec-4">
+        <div class="settings-section-head">
+          <span class="settings-section-num">04</span>
+          <div style="flex:1">
+            <div class="settings-section-title">Default Mode Network</div>
+            <div class="settings-section-desc">Background thought generation when not responding</div>
+          </div>
+          <svg class="settings-section-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </div>
+        <div class="settings-section-body">
+          <div class="ctrl-row">
+            <div class="ctrl-header"><span class="ctrl-label">Thought Frequency</span><span class="ctrl-hint">seconds between thought cycles</span><span class="ctrl-value-display" id="val-dmn_interval">15</span></div>
+            <input type="range" class="brain-slider" data-key="dmn_interval" min="5" max="120" step="5" value="15">
+          </div>
+          <div class="ctrl-row ctrl-master">
+            <div class="ctrl-header">
+              <span class="ctrl-label">Thought Suppression</span>
+              <span class="ctrl-hint">MASTER — how readily ACh/Glu suppress thoughts</span>
+            </div>
+            <input type="range" class="brain-slider" id="master-suppression" min="0.3" max="2.0" step="0.05" value="1.0">
+          </div>
+          <div class="ctrl-row child-row">
+            <div class="ctrl-header"><span class="ctrl-label">ACh suppression weight</span><span class="ctrl-value-display" id="val-ach_suppression_weight">1.00</span></div>
+            <input type="range" class="brain-slider child-slider" data-key="ach_suppression_weight" min="0.1" max="2.0" step="0.05" value="1.0">
+          </div>
+          <div class="ctrl-row child-row">
+            <div class="ctrl-header"><span class="ctrl-label">Glu suppression weight</span><span class="ctrl-value-display" id="val-glu_suppression_weight">0.30</span></div>
+            <input type="range" class="brain-slider child-slider" data-key="glu_suppression_weight" min="0.0" max="1.0" step="0.05" value="0.30">
+          </div>
+          <div class="ctrl-row">
+            <div class="ctrl-header"><span class="ctrl-label">Deduplication Strictness</span><span class="ctrl-hint">higher = more unique thoughts required</span><span class="ctrl-value-display" id="val-dmn_overlap_threshold">0.35</span></div>
+            <input type="range" class="brain-slider" data-key="dmn_overlap_threshold" min="0.1" max="0.8" step="0.05" value="0.35">
+          </div>
+        </div>
+      </div>
+
+      <!-- S5: Metacognition -->
+      <div class="settings-section" id="sec-5">
+        <div class="settings-section-head">
+          <span class="settings-section-num">05</span>
+          <div style="flex:1">
+            <div class="settings-section-title">Self-Reflection</div>
+            <div class="settings-section-desc">Periodic appraisal cycles and emotion override behavior</div>
+          </div>
+          <svg class="settings-section-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </div>
+        <div class="settings-section-body">
+          <div class="ctrl-row">
+            <div class="ctrl-header"><span class="ctrl-label">Reflection Interval</span><span class="ctrl-hint">seconds between self-appraisals</span><span class="ctrl-value-display" id="val-meta_interval">30</span></div>
+            <input type="range" class="brain-slider" data-key="meta_interval" min="10" max="180" step="5" value="30">
+          </div>
+          <div class="ctrl-row">
+            <div class="ctrl-header"><span class="ctrl-label">Override Cooldown</span><span class="ctrl-hint">turns before same emotion override can repeat</span><span class="ctrl-value-display" id="val-meta_cooldown_turns">3</span></div>
+            <input type="range" class="brain-slider" data-key="meta_cooldown_turns" min="1" max="10" step="1" value="3">
+          </div>
+          <div class="ctrl-row">
+            <div class="ctrl-header"><span class="ctrl-label">DA "Disappointed" Threshold</span><span class="ctrl-hint">DA must be below this</span><span class="ctrl-value-display" id="val-da_threshold_disappointed">0.25</span></div>
+            <input type="range" class="brain-slider" data-key="da_threshold_disappointed" min="0.1" max="0.5" step="0.05" value="0.25">
+          </div>
+          <div class="ctrl-row">
+            <div class="ctrl-header"><span class="ctrl-label">GABA Drop → "Relieved"</span><span class="ctrl-hint">required GABA decline to trigger</span><span class="ctrl-value-display" id="val-gaba_drop_threshold">0.20</span></div>
+            <input type="range" class="brain-slider" data-key="gaba_drop_threshold" min="0.05" max="0.5" step="0.05" value="0.20">
+          </div>
+        </div>
+      </div>
+
+      <!-- S6: Prediction & Surprise -->
+      <div class="settings-section" id="sec-6">
+        <div class="settings-section-head">
+          <span class="settings-section-num">06</span>
+          <div style="flex:1">
+            <div class="settings-section-title">Prediction &amp; Surprise</div>
+            <div class="settings-section-desc">How much divergence from expectation triggers a surprise signal</div>
+          </div>
+          <svg class="settings-section-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </div>
+        <div class="settings-section-body">
+          <div class="ctrl-row">
+            <div class="ctrl-header"><span class="ctrl-label">Surprise Sensitivity</span><span class="ctrl-hint">lower = more easily surprised</span><span class="ctrl-value-display" id="val-surprise_threshold">0.40</span></div>
+            <input type="range" class="brain-slider" data-key="surprise_threshold" min="0.1" max="0.9" step="0.05" value="0.40">
+          </div>
+          <div class="ctrl-row">
+            <div class="ctrl-header"><span class="ctrl-label">Confidence Skip Threshold</span><span class="ctrl-hint">above this, stop updating prediction</span><span class="ctrl-value-display" id="val-confidence_skip_threshold">0.70</span></div>
+            <input type="range" class="brain-slider" data-key="confidence_skip_threshold" min="0.3" max="1.0" step="0.05" value="0.70">
+          </div>
+          <div class="ctrl-row">
+            <div class="ctrl-header"><span class="ctrl-label">History Window</span><span class="ctrl-hint">turns tracked by predictor</span><span class="ctrl-value-display" id="val-predictor_window">8</span></div>
+            <input type="range" class="brain-slider" data-key="predictor_window" min="3" max="20" step="1" value="8">
+          </div>
+        </div>
+      </div>
+
+      <!-- S7: Voice Expressiveness -->
+      <div class="settings-section" id="sec-7">
+        <div class="settings-section-head">
+          <span class="settings-section-num">07</span>
+          <div style="flex:1">
+            <div class="settings-section-title">Voice Expressiveness</div>
+            <div class="settings-section-desc">Speech delivery — base voice and emotional modulation</div>
+          </div>
+          <svg class="settings-section-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </div>
+        <div class="settings-section-body">
+          <div class="ctrl-row">
+            <div class="ctrl-header"><span class="ctrl-label">Base Stability</span><span class="ctrl-hint">voice consistency (higher = less varied)</span><span class="ctrl-value-display" id="val-voice_stability_default">0.45</span></div>
+            <input type="range" class="brain-slider" data-key="voice_stability_default" min="0.0" max="1.0" step="0.05" value="0.45">
+          </div>
+          <div class="ctrl-row">
+            <div class="ctrl-header"><span class="ctrl-label">Base Style</span><span class="ctrl-hint">character injection amount</span><span class="ctrl-value-display" id="val-voice_style_default">0.40</span></div>
+            <input type="range" class="brain-slider" data-key="voice_style_default" min="0.0" max="1.0" step="0.05" value="0.40">
+          </div>
+          <div class="ctrl-row">
+            <div class="ctrl-header"><span class="ctrl-label">Base Speed</span><span class="ctrl-hint">speech rate multiplier</span><span class="ctrl-value-display" id="val-voice_speed_default">1.00</span></div>
+            <input type="range" class="brain-slider" data-key="voice_speed_default" min="0.7" max="1.3" step="0.05" value="1.0">
+          </div>
+          <div class="ctrl-row ctrl-master">
+            <div class="ctrl-header">
+              <span class="ctrl-label">Expressiveness</span>
+              <span class="ctrl-hint">MASTER — scales deviation from base in emotional states</span>
+            </div>
+            <input type="range" class="brain-slider" id="master-expressiveness" min="0.3" max="2.0" step="0.05" value="1.0">
+          </div>
+          <div class="ctrl-row">
+            <div class="ctrl-header"><span class="ctrl-label">Breath Pauses (max)</span><span class="ctrl-value-display" id="val-breath_pause_count_max">2</span></div>
+            <input type="range" class="brain-slider" data-key="breath_pause_count_max" min="0" max="4" step="1" value="2">
+          </div>
+          <div class="ctrl-row">
+            <div class="ctrl-header"><span class="ctrl-label">Urgently Threshold (Glu)</span><span class="ctrl-hint">Glu above this → [urgently] tag</span><span class="ctrl-value-display" id="val-glu_urgently_threshold">0.55</span></div>
+            <input type="range" class="brain-slider" data-key="glu_urgently_threshold" min="0.3" max="0.9" step="0.05" value="0.55">
+          </div>
+        </div>
+      </div>
+
+      <!-- S8: Proactive Behavior -->
+      <div class="settings-section" id="sec-8">
+        <div class="settings-section-head">
+          <span class="settings-section-num">08</span>
+          <div style="flex:1">
+            <div class="settings-section-title">Proactive Behavior</div>
+            <div class="settings-section-desc">When the brain speaks unprompted after idle time</div>
+          </div>
+          <svg class="settings-section-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </div>
+        <div class="settings-section-body">
+          <div class="ctrl-row">
+            <div class="ctrl-header"><span class="ctrl-label">Idle Threshold</span><span class="ctrl-hint">seconds of silence before proactive speech</span><span class="ctrl-value-display" id="val-proactive_idle_threshold">180</span></div>
+            <input type="range" class="brain-slider" data-key="proactive_idle_threshold" min="30" max="600" step="15" value="180">
+          </div>
+          <div class="ctrl-row">
+            <div class="ctrl-header"><span class="ctrl-label">Response Window</span><span class="ctrl-hint">seconds after speaking to withhold next proactive</span><span class="ctrl-value-display" id="val-proactive_response_window">8</span></div>
+            <input type="range" class="brain-slider" data-key="proactive_response_window" min="2" max="30" step="1" value="8">
+          </div>
+        </div>
+      </div>
+
+      <!-- S9: Attention & Routing -->
+      <div class="settings-section" id="sec-9">
+        <div class="settings-section-head">
+          <span class="settings-section-num">09</span>
+          <div style="flex:1">
+            <div class="settings-section-title">Attention &amp; Routing</div>
+            <div class="settings-section-desc">Thalamus priority weights for competing brain regions</div>
+          </div>
+          <svg class="settings-section-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </div>
+        <div class="settings-section-body">
+          <div class="ctrl-row">
+            <div class="ctrl-header"><span class="ctrl-label">Memory (Hippocampus) Priority</span><span class="ctrl-value-display" id="val-hippocampus_priority_base">0.60</span></div>
+            <input type="range" class="brain-slider" data-key="hippocampus_priority_base" min="0.1" max="1.0" step="0.05" value="0.60">
+          </div>
+          <div class="ctrl-row">
+            <div class="ctrl-header"><span class="ctrl-label">Curiosity (Frontal ACh) Boost</span><span class="ctrl-value-display" id="val-frontal_ach_weight">0.20</span></div>
+            <input type="range" class="brain-slider" data-key="frontal_ach_weight" min="0.0" max="0.6" step="0.05" value="0.20">
+          </div>
+          <div class="ctrl-row">
+            <div class="ctrl-header"><span class="ctrl-label">Salience Workspace Threshold</span><span class="ctrl-hint">above this, topic enters global workspace</span><span class="ctrl-value-display" id="val-salience_workspace_threshold">0.60</span></div>
+            <input type="range" class="brain-slider" data-key="salience_workspace_threshold" min="0.2" max="0.9" step="0.05" value="0.60">
+          </div>
+          <div class="ctrl-row">
+            <div class="ctrl-header"><span class="ctrl-label">Topic Attention Decay</span><span class="ctrl-hint">per-tick decay of attention focus (lower = faster fade)</span><span class="ctrl-value-display" id="val-topic_activation_decay">0.70</span></div>
+            <input type="range" class="brain-slider" data-key="topic_activation_decay" min="0.3" max="0.95" step="0.05" value="0.70">
+          </div>
+        </div>
+      </div>
+
+      <!-- S10: Speaker Recognition -->
+      <div class="settings-section" id="sec-10">
+        <div class="settings-section-head">
+          <span class="settings-section-num">10</span>
+          <div style="flex:1">
+            <div class="settings-section-title">Speaker Recognition</div>
+            <div class="settings-section-desc">Voice similarity thresholds for identifying speakers</div>
+          </div>
+          <svg class="settings-section-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </div>
+        <div class="settings-section-body">
+          <div class="ctrl-row">
+            <div class="ctrl-header"><span class="ctrl-label">Profile Store Threshold</span><span class="ctrl-hint">higher = pickier about saving voice profiles</span><span class="ctrl-value-display" id="val-speaker_store_threshold">0.70</span></div>
+            <input type="range" class="brain-slider" data-key="speaker_store_threshold" min="0.4" max="0.95" step="0.05" value="0.70">
+          </div>
+          <div class="ctrl-row">
+            <div class="ctrl-header"><span class="ctrl-label">Session Match Threshold</span><span class="ctrl-hint">lower = more permissive cross-turn matching</span><span class="ctrl-value-display" id="val-speaker_session_threshold">0.62</span></div>
+            <input type="range" class="brain-slider" data-key="speaker_session_threshold" min="0.3" max="0.90" step="0.05" value="0.62">
+          </div>
+          <div class="ctrl-row">
+            <div class="ctrl-header"><span class="ctrl-label">Min Audio Duration (s)</span><span class="ctrl-hint">minimum audio before attempting voice embed</span><span class="ctrl-value-display" id="val-speaker_min_audio_s">0.40</span></div>
+            <input type="range" class="brain-slider" data-key="speaker_min_audio_s" min="0.1" max="2.0" step="0.1" value="0.40">
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /.settings-grid -->
+  </div><!-- /#settings-page -->
 
 </div>
 
@@ -1588,16 +2421,36 @@ details[open].turn-log summary::before { transform: rotate(90deg); }
    REGION CONFIG (matches the server-side cluster names)
    ===================================================================== */
 const REGIONS = {
-  frontal:      { color: 'oklch(0.72 0.13 235)', label: 'Frontal lobe',      role: 'Executive · Response',    initial: 'F',  group: 'cortical' },
-  motor:        { color: 'oklch(0.66 0.20 15)',  label: 'Motor cortex',      role: 'Movement · Articulation', initial: 'M',  group: 'cortical' },
-  parietal:     { color: 'oklch(0.78 0.16 145)', label: 'Parietal lobe',     role: 'Context · Session state', initial: 'P',  group: 'cortical' },
-  occipital:    { color: 'oklch(0.70 0.16 300)', label: 'Occipital lobe',    role: 'Vision processing',       initial: 'O',  group: 'cortical' },
-  temporal:     { color: 'oklch(0.80 0.14 75)',  label: 'Temporal lobe',     role: 'Language understanding',  initial: 'T',  group: 'cortical' },
-  hippocampus:  { color: 'oklch(0.78 0.16 175)', label: 'Hippocampus',       role: 'Memory recall · Encoding',initial: 'Hi', group: 'subcortical' },
-  thalamus:     { color: 'oklch(0.90 0.02 250)', label: 'Thalamus',          role: 'Routing · Attention',     initial: 'Th', group: 'subcortical' },
-  hypothalamus: { color: 'oklch(0.78 0.16 65)',  label: 'Hypothalamus',      role: 'Drives · Affect',         initial: 'Hy', group: 'subcortical' },
-  brainstem:    { color: 'oklch(0.70 0.15 40)',  label: 'Brainstem',         role: 'Autonomic · Articulation',initial: 'Bs', group: 'passive' },
-  cerebellum:   { color: 'oklch(0.78 0.14 200)', label: 'Cerebellum',        role: 'Learned sequences',       initial: 'Cb', group: 'passive' },
+  frontal:      { color: 'oklch(0.72 0.13 235)', label: 'Frontal lobe',      role: 'Executive · Response',    initial: 'F',  group: 'cortical',
+    about: 'Executive function, decision-making, and response planning. Integrates input from all other regions.',
+    does:  'Generates the final response text, selects and runs drafters, applies emotional gate bypasses, and executes weighted cluster ordering.' },
+  motor:        { color: 'oklch(0.66 0.20 15)',  label: 'Motor cortex',      role: 'Movement · Articulation', initial: 'M',  group: 'cortical',
+    about: 'Controls voluntary movement and coordinates complex motor sequences.',
+    does:  'Executes tool calls — shell commands, file reads/writes, and external API actions via the motor cortex.' },
+  parietal:     { color: 'oklch(0.78 0.16 145)', label: 'Parietal lobe',     role: 'Context · Session state', initial: 'P',  group: 'cortical',
+    about: 'Integrates sensory information and maintains spatial and contextual awareness.',
+    does:  'Holds working memory for the current session — stores conversation context, recent episode seeds, and turn-level state.' },
+  occipital:    { color: 'oklch(0.70 0.16 300)', label: 'Occipital lobe',    role: 'Vision processing',       initial: 'O',  group: 'cortical',
+    about: 'Primary visual cortex — processes all visual input and object recognition.',
+    does:  'Processes attached images through a vision model and generates textual descriptions passed to other clusters.' },
+  temporal:     { color: 'oklch(0.80 0.14 75)',  label: 'Temporal lobe',     role: 'Language understanding',  initial: 'T',  group: 'cortical',
+    about: 'Auditory processing, language comprehension, and long-term memory formation.',
+    does:  'Parses user input — extracts intent, sentiment, salience, surprise score, entities, and topic summary. Runs the predictor.' },
+  hippocampus:  { color: 'oklch(0.78 0.16 175)', label: 'Hippocampus',       role: 'Memory recall · Encoding',initial: 'Hi', group: 'subcortical',
+    about: 'Consolidates short-term memory to long-term storage and enables episodic recall.',
+    does:  'Runs semantic search over the episodic store, encodes new memories, and maintains the self-model and user-model documents.' },
+  thalamus:     { color: 'oklch(0.90 0.02 250)', label: 'Thalamus',          role: 'Routing · Attention',     initial: 'Th', group: 'subcortical',
+    about: 'Relay station for sensory signals — gates what enters conscious awareness.',
+    does:  'Computes priority scores for each cluster each turn and publishes attention.focus to steer which cluster wakes first.' },
+  hypothalamus: { color: 'oklch(0.78 0.16 65)',  label: 'Hypothalamus',      role: 'Drives · Affect',         initial: 'Hy', group: 'subcortical',
+    about: 'Regulates autonomic drives — hunger, circadian rhythm, stress hormones.',
+    does:  'Updates DA, GABA, ACh, and Glu neuromodulator levels from input features and voice prosody. Names the current emotional state.' },
+  brainstem:    { color: 'oklch(0.70 0.15 40)',  label: 'Brainstem',         role: 'Autonomic · Articulation',initial: 'Bs', group: 'passive',
+    about: 'Controls vital autonomic functions and relays signals between brain and body.',
+    does:  'Manages session heartbeat, paces proactive speech timing, and sends final text to ElevenLabs for TTS output.' },
+  cerebellum:   { color: 'oklch(0.78 0.14 200)', label: 'Cerebellum',        role: 'Learned sequences',       initial: 'Cb', group: 'passive',
+    about: 'Coordinates movement timing, balance, and procedural/habitual learning.',
+    does:  'Tracks learned interaction patterns and fine-tunes response timing based on prior sequences.' },
 };
 
 // cluster → region mapping (matches the original CLUSTER_MAP)
@@ -1615,6 +2468,104 @@ const CLUSTER_MAP = {
   dmn:          'frontal',
   metacognition:'parietal',
 };
+
+// Per-region activity history — last 8 events each
+const regionHistory = {};
+Object.keys(REGIONS).forEach(id => regionHistory[id] = []);
+
+let expandedRegion = null;
+
+const _rdPopup = (() => {
+  const el = document.createElement('div');
+  el.id = 'region-detail-popup';
+  document.body.appendChild(el);
+  return el;
+})();
+
+function renderRegionDetail(regionId) {
+  const cfg  = REGIONS[regionId];
+  const hist = regionHistory[regionId] || [];
+  const histHtml = hist.length === 0
+    ? `<div class="rd-empty">No activations yet this session</div>`
+    : hist.map(h => {
+        const pct = Math.round(h.intensity * 100);
+        return `<div class="rd-hist-row">
+          <span class="rd-hist-time">${h.ts}</span>
+          <span class="rd-hist-cluster">${h.cluster}</span>
+          ${h.note ? `<span class="rd-hist-note">${h.note}</span>` : ''}
+          <span class="rd-hist-pct">${pct}%</span>
+        </div>`;
+      }).join('');
+  _rdPopup.style.setProperty('--lobe', cfg.color);
+  _rdPopup.innerHTML = `
+    <div class="rd-header">
+      <span class="rd-header-name">${cfg.label}</span>
+      <span class="rd-close" id="rd-close-btn">×</span>
+    </div>
+    <div class="rd-body">
+      <div class="rd-section">
+        <div class="rd-section-label">General</div>
+        <div class="rd-text">${cfg.about}</div>
+      </div>
+      <div class="rd-section">
+        <div class="rd-section-label">In this system</div>
+        <div class="rd-text rd-does">${cfg.does}</div>
+      </div>
+      <div class="rd-section">
+        <div class="rd-section-label">Recent activations</div>
+        <div class="rd-hist">${histHtml}</div>
+      </div>
+    </div>
+  `;
+  document.getElementById('rd-close-btn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    closeRegionDetail();
+  });
+}
+
+function _positionPopup(regionId) {
+  const card    = document.getElementById(`card-${regionId}`);
+  const colLeft = document.querySelector('.col-left');
+  if (!card || !colLeft) return;
+  const colRect  = colLeft.getBoundingClientRect();
+  const cardRect = card.getBoundingClientRect();
+  const popupW   = 288;
+  _rdPopup.style.left = (colRect.right + 8) + 'px';
+  // Align top with the card, clamped so it doesn't overflow viewport
+  const maxTop = window.innerHeight - _rdPopup.offsetHeight - 12;
+  _rdPopup.style.top = Math.max(8, Math.min(cardRect.top, maxTop || cardRect.top)) + 'px';
+}
+
+function closeRegionDetail() {
+  _rdPopup.classList.remove('open');
+  if (expandedRegion) {
+    const prevCard = document.getElementById(`card-${expandedRegion}`);
+    if (prevCard) prevCard.classList.remove('expanded');
+  }
+  expandedRegion = null;
+}
+
+function toggleRegionDetail(regionId) {
+  const card = document.getElementById(`card-${regionId}`);
+  if (!card) return;
+  if (expandedRegion === regionId) { closeRegionDetail(); return; }
+  // Close previous
+  if (expandedRegion) closeRegionDetail();
+  expandedRegion = regionId;
+  card.classList.add('expanded');
+  renderRegionDetail(regionId);
+  _rdPopup.classList.add('open');
+  // Position after display so offsetHeight is known
+  requestAnimationFrame(() => _positionPopup(regionId));
+}
+
+// Close popup when clicking outside
+document.addEventListener('click', (e) => {
+  if (!expandedRegion) return;
+  if (_rdPopup.contains(e.target)) return;
+  if (e.target.closest('.region-card')) return;
+  closeRegionDetail();
+});
 
 const EMOTION_COLORS = {
   joy:                  { bg: 'oklch(0.28 0.10 145 / 0.35)', color: 'oklch(0.88 0.18 145)' },
@@ -1731,6 +2682,7 @@ function renderRegionList() {
       <div class="status">IDLE</div>
     `;
     groups[cfg.group].appendChild(card);
+    card.addEventListener('click', () => toggleRegionDetail(id));
   });
 }
 
@@ -1830,6 +2782,7 @@ function connect() {
     document.getElementById('ws-indicator').classList.add('connected');
     const vid = document.getElementById('voice-select').value;
     if (vid) ws.send(JSON.stringify({ type: 'set_voice', voice_id: vid }));
+    renderTopEdges();
   };
 
   ws.onclose = () => {
@@ -1898,7 +2851,7 @@ function handle(msg) {
     case 'turn_start': {
       currentTurnId = msg.turn_id || null;
       pendingActivations = [];
-      if (msg.user_input) appendUserMessage(msg.user_input);
+      if (msg.user_input) { forceScrollChat(); appendUserMessage(msg.user_input); }
       // Voice path: clear the input box once the brain officially picks up
       // the transcribed utterance (the spoken text "flies" into the chat).
       if (pythonVoiceMode && msgInput.value.trim() === (msg.user_input || '').trim()) {
@@ -1976,11 +2929,9 @@ function handleDecisionEvent(msg) {
       || msg.decision === 'skip_encoder'
       || msg.decision === 'reuse_recent_recall') {
     _llmCallsSaved += (msg.drafts_skipped || 1);
-    document.getElementById('predictor-saved').textContent = `${_llmCallsSaved} LLM calls saved`;
+    document.getElementById('predictor-saved').textContent = _llmCallsSaved;
   }
   if (msg.decision === 'hebbian_update_applied') {
-    const key = `${msg.src} → ${msg.tgt}`;
-    _topEdges.set(key, {weight: msg.to_weight, delta: msg.delta});
     renderTopEdges();
   }
   if (msg.decision === 'session_plasticity_summary') {
@@ -2040,19 +2991,32 @@ function appendDecisionLine(msg) {
   }
 }
 
-function renderTopEdges() {
+async function renderTopEdges() {
   const root = document.getElementById('wiring-edges');
   if (!root) return;
-  // Sort by current weight desc, top 8
-  const rows = [...(_topEdges.entries())]
-    .sort((a, b) => b[1].weight - a[1].weight)
-    .slice(0, 8);
-  if (!rows.length) { root.textContent = '—'; return; }
-  root.innerHTML = rows.map(([k, v]) => {
-    const sign = v.delta > 0 ? '+' : '';
-    const color = v.delta > 0 ? '#7bd88f' : v.delta < 0 ? '#e8866c' : 'inherit';
-    return `<div>${k.padEnd(48,' ').slice(0,48)} <span style="opacity:0.7;">w=${v.weight.toFixed(3)}</span> <span style="color:${color};">${sign}${v.delta.toFixed(3)}</span></div>`;
-  }).join('');
+  try {
+    const res = await fetch('/wiring');
+    if (!res.ok) return;
+    const data = await res.json();
+    // Only show edges with a non-trivial session delta
+    const changed = (data.top || []).filter(e => Math.abs(e.session_delta ?? 0) > 0.0001);
+    if (!changed.length) {
+      root.innerHTML = '<div class="log-empty" style="padding:10px 0;text-align:left;font-size:10px;">No changes yet — updates after session ends</div>';
+      return;
+    }
+    root.innerHTML = changed.map(e => {
+      const delta = e.session_delta;
+      const sign  = delta > 0 ? '+' : '';
+      const color = delta > 0 ? '#7bd88f' : '#e8866c';
+      // Shorten edge label: strip common prefix, show last segment → last segment
+      const src = e.src.split('.').pop();
+      const tgt = e.tgt.split('.').pop();
+      return `<div class="wiring-row">`
+           + `<span class="wiring-edge" title="${e.src} → ${e.tgt}">${src} → ${tgt}</span>`
+           + `<span class="wiring-delta" style="color:${color};">${sign}${delta.toFixed(3)}</span>`
+           + `</div>`;
+    }).join('');
+  } catch (_) {}
 }
 
 /* =====================================================================
@@ -2159,39 +3123,47 @@ function appendUserMessage(text) {
 function appendBrainMessage(turnId, text, calls, elapsed) {
   const msgs = document.getElementById('messages');
 
-  // turn-log first (above the response)
-  const steps = pendingActivations.slice();
-  if (steps.length > 0) {
-    const det = document.createElement('details');
-    det.className = 'turn-log';
-    det.open = false;
-    const sum = document.createElement('summary');
-    sum.textContent = `${steps.length} STEPS · ${calls} LLM CALLS · ${elapsed}`;
-    det.appendChild(sum);
+  // Collapsible turn log — always present (holds steps + quality score)
+  const det = document.createElement('details');
+  det.className = 'turn-log';
+  det.open = false;
+  const sum = document.createElement('summary');
+  const stepCount = pendingActivations.length;
+  const stepPart = stepCount > 0 ? `${stepCount} STEPS · ` : '';
+  sum.textContent = `${stepPart}${calls} LLM CALLS · ${elapsed}`;
+  det.appendChild(sum);
 
-    const body = document.createElement('div');
-    body.className = 'turn-log-body';
-    steps.forEach(a => {
-      const regionId = CLUSTER_MAP[a.cluster];
-      const rcfg = regionId ? REGIONS[regionId] : null;
-      const color = rcfg ? rcfg.color : 'var(--accent)';
-      const initial = rcfg ? rcfg.initial : '·';
-      const pct = Math.round((a.intensity || 0) * 100);
-      const row = document.createElement('div');
-      row.className = 'log-step';
-      row.style.setProperty('--lobe', color);
-      row.innerHTML = `
-        <span class="log-icon">${initial}</span>
-        <span class="log-text">${a.cluster}${a.note ? ' <em>— ' + a.note + '</em>' : ''}</span>
-        <span class="log-bar"><span class="log-bar-fill" style="width:${pct}%"></span></span>
-      `;
-      body.appendChild(row);
-    });
-    det.appendChild(body);
-    msgs.appendChild(det);
-  }
+  const body = document.createElement('div');
+  body.className = 'turn-log-body';
+  pendingActivations.forEach(a => {
+    const regionId = CLUSTER_MAP[a.cluster];
+    const rcfg = regionId ? REGIONS[regionId] : null;
+    const color = rcfg ? rcfg.color : 'var(--accent)';
+    const initial = rcfg ? rcfg.initial : '·';
+    const pct = Math.round((a.intensity || 0) * 100);
+    const row = document.createElement('div');
+    row.className = 'log-step';
+    row.style.setProperty('--lobe', color);
+    row.innerHTML = `
+      <span class="log-icon">${initial}</span>
+      <span class="log-text">${a.cluster}${a.note ? ' <em>— ' + a.note + '</em>' : ''}</span>
+      <span class="log-bar"><span class="log-bar-fill" style="width:${pct}%"></span></span>
+    `;
+    body.appendChild(row);
+  });
 
-  // brain response bubble
+  // Quality badge lives inside the collapsible body
+  const badge = document.createElement('div');
+  badge.className = 'quality-badge';
+  if (turnId) badge.dataset.turnId = turnId;
+  const qs = turnId ? turnQualityScores[turnId] : null;
+  if (qs) updateQualityBadge(badge, qs);
+  body.appendChild(badge);
+
+  det.appendChild(body);
+  msgs.appendChild(det);
+
+  // Brain response bubble — text only, no redundant meta line
   const wrap = document.createElement('div');
   wrap.className = 'msg msg-brain';
   if (turnId) wrap.dataset.turnId = turnId;
@@ -2200,20 +3172,6 @@ function appendBrainMessage(turnId, text, calls, elapsed) {
     <div class="body"></div>
   `;
   wrap.querySelector('.body').textContent = text;
-
-  if (calls || elapsed) {
-    const m = document.createElement('div');
-    m.className = 'msg-meta';
-    m.textContent = (calls ? `${calls} LLM calls · ` : '') + (elapsed || '');
-    wrap.appendChild(m);
-  }
-
-  const badge = document.createElement('div');
-  badge.className = 'quality-badge';
-  if (turnId) badge.dataset.turnId = turnId;
-  const qs = turnId ? turnQualityScores[turnId] : null;
-  if (qs) updateQualityBadge(badge, qs);
-  wrap.appendChild(badge);
 
   msgs.appendChild(wrap);
   scrollChat();
@@ -2261,36 +3219,62 @@ function setTyping(visible) {
   if (visible) scrollChat();
 }
 
+/* Auto-scroll lock: set to true when the user manually scrolls up.
+   Cleared when they scroll back to the bottom, send a message, or
+   voice input is registered — any of those re-enables auto-scroll. */
+let _scrollLocked = false;
+
+(function initScrollLock() {
+  const wrap = document.getElementById('messages-wrap');
+  wrap.addEventListener('scroll', () => {
+    const atBottom = wrap.scrollHeight - wrap.scrollTop - wrap.clientHeight < 40;
+    _scrollLocked = !atBottom;
+  });
+})();
+
 function scrollChat() {
+  if (_scrollLocked) return;
+  const wrap = document.getElementById('messages-wrap');
+  wrap.scrollTop = wrap.scrollHeight;
+}
+
+function forceScrollChat() {
+  _scrollLocked = false;
   const wrap = document.getElementById('messages-wrap');
   wrap.scrollTop = wrap.scrollHeight;
 }
 
 /* =====================================================================
-   ACTIVITY LOG (right column bottom)
+   ACTIVITY TICKER (bottom strip)
    ===================================================================== */
 function logActivity(cluster, regionId, intensity, note) {
-  const log = document.getElementById('activity-log');
-  if (log.querySelector('.log-empty')) log.innerHTML = '';
+  if (regionId && regionHistory[regionId] !== undefined) {
+    const ts = new Date().toTimeString().slice(0, 8);
+    regionHistory[regionId].unshift({ cluster, note: note || '', intensity: intensity || 0, ts });
+    if (regionHistory[regionId].length > 8) regionHistory[regionId].pop();
+    // Refresh detail panel if this region is currently expanded
+    if (expandedRegion === regionId) renderRegionDetail(regionId);
+  }
+  const track = document.getElementById('ticker-track');
+  if (!track) return;
   const rcfg = regionId ? REGIONS[regionId] : null;
   const color = rcfg ? rcfg.color : 'oklch(0.78 0.14 220)';
-  const ts = new Date();
-  const time = ts.toTimeString().slice(0, 8);
-  const row = document.createElement('div');
-  row.className = 'act-row';
-  row.style.setProperty('--lobe', color);
   const pct = Math.round((intensity || 0) * 100);
-  row.innerHTML = `
-    <span class="act-time">${time}</span>
-    <span class="act-dot"></span>
-    <span class="act-msg"><span class="cluster">${cluster}</span> ${note ? '<span class="note">' + note + '</span>' : ''}</span>
-    <span class="act-intensity">${pct}%</span>
-  `;
-  log.insertBefore(row, log.firstChild);
+  const item = document.createElement('span');
+  item.className = 'tick-item';
+  item.style.setProperty('--lobe', color);
+  item.innerHTML =
+    `<span class="tick-dot"></span>` +
+    `<span class="tick-cluster">${cluster}</span>` +
+    (note ? `<span class="tick-note">${note}</span>` : '') +
+    `<span class="tick-pct">${pct}%</span>`;
+  track.appendChild(item);
+  // cap at 120 items
+  while (track.children.length > 120) track.removeChild(track.firstChild);
+  // auto-scroll to show latest
+  const scroll = document.getElementById('ticker-scroll');
+  if (scroll) scroll.scrollLeft = scroll.scrollWidth;
   logCount++;
-  document.getElementById('log-count').textContent = `${logCount} EVENT${logCount === 1 ? '' : 'S'}`;
-  // keep log capped
-  while (log.children.length > 60) log.removeChild(log.lastChild);
 }
 
 /* =====================================================================
@@ -2335,6 +3319,7 @@ imgRemoveBtn.addEventListener('click', () => {
 async function send() {
   const text = msgInput.value.trim();
   if (!text && !pendingImageFile) return;
+  forceScrollChat();
 
   let fullText = text;
 
@@ -2368,7 +3353,7 @@ msgInput.addEventListener('keydown', (e) => {
 });
 msgInput.addEventListener('input', function() {
   this.style.height = 'auto';
-  this.style.height = Math.min(this.scrollHeight, 80) + 'px';
+  this.style.height = Math.min(this.scrollHeight, 200) + 'px';
   sendBtn.disabled = this.value.trim().length === 0 && !pendingImageFile;
 });
 
@@ -2509,7 +3494,7 @@ function handleTranscriptEvent(msg) {
     if (!text) return;
     msgInput.value = text;
     msgInput.style.height = 'auto';
-    msgInput.style.height = Math.min(msgInput.scrollHeight, 80) + 'px';
+    msgInput.style.height = Math.min(msgInput.scrollHeight, 200) + 'px';
     msgInput.classList.add('voice-flash');
     setTimeout(() => msgInput.classList.remove('voice-flash'), 600);
     return;
@@ -2520,7 +3505,7 @@ function handleTranscriptEvent(msg) {
     finalTranscript += (finalTranscript ? ' ' : '') + msg.text;
     msgInput.value = finalTranscript.trim();
     msgInput.style.height = 'auto';
-    msgInput.style.height = Math.min(msgInput.scrollHeight, 80) + 'px';
+    msgInput.style.height = Math.min(msgInput.scrollHeight, 200) + 'px';
     transcriptText.textContent = '✓ ' + finalTranscript.trim();
 
     clearTimeout(autoSendTimer);
@@ -2764,6 +3749,248 @@ window.addEventListener('resize', () => { if (leftCollapsed || rightCollapsed) a
 /* =====================================================================
    BOOT
    ===================================================================== */
+/* =====================================================================
+   SETTINGS PAGE
+   ===================================================================== */
+
+const settingsPage  = document.getElementById('settings-page');
+const mainPage      = document.getElementById('main');
+const controlBar    = document.getElementById('control-bar');
+// transcriptBar already declared above
+const settingsBtn   = document.getElementById('settings-btn');
+const settingsBack  = document.getElementById('settings-back-btn');
+const settingsSave  = document.getElementById('settings-save-btn');
+const settingsReset = document.getElementById('settings-reset-btn');
+const restartBanner = document.getElementById('settings-restart-banner');
+
+restartBanner.addEventListener('click', async () => {
+  if (restartBanner.classList.contains('restarting')) return;
+  restartBanner.classList.add('restarting');
+  restartBanner.textContent = 'Restarting…';
+  try {
+    await fetch('/restart', { method: 'POST' });
+  } catch (_) { /* process died before responding — that's fine */ }
+  // Poll until the server responds again, then reload
+  const poll = setInterval(async () => {
+    try {
+      const r = await fetch('/settings', { method: 'GET' });
+      if (r.ok) {
+        clearInterval(poll);
+        window.location.reload();
+      }
+    } catch (_) { /* still restarting */ }
+  }, 800);
+});
+
+// Current in-memory settings (loaded from /settings on open)
+let currentSettings = {};
+let defaultSettings = {};
+
+function openSettings() {
+  mainPage.style.display = 'none';
+  const ticker = document.getElementById('activity-ticker');
+  if (ticker) ticker.style.display = 'none';
+  settingsPage.classList.add('visible');
+  settingsBtn.classList.add('active');
+  loadSettingsFromServer();
+}
+
+function closeSettings() {
+  settingsPage.classList.remove('visible');
+  mainPage.style.display = '';
+  const ticker = document.getElementById('activity-ticker');
+  if (ticker) ticker.style.display = '';
+  settingsBtn.classList.remove('active');
+}
+
+settingsBtn.addEventListener('click', () => {
+  if (settingsPage.classList.contains('visible')) closeSettings();
+  else openSettings();
+});
+settingsBack.addEventListener('click', closeSettings);
+
+// ── Section collapse/expand ──────────────────────────────────────────
+document.querySelectorAll('.settings-section-head').forEach(head => {
+  head.addEventListener('click', () => {
+    head.closest('.settings-section').classList.toggle('collapsed');
+  });
+});
+
+// ── Slider value display sync ────────────────────────────────────────
+function syncDisplay(input) {
+  const key = input.dataset.key;
+  if (!key) return;
+  const disp = document.getElementById('val-' + key);
+  if (!disp) return;
+  // Format: integers as int, floats with 2-3 decimal places
+  const v = parseFloat(input.value);
+  disp.textContent = Number.isInteger(parseFloat(input.step)) && parseFloat(input.step) >= 1
+    ? Math.round(v).toString()
+    : v.toFixed(v < 0.1 ? 3 : 2);
+}
+
+document.querySelectorAll('input[data-key]').forEach(input => {
+  input.addEventListener('input', () => {
+    syncDisplay(input);
+    currentSettings[input.dataset.key] = parseFloat(input.value);
+  });
+});
+
+// ── Master sliders ───────────────────────────────────────────────────
+
+// Master: Homeostasis Speed — proportionally scales all 5 decay rates
+// Reference center = average of defaults: (0.85+0.80+0.90+0.88+0.95)/5 = 0.876
+const DECAY_DEFAULTS = {
+  valence_to_DA_decay:      0.85,
+  threat_to_GABA_decay:     0.80,
+  novelty_to_ACh_decay:     0.90,
+  arousal_homeostat_decay:  0.88,
+  satiation_inhibitor_decay: 0.95,
+};
+const DECAY_CENTER = 0.876;
+document.getElementById('master-homeostasis').addEventListener('input', function() {
+  const masterVal = parseFloat(this.value);
+  const offset = masterVal - DECAY_CENTER;
+  for (const [key, def] of Object.entries(DECAY_DEFAULTS)) {
+    const inp = document.querySelector(`input[data-key="${key}"]`);
+    if (inp) {
+      const newVal = Math.max(0.5, Math.min(0.99, def + offset));
+      inp.value = newVal.toFixed(3);
+      syncDisplay(inp);
+      currentSettings[key] = parseFloat(inp.value);
+    }
+  }
+});
+
+// Master: Thought Suppression — scales ACh + Glu suppression weights
+const SUPPRESSION_DEFAULTS = { ach_suppression_weight: 1.0, glu_suppression_weight: 0.3 };
+document.getElementById('master-suppression').addEventListener('input', function() {
+  const scale = parseFloat(this.value);
+  for (const [key, def] of Object.entries(SUPPRESSION_DEFAULTS)) {
+    const inp = document.querySelector(`input[data-key="${key}"]`);
+    if (inp) { inp.value = Math.min(inp.max, def * scale).toFixed(3); syncDisplay(inp); currentSettings[key] = parseFloat(inp.value); }
+  }
+});
+
+// Master: Voice Expressiveness — scales deviation between base and emotional overrides
+// Base defaults
+const VOICE_BASE = { stability: 0.45, style: 0.40, speed: 1.0 };
+// Override state deltas (override - base), at scale=1.0
+const VOICE_OVERRIDES = {
+  threat:    { voice_stability_threat:   0.65, voice_style_threat:   0.25, voice_speed_threat:   0.95 },
+  bright:    { voice_stability_bright:   0.35, voice_style_bright:   0.55, voice_speed_bright:   1.05 },
+  low_mood:  { voice_stability_low_mood: 0.55, voice_style_low_mood: 0.30, voice_speed_low_mood: 0.93 },
+};
+document.getElementById('master-expressiveness').addEventListener('input', function() {
+  const scale = parseFloat(this.value);
+  for (const [, overrideMap] of Object.entries(VOICE_OVERRIDES)) {
+    for (const [key, overrideVal] of Object.entries(overrideMap)) {
+      const baseKey = key.replace(/voice_(stability|style|speed)_.*/, 'voice_$1_default');
+      const baseVal = parseFloat(document.querySelector(`input[data-key="${baseKey}"]`)?.value || VOICE_BASE[key.match(/_(stability|style|speed)_/)?.[1]] || 0.5);
+      const delta = overrideVal - (VOICE_BASE[key.match(/_(stability|style|speed)_/)?.[1]] || baseVal);
+      const inp = document.querySelector(`input[data-key="${key}"]`);
+      if (inp) {
+        const newVal = Math.max(0, Math.min(1.5, baseVal + delta * scale));
+        inp.value = newVal.toFixed(2);
+        syncDisplay(inp);
+        currentSettings[key] = parseFloat(inp.value);
+      }
+    }
+  }
+});
+
+// Learning Rate ↔ Weight Stability inverse link (0.4 coupling)
+const lrInput   = document.querySelector('input[data-key="hebbian_delta"]');
+const wsInput   = document.querySelector('input[data-key="decay_toward_rest_rate"]');
+const LR_DEF    = 0.02;
+const WS_DEF    = 0.01;
+const LR_COUPLE = 0.4;
+lrInput.addEventListener('input', function() {
+  const ratio = parseFloat(this.value) / LR_DEF;
+  const newWs = Math.max(parseFloat(wsInput.min), Math.min(parseFloat(wsInput.max), WS_DEF / (ratio ** LR_COUPLE)));
+  wsInput.value = newWs.toFixed(3);
+  syncDisplay(wsInput);
+  currentSettings['decay_toward_rest_rate'] = parseFloat(wsInput.value);
+});
+wsInput.addEventListener('input', function() {
+  const ratio = WS_DEF / Math.max(0.001, parseFloat(this.value));
+  const newLr = Math.max(parseFloat(lrInput.min), Math.min(parseFloat(lrInput.max), LR_DEF * (ratio ** LR_COUPLE)));
+  lrInput.value = newLr.toFixed(3);
+  syncDisplay(lrInput);
+  currentSettings['hebbian_delta'] = parseFloat(lrInput.value);
+});
+
+// ── Load settings from server ────────────────────────────────────────
+async function loadSettingsFromServer() {
+  try {
+    const res = await fetch('/settings');
+    if (!res.ok) return;
+    const data = await res.json();
+    currentSettings = { ...data.settings };
+    defaultSettings = { ...data.defaults };
+    applySettingsToUI(currentSettings);
+  } catch (e) {
+    console.warn('Settings: failed to load from server', e);
+  }
+}
+
+function applySettingsToUI(s) {
+  document.querySelectorAll('input[data-key]').forEach(inp => {
+    const key = inp.dataset.key;
+    if (key in s) {
+      inp.value = s[key];
+      syncDisplay(inp);
+    }
+  });
+  // Sync master homeostasis to average of decay values
+  const decayVals = Object.keys(DECAY_DEFAULTS).map(k => parseFloat(s[k] ?? DECAY_DEFAULTS[k]));
+  const avgDecay  = decayVals.reduce((a, b) => a + b, 0) / decayVals.length;
+  document.getElementById('master-homeostasis').value = avgDecay.toFixed(3);
+}
+
+// ── Save ─────────────────────────────────────────────────────────────
+settingsSave.addEventListener('click', async () => {
+  settingsSave.textContent = 'Saving…';
+  settingsSave.disabled = true;
+  try {
+    const res = await fetch('/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(currentSettings),
+    });
+    if (res.ok) {
+      restartBanner.classList.add('visible');
+      settingsSave.textContent = 'Saved';
+      setTimeout(() => { settingsSave.textContent = 'Save Settings'; settingsSave.disabled = false; }, 1800);
+    } else {
+      const txt = await res.text().catch(() => '');
+      console.error('Settings save failed:', res.status, txt);
+      settingsSave.textContent = 'Error (' + res.status + ')';
+      setTimeout(() => { settingsSave.textContent = 'Save Settings'; settingsSave.disabled = false; }, 2500);
+    }
+  } catch (e) {
+    console.error('Settings save error:', e);
+    settingsSave.textContent = 'Error (no server)';
+    setTimeout(() => { settingsSave.textContent = 'Save Settings'; settingsSave.disabled = false; }, 2500);
+  }
+});
+
+// ── Reset to defaults ─────────────────────────────────────────────────
+settingsReset.addEventListener('click', async () => {
+  if (!confirm('Reset all settings to defaults?')) return;
+  try {
+    const res = await fetch('/settings/reset', { method: 'POST' });
+    if (res.ok) {
+      const data = await res.json();
+      currentSettings = { ...data.settings };
+      applySettingsToUI(currentSettings);
+      restartBanner.classList.add('visible');
+    }
+  } catch (e) {
+    console.warn('Settings: reset failed', e);
+  }
+});
+
 renderRegionList();
 setMoodBackground('neutral');
 loadVoices();

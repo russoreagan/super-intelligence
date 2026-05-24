@@ -13,6 +13,7 @@ from __future__ import annotations
 from collections import deque, Counter
 from dataclasses import dataclass, field
 from typing import Hashable
+from brain.settings import settings as _settings
 
 # Emotional states where the entity should NOT lean on prediction. These are
 # either reactive (responding to something fresh) or relational (where stale
@@ -39,8 +40,13 @@ class PredictorSwitch:
     """
     name: str
     cluster: str
-    window: int = 8
-    surprise_threshold: float = 0.4   # prediction error above this wakes integrator
+    window: int = field(default=8)
+    surprise_threshold: float = field(default=0.4)
+
+    def __post_init__(self):
+        self.window = int(_settings.get("predictor_window"))
+        self.surprise_threshold = float(_settings.get("surprise_threshold"))
+        self._history = deque(maxlen=self.window)
 
     _history: deque = field(default_factory=lambda: deque(maxlen=8), init=False)
 
@@ -84,9 +90,15 @@ class CompositePredictor:
     """
     name: str
     cluster: str
-    window: int = 12
-    surprise_threshold: float = 0.4
-    confidence_skip_threshold: float = 0.7   # min confidence to actually skip the LLM
+    window: int = field(default=12)
+    surprise_threshold: float = field(default=0.4)
+    confidence_skip_threshold: float = field(default=0.7)
+
+    def __post_init__(self):
+        self.surprise_threshold = float(_settings.get("surprise_threshold"))
+        self.confidence_skip_threshold = float(_settings.get("confidence_skip_threshold"))
+        self._history = deque(maxlen=self.window)
+        self._outcome_scores = {}
 
     _history: deque = field(default_factory=lambda: deque(maxlen=12), init=False)
     # Track per-signature outcome history for "consistently high score" checks

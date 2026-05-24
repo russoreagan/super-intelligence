@@ -13,6 +13,7 @@ import asyncio
 import json
 import logging
 import os
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
@@ -23,10 +24,11 @@ from typing import TYPE_CHECKING, Callable
 # misclassifies the parameter as a query param, causing an immediate 403 on every
 # WebSocket connection attempt.
 try:
-    from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile
+    from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, UploadFile
     from fastapi.responses import HTMLResponse
 except ImportError:
     FastAPI = None  # type: ignore[assignment,misc]
+    Request = None  # type: ignore[assignment]
     WebSocket = None  # type: ignore[assignment]
     WebSocketDisconnect = None  # type: ignore[assignment]
     HTMLResponse = None  # type: ignore[assignment]
@@ -43,7 +45,8 @@ class UIServer:
                  on_voice_change: Callable[[str], None] | None = None,
                  on_eval_mode: Callable[[bool], None] | None = None,
                  on_mic_toggle: Callable[[], bool] | None = None,
-                 python_voice_mode: bool = False) -> None:
+                 python_voice_mode: bool = False,
+                 wiring=None) -> None:
         self._queue = emitter_queue
         self._on_user_message = on_user_message
         self._on_voice_change = on_voice_change
@@ -53,6 +56,7 @@ class UIServer:
         self._clients: set = set()
         self._last_neuromod: dict = {}
         self._wiring_frozen: bool = False
+        self._wiring = wiring
         self._app = None
 
     def set_wiring_frozen(self, frozen: bool) -> None:
@@ -73,6 +77,49 @@ class UIServer:
         async def index():
             html = HTML_PATH.read_text(encoding="utf-8")
             return HTMLResponse(html)
+
+        @app.get("/settings")
+        async def get_settings():
+            from brain.settings import settings, DEFAULTS
+            return {"settings": settings.all(), "defaults": DEFAULTS}
+
+        @app.post("/settings")
+        async def save_settings(request: Request):
+            from brain.settings import settings
+            body = await request.json()
+            try:
+                settings.save(body)
+                return {"ok": True}
+            except Exception as e:
+                from fastapi.responses import JSONResponse
+                return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+
+        @app.post("/settings/reset")
+        async def reset_settings():
+            from brain.settings import settings
+            settings.reset_to_defaults()
+            settings.save()
+            return {"ok": True, "settings": settings.all()}
+
+        @app.get("/wiring")
+        async def get_wiring():
+            w = self._wiring
+            if w is None:
+                return {"top": [], "deltas": [], "edge_count": 0}
+            return {
+                "top": w.top_edges(20),
+                "deltas": w.session_deltas(),
+                "edge_count": w.edge_count(),
+            }
+
+        @app.post("/restart")
+        async def restart_brain():
+            """Re-exec the current process with the same args — restarts the brain."""
+            async def _do_restart():
+                await asyncio.sleep(0.4)
+                os.execv(sys.executable, [sys.executable] + sys.argv)
+            asyncio.create_task(_do_restart())
+            return {"ok": True}
 
         @app.get("/voices")
         async def list_voices():

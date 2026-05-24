@@ -48,6 +48,7 @@ from brain.clusters.audio_dsp import (
     SILENCE_RMS,
 )
 from brain.second_brain.speaker_store import SpeakerStore
+from brain.settings import settings as _settings
 
 logger = logging.getLogger(__name__)
 
@@ -56,11 +57,19 @@ CLUSTER = "auditory_cortex"
 _FINGERPRINT_DB_PATH = Path(__file__).parent.parent / "second_brain" / "audio_fingerprints.json"
 
 # Minimum per-speaker audio to bother embedding (seconds)
-_MIN_SPEAKER_AUDIO_S = 0.4
+_MIN_SPEAKER_AUDIO_S: float = float(__import__("os").environ.get("AUDIO_SPEAKER_MIN_S", "0.4"))
 
-# Cosine similarity thresholds
+# Cosine similarity thresholds (env or settings, settings wins if set)
 _STORE_THRESHOLD = float(__import__("os").environ.get("AUDIO_SPEAKER_THRESHOLD", "0.70"))
 _SESSION_THRESHOLD = 0.62  # lower — same session, fewer confounders
+
+
+def _store_threshold() -> float:
+    return float(_settings.get("speaker_store_threshold"))
+
+
+def _session_threshold() -> float:
+    return float(_settings.get("speaker_session_threshold"))
 
 
 # ── Session speaker tracking ───────────────────────────────────────────────────
@@ -102,7 +111,7 @@ class SessionSpeakerRegistry:
         """
         # 1. Check persistent store (pre-enrolled, cross-session)
         store_id, store_name, store_score, store_status = self._store.identify(
-            embedding, threshold=_STORE_THRESHOLD
+            embedding, threshold=_store_threshold()
         )
         if store_status == "recognized":
             spk = self._get_or_create_known(store_id, store_name, embedding)
@@ -112,7 +121,7 @@ class SessionSpeakerRegistry:
 
         # 2. Check session speakers by embedding similarity
         best_spk, best_score = self._find_best_session_match(embedding)
-        if best_spk is not None and best_score >= _SESSION_THRESHOLD:
+        if best_spk is not None and best_score >= _session_threshold():
             self._update_mean(best_spk, embedding)
             best_spk.last_seen_ts = time.time()
             return best_spk, False
@@ -418,7 +427,7 @@ class AuditoryCluster:
         """Extract, embed, and identify one Deepgram speaker."""
         # Slice audio to this speaker's words only
         spk_audio = extract_speaker_audio_segments(audio, sr, words)
-        if len(spk_audio) < int(sr * _MIN_SPEAKER_AUDIO_S):
+        if len(spk_audio) < int(sr * float(_settings.get("speaker_min_audio_s"))):
             logger.debug("Auditory: Deepgram spk %d — too little audio, skipping", deepgram_label)
             return
 

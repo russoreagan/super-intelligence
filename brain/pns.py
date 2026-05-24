@@ -10,6 +10,7 @@ import os
 
 from brain.bus import Bus
 from brain.security import screen_input
+from brain.settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -203,15 +204,15 @@ class PNS:
         ACh = float(nm.get("ACh", 0.3))
         Glu = float(nm.get("Glu", 0.3))
         # Order matters: stressed-arousal before plain de-escalation.
-        if Glu > 0.55 and GABA > 0.35:
+        if Glu > settings.get("glu_urgently_threshold") and GABA > settings.get("gaba_urgently_threshold"):
             return "[urgently]"
-        if GABA > 0.5:
+        if GABA > settings.get("gaba_gently_threshold"):
             return "[gently]"
-        if DA > 0.6 and Glu > 0.55:
+        if DA > settings.get("da_excited_threshold") and Glu > settings.get("glu_excited_threshold"):
             return "[excited]"
-        if ACh > 0.55 and GABA < 0.35:
+        if ACh > settings.get("ach_curious_threshold") and GABA < settings.get("gaba_curious_threshold"):
             return "[curious]"
-        if DA < 0.3:
+        if DA < settings.get("da_softly_threshold"):
             return "[softly]"
         return None
 
@@ -256,10 +257,10 @@ class PNS:
         # Punctuation pass: insert breath pauses for grounded/de-escalation states.
         # Skip for brisk/aroused/neutral — em-dashes would fight the natural cadence.
         shaped = text
-        if GABA > 0.5:
+        if GABA > settings.get("gaba_single_pause_threshold"):
             shaped = PNS._add_breath_pauses(shaped, count=1)
-        elif DA < 0.3:
-            shaped = PNS._add_breath_pauses(shaped, count=2)
+        elif DA < settings.get("da_double_pause_threshold"):
+            shaped = PNS._add_breath_pauses(shaped, count=int(settings.get("breath_pause_count_max")))
 
         # Tag pass: prepend an inflection cue (if warranted).
         tag = PNS._v3_audio_tag_from_affect(affect)
@@ -277,18 +278,22 @@ class PNS:
         GABA = float(nm.get("GABA", 0.0))
         Glu = float(nm.get("Glu", 0.3))
 
-        # Defaults (current expressive baseline)
-        stability, style, speed = 0.45, 0.40, 1.0
+        stability = settings.get("voice_stability_default")
+        style = settings.get("voice_style_default")
+        speed = settings.get("voice_speed_default")
 
-        if GABA > 0.5:
-            # Threat / de-escalation: steadier, less dramatic, a touch slower
-            stability, style, speed = 0.65, 0.25, 0.95
-        elif Glu > 0.55 and DA > 0.55:
-            # Bright + aroused: more expressive, more character, a touch faster
-            stability, style, speed = 0.35, 0.55, 1.05
+        if GABA > settings.get("gaba_gently_threshold"):
+            stability = settings.get("voice_stability_threat")
+            style = settings.get("voice_style_threat")
+            speed = settings.get("voice_speed_threat")
+        elif Glu > settings.get("glu_excited_threshold") and DA > settings.get("da_excited_threshold"):
+            stability = settings.get("voice_stability_bright")
+            style = settings.get("voice_style_bright")
+            speed = settings.get("voice_speed_bright")
         elif DA < 0.35:
-            # Low mood: slower, less style injection
-            stability, style, speed = 0.55, 0.30, 0.93
+            stability = settings.get("voice_stability_low_mood")
+            style = settings.get("voice_style_low_mood")
+            speed = settings.get("voice_speed_low_mood")
 
         return {"stability": stability, "style": style, "speed": speed}
 

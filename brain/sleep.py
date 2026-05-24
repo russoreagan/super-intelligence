@@ -19,6 +19,7 @@ from brain.utils import safe_json_parse
 from brain.wiring import Wiring
 from brain.emotion_hierarchy import core_of
 from brain.observability.decisions import decisions
+from brain.settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -222,7 +223,7 @@ class SleepConsolidation:
         # Defuse path: the response started with "Let's slow down" or similar — a marker
         # we don't have explicitly. Use a proxy: very high GABA + low critic.
         gaba = float(trace.neuromod.get("GABA", 0.0))
-        if gaba > 0.55 and len(trace.draft_scores) <= 1:
+        if gaba > settings.get("gaba_skip_threshold_high") and len(trace.draft_scores) <= 1:
             return True, "defuse_path"
         # Confused/flat AND user negative
         emotion = (trace.emotion or "").lower()
@@ -254,7 +255,7 @@ class SleepConsolidation:
                 skipped += 1
                 continue
 
-            delta = outcome * 0.02 * plasticity
+            delta = outcome * settings.get("hebbian_outcome_delta") * plasticity
             path_names = [n["name"] for n in trace.fired_path]
             # Snapshot weights before to compute per-edge delta for logging
             before = {(path_names[i], path_names[i+1]):

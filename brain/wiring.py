@@ -24,6 +24,8 @@ WEIGHT_MIN = 0.1
 WEIGHT_MAX = 3.0
 WEIGHT_REST = 1.0
 
+from brain.settings import settings as _settings  # noqa: E402
+
 
 @dataclass
 class Edge:
@@ -62,9 +64,13 @@ class Wiring:
         e = self._edges.get((source, target))
         return e.weight if e else WEIGHT_REST
 
-    def hebbian_update(self, fired_path: list[str], delta: float = 0.02) -> int:
+    def hebbian_update(self, fired_path: list[str], delta: float | None = None) -> int:
         """Nudge weights along a path that produced a good (or bad) outcome.
         Returns the count of edges actually updated."""
+        if delta is None:
+            delta = _settings.get("hebbian_delta")
+        w_min = _settings.get("weight_min")
+        w_max = _settings.get("weight_max")
         if abs(delta) < 1e-6 or len(fired_path) < 2:
             return 0
         updated = 0
@@ -72,13 +78,15 @@ class Wiring:
             key = (fired_path[i], fired_path[i + 1])
             if key in self._edges:
                 e = self._edges[key]
-                e.weight = max(WEIGHT_MIN, min(WEIGHT_MAX, e.weight + delta))
+                e.weight = max(w_min, min(w_max, e.weight + delta))
                 updated += 1
         return updated
 
-    def decay_toward_rest(self, rest: float = WEIGHT_REST, rate: float = 0.01) -> None:
+    def decay_toward_rest(self, rest: float = WEIGHT_REST, rate: float | None = None) -> None:
         """Gentle synaptic homeostasis — every edge drifts toward rest by `rate`.
         Applied once per session before the Hebbian pass."""
+        if rate is None:
+            rate = _settings.get("decay_toward_rest_rate")
         for e in self._edges.values():
             e.weight = e.weight * (1.0 - rate) + rest * rate
 
