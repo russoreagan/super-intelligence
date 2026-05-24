@@ -80,11 +80,13 @@ class HypothalamusCluster:
         # ── Prosody modulation (from auditory cortex, if active) ──────────────
         # Drain expired messages; use most recent valid prosody
         prosody_tone = None
+        prosody_features: dict | None = None
         while True:
             try:
                 pros_msg = self._prosody_inbox.get_nowait()
                 if not pros_msg.expired:
                     prosody_tone = pros_msg.payload.get("tone_label")
+                    prosody_features = pros_msg.payload
             except asyncio.QueueEmpty:
                 break
 
@@ -168,6 +170,10 @@ class HypothalamusCluster:
             "high_GABA": snap["GABA"] > 0.4,
             "high_ACh": snap["ACh"] > 0.5,
             "vocal_tone": prosody_tone,
+            "prosody_f0_hz": round((prosody_features or {}).get("f0_mean_hz", 0.0), 1),
+            "prosody_energy": round((prosody_features or {}).get("energy_mean", 0.0), 4),
+            "prosody_jitter": round((prosody_features or {}).get("jitter", 0.0), 4),
+            "prosody_shimmer": round((prosody_features or {}).get("shimmer", 0.0), 4),
             "pace_label": (dynamics or {}).get("pace_label"),
             "hesitant_speech": bool((dynamics or {}).get("hesitant")),
             "emotion_source": "metacognition" if override_emotion else "neuromod",

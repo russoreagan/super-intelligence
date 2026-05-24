@@ -103,11 +103,11 @@ class SessionSpeakerRegistry:
 
     # ── Public interface ────────────────────────────────────────────────────
 
-    def match_or_create(self, embedding: np.ndarray) -> tuple[SessionSpeaker, bool]:
+    def match_or_create(self, embedding: np.ndarray) -> tuple[SessionSpeaker, bool, float]:
         """
         Find the session speaker whose voice best matches this embedding.
         Creates a new entry (enrollment_pending=True) if no match found.
-        Returns (session_speaker, is_new_this_turn).
+        Returns (session_speaker, is_new_this_turn, similarity_score).
         """
         # 1. Check persistent store (pre-enrolled, cross-session)
         store_id, store_name, store_score, store_status = self._store.identify(
@@ -117,14 +117,14 @@ class SessionSpeakerRegistry:
             spk = self._get_or_create_known(store_id, store_name, embedding)
             if store_id and spk.store_id:
                 self._store.update(store_id, embedding)
-            return spk, False
+            return spk, False, store_score
 
         # 2. Check session speakers by embedding similarity
         best_spk, best_score = self._find_best_session_match(embedding)
         if best_spk is not None and best_score >= _session_threshold():
             self._update_mean(best_spk, embedding)
             best_spk.last_seen_ts = time.time()
-            return best_spk, False
+            return best_spk, False, best_score
 
         # 3. New speaker this session — store_name here is the closest sub-threshold profile
         spk = SessionSpeaker(
@@ -139,7 +139,7 @@ class SessionSpeakerRegistry:
             closest_match=store_name,  # nearest profile that didn't clear the bar
         )
         self._speakers[spk.session_key] = spk
-        return spk, True
+        return spk, True, store_score
 
     def complete_enrollment(self, session_key: str, name: str) -> dict:
         """
@@ -445,7 +445,7 @@ class AuditoryCluster:
         words: list[dict],
     ) -> None:
         """Match embedding against registry; handle ID or enrollment."""
-        session_spk, is_new = self._registry.match_or_create(embedding)
+        session_spk, is_new, match_score = self._registry.match_or_create(embedding)
 
         # Update cross-loop speaker state and prosody baseline.
         if session_spk.store_id:
@@ -462,6 +462,7 @@ class AuditoryCluster:
             "speaker_name": session_spk.store_name,
             "enrollment_pending": session_spk.enrollment_pending,
             "is_new_this_session": is_new,
+            "match_score": round(match_score, 4),
         }
         logger.debug(
             "Auditory: session=%s name=%s enrolled=%s new=%s",

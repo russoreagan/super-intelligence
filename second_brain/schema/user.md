@@ -11,8 +11,8 @@
 - Notes: Early interactions — be friendly and warm but not yet familiar enough for teasing or in-jokes
 
 ## Affection score
-- Score: -2
-- History: neutral — polite and helpful, professional warmth (last tone: testing, delta: -1)
+- Score: 3
+- History: neutral — polite and helpful, professional warmth (last tone: praising, delta: +3)
 
 - User initiated a test.
 - The user initiated the conversation with a greeting.
@@ -24,3 +24,7 @@
 - user interested in self-learning systems leading to smarter behavior
 - self-improvement through continuous observation and adjustment expected but not yet defined
 - measuring progress would require comparing old vs new behaviors, looking for trends rather than noise
+- [relationship] The user seems engaged in Owen's methods and is curious about his intentions, suggesting a level of interest or involvement.
+- [relationship] The user seems engaged and curious about the hippocampus's capabilities, indicating a friendly rapport.
+- The AI successfully identified two different speakers.
+- The AI is capable of detecting subtle vocal differences.

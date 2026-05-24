@@ -589,6 +589,8 @@ async def session(args) -> None:
             features = dict(features)
             if latest_speaker and latest_speaker.get("speaker_name"):
                 features["speaker_name"] = latest_speaker["speaker_name"]
+            if latest_speaker:
+                features["_speaker_match_score"] = latest_speaker.get("match_score", 0.0)
             if latest_song:
                 features["song_match"] = latest_song
 
@@ -890,6 +892,13 @@ async def session(args) -> None:
         trace.cluster_tokens = cluster_tokens
         trace.memory_recalled = memory_recalled
         trace.memory_hit_count = memory_hit_count
+        trace.speaker_name = features.get("speaker_name", "")
+        trace.speaker_score = features.get("_speaker_match_score", 0.0)
+        trace.prosody_tone = affect.get("vocal_tone") or ""
+        trace.prosody_f0_hz = affect.get("prosody_f0_hz", 0.0)
+        trace.prosody_energy = affect.get("prosody_energy", 0.0)
+        trace.prosody_jitter = affect.get("prosody_jitter", 0.0)
+        trace.prosody_shimmer = affect.get("prosody_shimmer", 0.0)
         obs.record_turn(trace)
 
         # Append the full trace (with fired_path, neuromod, emotion etc.) so

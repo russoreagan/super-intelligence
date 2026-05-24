@@ -75,6 +75,15 @@ class TurnTrace:
     #              "level", "tag", "ts"}
     fired_path: list[dict] = field(default_factory=list)
 
+    # ── Voice / prosody fields (populated when --ears is active) ─────────────
+    speaker_name: str = ""
+    speaker_score: float = 0.0   # voiceprint cosine similarity (0–1)
+    prosody_tone: str = ""       # calm / stressed / energetic / whisper / monotone
+    prosody_f0_hz: float = 0.0   # mean fundamental frequency
+    prosody_energy: float = 0.0  # RMS energy
+    prosody_jitter: float = 0.0  # pitch period perturbation
+    prosody_shimmer: float = 0.0 # amplitude perturbation
+
 
 _TRACE_WINDOW = 500   # max full TurnTrace objects kept in memory per session
 _NEUROMOD_WINDOW = 2000  # lightweight {ts, neuromod} snapshots for history chart
@@ -146,6 +155,14 @@ class ObservabilityLayer:
                             "memory_hit_count": trace.memory_hit_count,
                             "drafter_count": trace.drafter_count,
                             "llm_calls_saved": trace.llm_calls_saved,
+                            # voice / prosody (non-empty only when --ears active)
+                            **({"speaker_name": trace.speaker_name} if trace.speaker_name else {}),
+                            **({"speaker_score": trace.speaker_score} if trace.speaker_score else {}),
+                            **({"prosody_tone": trace.prosody_tone} if trace.prosody_tone else {}),
+                            **({"prosody_f0_hz": trace.prosody_f0_hz} if trace.prosody_f0_hz else {}),
+                            **({"prosody_energy": trace.prosody_energy} if trace.prosody_energy else {}),
+                            **({"prosody_jitter": trace.prosody_jitter} if trace.prosody_jitter else {}),
+                            **({"prosody_shimmer": trace.prosody_shimmer} if trace.prosody_shimmer else {}),
                         },
                     )
                     span.end()
