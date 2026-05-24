@@ -25,7 +25,7 @@ DEFAULTS: dict[str, float | int] = {
     "hostility_DA_weight":         0.10,
     "surprise_ACh_weight":         0.12,
     "salience_ACh_weight":         0.08,
-    "salience_Glu_weight":         0.08,
+    "salience_Glu_weight":         0.12,
     "hostility_GABA_threshold_high": 0.50,
     "hostility_GABA_increment_high": 0.20,
     "hostility_GABA_threshold_med":  0.20,
@@ -187,7 +187,7 @@ DEFAULTS: dict[str, float | int] = {
     # ── Section 15: Anandamide / AEA (endocannabinoid) ───────────────────────
     # AEA = homeostatic buffer; medium-speed (decay 0.90 vs. neuromod 0.85 / hormone 0.97+)
     # Rises automatically when Glu + NE arousal sum exceeds threshold
-    "aea_arousal_threshold":       0.80,   # Glu + NE sum that triggers homeostatic AEA rise
+    "aea_arousal_threshold":       0.65,   # Glu + NE sum that triggers homeostatic AEA rise
     "aea_arousal_increment":       0.018,  # AEA gain per turn when arousal is high (~15 turns to effect)
     "aea_positive_increment":      0.005,  # AEA gain per warm/positive turn (social afterglow)
     "aea_cort_drain":              0.004,  # AEA drain per turn under sustained stress (CORT antagonism)

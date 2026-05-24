@@ -25,6 +25,7 @@ class HypothalamusCluster:
     def __init__(self, bus: Bus) -> None:
         self._bus = bus
         self._last_decay_time: float = time.monotonic()
+        self._current_turns: float = 1.0  # set by process(), consumed by decay_turn()
 
         # Stateful switches with decay
         self._valence_switch = StatefulSwitch("valence_to_DA", CLUSTER, decay=settings.get("valence_to_DA_decay"))
@@ -47,6 +48,18 @@ class HypothalamusCluster:
         """Update neuromod levels from temporal features. Return affect summary."""
         nm = self._bus.neuromod
 
+        # Compute time-weighted turns (elapsed since last decay / reference interval).
+        # Increments for text-derived signals are multiplied by turns so that
+        # equilibrium levels stay pace-independent — a 3-minute gap applies 3× the
+        # per-turn delta but also decays 3× as much, keeping the fixed point stable.
+        # Prosody and dynamics signals are NOT scaled (they are one-shot observations).
+        now = time.monotonic()
+        elapsed = now - self._last_decay_time
+        ref = settings.get("decay_reference_interval_s")
+        raw_turns = elapsed / ref
+        turns = max(settings.get("decay_min_turns"), min(raw_turns, settings.get("decay_max_turns")))
+        self._current_turns = turns
+
         sentiment = features.get("sentiment", 0.0)
         hostility = features.get("hostility", 0.0)
         salience = features.get("salience", 0.3)
@@ -56,25 +69,25 @@ class HypothalamusCluster:
 
         # DA: valence signal (reward / positive engagement)
         valence_delta = (sentiment * settings.get("sentiment_DA_weight") * er_scale) - (hostility * settings.get("hostility_DA_weight"))
-        nm.add("DA", valence_delta)
+        nm.add("DA", valence_delta * turns)
 
         # GABA: threat / caution signal (inhibitory)
         if hostility > settings.get("hostility_GABA_threshold_high"):
-            nm.add("GABA", hostility * settings.get("hostility_GABA_increment_high"))
+            nm.add("GABA", hostility * settings.get("hostility_GABA_increment_high") * turns)
         elif hostility > settings.get("hostility_GABA_threshold_med"):
-            nm.add("GABA", settings.get("hostility_GABA_increment_med"))
+            nm.add("GABA", settings.get("hostility_GABA_increment_med") * turns)
 
         # ACh: novelty / attention signal
         novelty_delta = (surprise * settings.get("surprise_ACh_weight") + salience * settings.get("salience_ACh_weight")) * er_scale
         if self._satiation_inhibitor.state > 0.5:
             novelty_delta *= (1.0 - self._satiation_inhibitor.state * settings.get("satiation_inhibition_factor"))
-        nm.add("ACh", novelty_delta)
+        nm.add("ACh", novelty_delta * turns)
 
         # Glu: general arousal
         arousal_delta = salience * settings.get("salience_Glu_weight") * er_scale
         if features.get("intent") == "hostile":
             arousal_delta += settings.get("hostile_intent_Glu_bonus")
-        nm.add("Glu", arousal_delta)
+        nm.add("Glu", arousal_delta * turns)
 
         # NE: focused alertness — rises with salience, surprise, and threat.
         # Distinct from Glu (general arousal): NE is the sharp attentional spotlight,
@@ -84,7 +97,7 @@ class HypothalamusCluster:
             surprise  * settings.get("ne_surprise_weight") +
             hostility * settings.get("ne_hostility_weight")
         ) * er_scale
-        nm.add("NE", ne_delta)
+        nm.add("NE", ne_delta * turns)
 
         # Satiation: if salience is low (routine), desensitize
         if salience < settings.get("salience_satiation_threshold"):
@@ -157,35 +170,35 @@ class HypothalamusCluster:
 
         # OXT: build on warm positive exchange; drain under hostility
         if sentiment > 0.3 and hostility < 0.2:
-            hs.add("OXT", settings.get("oxt_positive_increment"))
+            hs.add("OXT", settings.get("oxt_positive_increment") * turns)
         elif hostility > settings.get("hostility_GABA_threshold_high"):
-            hs.add("OXT", -settings.get("oxt_hostility_drain"))
+            hs.add("OXT", -settings.get("oxt_hostility_drain") * turns)
 
         # CORT: accumulates under sustained social threat (direct hostility, not prosody).
         # Decoupled from GABA so that animated/focused voice patterns don't trigger
         # false cortisol build — prosody raises GABA for alertness, not social stress.
         if hostility > settings.get("cort_hostility_threshold"):
-            hs.add("CORT", settings.get("cort_threat_increment"))
+            hs.add("CORT", settings.get("cort_threat_increment") * turns)
 
         # 5HT: slow lift from rewarding interaction; drain under hostility
         if sentiment > settings.get("sht_reward_sentiment_min") and hostility < 0.1:
-            hs.add("5HT", settings.get("sht_reward_increment"))
+            hs.add("5HT", settings.get("sht_reward_increment") * turns)
         elif hostility > settings.get("hostility_GABA_threshold_high"):
-            hs.add("5HT", -settings.get("sht_hostility_drain"))
+            hs.add("5HT", -settings.get("sht_hostility_drain") * turns)
 
         # OXT buffers CORT (cross-channel antagonism)
         if hs.get("OXT") > settings.get("oxt_cort_buffer_threshold"):
-            hs.add("CORT", -hs.get("OXT") * settings.get("oxt_cort_buffer_rate"))
+            hs.add("CORT", -hs.get("OXT") * settings.get("oxt_cort_buffer_rate") * turns)
 
         # AEA: homeostatic buffer — rises when Glu + NE arousal exceeds threshold.
         # Also gets a small positive lift from warm exchanges (social afterglow),
         # and drains slightly when CORT is sustained (stress antagonises AEA).
         if snap["Glu"] + snap["NE"] > settings.get("aea_arousal_threshold"):
-            hs.add("AEA", settings.get("aea_arousal_increment"))
+            hs.add("AEA", settings.get("aea_arousal_increment") * turns)
         if sentiment > 0.4 and hostility < 0.1:
-            hs.add("AEA", settings.get("aea_positive_increment"))
+            hs.add("AEA", settings.get("aea_positive_increment") * turns)
         if hs.get("CORT") > settings.get("cort_hostility_threshold"):
-            hs.add("AEA", -settings.get("aea_cort_drain"))
+            hs.add("AEA", -settings.get("aea_cort_drain") * turns)
 
         h_snap = hs.snapshot()
         logger.debug(
@@ -291,23 +304,12 @@ class HypothalamusCluster:
         return affect
 
     def decay_turn(self) -> None:
-        """Time-weighted decay: channels decay proportionally to real elapsed time.
+        """Apply time-weighted decay using turns computed by process() this turn.
 
-        A 60-second gap applies 1.0 turns of decay (the designed baseline).
-        A 10-second gap applies 0.25 turns (minimum — rapid exchanges stay stickier).
-        A 10-minute gap applies 10.0 turns (maximum — state resets to near-floor).
-
-        This means emotional state decays with wall-clock time rather than with
-        message count, so a slow thoughtful conversation doesn't preserve arousal
-        the same way a fast back-and-forth does.
+        process() measures elapsed time and caches turns in self._current_turns;
+        decay_turn() consumes that value and resets the clock, so both increment
+        scaling and decay use the same elapsed-time measurement per turn.
         """
-        now = time.monotonic()
-        elapsed = now - self._last_decay_time
-        self._last_decay_time = now
-
-        ref   = settings.get("decay_reference_interval_s")
-        turns = elapsed / ref
-        turns = max(settings.get("decay_min_turns"), min(turns, settings.get("decay_max_turns")))
-
-        self._bus.neuromod.decay(turns)
-        self._bus.hormonal.decay(turns)
+        self._last_decay_time = time.monotonic()
+        self._bus.neuromod.decay(self._current_turns)
+        self._bus.hormonal.decay(self._current_turns)

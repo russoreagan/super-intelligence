@@ -99,7 +99,7 @@ class HormonalState:
     """
 
     CHANNELS = ("5HT", "CORT", "OXT", "AEA")
-    _DECAY  = {"5HT": 0.995, "CORT": 0.970, "OXT": 0.998, "AEA": 0.900}
+    _DECAY  = {"5HT": 0.995, "CORT": 0.970, "OXT": 0.998, "AEA": 0.930}
     _FLOORS = {"5HT": 0.20,  "CORT": 0.02,  "OXT": 0.15,  "AEA": 0.10}
 
     def __init__(self) -> None:

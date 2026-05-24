@@ -9,6 +9,7 @@ Tests for the endocrine / hormonal system:
 from __future__ import annotations
 
 import asyncio
+import time
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -406,9 +407,10 @@ class TestHypothalamusHormonalIntegration:
 
     def test_sustained_positivity_produces_connected(self):
         bus, hyp = _make_hyp()
-        # Run enough warm turns to push OXT past the connected threshold
+        # Simulate 60s between turns so increments scale at turns=1.0
         threshold = settings.get("hormonal_oxt_connected_threshold")
         for _ in range(100):
+            hyp._last_decay_time = time.monotonic() - 60
             asyncio.run(hyp.process(_warm_features()))
             hyp.decay_turn()
         # OXT should now be above the threshold
