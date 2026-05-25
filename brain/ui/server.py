@@ -57,6 +57,7 @@ class UIServer:
         self._python_voice_mode = python_voice_mode
         self._clients: set = set()
         self._last_neuromod: dict = {}
+        self._last_hormonal: dict = {}
         self._wiring_frozen: bool = False
         self._wiring = wiring
         self._app = None
@@ -260,11 +261,18 @@ class UIServer:
             except Exception:
                 pass
 
-            # Send current neuromod state immediately on connect
+            # Send current neuromod + hormonal state immediately on connect
             if self._last_neuromod:
                 try:
                     await websocket.send_text(json.dumps(
                         {"type": "neuromod", **self._last_neuromod}
+                    ))
+                except Exception:
+                    pass
+            if self._last_hormonal:
+                try:
+                    await websocket.send_text(json.dumps(
+                        {"type": "hormonal", **self._last_hormonal}
                     ))
                 except Exception:
                     pass
@@ -451,9 +459,11 @@ class UIServer:
         while True:
             try:
                 event = await asyncio.wait_for(self._queue.get(), timeout=0.1)
-                # Cache latest neuromod for new clients
+                # Cache latest neuromod + hormonal for new clients
                 if event.get("type") == "neuromod":
                     self._last_neuromod = {k: v for k, v in event.items() if k != "type"}
+                elif event.get("type") == "hormonal":
+                    self._last_hormonal = {k: v for k, v in event.items() if k != "type"}
 
                 if self._clients:
                     payload = json.dumps(event)

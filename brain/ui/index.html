@@ -1994,6 +1994,29 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
               <div class="nm-head"><span class="nm-name">Glu</span><span class="nm-num" id="nm-num-Glu">30%</span></div>
               <div class="nm-track"><div class="nm-fill" id="nm-Glu" style="background: oklch(0.78 0.16 145); width: 30%"></div></div>
             </div>
+            <div class="nm-row">
+              <div class="nm-head"><span class="nm-name">NE</span><span class="nm-num" id="nm-num-NE">25%</span></div>
+              <div class="nm-track"><div class="nm-fill" id="nm-NE" style="background: oklch(0.75 0.16 300); width: 25%"></div></div>
+            </div>
+          </div>
+          <div class="section-label" style="margin-top:10px;">Hormonal</div>
+          <div class="nm-grid">
+            <div class="nm-row">
+              <div class="nm-head"><span class="nm-name">5HT</span><span class="nm-num" id="nm-num-5HT">50%</span></div>
+              <div class="nm-track"><div class="nm-fill" id="nm-5HT" style="background: oklch(0.82 0.16 65); width: 50%"></div></div>
+            </div>
+            <div class="nm-row">
+              <div class="nm-head"><span class="nm-name">OXT</span><span class="nm-num" id="nm-num-OXT">30%</span></div>
+              <div class="nm-track"><div class="nm-fill" id="nm-OXT" style="background: oklch(0.78 0.14 345); width: 30%"></div></div>
+            </div>
+            <div class="nm-row">
+              <div class="nm-head"><span class="nm-name">CORT</span><span class="nm-num" id="nm-num-CORT">5%</span></div>
+              <div class="nm-track"><div class="nm-fill" id="nm-CORT" style="background: oklch(0.70 0.18 40); width: 5%"></div></div>
+            </div>
+            <div class="nm-row">
+              <div class="nm-head"><span class="nm-name">AEA</span><span class="nm-num" id="nm-num-AEA">30%</span></div>
+              <div class="nm-track"><div class="nm-fill" id="nm-AEA" style="background: oklch(0.78 0.12 170); width: 30%"></div></div>
+            </div>
           </div>
           <div class="mood-display">
             <span class="mood-dot" id="mood-dot"></span>
@@ -2988,7 +3011,17 @@ function handle(msg) {
       break;
     }
     case 'neuromod': {
-      ['ACh', 'DA', 'GABA', 'Glu'].forEach(ch => {
+      ['ACh', 'DA', 'GABA', 'Glu', 'NE'].forEach(ch => {
+        const v = msg[ch];
+        if (v === undefined) return;
+        const pct = Math.round(v * 100);
+        document.getElementById(`nm-${ch}`).style.width = pct + '%';
+        document.getElementById(`nm-num-${ch}`).textContent = pct + '%';
+      });
+      break;
+    }
+    case 'hormonal': {
+      ['5HT', 'OXT', 'CORT', 'AEA'].forEach(ch => {
         const v = msg[ch];
         if (v === undefined) return;
         const pct = Math.round(v * 100);
@@ -3775,8 +3808,9 @@ function enterDemoMode() {
   // session id for demo
   sessionId = 'demo-' + Math.random().toString(36).slice(2, 6);
   document.getElementById('stat-session').textContent = sessionId;
-  // baseline neuromods
-  handle({ type: 'neuromod', ACh: 0.22, DA: 0.58, GABA: 0.10, Glu: 0.45 });
+  // baseline neuromods + hormonal
+  handle({ type: 'neuromod', ACh: 0.22, DA: 0.58, GABA: 0.10, Glu: 0.45, NE: 0.28 });
+  handle({ type: 'hormonal', '5HT': 0.50, OXT: 0.30, CORT: 0.05, AEA: 0.30 });
   handle({ type: 'emotion', emotion: 'curious' });
   // periodic idle activations
   setInterval(() => {
@@ -3792,6 +3826,7 @@ function enterDemoMode() {
       DA:   Math.max(0.10, Math.min(0.9, 0.55 + (Math.random()-0.5)*0.3)),
       GABA: Math.max(0.02, Math.min(0.6, 0.12 + (Math.random()-0.5)*0.2)),
       Glu:  Math.max(0.05, Math.min(0.9, 0.45 + (Math.random()-0.5)*0.3)),
+      NE:   Math.max(0.15, Math.min(0.8, 0.28 + (Math.random()-0.5)*0.3)),
     };
     handle({ type: 'neuromod', ...snap });
   }, 5000);
