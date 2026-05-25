@@ -14,7 +14,6 @@ single turn). Also written to eval JSONL as a "learning_summary" record.
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
 import time
@@ -96,14 +95,14 @@ Respond ONLY with valid JSON:
 
 
 class LearningJudge:
-    def __init__(self, eval_logger: "EvalLogger", obs=None) -> None:
+    def __init__(self, eval_logger: EvalLogger, obs=None) -> None:
         from brain.model_router import ModelRouter
         self._eval_logger = eval_logger
         self._obs = obs
         self._router = ModelRouter(obs=None)
         self._enabled = os.environ.get("BRAIN_EVAL_LEARNING", "").lower() in ("1", "true", "yes")
 
-    async def evaluate(self, session_id: str, full_traces: list["TurnTrace"],
+    async def evaluate(self, session_id: str, full_traces: list[TurnTrace],
                        session_metrics: dict) -> None:
         """
         Run the session-end learning judge. Non-blocking — call with await at shutdown.
@@ -160,14 +159,14 @@ class LearningJudge:
 
     # ── Private ──────────────────────────────────────────────────────────────
 
-    def _build_prompt(self, full_traces: list["TurnTrace"], metrics: dict) -> str:
+    def _build_prompt(self, full_traces: list[TurnTrace], metrics: dict) -> str:
         n = len(full_traces)
         third = max(1, n // 3)
 
         early = full_traces[:third]
         late = full_traces[-third:]
 
-        def _turn_summary(t: "TurnTrace", idx: int) -> str:
+        def _turn_summary(t: TurnTrace, idx: int) -> str:
             saved = t.llm_calls_saved or 0
             outcomes = t.predictor_outcomes or []
             correct = sum(1 for o in outcomes if o.get("correct"))
@@ -223,7 +222,7 @@ class LearningJudge:
             f"EARLY TURNS (first third):\n{early_text}\n\n"
             f"LATE TURNS (last third):\n{late_text}\n\n"
             f"PREDICTOR / GATING TREND:\n" + "\n".join(trend_lines or ["  (insufficient data)"]) + "\n\n"
-            f"HEBBIAN WEIGHT CHANGES (this session):\n" + "\n".join(hebbian_lines) + "\n\n"
+            "HEBBIAN WEIGHT CHANGES (this session):\n" + "\n".join(hebbian_lines) + "\n\n"
             "Evaluate learning."
         )
         return prompt

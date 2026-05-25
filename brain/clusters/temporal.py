@@ -6,19 +6,17 @@ Publishes structured features to the bus for all downstream clusters.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 import random as _random
 import re
-import time
 
 from brain.bus import Bus, Message
 from brain.cell import IntegratorCell
 from brain.model_router import ModelRouter
 from brain.neuron import SwitchNeuron
-from brain.predictor import PredictorSwitch, input_signature, should_bypass_gating
 from brain.observability.decisions import decisions
+from brain.predictor import PredictorSwitch, input_signature
 from brain.utils import safe_json_parse
 from brain.wiring import Wiring
 
@@ -165,7 +163,7 @@ class TemporalCluster:
         """Process the next sensory input for this turn. Returns parsed features or None."""
         try:
             msg: Message = await asyncio.wait_for(self._inbox.get(), timeout=25.0)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning("[Input parser] Timed out waiting for user message — no input arrived within 25s")
             return None
 
@@ -199,7 +197,7 @@ class TemporalCluster:
         # Fire switches in weight-sorted order so the firing_path records
         # which ones actually contributed this turn. Short-circuit on template
         # match (which preempts everything else).
-        switch_order = self._ordered_switches(turn_id)
+        self._ordered_switches(turn_id)
 
         trivial, trivial_type = _is_trivial(text)
         if trivial:

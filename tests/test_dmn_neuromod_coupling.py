@@ -9,12 +9,9 @@ from __future__ import annotations
 
 import asyncio
 from collections import deque
-from unittest.mock import AsyncMock, MagicMock, call
+from unittest.mock import AsyncMock, MagicMock
 
-import pytest
-
-from brain.dmn import _classify_thought, _INWARD_DELTA, _OUTWARD_DELTA, DefaultModeNetwork
-
+from brain.dmn import _INWARD_DELTA, _OUTWARD_DELTA, DefaultModeNetwork, _classify_thought
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 

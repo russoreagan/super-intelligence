@@ -10,11 +10,12 @@ justified) but share underlying storage and retrieval machinery.
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from brain.clusters.motor_subsystem import MotorSubsystem
@@ -102,7 +103,7 @@ class ProcedureStore:
                 "steps": json.dumps(annotated),
                 "results": json.dumps(results),
                 "success": success,
-                "recorded_at": datetime.now(timezone.utc).isoformat(),
+                "recorded_at": datetime.now(UTC).isoformat(),
                 "use_count": 0,
                 "vector": embedding or ([0.0] * _EMBEDDING_DIM),
             }
@@ -139,15 +140,13 @@ class ProcedureStore:
     def increment_use_count(self, proc_id: str) -> None:
         if not self._ensure_ready():
             return
-        try:
+        with contextlib.suppress(Exception):
             self._table.update(
                 where=f"id = '{proc_id}'",
                 values={"use_count": self._table.search()
                         .where(f"id = '{proc_id}'")
                         .limit(1).to_list()[0].get("use_count", 0) + 1}
             )
-        except Exception:
-            pass  # non-critical
 
     def reset_use_count(self, proc_id: str) -> None:
         """Reset use_count to 0 — drops procedure below open-loop threshold until re-validated."""

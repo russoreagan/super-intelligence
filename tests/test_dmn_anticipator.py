@@ -7,13 +7,9 @@ sketches a response for each. Surfaced to next turn's drafter as
 from __future__ import annotations
 
 import asyncio
-from collections import deque
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
-
 from brain.clusters.frontal import FrontalCluster
-
 
 # ── note_last_response heuristic ─────────────────────────────────────────
 

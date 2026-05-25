@@ -4,13 +4,13 @@ should_bypass_gating helper, and firing-path capture under both skip and call pa
 """
 from __future__ import annotations
 
-import pytest
-
 from brain.predictor import (
-    PredictorSwitch, CompositePredictor, composite_signature, should_bypass_gating,
+    CompositePredictor,
+    PredictorSwitch,
+    composite_signature,
     input_signature,
+    should_bypass_gating,
 )
-
 
 # ── PredictorSwitch ──────────────────────────────────────────────────────────
 
@@ -149,7 +149,7 @@ def test_input_signature_buckets_length_and_question():
 
 def test_switch_fire_appends_to_current_trace(monkeypatch):
     from brain.neuron import SwitchNeuron
-    from brain.observability.firing_path import set_current_trace, reset_current_trace
+    from brain.observability.firing_path import reset_current_trace, set_current_trace
     from brain.observability.timeline import TurnTrace
 
     trace = TurnTrace(turn_id="t1", session_id="s1", user_input="x")

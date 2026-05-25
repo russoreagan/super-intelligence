@@ -11,19 +11,20 @@ Updates self.md "Current mood signature" section.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
 import time
 from collections import deque
-from statistics import mean, stdev
+from statistics import mean
 
 from brain.bus import Bus
 from brain.cell import IntegratorCell
 from brain.model_router import ModelRouter
 from brain.security import sanitize_fact
-from brain.utils import safe_json_parse
 from brain.settings import settings
+from brain.utils import safe_json_parse
 
 logger = logging.getLogger(__name__)
 
@@ -134,13 +135,10 @@ class MetacognitionCell:
 
         # Appraise this turn for context-driven emotion override.
         # Fire-and-forget — must not block the run loop.
-        try:
+        with contextlib.suppress(RuntimeError):
             asyncio.create_task(self._appraise_and_emit(
                 features or {}, neuromod, draft_scores or [],
             ))
-        except RuntimeError:
-            # No running loop (e.g. unit test) — appraisal is best-effort
-            pass
 
     # ── Appraisal: detect context-driven emotions ─────────────────────────
     # These are emotions that pure neuromods can't produce — they require
@@ -181,12 +179,12 @@ class MetacognitionCell:
 
         # 2. Apologetic — user is correcting or expressing displeasure AND
         # the previous turn shows we said something off.
-        if user_emotion in ("frustrated", "disappointed", "annoyed", "angry") \
-                and user_tone in ("dismissive", "impatient", "insulting"):
-            if len(self._turn_stats) >= 2:
-                prev = self._turn_stats[-2]
-                if prev.get("surprise_score", 0) > 0.5:
-                    return "apologetic", "user pushed back after a surprising prior turn"
+        if (user_emotion in ("frustrated", "disappointed", "annoyed", "angry")
+                and user_tone in ("dismissive", "impatient", "insulting")
+                and len(self._turn_stats) >= 2):
+            prev = self._turn_stats[-2]
+            if prev.get("surprise_score", 0) > 0.5:
+                return "apologetic", "user pushed back after a surprising prior turn"
 
         # 3. Sympathetic — user is struggling (regardless of whether they're
         # warm toward us). The entity should feel for them.

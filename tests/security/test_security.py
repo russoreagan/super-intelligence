@@ -181,7 +181,6 @@ class TestSchemaStoreFilenameGuard:
             pytest.skip("SchemaStore not available")
         # Writing to a traversal path must be a no-op, not write the file
         store.write("../evil.md", "evil content")
-        evil = Path(store._lock.__class__.__module__)  # just to check no file was created
         # The real check: ensure no file was written outside schema dir
         import brain.second_brain.store as sm
         evil_path = sm.SCHEMA_DIR.parent / "evil.md"
@@ -355,7 +354,7 @@ class TestSanitizeFact:
             assert not result.startswith("-"), f"Leading dash not stripped: {result!r}"
 
     def test_sanitize_length_cap(self):
-        from brain.security import sanitize_fact, _FACT_MAX_LEN
+        from brain.security import _FACT_MAX_LEN, sanitize_fact
         long_fact = "x" * 1000
         result = sanitize_fact(long_fact)
         if result:
@@ -404,7 +403,7 @@ class TestLocalityEnforcement:
         cell.set_router(real_router)
         cell.reset_turn("t1")
 
-        result = await cell.call([{"role": "user", "content": "test"}])
+        await cell.call([{"role": "user", "content": "test"}])
         assert "local" in dispatched_to, (
             "Local cell should have been redirected to local model"
         )
@@ -429,7 +428,7 @@ class TestLocalityEnforcement:
         real_router._call_google = _cloud_ok      # type: ignore
 
         # Call with locality="cloud" and a cloud model key
-        result = await real_router.call(
+        await real_router.call(
             "flash-lite", "system", [{"role": "user", "content": "hi"}],
             locality="cloud",
         )

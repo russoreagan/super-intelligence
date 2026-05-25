@@ -5,6 +5,7 @@ Weights are nudged after turns and persisted to wiring.json.
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -159,10 +160,8 @@ class Wiring:
             # Keep history bounded: remove oldest files if over limit
             snapshots = sorted(WIRING_HISTORY_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime)
             for old in snapshots[:-self._MAX_HISTORY_SNAPSHOTS]:
-                try:
+                with contextlib.suppress(Exception):
                     old.unlink()
-                except Exception:
-                    pass
 
             return path
         except Exception as e:

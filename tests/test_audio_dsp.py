@@ -9,14 +9,14 @@ import numpy as np
 import pytest
 
 from brain.clusters.audio_dsp import (
-    decode_audio,
+    SILENCE_RMS,
+    STFT_NPERSEG,
     compute_spectrogram,
+    decode_audio,
     extract_peaks,
+    extract_prosody,
     generate_hashes,
     match_fingerprint,
-    extract_prosody,
-    STFT_NPERSEG,
-    SILENCE_RMS,
 )
 
 SR = 16000

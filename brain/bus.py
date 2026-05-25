@@ -6,10 +6,10 @@ Hormonal channels (5HT, CORT, OXT) are a slower endocrine layer that modulates n
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import time
 from dataclasses import dataclass, field
 from typing import Any
-
 
 MAX_HOPS = 8
 DEFAULT_TTL = 30.0  # seconds
@@ -25,7 +25,7 @@ class Message:
     hop_count: int = 0
     ts: float = field(default_factory=time.time)
 
-    def hop(self) -> "Message":
+    def hop(self) -> Message:
         return Message(
             topic=self.topic,
             payload=self.payload,
@@ -179,20 +179,16 @@ class Bus:
             return
         # exact-topic subscribers
         for q in self._subscribers.get(msg.topic, []):
-            try:
+            with contextlib.suppress(asyncio.QueueFull):
                 q.put_nowait(msg)
-            except asyncio.QueueFull:
-                pass
         # prefix subscribers
         for key, qs in self._subscribers.items():
             if key.startswith("__prefix__"):
                 prefix = key[len("__prefix__"):]
                 if msg.topic.startswith(prefix):
                     for q in qs:
-                        try:
+                        with contextlib.suppress(asyncio.QueueFull):
                             q.put_nowait(msg)
-                        except asyncio.QueueFull:
-                            pass
 
     async def publish_dict(self, topic: str, payload: dict, source: str, **kwargs) -> None:
         await self.publish(Message(topic=topic, payload=payload, source=source, **kwargs))

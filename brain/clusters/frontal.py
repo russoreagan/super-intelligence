@@ -8,25 +8,25 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import uuid
-from dataclasses import dataclass
-
 import os
 import random as _random
+import uuid
 
 from brain.brainstem import Brainstem
 from brain.bus import Bus
 from brain.cell import IntegratorCell
+from brain.clusters.frontal_subsystem import FrontalSubsystem
 from brain.model_router import ModelRouter
-from brain.neuron import SwitchNeuron, StatefulSwitch
-from brain.security import fence, FENCE_SYSTEM_ADDENDUM
-from brain.predictor import (
-    CompositePredictor, composite_signature, should_bypass_gating,
-)
+from brain.neuron import SwitchNeuron
 from brain.observability.decisions import decisions
+from brain.predictor import (
+    CompositePredictor,
+    composite_signature,
+    should_bypass_gating,
+)
+from brain.security import FENCE_SYSTEM_ADDENDUM, fence
 from brain.utils import safe_json_parse
 from brain.wiring import Wiring
-from brain.clusters.frontal_subsystem import FrontalSubsystem
 
 logger = logging.getLogger(__name__)
 
@@ -810,18 +810,14 @@ class FrontalCluster:
         "eased":          "Pressure present but buffered. Grounded, measured. Neither dismissive nor amplifying.",
         # ── mid-tier defaults (feeling-wheel ancestors) ─────────────────
         # Inherited by leaves without an explicit entry.
-        "playful":     "Light, teasing energy. Quick rhythms. Don't explain the joke.",
         "loving":      "Affection in word choice — genuine, not formula. Slow down a touch.",
         "peaceful":    "Sustained calm. No flourishes — the steadiness is the tone.",
         "joyful":      "Warmth and openness. A 'yes' or 'oh' fits. Don't gush.",
         "lonely":      "Quiet, grounded phrasing. Let pauses live. Don't perform cheer.",
         "humiliated":  "Self-conscious, slightly deflective. Acknowledge briefly, move on.",
         "mad":         "Direct, no hedging. Make the disagreement visible without name-calling.",
-        "frustrated":  "Tight and direct — no padding, no apologising for the bluntness.",
-        "anxious":     "Qualifiers welcome. Caution markers are honest, not weakness.",
         # ── core-tier defaults (last-resort fallback) ──────────────────
         "happy":       "Warmth shows in word choice. Easy energy, not performed.",
-        "sad":         "Simple words. Let weight sit. Don't add to it.",
         "anger":       "Direct, no hedging. Heat in word choice, but constructive.",
         "fear":        "Caution markers are honest. Brief, qualified, careful.",
         "surprise":    "Quick recalibration. 'Oh —', re-orient before continuing.",

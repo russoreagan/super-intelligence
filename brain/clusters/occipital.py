@@ -48,9 +48,10 @@ Return ONLY JSON."""
 def _rms_diff(a: bytes, b: bytes) -> float:
     """Cheap pixel-level RMS diff between two raw JPEG/PNG byte buffers."""
     try:
+        import io
+
         import numpy as np
         from PIL import Image
-        import io
         ia = np.array(Image.open(io.BytesIO(a)).convert("L"), dtype=float)
         ib = np.array(Image.open(io.BytesIO(b)).convert("L"), dtype=float)
         if ia.shape != ib.shape:

@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -115,8 +114,11 @@ class TestSpeakerStore:
 class TestFingerprintPipeline:
     def test_match_fingerprint_self(self):
         from brain.clusters.audio_dsp import (
-            decode_audio, compute_spectrogram, extract_peaks,
-            generate_hashes, match_fingerprint,
+            compute_spectrogram,
+            decode_audio,
+            extract_peaks,
+            generate_hashes,
+            match_fingerprint,
         )
         audio_bytes = _sine_bytes(440.0, duration=5.0)
         audio = decode_audio(audio_bytes)
@@ -203,10 +205,13 @@ class TestAuditoryCluster:
         """Audio whose hashes are in the DB should publish auditory.song_match."""
         pytest.importorskip("scipy")
         from brain.bus import Bus
-        from brain.clusters.auditory_cortex import AuditoryCluster
         from brain.clusters.audio_dsp import (
-            decode_audio, compute_spectrogram, extract_peaks, generate_hashes,
+            compute_spectrogram,
+            decode_audio,
+            extract_peaks,
+            generate_hashes,
         )
+        from brain.clusters.auditory_cortex import AuditoryCluster
 
         audio_bytes = _sine_bytes(880.0, duration=5.0)
         audio = decode_audio(audio_bytes)
@@ -246,8 +251,8 @@ class TestAuditoryCluster:
 
 class TestSessionSpeakerRegistry:
     def _registry(self, tmp_path):
-        from brain.second_brain.speaker_store import SpeakerStore
         from brain.clusters.auditory_cortex import SessionSpeakerRegistry
+        from brain.second_brain.speaker_store import SpeakerStore
         return SessionSpeakerRegistry(SpeakerStore(tmp_path))
 
     def _vec(self, seed: int):

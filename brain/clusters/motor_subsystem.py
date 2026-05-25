@@ -62,3 +62,4 @@ class MotorSubsystem(ABC):
         success: bool,
     ) -> None:
         """Called after a job finishes. Use for recording, learning, etc."""
+        return None

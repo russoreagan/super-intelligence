@@ -6,7 +6,6 @@ based on slow-timescale 5HT/CORT/OXT state.
 """
 from __future__ import annotations
 
-
 # Maps neuromod vector buckets to named emotion + action tendency
 # Format: (DA_range, GABA_range, ACh_range, Glu_range) -> (emotion, tendency)
 # Ranges are "low" (<0.3), "mid" (0.3-0.6), "high" (>0.6)

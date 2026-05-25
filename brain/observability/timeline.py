@@ -5,12 +5,13 @@ Dashboard: cluster activation heatmap + message timeline data.
 """
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from eval.turn_logger import EvalLogger
@@ -91,7 +92,7 @@ _NEUROMOD_WINDOW = 2000  # lightweight {ts, neuromod} snapshots for history char
 
 
 class ObservabilityLayer:
-    def __init__(self, session_id: str, eval_logger: "EvalLogger | None" = None) -> None:
+    def __init__(self, session_id: str, eval_logger: EvalLogger | None = None) -> None:
         self._session_id = session_id
         self._traces: list[TurnTrace] = []
         self._neuromod_history: deque[dict] = deque(maxlen=_NEUROMOD_WINDOW)
@@ -363,7 +364,5 @@ class ObservabilityLayer:
 
     def flush(self) -> None:
         if self._langfuse:
-            try:
+            with contextlib.suppress(Exception):
                 self._langfuse.flush()
-            except Exception:
-                pass

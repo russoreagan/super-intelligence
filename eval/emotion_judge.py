@@ -82,20 +82,20 @@ Respond ONLY with valid JSON matching this schema exactly:
 
 
 class EmotionJudge:
-    def __init__(self, eval_logger: "EvalLogger", obs=None) -> None:
+    def __init__(self, eval_logger: EvalLogger, obs=None) -> None:
         from brain.model_router import ModelRouter
         self._eval_logger = eval_logger
         self._obs = obs
         self._router = ModelRouter(obs=None)
         self._enabled = os.environ.get("BRAIN_EVAL_EMOTION", "").lower() in ("1", "true", "yes")
 
-    def fire(self, trace: "TurnTrace") -> None:
+    def fire(self, trace: TurnTrace) -> None:
         """Schedule a judge call. Non-blocking — creates a background task."""
         if not self._enabled:
             return
         asyncio.create_task(self._run(trace))
 
-    async def _run(self, trace: "TurnTrace") -> None:
+    async def _run(self, trace: TurnTrace) -> None:
         nm = trace.neuromod or {}
         hormonal = trace.hormonal or {}
 

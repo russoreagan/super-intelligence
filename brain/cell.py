@@ -8,7 +8,6 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any
 
 from brain.model_router import ModelRouter
 
@@ -79,7 +78,7 @@ class IntegratorCell:
             elapsed = time.time() - start
             logger.debug("%s.%s: %.2fs", self.cluster, self.name, elapsed)
             return result
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning(
                 "[%s/%s] LLM call timed out after %.1fs — returning empty. "
                 "If using Ollama, check it is running and the model is loaded ('ollama serve').",

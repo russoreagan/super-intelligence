@@ -12,14 +12,14 @@ import logging
 import time
 
 from brain.cell import IntegratorCell
+from brain.emotion_hierarchy import CORE_VALENCE, valence_of
 from brain.model_router import ModelRouter
-from brain.second_brain.store import SchemaStore, EpisodicStore
+from brain.observability.decisions import decisions
+from brain.second_brain.store import EpisodicStore, SchemaStore
 from brain.security import sanitize_fact
+from brain.settings import settings
 from brain.utils import safe_json_parse
 from brain.wiring import Wiring
-from brain.emotion_hierarchy import core_of, CORE_VALENCE, valence_of
-from brain.observability.decisions import decisions
-from brain.settings import settings
 
 logger = logging.getLogger(__name__)
 

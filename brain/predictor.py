@@ -10,9 +10,10 @@ fresh attention, not a cached response).
 """
 from __future__ import annotations
 
-from collections import deque, Counter
+from collections import Counter, deque
+from collections.abc import Hashable
 from dataclasses import dataclass, field
-from typing import Hashable
+
 from brain.settings import settings as _settings
 
 # Emotional states where the entity should NOT lean on prediction. These are
@@ -134,7 +135,7 @@ class CompositePredictor:
         if predicted == actual:
             return 1.0 - confidence
         # Partial credit: count fraction of matching positions
-        match_frac = sum(1 for a, b in zip(predicted, actual) if a == b) / max(len(predicted), 1)
+        match_frac = sum(1 for a, b in zip(predicted, actual, strict=False) if a == b) / max(len(predicted), 1)
         miss = 1.0 - match_frac
         return min(1.0, 0.4 + miss * 0.5 + (1.0 - confidence) * 0.1)
 

@@ -17,12 +17,9 @@ Regression tests for features added in the session covering:
 """
 from __future__ import annotations
 
-import asyncio
 import time
 from collections import deque
-from unittest.mock import MagicMock, patch
-
-import pytest
+from unittest.mock import MagicMock
 
 # ---------------------------------------------------------------------------
 # Helpers / stubs
@@ -533,7 +530,7 @@ class TestNewEmotions:
 
     def test_known_emotions_return_tendency(self):
         from brain.emotion_vocabulary import name_emotion
-        for emotion_name in ("angry", "proud", "surprised", "defensive", "wistful", "confused"):
+        for _ in ("angry", "proud", "surprised", "defensive", "wistful", "confused"):
             # Just confirm they all return a tuple with the tendency string
             result = name_emotion(0.1, 0.1, 0.7, 0.7)
             assert isinstance(result, tuple)
@@ -790,7 +787,6 @@ class TestMetacognitionCooldown:
             {},
             [],
         )
-        first_count = len([p for p in published if p["topic"] == "meta.emotion_override"])
         # Was grateful or similar — may or may not have fired depending on appraise
 
         # Manually set cooldown

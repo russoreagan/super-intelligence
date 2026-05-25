@@ -15,6 +15,7 @@ Writes an audit trail to second_brain/schema/tool_log.md after every call.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import glob
 import json
 import logging
@@ -24,7 +25,7 @@ from datetime import datetime
 from pathlib import Path
 
 from brain.bus import Bus
-from brain.security import screen_input, fence
+from brain.security import fence, screen_input
 
 logger = logging.getLogger(__name__)
 
@@ -210,11 +211,9 @@ class CloudExecutor:
             stdout, stderr = await asyncio.wait_for(
                 proc.communicate(), timeout=SUBPROCESS_TIMEOUT
             )
-        except asyncio.TimeoutError:
-            try:
+        except TimeoutError:
+            with contextlib.suppress(Exception):
                 proc.kill()
-            except Exception:
-                pass
             elapsed = time.time() - start
             logger.warning("[CloudExecutor] Subprocess timed out after %.1fs", elapsed)
             return {"tool": "cloud_action", "output": "[error] Claude subprocess timed out.",

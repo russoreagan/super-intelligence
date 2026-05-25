@@ -7,8 +7,6 @@ from __future__ import annotations
 
 import struct
 
-import pytest
-
 from brain.streaming_mic import StreamingMicSession
 
 

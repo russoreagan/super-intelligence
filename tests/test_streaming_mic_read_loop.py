@@ -9,11 +9,9 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
-from typing import Any, List
+from typing import Any
 
 import pytest
-import pytest_asyncio
-
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -47,7 +45,7 @@ def _utterance_end(last_word_end: float) -> SimpleNamespace:
 class _FakeSocket:
     """Async iterable that yields a fixed sequence of messages."""
 
-    def __init__(self, messages: List[Any]) -> None:
+    def __init__(self, messages: list[Any]) -> None:
         self._messages = messages
 
     def __aiter__(self):
@@ -61,21 +59,21 @@ class _FakeSocketIter:
     async def __anext__(self):
         try:
             return next(self._it)
-        except StopIteration:
-            raise StopAsyncIteration
+        except StopIteration as exc:
+            raise StopAsyncIteration from exc
 
 
 class _FakeBus:
     """Collects publish_dict calls so tests can assert on them."""
 
     def __init__(self) -> None:
-        self.published: List[tuple] = []  # (topic, payload)
+        self.published: list[tuple] = []  # (topic, payload)
 
     async def publish_dict(self, topic: str, payload: dict, source: str = "") -> None:
         self.published.append((topic, payload))
 
 
-def _make_session(messages: List[Any]) -> tuple:
+def _make_session(messages: list[Any]) -> tuple:
     """Return (session, bus) with _socket wired to a FakeSocket."""
     from brain.streaming_mic import StreamingMicSession
 

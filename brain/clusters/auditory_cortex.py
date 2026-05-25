@@ -37,6 +37,7 @@ import numpy as np
 
 from brain.bus import Bus
 from brain.clusters.audio_dsp import (
+    SILENCE_RMS,
     compute_speech_dynamics,
     decode_audio,
     extract_identity_name,
@@ -45,7 +46,6 @@ from brain.clusters.audio_dsp import (
     extract_speaker_embedding,
     label_prosody_tone,
     match_fingerprint,
-    SILENCE_RMS,
 )
 from brain.second_brain.speaker_store import SpeakerStore
 from brain.settings import settings as _settings
@@ -292,7 +292,7 @@ class AuditoryCluster:
         while True:
             try:
                 msg = await asyncio.wait_for(self._raw_inbox.get(), timeout=60.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 continue
             except Exception as e:
                 logger.error("Auditory raw loop error: %s", e)
@@ -359,7 +359,7 @@ class AuditoryCluster:
         while True:
             try:
                 msg = await asyncio.wait_for(self._diarized_inbox.get(), timeout=60.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 continue
             except Exception as e:
                 logger.error("Auditory diarized loop error: %s", e)

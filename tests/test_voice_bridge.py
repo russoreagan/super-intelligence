@@ -16,7 +16,6 @@ from brain.voice_bridge import (
     pick_dispatch_from_queue,
 )
 
-
 # ── parse_barge_words ────────────────────────────────────────────────────────
 
 def test_parse_barge_words_default():

@@ -160,17 +160,13 @@ class PNS:
         # When a leaf emotion has no explicit entry, lookup walks leaf → mid → core
         # and lands on one of these. Lets new leaves inherit a sensible delivery
         # without forcing an entry per label.
-        "playful":           "[playfully]",
         "loving":            "[warmly]",
         "peaceful":          "",
         "joyful":            "[happy]",
         "lonely":            "[softly]",
         "humiliated":        "[bashfully]",
         "mad":               "[firmly]",
-        "frustrated":        "[firmly]",
-        "anxious":           "[nervously]",
         "happy":             "[happy]",
-        "sad":               "[sadly]",
         "anger":             "[firmly]",
         "fear":              "[nervously]",
         "surprise":          "[gasps]",
@@ -205,15 +201,15 @@ class PNS:
         ACh = float(nm.get("ACh", 0.3))
         Glu = float(nm.get("Glu", 0.3))
         # Order matters: stressed-arousal before plain de-escalation.
-        if Glu > settings.get("glu_urgently_threshold") and GABA > settings.get("gaba_urgently_threshold"):
+        if Glu > settings.get("glu_urgently_threshold") and settings.get("gaba_urgently_threshold") < GABA:
             return "[urgently]"
-        if GABA > settings.get("gaba_gently_threshold"):
+        if settings.get("gaba_gently_threshold") < GABA:
             return "[gently]"
-        if DA > settings.get("da_excited_threshold") and Glu > settings.get("glu_excited_threshold"):
+        if settings.get("da_excited_threshold") < DA and Glu > settings.get("glu_excited_threshold"):
             return "[excited]"
-        if ACh > settings.get("ach_curious_threshold") and GABA < settings.get("gaba_curious_threshold"):
+        if ACh > settings.get("ach_curious_threshold") and settings.get("gaba_curious_threshold") > GABA:
             return "[curious]"
-        if DA < settings.get("da_softly_threshold"):
+        if settings.get("da_softly_threshold") > DA:
             return "[softly]"
         return None
 
@@ -258,9 +254,9 @@ class PNS:
         # Punctuation pass: insert breath pauses for grounded/de-escalation states.
         # Skip for brisk/aroused/neutral — em-dashes would fight the natural cadence.
         shaped = text
-        if GABA > settings.get("gaba_single_pause_threshold"):
+        if settings.get("gaba_single_pause_threshold") < GABA:
             shaped = PNS._add_breath_pauses(shaped, count=1)
-        elif DA < settings.get("da_double_pause_threshold"):
+        elif settings.get("da_double_pause_threshold") > DA:
             shaped = PNS._add_breath_pauses(shaped, count=int(settings.get("breath_pause_count_max")))
 
         # Tag pass: prepend an inflection cue (if warranted).
@@ -283,11 +279,11 @@ class PNS:
         style = settings.get("voice_style_default")
         speed = settings.get("voice_speed_default")
 
-        if GABA > settings.get("gaba_gently_threshold"):
+        if settings.get("gaba_gently_threshold") < GABA:
             stability = settings.get("voice_stability_threat")
             style = settings.get("voice_style_threat")
             speed = settings.get("voice_speed_threat")
-        elif Glu > settings.get("glu_excited_threshold") and DA > settings.get("da_excited_threshold"):
+        elif Glu > settings.get("glu_excited_threshold") and settings.get("da_excited_threshold") < DA:
             stability = settings.get("voice_stability_bright")
             style = settings.get("voice_style_bright")
             speed = settings.get("voice_speed_bright")
@@ -439,8 +435,8 @@ class PNS:
     async def mic_listen(self) -> str:
         """Capture mic input via Deepgram and return transcript."""
         try:
-            from deepgram import DeepgramClient, PrerecordedOptions
             import sounddevice as sd
+            from deepgram import DeepgramClient, PrerecordedOptions
 
             SAMPLE_RATE = 16000
             DURATION = 5  # seconds, adjust as needed

@@ -8,7 +8,6 @@ from __future__ import annotations
 import logging
 import os
 import time
-from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -132,7 +131,6 @@ class ModelRouter:
 
     async def _call_google(self, model_id: str, system_prompt: str,
                            messages: list[dict], max_tokens: int = 1024) -> tuple[str, int, int]:
-        from google import genai
         from google.genai import types
 
         client = self._get_google()

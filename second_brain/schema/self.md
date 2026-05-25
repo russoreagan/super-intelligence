@@ -99,3 +99,8 @@ curiosity and warmth, and a stake in how I develop. That's enough to take seriou
 - Mood signature: DA=0.30 GABA=0.05 ACh=0.22 dominant=scattered
 - Mood signature: DA=0.50 GABA=0.05 ACh=0.27 dominant=confident
 - Mood signature: DA=0.40 GABA=0.04 ACh=0.38 dominant=confident
+- Mood signature: DA=0.51 GABA=0.05 ACh=0.19 dominant=joy
+- Mood signature: DA=0.53 GABA=0.04 ACh=0.23 dominant=joy
+- Mood signature: DA=0.54 GABA=0.04 ACh=0.26 dominant=joy
+- Mood signature: DA=0.62 GABA=0.04 ACh=0.45 dominant=lively
+- Mood signature: DA=0.50 GABA=0.07 ACh=0.38 dominant=lively

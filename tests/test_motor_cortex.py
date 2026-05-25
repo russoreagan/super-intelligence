@@ -31,13 +31,9 @@ Coverage:
 """
 from __future__ import annotations
 
-import asyncio
 import json
-import os
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -77,8 +73,8 @@ def _make_motor(tmp_path, tool_plan=None, cloud=None):
 
 def _make_cloud_executor(tmp_path=None):
     """CloudExecutor with no real binary or extension dirs."""
-    from brain.clusters.cloud_executor import CloudExecutor
     from brain.bus import Bus
+    from brain.clusters.cloud_executor import CloudExecutor
     bus = Bus()
     exe = CloudExecutor.__new__(CloudExecutor)
     exe._bus = bus
@@ -359,7 +355,7 @@ class TestMotorRunCommand:
     async def test_timeout_returns_error(self, tmp_path):
         m, _ = _make_motor(tmp_path)
         mock_proc = MagicMock()
-        mock_proc.communicate = AsyncMock(side_effect=asyncio.TimeoutError())
+        mock_proc.communicate = AsyncMock(side_effect=TimeoutError())
         mock_proc.kill = MagicMock()
         with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)):
             result = await m._run_command("ls", str(tmp_path))
@@ -619,7 +615,6 @@ class TestCloudConnectorDiscovery:
         assert "ant.dir.gh.ableton.ableton-knowledge" not in exe._connectors
 
     def test_connectors_summary_formats_list(self):
-        from brain.clusters.cloud_executor import CloudExecutor
         exe = _make_cloud_executor()
         exe._connectors = {"a": "Gmail", "b": "Calendar"}
         summary = exe.connectors_summary()
@@ -627,7 +622,6 @@ class TestCloudConnectorDiscovery:
         assert "Calendar" in summary
 
     def test_connectors_summary_empty(self):
-        from brain.clusters.cloud_executor import CloudExecutor
         exe = _make_cloud_executor()
         exe._connectors = {}
         exe._trusted_dirs = []
@@ -777,8 +771,8 @@ class TestCloudResultScreening:
 
 class TestCloudSubprocess:
     async def test_successful_call_returns_fenced_output(self):
-        from brain.clusters.cloud_executor import CloudExecutor
         from brain.bus import Bus
+        from brain.clusters.cloud_executor import CloudExecutor
 
         exe = CloudExecutor.__new__(CloudExecutor)
         exe._bus = Bus()
@@ -801,8 +795,8 @@ class TestCloudSubprocess:
         assert "calendar events" in result["output"]
 
     async def test_subprocess_timeout_returns_error(self):
-        from brain.clusters.cloud_executor import CloudExecutor
         from brain.bus import Bus
+        from brain.clusters.cloud_executor import CloudExecutor
 
         exe = CloudExecutor.__new__(CloudExecutor)
         exe._bus = Bus()
@@ -813,7 +807,7 @@ class TestCloudSubprocess:
         exe._pending = None
 
         mock_proc = MagicMock()
-        mock_proc.communicate = AsyncMock(side_effect=asyncio.TimeoutError())
+        mock_proc.communicate = AsyncMock(side_effect=TimeoutError())
         mock_proc.kill = MagicMock()
 
         with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)), \
@@ -831,8 +825,8 @@ class TestCloudSubprocess:
         assert "not found" in result["output"].lower()
 
     async def test_execute_pending_calls_run_with_stored_task(self):
-        from brain.clusters.cloud_executor import CloudExecutor
         from brain.bus import Bus
+        from brain.clusters.cloud_executor import CloudExecutor
 
         exe = CloudExecutor.__new__(CloudExecutor)
         exe._bus = Bus()
@@ -922,8 +916,8 @@ class TestCloudAuditLog:
 
 class TestFrontalToolResultInjection:
     def _make_frontal(self):
-        from brain.bus import Bus
         from brain.brainstem import Brainstem
+        from brain.bus import Bus
         from brain.clusters.frontal import FrontalCluster
         bus = Bus()
         router = _make_fake_router()

@@ -44,6 +44,12 @@ def bootstrap(wiring: Wiring) -> None:
         wiring.add("frontal.executive", d, weight=1.0, polarity="excitatory")
         wiring.add(d, "frontal.critic", weight=1.0, polarity="excitatory")
         wiring.add(d, "frontal.empathy_critic", weight=1.0, polarity="excitatory")
+        # Self-monitor: each drafter's output flows to the commitment extractor,
+        # which can re-enter the loop as a self-directed task → motor.
+        wiring.add(d, "frontal.commitment_extractor",
+                   weight=1.0, polarity="excitatory")
+    wiring.add("frontal.commitment_extractor", "motor_cortex.tool_planner",
+               weight=1.0, polarity="excitatory")
 
     # ── Frontal inhibitory edges (GABA dampens drafters; satiation dampens repeat) ─
     wiring.add("hypothalamus.threat_to_GABA", "frontal.drafter_A",

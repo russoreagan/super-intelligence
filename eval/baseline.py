@@ -16,8 +16,8 @@ import time
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from eval.turn_logger import EvalLogger
     from eval.scorer import PostHocScorer
+    from eval.turn_logger import EvalLogger
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +27,7 @@ BASELINE_SYSTEM = (
 
 
 class BaselineRunner:
-    def __init__(self, eval_logger: "EvalLogger") -> None:
+    def __init__(self, eval_logger: EvalLogger) -> None:
         from brain.model_router import ModelRouter
         self._eval_logger = eval_logger
         self._router = ModelRouter(obs=None)   # dedicated instance — no shared state
@@ -35,7 +35,7 @@ class BaselineRunner:
         self._sample_every = int(os.environ.get("BRAIN_EVAL_SAMPLE_EVERY", "20"))
         self._intensive = os.environ.get("BRAIN_EVAL_INTENSIVE", "").lower() in ("1", "true", "yes")
         self._enabled = os.environ.get("BRAIN_EVAL_BASELINE", "").lower() in ("1", "true", "yes")
-        self._scorer: "PostHocScorer | None" = None   # injected by run.py after construction
+        self._scorer: PostHocScorer | None = None   # injected by run.py after construction
 
     # ── Public ──────────────────────────────────────────────────────────────
 

@@ -15,10 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import os
-from unittest.mock import AsyncMock, MagicMock, patch, call
-
-import pytest
-
+from unittest.mock import MagicMock, patch
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -84,10 +81,6 @@ class TestVoiceIdStorage:
             with patch.dict(os.environ, {"ELEVENLABS_API_KEY": "test_key"}), \
                  patch("brain.pns.AsyncElevenLabs", return_value=mock_client, create=True), \
                  patch("elevenlabs.AsyncElevenLabs", return_value=mock_client, create=True):
-                # Patch the import inside _speak
-                import brain.pns as pns_mod
-                orig_speak = pns._speak
-
                 called_with = {}
 
                 async def spy_speak(text, affect=None):

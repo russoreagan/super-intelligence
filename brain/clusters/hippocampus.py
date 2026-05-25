@@ -5,8 +5,6 @@ Retrieval intelligence determines relevance; storage does not gate memory.
 """
 from __future__ import annotations
 
-import asyncio
-import json
 import logging
 import os
 import time
@@ -15,10 +13,10 @@ import uuid
 from brain.bus import Bus
 from brain.cell import IntegratorCell
 from brain.model_router import ModelRouter
-from brain.second_brain.store import EpisodicStore, SchemaStore, Episode
-from brain.security import sanitize_fact
-from brain.predictor import should_bypass_gating
 from brain.observability.decisions import decisions
+from brain.predictor import should_bypass_gating
+from brain.second_brain.store import Episode, EpisodicStore, SchemaStore
+from brain.security import sanitize_fact
 from brain.utils import safe_json_parse
 from brain.wiring import Wiring
 

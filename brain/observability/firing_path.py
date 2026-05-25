@@ -5,6 +5,7 @@ updates along the path the turn actually traversed.
 """
 from __future__ import annotations
 
+import contextlib
 import contextvars
 import time
 from typing import TYPE_CHECKING
@@ -12,12 +13,12 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from brain.observability.timeline import TurnTrace
 
-current_turn_trace: contextvars.ContextVar["TurnTrace | None"] = (
+current_turn_trace: contextvars.ContextVar[TurnTrace | None] = (
     contextvars.ContextVar("current_turn_trace", default=None)
 )
 
 
-def set_current_trace(trace: "TurnTrace | None") -> contextvars.Token:
+def set_current_trace(trace: TurnTrace | None) -> contextvars.Token:
     """Bind the trace for the current async context. Returns a token to reset()."""
     return current_turn_trace.set(trace)
 
@@ -32,7 +33,7 @@ def record_switch_fire(name: str, cluster: str, level: float, tag: str,
     trace = current_turn_trace.get()
     if trace is None:
         return
-    try:
+    with contextlib.suppress(Exception):
         trace.fired_path.append({
             "name": f"{cluster}.{name}",
             "cluster": cluster,
@@ -42,9 +43,6 @@ def record_switch_fire(name: str, cluster: str, level: float, tag: str,
             "polarity": polarity,
             "ts": time.time(),
         })
-    except Exception:
-        # Never let observability break the turn
-        pass
 
 
 def record_integrator_call(name: str, cluster: str) -> None:
@@ -52,7 +50,7 @@ def record_integrator_call(name: str, cluster: str) -> None:
     trace = current_turn_trace.get()
     if trace is None:
         return
-    try:
+    with contextlib.suppress(Exception):
         trace.fired_path.append({
             "name": f"{cluster}.{name}",
             "cluster": cluster,
@@ -62,5 +60,3 @@ def record_integrator_call(name: str, cluster: str) -> None:
             "polarity": "excitatory",
             "ts": time.time(),
         })
-    except Exception:
-        pass

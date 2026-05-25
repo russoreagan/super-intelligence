@@ -10,8 +10,12 @@ import time
 
 from brain.bus import Bus
 from brain.emotion_vocabulary import (
-    name_emotion, apply_ne_color, apply_hormonal_color,
-    appraisal, prosody_prefix, compute_affect_dims,
+    apply_hormonal_color,
+    apply_ne_color,
+    appraisal,
+    compute_affect_dims,
+    name_emotion,
+    prosody_prefix,
 )
 from brain.neuron import StatefulSwitch
 from brain.settings import settings

@@ -11,18 +11,18 @@ Allowed paths and commands are configured via env vars:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import shlex
-import subprocess
 from pathlib import Path
 
 from brain.bus import Bus
 from brain.cell import IntegratorCell
+from brain.clusters.motor_subsystem import MotorSubsystem
 from brain.model_router import ModelRouter
 from brain.neuron import SwitchNeuron
 from brain.utils import safe_json_parse
-from brain.clusters.motor_subsystem import MotorSubsystem
 
 logger = logging.getLogger(__name__)
 
@@ -270,7 +270,6 @@ class MotorCortexCluster:
         the procedure as stale so it falls back to reactive planning next time.
         """
         steps = procedure.get("steps", [])
-        expected_results = procedure.get("results", [])
         proc_id = procedure.get("id", "")
 
         steps_taken: list[dict] = []
@@ -355,10 +354,8 @@ class MotorCortexCluster:
                            "marking procedure stale", prediction_errors)
             for sub in self._subsystems:
                 if hasattr(sub, "mark_diverged"):
-                    try:
+                    with contextlib.suppress(Exception):
                         sub.mark_diverged(proc_id)
-                    except Exception:
-                        pass
 
         if steps_taken:
             await self._notify_job_complete(goal or "", steps_taken, results_log, success)
@@ -382,7 +379,7 @@ class MotorCortexCluster:
             parts.append(subsystem_context.strip())
         if steps_done:
             history = ["Steps completed so far:"]
-            for i, (step, result) in enumerate(zip(steps_done, results), 1):
+            for i, (step, result) in enumerate(zip(steps_done, results, strict=False), 1):
                 preview = result[:200] + "..." if len(result) > 200 else result
                 history.append(f"  {i}. {step['tool']}({list(step['args'].keys())}) → {preview}")
             parts.append("\n".join(history))
@@ -548,10 +545,7 @@ class MotorCortexCluster:
             p = Path(resolved)
             if not p.is_dir():
                 return f"[error] Not a directory: {resolved}"
-            if recursive:
-                matches = list(p.rglob(pattern))
-            else:
-                matches = list(p.glob(pattern))
+            matches = list(p.rglob(pattern)) if recursive else list(p.glob(pattern))
             if not matches:
                 return "(no files matched)"
             lines = [str(m.relative_to(p)) for m in sorted(matches)[:200]]
@@ -591,11 +585,9 @@ class MotorCortexCluster:
             if len(output) > 3000:
                 output = output[:3000] + "\n[... truncated ...]"
             return output or "(command produced no output)"
-        except asyncio.TimeoutError:
-            try:
+        except TimeoutError:
+            with contextlib.suppress(Exception):
                 proc.kill()
-            except Exception:
-                pass
             return "[error] Command timed out after 30s."
         except FileNotFoundError:
             return f"[error] Command not found: {shlex.split(cmd)[0]}"

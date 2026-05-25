@@ -10,8 +10,8 @@ Three independent pipelines:
 from __future__ import annotations
 
 import logging
+import re as _re
 import threading
-import time
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -22,7 +22,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # ── Identity name patterns (for enrollment auto-detection) ────────────────────
-import re as _re
 
 _IDENTITY_PATTERNS = [
     _re.compile(r"(?:I'?m|my name(?:'?s| is)|I am|it'?s me[,\s]+|call me|I'?m called)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)", _re.I),

@@ -10,12 +10,13 @@ WebSocket /ws → bidirectional:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
 import sys
+from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable
 
 # FastAPI/WebSocket imports at module level so that `from __future__ import annotations`
 # (PEP 563 lazy strings) doesn't prevent FastAPI's dependency injector from resolving
@@ -24,7 +25,7 @@ from typing import TYPE_CHECKING, Callable
 # misclassifies the parameter as a query param, causing an immediate 403 on every
 # WebSocket connection attempt.
 try:
-    from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, UploadFile
+    from fastapi import FastAPI, Request, UploadFile, WebSocket, WebSocketDisconnect
     from fastapi.responses import HTMLResponse
 except ImportError:
     FastAPI = None  # type: ignore[assignment,misc]
@@ -83,7 +84,7 @@ class UIServer:
 
         @app.get("/settings")
         async def get_settings():
-            from brain.settings import settings, DEFAULTS
+            from brain.settings import DEFAULTS, settings
             return {"settings": settings.all(), "defaults": DEFAULTS}
 
         @app.post("/settings")
@@ -225,19 +226,15 @@ class UIServer:
         async def upload_image(file: UploadFile):
             import tempfile
             suffix = Path(file.filename or "upload").suffix or ".jpg"
-            tmp = tempfile.NamedTemporaryFile(
+            content = await file.read()
+            with tempfile.NamedTemporaryFile(
                 suffix=suffix, prefix="brain_ui_img_", delete=False
-            )
-            try:
-                content = await file.read()
+            ) as tmp:
                 tmp.write(content)
-            finally:
-                tmp.close()
             return {"path": tmp.name}
 
         @app.get("/{filename}")
         async def static_asset(filename: str):
-            from fastapi.responses import FileResponse
             from fastapi import HTTPException
             filepath = ui_dir / filename
             if filepath.is_file() and filepath.parent == ui_dir:
@@ -252,39 +249,31 @@ class UIServer:
 
             # Tell the client whether Python voice mode is active so it
             # switches the mic button from press-to-talk to a persistent toggle.
-            try:
+            with contextlib.suppress(Exception):
                 await websocket.send_text(json.dumps({
                     "type": "voice_mode",
                     "active": self._python_voice_mode,
                     "muted": False,
                 }))
-            except Exception:
-                pass
 
             # Send current neuromod + hormonal state immediately on connect
             if self._last_neuromod:
-                try:
+                with contextlib.suppress(Exception):
                     await websocket.send_text(json.dumps(
                         {"type": "neuromod", **self._last_neuromod}
                     ))
-                except Exception:
-                    pass
             if self._last_hormonal:
-                try:
+                with contextlib.suppress(Exception):
                     await websocket.send_text(json.dumps(
                         {"type": "hormonal", **self._last_hormonal}
                     ))
-                except Exception:
-                    pass
 
             # Tell the client about wiring state (frozen tag in plasticity panel)
-            try:
+            with contextlib.suppress(Exception):
                 await websocket.send_text(json.dumps({
                     "type": "wiring_status",
                     "frozen": self._wiring_frozen,
                 }))
-            except Exception:
-                pass
 
             # Run receive + broadcast concurrently for this client
             receive_task = asyncio.create_task(self._receive_loop(websocket))
@@ -316,12 +305,10 @@ class UIServer:
 
         api_key = os.environ.get("DEEPGRAM_API_KEY", "")
         if not api_key:
-            try:
+            with contextlib.suppress(Exception):
                 await websocket.send_text(json.dumps(
                     {"type": "transcript_error", "msg": "DEEPGRAM_API_KEY not set"}
                 ))
-            except Exception:
-                pass
             return None
 
         client = AsyncDeepgramClient()     # picks up DEEPGRAM_API_KEY from env
@@ -384,12 +371,10 @@ class UIServer:
                         logger.info("UI: Deepgram live session closed")
             except Exception as e:
                 logger.warning("Deepgram session error — voice input unavailable: %s", e)
-                try:
+                with contextlib.suppress(Exception):
                     await websocket.send_text(json.dumps(
                         {"type": "transcript_error", "msg": str(e)}
                     ))
-                except Exception:
-                    pass
 
         session._task = asyncio.create_task(_run_session())
         # Give the connection a moment to establish before we declare success
@@ -414,14 +399,12 @@ class UIServer:
                     elif t == "mic_toggle" and self._on_mic_toggle:
                         is_muted = self._on_mic_toggle()
                         # Echo new state back so the button updates
-                        try:
+                        with contextlib.suppress(Exception):
                             await websocket.send_text(json.dumps({
                                 "type": "voice_mode",
                                 "active": self._python_voice_mode,
                                 "muted": is_muted,
                             }))
-                        except Exception:
-                            pass
                     elif t == "set_voice" and self._on_voice_change:
                         vid = data.get("voice_id", "").strip()
                         if vid:
@@ -436,10 +419,8 @@ class UIServer:
                             dg_conn = await self._start_deepgram(websocket)
                     elif t == "voice_stop":
                         if dg_conn is not None:
-                            try:
+                            with contextlib.suppress(Exception):
                                 await dg_conn.finish()
-                            except Exception:
-                                pass
                             dg_conn = None
 
                 elif "bytes" in msg and msg["bytes"] and dg_conn is not None:
@@ -449,10 +430,8 @@ class UIServer:
                 break
 
         if dg_conn is not None:
-            try:
+            with contextlib.suppress(Exception):
                 await dg_conn.finish()
-            except Exception:
-                pass
 
     async def _broadcast_loop(self) -> None:
         """Drain emitter queue and broadcast to all connected clients."""
@@ -474,7 +453,7 @@ class UIServer:
                         except Exception:
                             dead.add(client)
                     self._clients -= dead
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 await asyncio.sleep(0.01)
 
     async def start(self, host: str = "127.0.0.1", port: int = 8765) -> None:

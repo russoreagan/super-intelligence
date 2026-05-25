@@ -10,7 +10,6 @@ from collections import deque
 
 from brain.clusters.frontal import FrontalCluster
 
-
 # ── DMN.recent_thoughts() accessor ────────────────────────────────────────
 
 def test_dmn_recent_thoughts_returns_list():

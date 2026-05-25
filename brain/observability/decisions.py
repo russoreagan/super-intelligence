@@ -33,10 +33,10 @@ class DecisionLog:
     """Singleton; configure once at session boot."""
 
     def __init__(self) -> None:
-        self._eval_logger: "EvalLogger | None" = None
+        self._eval_logger: EvalLogger | None = None
         self._emitter = None
 
-    def configure(self, eval_logger: "EvalLogger | None" = None,
+    def configure(self, eval_logger: EvalLogger | None = None,
                   emitter: Any = None) -> None:
         self._eval_logger = eval_logger
         # If emitter not supplied, fall back to the module-level singleton

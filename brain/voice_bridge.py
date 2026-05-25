@@ -40,7 +40,8 @@ def bleed_overlap(transcript: str, speaking_text: str) -> float:
     """
     if not transcript or not speaking_text:
         return 0.0
-    tokenize = lambda s: set(w for w in re.findall(r"[a-z']+", s.lower()) if len(w) > 1)
+    def tokenize(s: str) -> set[str]:
+        return {w for w in re.findall(r"[a-z']+", s.lower()) if len(w) > 1}
     a = tokenize(transcript)
     b = tokenize(speaking_text)
     if not a or not b:

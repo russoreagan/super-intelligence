@@ -139,7 +139,7 @@ Respond ONLY with valid JSON:
 
 
 class PostHocScorer:
-    def __init__(self, eval_logger: "EvalLogger", obs=None) -> None:
+    def __init__(self, eval_logger: EvalLogger, obs=None) -> None:
         from brain.model_router import ModelRouter
         self._eval_logger = eval_logger
         self._obs = obs
@@ -151,7 +151,7 @@ class PostHocScorer:
     def fire(self, *, turn_id: str, user_input: str, brain_response: str,
              baseline_response: str, memory_context: str,
              coherence: float, emotional_fit: float,
-             trace: "TurnTrace | None" = None) -> None:
+             trace: TurnTrace | None = None) -> None:
         """Schedule all three judge calls in parallel. Non-blocking."""
         if not self._enabled:
             return
@@ -165,7 +165,7 @@ class PostHocScorer:
     async def _run_all(self, turn_id: str, user_input: str, brain_response: str,
                        baseline_response: str, memory_context: str,
                        coherence: float, emotional_fit: float,
-                       trace: "TurnTrace | None") -> None:
+                       trace: TurnTrace | None) -> None:
         results = await asyncio.gather(
             self._run_quality(turn_id, user_input, brain_response, baseline_response,
                               memory_context, coherence, emotional_fit),
@@ -214,7 +214,7 @@ class PostHocScorer:
 
     async def _run_pipeline(self, turn_id: str, user_input: str, brain_response: str,
                             baseline_response: str, memory_context: str,
-                            coherence: float, trace: "TurnTrace | None") -> None:
+                            coherence: float, trace: TurnTrace | None) -> None:
         llm_calls = getattr(trace, "llm_calls", "?") if trace else "?"
         cluster_tokens = getattr(trace, "cluster_tokens", {}) if trace else {}
         memory_recalled = getattr(trace, "memory_recalled", False) if trace else False
@@ -270,7 +270,7 @@ class PostHocScorer:
         )
 
     async def _run_novelty(self, turn_id: str, user_input: str, brain_response: str,
-                           baseline_response: str, trace: "TurnTrace | None") -> None:
+                           baseline_response: str, trace: TurnTrace | None) -> None:
         emotion = getattr(trace, "emotion", "neutral") if trace else "neutral"
         emotion_core = getattr(trace, "emotion_core", "neutral") if trace else "neutral"
         llm_calls_saved = getattr(trace, "llm_calls_saved", 0) if trace else 0

@@ -17,9 +17,10 @@ the words Deepgram returned.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
-from typing import Awaitable, Callable, Optional
+from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +63,7 @@ class StreamingMicSession:
         self,
         bus,
         is_speaking_fn: Callable[[], bool],
-        on_user_interrupt: Optional[Callable[[], None]] = None,
+        on_user_interrupt: Callable[[], None] | None = None,
     ) -> None:
         self._bus = bus
         self._is_speaking_fn = is_speaking_fn
@@ -73,15 +74,15 @@ class StreamingMicSession:
         self._pcm_in: asyncio.Queue = asyncio.Queue(maxsize=200)  # mic → pumper
         self._pcm_buffer = _RollingPCM(SAMPLE_RATE, max_seconds=60.0)
         self._pending_words: list[dict] = []
-        self._utterance_start_s: Optional[float] = None
+        self._utterance_start_s: float | None = None
 
         self._stream = None             # sounddevice InputStream
         self._socket = None             # Deepgram AsyncV1SocketClient
         self._socket_cm = None          # async context manager
-        self._pumper_task: Optional[asyncio.Task] = None
-        self._reader_task: Optional[asyncio.Task] = None
-        self._keepalive_task: Optional[asyncio.Task] = None
-        self._main_loop: Optional[asyncio.AbstractEventLoop] = None
+        self._pumper_task: asyncio.Task | None = None
+        self._reader_task: asyncio.Task | None = None
+        self._keepalive_task: asyncio.Task | None = None
+        self._main_loop: asyncio.AbstractEventLoop | None = None
         self._running = False
         self._muted = False             # when True, mic audio is discarded
 
@@ -104,10 +105,8 @@ class StreamingMicSession:
             # indata is a numpy int16 array, shape (frames, channels)
             chunk = bytes(indata)
             # Thread-safe handoff: schedule put_nowait on the asyncio loop
-            try:
+            with contextlib.suppress(RuntimeError):
                 self._main_loop.call_soon_threadsafe(self._enqueue_chunk, chunk)
-            except RuntimeError:
-                pass  # loop closed during shutdown
 
         self._stream = sd.RawInputStream(
             samplerate=SAMPLE_RATE,
@@ -157,21 +156,21 @@ class StreamingMicSession:
         )
         keywords = [k.strip() for k in keywords_raw.split(",") if k.strip()]
 
-        connect_kwargs = dict(
-            model="nova-3",
-            encoding="linear16",
-            sample_rate=SAMPLE_RATE,
-            channels=CHANNELS,
-            interim_results=True,
-            vad_events=True,
-            utterance_end_ms=utterance_end_ms,
-            endpointing=endpointing_ms,
-            punctuate=True,
-            smart_format=True,
-            diarize=True,
-            language=language,
-            numerals=True,        # "five" → "5"
-        )
+        connect_kwargs = {
+            "model": "nova-3",
+            "encoding": "linear16",
+            "sample_rate": SAMPLE_RATE,
+            "channels": CHANNELS,
+            "interim_results": True,
+            "vad_events": True,
+            "utterance_end_ms": utterance_end_ms,
+            "endpointing": endpointing_ms,
+            "punctuate": True,
+            "smart_format": True,
+            "diarize": True,
+            "language": language,
+            "numerals": True,        # "five" → "5"
+        }
         # nova-3 uses `keyterm` (whole phrases, no boost number);
         # older models use `keywords` (word:boost pairs). Try keyterm first
         # for nova-3 — strip any :boost suffix.
@@ -190,10 +189,8 @@ class StreamingMicSession:
     async def _close_deepgram(self) -> None:
         """Close the current Deepgram session (best-effort)."""
         if self._socket_cm is not None:
-            try:
+            with contextlib.suppress(Exception):
                 await self._socket_cm.__aexit__(None, None, None)
-            except Exception:
-                pass
         self._socket = None
         self._socket_cm = None
 
@@ -229,6 +226,10 @@ class StreamingMicSession:
             while self._running:
                 try:
                     await self._open_deepgram()
+                    # Fresh session — discard any in-progress utterance from the
+                    # previous connection so stale words/timestamps don't bleed through.
+                    self._utterance_start_s = None
+                    self._pending_words = []
                     backoff = 0.5  # reset after a successful open
                     break          # connected — fall through to _read_loop
                 except asyncio.CancelledError:
@@ -276,10 +277,8 @@ class StreamingMicSession:
                 t.cancel()
         for t in (self._pumper_task, self._reader_task, self._keepalive_task):
             if t is not None:
-                try:
+                with contextlib.suppress(asyncio.CancelledError, Exception):
                     await t
-                except (asyncio.CancelledError, Exception):
-                    pass
         await self._close_deepgram()
         logger.info("[StreamingMic] session closed")
 
@@ -302,6 +301,10 @@ class StreamingMicSession:
         """Discard mic audio until unmute(). Socket stays warm — no reconnect needed."""
         if not self._muted:
             self._muted = True
+            # Reset any in-progress utterance so stale timestamps / words don't
+            # corrupt the first real utterance after unmute.
+            self._utterance_start_s = None
+            self._pending_words = []
             logger.info("[StreamingMic] Muted")
 
     def unmute(self) -> None:
@@ -401,6 +404,8 @@ class StreamingMicSession:
                 mtype = getattr(message, "type", None)
 
                 if mtype == "SpeechStarted":
+                    if self._muted:
+                        continue
                     ts = float(getattr(message, "timestamp", 0.0))
                     # Only record the timestamp of the FIRST burst in this utterance.
                     # Deepgram fires SpeechStarted again when the user resumes after
@@ -418,6 +423,8 @@ class StreamingMicSession:
 
                 elif mtype == "Results":
                     if not getattr(message, "is_final", False):
+                        continue
+                    if self._muted:
                         continue
                     # Accumulate words from the final alternative for this segment
                     try:
@@ -438,6 +445,12 @@ class StreamingMicSession:
                         logger.debug("[StreamingMic] results parse error: %s", e)
 
                 elif mtype == "UtteranceEnd":
+                    if self._muted:
+                        # Deepgram fires UtteranceEnd for silence while we're muted.
+                        # Reset state so the next real utterance starts clean.
+                        self._utterance_start_s = None
+                        self._pending_words = []
+                        continue
                     last_end = float(getattr(message, "last_word_end", 0.0))
                     start = self._utterance_start_s if self._utterance_start_s is not None else (
                         self._pending_words[0]["start"] if self._pending_words else last_end

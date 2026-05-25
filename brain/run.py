@@ -26,12 +26,11 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import logging
 import os
-import sys
 import time
 import uuid
-from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -41,10 +40,11 @@ logging.basicConfig(
     level=os.environ.get("BRAIN_LOG_LEVEL", "INFO"),
     format="%(asctime)s %(name)s %(levelname)s %(message)s",
 )
-from brain.emotion_hierarchy import core_of
-from brain.security import SecretRedactingFilter
-from brain.utils import get_idle_seconds
-from brain.settings import settings as _brain_settings
+from brain.emotion_hierarchy import core_of  # noqa: E402
+from brain.security import SecretRedactingFilter  # noqa: E402
+from brain.settings import settings as _brain_settings  # noqa: E402
+from brain.utils import get_idle_seconds  # noqa: E402
+
 _redact_filter = SecretRedactingFilter()
 logging.getLogger().addFilter(_redact_filter)
 logger = logging.getLogger("brain.run")
@@ -75,20 +75,20 @@ def _is_enrollment_cancellation(text: str) -> bool:
 
 
 async def session(args) -> None:
-    from brain.bus import Bus
     from brain.brainstem import Brainstem
-    from brain.model_router import ModelRouter
-    from brain.pns import PNS
+    from brain.bus import Bus
+    from brain.clusters.frontal import FrontalCluster
+    from brain.clusters.hippocampus import HippocampusCluster
+    from brain.clusters.hypothalamus import HypothalamusCluster
+    from brain.clusters.occipital import OccipitalCluster
+    from brain.clusters.parietal import ParietalCluster
     from brain.clusters.temporal import TemporalCluster
     from brain.clusters.thalamus import ThalamusCluster
-    from brain.clusters.occipital import OccipitalCluster
-    from brain.clusters.hypothalamus import HypothalamusCluster
-    from brain.clusters.parietal import ParietalCluster
-    from brain.clusters.hippocampus import HippocampusCluster
-    from brain.clusters.frontal import FrontalCluster
-    from brain.observability.timeline import ObservabilityLayer, TurnTrace
-    from brain.observability.firing_path import set_current_trace, reset_current_trace
+    from brain.model_router import ModelRouter
     from brain.observability.decisions import decisions as decisions_log
+    from brain.observability.firing_path import reset_current_trace, set_current_trace
+    from brain.observability.timeline import ObservabilityLayer, TurnTrace
+    from brain.pns import PNS
     from brain.wiring import Wiring
     from brain.wiring_bootstrap import bootstrap as wiring_bootstrap
 
@@ -105,12 +105,12 @@ async def session(args) -> None:
     learning_monitor = None
     learning_judge = None
     try:
-        from eval.turn_logger import EvalLogger
         from eval.baseline import BaselineRunner
-        from eval.scorer import PostHocScorer
         from eval.emotion_judge import EmotionJudge
-        from eval.learning_monitor import LearningMonitor
         from eval.learning_judge import LearningJudge
+        from eval.learning_monitor import LearningMonitor
+        from eval.scorer import PostHocScorer
+        from eval.turn_logger import EvalLogger
         eval_logger = EvalLogger()
         baseline_runner = BaselineRunner(eval_logger)
         posthoc_scorer = PostHocScorer(eval_logger)
@@ -180,7 +180,7 @@ async def session(args) -> None:
     core_context, recent_episodes = await hippocampus.boot(session_id)
     parietal.seed(recent_episodes)
 
-    from brain.security import PseudonymizationGateway, EGRESS_MODE
+    from brain.security import EGRESS_MODE, PseudonymizationGateway
     egress = PseudonymizationGateway()
 
     # ── UI server (optional) ──────────────────────────────────────────────────
@@ -235,8 +235,8 @@ async def session(args) -> None:
     # ── Motor Cortex (tool use) ───────────────────────────────────────────────
     motor = None
     if args.motor or os.environ.get("BRAIN_MOTOR", "false").lower() == "true":
-        from brain.clusters.motor_cortex import MotorCortexCluster
         from brain.clusters.cloud_executor import CloudExecutor
+        from brain.clusters.motor_cortex import MotorCortexCluster
 
         _motor_paths_raw = os.environ.get("BRAIN_MOTOR_PATHS", "")
         _motor_paths = [p.strip() for p in _motor_paths_raw.split(":") if p.strip()]
@@ -264,12 +264,14 @@ async def session(args) -> None:
             )
 
         # Register frontal and motor subsystems
+        from brain.clusters.follow_through import SELF_DIRECTED_PREFIX, FollowThrough
         from brain.clusters.frontal_task import FrontalTaskSubsystem, PendingTask
         from brain.clusters.motor_memory import MuscleMemorySubsystem
         pending_task = PendingTask()
         motor.set_pending_task(pending_task)
         frontal.register_subsystem(FrontalTaskSubsystem(pending_task))
         motor.register_subsystem(MuscleMemorySubsystem())
+        follow_through = FollowThrough(router)
 
         # Surface capabilities into drafter prompts so the entity can answer
         # "what tools do you have?" accurately instead of confabulating.
@@ -476,7 +478,7 @@ async def session(args) -> None:
     #   - Brain IS speaking → interrupt TTS and dispatch.
     # Everything the user says is sent; only empty transcripts (background noise)
     # are dropped.
-    from brain.voice_bridge import parse_barge_words, classify_utterance, pick_dispatch_from_queue
+    from brain.voice_bridge import classify_utterance, parse_barge_words, pick_dispatch_from_queue
     barge_in_words = parse_barge_words(os.environ.get("BRAIN_BARGE_IN_WORDS"))
 
     voice_bridge_task = None
@@ -487,12 +489,10 @@ async def session(args) -> None:
         async def _dispatch_text(text: str) -> None:
             logger.info("[I/O] voice → turn: %r", text[:80])
             if emitter:
-                try:
+                with contextlib.suppress(Exception):
                     await emitter.emit_event({
                         "type": "transcript", "text": text, "final": True,
                     })
-                except Exception:
-                    pass
             await ui_message_queue.put(text)
 
         async def _drain_pending_when_tts_ends() -> None:
@@ -585,28 +585,30 @@ async def session(args) -> None:
                 _process_turn_body(user_input, image_path),
                 timeout=TURN_TIMEOUT,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning(
                 "Turn timed out after %.1fs — sending fallback response. "
                 "If Ollama is slow, increase BRAIN_TURN_TIMEOUT_SECONDS (currently %.1fs).",
                 TURN_TIMEOUT, TURN_TIMEOUT,
             )
             timeout_msg = "I'm taking too long to think. Let me try again."
-            try:
+            with contextlib.suppress(Exception):
                 brainstem.end_turn()
-            except Exception:
-                pass
             if emitter:
                 # Best-effort UI signal that the turn ended
-                try:
+                with contextlib.suppress(Exception):
                     await emitter.emit_turn_end("timeout", timeout_msg, TURN_TIMEOUT, 0)
-                except Exception:
-                    pass
             if dmn:
                 dmn.resume()
             return timeout_msg, {}
 
     async def _process_turn_body(user_input: str, image_path: str | None = None) -> tuple[str, dict]:
+        # Self-directed turn? Strip the marker before the pipeline sees it, but
+        # remember so we skip the follow-through hook (no commitment loops).
+        is_self_directed = user_input.startswith(SELF_DIRECTED_PREFIX)
+        if is_self_directed:
+            user_input = user_input[len(SELF_DIRECTED_PREFIX):]
+            logger.info("[FollowThrough] Acting on self-directed goal: %s", user_input[:120])
         if dmn:
             # pause() is now a no-op (continuous-thought design); call kept
             # for backward compat in case anything still reaches for it.
@@ -1050,7 +1052,7 @@ async def session(args) -> None:
             cluster_tokens[_cl]["calls"] += 1
 
         memory_recalled = bool(memory.get("episodes") or memory.get("schema"))
-        memory_hit_count = len([l for l in (memory.get("episodes") or "").splitlines() if l.strip()])
+        memory_hit_count = len([ln for ln in (memory.get("episodes") or "").splitlines() if ln.strip()])
 
         selected_draft = next((d for d in draft_scores if d.get("selected")), {})
         selected_coherence = selected_draft.get("coherence", 0.5)
@@ -1107,6 +1109,21 @@ async def session(args) -> None:
         # Append the full trace (with fired_path, neuromod, emotion etc.) so
         # sleep consolidation can apply Hebbian updates along the path.
         session_traces_full.append(trace)
+
+        # ── Follow-through (non-blocking) ────────────────────────────────────
+        # If the brain just committed to an action ("let me go check that"),
+        # extract the goal and enqueue it as a synthetic self-directed input.
+        # The next turn will then route through the task subsystem → motor.
+        # Skip on turns that were themselves self-directed (avoid commitment loops).
+        if not is_self_directed:
+            async def _follow_through_check() -> None:
+                try:
+                    goal = await follow_through.extract(user_input, final, turn_id)
+                    if goal:
+                        await ui_message_queue.put(SELF_DIRECTED_PREFIX + goal)
+                except Exception as _e:
+                    logger.debug("follow-through check failed: %s", _e)
+            asyncio.create_task(_follow_through_check())
 
         # ── Background eval tasks (non-blocking) ─────────────────────────────
         if emotion_judge:
@@ -1170,10 +1187,8 @@ async def session(args) -> None:
                     turn_id, llm_calls, turn_result.elapsed(), affect.get("emotion"))
 
         # Release the firing-path context binding for this turn
-        try:
+        with contextlib.suppress(Exception):
             reset_current_trace(_ctx_token)
-        except Exception:
-            pass
 
         return final, affect
 
@@ -1188,7 +1203,7 @@ async def session(args) -> None:
         while True:
             try:
                 user_input = await asyncio.wait_for(ui_message_queue.get(), timeout=1.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 # Between turns: speak any proactive thought the DMN queued,
                 # but only when the brain isn't already talking, the user
                 # hasn't queued something, AND enough time has passed since
@@ -1293,10 +1308,8 @@ async def session(args) -> None:
 
     if voice_bridge_task is not None:
         voice_bridge_task.cancel()
-        try:
+        with contextlib.suppress(asyncio.CancelledError, Exception):
             await voice_bridge_task
-        except (asyncio.CancelledError, Exception):
-            pass
     try:
         voice_drain_task.cancel()  # type: ignore[name-defined]
         await voice_drain_task     # type: ignore[name-defined]

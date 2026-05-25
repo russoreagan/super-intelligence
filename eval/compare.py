@@ -83,7 +83,7 @@ def summarize(label: str, turns: list[dict]) -> dict:
 
 def render(report: dict) -> str:
     lines = [
-        f"\n=== Predict-and-surprise gating comparison ===",
+        "\n=== Predict-and-surprise gating comparison ===",
         f"Source: {report['source']}",
         f"Total turns: {report['total_turns']}",
         "",

@@ -34,7 +34,7 @@ class EvalLogger:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
 
-    def log_turn(self, trace: "TurnTrace") -> None:
+    def log_turn(self, trace: TurnTrace) -> None:
         """Write the initial JSONL record for a turn. Called synchronously."""
         record = dataclasses.asdict(trace)
         record["type"] = "turn"

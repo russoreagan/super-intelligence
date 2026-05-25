@@ -4,14 +4,10 @@ weight clamping, plasticity modulator, decay, and skip rules.
 """
 from __future__ import annotations
 
-import os
-from pathlib import Path
-
 import pytest
 
-from brain.wiring import Wiring, Edge, WEIGHT_MIN, WEIGHT_MAX
+from brain.wiring import WEIGHT_MAX, WEIGHT_MIN, Edge, Wiring
 from brain.wiring_bootstrap import bootstrap
-
 
 # ── Wiring core ─────────────────────────────────────────────────────────────
 
@@ -20,6 +16,7 @@ def _isolated_wiring(monkeypatch, tmp_path) -> Wiring:
     monkeypatch.setenv("BRAIN_WIRING_PATH", str(tmp_path / "wiring.json"))
     monkeypatch.setenv("BRAIN_WIRING_HISTORY_DIR", str(tmp_path / "history"))
     import importlib
+
     import brain.wiring as w_mod
     importlib.reload(w_mod)
     return w_mod.Wiring()

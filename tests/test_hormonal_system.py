@@ -10,14 +10,12 @@ from __future__ import annotations
 
 import asyncio
 import time
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from brain.bus import Bus, HormonalState
 from brain.emotion_vocabulary import apply_hormonal_color
 from brain.settings import settings
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -479,6 +477,7 @@ class TestHormonalTracing:
 
     def test_emit_hormonal_queues_correct_event_type(self):
         import asyncio
+
         from brain.ui.emitter import ActivationEmitter
         em = ActivationEmitter()
         snap = {"5HT": 0.5, "CORT": 0.05, "OXT": 0.3}
@@ -490,6 +489,7 @@ class TestHormonalTracing:
 
     def test_emit_hormonal_rounds_values(self):
         import asyncio
+
         from brain.ui.emitter import ActivationEmitter
         em = ActivationEmitter()
         asyncio.run(em.emit_hormonal({"5HT": 0.12345678, "CORT": 0.0, "OXT": 0.0}))

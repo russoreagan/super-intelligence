@@ -24,7 +24,6 @@ from __future__ import annotations
 import json
 import logging
 import math
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -39,7 +38,7 @@ class LearningMonitor:
         self._obs = obs
         self._turn_metrics: list[dict] = []
 
-    def record_turn(self, trace: "TurnTrace") -> dict:
+    def record_turn(self, trace: TurnTrace) -> dict:
         """Compute per-turn structural metrics and post to Langfuse. Returns the metrics dict."""
         outcomes = trace.predictor_outcomes or []
 
@@ -86,7 +85,7 @@ class LearningMonitor:
 
         return metrics
 
-    def session_metrics(self, wiring: "Wiring | None" = None) -> dict:
+    def session_metrics(self, wiring: Wiring | None = None) -> dict:
         """
         Compute session-level learning summary.
         Call at session end before the Hebbian pass runs (so wiring.session_deltas()
@@ -140,7 +139,7 @@ class LearningMonitor:
         return summary
 
 
-def _cross_session_drift(wiring: "Wiring") -> float | None:
+def _cross_session_drift(wiring: Wiring) -> float | None:
     """
     RMS weight change relative to the oldest wiring history snapshot.
     Returns None if no history exists.

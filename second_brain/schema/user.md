@@ -39,4 +39,4 @@ personality, and something like inner experience.
 
 - Score: 0
 
-- History: neutral — polite and helpful, professional warmth (last tone: polite, delta: +1)
+- History: neutral — polite and helpful, professional warmth (last tone: impatient, delta: -2)

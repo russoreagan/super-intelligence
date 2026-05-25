@@ -9,13 +9,12 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
-
 
 def _make_dmn():
     """Build a DefaultModeNetwork skeleton bypassing __init__."""
-    from brain.dmn import DefaultModeNetwork
     from collections import deque
+
+    from brain.dmn import DefaultModeNetwork
     dmn = DefaultModeNetwork.__new__(DefaultModeNetwork)
     dmn._bus = MagicMock()
     dmn._bus.publish_dict = AsyncMock()
