@@ -102,6 +102,8 @@ _TOOL_REQUEST_PATTERNS = [
     "open ", "close ", "play ", "pause ", "search for", "look up",
     "run ", "execute ", "create ", "make a ", "write a ", "save a ",
     "read the", "read my", "list ", "find ", "delete ", "move ",
+    "look into", "look at", "look in", "check ", "check the", "check my",
+    "investigate", "browse", "explore", "directory", "folder",
     # Generic "do X" patterns
     "can you do", "could you do", "go ahead and", "for me",
     "try to use", "try using",
