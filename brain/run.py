@@ -264,7 +264,7 @@ async def session(args) -> None:
             )
 
         # Register frontal and motor subsystems
-        from brain.clusters.follow_through import SELF_DIRECTED_PREFIX, FollowThrough
+        from brain.clusters.follow_through import FollowThrough, ResultReporter
         from brain.clusters.frontal_task import FrontalTaskSubsystem, PendingTask
         from brain.clusters.motor_memory import MuscleMemorySubsystem
         pending_task = PendingTask()
@@ -272,6 +272,7 @@ async def session(args) -> None:
         frontal.register_subsystem(FrontalTaskSubsystem(pending_task))
         motor.register_subsystem(MuscleMemorySubsystem())
         follow_through = FollowThrough(router)
+        result_reporter = ResultReporter(router)
 
         # Surface capabilities into drafter prompts so the entity can answer
         # "what tools do you have?" accurately instead of confabulating.
@@ -603,12 +604,6 @@ async def session(args) -> None:
             return timeout_msg, {}
 
     async def _process_turn_body(user_input: str, image_path: str | None = None) -> tuple[str, dict]:
-        # Self-directed turn? Strip the marker before the pipeline sees it, but
-        # remember so we skip the follow-through hook (no commitment loops).
-        is_self_directed = user_input.startswith(SELF_DIRECTED_PREFIX)
-        if is_self_directed:
-            user_input = user_input[len(SELF_DIRECTED_PREFIX):]
-            logger.info("[FollowThrough] Acting on self-directed goal: %s", user_input[:120])
         if dmn:
             # pause() is now a no-op (continuous-thought design); call kept
             # for backward compat in case anything still reaches for it.
@@ -1112,18 +1107,48 @@ async def session(args) -> None:
 
         # ── Follow-through (non-blocking) ────────────────────────────────────
         # If the brain just committed to an action ("let me go check that"),
-        # extract the goal and enqueue it as a synthetic self-directed input.
-        # The next turn will then route through the task subsystem → motor.
-        # Skip on turns that were themselves self-directed (avoid commitment loops).
-        if not is_self_directed:
-            async def _follow_through_check() -> None:
-                try:
-                    goal = await follow_through.extract(user_input, final, turn_id)
-                    if goal:
-                        await ui_message_queue.put(SELF_DIRECTED_PREFIX + goal)
-                except Exception as _e:
-                    logger.debug("follow-through check failed: %s", _e)
-            asyncio.create_task(_follow_through_check())
+        # kick off a self-directed internal job: strategic plan → step-by-step
+        # execution → task lifecycle events to the UI Tasks tab. Internal
+        # directive — no second chat bubble, no second TTS.
+        async def _follow_through_check() -> None:
+            try:
+                goal = await follow_through.extract(user_input, final, turn_id)
+                if not goal:
+                    return
+                logger.info("[FollowThrough] Acting on internal directive: %s", goal[:120])
+                summary = await motor.execute_internal_job(goal, f"internal_{turn_id}")
+
+                # Branch on outcome: clarification → ask; otherwise summarise and report.
+                if summary.get("clarification"):
+                    question = summary["clarification"]
+                    logger.info("[FollowThrough] Speaking clarification: %s", question[:120])
+                    if emitter:
+                        await emitter.emit_proactive_speech(question)
+                    await pns.emit(question, {"emotion": "curious"})
+                    return
+
+                spoken_summary = await result_reporter.report(summary, f"internal_{turn_id}")
+                if not spoken_summary:
+                    spoken_summary = (
+                        "Done — but I don't have a clean summary to share."
+                        if summary.get("success")
+                        else "I couldn't finish that — something went wrong with the steps."
+                    )
+                logger.info("[FollowThrough] Reporting result: %s", spoken_summary[:160])
+
+                # Push summary into the task card + chat + speak it.
+                if emitter:
+                    await emitter.emit_event({
+                        "type": "task_summary",
+                        "job_id": summary.get("job_id"),
+                        "summary": spoken_summary,
+                    })
+                    await emitter.emit_proactive_speech(spoken_summary)
+                await pns.emit(spoken_summary,
+                                {"emotion": "lively" if summary.get("success") else "concerned"})
+            except Exception as _e:
+                logger.warning("[FollowThrough] failed: %s", _e)
+        asyncio.create_task(_follow_through_check())
 
         # ── Background eval tasks (non-blocking) ─────────────────────────────
         if emotion_judge:

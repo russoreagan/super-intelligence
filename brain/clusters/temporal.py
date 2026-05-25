@@ -135,12 +135,31 @@ class TemporalCluster:
         self._predictor = PredictorSwitch(name="temporal_predictor", cluster=CLUSTER)
 
         # Switches (6 + predictor = 7; 1 inhibitory → ~14% inhibitory, acceptable for small cluster)
-        self._template_switch = SwitchNeuron("template_match", CLUSTER, polarity="excitatory")
+        # Modulator profiles encode each switch's biological identity — see plan
+        # /Users/russ/.claude/plans/and-what-affects-these-memoized-parnas.md.
+        self._template_switch = SwitchNeuron("template_match", CLUSTER, polarity="excitatory",
+                                             threshold=0.5,
+                                             modulators={"ACh": +0.15})
         self._length_switch = SwitchNeuron("length_bucket", CLUSTER, polarity="excitatory")
-        self._salience_prefilter = SwitchNeuron("salience_prefilter", CLUSTER, polarity="excitatory")
-        self._self_ref_switch = SwitchNeuron("self_reference", CLUSTER, polarity="excitatory")
-        self._epistemic_switch = SwitchNeuron("epistemic_action", CLUSTER, polarity="excitatory")
-        self._integrator_inhibitor = SwitchNeuron("integrator_inhibitor", CLUSTER, polarity="inhibitory")
+        self._salience_prefilter = SwitchNeuron("salience_prefilter", CLUSTER, polarity="excitatory",
+                                                threshold=0.4,
+                                                # NE lowers floor (alert state = more things tripped),
+                                                # CORT raises it (stress narrows attention to true threats).
+                                                modulators={"DA": +0.10, "NE": -0.15, "CORT": +0.10})
+        self._self_ref_switch = SwitchNeuron("self_reference", CLUSTER, polarity="excitatory",
+                                             threshold=0.5,
+                                             modulators={"OXT": -0.10, "5HT": -0.10})
+        self._epistemic_switch = SwitchNeuron("epistemic_action", CLUSTER, polarity="excitatory",
+                                              threshold=0.5,
+                                              modulators={"ACh": -0.15})
+        # Note: GABA modulator was removed — the should_bypass_gating() helper
+        # already forces the integrator awake at high GABA (emotional states
+        # engage understanding, not less of it). The old {"GABA": -0.15}
+        # contradicted that bypass and effectively cancelled out. ACh keeps the
+        # integrator engaged on simple inputs when the brain is curious.
+        self._integrator_inhibitor = SwitchNeuron("integrator_inhibitor", CLUSTER, polarity="inhibitory",
+                                                  threshold=0.5,
+                                                  modulators={"ACh": +0.10})
 
         self._inbox = bus.subscribe("sensory.text")
         # DMN's top-down prediction of the user's next message. Drained each
@@ -173,6 +192,11 @@ class TemporalCluster:
         text: str = msg.payload.get("text", "")
         image_present: bool = msg.payload.get("image_present", False)
 
+        # Chemistry snapshot for switch modulation — fetched once per turn so
+        # every switch sees the same state. Hypothalamus updates this in-place
+        # between turns; reading it sync is cheap.
+        chem = self._chem_snapshot()
+
         # ── DMN top-down prediction: if the brain's idle "user simulator"
         # guessed something close to what the user actually said, that's
         # strong evidence the routine path is correct — boost predictor.
@@ -200,9 +224,11 @@ class TemporalCluster:
         self._ordered_switches(turn_id)
 
         trivial, trivial_type = _is_trivial(text)
-        if trivial:
-            # The template-match switch wins outright.
-            self._template_switch.fire(1.0, trivial_type, {"text": text[:40]})
+        if trivial and self._template_switch.should_fire(0.7, chem, turn_id):
+            # The template-match switch wins outright. High ACh (curiosity)
+            # raises the threshold and can suppress the canned-response shortcut
+            # even on a trivial-pattern hit — engaging the LLM instead.
+            self._template_switch.fire(0.7, trivial_type, {"text": text[:40]}, chem)
             import random
             canned = random.choice(CANNED_RESPONSES.get(trivial_type, ["..."]))
             _words = text.split()
@@ -233,8 +259,9 @@ class TemporalCluster:
         length_tag = "tiny" if len(words) <= 3 else "short" if len(words) <= 15 else "long"
         sig = input_signature(text)
 
-        # Length switch always fires — its level tags the input bucket
-        self._length_switch.fire(0.6, length_tag)
+        # Length switch always fires — its level tags the input bucket. No
+        # chemistry modulation (granularity should not depend on mood).
+        self._length_switch.fire(0.6, length_tag, snapshot=chem)
 
         # Predictor
         predicted_tag, confidence = self._predictor.predict(sig)
@@ -246,15 +273,21 @@ class TemporalCluster:
         memory_hint = epistemic or any(w in text.lower() for w in
                                        ("remember", "last", "before", "told", "what was"))
 
-        if self_ref:
-            self._self_ref_switch.fire(0.9, "self_reference")
-        if epistemic:
-            self._epistemic_switch.fire(0.7, "epistemic_action")
+        if self_ref and self._self_ref_switch.should_fire(0.6, chem, turn_id):
+            self._self_ref_switch.fire(0.6, "self_reference", snapshot=chem)
+        if epistemic and self._epistemic_switch.should_fire(0.55, chem, turn_id):
+            self._epistemic_switch.fire(0.55, "epistemic_action", snapshot=chem)
 
         # The inhibitor's edge weight scales the confidence threshold for skipping.
         # High inhibitor weight → easier to skip the integrator. Low → harder.
         inhibitor_weight = self._inhibitor_weight()
         confidence_floor = max(0.4, 0.6 / max(0.5, inhibitor_weight))
+
+        # Chemistry modulation: high GABA (negative coefficient) shifts the
+        # inhibitor's effective threshold down, which here translates to a
+        # lower confidence floor — easier to skip the LLM under high inhibition.
+        chem_shift = self._integrator_inhibitor.modulation_delta(chem)
+        confidence_floor = max(0.30, min(0.90, confidence_floor + chem_shift))
 
         # DMN top-down hit: if the brain already simulated something close to
         # this input, drop the confidence floor (skip the LLM more readily)
@@ -303,7 +336,7 @@ class TemporalCluster:
             }
             self._predictor.record(sig, length_tag)
             await self._bus.publish_dict("temporal.features", features, source=CLUSTER)
-            self._integrator_inhibitor.fire(confidence, "integrator_skipped")
+            self._integrator_inhibitor.fire(confidence, "integrator_skipped", snapshot=chem)
             decisions.log(
                 "skip_temporal_integrator", turn_id=turn_id, cluster=CLUSTER,
                 reason=f"predictor confidence {confidence:.2f} > {confidence_floor:.2f}; surprise {surprise:.2f}",
@@ -437,3 +470,15 @@ class TemporalCluster:
             return current_turn_trace.get()
         except Exception:
             return None
+
+    def _chem_snapshot(self) -> dict[str, float]:
+        """Merged neuromod + hormonal snapshot for switch modulation."""
+        try:
+            nm = self._bus.neuromod.snapshot()
+        except Exception:
+            nm = {}
+        try:
+            hs = self._bus.hormonal.snapshot()
+        except Exception:
+            hs = {}
+        return {**nm, **hs}

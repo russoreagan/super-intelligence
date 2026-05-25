@@ -64,7 +64,32 @@ Return JSON with exactly this shape:
 }}
 
 If the request is conversational and needs no tool, return {{"tool": "none", "args": {{}}, "reason": "..."}}.
+If you genuinely need information from the user to proceed and cannot reasonably guess, return
+{{"tool": "ask_user", "args": {{"question": "..."}}, "reason": "..."}} — use sparingly; only when blocked.
 Return ONLY the JSON object. No explanation."""
+
+
+# Strategic-mode prompt: produces an upfront plan for an internal directive.
+# Used only on the first planner call of an internal job; subsequent calls use the
+# tactical (per-step) prompt above with prior steps + results in context.
+_STRATEGIC_SYSTEM = """You are the motor cortex planning a multi-step internal task.
+
+Given the overall goal, decompose it into a concrete plan of 2-8 steps. Each step is one
+discrete action a tool can perform. Steps should build on each other (later steps use
+earlier outputs).
+
+Return STRICT JSON, nothing else:
+{
+  "steps": [
+    {"description": "<imperative, concrete action>", "expected_tool": "list_files|read_file|search_files|run_command|cloud_action"},
+    ...
+  ],
+  "success_criteria": "<one sentence: what counts as done>",
+  "complexity": "low|medium|high"
+}
+
+Plan for what you genuinely need to do — don't pad. If two steps could collapse, collapse them.
+If the goal is trivial (one tool call), return a single-step plan."""
 
 
 class MotorCortexCluster:
@@ -123,15 +148,47 @@ class MotorCortexCluster:
         )
         self._planner.set_router(router)
 
+        # Strategic planner: same cluster + model, different prompt. Used on the
+        # first call of an internal job to produce an upfront plan; subsequent
+        # calls use the tactical (per-step) planner above.
+        self._strategic_planner = IntegratorCell(
+            name="strategic_planner",
+            cluster=CLUSTER,
+            model="local-code",
+            system_prompt=_STRATEGIC_SYSTEM,
+            topics=[],
+            max_calls_per_turn=1,
+            timeout_seconds=60.0,
+            locality="local",
+        )
+        self._strategic_planner.set_router(router)
+
         # Switches (~6 total; 2 inhibitory ≈ 33% — acceptable for small action cluster)
+        # Modulator profiles per plan /Users/russ/.claude/plans/and-what-affects-these-memoized-parnas.md.
         # Excitatory
-        self._action_gate = SwitchNeuron("action_gate", CLUSTER, polarity="excitatory")
-        self._tool_selector = SwitchNeuron("tool_selector", CLUSTER, polarity="excitatory")
+        self._action_gate = SwitchNeuron("action_gate", CLUSTER, polarity="excitatory",
+                                          threshold=0.5,
+                                          modulators={"DA": -0.10})
+        self._tool_selector = SwitchNeuron("tool_selector", CLUSTER, polarity="excitatory",
+                                            threshold=0.5,
+                                            modulators={"ACh": +0.05})
         self._result_publisher = SwitchNeuron("result_publisher", CLUSTER, polarity="excitatory")
-        self._fallback_reporter = SwitchNeuron("fallback_reporter", CLUSTER, polarity="excitatory")
-        # Inhibitory
-        self._safety_inhibitor = SwitchNeuron("safety_check", CLUSTER, polarity="inhibitory")
-        self._budget_inhibitor = SwitchNeuron("budget_check", CLUSTER, polarity="inhibitory")
+        self._fallback_reporter = SwitchNeuron("fallback_reporter", CLUSTER, polarity="excitatory",
+                                                threshold=0.5,
+                                                modulators={"NE": -0.10})
+        # Inhibitory — safety_inhibitor has a min_threshold floor so chemistry
+        # alone cannot disable it (contract enforced by tests/test_motor_cortex.py).
+        self._safety_inhibitor = SwitchNeuron("safety_check", CLUSTER, polarity="inhibitory",
+                                               threshold=0.5,
+                                               modulators={"NE": -0.10, "CORT": -0.10},
+                                               min_threshold=0.40)
+        # budget_inhibitor fires when budget_pressure (calls / effective_budget)
+        # reaches 1.0. The chemistry effect on budget itself is already in
+        # _effective_budget, so this switch stays chemistry-neutral to avoid
+        # double-modulation. Acts as observational telemetry for "we hit the
+        # ceiling."
+        self._budget_inhibitor = SwitchNeuron("budget_check", CLUSTER, polarity="inhibitory",
+                                               threshold=1.0)
 
         self._calls_this_turn: int = 0
 
@@ -157,10 +214,19 @@ class MotorCortexCluster:
           or the 3-call budget is exhausted. Fires after_job hooks on completion.
         - Reactive mode: no task goal → single tool call, return result immediately.
         """
-        if not self._action_gate.should_fire(1.0):
+        chem = self._chem_snapshot()
+        if not self._action_gate.should_fire(1.0, chem, turn_id):
             return None
-        if self._calls_this_turn >= 3:
-            logger.warning("[MotorCortex] Tool call budget exhausted for this turn")
+        # Chemistry-modulated budget: high DA raises the effective budget
+        # (eager pursuit), high CORT lowers it (resource conservation under
+        # stress). Bounded to [1, 5] so the change is never extreme.
+        budget = self._effective_budget(chem)
+        budget_pressure = self._calls_this_turn / max(1, budget)
+        if self._budget_inhibitor.should_fire(budget_pressure, chem, turn_id):
+            self._budget_inhibitor.fire(budget_pressure, "budget_exhausted",
+                                         {"calls": self._calls_this_turn, "limit": budget},
+                                         snapshot=chem)
+            logger.warning("[MotorCortex] Tool call budget exhausted for this turn (limit=%d)", budget)
             return None
 
         raw_text = features.get("raw_text", features.get("topic_summary", ""))
@@ -203,7 +269,7 @@ class MotorCortexCluster:
         results_log: list[str] = []
         last_result: dict | None = None
 
-        while self._calls_this_turn < 3:
+        while self._calls_this_turn < budget:
             plan_prompt = self._build_plan_prompt(
                 work_goal, features, subsystem_context, steps_taken, results_log
             )
@@ -220,6 +286,11 @@ class MotorCortexCluster:
             logger.info("[MotorCortex] Step %d: %s(%s) — %s",
                         len(steps_taken) + 1, tool, list(args.keys()), reason)
 
+            # tool_selector switch fires with the chosen tool as the tag.
+            # Chemistry-modulated by ACh — high curiosity slightly raises the
+            # bar for falling back to a familiar tool (favours exploration).
+            self._tool_selector.fire(0.8, tool, {"args": list(args.keys())}, snapshot=chem)
+
             self._calls_this_turn += 1
 
             if tool == "cloud_action":
@@ -235,6 +306,9 @@ class MotorCortexCluster:
 
             steps_taken.append({"tool": tool, "args": args, "reason": reason})
             results_log.append(output[:500] if output else "")
+
+            # Result / fallback / safety telemetry switches.
+            self._fire_outcome_switches(output, tool, chem)
 
             if not task_goal:
                 # Reactive mode: one tool per turn
@@ -259,6 +333,166 @@ class MotorCortexCluster:
 
         return last_result
 
+    # ── Internal-directive entry point ─────────────────────────────────────
+    async def execute_internal_job(self, goal: str, turn_id: str,
+                                    budget: int = 20) -> dict:
+        """Run a self-directed multi-step job: strategic plan upfront, then
+        tactical step-by-step execution. Emits task lifecycle events for the
+        UI Tasks tab. Returns a job summary dict.
+
+        Differs from execute(): not gated by action_gate or per-turn budget;
+        designed for sustained autonomous work triggered by the follow-through
+        loop, not by a user-turn.
+        """
+        from brain.ui.emitter import emitter
+        job_id = f"job_{turn_id}"
+        self.reset_turn(job_id)
+
+        # Surface the job immediately so the user can see something is brewing
+        # even before the strategic plan finishes (local-code planner can take
+        # 10-30s on the 14B model).
+        await emitter.emit_event({
+            "type": "task_planning",
+            "job_id": job_id,
+            "goal": goal,
+        })
+
+        # 1. Strategic plan
+        self._strategic_planner.reset_turn(job_id)
+        raw_plan = await self._strategic_planner.call(
+            [{"role": "user", "content": f"Goal: {goal}"}]
+        )
+        plan = safe_json_parse(raw_plan) or {}
+        steps_planned = plan.get("steps") or [{"description": goal, "expected_tool": "?"}]
+        success_criteria = plan.get("success_criteria", "")
+
+        logger.info("[InternalJob] %s — %d steps planned (criteria: %s)",
+                    goal[:60], len(steps_planned), success_criteria[:80])
+        await emitter.emit_event({
+            "type": "task_start",
+            "job_id": job_id,
+            "goal": goal,
+            "steps": [s.get("description", "") for s in steps_planned],
+            "success_criteria": success_criteria,
+            "complexity": plan.get("complexity", "?"),
+        })
+
+        # 2. Step-by-step execution. Each step is a sub-goal handed to the
+        # tactical planner with the full plan + prior results as context.
+        steps_taken: list[dict] = []
+        results_log: list[str] = []
+        last_result: dict | None = None
+        clarification_question: str | None = None
+        success = True
+
+        for idx, step in enumerate(steps_planned):
+            if self._calls_this_turn >= budget:
+                logger.warning("[InternalJob] Budget exhausted (%d) at step %d/%d",
+                                budget, idx + 1, len(steps_planned))
+                success = False
+                break
+
+            step_desc = step.get("description", "")
+            await emitter.emit_event({
+                "type": "task_step_start",
+                "job_id": job_id,
+                "step_index": idx,
+                "description": step_desc,
+                "expected_tool": step.get("expected_tool", ""),
+            })
+
+            # Build the tactical prompt with plan context for goal-coherence
+            tactical_features = {"raw_text": step_desc, "topic_summary": step_desc}
+            plan_summary = " | ".join(
+                f"{i+1}. {s.get('description', '')}" for i, s in enumerate(steps_planned)
+            )
+            extra_context = f"Overall goal: {goal}\nFull plan: {plan_summary}\nCurrent step ({idx+1}/{len(steps_planned)}): {step_desc}"
+            plan_prompt = self._build_plan_prompt(
+                step_desc, tactical_features, extra_context, steps_taken, results_log
+            )
+            raw = await self._planner.call([{"role": "user", "content": plan_prompt}])
+            tactical = safe_json_parse(raw) or {}
+            tool = tactical.get("tool", "none")
+            args = tactical.get("args", {})
+            reason = tactical.get("reason", "")
+
+            self._calls_this_turn += 1
+
+            if tool == "none":
+                logger.info("[InternalJob] Step %d skipped: %s", idx + 1, reason)
+                await emitter.emit_event({
+                    "type": "task_step_done",
+                    "job_id": job_id, "step_index": idx,
+                    "success": True, "skipped": True,
+                    "output": reason[:200],
+                })
+                steps_taken.append({"tool": "none", "args": {}, "reason": reason})
+                results_log.append("")
+                continue
+
+            if tool == "ask_user":
+                clarification_question = args.get("question", "I need more info to continue.")
+                logger.info("[InternalJob] Clarification needed at step %d: %s",
+                            idx + 1, clarification_question)
+                await emitter.emit_event({
+                    "type": "task_clarification",
+                    "job_id": job_id, "step_index": idx,
+                    "question": clarification_question,
+                })
+                success = False  # paused, not failed; caller decides what to do
+                break
+
+            logger.info("[InternalJob] Step %d/%d: %s — %s",
+                        idx + 1, len(steps_planned), tool, reason[:80])
+
+            if tool == "cloud_action":
+                last_result = await self._dispatch_cloud(args, job_id)
+                output = (last_result or {}).get("output", "")
+            else:
+                output = await self._dispatch(tool, args)
+                last_result = {
+                    "tool": tool, "args": args, "reason": reason, "output": output,
+                    "success": not output.startswith("[error]") and not output.startswith("[blocked]"),
+                }
+                await self._bus.publish_dict("motor.result", last_result, source=CLUSTER)
+
+            step_success = not output.startswith("[error]") and not output.startswith("[blocked]")
+            if not step_success:
+                success = False
+
+            steps_taken.append({"tool": tool, "args": args, "reason": reason})
+            results_log.append(output[:500] if output else "")
+            self._fire_outcome_switches(output, tool, open_loop_chem)
+            await emitter.emit_event({
+                "type": "task_step_done",
+                "job_id": job_id, "step_index": idx,
+                "tool": tool,
+                "success": step_success,
+                "output": (output or "")[:300],
+            })
+
+        # 3. Completion
+        await self._notify_job_complete(goal, steps_taken, results_log, success)
+        await emitter.emit_event({
+            "type": "task_complete",
+            "job_id": job_id,
+            "success": success,
+            "steps_completed": len(steps_taken),
+            "clarification": clarification_question,
+        })
+        logger.info("[InternalJob] Done: %s (success=%s, %d/%d steps)",
+                    goal[:60], success, len(steps_taken), len(steps_planned))
+        return {
+            "job_id": job_id, "goal": goal, "success": success,
+            "steps_taken_count": len(steps_taken),
+            "steps_planned_count": len(steps_planned),
+            "steps": steps_taken,            # list of {tool, args, reason}
+            "results": results_log,          # parallel list of output strings (each truncated to 500ch)
+            "plan_steps": steps_planned,     # original strategic plan (list of {description, expected_tool})
+            "clarification": clarification_question,
+            "last_output": (last_result or {}).get("output", "") if last_result else "",
+        }
+
     async def _execute_open_loop(self, procedure: dict, goal: str | None,
                                   turn_id: str) -> dict | None:
         """
@@ -277,10 +511,12 @@ class MotorCortexCluster:
         prediction_errors: int = 0
         last_result: dict | None = None
 
+        open_loop_chem = self._chem_snapshot()
+        open_loop_budget = self._effective_budget(open_loop_chem)
         for i, step in enumerate(steps):
-            if self._calls_this_turn >= 3:
-                logger.warning("[MotorCortex] Open-loop budget exhausted at step %d/%d",
-                               i + 1, len(steps))
+            if self._calls_this_turn >= open_loop_budget:
+                logger.warning("[MotorCortex] Open-loop budget exhausted at step %d/%d (limit=%d)",
+                               i + 1, len(steps), open_loop_budget)
                 break
 
             tool = step.get("tool", "none")
@@ -465,6 +701,50 @@ class MotorCortexCluster:
         except Exception as e:
             logger.error("[MotorCortex] Tool %s failed: %s", tool, e)
             return f"[error] {tool} failed: {e}"
+
+    # ── Chemistry helpers ──────────────────────────────────────────────────────
+
+    def _chem_snapshot(self) -> dict[str, float]:
+        """Merged neuromod + hormonal snapshot for switch modulation."""
+        try:
+            nm = self._bus.neuromod.snapshot()
+        except Exception:
+            nm = {}
+        try:
+            hs = self._bus.hormonal.snapshot()
+        except Exception:
+            hs = {}
+        return {**nm, **hs}
+
+    def _effective_budget(self, chem: dict[str, float]) -> int:
+        """Tool-call budget per turn, modulated by DA (pursuit) and CORT (stress).
+        Base is 3; bounded to [1, 5]."""
+        base = 3
+        if not chem:
+            return base
+        da = float(chem.get("DA", 0.5))
+        cort = float(chem.get("CORT", 0.5))
+        shift = (da - 0.5) * 2.0 - (cort - 0.5) * 2.0
+        return max(1, min(5, base + int(round(shift))))
+
+    def _fire_outcome_switches(self, output: str, tool: str,
+                                chem: dict[str, float]) -> None:
+        """Fire result_publisher / fallback_reporter / safety_inhibitor based
+        on the outcome of a tool dispatch. Pure telemetry — no behavioural
+        side effect beyond firing-path / decisions-log entries. The safety
+        inhibitor's min_threshold=0.40 floor guarantees chemistry cannot
+        silence its firing here."""
+        if output.startswith("[blocked]"):
+            self._safety_inhibitor.fire(1.0, "sandbox_block",
+                                         {"tool": tool, "preview": output[:80]},
+                                         snapshot=chem)
+        elif output.startswith("[error]"):
+            self._fallback_reporter.fire(0.8, "tool_error",
+                                          {"tool": tool, "preview": output[:80]},
+                                          snapshot=chem)
+        else:
+            self._result_publisher.fire(0.7, "success",
+                                         {"tool": tool}, snapshot=chem)
 
     # ── Path / command safety ──────────────────────────────────────────────────
 

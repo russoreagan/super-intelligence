@@ -77,6 +77,36 @@ def test_decision_log_hebbian_fields_preserved(tmp_path):
     assert record["delta"] == 0.04
 
 
+def test_switch_suppressed_by_modulation_decision_recorded(tmp_path, monkeypatch):
+    """When chemistry suppresses a fire that would have happened at the base
+    threshold, should_fire emits a switch_suppressed_by_modulation decision
+    via the module-level decisions singleton."""
+    from brain.neuron import SwitchNeuron
+    from brain.observability.decisions import decisions
+
+    log_path = tmp_path / "turns.jsonl"
+    eval_logger = EvalLogger(log_path=log_path)
+    decisions.configure(eval_logger=eval_logger, emitter=_NullEmitter())
+
+    s = SwitchNeuron("template_match", "temporal", threshold=0.5,
+                     modulators={"ACh": +0.20})
+    # Under high ACh, effective threshold = 0.60. Input 0.55 would have fired
+    # at the base threshold (0.5) but is suppressed by modulation.
+    assert s.should_fire(0.55, {"ACh": 1.0}, turn_id="t-suppress") is False
+
+    lines = log_path.read_text().strip().splitlines()
+    assert len(lines) == 1
+    record = json.loads(lines[0])
+    assert record["type"] == "decision"
+    assert record["decision"] == "switch_suppressed_by_modulation"
+    assert record["switch"] == "template_match"
+    assert record["cluster"] == "temporal"
+    assert record["base_threshold"] == 0.5
+    assert record["effective_threshold"] == 0.6
+    assert record["chemistry"] == {"ACh": 1.0}
+    assert "turn_id" in record
+
+
 # ── Test helpers ────────────────────────────────────────────────────────────
 
 class _NullEmitter:

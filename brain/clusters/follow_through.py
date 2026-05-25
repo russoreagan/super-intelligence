@@ -3,10 +3,9 @@ FollowThrough — self-monitor that turns spoken commitments into action.
 
 After the drafter finalises a response, this module checks whether the brain
 just promised to *do* something (look at files, run a tool, fetch info). If it
-did, the commitment is reformulated as an imperative goal and enqueued back
-into the input loop as a synthetic self-directed turn. The executive then
-classifies it as a task, the motor cortex picks it up, and the brain follows
-through on its own word.
+did, the commitment is reformulated as an imperative goal and the motor cortex
+is fired in the background to carry it out. No second chat turn, no second
+TTS — the directive is internal.
 
 Biologically: the SMA monitors your own utterances and converts spoken
 intentions into motor plans. Without this loop, the brain can say "I'll go
@@ -22,10 +21,6 @@ from brain.cell import IntegratorCell
 from brain.model_router import ModelRouter
 
 logger = logging.getLogger(__name__)
-
-# Sentinel prefix so the input loop can recognise synthetic self-directed turns
-# and skip the extractor on the resulting response (preventing commitment loops).
-SELF_DIRECTED_PREFIX = "[self-directed] "
 
 
 SYSTEM = """You read a single utterance an AI assistant just spoke aloud and
@@ -89,9 +84,6 @@ class FollowThrough:
         else None. Errors are swallowed — follow-through is best-effort."""
         if not response or not response.strip():
             return None
-        # Skip turns that were already self-directed (avoid loops)
-        if user_input.startswith(SELF_DIRECTED_PREFIX):
-            return None
 
         self._cell.reset_turn(turn_id)
         messages = [{
@@ -128,3 +120,76 @@ class FollowThrough:
             return None
         goal = (data.get("goal") or "").strip()
         return goal or None
+
+
+_REPORTER_SYSTEM = """You report back on a job the brain just finished executing.
+
+You will receive:
+- the original goal
+- whether it succeeded
+- the steps taken (tool + brief reason) and their outputs
+
+Write a SHORT spoken summary (1-2 sentences) the brain will say aloud to the user. Speak naturally,
+first person, present-or-past tense. Lead with what you found or what happened — concrete and specific.
+
+Examples of good summaries:
+- "Karaoke Hero has 47 files across the Scripts and Scenes folders — looks like a Unity 6 LTS project. The main scene is MainMenu.unity."
+- "Couldn't list that directory — the path wasn't in the allowed set. Want me to try /Users/russ/Documents/Karaoke Hero instead?"
+- "Read the README — it's a song-rhythm game with a custom note chart format. I can dig into the chart parser next if you want."
+
+Avoid:
+- Reciting tool names or implementation details
+- "I have completed the task" / "the operation succeeded"
+- Multi-paragraph explanations
+
+Output ONLY the spoken text, no JSON, no quotes, no preamble."""
+
+
+class ResultReporter:
+    """Generates a spoken summary of a completed internal job."""
+
+    def __init__(self, router: ModelRouter) -> None:
+        self._cell = IntegratorCell(
+            name="result_reporter",
+            cluster="frontal",
+            model="haiku",
+            system_prompt=_REPORTER_SYSTEM,
+            topics=[],
+            max_calls_per_turn=1,
+            timeout_seconds=10.0,
+            locality="cloud",
+            max_tokens=200,
+        )
+        self._cell.set_router(router)
+
+    async def report(self, job_summary: dict, turn_id: str) -> str:
+        """Return a 1-2 sentence summary suitable for TTS. Empty string on failure."""
+        goal = job_summary.get("goal", "")
+        success = job_summary.get("success", False)
+        steps = job_summary.get("steps") or []
+        results = job_summary.get("results") or []
+
+        # Build a compact transcript of what the motor cortex did
+        lines: list[str] = []
+        for i, step in enumerate(steps):
+            tool = step.get("tool", "?")
+            reason = (step.get("reason") or "")[:140]
+            out = (results[i] if i < len(results) else "")[:400]
+            lines.append(f"Step {i+1} [{tool}] {reason}\n  → {out}")
+        transcript = "\n".join(lines) if lines else "(no steps executed)"
+
+        self._cell.reset_turn(turn_id)
+        try:
+            text = await self._cell.call([{
+                "role": "user",
+                "content": (
+                    f"Goal: {goal}\n"
+                    f"Success: {success}\n\n"
+                    f"What I did:\n{transcript}\n\n"
+                    "Now write the spoken summary."
+                ),
+            }])
+        except Exception as e:
+            logger.debug("[ResultReporter] failed: %s", e)
+            return ""
+        return (text or "").strip().strip('"')

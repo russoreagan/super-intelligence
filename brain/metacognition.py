@@ -22,6 +22,7 @@ from statistics import mean
 from brain.bus import Bus
 from brain.cell import IntegratorCell
 from brain.model_router import ModelRouter
+from brain.neuron import SwitchNeuron
 from brain.security import sanitize_fact
 from brain.settings import settings
 from brain.utils import safe_json_parse
@@ -111,6 +112,15 @@ class MetacognitionCell:
             sensitivity="sensitive",
         )
         self._reflector.set_router(router)
+
+        # Self-monitor trigger — gates the reflection LLM call. ACh (curiosity
+        # about own behaviour) lowers threshold → reflects more frequently.
+        # GABA (defensive state) raises threshold → don't spiral when stressed.
+        self._self_monitor_trigger = SwitchNeuron(
+            "self_monitor_trigger", "metacognition", polarity="excitatory",
+            threshold=0.5,
+            modulators={"ACh": -0.10, "GABA": +0.10},
+        )
 
     def record_turn(self, turn_id: str, llm_calls: int, elapsed_s: float,
                     emotion: str, neuromod: dict, surprise_score: float,

@@ -198,6 +198,13 @@ DEFAULTS: dict[str, float | int] = {
     "aea_da_lift":                 0.04,   # AEA × this added to effective DA
     # AEA color threshold (when elevated AEA buffers a stress state → "eased")
     "aea_eased_threshold":         0.58,   # AEA > this + stress base emotion → eased
+
+    # ── Section: Switch Modulation ────────────────────────────────────────────
+    # Single gain that scales every SwitchNeuron's modulator coefficient.
+    # 0.0 = chemistry has no effect on switches (pure deterministic gating).
+    # 1.0 = profiles fire at their declared strength (default).
+    # >1.0 = amplified chemistry response; <1.0 = damped.
+    "modulation_gain":             1.00,
 }
 
 

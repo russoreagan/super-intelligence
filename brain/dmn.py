@@ -25,6 +25,7 @@ from brain.bus import Bus
 from brain.cell import IntegratorCell
 from brain.emotion_hierarchy import valence_of
 from brain.model_router import ModelRouter
+from brain.neuron import SwitchNeuron
 from brain.settings import settings
 from brain.utils import get_idle_seconds
 
@@ -425,6 +426,18 @@ class DefaultModeNetwork:
         self._last_affection_score: int = 0
         self._last_familiarity: str = "new"
 
+        # Idle-gate switch — gates DMN tick firing on the chemistry snapshot.
+        # 5HT + OXT (relaxed/safe) lower the threshold → mind-wanders more
+        # readily. NE (alertness) and GABA (defensive) raise it → suppress
+        # DMN when the brain needs to be attentive. The switch coexists with
+        # the existing _tick_skip_probability heuristic; it provides a hard
+        # chemistry-driven block, while the probability adds stochastic flow.
+        self._idle_gate = SwitchNeuron(
+            "idle_gate", "dmn", polarity="excitatory",
+            threshold=0.5,
+            modulators={"5HT": -0.10, "OXT": -0.05, "NE": +0.10, "GABA": +0.10},
+        )
+
     async def start(self, session_id: str) -> None:
         self._session_id = session_id
         self._running = True
@@ -745,6 +758,18 @@ class DefaultModeNetwork:
 
         return min(settings.get("suppression_skip_prob_max"), suppression)
 
+    def _chem_snapshot(self) -> dict[str, float]:
+        """Merged neuromod + hormonal snapshot for switch modulation."""
+        try:
+            nm = self._bus.neuromod.snapshot()
+        except Exception:
+            nm = {}
+        try:
+            hs = self._bus.hormonal.snapshot()
+        except Exception:
+            hs = {}
+        return {**nm, **hs}
+
     def _current_interval(self) -> float:
         """Adaptive tick interval: faster when there's a live conversation,
         slower when the user has wandered off (OS-idle for > 60s) so we
@@ -770,6 +795,18 @@ class DefaultModeNetwork:
                 # suppress forever. Running it here gives suppressed ticks a
                 # chance to recover.
                 self._idle_decay()
+                # Chemistry idle-gate: hard block when chemistry says the
+                # brain shouldn't be mind-wandering (alert/defensive states).
+                chem = self._chem_snapshot()
+                if not self._idle_gate.should_fire(0.6, chem, turn_id=f"dmn_{self._thought_count}"):
+                    logger.debug(
+                        "[Background reflection] Tick suppressed by idle_gate "
+                        "(NE=%.2f GABA=%.2f 5HT=%.2f OXT=%.2f)",
+                        chem.get("NE", 0), chem.get("GABA", 0),
+                        chem.get("5HT", 0), chem.get("OXT", 0),
+                    )
+                    continue
+                self._idle_gate.fire(0.6, "tick_allowed", snapshot=chem)
                 skip_prob = self._tick_skip_probability()
                 if random.random() < skip_prob:
                     snap = self._bus.neuromod.snapshot()

@@ -37,6 +37,6 @@ personality, and something like inner experience.
 
 ## Affection score
 
-- Score: 0
+- Score: -1
 
-- History: neutral — polite and helpful, professional warmth (last tone: impatient, delta: -2)
+- History: neutral — polite and helpful, professional warmth (last tone: testing, delta: -1)

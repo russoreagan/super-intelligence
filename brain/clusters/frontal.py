@@ -25,6 +25,7 @@ from brain.predictor import (
     should_bypass_gating,
 )
 from brain.security import FENCE_SYSTEM_ADDENDUM, fence
+from brain.settings import settings
 from brain.utils import safe_json_parse
 from brain.wiring import Wiring
 
@@ -246,21 +247,56 @@ class FrontalCluster:
         )
         self._empathy_critic.set_router(router)
 
-        # Switches (~12 total; 3 inhibitory = 25%)
-        # Excitatory
+        # Switches (~12 total; 3 inhibitory = 25%). All are now wired into
+        # real firing sites below — see process() for the gating call sites.
+        # Modulator profiles encode each switch's biological identity.
+        # Excitatory routers — fire to record the route taken (telemetry +
+        # Hebbian weight surface). Mostly chemistry-neutral since the route
+        # itself is chosen by the executive LLM.
         self._response_type_router = SwitchNeuron("response_type_router", CLUSTER)
         self._length_budget = SwitchNeuron("length_budget", CLUSTER)
         self._tone_selector = SwitchNeuron("tone_selector", CLUSTER)
         self._drafter_count_selector = SwitchNeuron("drafter_count", CLUSTER)
         self._planner_trigger = SwitchNeuron("planner_trigger", CLUSTER)
         self._template_fallback = SwitchNeuron("template_fallback", CLUSTER)
-        self._arousal_modulator = SwitchNeuron("arousal_modulator", CLUSTER)
-        self._epistemic_mode = SwitchNeuron("epistemic_mode", CLUSTER)
-        self._self_ref_mode = SwitchNeuron("self_reference_mode", CLUSTER)
-        # Inhibitory
-        self._GABA_inhibitor = SwitchNeuron("GABA_inhibits_drafters", CLUSTER, polarity="inhibitory")
-        self._satiation_inhibitor = SwitchNeuron("satiation_inhibits_repeat", CLUSTER, polarity="inhibitory")
-        self._low_DA_inhibits_planner = SwitchNeuron("low_DA_inhibits_planner", CLUSTER, polarity="inhibitory")
+        # Epistemic / self-reference modes — chemistry biases their engagement.
+        self._epistemic_mode = SwitchNeuron(
+            "epistemic_mode", CLUSTER, threshold=0.5,
+            modulators={"ACh": -0.10},  # curiosity invites epistemic engagement
+        )
+        self._self_ref_mode = SwitchNeuron(
+            "self_reference_mode", CLUSTER, threshold=0.5,
+            modulators={"OXT": -0.10, "5HT": -0.10},  # social safety eases introspection
+        )
+        # Arousal modulator — fires when Glu deficit clears threshold,
+        # reducing drafter count. CORT amplifies (stress → fewer drafts).
+        self._arousal_modulator = SwitchNeuron(
+            "arousal_modulator", CLUSTER, threshold=0.75,
+            modulators={"CORT": -0.10},
+        )
+        # Inhibitory — these are the real defensive gates.
+        # GABA_inhibitor fires when GABA clears the reframe threshold (0.40).
+        # CORT lowers threshold (chronic stress = quicker defense); OXT buffers.
+        self._GABA_inhibitor = SwitchNeuron(
+            "GABA_inhibits_drafters", CLUSTER, polarity="inhibitory",
+            threshold=0.40,
+            modulators={"CORT": -0.10, "OXT": +0.10},
+        )
+        # Satiation inhibitor fires when the hypothalamic satiation state is
+        # high enough to suppress repetition.
+        self._satiation_inhibitor = SwitchNeuron(
+            "satiation_inhibits_repeat", CLUSTER, polarity="inhibitory",
+            threshold=0.6,
+            modulators={"ACh": +0.10},  # curiosity raises the bar for "I'm bored of this"
+        )
+        # Fires on DA-deficit. threshold=0.70 means fires when DA < 0.30
+        # (since we test against 1 - DA). CORT lowers threshold (depression
+        # suppresses planning more readily); 5HT raises it (mood buffers).
+        self._low_DA_inhibits_planner = SwitchNeuron(
+            "low_DA_inhibits_planner", CLUSTER, polarity="inhibitory",
+            threshold=0.70,
+            modulators={"CORT": -0.10, "5HT": +0.10},
+        )
 
         # Eval: populated each turn with critic scores for all drafts — read by run.py
         self.last_turn_draft_scores: list[dict] = []
@@ -282,10 +318,15 @@ class FrontalCluster:
         Run the Multiple Drafts engine. Returns the committed response.
         """
         nm = self._bus.neuromod.snapshot()
+        chem = self._chem_snapshot()
         self.last_turn_draft_scores = []   # reset for this turn
 
         # --- v0.2 Stoic reframer: try to reframe before going defensive ---
-        if nm["GABA"] > 0.40:
+        # GABA_inhibitor switch — fires when GABA clears its (chemistry-shifted)
+        # threshold. CORT lowers threshold (defensive sooner); OXT buffers.
+        if self._GABA_inhibitor.should_fire(nm["GABA"], chem, turn_id):
+            self._GABA_inhibitor.fire(nm["GABA"], "reframe_trigger",
+                                      {"GABA": round(nm["GABA"], 3)}, snapshot=chem)
             reframe = await self._attempt_reframe(features, affect, turn_id)
             if reframe and reframe.get("succeeded"):
                 # Reframe succeeded — update features to route normally
@@ -293,7 +334,7 @@ class FrontalCluster:
                 features["_reframe"] = reframe["reframe"]
                 features["_reframe_approach"] = reframe["response_approach"]
                 logger.debug("[Response engine] Reframed hostile input: %s", reframe["reframe"][:60])
-            elif nm["GABA"] > 0.55:
+            elif nm["GABA"] > settings.get("gaba_skip_threshold_high"):
                 # Reframe failed and GABA very high → defuse path
                 logger.debug("[Response engine] Stress response active — using de-escalation response path")
                 return await self._defuse_response(features, affect, turn_id)
@@ -414,9 +455,50 @@ class FrontalCluster:
                 break  # subsystem matched but returned no response — fall through
 
         drafter_count = min(int(instruction.get("drafter_count", 1)), 3)
-        # Arousal switch: low arousal → fewer drafters
-        if nm["Glu"] < 0.25:
+        # Arousal modulator: fires on Glu-deficit (1-Glu) clearing threshold.
+        # CORT modulator means stress fires it more readily → drops drafter count.
+        glu_deficit = 1.0 - nm["Glu"]
+        if self._arousal_modulator.should_fire(glu_deficit, chem, turn_id):
+            self._arousal_modulator.fire(glu_deficit, "low_arousal_drop_count",
+                                          {"Glu": round(nm["Glu"], 3)}, snapshot=chem)
             drafter_count = max(1, drafter_count - 1)
+        # Drafter count router fires with the resolved count as the tag.
+        self._drafter_count_selector.fire(min(1.0, drafter_count / 3.0),
+                                          str(drafter_count), snapshot=chem)
+
+        # Mode routers — fire to record which mode the turn engages.
+        if features.get("epistemic_action"):
+            if self._epistemic_mode.should_fire(0.6, chem, turn_id):
+                self._epistemic_mode.fire(0.6, "epistemic", snapshot=chem)
+        if features.get("self_reference"):
+            if self._self_ref_mode.should_fire(0.6, chem, turn_id):
+                self._self_ref_mode.fire(0.6, "self_reference", snapshot=chem)
+
+        # Response-type / length / tone routers — fire with the executive's
+        # chosen route as the tag. These switches participate in the Hebbian
+        # weight surface so frequently-used routes accumulate weight.
+        self._response_type_router.fire(
+            0.8, instruction.get("response_type", "chitchat"), snapshot=chem,
+        )
+        self._length_budget.fire(
+            0.6, instruction.get("target_length", "medium"), snapshot=chem,
+        )
+        self._tone_selector.fire(
+            0.6, instruction.get("tone", "neutral"), snapshot=chem,
+        )
+        # Planner trigger fires when the executive routed to action/task.
+        if instruction.get("response_type") in ("task", "action"):
+            # low_DA inhibitor: fires on DA-deficit (1-DA) clearing threshold.
+            da_deficit = 1.0 - nm["DA"]
+            if self._low_DA_inhibits_planner.should_fire(da_deficit, chem, turn_id):
+                self._low_DA_inhibits_planner.fire(
+                    da_deficit, "planner_suppressed_low_DA",
+                    {"DA": round(nm["DA"], 3)}, snapshot=chem,
+                )
+                # Suppress the planner trigger — apathy/low motivation.
+                logger.debug("[Response engine] Planner suppressed by low-DA inhibitor")
+            else:
+                self._planner_trigger.fire(0.8, "task_or_action", snapshot=chem)
 
         # --- Drafters ---
         drafter_prompt = self._build_drafter_prompt(features, memory, parietal_context,
@@ -440,6 +522,8 @@ class FrontalCluster:
                 drafts.append((did, text))
 
         if not drafts:
+            # Template fallback fires when all drafters returned nothing.
+            self._template_fallback.fire(1.0, "no_drafts", snapshot=chem)
             return "I'm not sure how to respond to that."
 
         # --- Critics (only if ≥2 drafts) ---
@@ -614,6 +698,18 @@ class FrontalCluster:
             return current_turn_trace.get()
         except Exception:
             return None
+
+    def _chem_snapshot(self) -> dict[str, float]:
+        """Merged neuromod + hormonal snapshot for switch modulation."""
+        try:
+            nm = self._bus.neuromod.snapshot()
+        except Exception:
+            nm = {}
+        try:
+            hs = self._bus.hormonal.snapshot()
+        except Exception:
+            hs = {}
+        return {**nm, **hs}
 
     def _select_drafters(self, count: int, turn_id: str) -> list[int]:
         """Pick which drafter indices to fire, weighted by wiring edge weight.

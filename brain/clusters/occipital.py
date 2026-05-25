@@ -76,9 +76,19 @@ class OccipitalCluster:
         )
         self._vision_integrator.set_router(router)
 
+        # image_present fires whenever a static image enters processing.
+        # Neutral chemistry — presence detection is pure observation.
         self._image_present = SwitchNeuron("image_present", CLUSTER)
+        # image_size_router fires with "small" or "large" as the tag. Records
+        # which VLM model variant was chosen. Chemistry-neutral.
         self._image_size_router = SwitchNeuron("image_size_router", CLUSTER)
-        self._vision_needed = SwitchNeuron("vision_needed", CLUSTER)
+        # vision_needed gates the VLM call entirely. NE (alertness) sharpens
+        # visual attention by lowering the threshold — high alertness means
+        # even a marginal trigger engages vision.
+        self._vision_needed = SwitchNeuron(
+            "vision_needed", CLUSTER, threshold=0.5,
+            modulators={"NE": -0.10},
+        )
 
         # Video frame state
         self._frame_buffer: list[bytes] = []
@@ -93,6 +103,17 @@ class OccipitalCluster:
         """Process a single static image file. Returns vision features or None."""
         if not image_path:
             return None
+
+        chem = self._chem_snapshot()
+        self._image_present.fire(1.0, "static_image",
+                                  {"path": str(image_path)[:80]}, snapshot=chem)
+
+        # Vision-needed gate: even with a valid image, chemistry can suppress
+        # engaging the (expensive) VLM. Under low NE the threshold rises.
+        if not self._vision_needed.should_fire(0.7, chem, turn_id):
+            logger.debug("[Vision] Vision gate suppressed by chemistry — skipping VLM")
+            return None
+        self._vision_needed.fire(0.7, "vlm_engaged", snapshot=chem)
 
         path = Path(image_path)
         resolved = path.expanduser().resolve()
@@ -115,6 +136,11 @@ class OccipitalCluster:
         if size > MAX_IMAGE_SIZE_BYTES:
             logger.warning("[Vision] Image too large (%d bytes) — skipping.", size)
             return None
+
+        # Size router records which model variant fires for this image.
+        size_tag = "large" if size > 1 * 1024 * 1024 else "small"
+        self._image_size_router.fire(min(1.0, size / MAX_IMAGE_SIZE_BYTES),
+                                      size_tag, {"bytes": size}, snapshot=chem)
 
         self._vision_integrator.model = "flash" if size > 1 * 1024 * 1024 else "flash-lite"
         self._vision_integrator.reset_turn(turn_id)
@@ -209,6 +235,18 @@ class OccipitalCluster:
     # ------------------------------------------------------------------
     # Shared VLM call
     # ------------------------------------------------------------------
+
+    def _chem_snapshot(self) -> dict[str, float]:
+        """Merged neuromod + hormonal snapshot for switch modulation."""
+        try:
+            nm = self._bus.neuromod.snapshot()
+        except Exception:
+            nm = {}
+        try:
+            hs = self._bus.hormonal.snapshot()
+        except Exception:
+            hs = {}
+        return {**nm, **hs}
 
     async def _run_vision(self, messages: list[dict], turn_id: str) -> dict | None:
         try:

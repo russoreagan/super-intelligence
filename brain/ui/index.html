@@ -385,6 +385,212 @@ input, select, textarea { font: inherit; color: inherit; background: none; borde
 }
 .left-tab-content.hidden { display: none; }
 
+/* ---- Right panel tabs (mirror left-tabs) ---- */
+.right-tabs {
+  display: flex;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--bg-1);
+}
+.right-tab {
+  flex: 1;
+  padding: 10px 0;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--fg-faint);
+  border-bottom: 2px solid transparent;
+  transition: color 180ms, border-color 180ms, background 180ms;
+  cursor: pointer;
+}
+.right-tab:hover { color: var(--fg-mute); background: var(--bg-2); }
+.right-tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  background: transparent;
+}
+.right-tab.tab-flash { animation: tab-flash-anim 0.8s ease; }
+.right-tab-content {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.right-tab-content.hidden { display: none; }
+.right-tab-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--bg-0);
+  font-size: 9px;
+  font-weight: 700;
+  vertical-align: middle;
+}
+.right-tab-badge.hidden { display: none; }
+
+/* ---- Tasks pane ---- */
+#tasks-list {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+}
+.tasks-empty {
+  color: var(--fg-faint);
+  font-style: italic;
+  font-size: 12px;
+  text-align: center;
+  padding: 32px 16px;
+}
+.task-card {
+  border: 1px solid var(--line-soft);
+  border-radius: 6px;
+  background: var(--bg-1);
+  padding: 10px 12px;
+}
+.task-card.planning { border-color: var(--accent); }
+.task-card.running { border-color: var(--accent); }
+.task-card.complete { opacity: 0.75; }
+.task-card.failed { border-color: oklch(0.65 0.20 25); }
+.task-card.paused { border-color: oklch(0.78 0.16 75); }
+
+/* Pulsing border for jobs currently in progress */
+@keyframes task-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 oklch(0.72 0.13 235 / 0.0); }
+  50%      { box-shadow: 0 0 0 3px oklch(0.72 0.13 235 / 0.20); }
+}
+.task-card.planning,
+.task-card.running { animation: task-pulse 1.8s ease-in-out infinite; }
+
+.task-working-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 8px;
+  padding: 1px 7px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--bg-0);
+  font-size: 9px;
+  font-family: var(--mono);
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  vertical-align: middle;
+}
+.task-working-chip .chip-dot {
+  width: 5px; height: 5px; border-radius: 50%;
+  background: var(--bg-0);
+  animation: task-chip-blink 0.9s ease-in-out infinite;
+}
+@keyframes task-chip-blink {
+  0%, 100% { opacity: 0.3; }
+  50%      { opacity: 1.0; }
+}
+.task-goal {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg);
+  margin-bottom: 4px;
+}
+.task-meta {
+  font-size: 10px;
+  color: var(--fg-faint);
+  font-family: var(--mono);
+  margin-bottom: 8px;
+}
+.task-steps { list-style: none; padding: 0; margin: 0; }
+.task-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  padding: 3px 0;
+  color: var(--fg-mute);
+}
+.task-step .step-status {
+  flex-shrink: 0;
+  width: 14px;
+  text-align: center;
+  font-family: var(--mono);
+  color: var(--fg-faint);
+}
+.task-step.running { color: var(--fg); }
+.task-step.running .step-status {
+  color: var(--accent);
+  animation: step-spin 1.4s linear infinite;
+  display: inline-block;
+}
+@keyframes step-spin {
+  0%   { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+.task-step-output {
+  margin: 2px 0 4px 22px;
+  padding: 5px 8px;
+  background: var(--bg-2);
+  border-radius: 3px;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--fg-mute);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 120px;
+  overflow-y: auto;
+}
+.task-step-output.error { color: oklch(0.70 0.20 25); }
+.task-step.done .step-status { color: oklch(0.78 0.16 145); }
+.task-step.failed .step-status { color: oklch(0.65 0.20 25); }
+.task-step .step-tool {
+  flex-shrink: 0;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: var(--fg-faint);
+  padding: 1px 5px;
+  border: 1px solid var(--line-soft);
+  border-radius: 3px;
+}
+.task-clarification {
+  margin-top: 8px;
+  padding: 8px;
+  background: var(--bg-2);
+  border-left: 2px solid oklch(0.78 0.16 75);
+  font-size: 11px;
+  color: var(--fg);
+  font-style: italic;
+}
+
+.task-card { cursor: pointer; transition: background 180ms; }
+.task-card:hover { background: var(--bg-2); }
+.task-card.expanded { background: var(--bg-2); }
+.task-card.expanded .task-step-output { max-height: none; }
+
+.task-summary {
+  margin-top: 6px;
+  padding: 8px 10px;
+  background: var(--bg-2);
+  border-left: 2px solid oklch(0.78 0.16 145);
+  font-size: 12px;
+  color: var(--fg);
+  line-height: 1.5;
+}
+.task-card.failed .task-summary { border-left-color: oklch(0.65 0.20 25); }
+
+.task-expand-hint {
+  font-size: 9px;
+  color: var(--fg-faint);
+  font-family: var(--mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  margin-top: 6px;
+  text-align: right;
+}
+
 /* ---- Thoughts feed ---- */
 #thoughts-feed {
   padding: 14px 16px;
@@ -2898,6 +3104,14 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
 
     <!-- ----- RIGHT: response + input ----- -->
     <aside class="col col-right">
+      <!-- Tab nav -->
+      <div class="right-tabs">
+        <button class="right-tab active" data-tab="chat">Chat</button>
+        <button class="right-tab" data-tab="tasks">Tasks<span class="right-tab-badge hidden" id="tasks-badge">0</span></button>
+      </div>
+
+      <!-- Chat tab content (existing pane intact) -->
+      <div class="right-tab-content" id="right-tab-chat">
       <div class="right-stack">
         <section class="pane" style="flex:1;min-height:0;">
           <header class="pane-head">
@@ -2979,6 +3193,22 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
               </button>
             </div>
+          </div>
+        </section>
+      </div>
+      </div><!-- /#right-tab-chat -->
+
+      <!-- Tasks tab content -->
+      <div class="right-tab-content hidden" id="right-tab-tasks">
+        <section class="pane" style="flex:1;min-height:0;">
+          <header class="pane-head">
+            <h3>Tasks</h3>
+            <div class="head-meta">
+              <button id="tasks-clear-btn" class="btn-reset" style="font-size:10px;padding:3px 8px;" title="Clear completed jobs">Clear done</button>
+            </div>
+          </header>
+          <div class="pane-body" id="tasks-list">
+            <div class="tasks-empty">No active jobs.<br/>The brain will create one when it commits to an action.</div>
           </div>
         </section>
       </div>
@@ -3907,6 +4137,15 @@ function handle(msg) {
       if (tag) tag.style.display = msg.frozen ? 'inline' : 'none';
       break;
     }
+    case 'task_planning':
+    case 'task_start':
+    case 'task_step_start':
+    case 'task_step_done':
+    case 'task_clarification':
+    case 'task_complete':
+    case 'task_summary':
+      handleTaskEvent(msg);
+      break;
   }
 }
 
@@ -5056,6 +5295,191 @@ settingsReset.addEventListener('click', async () => {
   });
 })();
 
+// ---- Right panel tab switching ----
+(function initRightTabs() {
+  const tabs = document.querySelectorAll('.right-tab');
+  tabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      tabs.forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      document.querySelectorAll('.right-tab-content').forEach(c => c.classList.add('hidden'));
+      const target = document.getElementById('right-tab-' + tab.dataset.tab);
+      if (target) target.classList.remove('hidden');
+      // Clear badge when user opens the tasks tab
+      if (tab.dataset.tab === 'tasks') {
+        const badge = document.getElementById('tasks-badge');
+        if (badge) { badge.textContent = '0'; badge.classList.add('hidden'); }
+      }
+    });
+  });
+})();
+
+// ---- Tasks pane: live job rendering ----
+const TASKS = {};  // job_id → {goal, steps[], statuses[], outputs[], status, clarification}
+let _tasksUnseen = 0;
+
+function _tasksBumpBadge() {
+  const tabActive = document.querySelector('.right-tab[data-tab="tasks"].active');
+  if (tabActive) return;  // user is looking at tasks; no badge
+  _tasksUnseen += 1;
+  const badge = document.getElementById('tasks-badge');
+  if (badge) { badge.textContent = String(_tasksUnseen); badge.classList.remove('hidden'); }
+}
+
+function _stepStatusGlyph(status) {
+  switch (status) {
+    case 'running': return '◐';
+    case 'done':    return '✓';
+    case 'failed':  return '✗';
+    case 'skipped': return '·';
+    default:        return '○';
+  }
+}
+
+function renderTasks() {
+  const list = document.getElementById('tasks-list');
+  if (!list) return;
+  const jobs = Object.values(TASKS).sort((a, b) => (b.startedAt || 0) - (a.startedAt || 0));
+  if (jobs.length === 0) {
+    list.innerHTML = '<div class="tasks-empty">No active jobs.<br/>The brain will create one when it commits to an action.</div>';
+    return;
+  }
+  list.innerHTML = jobs.map(job => {
+    const cls = job.status || 'running';
+    const isRunning = cls === 'planning' || cls === 'running';
+    const doneCount = (job.statuses || []).filter(s => s === 'done').length;
+    const totalCount = (job.steps || []).length;
+
+    let stepsHtml;
+    if (cls === 'planning') {
+      stepsHtml = `<li class="task-step running">
+        <span class="step-status">◐</span>
+        <span style="font-style:italic;color:var(--fg-faint);">Planning steps…</span>
+      </li>`;
+    } else {
+      stepsHtml = (job.steps || []).map((desc, i) => {
+        const st = (job.statuses || [])[i] || 'queued';
+        const tool = (job.tools || [])[i] || '';
+        const out = (job.outputs || [])[i] || '';
+        const outCls = st === 'failed' ? 'error' : '';
+        const showOutput = out && (st === 'done' || st === 'failed');
+        return `<li class="task-step ${st}">
+          <span class="step-status">${_stepStatusGlyph(st)}</span>
+          <span>${i + 1}. ${escapeHtml(desc)}</span>
+          ${tool ? `<span class="step-tool">${escapeHtml(tool)}</span>` : ''}
+        </li>${showOutput ? `<div class="task-step-output ${outCls}">${escapeHtml(out)}</div>` : ''}`;
+      }).join('');
+    }
+
+    const metaParts = [];
+    if (cls === 'planning') {
+      metaParts.push('planning…');
+    } else {
+      metaParts.push(`${doneCount}/${totalCount} steps`);
+    }
+    if (job.complexity) metaParts.push(job.complexity);
+    const meta = metaParts.join(' · ');
+
+    const workingChip = isRunning
+      ? `<span class="task-working-chip"><span class="chip-dot"></span>${cls === 'planning' ? 'Planning' : 'Working'}</span>`
+      : '';
+    const clar = job.clarification
+      ? `<div class="task-clarification">Asked: ${escapeHtml(job.clarification)}</div>`
+      : '';
+    const summary = job.summary
+      ? `<div class="task-summary">${escapeHtml(job.summary)}</div>`
+      : '';
+    const expandedCls = job.expanded ? ' expanded' : '';
+    const hint = (cls === 'complete' || cls === 'failed' || cls === 'paused')
+      ? `<div class="task-expand-hint">${job.expanded ? 'click to collapse' : 'click for details'}</div>`
+      : '';
+    return `<div class="task-card ${cls}${expandedCls}" data-job-id="${escapeHtml(job.job_id || '')}">
+      <div class="task-goal">${escapeHtml(job.goal || '')}${workingChip}</div>
+      <div class="task-meta">${meta}</div>
+      ${summary}
+      <ul class="task-steps">${stepsHtml}</ul>
+      ${clar}
+      ${hint}
+    </div>`;
+  }).join('');
+}
+
+// Click on a card toggles its expanded state.
+document.getElementById('tasks-list')?.addEventListener('click', (e) => {
+  const card = e.target.closest('.task-card');
+  if (!card) return;
+  const id = card.dataset.jobId;
+  if (!id || !TASKS[id]) return;
+  TASKS[id].expanded = !TASKS[id].expanded;
+  renderTasks();
+});
+
+function escapeHtml(s) {
+  return String(s || '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+}
+
+function handleTaskEvent(msg) {
+  const id = msg.job_id;
+  if (!id) return;
+  if (msg.type === 'task_planning') {
+    TASKS[id] = {
+      job_id: id,
+      goal: msg.goal,
+      steps: [],
+      statuses: [], tools: [], outputs: [],
+      complexity: '',
+      status: 'planning',
+      startedAt: Date.now(),
+    };
+    _tasksBumpBadge();
+  } else if (msg.type === 'task_start') {
+    const existing = TASKS[id] || {};
+    TASKS[id] = {
+      job_id: id,
+      goal: msg.goal || existing.goal,
+      steps: msg.steps || [],
+      statuses: (msg.steps || []).map(() => 'queued'),
+      tools: (msg.steps || []).map(() => ''),
+      outputs: (msg.steps || []).map(() => ''),
+      complexity: msg.complexity,
+      status: 'running',
+      startedAt: existing.startedAt || Date.now(),
+    };
+    _tasksBumpBadge();
+  } else if (msg.type === 'task_summary') {
+    const job = TASKS[id]; if (!job) return;
+    job.summary = msg.summary;
+    _tasksBumpBadge();
+  } else if (msg.type === 'task_step_start') {
+    const job = TASKS[id]; if (!job) return;
+    job.statuses[msg.step_index] = 'running';
+    if (msg.expected_tool) job.tools[msg.step_index] = msg.expected_tool;
+  } else if (msg.type === 'task_step_done') {
+    const job = TASKS[id]; if (!job) return;
+    const idx = msg.step_index;
+    job.statuses[idx] = msg.skipped ? 'skipped' : (msg.success ? 'done' : 'failed');
+    if (msg.tool) job.tools[idx] = msg.tool;
+    job.outputs[idx] = msg.output || '';
+  } else if (msg.type === 'task_clarification') {
+    const job = TASKS[id]; if (!job) return;
+    job.statuses[msg.step_index] = 'failed';
+    job.clarification = msg.question;
+    job.status = 'paused';
+    _tasksBumpBadge();
+  } else if (msg.type === 'task_complete') {
+    const job = TASKS[id]; if (!job) return;
+    job.status = msg.success ? 'complete' : (job.clarification ? 'paused' : 'failed');
+  }
+  renderTasks();
+}
+
+document.getElementById('tasks-clear-btn')?.addEventListener('click', () => {
+  Object.keys(TASKS).forEach(id => {
+    if (TASKS[id].status === 'complete' || TASKS[id].status === 'failed') delete TASKS[id];
+  });
+  renderTasks();
+});
+
 renderRegionList();
 setMoodBackground('neutral');
 loadVoices();
@@ -5140,7 +5564,8 @@ const NM_CELL_DEFS = {
     { cell: 'understanding_integrator', cluster: 'temporal', model: 'flash-lite',    role: 'feature extraction' },
   ],
   motor: [
-    { cell: 'tool_planner',        cluster: 'motor_cortex',  model: 'local-code',    role: 'tool planning' },
+    { cell: 'tool_planner',        cluster: 'motor_cortex',  model: 'local-code',    role: 'per-step tool selection' },
+    { cell: 'strategic_planner',   cluster: 'motor_cortex',  model: 'local-code',    role: 'multi-step plan for internal jobs' },
   ],
   parietal: [
     { cell: 'self_reflector',      cluster: 'metacognition', model: 'haiku',         role: 'self-awareness' },

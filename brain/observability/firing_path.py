@@ -28,13 +28,15 @@ def reset_current_trace(token: contextvars.Token) -> None:
 
 
 def record_switch_fire(name: str, cluster: str, level: float, tag: str,
-                        polarity: str = "excitatory") -> None:
+                        polarity: str = "excitatory",
+                        eff_threshold: float | None = None,
+                        mod_delta: float | None = None) -> None:
     """Called from SwitchNeuron.fire(). No-op when no trace is bound."""
     trace = current_turn_trace.get()
     if trace is None:
         return
     with contextlib.suppress(Exception):
-        trace.fired_path.append({
+        entry: dict = {
             "name": f"{cluster}.{name}",
             "cluster": cluster,
             "kind": "switch",
@@ -42,7 +44,12 @@ def record_switch_fire(name: str, cluster: str, level: float, tag: str,
             "tag": tag,
             "polarity": polarity,
             "ts": time.time(),
-        })
+        }
+        if eff_threshold is not None:
+            entry["effective_threshold"] = round(float(eff_threshold), 3)
+        if mod_delta is not None and abs(mod_delta) > 1e-6:
+            entry["modulation_delta"] = round(float(mod_delta), 3)
+        trace.fired_path.append(entry)
 
 
 def record_integrator_call(name: str, cluster: str) -> None:

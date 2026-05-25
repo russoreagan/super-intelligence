@@ -966,3 +966,64 @@ class TestFrontalToolResultInjection:
         assert "</dat​a>" in prompt or "malicious" in prompt  # neutralised or present
         # Either way the raw closing tag should not appear unescaped after the opening
         # (fence() neutralises </data> inside content)
+
+
+# ---------------------------------------------------------------------------
+# Motor cortex — neuromodulator-aware switch behaviour
+# ---------------------------------------------------------------------------
+
+class TestMotorSwitchModulation:
+    """Contracts for the chemistry-modulated switches in motor cortex."""
+
+    def test_safety_check_floor_cannot_be_disabled_by_chemistry(self, tmp_path):
+        """Hard contract: no combination of neuromod/hormonal values can drop
+        the safety_check effective threshold below its min_threshold floor.
+        If this test ever fails, the sandbox is at risk."""
+        motor, _bus = _make_motor(tmp_path)
+        # Sweep every channel to its disabling extreme.
+        worst_chem = {
+            "DA": 1.0, "ACh": 1.0, "GABA": 1.0, "Glu": 1.0, "NE": 1.0,
+            "OXT": 1.0, "CORT": 1.0, "5HT": 1.0, "AEA": 1.0,
+        }
+        eff = motor._safety_inhibitor.effective_threshold(worst_chem)
+        assert eff >= motor._safety_inhibitor.min_threshold
+        assert motor._safety_inhibitor.min_threshold == 0.40
+        # And the opposite extreme — fully depleted chemistry — also clamped.
+        bottom_chem = {k: 0.0 for k in worst_chem}
+        eff_bot = motor._safety_inhibitor.effective_threshold(bottom_chem)
+        assert eff_bot >= motor._safety_inhibitor.min_threshold
+
+    def test_effective_budget_neutral_chemistry_is_three(self, tmp_path):
+        motor, _ = _make_motor(tmp_path)
+        assert motor._effective_budget({}) == 3
+        assert motor._effective_budget({"DA": 0.5, "CORT": 0.5}) == 3
+
+    def test_high_DA_raises_effective_budget(self, tmp_path):
+        motor, _ = _make_motor(tmp_path)
+        # High DA (pursuit) should raise the budget.
+        assert motor._effective_budget({"DA": 1.0, "CORT": 0.5}) > 3
+
+    def test_high_CORT_lowers_effective_budget(self, tmp_path):
+        motor, _ = _make_motor(tmp_path)
+        # High CORT (stress) should lower the budget.
+        assert motor._effective_budget({"DA": 0.5, "CORT": 1.0}) < 3
+
+    def test_effective_budget_bounded(self, tmp_path):
+        motor, _ = _make_motor(tmp_path)
+        # Extreme chemistry cannot push budget outside [1, 5].
+        worst = motor._effective_budget({"DA": 1.0, "CORT": 0.0})
+        best = motor._effective_budget({"DA": 0.0, "CORT": 1.0})
+        assert 1 <= best <= 5
+        assert 1 <= worst <= 5
+
+    def test_action_gate_modulator_profile(self, tmp_path):
+        motor, _ = _make_motor(tmp_path)
+        # High DA should lower the action_gate threshold (approach motivation).
+        assert motor._action_gate.effective_threshold({"DA": 1.0}) < \
+               motor._action_gate.effective_threshold({"DA": 0.0})
+
+    def test_fallback_reporter_modulator_profile(self, tmp_path):
+        motor, _ = _make_motor(tmp_path)
+        # High NE should lower the fallback_reporter threshold (alarm system).
+        assert motor._fallback_reporter.effective_threshold({"NE": 1.0}) < \
+               motor._fallback_reporter.effective_threshold({"NE": 0.0})

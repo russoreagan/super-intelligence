@@ -13,6 +13,7 @@ import uuid
 from brain.bus import Bus
 from brain.cell import IntegratorCell
 from brain.model_router import ModelRouter
+from brain.neuron import StatefulSwitch, SwitchNeuron
 from brain.observability.decisions import decisions
 from brain.predictor import should_bypass_gating
 from brain.second_brain.store import Episode, EpisodicStore, SchemaStore
@@ -85,6 +86,35 @@ class HippocampusCluster:
         # Pre-load core schema at boot (extended mind — reliably needed every session)
         self._core_context: dict[str, str] = {}
 
+        # Switch neurons promoted from inline threshold constants. Profiles
+        # mirror Temporal/Motor — modulators encode each gate's biological
+        # identity; the effective threshold is shifted by chemistry at runtime.
+        # See plan /Users/russ/.claude/plans/and-what-affects-these-memoized-parnas.md.
+        self._encoder_gate = SwitchNeuron(
+            "encoder_gate", CLUSTER, polarity="inhibitory",
+            threshold=0.5,
+            # DA+NE: engaged moments encode thoroughly (skip harder).
+            # CORT: chronic stress also encodes thoroughly — threat memories
+            # are exactly what the hippocampus is designed to preserve.
+            modulators={"DA": +0.10, "NE": +0.10, "CORT": +0.10},
+        )
+        self._recall_cache_reuse = SwitchNeuron(
+            "recall_cache_reuse", CLUSTER, polarity="excitatory",
+            threshold=0.5,
+            modulators={"DA": -0.10},
+        )
+        self._recall_fanout = StatefulSwitch(
+            "recall_fanout", CLUSTER, decay=0.95,
+            polarity="excitatory",
+            threshold=0.5,
+            modulators={"ACh": -0.10, "Glu": -0.05},
+        )
+        self._entity_grep = SwitchNeuron(
+            "entity_grep_depth", CLUSTER, polarity="excitatory",
+            threshold=0.5,
+            modulators={"ACh": -0.10},
+        )
+
     async def boot(self, session_id: str) -> tuple[dict[str, str], list[dict]]:
         """Load core schema and recent episodes into working memory at session start."""
         self._session_id = session_id
@@ -105,10 +135,17 @@ class HippocampusCluster:
         Recall from episodic + schema stores.
         Returns combined context for the frontal lobe.
         """
+        chem = self._chem_snapshot()
+
         # ── Coordinator gate: reuse recent recall if query is near-identical ──
+        # The recall_cache_reuse switch encodes "trust the cache" as a fire.
+        # High DA lowers its threshold (more reuse under reward); low DA raises
+        # it (force fresh recall when nothing's working).
         cache_key = self._normalize_recall_key(query, entities)
         cached = self._recent_recall.get(cache_key)
-        if cached is not None:
+        if cached is not None and self._recall_cache_reuse.should_fire(0.55, chem, turn_id):
+            self._recall_cache_reuse.fire(0.55, "cache_hit",
+                                          {"key": cache_key[:60]}, snapshot=chem)
             decisions.log(
                 "reuse_recent_recall", turn_id=turn_id, cluster=CLUSTER,
                 reason=f"normalized query key '{cache_key[:60]}' matches recent",
@@ -122,13 +159,20 @@ class HippocampusCluster:
                 })
             return cached
 
-        # ── Weighted recall fan-out (Hebbian) ────────────────────────────────
+        # ── Weighted recall fan-out (Hebbian × chemistry) ────────────────────
         strategy_weights = self._recall_strategy_weights()
-        schema_k, episode_k = self._allocate_recall_budget(strategy_weights)
+        # The fanout switch's effective threshold biases the total budget:
+        # under high ACh+Glu (lower threshold), the brain casts a wider net.
+        total_budget = self._fanout_total_budget(chem)
+        schema_k, episode_k = self._allocate_recall_budget(strategy_weights, total_budget)
+        self._recall_fanout.fire(min(1.0, total_budget / 8.0), "fanout_budget",
+                                  {"total": total_budget}, snapshot=chem)
 
-        # Schema grep (free, fast)
+        # Schema grep (free, fast). Entity-grep depth is shifted by ACh: under
+        # high curiosity the brain scans entities more broadly.
+        grep_depth = self._entity_grep_depth(chem, schema_k)
         schema_hits = []
-        for entity in entities[:max(2, schema_k)]:
+        for entity in entities[:grep_depth]:
             hits = self._schema.grep(entity)
             schema_hits.extend(hits[:2])
 
@@ -193,17 +237,51 @@ class HippocampusCluster:
             "time_filter": self._wiring.get_edge_weight("mem.recall", "hippocampus.time_filter"),
         }
 
-    def _allocate_recall_budget(self, weights: dict[str, float]) -> tuple[int, int]:
-        """Divide a fixed total fan-out (8 lookups) across schema vs episodes by weight ratio."""
+    def _allocate_recall_budget(self, weights: dict[str, float],
+                                  total_budget: int = 8) -> tuple[int, int]:
+        """Divide a fixed total fan-out across schema vs episodes by weight ratio."""
         schema_w = weights["schema_grep"] + weights["entity_tracker"]
         episode_w = weights["cosine_recall"] + weights["time_filter"]
         total = schema_w + episode_w
         if total <= 0:
-            return 3, 4
+            half = total_budget // 2
+            return max(1, half), max(1, total_budget - half)
         schema_share = schema_w / total
-        schema_k = max(1, round(schema_share * 8))
-        episode_k = max(1, 8 - schema_k)
+        schema_k = max(1, round(schema_share * total_budget))
+        episode_k = max(1, total_budget - schema_k)
         return schema_k, episode_k
+
+    def _chem_snapshot(self) -> dict[str, float]:
+        """Merged neuromod + hormonal snapshot for switch modulation."""
+        try:
+            nm = self._bus.neuromod.snapshot()
+        except Exception:
+            nm = {}
+        try:
+            hs = self._bus.hormonal.snapshot()
+        except Exception:
+            hs = {}
+        return {**nm, **hs}
+
+    def _fanout_total_budget(self, chem: dict[str, float]) -> int:
+        """Total recall lookups, biased by the recall_fanout switch's modulation
+        delta. Base is 8; bounded to [4, 12]. Under high ACh+Glu (lower
+        effective threshold), the brain casts a wider net."""
+        # modulation_delta is negative when chemistry lowers the threshold;
+        # we invert the sign so "lower threshold" corresponds to "more lookups".
+        delta = -self._recall_fanout.modulation_delta(chem)
+        # delta range under conservative coefficients (≤0.15) is approximately
+        # ±0.075. Scale to integer shifts in {-3, …, +3}.
+        shift = int(round(delta * 20))
+        return max(4, min(12, 8 + shift))
+
+    def _entity_grep_depth(self, chem: dict[str, float], schema_k: int) -> int:
+        """Number of entities to grep against the schema store. Base is
+        max(2, schema_k); ACh modulation widens or narrows it by ±1."""
+        base = max(2, schema_k)
+        delta = -self._entity_grep.modulation_delta(chem)  # negative coeff lowers thr → more entities
+        shift = int(round(delta * 20))
+        return max(1, min(8, base + shift))
 
     def _record_trace(self):
         try:
@@ -229,18 +307,27 @@ class HippocampusCluster:
 
         # Encoder gate: skip the LLM encoder when surprise + DA delta + facts
         # are all low. The episode still gets stored as raw text below, just
-        # without an LLM-generated summary.
+        # without an LLM-generated summary. The encoder_gate switch's chemistry
+        # modulation can suppress the skip under high DA+NE (engaged moments
+        # encode more thoroughly).
         bypass, bypass_reason = should_bypass_gating(affect, features)
         da_now = neuromod_snap.get("DA", 0.5) if neuromod_snap else 0.5
-        skip_encoder = (
+        chem = self._chem_snapshot()
+        baseline_skip = (
             not bypass
             and surprise_score < 0.25
             and salience < 0.4
             and da_now < 0.6
             and not features.get("entities")
         )
+        skip_encoder = baseline_skip and self._encoder_gate.should_fire(0.55, chem, turn_id)
 
         if skip_encoder:
+            self._encoder_gate.fire(0.55, "encoder_skipped",
+                                     {"surprise": round(surprise_score, 3),
+                                      "salience": round(salience, 3),
+                                      "DA": round(da_now, 3)},
+                                     snapshot=chem)
             decisions.log(
                 "skip_encoder", turn_id=turn_id, cluster=CLUSTER,
                 reason=f"surprise={surprise_score:.2f} salience={salience:.2f} DA={da_now:.2f}",
