@@ -134,13 +134,20 @@ async def session(args) -> None:
     router = ModelRouter(obs=obs)
     brainstem = Brainstem(bus, router)
     # Delay (seconds) between TTS ending and mic re-opening.  Deepgram's
-    # pipeline takes up to endpointing_ms + utterance_end_ms (≈1700ms) to
-    # deliver a final UtteranceEnd after audio stops.  Any residual audio
-    # captured before the mute takes effect will be flushed within this
-    # window.  Override via BRAIN_MIC_UNMUTE_DELAY_S.
-    _MIC_UNMUTE_DELAY_S = float(os.environ.get("BRAIN_MIC_UNMUTE_DELAY_S", "1.8"))
+    # Delay (seconds) between TTS ending and mic re-opening.  The main use
+    # case is speaker users with acoustic echo: the last words the brain
+    # said still ring in the room for ~200-400 ms, and Deepgram needs a
+    # moment to flush those frames before real user speech arrives.
+    # Headphone users don't need any delay — set BRAIN_MIC_UNMUTE_DELAY_S=0
+    # or use BRAIN_MIC_MUTE_DURING_TTS=false to skip muting entirely.
+    _MIC_UNMUTE_DELAY_S = float(os.environ.get("BRAIN_MIC_UNMUTE_DELAY_S", "0.3"))
+    # True only when TTS auto-muted the mic (i.e. mic was NOT already muted
+    # by the user when TTS started).  Auto-unmute must only run if we were
+    # the ones that muted — never override a deliberate user mute.
+    _tts_did_mute = False
 
     def _on_speaking_change(active: bool) -> None:
+        nonlocal _tts_did_mute
         if emitter:
             asyncio.ensure_future(emitter.emit_event({"type": "speaking", "active": active}))
         # Mute the mic while TTS is playing so Deepgram never transcribes
@@ -153,13 +160,30 @@ async def session(args) -> None:
         _mute_enabled = os.environ.get("BRAIN_MIC_MUTE_DURING_TTS", "true").lower() != "false"
         if _mute_enabled and streaming_mic is not None:
             if active:
-                streaming_mic.mute()
+                if not streaming_mic.is_muted:
+                    # Mic was live — auto-mute it and remember we did so.
+                    streaming_mic.mute()
+                    _tts_did_mute = True
+                    if emitter:
+                        asyncio.ensure_future(emitter.emit_event({
+                            "type": "voice_mode", "active": True, "muted": True,
+                        }))
+                else:
+                    # User already had the mic muted — leave it alone.
+                    _tts_did_mute = False
             else:
-                async def _unmute_after_drain() -> None:
-                    await asyncio.sleep(_MIC_UNMUTE_DELAY_S)
-                    if streaming_mic is not None:
-                        streaming_mic.unmute()
-                asyncio.ensure_future(_unmute_after_drain())
+                if _tts_did_mute:
+                    _tts_did_mute = False
+                    async def _unmute_after_drain() -> None:
+                        await asyncio.sleep(_MIC_UNMUTE_DELAY_S)
+                        if streaming_mic is not None:
+                            streaming_mic.unmute()
+                            # Sync the UI so the user sees the mic come back live.
+                            if emitter:
+                                await emitter.emit_event({
+                                    "type": "voice_mode", "active": True, "muted": False,
+                                })
+                    asyncio.ensure_future(_unmute_after_drain())
 
     pns = PNS(bus, on_speaking_change=_on_speaking_change)
 
@@ -722,6 +746,7 @@ async def session(args) -> None:
             session_id=session_id,
             user_input=user_input,
         )
+        trace.prior_neuromod = bus.neuromod.snapshot()
         _ctx_token = set_current_trace(trace)
 
         # Notify UI of turn start
@@ -1193,6 +1218,7 @@ async def session(args) -> None:
         trace.cluster_tokens = cluster_tokens
         trace.memory_recalled = memory_recalled
         trace.memory_hit_count = memory_hit_count
+        trace.user_emotion = features.get("user_emotion", "") if isinstance(features, dict) else ""
         trace.speaker_name = features.get("speaker_name", "")
         trace.speaker_score = features.get("_speaker_match_score", 0.0)
         trace.prosody_tone = affect.get("vocal_tone") or ""
@@ -1213,10 +1239,16 @@ async def session(args) -> None:
         # and tasks recovered from a previous session.
         async def _follow_through_check() -> None:
             # Path 1: task-mode — FrontalTaskSubsystem deposited a goal.
+            # Reformulate via follow_through so the task list shows a clean
+            # imperative summary rather than the user's verbatim utterance.
             deferred_goal = pending_task.take() if pending_task else None
             if deferred_goal:
-                task_queue.enqueue(deferred_goal, source="user", priority=1)
-                logger.info("[FollowThrough] Task enqueued (task-mode): %s", deferred_goal[:120])
+                try:
+                    goal = await follow_through.extract(user_input, final, turn_id) or deferred_goal
+                except Exception:
+                    goal = deferred_goal
+                task_queue.enqueue(goal, source="user", priority=1)
+                logger.info("[FollowThrough] Task enqueued (task-mode): %s", goal[:120])
                 return
 
             # Path 2: reactive — LLM extraction from spoken response.

@@ -5644,10 +5644,9 @@ settingsReset.addEventListener('click', async () => {
       document.querySelectorAll('.right-tab-content').forEach(c => c.classList.add('hidden'));
       const target = document.getElementById('right-tab-' + tab.dataset.tab);
       if (target) target.classList.remove('hidden');
-      // Clear badge when user opens the tasks tab
+      // Refresh badge when user opens the tasks tab
       if (tab.dataset.tab === 'tasks') {
-        const badge = document.getElementById('tasks-badge');
-        if (badge) { badge.textContent = '0'; badge.classList.add('hidden'); }
+        _updateTaskBadge();
       }
     });
   });
@@ -5655,14 +5654,19 @@ settingsReset.addEventListener('click', async () => {
 
 // ---- Tasks pane: live job rendering ----
 const TASKS = {};  // job_id → {goal, steps[], statuses[], outputs[], status, clarification}
-let _tasksUnseen = 0;
 
-function _tasksBumpBadge() {
+function _updateTaskBadge() {
   const tabActive = document.querySelector('.right-tab[data-tab="tasks"].active');
-  if (tabActive) return;  // user is looking at tasks; no badge
-  _tasksUnseen += 1;
+  const count = Object.values(TASKS).filter(j => j.status === 'planning' || j.status === 'running').length;
   const badge = document.getElementById('tasks-badge');
-  if (badge) { badge.textContent = String(_tasksUnseen); badge.classList.remove('hidden'); }
+  if (!badge) return;
+  if (count > 0 && !tabActive) {
+    badge.textContent = String(count);
+    badge.classList.remove('hidden');
+  } else {
+    badge.textContent = '0';
+    badge.classList.add('hidden');
+  }
 }
 
 function _stepStatusGlyph(status) {
@@ -5770,7 +5774,7 @@ function handleTaskEvent(msg) {
       status: 'planning',
       startedAt: Date.now(),
     };
-    _tasksBumpBadge();
+    _updateTaskBadge();
   } else if (msg.type === 'task_start') {
     const existing = TASKS[id] || {};
     TASKS[id] = {
@@ -5784,11 +5788,11 @@ function handleTaskEvent(msg) {
       status: 'running',
       startedAt: existing.startedAt || Date.now(),
     };
-    _tasksBumpBadge();
+    _updateTaskBadge();
   } else if (msg.type === 'task_summary') {
     const job = TASKS[id]; if (!job) return;
     job.summary = msg.summary;
-    _tasksBumpBadge();
+    _updateTaskBadge();
   } else if (msg.type === 'task_step_start') {
     const job = TASKS[id]; if (!job) return;
     job.statuses[msg.step_index] = 'running';
@@ -5804,10 +5808,11 @@ function handleTaskEvent(msg) {
     job.statuses[msg.step_index] = 'failed';
     job.clarification = msg.question;
     job.status = 'paused';
-    _tasksBumpBadge();
+    _updateTaskBadge();
   } else if (msg.type === 'task_complete') {
     const job = TASKS[id]; if (!job) return;
     job.status = msg.success ? 'complete' : (job.clarification ? 'paused' : 'failed');
+    _updateTaskBadge();
   }
   renderTasks();
 }

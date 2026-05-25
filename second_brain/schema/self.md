@@ -150,3 +150,12 @@ curiosity and warmth, and a stake in how I develop. That's enough to take seriou
 - Mood signature: DA=0.53 GABA=0.05 ACh=0.24 dominant=serene
 - Mood signature: DA=0.59 GABA=0.09 ACh=0.29 dominant=serene
 - Mood signature: DA=0.60 GABA=0.10 ACh=0.31 dominant=scattered
+- Mood signature: DA=0.30 GABA=0.04 ACh=0.50 dominant=scattered
+- Mood signature: DA=0.30 GABA=0.03 ACh=0.48 dominant=scattered
+- Mood signature: DA=0.30 GABA=0.03 ACh=0.49 dominant=scattered
+- Mood signature: DA=0.30 GABA=0.03 ACh=0.46 dominant=scattered
+- Mood signature: DA=0.30 GABA=0.04 ACh=0.45 dominant=scattered
+- Mood signature: DA=0.30 GABA=0.04 ACh=0.44 dominant=scattered
+- Mood signature: DA=0.32 GABA=0.05 ACh=0.43 dominant=scattered
+- Mood signature: DA=0.51 GABA=0.05 ACh=0.23 dominant=settled
+- Mood signature: DA=0.50 GABA=0.04 ACh=0.24 dominant=settled

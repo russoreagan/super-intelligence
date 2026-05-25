@@ -259,7 +259,7 @@ class StreamingMicSession:
                         await self._socket.send_keep_alive()
                         logger.debug("[StreamingMic] KeepAlive sent")
                     except Exception as e:
-                        logger.debug("[StreamingMic] KeepAlive failed (will reconnect): %s", e)
+                        logger.warning("[StreamingMic] KeepAlive failed — connection may drop: %s", e)
         except asyncio.CancelledError:
             pass
 
