@@ -18,6 +18,8 @@ MODEL_MAP = {
     "flash": "gemini-2.5-flash",
     "flash-lite": "gemini-2.5-flash-lite",
     "local": "local",
+    "local-code": "local-code",       # routes to OLLAMA_CODE_MODEL (qwen2.5-coder:14b)
+    "local-general": "local-general", # routes to OLLAMA_GENERAL_MODEL (qwen2.5:32b)
 }
 
 # Embedding dim must match EpisodicStore table schema (see brain/second_brain/store.py).
@@ -26,6 +28,8 @@ EMBEDDING_DIM = 768
 OLLAMA_EMBED_MODEL = os.environ.get("OLLAMA_EMBED_MODEL", "nomic-embed-text")
 GOOGLE_EMBED_MODEL = os.environ.get("GOOGLE_EMBED_MODEL", "gemini-embedding-001")
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+OLLAMA_CODE_MODEL = os.environ.get("OLLAMA_CODE_MODEL", "qwen2.5-coder:14b")
+OLLAMA_GENERAL_MODEL = os.environ.get("OLLAMA_GENERAL_MODEL", "qwen2.5:32b")
 
 
 class ModelRouter:
@@ -74,21 +78,23 @@ class ModelRouter:
                 "will fail. Fix: run 'ollama serve' and 'ollama pull qwen2.5:7b'.",
                 cluster, cell, model_id,
             )
-            model_key = "local"
-            model_id = "local"
+            model_key = model_key if model_key in ("local", "local-code", "local-general") else "local"
+            model_id = model_key
 
         start = time.time()
         if model_id.startswith("claude"):
             text, in_tok, out_tok = await self._call_anthropic(model_id, system_prompt, messages, max_tokens)
         elif model_id.startswith("gemini"):
             text, in_tok, out_tok = await self._call_google(model_id, system_prompt, messages, max_tokens)
-        elif model_id == "local":
+        elif model_id in ("local", "local-code", "local-general"):
             if skills:
                 from brain.skill_loader import SkillLoader
                 skill_block = SkillLoader.load_many(skills)
                 if skill_block:
                     system_prompt = f"{system_prompt}\n\n{skill_block}"
-            text, in_tok, out_tok = await self._call_local(system_prompt, messages, max_tokens)
+            text, in_tok, out_tok = await self._call_local(
+                system_prompt, messages, max_tokens, local_variant=model_id
+            )
         else:
             raise ValueError(f"Unknown model key: {model_key}")
 
@@ -172,10 +178,17 @@ class ModelRouter:
         return content or ""
 
     async def _call_local(self, system_prompt: str,
-                          messages: list[dict], max_tokens: int = 1024) -> tuple[str, int, int]:
+                          messages: list[dict], max_tokens: int = 1024,
+                          local_variant: str = "local") -> tuple[str, int, int]:
         flat_messages = [{"role": m["role"], "content": self._flatten_content(m["content"])} for m in messages]
+        if local_variant == "local-code":
+            model_name = OLLAMA_CODE_MODEL
+        elif local_variant == "local-general":
+            model_name = OLLAMA_GENERAL_MODEL
+        else:
+            model_name = os.environ.get("OLLAMA_MODEL", "qwen2.5:7b")
         payload = {
-            "model": os.environ.get("OLLAMA_MODEL", "qwen2.5:7b"),
+            "model": model_name,
             "messages": [{"role": "system", "content": system_prompt}] + flat_messages,
             "stream": False,
             "options": {"num_predict": max_tokens},

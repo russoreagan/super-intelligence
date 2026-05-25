@@ -107,13 +107,19 @@ class MotorCortexCluster:
         self._planner = IntegratorCell(
             name="tool_planner",
             cluster=CLUSTER,
-            model="local",
+            model="local-code",
             system_prompt=planner_system,
             topics=["temporal.features"],
             max_calls_per_turn=2,
-            timeout_seconds=45.0,
+            timeout_seconds=60.0,
             locality="local",
-            skills=["quality-debugging", "dev-process", "devops-git-advanced-workflows"],
+            skills=[
+                "quality-debugging", "dev-process", "devops-git-advanced-workflows",
+                # Unity skills — active when working on Evolution App or Karaoke Hero
+                "unity-development", "unity-animation", "unity-physics",
+                "unity-shader-graph", "unity-ui-toolkit", "unity-urp",
+                "unity-input-system", "unity-vfx-graph",
+            ],
         )
         self._planner.set_router(router)
 

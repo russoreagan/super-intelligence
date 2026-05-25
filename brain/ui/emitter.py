@@ -90,6 +90,20 @@ class ActivationEmitter:
         except asyncio.QueueFull:
             pass
 
+    async def emit_cell(self, cluster: str, cell: str, model: str,
+                        turn_id: str = "") -> None:
+        try:
+            self._queue.put_nowait({
+                "type": "cell_activation",
+                "cluster": cluster,
+                "cell": cell,
+                "model": model,
+                "turn_id": turn_id,
+                "ts": time.time(),
+            })
+        except asyncio.QueueFull:
+            pass
+
     async def emit_event(self, event: dict) -> None:
         """Emit an arbitrary event dict to the UI WebSocket."""
         try:

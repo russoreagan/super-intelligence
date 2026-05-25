@@ -58,11 +58,11 @@ class SleepConsolidation:
         self._self_updater = IntegratorCell(
             name="self_updater",
             cluster="sleep",
-            model="flash-lite",
+            model="local-general",
             system_prompt=SELF_UPDATE_SYSTEM,
             topics=[],
             max_calls_per_turn=1,
-            locality="either",
+            locality="local",
             sensitivity="sensitive",
         )
         self._self_updater.set_router(router)
@@ -70,11 +70,11 @@ class SleepConsolidation:
         self._synthesizer = IntegratorCell(
             name="episode_synthesizer",
             cluster="sleep",
-            model="flash-lite",
+            model="local-general",
             system_prompt=EPISODE_SYNTHESIS_SYSTEM,
             topics=[],
             max_calls_per_turn=1,
-            locality="either",
+            locality="local",
             sensitivity="sensitive",
         )
         self._synthesizer.set_router(router)

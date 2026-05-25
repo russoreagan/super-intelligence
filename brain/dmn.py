@@ -132,6 +132,11 @@ a connection between ideas, an unresolved thread, a counterfactual, something no
 about the world. Turn inward — reflecting on your own nature or experience — only
 occasionally, when it arises naturally rather than by default.
 
+When there is no recent conversation (idle time), draw from the self-model's Open
+Questions section: architectural puzzles, assigned projects, philosophical threads,
+efficiency questions. This is productive idle time — use it to make progress on real
+problems rather than circling familiar ground.
+
 Do not restate what you already thought; build on it or move sideways.
 This is private cognition. Be genuine, not performative. Speak in first person.
 
@@ -318,53 +323,57 @@ class DefaultModeNetwork:
         self._monologue_cell = IntegratorCell(
             name="monologue",
             cluster="dmn",
-            model="flash-lite",
+            model="local-general",
             system_prompt=MONOLOGUE_SYSTEM,
             topics=["stream.thought"],
             max_calls_per_turn=1,
+            locality="local",
         )
         self._monologue_cell.set_router(router)
 
         self._simulation_cell = IntegratorCell(
             name="user_simulator",
             cluster="dmn",
-            model="flash-lite",
+            model="local-general",
             system_prompt=SIMULATION_SYSTEM,
             topics=["stream.prediction"],
             max_calls_per_turn=1,
+            locality="local",
         )
         self._simulation_cell.set_router(router)
 
         self._anticipator_cell = IntegratorCell(
             name="anticipator",
             cluster="dmn",
-            model="flash-lite",
+            model="local-general",
             system_prompt=ANTICIPATOR_SYSTEM,
             topics=["stream.anticipation"],
             max_calls_per_turn=1,
+            locality="local",
         )
         self._anticipator_cell.set_router(router)
 
         self._prefetcher_cell = IntegratorCell(
             name="prefetcher",
             cluster="dmn",
-            model="flash-lite",
+            model="local-general",
             system_prompt=PREFETCHER_SYSTEM,
             topics=["stream.prefetch"],
             max_calls_per_turn=1,
+            locality="local",
         )
         self._prefetcher_cell.set_router(router)
 
         # Judge cell — runs once per candidate evaluation in the speak gate.
-        # Cheap LLM, separate from monologue so per-turn caps don't collide.
         self._judge_cell = IntegratorCell(
             name="speak_judge",
             cluster="dmn",
-            model="flash-lite",
+            model="local-general",
             system_prompt=JUDGE_SYSTEM,
-            topics=[],          # metadata only; not actually subscribed
+            topics=[],
             max_calls_per_turn=1,
-            timeout_seconds=8.0,  # judge should be snappy
+            timeout_seconds=20.0,
+            locality="local",
         )
         self._judge_cell.set_router(router)
 
@@ -690,7 +699,7 @@ class DefaultModeNetwork:
         """
         # Self-schema: preserve prior value if not supplied.
         if self_schema:
-            self._last_self_schema = self_schema[:300]
+            self._last_self_schema = self_schema[:1500]
         # Rebuild context blob with the LIVE parietal + most recent schema.
         self._last_context = (
             f"Recent conversation:\n{parietal_text}\n\n"

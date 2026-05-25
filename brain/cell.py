@@ -61,6 +61,12 @@ class IntegratorCell:
         except Exception:
             pass
         try:
+            from brain.ui.emitter import emitter as _ui_emitter
+            asyncio.create_task(_ui_emitter.emit_cell(
+                self.cluster, self.name, self.model, self._turn_id))
+        except Exception:
+            pass
+        try:
             result = await asyncio.wait_for(
                 self._router.call(
                     self.model, self.system_prompt, messages,

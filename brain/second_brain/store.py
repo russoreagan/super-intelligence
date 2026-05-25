@@ -254,9 +254,16 @@ class SchemaStore:
         return hits
 
     def load_core_context(self) -> dict[str, str]:
-        """Pre-load self.md + user.md at session boot (extended mind — reliably needed)."""
+        """Pre-load self.md + user.md + open_questions.md at session boot."""
+        self_content = self.read("self.md")
+        oq_content = self.read("open_questions.md")
+        # Combine into a single self key so the DMN sees open questions alongside
+        # the self-model without requiring changes to update_context() call sites.
+        combined_self = self_content
+        if oq_content:
+            combined_self = f"{self_content}\n\n{oq_content}"
         return {
-            "self": self.read("self.md"),
+            "self": combined_self,
             "user": self.read("user.md"),
         }
 

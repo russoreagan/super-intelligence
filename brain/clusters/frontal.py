@@ -233,14 +233,14 @@ class FrontalCluster:
 
         # v0.2
         self._reframer = IntegratorCell(
-            name="stoic_reframer", cluster=CLUSTER, model="flash-lite",
+            name="stoic_reframer", cluster=CLUSTER, model="haiku",
             system_prompt=REFRAMER_SYSTEM, topics=[],
             max_calls_per_turn=1, locality="cloud", max_tokens=512,
         )
         self._reframer.set_router(router)
 
         self._empathy_critic = IntegratorCell(
-            name="empathy_critic", cluster=CLUSTER, model="flash-lite",
+            name="empathy_critic", cluster=CLUSTER, model="haiku",
             system_prompt=EMPATHY_CRITIC_SYSTEM, topics=[],
             max_calls_per_turn=1, locality="cloud", max_tokens=256,
         )

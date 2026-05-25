@@ -103,11 +103,10 @@ class MetacognitionCell:
         self._reflector = IntegratorCell(
             name="self_reflector",
             cluster="metacognition",
-            model="flash-lite",
+            model="haiku",
             system_prompt=SELF_REFLECTION_SYSTEM,
             topics=["meta.reflection"],
             max_calls_per_turn=1,
-            locality="local",
             sensitivity="sensitive",
         )
         self._reflector.set_router(router)

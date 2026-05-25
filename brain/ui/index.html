@@ -2541,6 +2541,95 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
   .nm-node[data-id="hypothalamus"] .nm-node-mods { display: none; }
 }
 
+/* ── Node expand chevron ── */
+.nm-node-chevron {
+  display: none;
+  width: 10px; height: 10px;
+  flex-shrink: 0;
+  color: var(--fg-faint);
+  opacity: 0.55;
+  transition: transform 200ms ease, opacity 200ms ease, color 200ms ease;
+}
+.nm-node.has-cells .nm-node-chevron { display: block; }
+.nm-node.has-cells:hover .nm-node-chevron { opacity: 1; color: var(--lobe); }
+.nm-node.expanded .nm-node-chevron {
+  transform: rotate(180deg);
+  opacity: 1;
+  color: var(--lobe);
+}
+
+/* ── Cell list within expanded node ── */
+.nm-cell-list {
+  display: none;
+  flex-direction: column;
+  gap: 1px;
+  margin-top: 5px;
+  padding-top: 5px;
+  border-top: 1px solid var(--line-faint);
+}
+.nm-node.expanded .nm-cell-list { display: flex; }
+
+.nm-cell-row {
+  display: grid;
+  grid-template-columns: 7px 1fr auto;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 3px;
+  border-radius: 3px;
+  transition: background 200ms ease;
+}
+.nm-cell-row.firing {
+  background: oklch(from var(--lobe) l c h / 0.16);
+  animation: nm-cell-pulse 1.4s ease-out both;
+}
+@keyframes nm-cell-pulse {
+  0%   { background: oklch(from var(--lobe) l c h / 0.28); }
+  100% { background: oklch(from var(--lobe) l c h / 0.16); }
+}
+
+.nm-cell-dot {
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: var(--cell-color, var(--fg-faint));
+  flex-shrink: 0;
+  transition: box-shadow 200ms ease;
+}
+.nm-cell-row.firing .nm-cell-dot {
+  box-shadow: 0 0 5px var(--cell-color, var(--fg-faint));
+}
+
+.nm-cell-name {
+  font-family: var(--mono);
+  font-size: 7.5px;
+  font-weight: 600;
+  color: var(--fg-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: color 200ms ease;
+}
+.nm-cell-row.firing .nm-cell-name { color: var(--fg); }
+
+.nm-cell-tag {
+  font-family: var(--mono);
+  font-size: 6px;
+  letter-spacing: 0.04em;
+  color: var(--fg-faint);
+  background: oklch(from var(--cell-color, var(--bg-2)) l c h / 0.14);
+  border: 1px solid oklch(from var(--cell-color, var(--bg-2)) l c h / 0.25);
+  padding: 0 3px;
+  border-radius: 2px;
+  white-space: nowrap;
+  transition: color 200ms ease, background 200ms ease;
+}
+.nm-cell-row.firing .nm-cell-tag {
+  color: var(--cell-color, var(--fg-mute));
+  background: oklch(from var(--cell-color, var(--bg-2)) l c h / 0.22);
+}
+
+/* Expanded node anchor to top so it grows downward */
+.nm-node.expanded { transform: translate(-50%, -16%); z-index: 6; }
+
 </style>
 </head>
 <body>
@@ -3703,6 +3792,10 @@ function handle(msg) {
       if (currentTurnId && msg.note !== 'done' && msg.intensity > 0) {
         pendingActivations.push({ cluster: msg.cluster, intensity: msg.intensity, note: msg.note });
       }
+      break;
+    }
+    case 'cell_activation': {
+      nmFireCell(msg.cluster, msg.cell);
       break;
     }
     case 'neuromod': {
@@ -5020,6 +5113,54 @@ const NM_EDGES = [
   ['brainstem', 'output'],
 ];
 
+// Model → display color
+const NM_MODEL_COLORS = {
+  'haiku':         'oklch(0.78 0.14 220)',
+  'flash-lite':    'oklch(0.78 0.16 145)',
+  'flash':         'oklch(0.80 0.14 175)',
+  'sonnet':        'oklch(0.72 0.13 235)',
+  'local':         'oklch(0.78 0.16 65)',
+  'local-code':    'oklch(0.76 0.18 40)',
+  'local-general': 'oklch(0.72 0.18 20)',
+};
+
+// Subprocess cells per node — defines what each lobe contains
+const NM_CELL_DEFS = {
+  frontal: [
+    { cell: 'executive',           cluster: 'frontal',       model: 'haiku',         role: 'plans response' },
+    { cell: 'drafter_A',           cluster: 'frontal',       model: 'haiku',         role: 'draft' },
+    { cell: 'drafter_B',           cluster: 'frontal',       model: 'haiku',         role: 'draft' },
+    { cell: 'drafter_C',           cluster: 'frontal',       model: 'haiku',         role: 'draft' },
+    { cell: 'critic',              cluster: 'frontal',       model: 'haiku',         role: 'quality scoring' },
+    { cell: 'stoic_reframer',      cluster: 'frontal',       model: 'haiku',         role: 'threat reframe' },
+    { cell: 'empathy_critic',      cluster: 'frontal',       model: 'haiku',         role: 'empathy check' },
+  ],
+  temporal: [
+    { cell: 'understanding_integrator', cluster: 'temporal', model: 'flash-lite',    role: 'feature extraction' },
+  ],
+  motor: [
+    { cell: 'tool_planner',        cluster: 'motor_cortex',  model: 'local-code',    role: 'tool planning' },
+  ],
+  parietal: [
+    { cell: 'self_reflector',      cluster: 'metacognition', model: 'haiku',         role: 'self-awareness' },
+  ],
+  brainstem: [
+    { cell: 'monologue',           cluster: 'dmn',           model: 'local-general', role: 'inner voice' },
+    { cell: 'user_simulator',      cluster: 'dmn',           model: 'local-general', role: 'input prediction' },
+    { cell: 'anticipator',         cluster: 'dmn',           model: 'local-general', role: 'response prep' },
+    { cell: 'prefetcher',          cluster: 'dmn',           model: 'local-general', role: 'memory prefetch' },
+    { cell: 'speak_judge',         cluster: 'dmn',           model: 'local-general', role: 'proactive speech' },
+    { cell: 'self_updater',        cluster: 'sleep',         model: 'local-general', role: 'self-model update' },
+    { cell: 'episode_synthesizer', cluster: 'sleep',         model: 'local-general', role: 'episode synth' },
+  ],
+};
+
+// Reverse lookup: "cluster/cell" → nodeId
+const _nmCellToNode = {};
+Object.entries(NM_CELL_DEFS).forEach(([nodeId, cells]) => {
+  cells.forEach(c => { _nmCellToNode[c.cluster + '/' + c.cell] = nodeId; });
+});
+
 let _nmReady = false;
 const _nmLastFire = new Map();           // regionId → ts (ms)
 const _nmInTurn   = { active: false };
@@ -5040,6 +5181,7 @@ function _nmPathD(A, B) {
 }
 
 function nmInit() {
+  if (_nmReady) return;
   const svg   = document.getElementById('nm-svg');
   const nodes = document.getElementById('nm-nodes');
   if (!svg || !nodes) return;
@@ -5080,14 +5222,27 @@ function nmInit() {
       el.style.left = n.x + '%';
       el.style.top  = n.y + '%';
       el.style.setProperty('--lobe', cfg.color);
+      const cellDefs = NM_CELL_DEFS[n.region] || [];
+      const hasCells = cellDefs.length > 0;
+      if (hasCells) el.classList.add('has-cells');
       el.innerHTML = `
         <div class="nm-node-head">
           <span class="nm-node-init">${cfg.initial}</span>
           <span class="nm-node-name">${cfg.label}</span>
           <span class="nm-node-dot"></span>
+          <svg class="nm-node-chevron" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="2,3 5,7 8,3"/></svg>
         </div>
         <div class="nm-node-role">${cfg.role}</div>
-        <div class="nm-node-meter"><div class="nm-node-meter-fill"></div></div>`;
+        <div class="nm-node-meter"><div class="nm-node-meter-fill"></div></div>
+        ${hasCells ? `<div class="nm-cell-list">${cellDefs.map(c => {
+          const color = NM_MODEL_COLORS[c.model] || 'oklch(0.55 0.05 250)';
+          const tag   = c.model.replace('local-general','32B').replace('local-code','14B').replace('local','7B');
+          return `<div class="nm-cell-row" data-cell="${c.cell}" data-cluster="${c.cluster}" style="--cell-color:${color}">
+            <span class="nm-cell-dot"></span>
+            <span class="nm-cell-name">${c.cell.replace(/_/g,' ')}</span>
+            <span class="nm-cell-tag">${tag}</span>
+          </div>`;
+        }).join('')}</div>` : ''}`;
 
       // Hypothalamus carries live neuromodulator bars — anatomically correct,
       // and avoids a floating overlay that would collide with other nodes.
@@ -5103,8 +5258,12 @@ function nmInit() {
         el.appendChild(mods);
       }
 
-      el.addEventListener('click', () => {
-        if (typeof renderRegionDetail === 'function') renderRegionDetail(n.region);
+      el.addEventListener('click', (e) => {
+        if (hasCells) {
+          el.classList.toggle('expanded');
+        } else {
+          if (typeof renderRegionDetail === 'function') renderRegionDetail(n.region);
+        }
       });
       nodes.appendChild(el);
     }
@@ -5187,6 +5346,21 @@ function nmActivate(regionId, intensity) {
   }
 
   _nmLastFire.set(regionId, now);
+}
+
+const _nmCellTimers = new Map();
+function nmFireCell(cluster, cell) {
+  if (!_nmReady) return;
+  const nodeId = _nmCellToNode[cluster + '/' + cell];
+  if (!nodeId) return;
+  const row = document.querySelector(`#nm-node-${nodeId} .nm-cell-row[data-cell="${cell}"][data-cluster="${cluster}"]`);
+  if (!row) return;
+  row.classList.remove('firing');
+  void row.getBoundingClientRect();
+  row.classList.add('firing');
+  const key = cluster + '/' + cell;
+  if (_nmCellTimers.has(key)) clearTimeout(_nmCellTimers.get(key));
+  _nmCellTimers.set(key, setTimeout(() => row.classList.remove('firing'), 2200));
 }
 
 function nmOnTurnStart() {
