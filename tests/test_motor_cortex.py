@@ -1027,3 +1027,331 @@ class TestMotorSwitchModulation:
         # High NE should lower the fallback_reporter threshold (alarm system).
         assert motor._fallback_reporter.effective_threshold({"NE": 1.0}) < \
                motor._fallback_reporter.effective_threshold({"NE": 0.0})
+
+
+# ---------------------------------------------------------------------------
+# MotorCortexCluster — job budget (chemistry-modulated)
+# ---------------------------------------------------------------------------
+
+class TestEffectiveJobBudget:
+    def test_neutral_chemistry_returns_twelve(self, tmp_path):
+        motor, _ = _make_motor(tmp_path)
+        assert motor._effective_job_budget({}) == 12
+        assert motor._effective_job_budget({"DA": 0.5, "CORT": 0.5}) == 12
+
+    def test_high_da_raises_budget(self, tmp_path):
+        motor, _ = _make_motor(tmp_path)
+        assert motor._effective_job_budget({"DA": 1.0, "CORT": 0.5}) > 12
+
+    def test_high_cort_lowers_budget(self, tmp_path):
+        motor, _ = _make_motor(tmp_path)
+        assert motor._effective_job_budget({"DA": 0.5, "CORT": 1.0}) < 12
+
+    def test_extreme_chemistry_clamped_to_bounds(self, tmp_path):
+        motor, _ = _make_motor(tmp_path)
+        high = motor._effective_job_budget({"DA": 1.0, "CORT": 0.0})
+        low = motor._effective_job_budget({"DA": 0.0, "CORT": 1.0})
+        assert 6 <= low <= 20
+        assert 6 <= high <= 20
+
+    def test_job_budget_higher_than_turn_budget(self, tmp_path):
+        motor, _ = _make_motor(tmp_path)
+        neutral = {"DA": 0.5, "CORT": 0.5}
+        assert motor._effective_job_budget(neutral) > motor._effective_budget(neutral)
+
+
+# ---------------------------------------------------------------------------
+# MotorCortexCluster — chemistry description
+# ---------------------------------------------------------------------------
+
+class TestChemDescription:
+    def test_empty_returns_balanced(self, tmp_path):
+        motor, _ = _make_motor(tmp_path)
+        assert motor._chem_description({}) == "balanced"
+
+    def test_neutral_returns_balanced(self, tmp_path):
+        motor, _ = _make_motor(tmp_path)
+        assert motor._chem_description({"DA": 0.5, "CORT": 0.5}) == "balanced"
+
+    def test_high_cort_mentions_stress(self, tmp_path):
+        motor, _ = _make_motor(tmp_path)
+        desc = motor._chem_description({"CORT": 0.9})
+        assert "stress" in desc.lower() or "cautious" in desc.lower()
+
+    def test_high_da_mentions_motivated(self, tmp_path):
+        motor, _ = _make_motor(tmp_path)
+        desc = motor._chem_description({"DA": 0.9})
+        assert "motivated" in desc.lower() or "thorough" in desc.lower()
+
+    def test_multiple_signals_combined(self, tmp_path):
+        motor, _ = _make_motor(tmp_path)
+        desc = motor._chem_description({"DA": 0.9, "CORT": 0.8})
+        # Both signals should appear
+        assert len(desc) > 10  # not just "balanced"
+
+
+# ---------------------------------------------------------------------------
+# MotorCortexCluster — lobe bridge dispatch
+# ---------------------------------------------------------------------------
+
+class TestDispatchLobe:
+    def _make_bridge(self, result: str = "bridge result"):
+        from brain.clusters.lobe_bridge import LobeBridge
+        bridge = LobeBridge()
+
+        async def _handler(**kwargs) -> str:
+            return result
+
+        bridge.register("recall_memory", _handler)
+        bridge.register("analyze_image", _handler)
+        return bridge
+
+    async def test_recall_memory_routes_through_bridge(self, tmp_path):
+        motor, _ = _make_motor(tmp_path)
+        motor.set_lobe_bridge(self._make_bridge("memory result"))
+        out = await motor._dispatch_lobe(
+            "recall_memory", {"topic": "neural plasticity", "entities": []}, "t1"
+        )
+        assert out == "memory result"
+
+    async def test_analyze_image_routes_through_bridge(self, tmp_path):
+        motor, _ = _make_motor(tmp_path)
+        motor.set_lobe_bridge(self._make_bridge("vision result"))
+        out = await motor._dispatch_lobe(
+            "analyze_image", {"path": "/tmp/img.png", "question": "what?"}, "t1"
+        )
+        assert out == "vision result"
+
+    async def test_no_bridge_returns_error(self, tmp_path):
+        motor, _ = _make_motor(tmp_path)
+        # _lobe_bridge is None by default
+        out = await motor._dispatch_lobe("recall_memory", {"topic": "x"}, "t1")
+        assert out.startswith("[error]")
+        assert "not configured" in out.lower() or "bridge" in out.lower()
+
+    async def test_unknown_lobe_tool_returns_error(self, tmp_path):
+        motor, _ = _make_motor(tmp_path)
+        motor.set_lobe_bridge(self._make_bridge())
+        out = await motor._dispatch_lobe("unknown_lobe_tool", {}, "t1")
+        assert out.startswith("[error]")
+
+
+# ---------------------------------------------------------------------------
+# MotorCortexCluster — set_lobe_bridge prompt update
+# ---------------------------------------------------------------------------
+
+class TestSetLobeBridge:
+    def test_updates_planner_prompt_with_capabilities(self, tmp_path):
+        from brain.clusters.lobe_bridge import LobeBridge
+        motor, _ = _make_motor(tmp_path)
+        bridge = LobeBridge()
+
+        async def dummy(**_kwargs) -> str:
+            return "ok"
+
+        bridge.register("recall_memory", dummy)
+        bridge.register("analyze_image", dummy)
+        motor.set_lobe_bridge(bridge)
+        assert "recall_memory" in motor._planner.system_prompt
+        assert "analyze_image" in motor._planner.system_prompt
+
+    def test_empty_bridge_uses_none_hint(self, tmp_path):
+        from brain.clusters.lobe_bridge import LobeBridge
+        motor, _ = _make_motor(tmp_path)
+        bridge = LobeBridge()
+        motor.set_lobe_bridge(bridge)
+        prompt = motor._planner.system_prompt
+        assert "No lobe capabilities" in prompt
+
+
+# ---------------------------------------------------------------------------
+# MotorCortexCluster — execute_internal_job()
+# ---------------------------------------------------------------------------
+
+class TestExecuteInternalJob:
+    """Tests for the background multi-step job executor."""
+
+    def _make_job_router(self, strategic_plan: dict, tactical_steps: list[dict]):
+        """Router that returns strategic_plan for first call, then cycles through steps."""
+        responses = [json.dumps(strategic_plan)] + [json.dumps(s) for s in tactical_steps]
+        call_count = {"n": 0}
+
+        class JobRouter:
+            _call_log: list[dict] = []
+
+            async def call(self, model_key, system_prompt, messages, **kwargs):
+                idx = call_count["n"]
+                call_count["n"] += 1
+                if idx < len(responses):
+                    return responses[idx]
+                return json.dumps({"tool": "none", "args": {}, "reason": "done"})
+
+            async def embed(self, text: str):
+                return [0.0] * 768
+
+        return JobRouter()
+
+    def _make_motor_for_job(self, tmp_path, router):
+        from brain.bus import Bus
+        from brain.clusters.motor_cortex import MotorCortexCluster
+        bus = Bus()
+        return MotorCortexCluster(bus, router, allowed_paths=[str(tmp_path)]), bus
+
+    async def test_single_step_job_reads_file(self, tmp_path):
+        """Happy path: strategic plan → one read_file step → success."""
+        f = tmp_path / "data.txt"
+        f.write_text("important content")
+
+        strategic = {
+            "steps": [{"description": "read data", "expected_tool": "read_file"}],
+            "success_criteria": "file read",
+            "complexity": "low",
+        }
+        tactical = [{"tool": "read_file", "args": {"path": str(f)}, "reason": "read"}]
+        router = self._make_job_router(strategic, tactical)
+        motor, _ = self._make_motor_for_job(tmp_path, router)
+
+        mock_emitter = MagicMock()
+        mock_emitter.emit_event = AsyncMock()
+        with patch("brain.ui.emitter.emitter", mock_emitter):
+            result = await motor.execute_internal_job("read data.txt", "t1")
+
+        assert result["success"] is True
+        assert len(result["steps"]) == 1
+        assert "important content" in result["last_output"]
+
+    async def test_budget_exhausted_marks_failure(self, tmp_path):
+        """Job stops and marks success=False when budget runs out before plan completes."""
+        strategic = {
+            "steps": [
+                {"description": "step A", "expected_tool": "read_file"},
+                {"description": "step B", "expected_tool": "read_file"},
+                {"description": "step C", "expected_tool": "read_file"},
+            ],
+            "success_criteria": "all done",
+            "complexity": "medium",
+        }
+        # Planner always returns a read_file call — budget of 1 will exhaust
+        f = tmp_path / "x.txt"
+        f.write_text("x")
+        tactical = [{"tool": "read_file", "args": {"path": str(f)}, "reason": "r"}] * 10
+        router = self._make_job_router(strategic, tactical)
+        motor, _ = self._make_motor_for_job(tmp_path, router)
+
+        mock_emitter = MagicMock()
+        mock_emitter.emit_event = AsyncMock()
+        with patch("brain.ui.emitter.emitter", mock_emitter):
+            result = await motor.execute_internal_job("do many things", "t1", budget=1)
+
+        assert result["success"] is False
+        assert result["steps_taken_count"] == 1  # stopped after 1
+
+    async def test_clarification_pauses_job(self, tmp_path):
+        """ask_user response sets clarification and stops the loop."""
+        strategic = {
+            "steps": [{"description": "need info", "expected_tool": "ask_user"}],
+            "success_criteria": "got answer",
+            "complexity": "low",
+        }
+        tactical = [{"tool": "ask_user",
+                     "args": {"question": "Which directory?"},
+                     "reason": "need path"}]
+        router = self._make_job_router(strategic, tactical)
+        motor, _ = self._make_motor_for_job(tmp_path, router)
+
+        mock_emitter = MagicMock()
+        mock_emitter.emit_event = AsyncMock()
+        with patch("brain.ui.emitter.emitter", mock_emitter):
+            result = await motor.execute_internal_job("unclear task", "t1")
+
+        assert result["clarification"] == "Which directory?"
+        assert result["success"] is False
+
+    async def test_lobe_tool_dispatched_through_bridge(self, tmp_path):
+        """recall_memory steps route through the lobe bridge, not _dispatch()."""
+        from brain.clusters.lobe_bridge import LobeBridge
+
+        strategic = {
+            "steps": [{"description": "recall context", "expected_tool": "recall_memory"}],
+            "success_criteria": "recalled",
+            "complexity": "low",
+        }
+        tactical = [{"tool": "recall_memory",
+                     "args": {"topic": "project goals", "entities": []},
+                     "reason": "need context"}]
+        router = self._make_job_router(strategic, tactical)
+        motor, _ = self._make_motor_for_job(tmp_path, router)
+
+        bridge = LobeBridge()
+        calls: list[dict] = []
+
+        async def recall_handler(*, topic, entities, turn_id, **_):
+            calls.append({"topic": topic})
+            return f"memories about {topic}"
+
+        bridge.register("recall_memory", recall_handler)
+        motor.set_lobe_bridge(bridge)
+
+        mock_emitter = MagicMock()
+        mock_emitter.emit_event = AsyncMock()
+        with patch("brain.ui.emitter.emitter", mock_emitter):
+            result = await motor.execute_internal_job("recall project goals", "t1")
+
+        assert len(calls) == 1
+        assert calls[0]["topic"] == "project goals"
+        assert "memories about" in result["last_output"]
+
+    async def test_observability_begin_end_called(self, tmp_path):
+        """begin_job / end_job are called on the obs layer when set."""
+        strategic = {
+            "steps": [{"description": "done", "expected_tool": "none"}],
+            "success_criteria": "done",
+            "complexity": "low",
+        }
+        tactical = [{"tool": "none", "args": {}, "reason": "nothing to do"}]
+        router = self._make_job_router(strategic, tactical)
+        motor, _ = self._make_motor_for_job(tmp_path, router)
+
+        mock_obs = MagicMock()
+        motor.set_observability(mock_obs)
+
+        mock_emitter = MagicMock()
+        mock_emitter.emit_event = AsyncMock()
+        with patch("brain.ui.emitter.emitter", mock_emitter):
+            await motor.execute_internal_job("simple task", "t1")
+
+        mock_obs.begin_job.assert_called_once()
+        call_kwargs = mock_obs.begin_job.call_args
+        assert "simple task" in str(call_kwargs)
+
+        mock_obs.end_job.assert_called_once()
+        end_kwargs = mock_obs.end_job.call_args[1]
+        assert "success" in end_kwargs
+        assert "steps_completed" in end_kwargs
+        assert "steps_planned" in end_kwargs
+
+    async def test_chem_modulated_budget_applied(self, tmp_path):
+        """High CORT reduces the job budget relative to neutral chemistry."""
+        motor, _ = _make_motor(tmp_path)
+        neutral_budget = motor._effective_job_budget({"DA": 0.5, "CORT": 0.5})
+        stressed_budget = motor._effective_job_budget({"DA": 0.5, "CORT": 1.0})
+        assert stressed_budget < neutral_budget
+
+    async def test_no_obs_does_not_crash(self, tmp_path):
+        """Job runs normally when observability is not configured."""
+        strategic = {
+            "steps": [{"description": "task", "expected_tool": "none"}],
+            "success_criteria": "done",
+            "complexity": "low",
+        }
+        tactical = [{"tool": "none", "args": {}, "reason": "trivial"}]
+        router = self._make_job_router(strategic, tactical)
+        motor, _ = self._make_motor_for_job(tmp_path, router)
+        # _obs is None by default
+
+        mock_emitter = MagicMock()
+        mock_emitter.emit_event = AsyncMock()
+        with patch("brain.ui.emitter.emitter", mock_emitter):
+            result = await motor.execute_internal_job("trivial task", "t1")
+
+        assert "job_id" in result  # completed without crashing

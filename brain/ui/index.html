@@ -379,6 +379,7 @@ input, select, textarea { font: inherit; color: inherit; background: none; borde
 .left-tab-content {
   flex: 1;
   min-height: 0;
+  overflow-x: hidden;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -610,6 +611,33 @@ input, select, textarea { font: inherit; color: inherit; background: none; borde
   background: var(--bg-1);
   animation: fadein 240ms ease both;
 }
+.thought-item--latest {
+  color: var(--fg-dim);
+  font-weight: 500;
+}
+.thought-chem {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+  font-style: normal;
+}
+.thought-chem-pill {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  padding: 1px 5px;
+  border-radius: 3px;
+  opacity: 0.75;
+}
+.thought-chem-pill.pos {
+  color: oklch(0.72 0.14 150);
+  background: oklch(0.72 0.14 150 / 0.10);
+}
+.thought-chem-pill.neg {
+  color: oklch(0.68 0.14 25);
+  background: oklch(0.68 0.14 25 / 0.10);
+}
 .thought-ts {
   display: block;
   font-family: var(--mono);
@@ -633,15 +661,15 @@ input, select, textarea { font: inherit; color: inherit; background: none; borde
   align-items: center;
   justify-content: space-between;
   font-family: var(--mono);
-  font-size: 9.5px;
-  letter-spacing: 0.20em;
+  font-size: 11px;
+  letter-spacing: 0.18em;
   color: var(--fg-mute);
   text-transform: uppercase;
   margin-bottom: 12px;
 }
 .section-label .count {
   font-family: var(--mono);
-  font-size: 9px;
+  font-size: 10px;
   color: var(--fg-faint);
   letter-spacing: 0.14em;
 }
@@ -700,11 +728,14 @@ input, select, textarea { font: inherit; color: inherit; background: none; borde
   font-size: 12.5px;
   font-weight: 600;
   letter-spacing: 0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .region-card .role {
   display: block;
   font-family: var(--mono);
-  font-size: 9.5px;
+  font-size: 10.5px;
   color: var(--fg-mute);
   letter-spacing: 0.06em;
   margin-top: 1px;
@@ -714,8 +745,8 @@ input, select, textarea { font: inherit; color: inherit; background: none; borde
 }
 .region-card .status {
   font-family: var(--mono);
-  font-size: 9px;
-  letter-spacing: 0.16em;
+  font-size: 10px;
+  letter-spacing: 0.14em;
   color: var(--fg-faint);
 }
 .region-card.active .status { color: var(--lobe); }
@@ -732,7 +763,7 @@ input, select, textarea { font: inherit; color: inherit; background: none; borde
 }
 .region-card.compact .swatch::after { inset: 3px; border-radius: 2px; }
 .region-card.compact .name { font-size: 11.5px; font-weight: 500; }
-.region-card.compact .role { font-size: 9px; }
+.region-card.compact .role { font-size: 10px; }
 
 /* ---- Region detail popup ---- */
 .region-card { cursor: pointer; }
@@ -839,7 +870,7 @@ input, select, textarea { font: inherit; color: inherit; background: none; borde
 }
 .nm-head .nm-num {
   color: var(--fg-faint);
-  font-size: 9.5px;
+  font-size: 10.5px;
 }
 .nm-track {
   height: 4px;
@@ -947,7 +978,10 @@ input, select, textarea { font: inherit; color: inherit; background: none; borde
   max-width: 100%;
   max-height: 100%;
   margin: 0 auto;
-  filter: drop-shadow(0 22px 44px oklch(0 0 0 / 0.55));
+  /* Drop-shadow on the figure forces it into its own filter-pipeline layer
+     and competes with the lobe overlay drop-shadows. The visual weight comes
+     from the radial mood gradient + the stage's circular reticle, so this is
+     safe to skip. */
 }
 .brain-figure .brain-base,
 .brain-figure .lobe-overlay {
@@ -1034,19 +1068,24 @@ input, select, textarea { font: inherit; color: inherit; background: none; borde
 }
 .lobe-overlay.active {
   opacity: 1;
+  /* Single drop-shadow instead of two stacked — the wider second halo
+     barely registered visually but doubled the filter raster cost. */
   filter:
-    drop-shadow(var(--lobe-glow) 0px 0px 22px)
-    drop-shadow(var(--lobe-glow) 0px 0px 44px)
+    drop-shadow(var(--lobe-glow) 0px 0px 32px)
     saturate(1.55)
     brightness(1.18);
+  will-change: opacity, filter;
 }
 .lobe-overlay.active.pulse {
   animation: lobe-pulse 1.6s ease-out both;
 }
 @keyframes lobe-pulse {
-  0%   { filter: drop-shadow(var(--lobe-glow) 0px 0px 0px) saturate(1) brightness(1); }
-  30%  { filter: drop-shadow(var(--lobe-glow) 0px 0px 44px) drop-shadow(var(--lobe-glow) 0px 0px 72px) saturate(1.8) brightness(1.3); }
-  100% { filter: drop-shadow(var(--lobe-glow) 0px 0px 22px) drop-shadow(var(--lobe-glow) 0px 0px 44px) saturate(1.55) brightness(1.18); }
+  /* Animate a single drop-shadow blur radius + saturate/brightness only.
+     Stacking multiple drop-shadows per keyframe was the dominant per-frame
+     cost during lobe activation. */
+  0%   { filter: drop-shadow(var(--lobe-glow) 0px 0px 0px)  saturate(1)    brightness(1); }
+  30%  { filter: drop-shadow(var(--lobe-glow) 0px 0px 56px) saturate(1.8)  brightness(1.3); }
+  100% { filter: drop-shadow(var(--lobe-glow) 0px 0px 32px) saturate(1.55) brightness(1.18); }
 }
 
 /* Subcortical structures — SVG ellipses overlaid on the inner-brain band */
@@ -1535,6 +1574,34 @@ details[open].turn-log summary::before { transform: rotate(90deg); }
   align-items: center;
   gap: 8px;
   padding: 0 2px;
+}
+#user-mood-wrap {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+#user-mood-label {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: var(--fg-faint);
+  white-space: nowrap;
+}
+#user-emotion-badge {
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  background: oklch(0.20 0.01 250 / 0.5);
+  color: var(--fg-dim);
+  border: 1px solid var(--line-soft);
+  transition: background 2s ease, color 2s ease, border-color 2s ease;
+  white-space: nowrap;
 }
 
 /* ---- Interrupt / stop-speaking button ---- */
@@ -2267,12 +2334,13 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
 .nm-edge.firing {
   stroke: var(--firing-color, oklch(0.88 0.18 220));
   opacity: 1;
-  filter:
-    drop-shadow(0 0 3px var(--firing-color, oklch(0.88 0.18 220)))
-    drop-shadow(0 0 8px var(--firing-color, oklch(0.88 0.18 220)))
-    drop-shadow(0 0 16px oklch(from var(--firing-color, oklch(0.88 0.18 220)) l c h / 0.45));
+  /* Single drop-shadow only — multiple stacked filters force per-frame raster
+     of the entire SVG region. Replaced by a halo path that sits behind the
+     firing edge for the broader glow (see ._nmFireEdge in JS). */
+  filter: drop-shadow(0 0 4px var(--firing-color, oklch(0.88 0.18 220)));
   stroke-width: 3.2;
   animation: nm-flow 1s linear infinite;
+  will-change: stroke-dashoffset;
 }
 .nm-edge.modulatory.firing {
   animation: nm-flow-mod 1s linear infinite;
@@ -2307,14 +2375,18 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
   min-width: 84px;
   max-width: 148px;
   transform: translate(-50%, -50%);
-  background: oklch(0.18 0.022 250 / 0.88);
+  /* Higher alpha replaces backdrop-filter blur — mood-bg stays visible behind
+     the nodes but they read as solid panels rather than frosted glass.
+     backdrop-filter was forcing the whole brain figure to re-rasterize every
+     frame any nm-node moved. */
+  background: oklch(0.18 0.022 250 / 0.94);
   border: 1px solid var(--line);
   border-radius: 10px;
   padding: 7px 9px 8px;
   pointer-events: auto;
   cursor: pointer;
-  backdrop-filter: blur(8px);
   transition: border-color 220ms ease, box-shadow 320ms ease, background 220ms ease, transform 220ms ease;
+  will-change: opacity, transform;
 }
 .nm-node:hover {
   border-color: var(--bg-3);
@@ -2406,6 +2478,222 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
 .nm-node.firing .nm-node-init {
   box-shadow: 0 0 10px oklch(from var(--lobe) l c h / 0.65);
 }
+
+/* --- switches: per-node breakdown of internal gates --- */
+.nm-switches {
+  margin-top: 5px;
+  padding-top: 5px;
+  border-top: 1px solid var(--line-faint);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 3px;
+  --switch-on: oklch(from var(--lobe, var(--accent)) l c h / 0.9);
+}
+.nm-switches-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  width: 100%;
+  margin-bottom: 1px;
+}
+.nm-switches-label {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--fg-faint);
+}
+.nm-switches-count {
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--fg-faint);
+  letter-spacing: 0.04em;
+}
+.nm-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 4px 1px 3px;
+  border-radius: 3px;
+  background: oklch(0.20 0.022 250 / 0.7);
+  border: 1px solid var(--line-faint);
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.02em;
+  color: var(--fg-mute);
+  line-height: 1.2;
+  white-space: nowrap;
+  cursor: help;
+  transition: background 200ms, border-color 200ms, color 200ms, box-shadow 200ms;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.nm-switch::before {
+  content: '';
+  width: 4px; height: 4px;
+  border-radius: 50%;
+  background: oklch(0.40 0.02 250);
+  flex-shrink: 0;
+  transition: background 200ms, box-shadow 200ms;
+}
+.nm-switch:hover {
+  border-color: var(--lobe, var(--accent));
+  color: var(--fg-dim);
+  background: oklch(0.22 0.024 250 / 0.85);
+}
+.nm-switch.inhibitory {
+  border-style: dashed;
+  border-color: oklch(from var(--danger) l c h / 0.35);
+  color: oklch(from var(--danger) l c h / 0.7);
+}
+.nm-switch.inhibitory::before {
+  background: oklch(from var(--danger) l c h / 0.6);
+}
+.nm-switch.firing {
+  background: oklch(from var(--lobe, var(--accent)) l c h / 0.18);
+  border-color: var(--lobe, var(--accent));
+  border-style: solid;
+  color: oklch(0.97 0.02 250);
+  box-shadow:
+    0 0 0 1px oklch(from var(--lobe, var(--accent)) l c h / 0.4),
+    0 0 8px oklch(from var(--lobe, var(--accent)) l c h / 0.55);
+  animation: nm-switch-pulse 0.9s ease-out;
+}
+.nm-switch.firing::before {
+  background: var(--lobe, var(--accent));
+  box-shadow: 0 0 6px var(--lobe, var(--accent));
+}
+.nm-switch.inhibitory.firing {
+  background: oklch(from var(--danger) l c h / 0.22);
+  border-color: var(--danger);
+  color: oklch(0.95 0.10 25);
+  box-shadow:
+    0 0 0 1px oklch(from var(--danger) l c h / 0.5),
+    0 0 8px oklch(from var(--danger) l c h / 0.55);
+}
+.nm-switch.inhibitory.firing::before {
+  background: var(--danger);
+  box-shadow: 0 0 6px var(--danger);
+}
+@keyframes nm-switch-pulse {
+  0%   { transform: scale(1); }
+  35%  { transform: scale(1.08); }
+  100% { transform: scale(1); }
+}
+
+/* Compact mode (toggle off): show only dots for each switch */
+.nm-wrap.switches-compact .nm-switch {
+  width: 8px; height: 8px;
+  padding: 0;
+  gap: 0;
+  border-radius: 50%;
+  background: oklch(0.40 0.02 250);
+  border: 1px solid transparent;
+}
+.nm-wrap.switches-compact .nm-switch::before { display: none; }
+.nm-wrap.switches-compact .nm-switch-label { display: none; }
+.nm-wrap.switches-compact .nm-switch.inhibitory {
+  background: transparent;
+  border-color: oklch(from var(--danger) l c h / 0.6);
+  border-style: dashed;
+}
+.nm-wrap.switches-compact .nm-switch.firing {
+  background: var(--lobe, var(--accent));
+  box-shadow: 0 0 6px var(--lobe, var(--accent));
+  border-color: transparent;
+}
+.nm-wrap.switches-compact .nm-switch.inhibitory.firing {
+  background: var(--danger);
+  border-color: transparent;
+  box-shadow: 0 0 6px var(--danger);
+}
+.nm-wrap.switches-compact .nm-switches { gap: 4px; }
+.nm-wrap.switches-compact .nm-switches-count { display: none; }
+
+/* Switch list inside region-detail popup */
+.rd-switches {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.rd-switch-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px;
+  align-items: baseline;
+  padding: 4px 6px;
+  border-radius: 4px;
+  background: oklch(0.18 0.02 250 / 0.6);
+  border-left: 2px solid oklch(from var(--lobe) l c h / 0.5);
+  font-size: 10.5px;
+  line-height: 1.4;
+}
+.rd-switch-row.inhibitory {
+  border-left-color: oklch(from var(--danger) l c h / 0.7);
+}
+.rd-switch-name {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--fg-dim);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+.rd-switch-row.inhibitory .rd-switch-name { color: oklch(0.85 0.14 25); }
+.rd-switch-name::before {
+  content: '';
+  display: inline-block;
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: oklch(from var(--lobe) l c h / 0.7);
+  margin-right: 6px;
+  vertical-align: middle;
+}
+.rd-switch-row.inhibitory .rd-switch-name::before {
+  background: var(--danger);
+}
+.rd-switch-desc {
+  color: var(--fg-mute);
+  font-size: 10.5px;
+}
+
+/* Switches toggle in the neural-map legend */
+.nm-legend-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px 3px 5px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: oklch(0.16 0.018 250 / 0.8);
+  color: var(--fg-mute);
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  cursor: pointer;
+  pointer-events: auto;
+  transition: background 180ms, color 180ms, border-color 180ms;
+  margin-left: 8px;
+}
+.nm-legend-toggle:hover { background: var(--bg-2); color: var(--fg-dim); }
+.nm-legend-toggle .lt-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--fg-faint);
+  transition: background 180ms, box-shadow 180ms;
+}
+.nm-legend-toggle.active {
+  color: var(--accent);
+  border-color: oklch(0.78 0.14 220 / 0.5);
+  background: oklch(0.78 0.14 220 / 0.10);
+}
+.nm-legend-toggle.active .lt-dot {
+  background: var(--accent);
+  box-shadow: 0 0 6px var(--accent);
+}
+
 @keyframes nm-node-pulse {
   0%   {
     box-shadow: 0 0 0 1px var(--lobe), 0 0 0 0 oklch(from var(--lobe) l c h / 0.6);
@@ -2453,8 +2741,8 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
 }
 .nm-io-label {
   font-family: var(--mono);
-  font-size: 7.5px;
-  letter-spacing: 0.14em;
+  font-size: 9px;
+  letter-spacing: 0.12em;
   color: var(--fg-mute);
   text-transform: uppercase;
 }
@@ -2491,7 +2779,7 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
   transition: background 240ms ease;
 }
 .nm-mod-row-name {
-  font-size: 7.5px;
+  font-size: 9px;
   font-weight: 700;
   letter-spacing: 0.04em;
   color: var(--fg-dim);
@@ -2509,7 +2797,7 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
   transition: width 600ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 .nm-mod-row-val {
-  font-size: 7px;
+  font-size: 8.5px;
   font-variant-numeric: tabular-nums;
   color: var(--fg-mute);
   text-align: right;
@@ -2600,7 +2888,7 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
 
 .nm-trigger {
   font-family: var(--mono);
-  font-size: 8.5px;
+  font-size: 9.5px;
   letter-spacing: 0.10em;
   text-transform: uppercase;
   color: var(--fg-faint);
@@ -2621,7 +2909,7 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
 
 /* Mini delta inside hypothalamus map node */
 .nm-delta-mini {
-  font-size: 6.5px;
+  font-size: 8px;
   padding: 0 3px;
   margin-left: 3px;
   border-radius: 2px;
@@ -2684,10 +2972,9 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
   align-items: center;
   gap: 16px;
   padding: 8px 16px;
-  background: oklch(0.14 0.020 250 / 0.78);
+  background: oklch(0.14 0.020 250 / 0.92);
   border: 1px solid var(--line-soft);
   border-radius: 999px;
-  backdrop-filter: blur(8px);
   z-index: 5;
   pointer-events: none;
 }
@@ -2729,21 +3016,21 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
   .nm-node-head { margin-bottom: 0; gap: 5px; }
   .nm-io { width: 56px; height: 56px; }
   .nm-io-glyph { width: 13px; height: 13px; }
-  .nm-io-label { font-size: 7px; letter-spacing: 0.1em; }
+  .nm-io-label { font-size: 8.5px; letter-spacing: 0.1em; }
   .nm-meta { display: none; }
   .nm-legend { bottom: 8px; padding: 5px 11px; gap: 11px; }
-  .nm-legend-key { font-size: 8px; }
+  .nm-legend-key { font-size: 9px; }
   .nm-legend-line { width: 16px; }
   .nm-mod-row { grid-template-columns: 22px 1fr 18px; gap: 3px; }
-  .nm-mod-row-name { font-size: 6.5px; }
-  .nm-mod-row-val { font-size: 6.5px; }
+  .nm-mod-row-name { font-size: 8px; }
+  .nm-mod-row-val { font-size: 8px; }
 }
 
 @container (max-width: 460px) {
   .nm-node { min-width: 52px; padding: 4px 5px 5px; }
   .nm-node-name { font-size: 8.5px; }
   .nm-io { width: 48px; height: 48px; }
-  .nm-io-label { font-size: 6.5px; }
+  .nm-io-label { font-size: 8px; }
   .nm-node[data-id="hypothalamus"] .nm-node-mods { display: none; }
 }
 
@@ -3088,7 +3375,11 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
             <div class="nm-legend">
               <span class="nm-legend-key"><span class="nm-legend-line"></span>Excitatory</span>
               <span class="nm-legend-key dim"><span class="nm-legend-line modulatory"></span>Modulatory</span>
+              <span class="nm-legend-key"><span class="nm-legend-dot" style="background:var(--danger);box-shadow:0 0 6px var(--danger);"></span>Inhibit ⊘</span>
               <span class="nm-legend-key"><span class="nm-legend-dot"></span>Active node</span>
+              <button class="nm-legend-toggle active" id="nm-switches-toggle" type="button" title="Show / hide switch names">
+                <span class="lt-dot"></span>Switch names
+              </button>
             </div>
           </div>
         </div>
@@ -3173,6 +3464,10 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
                   Text
                 </span>
               </button>
+              <div id="user-mood-wrap">
+                <span id="user-mood-label">you seem</span>
+                <span id="user-emotion-badge">neutral</span>
+              </div>
             </div>
 
             <div class="input-wrap">
@@ -3682,6 +3977,18 @@ const _rdPopup = (() => {
 function renderRegionDetail(regionId) {
   const cfg  = REGIONS[regionId];
   const hist = regionHistory[regionId] || [];
+  const switches = (typeof NM_SWITCHES !== 'undefined' && NM_SWITCHES[regionId]) || [];
+  const switchesHtml = switches.length === 0 ? '' : `
+      <div class="rd-section">
+        <div class="rd-section-label">Switches · ${switches.length}</div>
+        <div class="rd-switches">
+          ${switches.map(s => `
+            <div class="rd-switch-row ${s.kind === 'inhibitory' ? 'inhibitory' : ''}">
+              <span class="rd-switch-name">${s.name}${s.kind === 'inhibitory' ? ' ⊘' : ''}</span>
+              <span class="rd-switch-desc">${s.desc}</span>
+            </div>`).join('')}
+        </div>
+      </div>`;
   const histHtml = hist.length === 0
     ? `<div class="rd-empty">No activations yet this session</div>`
     : hist.map(h => {
@@ -3708,6 +4015,7 @@ function renderRegionDetail(regionId) {
         <div class="rd-section-label">In this system</div>
         <div class="rd-text rd-does">${cfg.does}</div>
       </div>
+      ${switchesHtml}
       <div class="rd-section">
         <div class="rd-section-label">Recent activations</div>
         <div class="rd-hist">${histHtml}</div>
@@ -3982,6 +4290,10 @@ function connect() {
     wsConnected = true;
     demoMode = false;
     document.getElementById('ws-indicator').classList.add('connected');
+    // Reset any turn state left over from a crash or restart.
+    setTyping(false);
+    document.getElementById('send-btn').disabled = false;
+    currentTurnId = null;
     const vid = document.getElementById('voice-select').value;
     if (vid) ws.send(JSON.stringify({ type: 'set_voice', voice_id: vid }));
     renderTopEdges();
@@ -4069,6 +4381,23 @@ function handle(msg) {
       setMoodBackground(msg.emotion);
       break;
     }
+    case 'user_emotion': {
+      const ubadge = document.getElementById('user-emotion-badge');
+      if (!ubadge) break;
+      ubadge.textContent = msg.emotion;
+      const USER_MOOD_MAP = {
+        stressed: 'anxious', energetic: 'enthusiasm', whisper: 'somber',
+        calm: 'content', monotone: 'flat', praising: 'grateful', polite: 'content',
+        dismissive: 'flat', impatient: 'restless', insulting: 'frustrated', testing: 'curious',
+      };
+      const ukey = USER_MOOD_MAP[msg.emotion] || msg.emotion;
+      const { l: ul, c: uc, h: uh } = MOOD_BG_COLORS[ukey] || MOOD_BG_COLORS.neutral;
+      const ubadgeText = `oklch(${Math.min(ul + 0.62, 0.88)} ${Math.min(uc * 1.3, 0.20)} ${uh})`;
+      ubadge.style.background  = `oklch(${ul} ${uc} ${uh} / 0.35)`;
+      ubadge.style.color       = ubadgeText;
+      ubadge.style.borderColor = `oklch(${Math.min(ul + 0.28, 0.50)} ${uc} ${uh} / 0.6)`;
+      break;
+    }
     case 'turn_start': {
       currentTurnId = msg.turn_id || null;
       pendingActivations = [];
@@ -4116,7 +4445,7 @@ function handle(msg) {
       break;
     }
     case 'stream_thought': {
-      if (msg.thought) appendThought(msg.thought);
+      if (msg.thought) appendThought(msg.thought, msg.chem_delta || {});
       break;
     }
     case 'proactive_speech': {
@@ -4427,22 +4756,32 @@ function updateQualityBadge(badge, qs) {
   `;
 }
 
-function appendThought(text) {
+function appendThought(text, chemDelta) {
   const feed = document.getElementById('thoughts-feed');
-  // Remove the empty placeholder if present
   const empty = feed.querySelector('.log-empty');
   if (empty) empty.remove();
 
   const now = new Date();
   const ts = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   const div = document.createElement('div');
-  div.className = 'thought-item';
-  div.innerHTML = `<span class="thought-ts">${ts}</span>${text}`;
-  feed.appendChild(div);
+  const prev = feed.querySelector('.thought-item--latest');
+  if (prev) prev.classList.remove('thought-item--latest');
+  div.className = 'thought-item thought-item--latest';
 
-  // Auto-scroll — the overflow container is the parent tab panel, not the feed itself
-  const tabPanel = feed.parentElement;
-  if (tabPanel) tabPanel.scrollTop = tabPanel.scrollHeight;
+  let chemHtml = '';
+  if (chemDelta && Object.keys(chemDelta).length > 0) {
+    const pills = Object.entries(chemDelta)
+      .filter(([, v]) => Math.abs(v) >= 0.005)
+      .map(([ch, v]) => {
+        const cls = v > 0 ? 'pos' : 'neg';
+        const sign = v > 0 ? '+' : '';
+        return `<span class="thought-chem-pill ${cls}">${ch} ${sign}${v.toFixed(2)}</span>`;
+      }).join('');
+    if (pills) chemHtml = `<div class="thought-chem">${pills}</div>`;
+  }
+
+  div.innerHTML = `<span class="thought-ts">${ts}</span>${text}${chemHtml}`;
+  feed.prepend(div);
 
   // Flash the Thoughts tab badge if it's not active
   const thoughtsTab = document.querySelector('.left-tab[data-tab="thoughts"]');
@@ -5513,6 +5852,50 @@ const NM_NODES = {
     glyph: '<path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>' },
 };
 
+// Per-region switch table — the deterministic SwitchNeuron gates inside each
+// cluster. Each entry: short label (chip), name (long), kind (excitatory or
+// inhibitory), desc (popover tooltip). Rendered as chip strips inside the
+// neural-map node cards; can be toggled to compact-dot mode via the legend.
+const NM_SWITCHES = {
+  temporal: [
+    { short: 'template',  name: 'template_match',       kind: 'normal',     desc: 'Detects trivial/templated input (greetings, acks). If it fires, the integrator is short-circuited entirely.' },
+    { short: 'length',    name: 'length_bucket',        kind: 'normal',     desc: 'Classifies input as short/medium/long; downstream clusters use the tag to set response length budget.' },
+    { short: 'salience',  name: 'salience_prefilter',   kind: 'normal',     desc: 'Low-salience input turns down integrator priority.' },
+    { short: 'self_ref',  name: 'self_reference',       kind: 'normal',     desc: 'Flags turns that are about the entity itself, boosting drafter engagement.' },
+    { short: 'epistemic', name: 'epistemic_action',     kind: 'normal',     desc: 'Flags questions/requests for information.' },
+    { short: 'integ ⊘',   name: 'integrator_inhibitor', kind: 'inhibitory', desc: 'Fires when the predictor is confident; literally suppresses the integrator from running.' },
+  ],
+  frontal: [
+    { short: 'type→',     name: 'response_type_router',     kind: 'normal',     desc: 'Reads response_type from executive output, sets downstream routing tag.' },
+    { short: 'tokens',    name: 'length_budget',            kind: 'normal',     desc: 'Translates the length tag into a token budget.' },
+    { short: 'tone',      name: 'tone_selector',            kind: 'normal',     desc: 'Reads emotional state → picks a tone directive injected into drafter prompts.' },
+    { short: 'draft_n',   name: 'drafter_count_selector',   kind: 'normal',     desc: 'Decides how many drafters fire (1–3) based on novelty/complexity.' },
+    { short: 'GABA ⊘',    name: 'GABA_inhibits_drafters',   kind: 'inhibitory', desc: 'High GABA (de-escalation state) reduces drafter count.' },
+    { short: 'sat ⊘',     name: 'satiation_inhibits_repeat', kind: 'inhibitory', desc: 'Suppresses re-running a drafter template it just used.' },
+    { short: 'DA→plan ⊘', name: 'low_DA_inhibits_planner',  kind: 'inhibitory', desc: 'Low dopamine suppresses the planning path.' },
+  ],
+  hypothalamus: [
+    { short: 'val→DA',    name: 'valence_to_DA',        kind: 'normal',     desc: 'Integrates positive sentiment signal → DA updates.' },
+    { short: 'thr→GABA',  name: 'threat_to_GABA',       kind: 'normal',     desc: 'Integrates hostility/threat → GABA updates.' },
+    { short: 'nov→ACh',   name: 'novelty_to_ACh',       kind: 'normal',     desc: 'Integrates novelty signal → ACh updates.' },
+    { short: 'arousal',   name: 'arousal_homeostat',    kind: 'normal',     desc: 'General arousal homeostasis.' },
+    { short: 'sat ⊘',     name: 'satiation_inhibitor',  kind: 'inhibitory', desc: 'Prevents runaway neuromod accumulation.' },
+  ],
+  motor: [
+    { short: 'gate',      name: 'action_gate',          kind: 'normal',     desc: 'The go/no-go gate; if it doesn’t fire, the motor loop exits immediately.' },
+    { short: 'tool',      name: 'tool_selector',        kind: 'normal',     desc: 'Routes to the right tool executor based on plan step type.' },
+    { short: 'publish',   name: 'result_publisher',     kind: 'normal',     desc: 'Fires when a step completes successfully, publishing to the bus.' },
+    { short: 'fallback',  name: 'fallback_reporter',    kind: 'normal',     desc: 'Fires on tool failure to surface the error.' },
+    { short: 'safety ⊘',  name: 'safety_check',         kind: 'inhibitory', desc: 'If the requested path is outside BRAIN_MOTOR_PATHS, vetoes execution.' },
+    { short: 'budget ⊘',  name: 'budget_check',         kind: 'inhibitory', desc: 'If the step budget is exhausted, halts the loop.' },
+  ],
+  occipital: [
+    { short: 'img?',       name: 'image_present',     kind: 'normal',     desc: 'Fires if an image is in the context.' },
+    { short: 'img_size',   name: 'image_size_router', kind: 'normal',     desc: 'Routes large vs. small images to different VLM configs.' },
+    { short: 'vis_gate ⊘', name: 'vision_needed',     kind: 'inhibitory', desc: 'Gate: if no image is present, the entire cluster is skipped.' },
+  ],
+};
+
 // [from, to, kind?] — kind: 'modulatory' for neuromodulator/inhibitory paths
 const NM_EDGES = [
   ['input', 'temporal'],
@@ -5670,6 +6053,31 @@ function nmInit() {
           </div>`;
         }).join('')}</div>` : ''}`;
 
+      // Per-region switch chips — the deterministic gates inside this cluster.
+      // Shown below the cells list (or directly under the meter for clusters
+      // with no cells). Compact-mode toggle in the legend collapses these to
+      // dots-only when the chip strip gets crowded.
+      const switches = NM_SWITCHES[n.region];
+      if (switches && switches.length) {
+        const wrap = document.createElement('div');
+        wrap.className = 'nm-switches';
+        wrap.innerHTML = switches.map((s, i) => `
+            <span class="nm-switch ${s.kind === 'inhibitory' ? 'inhibitory' : ''}"
+                  data-region="${n.region}" data-switch-idx="${i}"
+                  title="${s.name}\n${s.desc}">
+              <span class="nm-switch-label">${s.short}</span>
+            </span>`).join('');
+        // Click-through on the chip strip opens the region detail popup
+        // anchored to the left-panel brain card (same modal as clicking the
+        // cluster in the Brain tab). toggleRegionDetail handles positioning,
+        // open class, and the left-panel "expanded" highlight.
+        wrap.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          if (typeof toggleRegionDetail === 'function') toggleRegionDetail(n.region);
+        });
+        el.appendChild(wrap);
+      }
+
       // Hypothalamus carries live neuromodulator bars — anatomically correct,
       // and avoids a floating overlay that would collide with other nodes.
       if (n.region === 'hypothalamus') {
@@ -5749,11 +6157,71 @@ function _nmFireIO(id, ms) {
   setTimeout(() => el.classList.remove('firing'), ms || 1600);
 }
 
+// Fire a plausible subset of the region's switches when it activates. Higher
+// intensity → more switches fire. Inhibitory ones fire less often (they're
+// conditional gates) but when they do, they read as red. Visual only — the
+// real switch decisions happen in the backend; this is the surfacing.
+const _nmSwitchTimers = new Map();
+function _nmFireSwitches(regionId, intensity) {
+  const list = NM_SWITCHES[regionId];
+  if (!list || !list.length) return;
+  const node = document.getElementById('nm-node-' + regionId);
+  if (!node) return;
+  const inten = Math.max(0.2, Math.min(1, intensity ?? 0.6));
+  const targetCount = Math.max(1, Math.round(list.length * (0.4 + inten * 0.5)));
+  const scored = list.map((s, i) => {
+    const base = s.kind === 'inhibitory' ? 0.18 + inten * 0.20 : 0.6 + Math.random() * 0.4;
+    return { i, score: base + Math.random() * 0.3, sw: s };
+  }).sort((a, b) => b.score - a.score);
+  const picks = scored.slice(0, targetCount);
+  picks.forEach((p, k) => {
+    const delay = 60 + k * 90 + Math.random() * 60;
+    const chip = node.querySelector(`.nm-switch[data-switch-idx="${p.i}"]`);
+    if (!chip) return;
+    const key = regionId + ':' + p.i;
+    if (_nmSwitchTimers.has(key)) {
+      clearTimeout(_nmSwitchTimers.get(key).on);
+      clearTimeout(_nmSwitchTimers.get(key).off);
+    }
+    const on = setTimeout(() => {
+      chip.classList.remove('firing');
+      void chip.getBoundingClientRect();
+      chip.classList.add('firing');
+    }, delay);
+    const off = setTimeout(() => chip.classList.remove('firing'), delay + 1400);
+    _nmSwitchTimers.set(key, { on, off });
+  });
+}
+
+// Toggle: switch chip names visible (default) vs. compact dots only.
+// Persists across reloads via localStorage.
+function nmInitSwitchesToggle() {
+  const btn  = document.getElementById('nm-switches-toggle');
+  const wrap = document.getElementById('nm-wrap');
+  if (!btn || !wrap) return;
+  let on = true;
+  try {
+    const saved = localStorage.getItem('si-switches');
+    if (saved === 'compact') on = false;
+  } catch (e) {}
+  const apply = () => {
+    wrap.classList.toggle('switches-compact', !on);
+    btn.classList.toggle('active', on);
+  };
+  apply();
+  btn.addEventListener('click', () => {
+    on = !on;
+    try { localStorage.setItem('si-switches', on ? 'names' : 'compact'); } catch (e) {}
+    apply();
+  });
+}
+
 function nmActivate(regionId, intensity) {
   if (!_nmReady) return;
   if (!NM_NODES[regionId]) return;
   const now = Date.now();
   _nmFireNode(regionId, intensity);
+  _nmFireSwitches(regionId, intensity);
 
   // Light up incoming edges from any recently-active source node
   document.querySelectorAll(`#nm-svg path[data-to="${regionId}"]`).forEach(p => {
@@ -5878,6 +6346,7 @@ function nmInitDropdown() {
 }
 
 nmInit();
+nmInitSwitchesToggle();
 nmInitDropdown();
 try {
   const saved = localStorage.getItem('si-view');

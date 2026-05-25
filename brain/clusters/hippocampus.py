@@ -436,6 +436,7 @@ class HippocampusCluster:
         # Update running affection score based on how the user treated the AI this turn
         tone = features.get("user_tone_toward_ai", "neutral")
         await self._update_affection_score(tone, speaker_name=speaker_name)
+        await self._maybe_promote_familiarity(schema_file)
 
         # Build embedding vector
         vec = None
@@ -517,6 +518,49 @@ class HippocampusCluster:
             self._schema._atomic_write(SCHEMA_DIR / schema_file, content)
             logger.debug("[Memory] Affection score [%s]: %d→%d (%s, tone=%s)",
                          schema_file, current, new_score, tier_label, tone)
+
+    # Familiarity tiers by interaction count (turns with this speaker)
+    _FAMILIARITY_TIERS = [
+        (30, "close"),
+        (8,  "acquainted"),
+        (0,  "new"),
+    ]
+
+    async def _maybe_promote_familiarity(self, schema_file: str) -> None:
+        """Increment per-speaker interaction count and promote familiarity tier
+        when thresholds are crossed. Familiarity only moves forward — never back."""
+        import re
+        async with self._schema._lock:
+            content = self._schema.read(schema_file)
+            # Read or initialise interaction count
+            m_count = re.search(r"- Interactions:\s*(\d+)", content)
+            count = int(m_count.group(1)) + 1 if m_count else 1
+            # Determine new tier
+            new_tier = "new"
+            for threshold, label in self._FAMILIARITY_TIERS:
+                if count >= threshold:
+                    new_tier = label
+                    break
+            # Read current tier (don't downgrade)
+            _tier_order = {"new": 0, "acquainted": 1, "close": 2}
+            m_fam = re.search(r"- Familiarity:\s*(\w+)", content)
+            current_tier = m_fam.group(1).lower() if m_fam else "new"
+            if _tier_order.get(new_tier, 0) <= _tier_order.get(current_tier, 0):
+                new_tier = current_tier  # never downgrade
+            # Write interaction count
+            count_line = f"- Interactions: {count}"
+            if m_count:
+                content = content[:m_count.start()] + count_line + content[m_count.end():]
+            else:
+                content += f"\n{count_line}"
+            # Write familiarity tier
+            fam_line = f"- Familiarity: {new_tier} (interactions: {count})"
+            if m_fam:
+                content = content[:m_fam.start()] + fam_line + content[m_fam.end():]
+            else:
+                content += f"\n{fam_line}"
+            from brain.second_brain.store import SCHEMA_DIR
+            self._schema._atomic_write(SCHEMA_DIR / schema_file, content)
 
     def update_self_schema(self, updates: dict) -> None:
         """Write updates to self.md (called at sleep consolidation)."""

@@ -174,15 +174,15 @@ DEFAULTS: dict[str, float | int] = {
     # ── Section 14: Norepinephrine (NE) ──────────────────────────────────────
     # NE = focused alertness signal; inverted-U curve (optimal 0.20–0.55)
     # Per-turn update weights (applied before er_scale)
-    "ne_salience_weight":          0.10,   # NE gain per unit salience (alert to what matters)
-    "ne_surprise_weight":          0.08,   # NE gain per unit surprise (re-orient fast)
+    "ne_salience_weight":          0.07,   # NE gain per unit salience (alert to what matters)
+    "ne_surprise_weight":          0.05,   # NE gain per unit surprise (re-orient fast)
     "ne_hostility_weight":         0.10,   # NE gain per unit hostility (threat → vigilance)
     # Prosody / dynamics contributions
     "ne_prosody_stressed":         0.06,   # NE gain when tone_label == "stressed"
     "ne_rush_increment":           0.05,   # NE gain when pace == "rushed"
     # Inverted-U thresholds (above high → vigilant; above scatter → degraded focus)
     "ne_high_threshold":           0.55,   # NE > this → heightened vigilance modifier
-    "ne_scatter_threshold":        0.75,   # NE > this → attention narrowed, scattered
+    "ne_scatter_threshold":        0.82,   # NE > this → attention narrowed, scattered
 
     # ── Section 15: Anandamide / AEA (endocannabinoid) ───────────────────────
     # AEA = homeostatic buffer; medium-speed (decay 0.90 vs. neuromod 0.85 / hormone 0.97+)

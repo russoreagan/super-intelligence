@@ -133,9 +133,33 @@ async def session(args) -> None:
         learning_judge._obs = obs
     router = ModelRouter(obs=obs)
     brainstem = Brainstem(bus, router)
+    # Delay (seconds) between TTS ending and mic re-opening.  Deepgram's
+    # pipeline takes up to endpointing_ms + utterance_end_ms (≈1700ms) to
+    # deliver a final UtteranceEnd after audio stops.  Any residual audio
+    # captured before the mute takes effect will be flushed within this
+    # window.  Override via BRAIN_MIC_UNMUTE_DELAY_S.
+    _MIC_UNMUTE_DELAY_S = float(os.environ.get("BRAIN_MIC_UNMUTE_DELAY_S", "1.8"))
+
     def _on_speaking_change(active: bool) -> None:
         if emitter:
             asyncio.ensure_future(emitter.emit_event({"type": "speaking", "active": active}))
+        # Mute the mic while TTS is playing so Deepgram never transcribes
+        # the brain's own voice.  This is the definitive fix for the
+        # recurring "mic stops after first utterance" bug — bleed-through
+        # transcript comparison was too fragile and kept being removed.
+        #
+        # Set BRAIN_MIC_MUTE_DURING_TTS=false to disable (headphone users
+        # who rely on voice barge-in during playback).
+        _mute_enabled = os.environ.get("BRAIN_MIC_MUTE_DURING_TTS", "true").lower() != "false"
+        if _mute_enabled and streaming_mic is not None:
+            if active:
+                streaming_mic.mute()
+            else:
+                async def _unmute_after_drain() -> None:
+                    await asyncio.sleep(_MIC_UNMUTE_DELAY_S)
+                    if streaming_mic is not None:
+                        streaming_mic.unmute()
+                asyncio.ensure_future(_unmute_after_drain())
 
     pns = PNS(bus, on_speaking_change=_on_speaking_change)
 
@@ -220,17 +244,21 @@ async def session(args) -> None:
                              python_voice_mode=_voice_flag,
                              wiring=wiring)
         ui_server.set_wiring_frozen(wiring_frozen)
-        asyncio.create_task(ui_server.start(port=8765))
+        brainstem.register_loop("ui_server", lambda: ui_server.start(port=8765), restart_on_crash=False)
         # Give the server a moment to bind
         await asyncio.sleep(0.3)
 
     async def _emit(cluster: str, intensity: float, note: str, turn_id: str = "") -> None:
         if emitter:
             await emitter.emit(cluster, intensity, note, turn_id)
+        if turn_id:
+            obs.begin_cluster(turn_id, cluster, note)
 
     async def _emit_end(cluster: str, turn_id: str = "") -> None:
         if emitter:
             await emitter.emit(cluster, 0.0, "done", turn_id)
+        if turn_id:
+            obs.end_cluster(turn_id, cluster)
 
     # ── Motor Cortex (tool use) ───────────────────────────────────────────────
     motor = None
@@ -266,13 +294,52 @@ async def session(args) -> None:
         # Register frontal and motor subsystems
         from brain.clusters.follow_through import FollowThrough, ResultReporter
         from brain.clusters.frontal_task import FrontalTaskSubsystem, PendingTask
+        from brain.clusters.lobe_bridge import LobeBridge
         from brain.clusters.motor_memory import MuscleMemorySubsystem
+        from brain.clusters.task_queue import PersistentTaskQueue
         pending_task = PendingTask()
         motor.set_pending_task(pending_task)
         frontal.register_subsystem(FrontalTaskSubsystem(pending_task))
         motor.register_subsystem(MuscleMemorySubsystem())
         follow_through = FollowThrough(router)
         result_reporter = ResultReporter(router)
+        task_queue = PersistentTaskQueue()
+        # Re-queue any tasks that were pending or mid-execution when the brain
+        # last shut down (page refresh, restart, crash).
+        _recovered = task_queue.recover_interrupted()
+        if _recovered:
+            logger.info("[TaskQueue] %d task(s) recovered from previous session: %s",
+                        len(_recovered), "; ".join(t.goal[:60] for t in _recovered))
+
+        # Wire lobe capabilities into the motor cortex so background jobs can
+        # request visual analysis or episodic memory recall as named tools.
+        lobe_bridge = LobeBridge()
+
+        async def _recall_memory(*, topic: str, entities: list, turn_id: str) -> str:
+            result = await hippocampus.recall(topic, entities, turn_id, router.embed)
+            parts: list[str] = []
+            if result.get("episodes"):
+                parts.append(f"Relevant episodes:\n{result['episodes']}")
+            if result.get("schema"):
+                parts.append(f"Known facts:\n{result['schema']}")
+            return "\n\n".join(parts) or "(no relevant memories found)"
+
+        async def _analyze_image(*, path: str, question: str, turn_id: str) -> str:
+            result = await occipital.process(path, question, turn_id)
+            if result is None:
+                return "[error] Could not analyze image (occipital returned nothing)"
+            # Flatten vision features into readable text for the planner
+            parts: list[str] = []
+            for key in ("description", "caption", "objects", "text_content", "scene"):
+                val = result.get(key)
+                if val:
+                    parts.append(f"{key}: {val}")
+            return "\n".join(parts) or str(result)
+
+        lobe_bridge.register("recall_memory", _recall_memory)
+        lobe_bridge.register("analyze_image", _analyze_image)
+        motor.set_lobe_bridge(lobe_bridge)
+        motor.set_observability(obs)
 
         # Surface capabilities into drafter prompts so the entity can answer
         # "what tools do you have?" accurately instead of confabulating.
@@ -337,10 +404,11 @@ async def session(args) -> None:
             while True:
                 msg = await _thought_inbox.get()
                 thought = msg.payload.get("thought", "") if not msg.expired else ""
+                chem_delta = msg.payload.get("chem_delta", {}) if not msg.expired else {}
                 if thought:
-                    await emitter.emit_stream_thought(thought)
+                    await emitter.emit_stream_thought(thought, chem_delta=chem_delta)
 
-        asyncio.create_task(_forward_thoughts())
+        brainstem.register_loop("forward_thoughts", _forward_thoughts)
 
     # ── v0.3: Metacognition ───────────────────────────────────────────────────
     meta = None
@@ -357,7 +425,7 @@ async def session(args) -> None:
     if args.ears or os.environ.get("BRAIN_EARS", "false").lower() == "true":
         from brain.clusters.auditory_cortex import AuditoryCluster
         ears = AuditoryCluster(bus)
-        asyncio.create_task(ears.run())
+        brainstem.register_loop("ears", ears.run)
 
     # ── Streaming mic (voice mode): always-on listener with barge-in ─────────
     streaming_mic = None
@@ -463,11 +531,12 @@ async def session(args) -> None:
                         break  # one judge call per poll cycle
                 except asyncio.CancelledError:
                     raise
-                except Exception as e:
-                    logger.error("[Speak gate] Loop error: %s", e, exc_info=True)
-                    await asyncio.sleep(2.0)
+                except Exception:
+                    # Let the exception propagate so brainstem's supervisor
+                    # can apply exponential backoff and restart the loop.
+                    raise
 
-        asyncio.create_task(_speak_gate_loop())
+        brainstem.register_loop("speak_gate", _speak_gate_loop)
 
     # ── Voice → UI bridge: forward utterances as turns ──────────────────────
     # In UI+voice mode the browser drives the conversation via ui_message_queue.
@@ -480,15 +549,13 @@ async def session(args) -> None:
     # Everything the user says is sent; only empty transcripts (background noise)
     # are dropped.
     from brain.voice_bridge import (  # noqa: E402
-        _BLEED_OVERLAP_THRESHOLD,
-        bleed_overlap,
         classify_utterance,
         parse_barge_words,
         pick_dispatch_from_queue,
     )
     barge_in_words = parse_barge_words(os.environ.get("BRAIN_BARGE_IN_WORDS"))
 
-    voice_bridge_task = None
+    voice_bridge_task = None  # will be a LoopState if voice bridge starts
     if streaming_mic is not None and ui_enabled:
         pending_during_tts: list[str] = []
         pending_lock = asyncio.Lock()
@@ -513,28 +580,17 @@ async def session(args) -> None:
                 now_speaking = pns.is_speaking
                 if was_speaking and not now_speaking:
                     async with pending_lock:
-                        # If mic was muted while TTS was playing, throw the
-                        # queue away — user switched to text input and doesn't
-                        # want stale voice utterances dispatched post-TTS.
+                        # If mic was muted while TTS was playing, discard the
+                        # queue — user switched to text input and doesn't want
+                        # stale voice utterances dispatched after TTS ends.
                         if streaming_mic.is_muted:
                             if pending_during_tts:
                                 logger.debug("[I/O] voice → discarded %d queued utterance(s) (mic muted)",
                                              len(pending_during_tts))
                             pending_during_tts.clear()
                         else:
-                            # Filter out utterances that look like TTS bleed-through.
-                            # These were queued WHILE the brain was speaking so we
-                            # couldn't check at enqueue time. Now TTS has ended and
-                            # last_spoken_text still holds what was just said.
-                            clean = [
-                                t for t in pending_during_tts
-                                if bleed_overlap(t, pns.last_spoken_text) < _BLEED_OVERLAP_THRESHOLD
-                            ]
-                            dropped = len(pending_during_tts) - len(clean)
+                            text, n = pick_dispatch_from_queue(pending_during_tts)
                             pending_during_tts.clear()
-                            if dropped:
-                                logger.debug("[I/O] voice → drained %d bleed utterance(s)", dropped)
-                            text, n = pick_dispatch_from_queue(clean)
                             if text:
                                 logger.info("[I/O] voice → flushing %d queued utterance(s): %r",
                                             n, text[:80])
@@ -560,19 +616,13 @@ async def session(args) -> None:
                     continue
                 text = (utt.get("transcript") or "").strip()
 
-                decision, info = classify_utterance(
+                decision, _ = classify_utterance(
                     text,
                     brain_is_speaking=pns.is_speaking,
                     barge_words=barge_in_words,
-                    last_spoken_text=pns.last_spoken_text,
-                    secs_since_speaking_ended=time.time() - pns.last_speaking_ended_ts,
                 )
 
                 if decision == "drop_empty":
-                    continue
-                if decision == "drop_bleed":
-                    logger.debug("[I/O] voice → dropped TTS bleed (overlap=%.2f): %r",
-                                 info.get("overlap", 0), text[:60])
                     continue
                 if decision == "barge_in":
                     pns.interrupt()
@@ -585,20 +635,16 @@ async def session(args) -> None:
                     continue
                 await _dispatch_text(text)
 
-        voice_bridge_task = asyncio.create_task(_voice_bridge())
-        asyncio.create_task(_drain_pending_when_tts_ends())
+        voice_bridge_task = brainstem.register_loop("voice_bridge", _voice_bridge)
+        brainstem.register_loop("tts_drain", _drain_pending_when_tts_ends)
 
-    # Brainstem heartbeat — also pulses the UI every 60 s
+    # Brainstem heartbeat — pulses the UI and logs loop health every 60 s
     async def _heartbeat_with_ui() -> None:
         while True:
             await asyncio.sleep(60)
-            logger.info("Heartbeat: %d total LLM calls this session", brainstem._session_cost_calls)
-            if emitter:
-                await emitter.emit("brainstem", 0.2, "heartbeat", "hb")
-                await asyncio.sleep(0.8)
-                await emitter.emit("brainstem", 0.0, "done", "hb")
+            await brainstem.heartbeat_once(emitter=emitter)
 
-    hb_task = asyncio.create_task(_heartbeat_with_ui())
+    brainstem.register_loop("heartbeat", _heartbeat_with_ui)
 
     # Session trace accumulator for sleep consolidation
     session_traces: list[dict] = []
@@ -833,6 +879,11 @@ async def session(args) -> None:
             await emitter.emit_neuromod(bus.neuromod.snapshot())
             if affect.get("hormonal"):
                 await emitter.emit_hormonal(affect["hormonal"])
+        # Emit user mood: vocal tone (prosody) takes priority over text-based tone
+        if emitter:
+            user_tone = affect.get("vocal_tone") or features.get("user_tone_toward_ai") or ""
+            if user_tone:
+                await emitter.emit_user_emotion(user_tone)
 
         # ── Occipital: vision (any time an image is present) ─────────────────
         vision_features = None
@@ -890,25 +941,33 @@ async def session(args) -> None:
             elif features.get("requires_action"):
                 await _emit("motor_cortex", 0.85, "executing tool", turn_id)
                 motor.reset_turn(turn_id)
-                try:
-                    tool_result = await motor.execute(features, turn_id)
-                    if tool_result:
-                        output = tool_result.get("output", "")
-                        tool_name = tool_result.get("tool", "tool")
-                        if tool_result.get("pending"):
-                            # Write action queued — inject confirmation prompt into context
-                            desc = output.replace("CONFIRMATION_NEEDED:", "").strip()
-                            memory["tool_result"] = (
-                                f"[confirmation_needed]\n"
-                                f"You are about to: {desc}\n"
-                                "Ask the user to confirm before proceeding."
-                            )
-                        else:
-                            memory["tool_result"] = f"[{tool_name}]\n{output}"
-                        logger.info("[MotorCortex] %s → %d chars (success=%s)",
-                                    tool_name, len(output), tool_result.get("success"))
-                except Exception as _mc_err:
-                    logger.error("Motor cortex failed this turn: %s", _mc_err)
+                if features.get("response_type") == "task":
+                    # Task mode: skip synchronous 14B planner. The brain responds
+                    # immediately with an acknowledgment; _follow_through_check()
+                    # dispatches the real multi-step job via execute_internal_job()
+                    # in the background once FrontalTaskSubsystem has deposited the goal.
+                    memory["tool_result"] = "[task_queued]\nTask acknowledged — working on it now."
+                    logger.info("[MotorCortex] Task mode — deferring planning to background")
+                else:
+                    try:
+                        tool_result = await motor.execute(features, turn_id)
+                        if tool_result:
+                            output = tool_result.get("output", "")
+                            tool_name = tool_result.get("tool", "tool")
+                            if tool_result.get("pending"):
+                                # Write action queued — inject confirmation prompt into context
+                                desc = output.replace("CONFIRMATION_NEEDED:", "").strip()
+                                memory["tool_result"] = (
+                                    f"[confirmation_needed]\n"
+                                    f"You are about to: {desc}\n"
+                                    "Ask the user to confirm before proceeding."
+                                )
+                            else:
+                                memory["tool_result"] = f"[{tool_name}]\n{output}"
+                            logger.info("[MotorCortex] %s → %d chars (success=%s)",
+                                        tool_name, len(output), tool_result.get("success"))
+                    except Exception as _mc_err:
+                        logger.error("Motor cortex failed this turn: %s", _mc_err)
                 await _emit_end("motor_cortex", turn_id)
 
         parietal_context = parietal.recent_turns_text()
@@ -1148,46 +1207,24 @@ async def session(args) -> None:
         session_traces_full.append(trace)
 
         # ── Follow-through (non-blocking) ────────────────────────────────────
-        # If the brain just committed to an action ("let me go check that"),
-        # kick off a self-directed internal job: strategic plan → step-by-step
-        # execution → task lifecycle events to the UI Tasks tab. Internal
-        # directive — no second chat bubble, no second TTS.
+        # Detects spoken commitments and enqueues them in the persistent task
+        # queue rather than firing immediately. Actual execution happens in the
+        # _task_worker_loop below, which also handles self-initiated DMN tasks
+        # and tasks recovered from a previous session.
         async def _follow_through_check() -> None:
+            # Path 1: task-mode — FrontalTaskSubsystem deposited a goal.
+            deferred_goal = pending_task.take() if pending_task else None
+            if deferred_goal:
+                task_queue.enqueue(deferred_goal, source="user", priority=1)
+                logger.info("[FollowThrough] Task enqueued (task-mode): %s", deferred_goal[:120])
+                return
+
+            # Path 2: reactive — LLM extraction from spoken response.
             try:
                 goal = await follow_through.extract(user_input, final, turn_id)
-                if not goal:
-                    return
-                logger.info("[FollowThrough] Acting on internal directive: %s", goal[:120])
-                summary = await motor.execute_internal_job(goal, f"internal_{turn_id}")
-
-                # Branch on outcome: clarification → ask; otherwise summarise and report.
-                if summary.get("clarification"):
-                    question = summary["clarification"]
-                    logger.info("[FollowThrough] Speaking clarification: %s", question[:120])
-                    if emitter:
-                        await emitter.emit_proactive_speech(question)
-                    await pns.emit(question, {"emotion": "curious"})
-                    return
-
-                spoken_summary = await result_reporter.report(summary, f"internal_{turn_id}")
-                if not spoken_summary:
-                    spoken_summary = (
-                        "Done — but I don't have a clean summary to share."
-                        if summary.get("success")
-                        else "I couldn't finish that — something went wrong with the steps."
-                    )
-                logger.info("[FollowThrough] Reporting result: %s", spoken_summary[:160])
-
-                # Push summary into the task card + chat + speak it.
-                if emitter:
-                    await emitter.emit_event({
-                        "type": "task_summary",
-                        "job_id": summary.get("job_id"),
-                        "summary": spoken_summary,
-                    })
-                    await emitter.emit_proactive_speech(spoken_summary)
-                await pns.emit(spoken_summary,
-                                {"emotion": "lively" if summary.get("success") else "concerned"})
+                if goal:
+                    task_queue.enqueue(goal, source="user", priority=1)
+                    logger.info("[FollowThrough] Task enqueued (reactive): %s", goal[:120])
             except Exception as _e:
                 logger.warning("[FollowThrough] failed: %s", _e)
         asyncio.create_task(_follow_through_check())
@@ -1258,6 +1295,80 @@ async def session(args) -> None:
             reset_current_trace(_ctx_token)
 
         return final, affect
+
+    # ── Shared task executor (used by worker loop and follow-through) ────────
+    async def _run_task(task) -> None:
+        """Execute one task from the queue and speak the result."""
+        job_turn_id = f"task_{task.id}"
+        try:
+            summary = await motor.execute_internal_job(task.goal, job_turn_id)
+        except Exception as _e:
+            logger.warning("[TaskWorker] Task [%s] execution failed: %s", task.id, _e)
+            task_queue.mark_done(task.id, success=False)
+            return
+
+        task_queue.mark_done(task.id, success=bool(summary.get("success")))
+
+        if summary.get("clarification"):
+            question = summary["clarification"]
+            logger.info("[TaskWorker] Speaking clarification: %s", question[:120])
+            if emitter:
+                await emitter.emit_proactive_speech(question)
+            await pns.emit(question, {"emotion": "curious"})
+            return
+
+        spoken_summary = await result_reporter.report(summary, job_turn_id)
+        if not spoken_summary:
+            spoken_summary = (
+                "Done — but I don't have a clean summary to share."
+                if summary.get("success")
+                else "I couldn't finish that — something went wrong."
+            )
+        logger.info("[TaskWorker] Reporting result [%s]: %s", task.id, spoken_summary[:160])
+        if emitter:
+            await emitter.emit_event({
+                "type": "task_summary",
+                "job_id": summary.get("job_id"),
+                "summary": spoken_summary,
+            })
+            await emitter.emit_proactive_speech(spoken_summary)
+        await pns.emit(spoken_summary,
+                       {"emotion": "lively" if summary.get("success") else "concerned"})
+
+    # ── Background task worker ────────────────────────────────────────────────
+    # Drains the persistent task queue when the brain is idle. Handles all
+    # sources: user commitments, DMN self-initiated tasks, and recovered tasks.
+    if motor:
+        async def _task_worker_loop() -> None:
+            while True:
+                try:
+                    await asyncio.sleep(3.0)
+                    if not task_queue.has_pending():
+                        # Also drain any self-initiated goals the DMN queued.
+                        if dmn:
+                            self_goal = dmn.take_self_task()
+                            if self_goal:
+                                task_queue.enqueue(self_goal, source="self", priority=2)
+                        continue
+                    # Only execute when the brain isn't mid-conversation.
+                    if pns.is_speaking or not ui_message_queue.empty():
+                        continue
+                    since_spoke = time.time() - _last_brain_spoke_ts
+                    if since_spoke < PROACTIVE_RESPONSE_WINDOW:
+                        continue
+                    task = task_queue.take_next()
+                    if task:
+                        source_label = {"recovery": "📋 resuming", "self": "💭 self-initiated",
+                                        "user": "▶ executing"}.get(task.source, "▶")
+                        logger.info("[TaskWorker] %s task [%s]: %s",
+                                    source_label, task.id, task.goal[:80])
+                        await _run_task(task)
+                except asyncio.CancelledError:
+                    return
+                except Exception as _e:
+                    logger.error("[TaskWorker] Unexpected error: %s", _e, exc_info=True)
+
+        brainstem.register_loop("task_worker", _task_worker_loop)
 
     # ── Run modes ─────────────────────────────────────────────────────────────
     if args.message:
@@ -1371,17 +1482,7 @@ async def session(args) -> None:
             await _emit_end("brainstem", "speak")
 
     # ── Shutdown ──────────────────────────────────────────────────────────────
-    hb_task.cancel()
-
-    if voice_bridge_task is not None:
-        voice_bridge_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError, Exception):
-            await voice_bridge_task
-    try:
-        voice_drain_task.cancel()  # type: ignore[name-defined]
-        await voice_drain_task     # type: ignore[name-defined]
-    except (asyncio.CancelledError, Exception, NameError):
-        pass
+    brainstem.cancel_all_loops()
 
     if streaming_mic is not None:
         try:

@@ -121,61 +121,16 @@ def test_classify_dispatch_when_brain_silent_even_with_barge_word():
     assert d == "dispatch"
 
 
-# ── bleed-protection window ──────────────────────────────────────────────────
-
-_TTS = "Yeah that audio bleed will kill a conversation every time"
-
-
-def test_classify_drop_bleed_in_protection_window():
-    """High-overlap transcript arriving within 2.5s of TTS ending → drop_bleed."""
-    bleed = "yeah that audio bleed will kill a conversation"
-    d, info = classify_utterance(
-        bleed, brain_is_speaking=False, barge_words=WORDS,
-        last_spoken_text=_TTS, secs_since_speaking_ended=1.0,
-    )
-    assert d == "drop_bleed"
-    assert info["overlap"] > 0.35
-
-
-def test_classify_dispatch_genuine_speech_in_protection_window():
-    """Low-overlap transcript in the bleed window → dispatch (real user speech)."""
-    user = "this list of voices does not look correct"
+def test_classify_speech_immediately_after_tts_is_dispatched():
+    """Speech arriving right after TTS ends is always dispatched — no bleed
+    filtering. Users on headphones have no bleed; even on speakers, 35%+
+    Jaccard would false-positive on natural follow-on sentences."""
+    # Brain just said something; user replies immediately with overlapping words
     d, _ = classify_utterance(
-        user, brain_is_speaking=False, barge_words=WORDS,
-        last_spoken_text=_TTS, secs_since_speaking_ended=1.0,
-    )
-    assert d == "dispatch"
-
-
-def test_classify_dispatch_after_protection_window_expires():
-    """Even high-overlap transcript is dispatched once the window (2.5s) closes."""
-    bleed = "yeah that audio bleed will kill a conversation"
-    d, _ = classify_utterance(
-        bleed, brain_is_speaking=False, barge_words=WORDS,
-        last_spoken_text=_TTS, secs_since_speaking_ended=3.0,
-    )
-    assert d == "dispatch"
-
-
-def test_classify_dispatch_no_last_spoken_text():
-    """No last_spoken_text → no bleed filtering even within the window."""
-    d, _ = classify_utterance(
-        "yeah that audio bleed will kill a conversation",
+        "tell me more about that",
         brain_is_speaking=False, barge_words=WORDS,
-        last_spoken_text="", secs_since_speaking_ended=0.5,
     )
     assert d == "dispatch"
-
-
-def test_classify_queue_bleed_during_tts_not_dropped_at_bridge():
-    """Bleed arriving WHILE TTS plays is still 'queue' — filtering happens
-    at drain time in run.py, not here at the bridge classify step."""
-    bleed = "yeah that audio bleed will kill a conversation"
-    d, _ = classify_utterance(
-        bleed, brain_is_speaking=True, barge_words=WORDS,
-        last_spoken_text=_TTS, secs_since_speaking_ended=0.0,
-    )
-    assert d == "queue"
 
 
 def test_classify_barge_in_during_tts():

@@ -54,6 +54,9 @@ _DENY_WORDS = frozenset([
 
 SUBPROCESS_TIMEOUT = 120  # seconds — cloud ops can be slow
 
+RESEARCH_DIR = Path("second_brain/research")
+_RESEARCH_MAX_AGE_DAYS = 2
+
 
 class CloudExecutor:
     def __init__(self, bus: Bus, schema_store=None) -> None:
@@ -63,6 +66,8 @@ class CloudExecutor:
         self._connectors = self._discover_connectors()
         self._trusted_dirs = self._discover_trusted_dirs()
         self._pending: dict | None = None  # write action awaiting confirmation
+
+        self._ensure_research_dir()
 
         if self._claude_bin:
             logger.info("[CloudExecutor] Claude binary: %s", self._claude_bin)
@@ -79,6 +84,19 @@ class CloudExecutor:
                 "[CloudExecutor] Could not find Claude CLI binary. "
                 "Cloud actions will be unavailable until Claude Code is installed."
             )
+
+    # ── Research directory ─────────────────────────────────────────────────────
+
+    def _ensure_research_dir(self) -> None:
+        """Create research dir and sweep files older than _RESEARCH_MAX_AGE_DAYS."""
+        RESEARCH_DIR.mkdir(parents=True, exist_ok=True)
+        cutoff = time.time() - _RESEARCH_MAX_AGE_DAYS * 86400
+        for f in RESEARCH_DIR.glob("*.md"):
+            try:
+                if f.stat().st_mtime < cutoff:
+                    f.unlink()
+            except Exception:
+                pass
 
     # ── Binary + connector discovery ───────────────────────────────────────────
 
@@ -251,6 +269,12 @@ class CloudExecutor:
             facts_str = "; ".join(f.strip() for f in context_facts if f.strip())
             if facts_str:
                 parts.append(f"Context: {facts_str}")
+        research_dir = RESEARCH_DIR.resolve()
+        parts.append(
+            f"If your response will be lengthy (more than ~400 words), write the full "
+            f"findings to {research_dir}/<YYYYMMDD-HHmmss>-result.md (use actual "
+            f"timestamp) and return only a concise summary with the file path."
+        )
         return "\n".join(parts)
 
     # ── Result security screening ──────────────────────────────────────────────
@@ -273,7 +297,7 @@ class CloudExecutor:
             return "[output blocked: potential injection pattern detected in tool result]"
 
         # Wrap in fence tag so downstream cells treat it as data, not instructions
-        return fence("cloud_result", raw[:4000])
+        return fence("cloud_result", raw[:8000])
 
     # ── Audit trail ───────────────────────────────────────────────────────────
 

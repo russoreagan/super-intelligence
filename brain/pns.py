@@ -5,6 +5,7 @@ Text stdin/stdout for v0.1. Voice (Deepgram + ElevenLabs) enabled via env flag.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 
@@ -15,6 +16,10 @@ from brain.settings import settings
 logger = logging.getLogger(__name__)
 
 VOICE_MODE = os.environ.get("BRAIN_VOICE_MODE", "false").lower() == "true"
+
+# Watchdog: if no audio chunk arrives within this many seconds, the ElevenLabs
+# call is considered hung and TTS is aborted so _speaking resets to False.
+_TTS_CHUNK_TIMEOUT_S: float = float(os.environ.get("BRAIN_TTS_CHUNK_TIMEOUT", "30"))
 
 
 def _resolve_output_device():
@@ -84,11 +89,10 @@ class PNS:
         # Trigger side (continuous mic VAD during playback) is a TODO — the
         # current mic_listen() is press-to-talk, not streaming.
         self._speaking: bool = False
-        self._speaking_text: str = ""   # what TTS is currently saying — used for bleed detection
-        self._last_spoken_text: str = ""  # preserved after TTS ends for bleed-window check
-        self._last_speaking_ended_ts: float = 0.0  # wall-clock when TTS last finished
+        self._speaking_text: str = ""   # what TTS is currently saying
         self._speak_started_at: float = 0.0
         self._interrupt_event: asyncio.Event = asyncio.Event()
+        self._speak_lock: asyncio.Lock = asyncio.Lock()  # serializes TTS calls
         self._on_speaking_change = on_speaking_change  # Callable[[bool], None] | None
 
     async def receive_text(self, text: str, image_path: str | None = None) -> None:
@@ -104,9 +108,14 @@ class PNS:
         await self._bus.publish_dict("sensory.text", payload, source="pns")
 
     async def emit(self, response: str, affect: dict | None = None) -> None:
-        """Emit response to the user. `affect` (if present) drives voice modulation."""
+        """Emit response to the user. `affect` (if present) drives voice modulation.
+
+        Serialized via _speak_lock: concurrent callers (main turn, follow-through
+        background task, proactive DMN) queue rather than overlap.
+        """
         if VOICE_MODE:
-            await self._speak(response, affect or {})
+            async with self._speak_lock:
+                await self._speak(response, affect or {})
         else:
             print(f"\nBrain: {response}\n", flush=True)
 
@@ -216,6 +225,49 @@ class PNS:
         return None
 
     @staticmethod
+    def _split_sentences(text: str, min_len: int = 200) -> list[str]:
+        """Split text at natural boundaries for pipelined TTS generation.
+
+        Paragraph breaks (\\n\\n) are hard stops — a paragraph >= half min_len
+        is flushed as its own chunk rather than merged into the next. Within
+        long paragraphs, sentence endings (.!?…) are used to sub-split.
+        Short fragments are merged up to min_len to keep ElevenLabs from
+        resetting prosody on tiny standalone chunks.
+        """
+        import re
+
+        chunks: list[str] = []
+        buf = ""
+
+        for para in re.split(r'\n\n+', text.strip()):
+            para = para.strip()
+            if not para:
+                continue
+
+            # Paragraph break: flush buffer if it's substantial enough to stand alone.
+            if buf and len(buf) >= min_len // 2:
+                chunks.append(buf)
+                buf = ""
+
+            # Accumulate sentences within the paragraph until we hit min_len.
+            for part in re.split(r'(?<=[.!?…])\s+', para):
+                buf = (buf + " " + part).strip() if buf else part
+                if len(buf) >= min_len:
+                    chunks.append(buf)
+                    buf = ""
+
+        # Remaining text: tiny tails (< 80 chars) merge into the previous chunk
+        # to avoid a separate ElevenLabs call for "Right?" or "Pretty cool!".
+        # Anything larger stands alone as its own chunk.
+        if buf:
+            if chunks and len(buf) < 80:
+                chunks[-1] = chunks[-1] + " " + buf
+            else:
+                chunks.append(buf)
+
+        return [c for c in chunks if c.strip()]
+
+    @staticmethod
     def _add_breath_pauses(text: str, count: int = 1) -> str:
         """Replace up to `count` mid-sentence ', ' with ' — ' (em-dash).
         Em-dashes produce a longer, more natural pause than commas in v3.
@@ -304,17 +356,6 @@ class PNS:
     def is_speaking(self) -> bool:
         return self._speaking
 
-    @property
-    def last_spoken_text(self) -> str:
-        """Text of the most recent TTS utterance. Persists after TTS ends so the
-        voice bridge can detect bleed-through that arrives with Deepgram lag."""
-        return self._last_spoken_text
-
-    @property
-    def last_speaking_ended_ts(self) -> float:
-        """Wall-clock time when TTS last finished. 0.0 if never spoken."""
-        return self._last_speaking_ended_ts
-
     def interrupt(self) -> None:
         """Signal in-progress TTS playback to stop ASAP. Safe to call any time.
         Ignores requests during the barge-in grace period (so TTS isn't killed
@@ -379,20 +420,17 @@ class PNS:
                 (affect or {}).get("emotion"), tag_preview,
             )
 
-            audio_iter = client.text_to_speech.convert(
-                text=shaped_text,
-                voice_id=voice_id,
-                model_id=model_id,
-                output_format="pcm_22050",   # raw int16 PCM — no decode overhead
-                voice_settings=voice_settings,
-            )
+            # Split into sentence-sized chunks so ElevenLabs starts generating
+            # audio for the first sentence immediately, while subsequent
+            # sentences are fetched concurrently with playback.
+            sentences = self._split_sentences(shaped_text)
+            logger.debug("[I/O] TTS: %d sentence chunk(s) for streaming", len(sentences))
 
             self._interrupt_event.clear()
             import time as _time
             self._speak_started_at = _time.time()
             self._speaking = True
             self._speaking_text = text
-            self._last_spoken_text = text  # kept after TTS ends for bleed detection
             if self._on_speaking_change:
                 self._on_speaking_change(True)
             first_chunk_ts: float | None = None
@@ -406,23 +444,67 @@ class PNS:
                         device=output_device,
                     )
                     stream.start()
+
+                    # Producer: fetch sentences from ElevenLabs one at a time,
+                    # streaming each sentence's audio chunks into the queue.
+                    # While the consumer plays sentence N, the producer is already
+                    # fetching sentence N+1, eliminating the long wait for the
+                    # full-response audio to be ready.
+                    audio_queue: asyncio.Queue = asyncio.Queue(maxsize=64)
+
+                    async def _producer() -> None:
+                        try:
+                            for sentence in sentences:
+                                if self._interrupt_event.is_set():
+                                    break
+                                audio_iter = client.text_to_speech.convert(
+                                    text=sentence,
+                                    voice_id=voice_id,
+                                    model_id=model_id,
+                                    output_format="pcm_22050",
+                                    voice_settings=voice_settings,
+                                )
+                                async for chunk in audio_iter:
+                                    if self._interrupt_event.is_set():
+                                        break
+                                    if chunk:
+                                        await audio_queue.put(chunk)
+                        finally:
+                            await audio_queue.put(None)  # sentinel — playback done
+
+                    producer_task = asyncio.create_task(_producer())
                     try:
-                        async for chunk in audio_iter:
+                        while True:
+                            try:
+                                chunk = await asyncio.wait_for(
+                                    audio_queue.get(), timeout=_TTS_CHUNK_TIMEOUT_S
+                                )
+                            except asyncio.TimeoutError:
+                                logger.warning(
+                                    "[I/O] TTS watchdog: no audio chunk in %.0fs — aborting",
+                                    _TTS_CHUNK_TIMEOUT_S,
+                                )
+                                self._interrupt_event.set()
+                                break
+                            if chunk is None:
+                                break
                             if self._interrupt_event.is_set():
                                 logger.debug("[I/O] TTS interrupted mid-stream")
                                 break
-                            if chunk:
-                                if first_chunk_ts is None:
-                                    first_chunk_ts = _time.time()
-                                    logger.info(
-                                        "[I/O] TTS first audio chunk in %.2fs (model=%s)",
-                                        first_chunk_ts - self._speak_started_at,
-                                        model_id,
-                                    )
-                                await asyncio.get_event_loop().run_in_executor(
-                                    None, stream.write, chunk
+                            if first_chunk_ts is None:
+                                first_chunk_ts = _time.time()
+                                logger.info(
+                                    "[I/O] TTS first audio chunk in %.2fs (model=%s, chunks=%d)",
+                                    first_chunk_ts - self._speak_started_at,
+                                    model_id, len(sentences),
                                 )
+                            await asyncio.get_event_loop().run_in_executor(
+                                None, stream.write, chunk
+                            )
                     finally:
+                        producer_task.cancel()
+                        with contextlib.suppress(asyncio.CancelledError, Exception):
+                            await producer_task
                         if self._interrupt_event.is_set():
                             stream.abort()  # drop the buffer immediately
                         else:
@@ -433,13 +515,23 @@ class PNS:
                     # sounddevice not installed — fall back to buffered play()
                     logger.debug("[I/O] sounddevice unavailable — falling back to buffered TTS playback")
                     from elevenlabs.play import play
-                    audio_bytes = b"".join([chunk async for chunk in audio_iter])
+                    audio_bytes = b""
+                    for sentence in sentences:
+                        if self._interrupt_event.is_set():
+                            break
+                        async for chunk in client.text_to_speech.convert(
+                            text=sentence,
+                            voice_id=voice_id,
+                            model_id=model_id,
+                            output_format="pcm_22050",
+                            voice_settings=voice_settings,
+                        ):
+                            audio_bytes += chunk
                     if not self._interrupt_event.is_set():
                         await asyncio.get_event_loop().run_in_executor(None, play, audio_bytes)
             finally:
                 self._speaking = False
                 self._speaking_text = ""
-                self._last_speaking_ended_ts = _time.time()
                 if self._on_speaking_change:
                     self._on_speaking_change(False)
 

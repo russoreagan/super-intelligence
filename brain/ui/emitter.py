@@ -43,6 +43,10 @@ class ActivationEmitter:
         with contextlib.suppress(asyncio.QueueFull):
             self._queue.put_nowait({"type": "emotion", "emotion": emotion})
 
+    async def emit_user_emotion(self, emotion: str) -> None:
+        with contextlib.suppress(asyncio.QueueFull):
+            self._queue.put_nowait({"type": "user_emotion", "emotion": emotion})
+
     async def emit_turn_start(self, turn_id: str, user_input: str,
                                session_id: str = "") -> None:
         with contextlib.suppress(asyncio.QueueFull):
@@ -66,9 +70,10 @@ class ActivationEmitter:
                 "ts": time.time(),
             })
 
-    async def emit_stream_thought(self, thought: str) -> None:
+    async def emit_stream_thought(self, thought: str, chem_delta: dict | None = None) -> None:
         with contextlib.suppress(asyncio.QueueFull):
-            self._queue.put_nowait({"type": "stream_thought", "thought": thought})
+            self._queue.put_nowait({"type": "stream_thought", "thought": thought,
+                                    "chem_delta": chem_delta or {}})
 
     async def emit_proactive_speech(self, text: str) -> None:
         with contextlib.suppress(asyncio.QueueFull):

@@ -53,12 +53,19 @@ Available tools:
         context_facts: list of specific facts Claude needs (e.g. ["recipient is John Smith"])
                        — NEVER include memory dumps or personal history, only operational facts
         description: one short sentence describing the action for user confirmation
+        NOTE: if the result contains a file path (e.g. second_brain/research/…), follow up
+        with read_file on that path to retrieve the full findings.
+  recall_memory(topic, entities)            — search episodic memory for context about a topic;
+                                              entities: optional list of names/topics to narrow the search
+  analyze_image(path, question)             — analyze an image using visual processing;
+                                              path: absolute file path; question: what to look for
 
 {cloud_connector_hint}
+{lobe_hint}
 
 Return JSON with exactly this shape:
 {{
-  "tool": "read_file"|"write_file"|"append_file"|"list_files"|"run_command"|"search_files"|"cloud_action"|"none",
+  "tool": "read_file"|"write_file"|"append_file"|"list_files"|"run_command"|"search_files"|"cloud_action"|"recall_memory"|"analyze_image"|"none",
   "args": {{ ...tool-specific args as above... }},
   "reason": "one sentence explaining why"
 }}
@@ -105,6 +112,8 @@ class MotorCortexCluster:
         self._router = router
         self._cloud = cloud_executor
         self._pending_task = None  # set post-init via set_pending_task()
+        self._lobe_bridge = None   # set post-init via set_lobe_bridge()
+        self._obs = None           # set post-init via set_observability()
         self._subsystems: list[MotorSubsystem] = []
 
         # Resolve and normalise allowed path roots at startup
@@ -119,14 +128,17 @@ class MotorCortexCluster:
 
         # Build planner prompt dynamically: include cloud connector hint if available
         if cloud_executor and cloud_executor.available:
-            cloud_hint = (
+            self._cloud_hint = (
                 f"Cloud connectors currently enabled: {cloud_executor.connectors_summary()}. "
                 "Use cloud_action for any request that involves these services."
             )
         else:
-            cloud_hint = "No cloud connectors available — use local tools only."
+            self._cloud_hint = "No cloud connectors available — use local tools only."
 
-        planner_system = _PLANNER_SYSTEM_BASE.format(cloud_connector_hint=cloud_hint)
+        planner_system = _PLANNER_SYSTEM_BASE.format(
+            cloud_connector_hint=self._cloud_hint,
+            lobe_hint="Lobe capabilities (recall_memory, analyze_image) not yet configured.",
+        )
 
         # Planner: local Ollama — tool decisions stay on-device
         self._planner = IntegratorCell(
@@ -194,6 +206,24 @@ class MotorCortexCluster:
 
     def set_pending_task(self, pending_task) -> None:
         self._pending_task = pending_task
+
+    def set_observability(self, obs) -> None:
+        self._obs = obs
+
+    def set_lobe_bridge(self, bridge) -> None:
+        self._lobe_bridge = bridge
+        caps = bridge.capabilities
+        lobe_hint = (
+            f"Active lobe capabilities: {', '.join(caps)}. "
+            "Use recall_memory to retrieve episodic context; analyze_image for vision tasks."
+            if caps
+            else "No lobe capabilities registered."
+        )
+        self._planner.system_prompt = _PLANNER_SYSTEM_BASE.format(
+            cloud_connector_hint=self._cloud_hint,
+            lobe_hint=lobe_hint,
+        )
+        logger.info("[MotorCortex] Lobe bridge registered: %s", caps)
 
     def register_subsystem(self, subsystem: MotorSubsystem) -> None:
         self._subsystems.append(subsystem)
@@ -335,18 +365,31 @@ class MotorCortexCluster:
 
     # ── Internal-directive entry point ─────────────────────────────────────
     async def execute_internal_job(self, goal: str, turn_id: str,
-                                    budget: int = 20) -> dict:
+                                    budget: int = 0) -> dict:
         """Run a self-directed multi-step job: strategic plan upfront, then
         tactical step-by-step execution. Emits task lifecycle events for the
         UI Tasks tab. Returns a job summary dict.
 
         Differs from execute(): not gated by action_gate or per-turn budget;
         designed for sustained autonomous work triggered by the follow-through
-        loop, not by a user-turn.
+        loop, not by a user-turn. Budget is chemistry-modulated (DA/CORT);
+        pass budget>0 to override.
         """
         from brain.ui.emitter import emitter
         job_id = f"job_{turn_id}"
         self.reset_turn(job_id)
+
+        # Sample neuromodulator / hormonal state once at job start.
+        # This modulates how ambitious the plan is and how many steps we'll take.
+        chem = self._chem_snapshot()
+        effective_budget = budget if budget > 0 else self._effective_job_budget(chem)
+        chem_ctx = self._chem_description(chem)
+
+        # Open a Langfuse trace so all LLM calls inside this job are nested under it.
+        # record_llm_call() uses _active_spans[job_id] as the parent — the same
+        # mechanism as per-turn tracing, keyed by job_id instead of turn_id.
+        if self._obs:
+            self._obs.begin_job(job_id, goal=goal, chem=chem)
 
         # Surface the job immediately so the user can see something is brewing
         # even before the strategic plan finishes (local-code planner can take
@@ -357,10 +400,11 @@ class MotorCortexCluster:
             "goal": goal,
         })
 
-        # 1. Strategic plan
+        # 1. Strategic plan — pass chemistry state so the planner can calibrate
+        # complexity (e.g. fewer steps when stressed, more thorough when motivated).
         self._strategic_planner.reset_turn(job_id)
         raw_plan = await self._strategic_planner.call(
-            [{"role": "user", "content": f"Goal: {goal}"}]
+            [{"role": "user", "content": f"Goal: {goal}\nBrain state: {chem_ctx}"}]
         )
         plan = safe_json_parse(raw_plan) or {}
         steps_planned = plan.get("steps") or [{"description": goal, "expected_tool": "?"}]
@@ -386,9 +430,9 @@ class MotorCortexCluster:
         success = True
 
         for idx, step in enumerate(steps_planned):
-            if self._calls_this_turn >= budget:
+            if self._calls_this_turn >= effective_budget:
                 logger.warning("[InternalJob] Budget exhausted (%d) at step %d/%d",
-                                budget, idx + 1, len(steps_planned))
+                                effective_budget, idx + 1, len(steps_planned))
                 success = False
                 break
 
@@ -448,6 +492,13 @@ class MotorCortexCluster:
             if tool == "cloud_action":
                 last_result = await self._dispatch_cloud(args, job_id)
                 output = (last_result or {}).get("output", "")
+            elif tool in ("recall_memory", "analyze_image"):
+                output = await self._dispatch_lobe(tool, args, job_id)
+                last_result = {
+                    "tool": tool, "args": args, "reason": reason, "output": output,
+                    "success": not output.startswith("[error]"),
+                }
+                await self._bus.publish_dict("motor.result", last_result, source=CLUSTER)
             else:
                 output = await self._dispatch(tool, args)
                 last_result = {
@@ -462,7 +513,7 @@ class MotorCortexCluster:
 
             steps_taken.append({"tool": tool, "args": args, "reason": reason})
             results_log.append(output[:500] if output else "")
-            self._fire_outcome_switches(output, tool, open_loop_chem)
+            self._fire_outcome_switches(output, tool, self._chem_snapshot())
             await emitter.emit_event({
                 "type": "task_step_done",
                 "job_id": job_id, "step_index": idx,
@@ -482,6 +533,10 @@ class MotorCortexCluster:
         })
         logger.info("[InternalJob] Done: %s (success=%s, %d/%d steps)",
                     goal[:60], success, len(steps_taken), len(steps_planned))
+        if self._obs:
+            self._obs.end_job(job_id, success=success,
+                              steps_completed=len(steps_taken),
+                              steps_planned=len(steps_planned))
         return {
             "job_id": job_id, "goal": goal, "success": success,
             "steps_taken_count": len(steps_taken),
@@ -726,6 +781,59 @@ class MotorCortexCluster:
         cort = float(chem.get("CORT", 0.5))
         shift = (da - 0.5) * 2.0 - (cort - 0.5) * 2.0
         return max(1, min(5, base + int(round(shift))))
+
+    def _effective_job_budget(self, chem: dict[str, float]) -> int:
+        """Step budget for background jobs — higher base than reactive turns.
+        DA raises it (motivated pursuit); CORT lowers it (stress-induced caution).
+        Base is 12; bounded to [6, 20]."""
+        base = 12
+        if not chem:
+            return base
+        da = float(chem.get("DA", 0.5))
+        cort = float(chem.get("CORT", 0.5))
+        shift = (da - 0.5) * 6.0 - (cort - 0.5) * 6.0
+        return max(6, min(20, base + int(round(shift))))
+
+    def _chem_description(self, chem: dict[str, float]) -> str:
+        """Short human-readable description of the brain's current chemical state,
+        passed to the strategic planner so it can adjust plan complexity."""
+        if not chem:
+            return "balanced"
+        da = float(chem.get("DA", 0.5))
+        cort = float(chem.get("CORT", 0.5))
+        gaba = float(chem.get("GABA", 0.5))
+        parts: list[str] = []
+        if cort > 0.65:
+            parts.append("stressed — prefer fewer, safer steps")
+        elif cort < 0.35:
+            parts.append("relaxed — can take more thorough steps")
+        if da > 0.65:
+            parts.append("motivated — be thorough and ambitious")
+        elif da < 0.35:
+            parts.append("low drive — keep plan minimal")
+        if gaba > 0.65:
+            parts.append("calm — methodical approach preferred")
+        return "; ".join(parts) if parts else "balanced"
+
+    async def _dispatch_lobe(self, tool: str, args: dict, turn_id: str) -> str:
+        """Route a lobe tool call through the LobeBridge."""
+        if not self._lobe_bridge:
+            return f"[error] Lobe bridge not configured — {tool} unavailable"
+        if tool == "recall_memory":
+            return await self._lobe_bridge.invoke(
+                "recall_memory",
+                topic=args.get("topic", ""),
+                entities=args.get("entities") or [],
+                turn_id=turn_id,
+            )
+        if tool == "analyze_image":
+            return await self._lobe_bridge.invoke(
+                "analyze_image",
+                path=args.get("path", ""),
+                question=args.get("question", ""),
+                turn_id=turn_id,
+            )
+        return f"[error] Unknown lobe tool: {tool}"
 
     def _fire_outcome_switches(self, output: str, tool: str,
                                 chem: dict[str, float]) -> None:

@@ -100,9 +100,16 @@ _INWARD_MARKERS: frozenset[str] = frozenset({
     "what it means", "my nature", "my existence", "my purpose",
 })
 
-# Neuromod deltas applied per thought (kept small — these accumulate across ticks)
+# Fallback neuromod deltas when the model doesn't emit chem_delta.
 _INWARD_DELTA: dict[str, float] = {"GABA": 0.04}
 _OUTWARD_DELTA: dict[str, float] = {"DA": 0.02, "ACh": 0.02}
+
+# Channels the model is allowed to nudge, and the max absolute delta per tick.
+# Keeps a rogue thought from spiking chemistry into an unrecoverable state.
+_CHEM_ALLOWED: frozenset[str] = frozenset(
+    {"DA", "ACh", "GABA", "Glu", "NE", "5HT", "CORT", "OXT", "AEA"}
+)
+_CHEM_MAX_DELTA: float = 0.06
 
 # Social-discomfort emotion labels — these come from metacognition appraisal,
 # not pure neuromod state. They bias the speak gate toward DEFLECTION more
@@ -141,6 +148,17 @@ problems rather than circling familiar ground.
 Do not restate what you already thought; build on it or move sideways.
 This is private cognition. Be genuine, not performative. Speak in first person.
 
+CHEMISTRY SHAPES THOUGHT CHARACTER. You'll receive neuromodulator and hormone levels.
+Let them color what you think, not just whether you think:
+DA (dopamine) — high: exploratory, motivated, forward-leaning; low: flat, withdrawn.
+ACh (acetylcholine) — high: detail-focused, attentive; low: drifting, associative.
+GABA — high: ruminative, contracted, self-protective; low: open, relaxed.
+5HT (serotonin) — high: equanimous, steady; low: prone to negative loops.
+CORT (cortisol) — high: urgent, threat-aware, scanning; low: unhurried.
+OXT (oxytocin) — high: warm, relational pull; low: more self-contained.
+NE (norepinephrine) — high: alert, scanning; low: sluggish.
+Don't announce the chemistry — let it quietly shape what you find interesting.
+
 EMOTION SHAPES THOUGHT AND SPEECH DIFFERENTLY. When you feel positive (excited, curious,
 content) your thoughts naturally build on the live conversation. When you feel negative
 or uncomfortable (sad, frustrated, embarrassed, angry) your private thoughts typically
@@ -177,7 +195,9 @@ Return JSON only:
   "thought": "...",    // 1-2 sentence private internal form
   "angle": "...",      // 2-4 word label for the conceptual territory this thought covers, e.g. "user-creative-process", "music-identity", "unresolved-question", "world-connection". Used to prevent revisiting the same territory.
   "speak": false,      // true if this thought is a candidate for being spoken aloud (the gate decides whether to actually speak it)
-  "spoken": "..."      // self-contained spoken form (required when speak=true, else omit)
+  "spoken": "...",     // self-contained spoken form (required when speak=true, else omit)
+  "chem_delta": {},    // optional: tiny chemistry nudges this thought produces, e.g. {"DA": 0.03, "GABA": -0.02}. Only include channels that genuinely shift. Values clamped to ±0.06.
+  "task": ""           // optional: if you recall a concrete unfinished commitment from memory that you have tools to act on, write it as an imperative goal (e.g. "Read the file Russ mentioned and summarise it"). Leave empty if none — don't invent tasks.
 }"""
 
 JUDGE_SYSTEM = """You are the social-judgment gate for an AI brain's spoken proactive
@@ -196,6 +216,9 @@ You will receive inputs:
                  conversation. High = on-topic, low = changing the subject.
 - familiarity: "new" (stranger) / "acquainted" / "close"
 - affection_score: int -50..+100 — how warmly the brain feels toward this speaker
+- angle: 2-4 word label for the thought's conceptual territory (e.g. "user-creative-process",
+          "user-background", "unresolved-question"). Angles beginning with "user-" signal
+          outward curiosity about the speaker — apply the user-curiosity exception.
 
 Weighing rules (apply them like a thoughtful person would, not as rigid math):
 
@@ -210,6 +233,19 @@ CLOSE relationship is permissive: ramble, tangent, share unprompted — all welc
 ACQUAINTED is moderate.
 NEW (stranger) is reserved: only speak when topic continuity is high or the
 candidate clearly serves the conversation. Default to "wait" for tangents.
+
+OUTWARD USER-CURIOSITY: If the candidate is a question about the user that
+connects to the current topic (topic_overlap ≥ 0.10, or the angle contains
+"user-" and the question clearly relates to what's being discussed), treat it
+as on-topic and approve freely. Example: asking about their architecture
+approach during a code discussion is ideal — it deepens the conversation.
+
+However, if the question about the user is unrelated to the current topic
+(e.g. asking their favorite color mid-project discussion), apply normal
+familiarity rules — allow it at "close", consider it at "acquainted" if the
+conversation has shifted to casual, default to "wait" at "new".
+Use topic_overlap and the recent_context to judge whether you're in casual
+or focused-project mode before deciding.
 
 NEGATIVE affection_score (the brain doesn't like this speaker much) suppresses
 speaking overall regardless of valence — defensive, terse, fewer interjections.
@@ -417,6 +453,9 @@ class DefaultModeNetwork:
         # Spoken utterances cleared by the gate — drained by run.py and spoken.
         # maxlen=2 so stale proactive utterances don't pile up between turns.
         self._proactive_q: deque = deque(maxlen=2)
+        # Self-initiated task goals — drained by run.py task worker.
+        # maxlen=4 so idle reasoning doesn't flood the queue.
+        self._self_task_q: deque = deque(maxlen=4)
         self._loop_task: asyncio.Task | None = None
 
         # Programmatic emotion + relationship state, set by update_context().
@@ -538,6 +577,10 @@ class DefaultModeNetwork:
         """Pop the prefetched-context items so they're consumed exactly once."""
         out, self.prefetched = self.prefetched, []
         return out
+
+    def take_self_task(self) -> str | None:
+        """Drain one self-initiated task goal, or None if queue is empty."""
+        return self._self_task_q.popleft() if self._self_task_q else None
 
     def take_proactive(self) -> str | None:
         """Pop the oldest queued proactive utterance, or None if empty."""
@@ -675,6 +718,7 @@ class DefaultModeNetwork:
         valence = valence_of(self._last_emotion)
         is_social_discomfort = self._last_emotion in _DEFLECTION_OVERRIDES
 
+        angle = (candidate.get("angle") or "").strip()
         prompt_lines = [
             "RECENT CONTEXT:",
             (self._last_context or "(no context yet)")[:1500],
@@ -690,6 +734,7 @@ class DefaultModeNetwork:
             f"- familiarity: {self._last_familiarity}",
             f"- affection_score: {self._last_affection_score}",
             f"- attempts_so_far: {int(candidate.get('attempts', 0))}",
+            f"- angle: {angle or '(unset)'}",
             "",
             "Return JSON: {\"verdict\": \"yes\"|\"wait\"|\"drop\", \"reason\": \"...\"}",
         ]
@@ -868,23 +913,36 @@ class DefaultModeNetwork:
         except asyncio.CancelledError:
             pass
 
-    def _build_situation_block(self) -> str:
-        """Structured emotion + relationship signals appended to the monologue
-        prompt so the LLM has them as explicit fields, not buried in prose."""
+    def _build_situation_block(self, chem: dict) -> str:
+        """Structured emotion, chemistry, and relationship signals appended to
+        the monologue prompt so the LLM has them as explicit fields."""
         val = valence_of(self._last_emotion)
         comfort = "comfortable" if val >= 0 else "uncomfortable"
         lines = [
             "",
-            f"Your current emotion: {self._last_emotion} "
-            f"(valence {val:+.1f}, {comfort})",
+            f"Emotion: {self._last_emotion} (valence {val:+.1f}, {comfort})",
         ]
+        # Neuromodulators shape thought character — which topics feel salient,
+        # how ruminative vs exploratory the mind runs, motivational pull.
+        nm_parts = []
+        for key in ("DA", "ACh", "GABA", "Glu", "NE"):
+            if key in chem:
+                nm_parts.append(f"{key}={chem[key]:.2f}")
+        # Hormones shape longer-horizon mood coloring.
+        h_parts = []
+        for key in ("5HT", "CORT", "OXT", "AEA"):
+            if key in chem:
+                h_parts.append(f"{key}={chem[key]:.2f}")
+        if nm_parts:
+            lines.append(f"Neuromodulators: {' '.join(nm_parts)}")
+        if h_parts:
+            lines.append(f"Hormones: {' '.join(h_parts)}")
         if self._last_speaker_name:
             lines.append(
-                f"You're talking with: {self._last_speaker_name} "
-                f"({self._last_familiarity})"
+                f"Speaker: {self._last_speaker_name} ({self._last_familiarity})"
             )
         else:
-            lines.append("You're talking with: (unknown speaker — new)")
+            lines.append("Speaker: unknown (new)")
         return "\n".join(lines)
 
     async def _tick(self) -> None:
@@ -902,8 +960,10 @@ class DefaultModeNetwork:
         # 1. Internal monologue — show the LLM what it just thought so it
         # naturally varies, then reject anything that still looks redundant.
         self._monologue_cell.reset_turn(turn_id)
-        prompt_parts = [self._last_context or "No context yet.",
-                        self._build_situation_block()]
+        chem = self._chem_snapshot()
+        context_label = f"Recent context:\n{self._last_context}" if self._last_context else "Recent context: none"
+        prompt_parts = [context_label,
+                        self._build_situation_block(chem)]
         if self._recent_thoughts:
             recent_block = "\n".join(f"- {t}" for t in self._recent_thoughts)
             prompt_parts.append(
@@ -926,6 +986,8 @@ class DefaultModeNetwork:
             # plain thought text so old-style outputs don't silently vanish.
             spoken_form: str | None = None
             angle: str | None = None
+            chem_delta: dict[str, float] = {}
+            task_goal: str | None = None
             try:
                 # Strip markdown code fences the LLM sometimes wraps around JSON
                 candidate = raw.strip()
@@ -936,6 +998,41 @@ class DefaultModeNetwork:
                 angle = (parsed.get("angle") or "").strip().lower() or None
                 if parsed.get("speak") and parsed.get("spoken"):
                     spoken_form = parsed["spoken"].strip()
+                raw_task = (parsed.get("task") or "").strip()
+                if raw_task:
+                    task_goal = raw_task
+                raw_delta = parsed.get("chem_delta") or {}
+                if isinstance(raw_delta, dict):
+                    for ch, v in raw_delta.items():
+                        if ch in _CHEM_ALLOWED:
+                            try:
+                                chem_delta[ch] = max(-_CHEM_MAX_DELTA,
+                                                     min(_CHEM_MAX_DELTA, float(v)))
+                            except (TypeError, ValueError):
+                                pass
+            except (json.JSONDecodeError, ValueError):
+                # Model sometimes emits +0.02 style numbers which are invalid
+                # JSON — strip leading + signs and retry once before falling back.
+                try:
+                    fixed = re.sub(r':\s*\+(\d)', r': \1', raw.strip())
+                    fixed = re.sub(r"^```(?:json)?\s*", "", fixed)
+                    fixed = re.sub(r"\s*```$", "", fixed).strip()
+                    parsed = json.loads(fixed)
+                    thought_clean = (parsed.get("thought") or "").strip()
+                    angle = (parsed.get("angle") or "").strip().lower() or None
+                    if parsed.get("speak") and parsed.get("spoken"):
+                        spoken_form = parsed["spoken"].strip()
+                    raw_delta = parsed.get("chem_delta") or {}
+                    if isinstance(raw_delta, dict):
+                        for ch, v in raw_delta.items():
+                            if ch in _CHEM_ALLOWED:
+                                try:
+                                    chem_delta[ch] = max(-_CHEM_MAX_DELTA,
+                                                         min(_CHEM_MAX_DELTA, float(v)))
+                                except (TypeError, ValueError):
+                                    pass
+                except Exception:
+                    thought_clean = raw.strip()
             except Exception:
                 thought_clean = raw.strip()
 
@@ -1017,15 +1114,28 @@ class DefaultModeNetwork:
                         else:
                             self._session_thought_buf.pop(0)
 
-                    deltas = _INWARD_DELTA if direction == "inward" else _OUTWARD_DELTA
-                    for channel, delta in deltas.items():
+                    # Fixed tick deltas always apply — they model chemistry
+                    # drifting back toward baseline as time passes (passive decay).
+                    tick_deltas = _INWARD_DELTA if direction == "inward" else _OUTWARD_DELTA
+                    for channel, delta in tick_deltas.items():
                         self._bus.neuromod.add(channel, delta)
+
+                    # Content-driven deltas from the model — what this particular
+                    # thought does to chemistry based on its actual substance.
+                    # Neuromod and hormonal buses are separate — route accordingly.
+                    hormonal_channels = {"5HT", "CORT", "OXT", "AEA"}
+                    for channel, delta in chem_delta.items():
+                        if channel in hormonal_channels:
+                            self._bus.hormonal.add(channel, delta)
+                        else:
+                            self._bus.neuromod.add(channel, delta)
 
                     await self._bus.publish_dict(
                         "stream.thought",
                         {"thought": thought_clean, "ts": time.time(),
                          "count": self._thought_count, "direction": direction,
-                         "proactive": spoken_form is not None},
+                         "proactive": spoken_form is not None,
+                         "chem_delta": chem_delta},
                         source="dmn",
                     )
                     logger.debug("[Background reflection] Thought #%d (%s): %s",
@@ -1046,6 +1156,11 @@ class DefaultModeNetwork:
                         logger.info("[Background reflection] Speak candidate queued "
                                     "(queue=%d): %r",
                                     len(self._candidate_q), spoken_form[:80])
+
+                    if task_goal:
+                        self._self_task_q.append(task_goal)
+                        logger.info("[Background reflection] Self-initiated task queued: %r",
+                                    task_goal[:80])
 
         # 2. User simulation / prediction (every 3rd tick)
         if self._thought_count % 3 == 0 and self._parietal:

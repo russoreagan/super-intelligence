@@ -102,6 +102,7 @@ class ObservabilityLayer:
         self._neuromod_history: deque[dict] = deque(maxlen=_NEUROMOD_WINDOW)
         self._langfuse = None
         self._active_spans: dict[str, Any] = {}
+        self._active_cluster_spans: dict[str, Any] = {}  # "{turn_id}:{cluster}" → span
         self._trace_ids: dict[str, str] = {}
         self._eval_logger = eval_logger
         self._init_langfuse()
@@ -139,6 +140,40 @@ class ObservabilityLayer:
             self._trace_ids[turn_id] = span.trace_id
         except Exception as e:
             logger.debug("Langfuse begin_turn failed: %s", e)
+
+    def begin_cluster(self, turn_id: str, cluster: str, note: str = "") -> None:
+        """Open a child span for one cluster's execution within a turn."""
+        if not self._langfuse:
+            return
+        parent = self._active_spans.get(turn_id)
+        if not parent:
+            return
+        key = f"{turn_id}:{cluster}"
+        try:
+            span = parent.start_observation(
+                name=cluster,
+                as_type="span",
+                input={"note": note} if note else {},
+                metadata={"cluster": cluster},
+            )
+            self._active_cluster_spans[key] = (span, time.time())
+        except Exception as e:
+            logger.debug("Langfuse begin_cluster(%s) failed: %s", cluster, e)
+
+    def end_cluster(self, turn_id: str, cluster: str) -> None:
+        """Close the cluster span opened by begin_cluster."""
+        if not self._langfuse:
+            return
+        key = f"{turn_id}:{cluster}"
+        entry = self._active_cluster_spans.pop(key, None)
+        if entry:
+            span, started = entry
+            try:
+                span.update(metadata={"cluster": cluster,
+                                      "latency_s": round(time.time() - started, 3)})
+                span.end()
+            except Exception as e:
+                logger.debug("Langfuse end_cluster(%s) failed: %s", cluster, e)
 
     def record_turn(self, trace: TurnTrace) -> None:
         self._traces.append(trace)
@@ -319,13 +354,65 @@ class ObservabilityLayer:
         except Exception as e:
             logger.debug("Langfuse record_modulation_event failed: %s", e)
 
+    def begin_job(self, job_id: str, goal: str, chem: dict | None = None) -> None:
+        """Open a Langfuse trace for a background internal job.
+
+        Creates an entry in _active_spans[job_id] so that subsequent
+        record_llm_call(job_id, ...) calls automatically nest under it —
+        the same mechanism used for per-turn tracing.
+        """
+        if not self._langfuse:
+            return
+        try:
+            from langfuse import propagate_attributes
+            with propagate_attributes(session_id=self._session_id,
+                                      trace_name="brain-job"):
+                span = self._langfuse.start_observation(
+                    name="brain-job",
+                    as_type="span",
+                    input={"goal": goal},
+                    metadata={
+                        "job_id": job_id,
+                        **({"neuromod": {k: round(float(v), 3)
+                                         for k, v in chem.items()}}
+                           if chem else {}),
+                    },
+                )
+            self._active_spans[job_id] = span
+        except Exception as e:
+            logger.debug("Langfuse begin_job(%s) failed: %s", job_id, e)
+
+    def end_job(self, job_id: str, *, success: bool, steps_completed: int,
+                steps_planned: int) -> None:
+        """Close the Langfuse trace opened by begin_job."""
+        if not self._langfuse:
+            return
+        span = self._active_spans.pop(job_id, None)
+        if span:
+            try:
+                span.update(
+                    output={"success": success,
+                            "steps_completed": steps_completed},
+                    metadata={
+                        "success": success,
+                        "steps_completed": steps_completed,
+                        "steps_planned": steps_planned,
+                    },
+                )
+                span.end()
+            except Exception as e:
+                logger.debug("Langfuse end_job(%s) failed: %s", job_id, e)
+
     def record_llm_call(self, turn_id: str, cluster: str, cell: str,
                          model: str, prompt_tokens: int, completion_tokens: int,
                          latency_s: float) -> None:
         if not self._langfuse:
             return
         try:
-            parent = self._active_spans.get(turn_id)
+            # Prefer the active cluster span so the generation nests inside it.
+            cluster_entry = self._active_cluster_spans.get(f"{turn_id}:{cluster}")
+            parent = (cluster_entry[0] if cluster_entry
+                      else self._active_spans.get(turn_id))
             if parent:
                 gen = parent.start_observation(
                     name=f"{cluster}.{cell}",

@@ -1,0 +1,46 @@
+[
+  {
+    "id": "7254d218",
+    "goal": "we got interrupted why don't you pick back up the unity task",
+    "status": "failed",
+    "source": "user",
+    "priority": 1,
+    "created_at": 1779739760.835316,
+    "started_at": 1779739826.4765,
+    "completed_at": 1779739893.969036,
+    "success": false
+  },
+  {
+    "id": "80b2f0c0",
+    "goal": "List and read through the contents of the Karaoke Hero project directory to understand how it's structured and wired together.",
+    "status": "failed",
+    "source": "recovery",
+    "priority": 0,
+    "created_at": 1779740015.601163,
+    "started_at": 1779740124.363801,
+    "completed_at": 1779740231.831695,
+    "success": false
+  },
+  {
+    "id": "4347edc7",
+    "goal": "its definitely a rhythm game. im trying to recreate the game 'rock band' almost beat for beat, but with the ability to generate my own songs for it. they have stopped producing new songs for the actual game so im trying to make my own, plus enhance the karaoke aspects a bit so there are more songs that are karaoke friendly even if they dont have a ton of instrument support.",
+    "status": "completed",
+    "source": "user",
+    "priority": 1,
+    "created_at": 1779741408.3073769,
+    "started_at": 1779741466.022919,
+    "completed_at": 1779741577.129913,
+    "success": true
+  },
+  {
+    "id": "672a7027",
+    "goal": "i should already have most of the main components there. im not trying to procedurally generate songs i wouldnt say. its not expected to do it in realtime or anything, i just want to be able to use the tools i have to capture audio from online, then build the note map, get lyrics, and so on so it can be added to the library.",
+    "status": "pending",
+    "source": "user",
+    "priority": 1,
+    "created_at": 1779741560.685441,
+    "started_at": null,
+    "completed_at": null,
+    "success": null
+  }
+]
