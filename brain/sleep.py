@@ -9,7 +9,9 @@ v0.2 feature.
 from __future__ import annotations
 
 import logging
+import re
 import time
+from collections import Counter, defaultdict
 
 from brain.cell import IntegratorCell
 from brain.emotion_hierarchy import CORE_VALENCE, valence_of
@@ -46,6 +48,41 @@ Return JSON: {
 }
 Return ONLY JSON."""
 
+THOUGHT_CONSOLIDATION_SYSTEM = """You are the REM-sleep consolidation process of an AI brain.
+During the session, the brain generated private internal thoughts — its stream of consciousness
+between turns. You are given the salient ones (those tagged during high dopamine, strong
+emotion, or as speech candidates) plus the full list so you can detect recurrence.
+
+Your job mirrors what the hippocampus and neocortex do during REM: find patterns that the
+waking brain was too busy to notice, connect internal preoccupations to the episodic record,
+and generate insights worth encoding into the self-model.
+
+Look for:
+1. PREOCCUPATIONS — topics or questions the brain returned to repeatedly, even if it never
+   brought them up in conversation. These reveal what the brain was actually caring about.
+2. CROSS-CONNECTIONS — places where a recurring internal thought connects to something that
+   DID come up in conversation (a topic cluster). This is where implicit becomes explicit.
+3. INSIGHTS — anything that emerges from the pattern that wasn't obvious during the session.
+   A new angle on a question, a contradiction noticed, a shift in emotional preoccupation.
+4. UNRESOLVED THREADS — questions or concerns the brain kept returning to but never resolved.
+   These should be written into Open Questions so the brain can pick them up next session.
+
+Biological principle: only process thoughts that recurred (appeared in multiple angles or
+similar wording) OR occurred during high-salience states. Isolated neutral thoughts are
+synaptic noise — do not force meaning onto them.
+
+Return JSON:
+{
+  "preoccupations": [string],    // 0-3 topics the brain kept returning to internally
+  "cross_connections": [string], // 0-3 links between internal themes and conversation topics
+  "insights": [string],          // 0-2 genuine insights from the pattern
+  "open_questions": [string],    // 0-3 unresolved threads worth carrying forward
+  "preoccupations_digest": string // 2-3 sentence summary of the session's inner life,
+                                  // written in first person as if the brain is reflecting.
+                                  // Empty string if nothing significant emerged.
+}
+Return ONLY JSON."""
+
 
 class SleepConsolidation:
     def __init__(self, router: ModelRouter, schema: SchemaStore,
@@ -79,13 +116,29 @@ class SleepConsolidation:
         )
         self._synthesizer.set_router(router)
 
+        self._thought_consolidator = IntegratorCell(
+            name="thought_consolidator",
+            cluster="sleep",
+            model="local-general",
+            system_prompt=THOUGHT_CONSOLIDATION_SYSTEM,
+            topics=[],
+            max_calls_per_turn=1,
+            locality="local",
+            sensitivity="sensitive",
+        )
+        self._thought_consolidator.set_router(router)
+
     async def consolidate(self, session_id: str, session_traces: list[dict],
-                          full_traces: list | None = None) -> None:
+                          full_traces: list | None = None,
+                          session_thoughts: list[dict] | None = None) -> None:
         """
         Run full consolidation after a session ends.
         session_traces: list of {user_input, entity_response, emotion, topic_tags} dicts.
         full_traces: list of TurnTrace objects (carry fired_path, neuromod, draft_scores)
                      — used for the Hebbian pass. Pass [] or None to skip Hebbian.
+        session_thoughts: list of tagged DMN thought entries from DefaultModeNetwork.
+                          session_thoughts(). Used for the REM-style thought pass.
+                          Pass [] or None to skip thought consolidation.
         """
         if not session_traces:
             return
@@ -101,7 +154,6 @@ class SleepConsolidation:
         # 1. Episode synthesis — extract facts per speaker
         # Group the last 20 turns by speaker so facts land in the right schema file.
         # Turns without a speaker_name go to user.md (primary user).
-        from collections import defaultdict
         speaker_turns: dict[str, list[dict]] = defaultdict(list)
         for t in session_traces[-20:]:
             key = t.get("speaker_name") or ""
@@ -161,6 +213,14 @@ class SleepConsolidation:
         if updates:
             await self._apply_self_updates(updates)
 
+        # 3. REM-style thought consolidation — process the session's inner life.
+        if session_thoughts:
+            await self.consolidate_thoughts(
+                session_id=session_id,
+                session_thoughts=session_thoughts,
+                topic_clusters=all_topic_clusters,
+            )
+
         elapsed = time.time() - start
         logger.info("[Memory consolidation] Done in %.2fs", elapsed)
 
@@ -169,7 +229,6 @@ class SleepConsolidation:
         if not existing:
             return
 
-        import re
         for section_key, content in updates.items():
             # Map JSON key to markdown section name
             section_map = {
@@ -185,6 +244,144 @@ class SleepConsolidation:
 
         await self._schema.awrite("self.md", existing)
         logger.debug("[Memory consolidation] Self-model updated")
+
+    # ── REM-style thought consolidation ──────────────────────────────────────
+
+    async def consolidate_thoughts(self, session_id: str,
+                                   session_thoughts: list[dict],
+                                   topic_clusters: list[str] | None = None) -> None:
+        """REM-style pass: find recurring preoccupations in the session's inner
+        monologue, cross-connect them to episodic topics, and write insights +
+        open questions into self.md.
+
+        Biological principle: only salient thoughts (high DA, strong emotion,
+        speak-flagged) plus any thought whose angle recurred at least twice are
+        passed to the LLM — the rest is homeostatic noise that gets discarded,
+        mirroring non-REM synaptic downscaling.
+        """
+        if not session_thoughts:
+            return
+
+        # Identify recurring angles (recurrence ≥ 2 occurrences)
+        angle_counts: Counter = Counter(
+            t["angle"] for t in session_thoughts if t.get("angle")
+        )
+        recurring_angles: set[str] = {a for a, c in angle_counts.items() if c >= 2}
+
+        # Filter: salient OR recurring-angle thoughts only
+        notable = [
+            t for t in session_thoughts
+            if t.get("salient") or t.get("angle") in recurring_angles
+        ]
+
+        if not notable:
+            logger.info("[Memory consolidation] Thought pass: no notable thoughts to consolidate")
+            return
+
+        logger.info(
+            "[Memory consolidation] Thought pass: %d notable / %d total thoughts",
+            len(notable), len(session_thoughts),
+        )
+
+        # Build prompt
+        lines = ["SESSION INNER MONOLOGUE (notable thoughts only):"]
+        for i, t in enumerate(notable[-40:], 1):  # cap at 40
+            flags = []
+            if t.get("salient"):
+                flags.append("salient")
+            if t.get("speak_flagged"):
+                flags.append("speak-candidate")
+            if t.get("angle") in recurring_angles:
+                flags.append("recurring-angle")
+            flag_str = f" [{', '.join(flags)}]" if flags else ""
+            lines.append(
+                f"{i}. [{t.get('direction', 'outward')}]{flag_str} "
+                f"angle={t.get('angle', '?')} | {t['thought']}"
+            )
+
+        if topic_clusters:
+            lines.append("\nCONVERSATION TOPIC CLUSTERS (from episodic synthesis):")
+            lines.append(", ".join(topic_clusters[:15]))
+
+        lines.append(
+            "\nRecurring angles (appeared ≥2 times): "
+            + (", ".join(sorted(recurring_angles)) if recurring_angles else "none")
+        )
+
+        prompt = "\n".join(lines)
+        self._thought_consolidator.reset_turn(f"sleep_{session_id}_thoughts")
+        raw = await self._thought_consolidator.call([{"role": "user", "content": prompt}])
+        result: dict = safe_json_parse(raw) or {}
+
+        if not result:
+            logger.debug("[Memory consolidation] Thought consolidator returned no parseable output")
+            return
+
+        await self._apply_thought_updates(result)
+
+    async def _apply_thought_updates(self, result: dict) -> None:
+        """Write thought consolidation output into self.md."""
+        preoccupations = result.get("preoccupations") or []
+        cross_connections = result.get("cross_connections") or []
+        insights = result.get("insights") or []
+        open_questions = result.get("open_questions") or []
+        digest = (result.get("preoccupations_digest") or "").strip()
+
+        if not any([preoccupations, cross_connections, insights, open_questions, digest]):
+            return
+
+        existing = self._schema.read("self.md")
+        if not existing:
+            return
+
+        updated = existing
+
+        # Append open questions to the "Open Questions" section (if present).
+        # These are questions the brain kept circling that were never resolved.
+        if open_questions:
+            oq_block = "\n".join(f"- {q}" for q in open_questions[:3])
+            # Try to append inside an existing Open Questions section
+            oq_pattern = r"(## Open [Qq]uestions\n)(.*?)(\n## |\Z)"
+            match = re.search(oq_pattern, updated, flags=re.DOTALL)
+            if match:
+                existing_content = match.group(2).rstrip()
+                new_content = f"{existing_content}\n{oq_block}" if existing_content else oq_block
+                updated = re.sub(oq_pattern,
+                                 lambda m: m.group(1) + new_content + "\n" + m.group(3),
+                                 updated, flags=re.DOTALL)
+            else:
+                # Append a new section at the end
+                updated = updated.rstrip() + f"\n\n## Open Questions\n{oq_block}\n"
+
+        # Write the preoccupations digest as a fact into self.md.
+        # The sanitize_fact check prevents injection; aappend_fact handles
+        # dedup so repeated consolidations don't pile up identical lines.
+        if digest:
+            fact = sanitize_fact(f"Session inner-life digest: {digest}")
+            if fact:
+                await self._schema.aappend_fact("self.md", fact)
+                logger.info("[Memory consolidation] Thought digest: %s", digest[:120])
+
+        # Log the rest to decisions for observability without writing noise to schema.
+        decisions.log(
+            "thought_consolidation",
+            preoccupations=preoccupations,
+            cross_connections=cross_connections,
+            insights=insights,
+            open_questions=open_questions,
+        )
+
+        if preoccupations:
+            logger.info("[Memory consolidation] Preoccupations: %s",
+                        "; ".join(preoccupations[:3]))
+        if insights:
+            logger.info("[Memory consolidation] Insights: %s",
+                        "; ".join(insights[:2]))
+
+        # Write open-questions changes only if the content was restructured
+        if open_questions and updated != existing:
+            await self._schema.awrite("self.md", updated)
+            logger.debug("[Memory consolidation] Open Questions section updated")
 
     # ── Hebbian pass ─────────────────────────────────────────────────────────
 

@@ -1358,7 +1358,11 @@ async def session(args) -> None:
             sleep = SleepConsolidation(router, hippocampus._schema, hippocampus._episodic,
                                        wiring=wiring)
             logger.info("Running end-of-session memory consolidation (summarising facts, updating self-model, applying Hebbian updates)...")
-            await sleep.consolidate(session_id, session_traces, full_traces=session_traces_full)
+            await sleep.consolidate(
+                session_id, session_traces,
+                full_traces=session_traces_full,
+                session_thoughts=dmn.session_thoughts() if dmn else [],
+            )
         except Exception as e:
             logger.warning("End-of-session memory consolidation failed — recent facts may not be saved: %s", e)
 

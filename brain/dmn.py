@@ -13,6 +13,7 @@ v0.2 feature — only active when BRAIN_DMN=true in env.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -438,6 +439,18 @@ class DefaultModeNetwork:
             modulators={"5HT": -0.10, "OXT": -0.05, "NE": +0.10, "GABA": +0.10},
         )
 
+        # Session thought buffer — hippocampal-tagging analog.
+        # Every accepted thought is appended here with its neuromod context and
+        # a salience flag. Salient thoughts are those generated during elevated
+        # DA / strong emotion, or flagged for speech (they passed the relevance
+        # bar). At sleep consolidation, the buffer is handed to the REM-style
+        # pass so recurring preoccupations and cross-connections can be found.
+        # Non-salient thoughts are the equivalent of synaptic noise: they might
+        # inform the context during the session but don't need to be persisted.
+        self._session_thought_buf: list[dict] = []
+        _SESSION_THOUGHT_LIMIT = 50  # keep last 50 thoughts; older are discarded
+        self._session_thought_limit = _SESSION_THOUGHT_LIMIT
+
     async def start(self, session_id: str) -> None:
         self._session_id = session_id
         self._running = True
@@ -476,6 +489,14 @@ class DefaultModeNetwork:
         Consumed by run.py to seed the next turn's drafter context — so the
         entity can reference what it was musing about when the user speaks."""
         return list(self._recent_thoughts)[-n:]
+
+    def session_thoughts(self) -> list[dict]:
+        """Return the full session thought buffer for sleep consolidation.
+        Each entry: {thought, angle, direction, speak_flagged, emotion,
+                     neuromod, salient, ts}.
+        Called once at session end by run.py and passed to
+        SleepConsolidation.consolidate() for the REM-style thought pass."""
+        return list(self._session_thought_buf)
 
     def note_last_response(self, response: str) -> None:
         """Called by run.py after each turn end. Records whether the entity's
@@ -859,10 +880,8 @@ class DefaultModeNetwork:
         # boundary. update_context preserves the previously-stored emotion,
         # self_schema, speaker, and relationship via its upsert semantics.
         if self._parietal is not None:
-            try:
+            with contextlib.suppress(Exception):
                 self.update_context(self._parietal.recent_turns_text())
-            except Exception:
-                pass
 
         # 1. Internal monologue — show the LLM what it just thought so it
         # naturally varies, then reject anything that still looks redundant.
@@ -934,8 +953,8 @@ class DefaultModeNetwork:
                     # Classify thought direction and apply neuromod feedback.
                     direction = _classify_thought(thought_clean)
 
+                    neuromod_snapshot = self._bus.neuromod.snapshot()
                     if self._obs:
-                        neuromod_snapshot = self._bus.neuromod.snapshot()
                         self._obs.record_thought(
                             thought=thought_clean,
                             direction=direction,
@@ -943,6 +962,45 @@ class DefaultModeNetwork:
                             count=self._thought_count,
                             neuromod=neuromod_snapshot,
                         )
+
+                    # Hippocampal tagging: mark thoughts salient when DA is
+                    # elevated (reward/engagement signal), when the thought was
+                    # flagged as a speak candidate (passed relevance bar), or
+                    # when the current emotion has strong valence — these are
+                    # the conditions under which real memories get tagged for
+                    # consolidation during sleep. Neutral-state noise is kept in
+                    # the buffer but not marked salient, so the REM pass can
+                    # still look for recurrence across non-salient thoughts
+                    # without treating each individual one as important.
+                    da_level = float(neuromod_snapshot.get("DA", 0.5))
+                    em_valence = valence_of(self._last_emotion)
+                    salient = (
+                        da_level > 0.62          # elevated dopamine
+                        or spoken_form is not None  # passed speak-gate bar
+                        or abs(em_valence) > 0.45   # strong emotion
+                    )
+                    buf_entry: dict = {
+                        "thought": thought_clean,
+                        "angle": angle or "",
+                        "direction": direction,
+                        "speak_flagged": spoken_form is not None,
+                        "emotion": self._last_emotion,
+                        "neuromod": {k: round(v, 3) for k, v in neuromod_snapshot.items()},
+                        "salient": salient,
+                        "ts": time.time(),
+                    }
+                    self._session_thought_buf.append(buf_entry)
+                    # Hard cap — evict oldest non-salient entry first; if all
+                    # are salient, evict the oldest overall.
+                    if len(self._session_thought_buf) > self._session_thought_limit:
+                        # Try to drop oldest non-salient entry
+                        for i, e in enumerate(self._session_thought_buf):
+                            if not e["salient"]:
+                                self._session_thought_buf.pop(i)
+                                break
+                        else:
+                            self._session_thought_buf.pop(0)
+
                     deltas = _INWARD_DELTA if direction == "inward" else _OUTWARD_DELTA
                     for channel, delta in deltas.items():
                         self._bus.neuromod.add(channel, delta)
