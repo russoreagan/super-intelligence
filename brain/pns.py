@@ -85,6 +85,8 @@ class PNS:
         # current mic_listen() is press-to-talk, not streaming.
         self._speaking: bool = False
         self._speaking_text: str = ""   # what TTS is currently saying — used for bleed detection
+        self._last_spoken_text: str = ""  # preserved after TTS ends for bleed-window check
+        self._last_speaking_ended_ts: float = 0.0  # wall-clock when TTS last finished
         self._speak_started_at: float = 0.0
         self._interrupt_event: asyncio.Event = asyncio.Event()
         self._on_speaking_change = on_speaking_change  # Callable[[bool], None] | None
@@ -302,6 +304,17 @@ class PNS:
     def is_speaking(self) -> bool:
         return self._speaking
 
+    @property
+    def last_spoken_text(self) -> str:
+        """Text of the most recent TTS utterance. Persists after TTS ends so the
+        voice bridge can detect bleed-through that arrives with Deepgram lag."""
+        return self._last_spoken_text
+
+    @property
+    def last_speaking_ended_ts(self) -> float:
+        """Wall-clock time when TTS last finished. 0.0 if never spoken."""
+        return self._last_speaking_ended_ts
+
     def interrupt(self) -> None:
         """Signal in-progress TTS playback to stop ASAP. Safe to call any time.
         Ignores requests during the barge-in grace period (so TTS isn't killed
@@ -379,6 +392,7 @@ class PNS:
             self._speak_started_at = _time.time()
             self._speaking = True
             self._speaking_text = text
+            self._last_spoken_text = text  # kept after TTS ends for bleed detection
             if self._on_speaking_change:
                 self._on_speaking_change(True)
             first_chunk_ts: float | None = None
@@ -425,6 +439,7 @@ class PNS:
             finally:
                 self._speaking = False
                 self._speaking_text = ""
+                self._last_speaking_ended_ts = _time.time()
                 if self._on_speaking_change:
                     self._on_speaking_change(False)
 

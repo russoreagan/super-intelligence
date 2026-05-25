@@ -49,26 +49,46 @@ def bleed_overlap(transcript: str, speaking_text: str) -> float:
     return len(a & b) / len(a | b)
 
 
+# Seconds after TTS ends during which bleed-through can still arrive from
+# Deepgram (endpointing_ms 500 + utterance_end_ms 1200 = 1700ms max lag).
+# Use 2500ms for safety margin.
+_BLEED_PROTECT_WINDOW_S: float = 2.5
+# Jaccard overlap above which a post-TTS utterance is classified as bleed.
+_BLEED_OVERLAP_THRESHOLD: float = 0.35
+
+
 def classify_utterance(
     text: str,
     *,
     brain_is_speaking: bool,
     barge_words: list[str],
+    last_spoken_text: str = "",
+    secs_since_speaking_ended: float = 999.0,
 ) -> tuple[str, dict]:
     """Decide what to do with an utterance.
 
     Returns (decision, info) where decision is one of:
-      - "drop_empty" — empty transcript (background noise)
-      - "dispatch"   — brain not speaking, send immediately
-      - "barge_in"   — brain speaking + explicit interrupt keyword
-      - "queue"      — brain speaking, hold and flush when TTS ends
-    Everything the user says is sent; only empty transcripts are dropped.
+      - "drop_empty"  — empty transcript (background noise)
+      - "drop_bleed"  — transcript is the brain's own TTS bleed-through
+      - "dispatch"    — brain not speaking, send immediately
+      - "barge_in"    — brain speaking + explicit interrupt keyword
+      - "queue"       — brain speaking, hold and flush when TTS ends
+    Everything the user says is sent; only empty transcripts and bleed are dropped.
     """
     text = (text or "").strip()
     if not text:
         return "drop_empty", {}
 
     if not brain_is_speaking:
+        # Bleed-protection window: Deepgram's UtteranceEnd arrives up to
+        # ~1700ms after TTS audio ends. Any utterance in that window that
+        # has high word overlap with what the brain just said is its own
+        # voice bleeding through the mic, not the user speaking.
+        if (secs_since_speaking_ended < _BLEED_PROTECT_WINDOW_S
+                and last_spoken_text):
+            overlap = bleed_overlap(text, last_spoken_text)
+            if overlap >= _BLEED_OVERLAP_THRESHOLD:
+                return "drop_bleed", {"overlap": round(overlap, 3)}
         return "dispatch", {}
 
     if is_barge_in(text, barge_words):

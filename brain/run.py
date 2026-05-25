@@ -479,7 +479,13 @@ async def session(args) -> None:
     #   - Brain IS speaking → interrupt TTS and dispatch.
     # Everything the user says is sent; only empty transcripts (background noise)
     # are dropped.
-    from brain.voice_bridge import classify_utterance, parse_barge_words, pick_dispatch_from_queue
+    from brain.voice_bridge import (  # noqa: E402
+        _BLEED_OVERLAP_THRESHOLD,
+        bleed_overlap,
+        classify_utterance,
+        parse_barge_words,
+        pick_dispatch_from_queue,
+    )
     barge_in_words = parse_barge_words(os.environ.get("BRAIN_BARGE_IN_WORDS"))
 
     voice_bridge_task = None
@@ -497,7 +503,7 @@ async def session(args) -> None:
             await ui_message_queue.put(text)
 
         async def _drain_pending_when_tts_ends() -> None:
-            """When TTS finishes, flush all queued utterances as one joined block."""
+            """When TTS finishes, flush queued utterances — minus any bleed."""
             was_speaking = False
             while True:
                 try:
@@ -507,8 +513,19 @@ async def session(args) -> None:
                 now_speaking = pns.is_speaking
                 if was_speaking and not now_speaking:
                     async with pending_lock:
-                        text, n = pick_dispatch_from_queue(pending_during_tts)
+                        # Filter out utterances that look like TTS bleed-through.
+                        # These were queued WHILE the brain was speaking so we
+                        # couldn't check at enqueue time. Now TTS has ended and
+                        # last_spoken_text still holds what was just said.
+                        clean = [
+                            t for t in pending_during_tts
+                            if bleed_overlap(t, pns.last_spoken_text) < _BLEED_OVERLAP_THRESHOLD
+                        ]
+                        dropped = len(pending_during_tts) - len(clean)
                         pending_during_tts.clear()
+                    if dropped:
+                        logger.debug("[I/O] voice → drained %d bleed utterance(s)", dropped)
+                    text, n = pick_dispatch_from_queue(clean)
                     if text:
                         logger.info("[I/O] voice → flushing %d queued utterance(s): %r", n, text[:80])
                         await _dispatch_text(text)
@@ -526,13 +543,19 @@ async def session(args) -> None:
                     continue
                 text = (utt.get("transcript") or "").strip()
 
-                decision, _ = classify_utterance(
+                decision, info = classify_utterance(
                     text,
                     brain_is_speaking=pns.is_speaking,
                     barge_words=barge_in_words,
+                    last_spoken_text=pns.last_spoken_text,
+                    secs_since_speaking_ended=time.time() - pns.last_speaking_ended_ts,
                 )
 
                 if decision == "drop_empty":
+                    continue
+                if decision == "drop_bleed":
+                    logger.debug("[I/O] voice → dropped TTS bleed (overlap=%.2f): %r",
+                                 info.get("overlap", 0), text[:60])
                     continue
                 if decision == "barge_in":
                     pns.interrupt()
