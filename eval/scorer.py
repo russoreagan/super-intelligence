@@ -57,8 +57,15 @@ You evaluate whether a multi-cluster AI brain pipeline justified its computation
 compared to a single plain LLM call for the same user message.
 
 The brain uses separate clusters: temporal (language understanding), hypothalamus
-(emotion/affect), hippocampus (long-term memory recall), frontal (multiple competing
-drafts + critic), brainstem (articulation gate). Each cluster may make LLM calls.
+(emotion/affect + endocrine updates), hippocampus (long-term memory recall), frontal
+(multiple competing drafts + critic), brainstem (articulation gate). Each cluster may
+make LLM calls.
+
+The hypothalamus also maintains a slow-timescale hormonal layer (5HT/serotonin,
+CORT/cortisol, OXT/oxytocin) that accumulates across turns and modulates neuromodulator
+levels. This means the pipeline carries persistent affective state that a single-call
+LLM cannot replicate — factor this into pipeline_value_add when hormonal state is
+non-baseline (e.g., elevated OXT from prior warmth, elevated CORT from prior stress).
 
 Score these dimensions (0.0–1.0):
   pipeline_value_add:  Did the brain response clearly benefit from the multi-cluster
@@ -95,6 +102,14 @@ memory-driven specificity about the person, personality continuity across the
 conversation, proactive thoughts that weren't directly prompted, or any response
 element that feels like it emerged from the interaction between components rather
 than from a single generation.
+
+The brain maintains a slow-timescale hormonal layer (5HT serotonin, CORT cortisol,
+OXT oxytocin) that accumulates across many turns. Hormonal state can produce novel
+behavior a single LLM can't replicate: e.g., elevated OXT producing unusual warmth
+toward a familiar user, elevated CORT producing uncharacteristic caution or brevity,
+high 5HT producing a stable contentment that modulates tone across an entire session.
+When the prompt includes hormonal values, factor them into emergence_detected —
+non-baseline levels are evidence of cross-turn state that shaped this response.
 
 Score these dimensions (0.0–1.0):
   behavioral_novelty:  Does the brain response contain anything that a standard LLM
@@ -205,12 +220,17 @@ class PostHocScorer:
         memory_recalled = getattr(trace, "memory_recalled", False) if trace else False
         drafter_count = getattr(trace, "drafter_count", 1) if trace else 1
         llm_calls_saved = getattr(trace, "llm_calls_saved", 0) if trace else 0
+        hormonal = getattr(trace, "hormonal", {}) if trace else {}
 
         token_summary = (
             "; ".join(
                 f"{cl}: {v.get('calls', 0)} calls / {v.get('in', 0)+v.get('out', 0)} tokens"
                 for cl, v in cluster_tokens.items()
             ) if cluster_tokens else "(not available)"
+        )
+        hormonal_text = (
+            ", ".join(f"{k}={v:.3f}" for k, v in hormonal.items())
+            if hormonal else "(not available)"
         )
 
         prompt = (
@@ -222,7 +242,8 @@ class PostHocScorer:
             f"  LLM calls saved by gating: {llm_calls_saved}\n"
             f"  Competing drafts generated: {drafter_count}\n"
             f"  Memory recalled: {memory_recalled}\n"
-            f"  Per-cluster breakdown: {token_summary}\n\n"
+            f"  Per-cluster breakdown: {token_summary}\n"
+            f"  Hormonal state (5HT/CORT/OXT): {hormonal_text}\n\n"
             f"Memory context used (first 400 chars):\n"
             f"{memory_context[:400] if memory_context else '(none)'}\n\n"
             "Evaluate pipeline efficiency."
@@ -253,9 +274,14 @@ class PostHocScorer:
         emotion = getattr(trace, "emotion", "neutral") if trace else "neutral"
         emotion_core = getattr(trace, "emotion_core", "neutral") if trace else "neutral"
         llm_calls_saved = getattr(trace, "llm_calls_saved", 0) if trace else 0
+        hormonal = getattr(trace, "hormonal", {}) if trace else {}
         has_anticipations = bool(
             trace and getattr(trace, "fired_path", None) and
             any(p.get("tag") == "anticipator" for p in trace.fired_path)
+        )
+        hormonal_text = (
+            ", ".join(f"{k}={v:.3f}" for k, v in hormonal.items())
+            if hormonal else "(not available)"
         )
 
         prompt = (
@@ -264,6 +290,7 @@ class PostHocScorer:
             f"Baseline response (single plain LLM call):\n{baseline_response}\n\n"
             f"Context about the brain this turn:\n"
             f"  Detected emotion: {emotion} (core: {emotion_core})\n"
+            f"  Hormonal state (5HT/CORT/OXT): {hormonal_text}\n"
             f"  Gating saved {llm_calls_saved} LLM calls via prediction\n"
             f"  DMN anticipations surfaced: {has_anticipations}\n\n"
             "Evaluate novelty and emergent behavior."

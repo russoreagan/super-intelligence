@@ -60,11 +60,12 @@ Score EACH dimension 0.0–1.0:
                            Use 0.5 if the turn was factual/neutral and any calm emotion
                            would be equally appropriate.
 
-  neuromod_plausibility:   Do the neuromodulator levels make neurochemical sense for this
-                           emotion? High (>0.8) = the levels are coherent with the label.
+  neuromod_plausible:      Do both the neuromodulator levels (DA/ACh/GABA/Glu) AND the
+                           hormonal state (5HT/CORT/OXT) make neurochemical sense for
+                           this emotion? High (>0.8) = all levels cohere with the label.
                            Low (<0.4) = there's a contradiction (e.g., very high GABA
-                           but emotion is "excitement"). Use 0.5 if levels are mid-range
-                           and don't give strong signal either way.
+                           with "excitement", or elevated CORT with "warm/content").
+                           Use 0.5 if levels are mid-range and don't give strong signal.
 
   expressiveness:          Is the emotion actually visible in the response text, or only
                            labeled internally? High = reader can sense the mood without

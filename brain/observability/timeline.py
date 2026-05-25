@@ -310,6 +310,57 @@ class ObservabilityLayer:
             "neuromod_history": list(self._neuromod_history),
         }
 
+    def record_session_learning(self, session_id: str, judge_scores: dict,
+                                structural_metrics: dict) -> None:
+        """Create a standalone Langfuse span for session-level learning scores.
+
+        Called by LearningJudge at session end. Scores appear in Langfuse tagged
+        with the session_id so they're co-located with all other turns.
+        """
+        if not self._langfuse:
+            return
+        try:
+            from langfuse import propagate_attributes
+            with propagate_attributes(session_id=session_id,
+                                      trace_name="learning-summary"):
+                span = self._langfuse.start_observation(
+                    name="learning-summary",
+                    as_type="span",
+                    input={"session_id": session_id,
+                           "turns": structural_metrics.get("turns_recorded", 0)},
+                    output={"reasoning": judge_scores.get("learning_reasoning", "")},
+                    metadata={
+                        **{k: v for k, v in structural_metrics.items()
+                           if k not in ("wiring_deltas",) and isinstance(v, (int, float, str))},
+                    },
+                )
+            # Post judge scores as numeric Langfuse scores on this span's trace
+            span.end()
+            tid = span.trace_id
+            lf_scores = {
+                f"learning.{k}": v
+                for k, v in judge_scores.items()
+                if k != "learning_reasoning" and isinstance(v, (int, float))
+            }
+            # Also include key structural metrics as scores for charting
+            for key in ("predictor_accuracy_trend", "gating_efficiency_trend",
+                        "surprise_trend", "wiring_delta_magnitude", "cross_session_drift"):
+                val = structural_metrics.get(key)
+                if isinstance(val, (int, float)):
+                    lf_scores[f"learning.{key}"] = val
+            for name, value in lf_scores.items():
+                try:
+                    self._langfuse.create_score(
+                        trace_id=tid,
+                        name=name,
+                        value=float(value),
+                        data_type="NUMERIC",
+                    )
+                except Exception as e:
+                    logger.debug("Langfuse create_score(%s) failed: %s", name, e)
+        except Exception as e:
+            logger.debug("record_session_learning failed: %s", e)
+
     def flush(self) -> None:
         if self._langfuse:
             try:

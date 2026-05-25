@@ -102,16 +102,22 @@ async def session(args) -> None:
     baseline_runner = None
     posthoc_scorer = None
     emotion_judge = None
+    learning_monitor = None
+    learning_judge = None
     try:
         from eval.turn_logger import EvalLogger
         from eval.baseline import BaselineRunner
         from eval.scorer import PostHocScorer
         from eval.emotion_judge import EmotionJudge
+        from eval.learning_monitor import LearningMonitor
+        from eval.learning_judge import LearningJudge
         eval_logger = EvalLogger()
         baseline_runner = BaselineRunner(eval_logger)
         posthoc_scorer = PostHocScorer(eval_logger)
         baseline_runner._scorer = posthoc_scorer
         emotion_judge = EmotionJudge(eval_logger)
+        learning_monitor = LearningMonitor()
+        learning_judge = LearningJudge(eval_logger)
         logger.info("Eval: logging to %s", eval_logger._path)
     except Exception as _eval_err:
         logger.debug("Eval system unavailable: %s", _eval_err)
@@ -121,6 +127,10 @@ async def session(args) -> None:
         posthoc_scorer._obs = obs
     if emotion_judge is not None:
         emotion_judge._obs = obs
+    if learning_monitor is not None:
+        learning_monitor._obs = obs
+    if learning_judge is not None:
+        learning_judge._obs = obs
     router = ModelRouter(obs=obs)
     brainstem = Brainstem(bus, router)
     def _on_speaking_change(active: bool) -> None:
@@ -1102,6 +1112,9 @@ async def session(args) -> None:
         if emotion_judge:
             emotion_judge.fire(trace)
 
+        if learning_monitor:
+            learning_monitor.record_turn(trace)
+
         if baseline_runner:
             memory_ctx = ((memory.get("episodes") or "") + "\n"
                           + (memory.get("schema") or ""))
@@ -1310,6 +1323,15 @@ async def session(args) -> None:
             await sleep.consolidate(session_id, session_traces, full_traces=session_traces_full)
         except Exception as e:
             logger.warning("End-of-session memory consolidation failed — recent facts may not be saved: %s", e)
+
+    # Learning judge runs after sleep consolidation so wiring.session_deltas()
+    # reflects the Hebbian pass that just completed.
+    if learning_monitor and learning_judge and session_traces_full:
+        try:
+            session_metrics = learning_monitor.session_metrics(wiring=wiring)
+            await learning_judge.evaluate(session_id, session_traces_full, session_metrics)
+        except Exception as e:
+            logger.warning("Learning judge failed: %s", e)
 
     obs.flush()
     logger.info("Session %s complete. Total LLM calls: %d",
