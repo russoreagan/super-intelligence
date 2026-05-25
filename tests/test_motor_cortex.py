@@ -989,7 +989,7 @@ class TestMotorSwitchModulation:
         assert eff >= motor._safety_inhibitor.min_threshold
         assert motor._safety_inhibitor.min_threshold == 0.40
         # And the opposite extreme — fully depleted chemistry — also clamped.
-        bottom_chem = {k: 0.0 for k in worst_chem}
+        bottom_chem = dict.fromkeys(worst_chem, 0.0)
         eff_bot = motor._safety_inhibitor.effective_threshold(bottom_chem)
         assert eff_bot >= motor._safety_inhibitor.min_threshold
 

@@ -467,12 +467,10 @@ class FrontalCluster:
                                           str(drafter_count), snapshot=chem)
 
         # Mode routers — fire to record which mode the turn engages.
-        if features.get("epistemic_action"):
-            if self._epistemic_mode.should_fire(0.6, chem, turn_id):
-                self._epistemic_mode.fire(0.6, "epistemic", snapshot=chem)
-        if features.get("self_reference"):
-            if self._self_ref_mode.should_fire(0.6, chem, turn_id):
-                self._self_ref_mode.fire(0.6, "self_reference", snapshot=chem)
+        if features.get("epistemic_action") and self._epistemic_mode.should_fire(0.6, chem, turn_id):
+            self._epistemic_mode.fire(0.6, "epistemic", snapshot=chem)
+        if features.get("self_reference") and self._self_ref_mode.should_fire(0.6, chem, turn_id):
+            self._self_ref_mode.fire(0.6, "self_reference", snapshot=chem)
 
         # Response-type / length / tone routers — fire with the executive's
         # chosen route as the tag. These switches participate in the Hebbian

@@ -8,9 +8,6 @@ expected differences are small but directionally significant.
 """
 from __future__ import annotations
 
-import pytest
-
-
 # ---------------------------------------------------------------------------
 # Temporal cluster switches
 # ---------------------------------------------------------------------------
@@ -172,8 +169,8 @@ class TestChemistryPropagation:
     def test_high_CORT_makes_hippocampus_encoder_harder_to_skip(self):
         """High CORT (chronic stress) raises the encoder_gate threshold so the
         LLM encoder is harder to skip — threat memories get encoded thoroughly."""
-        from brain.clusters.hippocampus import HippocampusCluster
         from brain.bus import Bus
+        from brain.clusters.hippocampus import HippocampusCluster
         class _Router:
             async def call(self, *a, **kw): return "{}"
             def supports(self, *a, **kw): return True
