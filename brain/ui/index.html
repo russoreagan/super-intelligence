@@ -1890,6 +1890,657 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
 .tick-note { color: var(--fg-faint); }
 .tick-pct { color: var(--fg-faint); font-size: 9px; }
 
+/* =====================================================================
+   BRAND DROPDOWN — view switcher in the header
+   ===================================================================== */
+.brand { position: relative; }
+.brand-btn {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 8px 4px 4px;
+  border-radius: 8px;
+  cursor: pointer;
+  background: transparent;
+  border: 1px solid transparent;
+  text-align: left;
+  transition: background 120ms ease, border-color 120ms ease;
+  font: inherit;
+  color: inherit;
+}
+.brand-btn:hover {
+  background: oklch(1 0 0 / 0.025);
+  border-color: var(--line-soft);
+}
+.brand-btn.open {
+  background: oklch(1 0 0 / 0.04);
+  border-color: var(--line);
+}
+.brand-btn .brand-text { display: block; line-height: 1.2; }
+.brand-chev {
+  width: 12px; height: 12px;
+  flex-shrink: 0;
+  color: var(--fg-mute);
+  transition: transform 220ms ease;
+}
+.brand-btn.open .brand-chev { transform: rotate(180deg); color: var(--fg-dim); }
+
+.brand-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  min-width: 280px;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 6px;
+  box-shadow: 0 18px 48px oklch(0 0 0 / 0.55), 0 0 0 1px oklch(0 0 0 / 0.3);
+  z-index: 200;
+  display: none;
+  opacity: 0;
+  transform: translateY(-4px);
+  transition: opacity 140ms ease, transform 140ms ease;
+}
+.brand-menu.open {
+  display: block;
+  opacity: 1;
+  transform: translateY(0);
+}
+.brand-menu-head {
+  padding: 8px 10px 6px;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--fg-faint);
+}
+.brand-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  width: 100%;
+  background: transparent;
+  border: none;
+  color: var(--fg);
+  font: inherit;
+  text-align: left;
+  transition: background 100ms ease;
+}
+.brand-menu-item:hover { background: var(--bg-2); }
+.brand-menu-item.active {
+  background: oklch(0.78 0.14 220 / 0.10);
+  box-shadow: inset 0 0 0 1px oklch(0.78 0.14 220 / 0.30);
+}
+.brand-menu-icon {
+  width: 32px; height: 32px;
+  flex-shrink: 0;
+  display: grid; place-items: center;
+  border-radius: 7px;
+  background: var(--bg-2);
+  color: var(--fg-dim);
+  border: 1px solid var(--line-soft);
+}
+.brand-menu-item.active .brand-menu-icon {
+  background: oklch(0.78 0.14 220 / 0.18);
+  border-color: oklch(0.78 0.14 220 / 0.45);
+  color: var(--accent);
+}
+.brand-menu-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.brand-menu-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+  line-height: 1.1;
+}
+.brand-menu-desc {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-mute);
+}
+.brand-menu-check {
+  margin-left: auto;
+  width: 14px; height: 14px;
+  color: var(--accent);
+  opacity: 0;
+  flex-shrink: 0;
+}
+.brand-menu-item.active .brand-menu-check { opacity: 1; }
+
+/* =====================================================================
+   NEURAL MAP — process-flow alternate view
+   ===================================================================== */
+.brain-stage[data-view="map"] .brain-figure { display: none; }
+.brain-stage[data-view="anatomy"] #neural-map { display: none; }
+
+#neural-map {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 44px 14px 52px;
+  z-index: 1;
+}
+
+.nm-wrap {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  max-width: 1240px;
+  container-type: inline-size;
+}
+
+.nm-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.nm-edge {
+  fill: none;
+  stroke: oklch(0.42 0.020 250 / 0.55);
+  stroke-width: 1.6;
+  vector-effect: non-scaling-stroke;
+  transition: stroke 200ms ease, opacity 200ms ease, filter 200ms ease;
+  opacity: 0.55;
+}
+.nm-edge.modulatory {
+  stroke-dasharray: 5 5;
+  stroke: oklch(0.42 0.020 250 / 0.4);
+  opacity: 0.5;
+}
+.nm-edge.firing {
+  stroke: var(--firing-color, oklch(0.88 0.18 220));
+  opacity: 1;
+  filter:
+    drop-shadow(0 0 3px var(--firing-color, oklch(0.88 0.18 220)))
+    drop-shadow(0 0 8px var(--firing-color, oklch(0.88 0.18 220)))
+    drop-shadow(0 0 16px oklch(from var(--firing-color, oklch(0.88 0.18 220)) l c h / 0.45));
+  stroke-width: 3.2;
+  animation: nm-flow 1s linear infinite;
+}
+.nm-edge.modulatory.firing {
+  animation: nm-flow-mod 1s linear infinite;
+  stroke-width: 2.6;
+}
+@keyframes nm-flow {
+  from { stroke-dasharray: 5 9; stroke-dashoffset: 14; }
+  to   { stroke-dasharray: 5 9; stroke-dashoffset: 0; }
+}
+@keyframes nm-flow-mod {
+  from { stroke-dasharray: 7 6; stroke-dashoffset: 13; }
+  to   { stroke-dasharray: 7 6; stroke-dashoffset: 0; }
+}
+
+.nm-particle {
+  fill: var(--firing-color, oklch(0.95 0.12 220));
+  opacity: 0;
+  filter: drop-shadow(0 0 4px var(--firing-color, oklch(0.95 0.12 220)));
+}
+.nm-particle.firing { opacity: 1; }
+
+.nm-nodes {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.nm-node {
+  position: absolute;
+  width: 14%;
+  min-width: 84px;
+  max-width: 148px;
+  transform: translate(-50%, -50%);
+  background: oklch(0.18 0.022 250 / 0.88);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 7px 9px 8px;
+  pointer-events: auto;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+  transition: border-color 220ms ease, box-shadow 320ms ease, background 220ms ease, transform 220ms ease;
+}
+.nm-node:hover {
+  border-color: var(--bg-3);
+  transform: translate(-50%, -50%) translateY(-1px);
+}
+.nm-node-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.nm-node-init {
+  width: 18px; height: 18px;
+  flex-shrink: 0;
+  display: grid; place-items: center;
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 700;
+  background: var(--lobe, var(--accent));
+  color: oklch(0.13 0.018 250);
+}
+.nm-node-name {
+  flex: 1;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--fg);
+  line-height: 1.05;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nm-node-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--bg-3);
+  flex-shrink: 0;
+  transition: background 200ms ease, box-shadow 200ms ease;
+}
+.nm-node-role {
+  font-family: var(--mono);
+  font-size: 8px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg-mute);
+  line-height: 1.3;
+  margin-bottom: 6px;
+  min-height: 18px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nm-node-meter {
+  height: 3px;
+  background: var(--bg-2);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.nm-node-meter-fill {
+  height: 100%;
+  width: 0;
+  background: var(--lobe, var(--accent));
+  border-radius: 2px;
+  opacity: 0.5;
+  transition: width 600ms ease, opacity 400ms ease;
+}
+
+.nm-node.firing {
+  border-color: var(--lobe);
+  background:
+    linear-gradient(180deg,
+      oklch(from var(--lobe) l c h / 0.26) 0%,
+      oklch(0.20 0.024 250 / 0.92) 70%);
+  box-shadow:
+    0 0 0 1px var(--lobe),
+    0 0 26px oklch(from var(--lobe) l c h / 0.55),
+    0 0 60px oklch(from var(--lobe) l c h / 0.18),
+    0 8px 24px oklch(0 0 0 / 0.45);
+  animation: nm-node-pulse 1.6s ease-out;
+  z-index: 4;
+}
+.nm-node.firing .nm-node-dot {
+  background: var(--lobe);
+  box-shadow: 0 0 8px var(--lobe);
+  animation: nm-dot-blink 0.7s ease-in-out infinite alternate;
+}
+.nm-node.firing .nm-node-meter-fill { opacity: 1; }
+.nm-node.firing .nm-node-name { color: oklch(0.98 0.01 250); }
+.nm-node.firing .nm-node-init {
+  box-shadow: 0 0 10px oklch(from var(--lobe) l c h / 0.65);
+}
+@keyframes nm-node-pulse {
+  0%   {
+    box-shadow: 0 0 0 1px var(--lobe), 0 0 0 0 oklch(from var(--lobe) l c h / 0.6);
+  }
+  40%  {
+    box-shadow:
+      0 0 0 1px var(--lobe),
+      0 0 28px oklch(from var(--lobe) l c h / 0.7),
+      0 0 70px oklch(from var(--lobe) l c h / 0.25);
+  }
+  100% {
+    box-shadow:
+      0 0 0 1px var(--lobe),
+      0 0 22px oklch(from var(--lobe) l c h / 0.4),
+      0 0 50px oklch(from var(--lobe) l c h / 0.15);
+  }
+}
+@keyframes nm-dot-blink {
+  from { opacity: 0.4; }
+  to   { opacity: 1; }
+}
+
+/* IO endpoints (PROMPT IN / RESPONSE OUT) */
+.nm-io {
+  position: absolute;
+  width: 68px; height: 68px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  display: grid; place-items: center;
+  background:
+    radial-gradient(circle at center, oklch(0.20 0.024 250) 0%, oklch(0.15 0.020 250) 100%);
+  border: 1px solid var(--line);
+  text-align: center;
+  pointer-events: auto;
+  z-index: 3;
+  transition: border-color 220ms ease, box-shadow 320ms ease;
+}
+.nm-io-inner {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+}
+.nm-io-glyph {
+  width: 15px; height: 15px;
+  color: var(--fg-dim);
+  transition: color 220ms ease;
+}
+.nm-io-label {
+  font-family: var(--mono);
+  font-size: 7.5px;
+  letter-spacing: 0.14em;
+  color: var(--fg-mute);
+  text-transform: uppercase;
+}
+.nm-io.firing {
+  border-color: var(--accent);
+  box-shadow:
+    0 0 0 1px var(--accent),
+    0 0 28px oklch(0.78 0.14 220 / 0.55),
+    0 0 60px oklch(0.78 0.14 220 / 0.25);
+  background:
+    radial-gradient(circle at center, oklch(0.78 0.14 220 / 0.22) 0%, oklch(0.15 0.020 250) 70%);
+}
+.nm-io.firing .nm-io-glyph { color: oklch(0.95 0.06 220); }
+.nm-io.firing .nm-io-label { color: oklch(0.92 0.05 220); }
+
+/* Neuromodulator bars embedded in the hypothalamus node — that's where
+   they originate anatomically, so they live there in the map too. */
+.nm-node-mods {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding-top: 6px;
+  border-top: 1px solid var(--line-faint);
+}
+.nm-mod-row {
+  display: grid;
+  grid-template-columns: 28px 1fr 22px;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--mono);
+  border-radius: 3px;
+  padding: 1px 2px;
+  transition: background 240ms ease;
+}
+.nm-mod-row-name {
+  font-size: 7.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--fg-dim);
+}
+.nm-mod-row-bar {
+  height: 2px;
+  background: var(--bg-2);
+  border-radius: 1px;
+  overflow: hidden;
+}
+.nm-mod-row-fill {
+  height: 100%;
+  width: 0;
+  border-radius: 1px;
+  transition: width 600ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.nm-mod-row-val {
+  font-size: 7px;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-mute);
+  text-align: right;
+}
+.nm-mod-row.changed {
+  background: oklch(from var(--mod-color) l c h / 0.18);
+}
+.nm-mod-row.changed .nm-mod-row-val { color: var(--fg); }
+.nm-mod-row.changed .nm-mod-row-name { color: var(--fg); }
+
+/* =========================================================
+   NEUROMOD CAUSE/EFFECT — delta badges, sparklines, triggers,
+   release particles. Layered on top of existing nm-row + nm-mod-row.
+   ========================================================= */
+.nm-row   { position: relative; }
+.nm-head  { position: relative; flex-wrap: nowrap; gap: 6px; }
+
+.nm-delta {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-family: var(--mono);
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 1px 5px 1px 4px;
+  border-radius: 3px;
+  margin-left: 4px;
+  opacity: 0;
+  transform: translateY(-1px);
+  transition: opacity 220ms ease, transform 220ms ease;
+  pointer-events: none;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+.nm-delta.show { opacity: 1; transform: none; }
+.nm-delta.up   {
+  background: oklch(0.32 0.10 145 / 0.45);
+  border-color: oklch(0.55 0.14 145 / 0.6);
+  color: oklch(0.90 0.14 145);
+}
+.nm-delta.down {
+  background: oklch(0.32 0.10 25 / 0.45);
+  border-color: oklch(0.55 0.14 25 / 0.6);
+  color: oklch(0.88 0.14 25);
+}
+.nm-delta.flash {
+  animation: nm-delta-flash 0.5s ease-out;
+}
+@keyframes nm-delta-flash {
+  0%   { transform: translateY(-3px) scale(1.18); }
+  60%  { transform: translateY(0) scale(1); }
+  100% { transform: none; }
+}
+
+.nm-spark {
+  display: block;
+  width: 100%;
+  height: 16px;
+  margin-top: 5px;
+  opacity: 0.7;
+  overflow: visible;
+}
+.nm-spark-grid {
+  stroke: oklch(0.30 0.02 250 / 0.4);
+  stroke-width: 0.4;
+  vector-effect: non-scaling-stroke;
+  fill: none;
+}
+.nm-spark-line {
+  fill: none;
+  stroke: var(--spark-color, var(--fg-faint));
+  stroke-width: 1.4;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+  filter: drop-shadow(0 0 2px var(--spark-color, transparent));
+  transition: opacity 200ms;
+}
+.nm-spark-fill {
+  fill: var(--spark-color, var(--fg-faint));
+  opacity: 0.12;
+}
+.nm-spark-head {
+  fill: var(--spark-color, var(--fg-faint));
+  filter: drop-shadow(0 0 3px var(--spark-color, transparent));
+}
+
+.nm-trigger {
+  font-family: var(--mono);
+  font-size: 8.5px;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: var(--fg-faint);
+  min-height: 11px;
+  margin-top: 3px;
+  opacity: 0.35;
+  transition: opacity 200ms, color 200ms;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.nm-trigger .nm-trigger-arrow { color: var(--fg-faint); margin: 0 4px; }
+.nm-trigger.show {
+  opacity: 1;
+  color: var(--spark-color, var(--fg-mute));
+}
+.nm-trigger.show .nm-trigger-arrow { color: var(--fg-mute); }
+
+/* Mini delta inside hypothalamus map node */
+.nm-delta-mini {
+  font-size: 6.5px;
+  padding: 0 3px;
+  margin-left: 3px;
+  border-radius: 2px;
+  letter-spacing: 0;
+}
+
+/* Release particles — circles inside #nm-svg */
+.nm-release-particle {
+  pointer-events: none;
+}
+
+/* Hypothalamus node firing pulse — emphasize when it releases */
+.nm-node[data-id="hypothalamus"].releasing {
+  box-shadow:
+    0 0 0 1px var(--release-color, var(--accent)),
+    0 0 24px oklch(from var(--release-color, var(--accent)) l c h / 0.7),
+    0 0 60px oklch(from var(--release-color, var(--accent)) l c h / 0.25);
+  border-color: var(--release-color, var(--accent));
+  transition: box-shadow 280ms ease, border-color 280ms ease;
+}
+
+/* Hide corner readouts in map view — info is implicit in the live diagram */
+.brain-stage[data-view="map"] .readout { display: none; }
+/* Lower the side toggle z-index so the prompt/response circles read above them */
+.brain-stage[data-view="map"] .col-toggle { opacity: 0.5; }
+.brain-stage[data-view="map"] .col-toggle:hover { opacity: 1; }
+
+/* Map chrome — title strip top-left, legend bottom */
+.nm-meta {
+  position: absolute;
+  top: 14px;
+  left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  pointer-events: none;
+  z-index: 5;
+}
+.nm-meta-eyebrow {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  color: var(--fg-faint);
+  text-transform: uppercase;
+}
+.nm-meta-title {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  color: var(--fg-dim);
+  text-transform: uppercase;
+}
+
+.nm-legend {
+  position: absolute;
+  bottom: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 16px;
+  background: oklch(0.14 0.020 250 / 0.78);
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  backdrop-filter: blur(8px);
+  z-index: 5;
+  pointer-events: none;
+}
+.nm-legend-key {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg-mute);
+}
+.nm-legend-key.dim { opacity: 0.7; }
+.nm-legend-line {
+  width: 22px; height: 2px;
+  background: var(--accent);
+  border-radius: 1px;
+}
+.nm-legend-line.modulatory {
+  background:
+    repeating-linear-gradient(90deg, var(--fg-mute) 0 4px, transparent 4px 8px);
+  height: 1.5px;
+}
+.nm-legend-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 6px var(--accent);
+}
+
+/* Narrow stage handling via container queries on .nm-wrap */
+@container (max-width: 760px) {
+  .nm-node { min-width: 64px; padding: 5px 7px 6px; max-width: 120px; }
+  .nm-node-name { font-size: 9.5px; }
+  .nm-node-init { width: 16px; height: 16px; font-size: 8.5px; }
+  .nm-node-role { display: none; }
+  .nm-node-meter { display: none; }
+  .nm-node-head { margin-bottom: 0; gap: 5px; }
+  .nm-io { width: 56px; height: 56px; }
+  .nm-io-glyph { width: 13px; height: 13px; }
+  .nm-io-label { font-size: 7px; letter-spacing: 0.1em; }
+  .nm-meta { display: none; }
+  .nm-legend { bottom: 8px; padding: 5px 11px; gap: 11px; }
+  .nm-legend-key { font-size: 8px; }
+  .nm-legend-line { width: 16px; }
+  .nm-mod-row { grid-template-columns: 22px 1fr 18px; gap: 3px; }
+  .nm-mod-row-name { font-size: 6.5px; }
+  .nm-mod-row-val { font-size: 6.5px; }
+}
+
+@container (max-width: 460px) {
+  .nm-node { min-width: 52px; padding: 4px 5px 5px; }
+  .nm-node-name { font-size: 8.5px; }
+  .nm-io { width: 48px; height: 48px; }
+  .nm-io-label { font-size: 6.5px; }
+  .nm-node[data-id="hypothalamus"] .nm-node-mods { display: none; }
+}
+
 </style>
 </head>
 <body>
@@ -1899,10 +2550,36 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
   <!-- ====== HEADER ====== -->
   <header class="header">
     <div class="brand">
-      <div class="brand-mark" aria-hidden="true"></div>
-      <div>
-        <div class="brand-title">Super Intelligence</div>
-        <span class="brand-sub">NEURAL CONTROL · v0.4</span>
+      <button class="brand-btn" id="brand-btn" type="button" aria-haspopup="menu" aria-expanded="false">
+        <div class="brand-mark" aria-hidden="true"></div>
+        <div class="brand-text">
+          <div class="brand-title">Super Intelligence</div>
+          <span class="brand-sub" id="brand-sub">NEURAL CONTROL · v0.4</span>
+        </div>
+        <svg class="brand-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+      <div class="brand-menu" id="brand-menu" role="menu" aria-label="Choose view">
+        <div class="brand-menu-head">View</div>
+        <button class="brand-menu-item active" data-view="anatomy" role="menuitemradio" aria-checked="true">
+          <span class="brand-menu-icon">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4a4 4 0 0 0-3.8 5.2A3.5 3.5 0 0 0 5 16a3.5 3.5 0 0 0 4 3.5A3 3 0 0 0 12 21V4a3 3 0 0 0-3 0Z"/><path d="M15 4a4 4 0 0 1 3.8 5.2A3.5 3.5 0 0 1 19 16a3.5 3.5 0 0 1-4 3.5A3 3 0 0 1 12 21"/></svg>
+          </span>
+          <span class="brand-menu-text">
+            <span class="brand-menu-name">Neural Control</span>
+            <span class="brand-menu-desc">Anatomical view · v0.4</span>
+          </span>
+          <svg class="brand-menu-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+        </button>
+        <button class="brand-menu-item" data-view="map" role="menuitemradio" aria-checked="false">
+          <span class="brand-menu-icon">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="6" r="2"/><circle cx="5" cy="18" r="2"/><circle cx="19" cy="12" r="2"/><circle cx="12" cy="6" r="1.6"/><circle cx="12" cy="18" r="1.6"/><path d="M7 6h3M7 18h3M13.4 6.6 17 11M13.4 17.4 17 13"/></svg>
+          </span>
+          <span class="brand-menu-text">
+            <span class="brand-menu-name">Neural Map</span>
+            <span class="brand-menu-desc">Process flow · v0.4</span>
+          </span>
+          <svg class="brand-menu-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+        </button>
       </div>
     </div>
 
@@ -1999,31 +2676,32 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
               <div class="nm-track"><div class="nm-fill" id="nm-NE" style="background: oklch(0.75 0.16 300); width: 25%"></div></div>
             </div>
           </div>
-          <div class="section-label" style="margin-top:10px;">Hormonal</div>
-          <div class="nm-grid">
-            <div class="nm-row">
-              <div class="nm-head"><span class="nm-name">5HT</span><span class="nm-num" id="nm-num-5HT">50%</span></div>
-              <div class="nm-track"><div class="nm-fill" id="nm-5HT" style="background: oklch(0.82 0.16 65); width: 50%"></div></div>
-            </div>
-            <div class="nm-row">
-              <div class="nm-head"><span class="nm-name">OXT</span><span class="nm-num" id="nm-num-OXT">30%</span></div>
-              <div class="nm-track"><div class="nm-fill" id="nm-OXT" style="background: oklch(0.78 0.14 345); width: 30%"></div></div>
-            </div>
-            <div class="nm-row">
-              <div class="nm-head"><span class="nm-name">CORT</span><span class="nm-num" id="nm-num-CORT">5%</span></div>
-              <div class="nm-track"><div class="nm-fill" id="nm-CORT" style="background: oklch(0.70 0.18 40); width: 5%"></div></div>
-            </div>
-            <div class="nm-row">
-              <div class="nm-head"><span class="nm-name">AEA</span><span class="nm-num" id="nm-num-AEA">30%</span></div>
-              <div class="nm-track"><div class="nm-fill" id="nm-AEA" style="background: oklch(0.78 0.12 170); width: 30%"></div></div>
-            </div>
-          </div>
           <div class="mood-display">
             <span class="mood-dot" id="mood-dot"></span>
             <span class="mood-name" id="mood-name">neutral</span>
             <span class="mood-key">Mood</span>
           </div>
         </section>
+
+          <section class="panel-section">
+            <h3 class="panel-label">Hormonal</h3>
+            <div class="nm-row">
+              <div class="nm-head"><span class="nm-name">5HT</span><span class="nm-num" id="nm-num-5HT">30%</span></div>
+              <div class="nm-track"><div class="nm-fill" id="nm-5HT" style="background: oklch(0.80 0.14 85); width: 30%"></div></div>
+            </div>
+            <div class="nm-row">
+              <div class="nm-head"><span class="nm-name">OXT</span><span class="nm-num" id="nm-num-OXT">25%</span></div>
+              <div class="nm-track"><div class="nm-fill" id="nm-OXT" style="background: oklch(0.75 0.18 0); width: 25%"></div></div>
+            </div>
+            <div class="nm-row">
+              <div class="nm-head"><span class="nm-name">CORT</span><span class="nm-num" id="nm-num-CORT">10%</span></div>
+              <div class="nm-track"><div class="nm-fill" id="nm-CORT" style="background: oklch(0.70 0.17 55); width: 10%"></div></div>
+            </div>
+            <div class="nm-row">
+              <div class="nm-head"><span class="nm-name">AEA</span><span class="nm-num" id="nm-num-AEA">20%</span></div>
+              <div class="nm-track"><div class="nm-fill" id="nm-AEA" style="background: oklch(0.72 0.16 145); width: 20%"></div></div>
+            </div>
+          </section>
 
         <section class="pane log-pane" id="plasticity-pane">
           <header class="pane-head">
@@ -2065,7 +2743,7 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
 
     <!-- ----- CENTER: brain stage ----- -->
     <main class="col col-mid">
-      <div class="brain-stage" id="brain-stage">
+      <div class="brain-stage" id="brain-stage" data-view="anatomy">
         <div id="mood-bg" aria-hidden="true"></div>
         <div class="readout tl">
           Cluster firing
@@ -2101,6 +2779,23 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
           <svg class="brain-subcortical" viewBox="0 0 942 867" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">
             <!-- No remaining SVG subcortical shapes — all are now PNG images -->
           </svg>
+        </div>
+
+        <!-- ===== NEURAL MAP — alternate view ===== -->
+        <div id="neural-map" aria-label="Neural process-flow map">
+          <div class="nm-wrap" id="nm-wrap">
+            <div class="nm-meta">
+              <div class="nm-meta-eyebrow">View</div>
+              <div class="nm-meta-title">Neural Map · Process Flow</div>
+            </div>
+            <svg class="nm-svg" id="nm-svg" viewBox="0 0 100 100" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg"></svg>
+            <div class="nm-nodes" id="nm-nodes"></div>
+            <div class="nm-legend">
+              <span class="nm-legend-key"><span class="nm-legend-line"></span>Excitatory</span>
+              <span class="nm-legend-key dim"><span class="nm-legend-line modulatory"></span>Modulatory</span>
+              <span class="nm-legend-key"><span class="nm-legend-dot"></span>Active node</span>
+            </div>
+          </div>
         </div>
 
         <button class="col-toggle col-toggle-left"  id="toggle-left"  title="Toggle left panel"  aria-label="Toggle left panel">
@@ -2187,7 +2882,7 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
               </label>
               <input type="file" id="img-file-input" accept="image/*" style="display:none">
               <div id="img-preview-chip">
-                <img id="img-preview-thumb" src="" alt="attached image">
+                <img id="img-preview-thumb" alt="attached image">
                 <button id="img-remove-btn" title="Remove image">×</button>
               </div>
               <textarea id="msg-input" rows="4" placeholder="Type a message, or hold Space to speak…"></textarea>
@@ -3020,16 +3715,18 @@ function handle(msg) {
       });
       break;
     }
-    case 'hormonal': {
-      ['5HT', 'OXT', 'CORT', 'AEA'].forEach(ch => {
-        const v = msg[ch];
-        if (v === undefined) return;
-        const pct = Math.round(v * 100);
-        document.getElementById(`nm-${ch}`).style.width = pct + '%';
-        document.getElementById(`nm-num-${ch}`).textContent = pct + '%';
-      });
-      break;
-    }
+        case 'hormonal': {
+          const hd = msg.data ?? msg;
+          ['5HT', 'OXT', 'CORT', 'AEA'].forEach(k => {
+            const v = hd[k] ?? 0;
+            const pct = Math.round(v * 100);
+            const fill = document.getElementById('nm-' + k);
+            const num  = document.getElementById('nm-num-' + k);
+            if (fill) fill.style.width = pct + '%';
+            if (num)  num.textContent  = pct + '%';
+          });
+          break;
+        }
     case 'emotion': {
       const badge = document.getElementById('emotion-badge');
       badge.textContent = msg.emotion;
@@ -3518,7 +4215,7 @@ const imgAttachBtn   = document.getElementById('img-attach-btn');
 function clearImagePreview() {
   pendingImageFile = null;
   imgPreviewChip.classList.remove('visible');
-  imgPreviewThumb.src = '';
+  imgPreviewThumb.removeAttribute('src');
   imgAttachBtn.classList.remove('has-image');
   imgFileInput.value = '';
 }
@@ -3808,9 +4505,9 @@ function enterDemoMode() {
   // session id for demo
   sessionId = 'demo-' + Math.random().toString(36).slice(2, 6);
   document.getElementById('stat-session').textContent = sessionId;
-  // baseline neuromods + hormonal
-  handle({ type: 'neuromod', ACh: 0.22, DA: 0.58, GABA: 0.10, Glu: 0.45, NE: 0.28 });
-  handle({ type: 'hormonal', '5HT': 0.50, OXT: 0.30, CORT: 0.05, AEA: 0.30 });
+  // baseline neuromods
+  handle({ type: 'neuromod', ACh: 0.22, DA: 0.58, GABA: 0.10, Glu: 0.45, NE: 0.25 });
+  handle({ type: 'hormonal', data: { '5HT': 0.30, OXT: 0.25, CORT: 0.10, AEA: 0.20 } });
   handle({ type: 'emotion', emotion: 'curious' });
   // periodic idle activations
   setInterval(() => {
@@ -3826,7 +4523,7 @@ function enterDemoMode() {
       DA:   Math.max(0.10, Math.min(0.9, 0.55 + (Math.random()-0.5)*0.3)),
       GABA: Math.max(0.02, Math.min(0.6, 0.12 + (Math.random()-0.5)*0.2)),
       Glu:  Math.max(0.05, Math.min(0.9, 0.45 + (Math.random()-0.5)*0.3)),
-      NE:   Math.max(0.15, Math.min(0.8, 0.28 + (Math.random()-0.5)*0.3)),
+      NE:   Math.max(0.05, Math.min(0.9, 0.25 + (Math.random()-0.5)*0.3)),
     };
     handle({ type: 'neuromod', ...snap });
   }, 5000);
@@ -4275,6 +4972,620 @@ connect();
 setTimeout(() => {
   if (!wsConnected) enterDemoMode();
 }, 1500);
+
+/* =====================================================================
+   NEURAL MAP — process-flow alternate view
+   Renders nodes + curved SVG "neuron" pathways between them. Hooks the
+   existing activateRegion / handle() pipeline so the same WS events that
+   light the anatomical view also light the map.
+   ===================================================================== */
+const NM_NODES = {
+  input:        { x: 9,  y: 50, type: 'io', label: 'Prompt',
+    glyph: '<polyline points="13 17 18 12 13 7"/><line x1="6" y1="12" x2="18" y2="12"/>' },
+  occipital:    { x: 24, y: 15, type: 'node', region: 'occipital'  },
+  temporal:     { x: 24, y: 50, type: 'node', region: 'temporal'   },
+  thalamus:     { x: 41, y: 15, type: 'node', region: 'thalamus'   },
+  hippocampus:  { x: 41, y: 50, type: 'node', region: 'hippocampus' },
+  hypothalamus: { x: 41, y: 80, type: 'node', region: 'hypothalamus' },
+  parietal:     { x: 58, y: 15, type: 'node', region: 'parietal'   },
+  frontal:      { x: 58, y: 50, type: 'node', region: 'frontal'    },
+  cerebellum:   { x: 58, y: 80, type: 'node', region: 'cerebellum' },
+  motor:        { x: 75, y: 28, type: 'node', region: 'motor'      },
+  brainstem:    { x: 75, y: 72, type: 'node', region: 'brainstem'  },
+  output:       { x: 90, y: 50, type: 'io', label: 'Response',
+    glyph: '<path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>' },
+};
+
+// [from, to, kind?] — kind: 'modulatory' for neuromodulator/inhibitory paths
+const NM_EDGES = [
+  ['input', 'temporal'],
+  ['input', 'occipital', 'modulatory'],
+  ['occipital', 'temporal'],
+  ['temporal', 'thalamus'],
+  ['temporal', 'hippocampus'],
+  ['temporal', 'hypothalamus'],
+  ['thalamus', 'parietal'],
+  ['thalamus', 'frontal'],
+  ['thalamus', 'hippocampus'],
+  ['hippocampus', 'frontal'],
+  ['hippocampus', 'parietal'],
+  ['parietal', 'frontal'],
+  ['hypothalamus', 'frontal', 'modulatory'],
+  ['hypothalamus', 'hippocampus', 'modulatory'],
+  ['frontal', 'motor'],
+  ['frontal', 'brainstem'],
+  ['frontal', 'cerebellum'],
+  ['cerebellum', 'motor', 'modulatory'],
+  ['motor', 'output'],
+  ['brainstem', 'output'],
+];
+
+let _nmReady = false;
+const _nmLastFire = new Map();           // regionId → ts (ms)
+const _nmInTurn   = { active: false };
+const _nmEdgeTimers = new Map();
+const _nmNodeTimers = new Map();
+const _nmModTimers  = new Map();
+const _nmModLast    = { DA: 0.5, GABA: 0.05, ACh: 0.20, Glu: 0.30 };
+const NM_FIRING_MS  = 1500;
+const NM_RECENT_MS  = 2400;
+const NM_NS         = 'http://www.w3.org/2000/svg';
+
+function _nmPathD(A, B) {
+  // Smooth horizontal-bias cubic between two coordinates (in 0–100 viewBox space).
+  const dx = B.x - A.x;
+  const cx1 = A.x + dx * 0.5;
+  const cx2 = B.x - dx * 0.5;
+  return `M ${A.x} ${A.y} C ${cx1} ${A.y}, ${cx2} ${B.y}, ${B.x} ${B.y}`;
+}
+
+function nmInit() {
+  const svg   = document.getElementById('nm-svg');
+  const nodes = document.getElementById('nm-nodes');
+  if (!svg || !nodes) return;
+
+  // Build edge paths
+  NM_EDGES.forEach(([from, to, kind]) => {
+    const A = NM_NODES[from], B = NM_NODES[to];
+    if (!A || !B) return;
+    const path = document.createElementNS(NM_NS, 'path');
+    path.setAttribute('d', _nmPathD(A, B));
+    path.setAttribute('class', 'nm-edge' + (kind === 'modulatory' ? ' modulatory' : ''));
+    path.dataset.from = from;
+    path.dataset.to   = to;
+    svg.appendChild(path);
+  });
+
+  // Build node cards + IO endpoints
+  Object.entries(NM_NODES).forEach(([id, n]) => {
+    if (n.type === 'io') {
+      const el = document.createElement('div');
+      el.className = 'nm-io';
+      el.id = 'nm-io-' + id;
+      el.style.left = n.x + '%';
+      el.style.top  = n.y + '%';
+      el.innerHTML = `
+        <div class="nm-io-inner">
+          <svg class="nm-io-glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${n.glyph}</svg>
+          <div class="nm-io-label">${n.label}</div>
+        </div>`;
+      nodes.appendChild(el);
+    } else {
+      const cfg = REGIONS[n.region];
+      if (!cfg) return;
+      const el = document.createElement('div');
+      el.className = 'nm-node';
+      el.id = 'nm-node-' + n.region;
+      el.dataset.id = n.region;
+      el.style.left = n.x + '%';
+      el.style.top  = n.y + '%';
+      el.style.setProperty('--lobe', cfg.color);
+      el.innerHTML = `
+        <div class="nm-node-head">
+          <span class="nm-node-init">${cfg.initial}</span>
+          <span class="nm-node-name">${cfg.label}</span>
+          <span class="nm-node-dot"></span>
+        </div>
+        <div class="nm-node-role">${cfg.role}</div>
+        <div class="nm-node-meter"><div class="nm-node-meter-fill"></div></div>`;
+
+      // Hypothalamus carries live neuromodulator bars — anatomically correct,
+      // and avoids a floating overlay that would collide with other nodes.
+      if (n.region === 'hypothalamus') {
+        const mods = document.createElement('div');
+        mods.className = 'nm-node-mods';
+        mods.innerHTML = `
+          <div class="nm-mod-row" data-mod="DA"   style="--mod-color: oklch(0.80 0.16 85);"><span class="nm-mod-row-name">DA</span><div class="nm-mod-row-bar"><div class="nm-mod-row-fill" style="background:oklch(0.80 0.16 85);"></div></div><span class="nm-mod-row-val">50</span></div>
+          <div class="nm-mod-row" data-mod="GABA" style="--mod-color: oklch(0.70 0.18 25);"><span class="nm-mod-row-name">GABA</span><div class="nm-mod-row-bar"><div class="nm-mod-row-fill" style="background:oklch(0.70 0.18 25);"></div></div><span class="nm-mod-row-val">5</span></div>
+          <div class="nm-mod-row" data-mod="ACh"  style="--mod-color: oklch(0.78 0.14 200);"><span class="nm-mod-row-name">ACh</span><div class="nm-mod-row-bar"><div class="nm-mod-row-fill" style="background:oklch(0.78 0.14 200);"></div></div><span class="nm-mod-row-val">20</span></div>
+          <div class="nm-mod-row" data-mod="Glu"  style="--mod-color: oklch(0.78 0.16 145);"><span class="nm-mod-row-name">Glu</span><div class="nm-mod-row-bar"><div class="nm-mod-row-fill" style="background:oklch(0.78 0.16 145);"></div></div><span class="nm-mod-row-val">30</span></div>
+          <div class="nm-mod-row" data-mod="NE"   style="--mod-color: oklch(0.75 0.16 300);"><span class="nm-mod-row-name">NE</span><div class="nm-mod-row-bar"><div class="nm-mod-row-fill" style="background:oklch(0.75 0.16 300);"></div></div><span class="nm-mod-row-val">25</span></div>`;
+        el.appendChild(mods);
+      }
+
+      el.addEventListener('click', () => {
+        if (typeof renderRegionDetail === 'function') renderRegionDetail(n.region);
+      });
+      nodes.appendChild(el);
+    }
+  });
+
+  // Sync mod bars from whatever the left-panel meters currently show
+  ['DA', 'GABA', 'ACh', 'Glu'].forEach(ch => {
+    const cur  = parseFloat(document.getElementById('nm-num-' + ch).textContent) || 0;
+    const row  = document.querySelector(`.nm-mod-row[data-mod="${ch}"]`);
+    if (!row) return;
+    const fill = row.querySelector('.nm-mod-row-fill');
+    const val  = row.querySelector('.nm-mod-row-val');
+    if (fill) fill.style.width = cur + '%';
+    if (val)  val.textContent  = Math.round(cur);
+    _nmModLast[ch] = cur / 100;
+  });
+
+  _nmReady = true;
+}
+
+function _nmFireEdge(from, to) {
+  const path = document.querySelector(`#nm-svg path[data-from="${from}"][data-to="${to}"]`);
+  if (!path) return;
+  const tgt   = NM_NODES[to];
+  const color = tgt && tgt.region ? REGIONS[tgt.region].color : 'oklch(0.85 0.16 220)';
+  path.style.setProperty('--firing-color', color);
+  path.classList.remove('firing');
+  void path.getBoundingClientRect();
+  path.classList.add('firing');
+  const key = from + '>' + to;
+  if (_nmEdgeTimers.has(key)) clearTimeout(_nmEdgeTimers.get(key));
+  _nmEdgeTimers.set(key, setTimeout(() => path.classList.remove('firing'), NM_FIRING_MS));
+}
+
+function _nmFireNode(regionId, intensity) {
+  const el = document.getElementById('nm-node-' + regionId);
+  if (!el) return;
+  const inten = Math.max(0.15, Math.min(1, intensity ?? 0.6));
+  el.classList.remove('firing');
+  void el.getBoundingClientRect();
+  el.classList.add('firing');
+  const fill = el.querySelector('.nm-node-meter-fill');
+  if (fill) fill.style.width = (inten * 100) + '%';
+  if (_nmNodeTimers.has(regionId)) clearTimeout(_nmNodeTimers.get(regionId));
+  _nmNodeTimers.set(regionId, setTimeout(() => {
+    el.classList.remove('firing');
+    if (fill) fill.style.width = '0%';
+  }, 1800));
+}
+
+function _nmFireIO(id, ms) {
+  const el = document.getElementById('nm-io-' + id);
+  if (!el) return;
+  el.classList.remove('firing');
+  void el.getBoundingClientRect();
+  el.classList.add('firing');
+  setTimeout(() => el.classList.remove('firing'), ms || 1600);
+}
+
+function nmActivate(regionId, intensity) {
+  if (!_nmReady) return;
+  if (!NM_NODES[regionId]) return;
+  const now = Date.now();
+  _nmFireNode(regionId, intensity);
+
+  // Light up incoming edges from any recently-active source node
+  document.querySelectorAll(`#nm-svg path[data-to="${regionId}"]`).forEach(p => {
+    const from = p.dataset.from;
+    if (from === 'input') {
+      if (_nmInTurn.active) _nmFireEdge(from, regionId);
+    } else {
+      const last = _nmLastFire.get(from) || 0;
+      if (now - last <= NM_RECENT_MS) _nmFireEdge(from, regionId);
+    }
+  });
+
+  // Output-bound edges fire alongside their source
+  if (regionId === 'motor' || regionId === 'brainstem') {
+    _nmFireEdge(regionId, 'output');
+  }
+
+  _nmLastFire.set(regionId, now);
+}
+
+function nmOnTurnStart() {
+  if (!_nmReady) return;
+  _nmInTurn.active = true;
+  _nmFireIO('input', 2000);
+  _nmLastFire.set('input', Date.now());
+}
+
+function nmOnTurnEnd() {
+  if (!_nmReady) return;
+  setTimeout(() => {
+    _nmFireIO('output', 2200);
+    _nmInTurn.active = false;
+  }, 320);
+}
+
+function nmOnNeuromod(msg) {
+  if (!_nmReady) return;
+  ['DA', 'GABA', 'ACh', 'Glu', 'NE'].forEach(ch => {
+    const v = msg[ch];
+    if (v === undefined) return;
+    const pct  = Math.round(v * 100);
+    const row  = document.querySelector(`.nm-mod-row[data-mod="${ch}"]`);
+    if (!row) return;
+    const fill = row.querySelector('.nm-mod-row-fill');
+    const val  = row.querySelector('.nm-mod-row-val');
+    if (fill) fill.style.width = pct + '%';
+    if (val)  val.textContent  = pct;
+    if (Math.abs(v - _nmModLast[ch]) > 0.015) {
+      row.classList.remove('changed');
+      void row.getBoundingClientRect();
+      row.classList.add('changed');
+      if (_nmModTimers.has(ch)) clearTimeout(_nmModTimers.get(ch));
+      _nmModTimers.set(ch, setTimeout(() => row.classList.remove('changed'), 1400));
+    }
+    _nmModLast[ch] = v;
+  });
+}
+
+/* ----- View switcher (header dropdown) ----- */
+function nmSetView(view) {
+  const stage = document.getElementById('brain-stage');
+  if (!stage) return;
+  stage.dataset.view = view;
+  document.querySelectorAll('#brand-menu .brand-menu-item').forEach(b => {
+    const active = b.dataset.view === view;
+    b.classList.toggle('active', active);
+    b.setAttribute('aria-checked', active ? 'true' : 'false');
+  });
+  const sub = document.getElementById('brand-sub');
+  if (sub) sub.textContent = (view === 'map' ? 'NEURAL MAP · v0.4' : 'NEURAL CONTROL · v0.4');
+  try { localStorage.setItem('si-view', view); } catch (e) {}
+}
+
+function nmInitDropdown() {
+  const btn  = document.getElementById('brand-btn');
+  const menu = document.getElementById('brand-menu');
+  if (!btn || !menu) return;
+  const close = () => {
+    btn.classList.remove('open');
+    menu.classList.remove('open');
+    btn.setAttribute('aria-expanded', 'false');
+  };
+  const open = () => {
+    btn.classList.add('open');
+    menu.classList.add('open');
+    btn.setAttribute('aria-expanded', 'true');
+  };
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (btn.classList.contains('open')) close();
+    else open();
+  });
+  menu.querySelectorAll('.brand-menu-item').forEach(item => {
+    item.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const v = item.dataset.view;
+      if (v) nmSetView(v);
+      close();
+    });
+  });
+  document.addEventListener('click', (e) => {
+    if (!btn.contains(e.target) && !menu.contains(e.target)) close();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') close();
+  });
+}
+
+nmInit();
+nmInitDropdown();
+try {
+  const saved = localStorage.getItem('si-view');
+  if (saved === 'map') nmSetView('map');
+} catch (e) {}
+
+/* Hook into the existing event pipeline so map updates with the anatomy view */
+const _nmOrigActivateRegion = activateRegion;
+activateRegion = function (regionId, intensity, note) {
+  _nmOrigActivateRegion(regionId, intensity, note);
+  nmActivate(regionId, intensity);
+};
+const _nmOrigHandle = handle;
+handle = function (msg) {
+  _nmOrigHandle(msg);
+  if (!msg) return;
+  if (msg.type === 'turn_start')   nmOnTurnStart(msg);
+  else if (msg.type === 'turn_end')  nmOnTurnEnd(msg);
+  else if (msg.type === 'neuromod')  nmOnNeuromod(msg);
+};
+
+/* =====================================================================
+   NEUROMOD CAUSE/EFFECT VISUALS
+   - delta badges next to each chemical (anatomy + map node)
+   - 30-tick sparkline under each bar (anatomy panel)
+   - trigger label inferred from chemical + direction
+   - release particles fired from hypothalamus along outgoing edges (map)
+   ===================================================================== */
+const NM_COLORS = {
+  DA:   'oklch(0.80 0.16 85)',
+  GABA: 'oklch(0.70 0.18 25)',
+  ACh:  'oklch(0.78 0.14 200)',
+  Glu:  'oklch(0.78 0.16 145)',
+  NE:   'oklch(0.75 0.16 300)',
+};
+const NM_INITIAL = { DA: 0.5, GABA: 0.05, ACh: 0.20, Glu: 0.30, NE: 0.25 };
+const NM_DELTA_MIN = 0.012;     // ~1.2% — show delta + trigger
+const NM_PARTICLE_MIN = 0.025;  // ~2.5% — fire release particles
+const SPARK_LEN = 30;
+
+const enhFx = {
+  history: { DA: [], GABA: [], ACh: [], Glu: [], NE: [] },
+  triggerTimers: new Map(),
+  deltaTimers: new Map(),
+  ready: false,
+
+  init() {
+    if (this.ready) return;
+    this._enhanceLeftPanel();
+    this._enhanceMapNode();
+    // Seed history with current values so the first delta isn't a 100% spike
+    ['DA','GABA','ACh','Glu','NE'].forEach(ch => {
+      const numEl = document.getElementById('nm-num-' + ch);
+      const cur = numEl ? (parseFloat(numEl.textContent) / 100) : NM_INITIAL[ch];
+      this.history[ch] = Array(SPARK_LEN).fill(cur);
+      this._renderSpark(ch);
+    });
+    this.ready = true;
+  },
+
+  _enhanceLeftPanel() {
+    ['ACh','DA','GABA','Glu','NE'].forEach(ch => {
+      const numEl = document.getElementById('nm-num-' + ch);
+      if (!numEl) return;
+      const row = numEl.closest('.nm-row');
+      if (!row || row.dataset.enhanced) return;
+      row.dataset.enhanced = '1';
+      row.style.setProperty('--spark-color', NM_COLORS[ch]);
+
+      // Delta badge next to percent
+      const delta = document.createElement('span');
+      delta.className = 'nm-delta';
+      delta.dataset.ch = ch;
+      delta.dataset.target = 'panel';
+      numEl.after(delta);
+
+      // Sparkline below the track
+      const track = row.querySelector('.nm-track');
+      const SVG_NS = 'http://www.w3.org/2000/svg';
+      const spark = document.createElementNS(SVG_NS, 'svg');
+      spark.classList.add('nm-spark');
+      spark.dataset.ch = ch;
+      spark.setAttribute('viewBox', '0 0 100 16');
+      spark.setAttribute('preserveAspectRatio', 'none');
+      // midline grid
+      const grid = document.createElementNS(SVG_NS, 'line');
+      grid.setAttribute('class', 'nm-spark-grid');
+      grid.setAttribute('x1', '0'); grid.setAttribute('x2', '100');
+      grid.setAttribute('y1', '8'); grid.setAttribute('y2', '8');
+      spark.appendChild(grid);
+      // filled area
+      const fill = document.createElementNS(SVG_NS, 'polygon');
+      fill.setAttribute('class', 'nm-spark-fill');
+      spark.appendChild(fill);
+      // main polyline
+      const line = document.createElementNS(SVG_NS, 'polyline');
+      line.setAttribute('class', 'nm-spark-line');
+      spark.appendChild(line);
+      // head dot
+      const head = document.createElementNS(SVG_NS, 'circle');
+      head.setAttribute('class', 'nm-spark-head');
+      head.setAttribute('r', '1.4');
+      spark.appendChild(head);
+      track.after(spark);
+
+      // Trigger label below sparkline
+      const trigger = document.createElement('div');
+      trigger.className = 'nm-trigger';
+      trigger.dataset.ch = ch;
+      trigger.innerHTML = '&nbsp;'; // reserve height
+      spark.after(trigger);
+    });
+  },
+
+  _enhanceMapNode() {
+    document.querySelectorAll('.nm-mod-row[data-mod]').forEach(row => {
+      if (row.dataset.enhanced) return;
+      row.dataset.enhanced = '1';
+      const val = row.querySelector('.nm-mod-row-val');
+      if (!val) return;
+      const delta = document.createElement('span');
+      delta.className = 'nm-delta nm-delta-mini';
+      delta.dataset.ch = row.dataset.mod;
+      delta.dataset.target = 'map';
+      val.after(delta);
+    });
+  },
+
+  recordValue(ch, v) {
+    const h = this.history[ch];
+    h.push(v);
+    while (h.length > SPARK_LEN) h.shift();
+  },
+
+  _renderSpark(ch) {
+    const h = this.history[ch];
+    if (!h.length) return;
+    const spark = document.querySelector(`.nm-spark[data-ch="${ch}"]`);
+    if (!spark) return;
+    const line = spark.querySelector('.nm-spark-line');
+    const fill = spark.querySelector('.nm-spark-fill');
+    const head = spark.querySelector('.nm-spark-head');
+    const W = 100, H = 16, pad = 1.5;
+    const pts = h.map((v, i) => {
+      const x = (i / (SPARK_LEN - 1)) * W;
+      const y = pad + (1 - Math.max(0, Math.min(1, v))) * (H - pad * 2);
+      return [x, y];
+    });
+    const ptsStr = pts.map(p => p[0].toFixed(2) + ',' + p[1].toFixed(2)).join(' ');
+    line.setAttribute('points', ptsStr);
+    // Polygon = line + bottom-right + bottom-left
+    const last = pts[pts.length - 1];
+    const first = pts[0];
+    fill.setAttribute('points', ptsStr + ` ${last[0]},${H} ${first[0]},${H}`);
+    head.setAttribute('cx', last[0]);
+    head.setAttribute('cy', last[1]);
+  },
+
+  showDelta(ch, delta) {
+    const sign  = delta > 0 ? '+' : '−';
+    const arrow = delta > 0 ? '↑' : '↓';
+    const abs   = Math.abs(Math.round(delta * 100));
+    document.querySelectorAll(`.nm-delta[data-ch="${ch}"]`).forEach(el => {
+      const isMap = el.dataset.target === 'map';
+      el.textContent = isMap ? `${sign}${abs}${arrow}` : `${sign}${abs} ${arrow}`;
+      el.classList.remove('show', 'up', 'down', 'flash');
+      void el.getBoundingClientRect();
+      el.classList.add('show', 'flash', delta > 0 ? 'up' : 'down');
+    });
+    const key = 'd-' + ch;
+    if (this.deltaTimers.has(key)) clearTimeout(this.deltaTimers.get(key));
+    this.deltaTimers.set(key, setTimeout(() => {
+      document.querySelectorAll(`.nm-delta[data-ch="${ch}"]`).forEach(el => {
+        el.classList.remove('show');
+      });
+    }, 2400));
+  },
+
+  showTrigger(ch, delta) {
+    const text = this._triggerText(ch, delta);
+    if (!text) return;
+    const el = document.querySelector(`.nm-trigger[data-ch="${ch}"]`);
+    if (!el) return;
+    el.innerHTML = text;
+    el.classList.remove('show');
+    void el.getBoundingClientRect();
+    el.classList.add('show');
+    const key = 't-' + ch;
+    if (this.triggerTimers.has(key)) clearTimeout(this.triggerTimers.get(key));
+    this.triggerTimers.set(key, setTimeout(() => {
+      el.classList.remove('show');
+    }, 3000));
+  },
+
+  _triggerText(ch, delta) {
+    const up = delta > 0;
+    const arrow = `<span class="nm-trigger-arrow">→</span>`;
+    // Map chemical + direction to upstream cause (matches the
+    // sentiment_DA_weight / surprise_ACh_weight / threat_GABA / salience_Glu
+    // wiring defined in the settings panel).
+    const causes = {
+      DA:   up ? 'Positive valence'  : 'Low valence / decay',
+      ACh:  up ? 'Surprise · novelty': 'Novelty decay',
+      GABA: up ? 'Threat detected'   : 'Threat clearing',
+      Glu:  up ? 'High salience'     : 'Salience decay',
+      NE:   up ? 'Arousal / alerting': 'Arousal decay',
+    };
+    const cause = causes[ch];
+    if (!cause) return '';
+    return `${cause}${arrow}<span style="color:var(--spark-color);font-weight:700">${ch}</span>`;
+  },
+
+  pulseHypothalamus(color) {
+    const el = document.getElementById('nm-node-hypothalamus');
+    if (!el) return;
+    el.style.setProperty('--release-color', color);
+    el.classList.remove('releasing');
+    void el.getBoundingClientRect();
+    el.classList.add('releasing');
+    clearTimeout(el._pulseT);
+    el._pulseT = setTimeout(() => el.classList.remove('releasing'), 1600);
+  },
+
+  releaseParticles(ch, delta) {
+    if (!_nmReady) return;
+    const stage = document.getElementById('brain-stage');
+    if (!stage || stage.dataset.view !== 'map') return;
+    if (Math.abs(delta) < NM_PARTICLE_MIN) return;
+
+    const svg = document.getElementById('nm-svg');
+    if (!svg) return;
+    const paths = svg.querySelectorAll('path[data-from="hypothalamus"]');
+    if (!paths.length) return;
+    const color = NM_COLORS[ch] || 'white';
+    this.pulseHypothalamus(color);
+
+    // Intensity scales particle count
+    const intensity = Math.min(1, Math.abs(delta) * 4);
+    const count = Math.max(3, Math.round(3 + intensity * 4));
+
+    paths.forEach((path, pathIdx) => {
+      for (let i = 0; i < count; i++) {
+        const delay = i * 130 + pathIdx * 40;
+        setTimeout(() => this._spawnParticle(svg, path, color, delta < 0), delay);
+      }
+    });
+  },
+
+  _spawnParticle(svg, path, color, reverse) {
+    let len = 0;
+    try { len = path.getTotalLength(); } catch (e) { return; }
+    if (!len) return;
+    const SVG_NS = 'http://www.w3.org/2000/svg';
+    const c = document.createElementNS(SVG_NS, 'circle');
+    c.setAttribute('class', 'nm-release-particle');
+    c.setAttribute('r', '0.9');
+    c.setAttribute('fill', color);
+    c.setAttribute('opacity', '0');
+    c.style.filter = `drop-shadow(0 0 1.5px ${color}) drop-shadow(0 0 3.5px ${color})`;
+    svg.appendChild(c);
+
+    const start = performance.now();
+    const dur = 1100 + Math.random() * 250;
+    const step = (now) => {
+      const t = Math.min(1, (now - start) / dur);
+      const tt = reverse ? (1 - t) : t;
+      const pt = path.getPointAtLength(tt * len);
+      c.setAttribute('cx', pt.x);
+      c.setAttribute('cy', pt.y);
+      const fade = t < 0.15 ? (t / 0.15) : (t > 0.85 ? ((1 - t) / 0.15) : 1);
+      c.setAttribute('opacity', fade.toFixed(3));
+      if (t < 1) requestAnimationFrame(step);
+      else c.remove();
+    };
+    requestAnimationFrame(step);
+  },
+};
+
+// Wrap handle one more time so nmOnNeuromod stays untouched
+const _enhOrigHandle = handle;
+handle = function (msg) {
+  _enhOrigHandle(msg);
+  if (!msg) return;
+  if (msg.type === 'neuromod') {
+    enhFx.init();
+    ['DA','GABA','ACh','Glu','NE'].forEach(ch => {
+      const v = msg[ch];
+      if (v === undefined) return;
+      const h = enhFx.history[ch];
+      const prev = h.length ? h[h.length - 1] : v;
+      const delta = v - prev;
+      enhFx.recordValue(ch, v);
+      enhFx._renderSpark(ch);
+      if (Math.abs(delta) >= NM_DELTA_MIN) {
+        enhFx.showDelta(ch, delta);
+        enhFx.showTrigger(ch, delta);
+        enhFx.releaseParticles(ch, delta);
+      }
+    });
+  }
+};
+
+// Init the visual scaffolding as soon as possible (left-panel bars
+// already exist in DOM; map node mods are added by nmInit() above).
+enhFx.init();
+
+// Expose for debugging
+window.__enhFx = enhFx;
 
 </script>
 </body>
