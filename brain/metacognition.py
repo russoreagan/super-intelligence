@@ -296,6 +296,18 @@ class MetacognitionCell:
             "neuromod_averages": nm_means,
         }
 
+    def _chem_snapshot(self) -> dict[str, float]:
+        """Merged neuromod + hormonal snapshot for switch modulation."""
+        try:
+            nm = self._bus.neuromod.snapshot()
+        except Exception:
+            nm = {}
+        try:
+            hs = self._bus.hormonal.snapshot()
+        except Exception:
+            hs = {}
+        return {**nm, **hs}
+
     async def start(self) -> None:
         if not META_ENABLED:
             logger.debug("[Self-monitor] Disabled — set BRAIN_METACOGNITION=true to enable periodic self-reflection")
@@ -315,6 +327,17 @@ class MetacognitionCell:
 
         self._reflection_count += 1
         turn_id = f"meta_{self._reflection_count}"
+
+        # Chemistry gate: high GABA suppresses reflection (don't spiral when
+        # stressed); high ACh invites it. Suppressed reflections still emit
+        # the meta.stats event below (raw stats are free).
+        chem = self._chem_snapshot()
+        if not self._self_monitor_trigger.should_fire(0.6, chem, turn_id):
+            logger.debug("[Self-monitor] Reflection LLM call suppressed by chemistry gate "
+                          "(ACh=%.2f GABA=%.2f)", chem.get("ACh", 0), chem.get("GABA", 0))
+            await self._bus.publish_dict("meta.stats", stats, source="metacognition")
+            return
+        self._self_monitor_trigger.fire(0.6, "reflection_engaged", snapshot=chem)
 
         # Publish raw stats to meta.stats
         await self._bus.publish_dict("meta.stats", stats, source="metacognition")

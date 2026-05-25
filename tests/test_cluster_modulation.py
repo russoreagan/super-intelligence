@@ -184,3 +184,153 @@ class TestChemistryPropagation:
         high_cort = {"DA": 0.5, "NE": 0.5, "CORT": 1.0}
         assert hippo._encoder_gate.effective_threshold(high_cort) > \
                hippo._encoder_gate.effective_threshold(neutral)
+
+
+# ---------------------------------------------------------------------------
+# Frontal cluster — newly-wired switches
+# ---------------------------------------------------------------------------
+
+def _make_frontal():
+    from brain.brainstem import Brainstem
+    from brain.bus import Bus
+    from brain.clusters.frontal import FrontalCluster
+
+    class _Router:
+        async def call(self, *a, **kw):
+            return "{}"
+        def supports(self, *a, **kw):
+            return True
+    bus = Bus()
+    router = _Router()
+    brainstem = Brainstem(bus, router)
+    return FrontalCluster(bus, brainstem, router), bus
+
+
+class TestFrontalSwitchModulation:
+    def test_GABA_inhibitor_easier_under_high_CORT(self):
+        frontal, _ = _make_frontal()
+        sw = frontal._GABA_inhibitor
+        # CORT lowers threshold (defensive sooner under chronic stress).
+        assert sw.effective_threshold({"CORT": 1.0, "OXT": 0.5}) < \
+               sw.effective_threshold({"CORT": 0.0, "OXT": 0.5})
+
+    def test_GABA_inhibitor_harder_under_high_OXT(self):
+        frontal, _ = _make_frontal()
+        sw = frontal._GABA_inhibitor
+        # OXT raises threshold (social safety buffers defense).
+        assert sw.effective_threshold({"CORT": 0.5, "OXT": 1.0}) > \
+               sw.effective_threshold({"CORT": 0.5, "OXT": 0.0})
+
+    def test_planner_inhibitor_easier_under_high_CORT(self):
+        frontal, _ = _make_frontal()
+        sw = frontal._low_DA_inhibits_planner
+        # CORT lowers threshold (depression suppresses planning more readily).
+        assert sw.effective_threshold({"CORT": 1.0, "5HT": 0.5}) < \
+               sw.effective_threshold({"CORT": 0.0, "5HT": 0.5})
+
+    def test_planner_inhibitor_harder_under_high_5HT(self):
+        frontal, _ = _make_frontal()
+        sw = frontal._low_DA_inhibits_planner
+        # 5HT raises threshold (mood buffers).
+        assert sw.effective_threshold({"CORT": 0.5, "5HT": 1.0}) > \
+               sw.effective_threshold({"CORT": 0.5, "5HT": 0.0})
+
+    def test_epistemic_mode_easier_under_high_ACh(self):
+        frontal, _ = _make_frontal()
+        sw = frontal._epistemic_mode
+        assert sw.effective_threshold({"ACh": 1.0}) < \
+               sw.effective_threshold({"ACh": 0.0})
+
+    def test_routers_are_chemistry_neutral(self):
+        """The routing switches (response_type, length, tone) fire to record
+        the executive's chosen route, not to gate it. They should not respond
+        to chemistry."""
+        frontal, _ = _make_frontal()
+        for sw in (frontal._response_type_router, frontal._length_budget,
+                   frontal._tone_selector, frontal._drafter_count_selector,
+                   frontal._planner_trigger, frontal._template_fallback):
+            assert sw.effective_threshold({"DA": 1.0, "GABA": 1.0, "CORT": 1.0}) \
+                   == sw.threshold
+
+
+# ---------------------------------------------------------------------------
+# DMN idle gate
+# ---------------------------------------------------------------------------
+
+class TestDMNIdleGate:
+    def _make_dmn(self):
+        from brain.bus import Bus
+        from brain.dmn import DefaultModeNetwork
+        class _Router:
+            async def call(self, *a, **kw): return "{}"
+            def supports(self, *a, **kw): return True
+        bus = Bus()
+        return DefaultModeNetwork(bus, _Router()), bus
+
+    def test_idle_gate_easier_under_high_5HT_OXT(self):
+        dmn, _ = self._make_dmn()
+        relaxed = {"5HT": 1.0, "OXT": 1.0, "NE": 0.5, "GABA": 0.5}
+        alert = {"5HT": 0.5, "OXT": 0.5, "NE": 0.5, "GABA": 0.5}
+        # Relaxed chemistry → lower threshold → DMN ticks more readily.
+        assert dmn._idle_gate.effective_threshold(relaxed) < \
+               dmn._idle_gate.effective_threshold(alert)
+
+    def test_idle_gate_harder_under_high_NE_GABA(self):
+        dmn, _ = self._make_dmn()
+        defensive = {"5HT": 0.5, "OXT": 0.5, "NE": 1.0, "GABA": 1.0}
+        calm = {"5HT": 0.5, "OXT": 0.5, "NE": 0.5, "GABA": 0.5}
+        # Alert/defensive chemistry → higher threshold → DMN suppressed.
+        assert dmn._idle_gate.effective_threshold(defensive) > \
+               dmn._idle_gate.effective_threshold(calm)
+
+
+# ---------------------------------------------------------------------------
+# Metacognition self-monitor trigger
+# ---------------------------------------------------------------------------
+
+class TestMetaSelfMonitorTrigger:
+    def _make_meta(self):
+        from brain.bus import Bus
+        from brain.metacognition import MetacognitionCell
+        class _Router:
+            async def call(self, *a, **kw): return "{}"
+            def supports(self, *a, **kw): return True
+        bus = Bus()
+        return MetacognitionCell(bus, _Router()), bus
+
+    def test_trigger_easier_under_high_ACh(self):
+        meta, _ = self._make_meta()
+        assert meta._self_monitor_trigger.effective_threshold({"ACh": 1.0, "GABA": 0.5}) < \
+               meta._self_monitor_trigger.effective_threshold({"ACh": 0.0, "GABA": 0.5})
+
+    def test_trigger_harder_under_high_GABA(self):
+        meta, _ = self._make_meta()
+        # Don't spiral when stressed.
+        assert meta._self_monitor_trigger.effective_threshold({"ACh": 0.5, "GABA": 1.0}) > \
+               meta._self_monitor_trigger.effective_threshold({"ACh": 0.5, "GABA": 0.0})
+
+
+# ---------------------------------------------------------------------------
+# Occipital vision_needed gate
+# ---------------------------------------------------------------------------
+
+class TestOccipitalVisionGate:
+    def _make_occ(self):
+        from brain.bus import Bus
+        from brain.clusters.occipital import OccipitalCluster
+        class _Router:
+            async def call(self, *a, **kw): return "{}"
+            def supports(self, *a, **kw): return True
+        bus = Bus()
+        return OccipitalCluster(bus, _Router()), bus
+
+    def test_vision_needed_easier_under_high_NE(self):
+        occ, _ = self._make_occ()
+        # High NE (alertness) lowers threshold → VLM engages more readily.
+        assert occ._vision_needed.effective_threshold({"NE": 1.0}) < \
+               occ._vision_needed.effective_threshold({"NE": 0.0})
+
+    def test_image_present_chemistry_neutral(self):
+        occ, _ = self._make_occ()
+        assert occ._image_present.effective_threshold({"NE": 1.0, "DA": 1.0}) \
+               == occ._image_present.threshold

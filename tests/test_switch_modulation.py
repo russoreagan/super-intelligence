@@ -164,3 +164,38 @@ def test_near_miss_does_not_emit_when_no_modulators(monkeypatch):
     s = SwitchNeuron("p", "test", threshold=0.5)
     assert s.should_fire(0.4, {"ACh": 1.0}) is False
     assert captured == []
+
+
+# ---------------------------------------------------------------------------
+# Modulation gain knob
+# ---------------------------------------------------------------------------
+
+def test_modulation_gain_zero_disables_all_chemistry(monkeypatch):
+    """gain=0 → switches behave as if modulators were empty everywhere."""
+    from brain.settings import settings as _settings
+    monkeypatch.setattr(_settings, "get",
+                         lambda k, d=None: 0.0 if k == "modulation_gain"
+                         else _settings._data.get(k, d if d is not None else 0))
+    s = SwitchNeuron("p", "test", threshold=0.5,
+                     modulators={"ACh": +0.20, "GABA": -0.20})
+    # Even at chemistry extremes, gain=0 means threshold stays at 0.5.
+    assert s.effective_threshold({"ACh": 1.0, "GABA": 1.0}) == 0.5
+    assert s.effective_threshold({"ACh": 0.0, "GABA": 0.0}) == 0.5
+
+
+def test_modulation_gain_two_doubles_shift(monkeypatch):
+    """gain=2 → modulation shift is twice as strong."""
+    from brain.settings import settings as _settings
+    monkeypatch.setattr(_settings, "get",
+                         lambda k, d=None: 2.0 if k == "modulation_gain"
+                         else _settings._data.get(k, d if d is not None else 0))
+    s = SwitchNeuron("p", "test", threshold=0.5, modulators={"ACh": +0.10})
+    # ACh=1.0 with coeff 0.10 → shift = 0.10*0.5 = 0.05; doubled = 0.10
+    assert s.effective_threshold({"ACh": 1.0}) == pytest.approx(0.60, abs=1e-9)
+
+
+def test_modulation_gain_default_is_one(monkeypatch):
+    """Without override, gain=1.0 — modulation operates at declared strength."""
+    s = SwitchNeuron("p", "test", threshold=0.5, modulators={"ACh": +0.10})
+    # Default gain 1.0: ACh=1.0 → shift = 0.05 → threshold = 0.55
+    assert s.effective_threshold({"ACh": 1.0}) == pytest.approx(0.55, abs=1e-9)
