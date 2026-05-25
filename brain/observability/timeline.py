@@ -77,6 +77,15 @@ class TurnTrace:
     #              "level", "tag", "ts"}
     fired_path: list[dict] = field(default_factory=list)
 
+    # Neuromod state at the start of the turn (before any processing).
+    # Used by the Hebbian pass to compute per-turn DA delta rather than
+    # comparing DA to an arbitrary neutral baseline.
+    prior_neuromod: dict = field(default_factory=dict)
+
+    # User's detected emotional state this turn (from temporal understanding).
+    # Stored here so the Hebbian sleep pass can use it without re-parsing features.
+    user_emotion: str = ""
+
     # Modulation counters (incremented by SwitchNeuron.fire / should_fire)
     modulated_switch_count: int = 0   # switches where |mod_delta| > 0.01
     suppressed_switch_count: int = 0  # near-misses: level >= base but < effective

@@ -123,6 +123,10 @@ The `CompositePredictor` in the frontal lobe extends this to structured predicti
 | **Brainstem** | Vital autonomic functions | Heartbeat, cost monitor, turn-budget enforcer, articulation gate | Code only |
 | **PNS** | Peripheral I/O | Text/image input, Deepgram STT, ElevenLabs TTS | Code only |
 
+![Figure 1 — Multi-agent cognitive architecture: signal flow and cluster composition](figures/architecture.png)
+
+*Figure 1: Full architecture diagram. Each box is a brain-region cluster. Coloured chips are deterministic **switch neurons** (red-bordered ⊘ = inhibitory). Vertical coloured bars prefix **integrator cells** (LLM-backed); the bar colour encodes the backing model (blue = Haiku, green = flash-lite, amber = local-general 7B, rust = local-code). Solid arrows = excitatory signal flow; dashed arrows = modulatory / neuromodulator channels. The **Second Brain** dashed box (bottom left) is accessible only via the hippocampus cluster. The **predict-and-surprise gate** lives inside the temporal cluster (integ ⊘ chip) and the frontal CompositePredictor.*
+
 ### 4.4 Neuromodulator dynamics
 
 Four neuromodulator channels function as system-wide tuning parameters, not message streams. They are scalar levels maintained by sum-plus-exponential-decay, readable synchronously by any cluster:
@@ -150,10 +154,18 @@ Only the hippocampus cluster has import access to the second brain store. All ot
 Edges between nodes carry weights. The composite outcome signal is:
 
 ```
-outcome = 0.5 × ΔDA + 0.3 × critic_score + 0.2 × Δuser_emotion
+outcome = 0.5 × ΔDA_turn + 0.3 × critic_score + 0.2 × user_emotion_valence
 ```
 
+**ΔDA_turn** is the per-turn dopamine delta — how much DA changed from turn start to turn end — rather than absolute DA vs a neutral baseline. This encodes prediction error in the reward signal (the same quantity biological dopaminergic neurons encode) rather than session mood. The neuromod state at turn start is captured in `TurnTrace.prior_neuromod`; the Hebbian pass computes `(DA_end − DA_start) × 4` scaled to [−1, +1].
+
+**critic_score** only contributes (weight 0.3) when the LLM critic actually evaluated the draft (`critic_ran=True`). For single-draft turns — the majority — the critic term is zeroed to avoid a spurious positive bias from a hardcoded fallback score; the DA delta carries the full directional signal for those turns.
+
+**user_emotion_valence** is read from `TurnTrace.user_emotion` (populated by run.py from temporal understanding features) so the 20% weight contributes for turns with detected user emotional state.
+
 A **plasticity modulator** scales the learning rate by session-averaged DA × ACh — engaged, high-DA sessions learn faster; flat or disengaged sessions learn slowly. A gentle homeostatic decay (1% toward resting weight 1.0 per update) prevents lock-in. Edge weights are consulted live for drafter selection, switch evaluation order, and recall fan-out via epsilon-greedy exploration, providing a soft form of reinforcement without explicit RL machinery.
+
+**Competitive drafter reinforcement** runs at sleep consolidation for turns where the critic compared multiple real drafts. The winning drafter's edge to the executive receives an additional bonus proportional to its margin over the other drafters; losing drafters receive a small penalty. This creates genuine competitive selection pressure between drafters over time, separate from the path-level Hebbian update that treats all traversed edges equally.
 
 ### 4.7 Additional modules
 
@@ -255,9 +267,11 @@ The `temporal.understanding_integrator → frontal.executive` and `frontal.execu
 
 Whether this reinforcement will produce a measurable behavioral preference — the system genuinely favoring drafter_A's style — requires longer observation. The contrast-class confound from the prior analysis still applies.
 
+**Post-analysis update (May 2026):** The Hebbian outcome signal was restructured after this dataset was collected. The DA term now encodes per-turn dopamine delta (`ΔDA_turn = (DA_end − DA_start) × 4`) rather than absolute DA vs a neutral baseline; the critic term now only fires when `critic_ran=True`; and `user_emotion` is read directly from `TurnTrace.user_emotion` set during temporal processing. The skip threshold was lowered from 0.05 to 0.02 to allow more turns through and enable LTD. The "no losers" result in the above data is expected to change with the revised signal: turns where DA dropped during the turn will produce negative deltas regardless of session-level DA. Competitive drafter reinforcement was also added, applying winner bonuses and loser penalties when the critic compared multiple drafts. These changes constitute Priority 1 of the Hebbian enhancement roadmap identified in May 2026.
+
 ### 6.8 Draft quality
 
-Mean drafter count: **1.10 across 326 drafts**. The single-draft norm confirms that arousal-modulated drafter count selection is working correctly: most turns are low enough arousal to generate one draft, with multiples reserved for complex or emotionally charged inputs. Critic score data is not currently captured in the turn trace and will be added in a future instrumentation pass.
+Mean drafter count: **1.10 across 326 drafts**. The single-draft norm confirms that arousal-modulated drafter count selection is working correctly: most turns are low enough arousal to generate one draft, with multiples reserved for complex or emotionally charged inputs. Critic scores are captured in `TurnTrace.draft_scores` for multi-draft turns (where the LLM critic ran); single-draft turns carry `critic_ran=False` and do not contribute a critic term to the Hebbian outcome, preventing a spurious positive bias from a hardcoded fallback.
 
 The `skip_executive_integrator` gating bypasses the coordination step that precedes drafting, not the drafter itself. Draft quality is therefore not affected by the efficiency gains in Section 6.3 — the optimization targets overhead, not generation.
 

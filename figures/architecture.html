@@ -1,0 +1,586 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Architecture Diagram</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #f8f8f6; font-family: 'SF Pro Text', -apple-system, 'Helvetica Neue', sans-serif; }
+  svg { display: block; }
+</style>
+</head>
+<body>
+<svg id="diagram" width="1580" height="995"
+     viewBox="0 0 1580 995"
+     xmlns="http://www.w3.org/2000/svg"
+     style="background:#f8f8f6">
+
+<defs>
+  <!-- Arrow markers -->
+  <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5"
+          markerWidth="7" markerHeight="7" orient="auto">
+    <path d="M0,1 L9,5 L0,9 Z" fill="#444"/>
+  </marker>
+  <marker id="arr-mod" viewBox="0 0 10 10" refX="9" refY="5"
+          markerWidth="7" markerHeight="7" orient="auto">
+    <path d="M0,1 L9,5 L0,9 Z" fill="#999"/>
+  </marker>
+  <marker id="arr-inh" viewBox="0 0 10 10" refX="9" refY="5"
+          markerWidth="7" markerHeight="7" orient="auto">
+    <path d="M0,1 L9,5 L0,9 Z" fill="#c0392b"/>
+  </marker>
+
+  <!-- Drop shadow filter -->
+  <filter id="shadow" x="-5%" y="-5%" width="115%" height="115%">
+    <feDropShadow dx="0" dy="1" stdDeviation="3" flood-color="#00000020"/>
+  </filter>
+
+  <!-- Node color palette — desaturated for print -->
+  <!-- frontal #4a7ecb, temporal #c49e2e, hippocampus #2e9b82,
+       thalamus #7a7a8a, hypothalamus #c47a3a, parietal #3a9b5c,
+       occipital #8a4abf, motor #c94930, brainstem #6a6a7a, cerebellum #3a7a8b -->
+</defs>
+
+<!-- ═══════════════════════════════════════════
+     TITLE
+════════════════════════════════════════════ -->
+<text x="790" y="34" text-anchor="middle"
+      font-size="17" font-weight="700" fill="#222" letter-spacing="0.3">
+  Figure 1 — Biologically-Inspired Multi-Agent Cognitive Architecture: Signal Flow &amp; Cluster Composition
+</text>
+
+<g transform="translate(0,50)">
+<!-- ═══════════════════════════════════════════
+     EDGES  (drawn behind nodes)
+     Excitatory = solid #555, 1.6px
+     Modulatory = dashed #999, 1.3px
+════════════════════════════════════════════ -->
+
+<!-- input → temporal (horizontal) -->
+<line x1="100" y1="463" x2="243" y2="463" stroke="#444" stroke-width="1.6"
+      marker-end="url(#arr)"/>
+
+<!-- input → occipital (modulatory, dashed, curves up) -->
+<path d="M100,450 C180,430 200,90 246,83" fill="none"
+      stroke="#999" stroke-width="1.3" stroke-dasharray="5,3"
+      marker-end="url(#arr-mod)"/>
+
+<!-- occipital → temporal (vertical) -->
+<line x1="330" y1="125" x2="330" y2="378" stroke="#444" stroke-width="1.6"
+      marker-end="url(#arr)"/>
+
+<!-- temporal → thalamus (diagonal up-right) -->
+<path d="M413,440 C490,440 510,90 556,83" fill="none"
+      stroke="#444" stroke-width="1.6" marker-end="url(#arr)"/>
+
+<!-- temporal → hippocampus (horizontal) -->
+<line x1="413" y1="463" x2="553" y2="463" stroke="#444" stroke-width="1.6"
+      marker-end="url(#arr)"/>
+
+<!-- temporal → hypothalamus (diagonal down-right) -->
+<path d="M380,543 C420,630 490,770 556,787" fill="none"
+      stroke="#444" stroke-width="1.6" marker-end="url(#arr)"/>
+
+<!-- thalamus → parietal (horizontal) -->
+<line x1="726" y1="83" x2="867" y2="83" stroke="#444" stroke-width="1.6"
+      marker-end="url(#arr)"/>
+
+<!-- thalamus → frontal (diagonal down-right) -->
+<path d="M726,100 C790,100 810,310 849,340" fill="none"
+      stroke="#444" stroke-width="1.6" marker-end="url(#arr)"/>
+
+<!-- thalamus → hippocampus (vertical) -->
+<line x1="641" y1="130" x2="641" y2="373" stroke="#444" stroke-width="1.6"
+      marker-end="url(#arr)"/>
+
+<!-- hippocampus → frontal (horizontal) -->
+<line x1="726" y1="463" x2="849" y2="463" stroke="#444" stroke-width="1.6"
+      marker-end="url(#arr)"/>
+
+<!-- hippocampus → parietal (diagonal up-right) -->
+<path d="M726,420 C790,300 820,160 867,130" fill="none"
+      stroke="#444" stroke-width="1.6" marker-end="url(#arr)"/>
+
+<!-- hypothalamus → hippocampus (vertical up, modulatory) -->
+<line x1="625" y1="735" x2="625" y2="548" stroke="#999" stroke-width="1.3"
+      stroke-dasharray="5,3" marker-end="url(#arr-mod)"/>
+
+<!-- hypothalamus → frontal (diagonal up-right, modulatory) -->
+<path d="M726,770 C790,680 810,630 849,590" fill="none"
+      stroke="#999" stroke-width="1.3" stroke-dasharray="5,3"
+      marker-end="url(#arr-mod)"/>
+
+<!-- parietal → frontal (vertical) -->
+<line x1="950" y1="140" x2="950" y2="328" stroke="#444" stroke-width="1.6"
+      marker-end="url(#arr)"/>
+
+<!-- frontal → motor (diagonal up-right) -->
+<path d="M1053,430 C1100,350 1130,280 1173,245" fill="none"
+      stroke="#444" stroke-width="1.6" marker-end="url(#arr)"/>
+
+<!-- frontal → brainstem (diagonal down-right) -->
+<path d="M1053,496 C1100,560 1130,620 1173,650" fill="none"
+      stroke="#444" stroke-width="1.6" marker-end="url(#arr)"/>
+
+<!-- frontal → cerebellum (vertical) -->
+<line x1="970" y1="597" x2="970" y2="743" stroke="#444" stroke-width="1.6"
+      marker-end="url(#arr)"/>
+
+<!-- cerebellum → motor (diagonal up-right, modulatory) -->
+<path d="M1033,777 C1090,700 1130,360 1173,285" fill="none"
+      stroke="#999" stroke-width="1.3" stroke-dasharray="5,3"
+      marker-end="url(#arr-mod)"/>
+
+<!-- motor → output (diagonal, curves to output) -->
+<path d="M1350,235 C1430,235 1450,430 1497,455" fill="none"
+      stroke="#444" stroke-width="1.6" marker-end="url(#arr)"/>
+
+<!-- brainstem → output (diagonal, curves to output) -->
+<path d="M1350,690 C1430,690 1450,500 1497,471" fill="none"
+      stroke="#444" stroke-width="1.6" marker-end="url(#arr)"/>
+
+
+<!-- ═══════════════════════════════════════════
+     HELPER MACROS (inlined via repetition)
+     Node layout: header band + content
+════════════════════════════════════════════ -->
+
+<!-- ─── INPUT I/O ─── x=25 y=444 w=75 h=38 -->
+<g id="node-input" filter="url(#shadow)">
+  <rect x="25" y="444" width="75" height="38" rx="8" fill="#e8e8e0" stroke="#aaa" stroke-width="1.2"/>
+  <text x="62" y="458" text-anchor="middle" font-size="9" font-weight="700" fill="#555" letter-spacing="0.5">USER</text>
+  <text x="62" y="473" text-anchor="middle" font-size="9" fill="#777">PROMPT</text>
+</g>
+
+<!-- ─── OUTPUT I/O ─── x=1480 y=444 w=75 h=38 -->
+<g id="node-output" filter="url(#shadow)">
+  <rect x="1480" y="444" width="75" height="38" rx="8" fill="#e8e8e0" stroke="#aaa" stroke-width="1.2"/>
+  <text x="1517" y="458" text-anchor="middle" font-size="9" font-weight="700" fill="#555" letter-spacing="0.5">RESPONSE</text>
+  <text x="1517" y="473" text-anchor="middle" font-size="9" fill="#777">TTS / TEXT</text>
+</g>
+
+
+<!-- ─────────────────────────────────────────────
+     OCCIPITAL  x=165 y=25  w=165 h=100
+     color: #8a4abf  light: #f5f0fa
+───────────────────────────────────────────── -->
+<g id="node-occipital" filter="url(#shadow)">
+  <rect x="165" y="25" width="165" height="100" rx="7" fill="#f5f0fa" stroke="#8a4abf" stroke-width="1.5"/>
+  <!-- header -->
+  <rect x="165" y="25" width="165" height="22" rx="7" fill="#8a4abf"/>
+  <rect x="165" y="37" width="165" height="10" fill="#8a4abf"/>
+  <text x="247" y="41" text-anchor="middle" font-size="11" font-weight="700" fill="#fff" letter-spacing="0.3">OCCIPITAL</text>
+  <!-- role -->
+  <text x="247" y="59" text-anchor="middle" font-size="9" fill="#666" font-style="italic">Vision / image processing</text>
+  <!-- separator -->
+  <line x1="175" y1="65" x2="320" y2="65" stroke="#d8c8ee" stroke-width="0.8"/>
+  <!-- switches -->
+  <text x="175" y="78" font-size="9" fill="#555">Switches (3):</text>
+  <!-- chips row -->
+  <rect x="175" y="82" width="42" height="14" rx="3" fill="#e8d8f8" stroke="#8a4abf" stroke-width="0.8"/>
+  <text x="196" y="92" text-anchor="middle" font-size="8.5" fill="#5a2a8a">img?</text>
+
+  <rect x="222" y="82" width="46" height="14" rx="3" fill="#e8d8f8" stroke="#8a4abf" stroke-width="0.8"/>
+  <text x="245" y="92" text-anchor="middle" font-size="8.5" fill="#5a2a8a">img_size</text>
+
+  <rect x="273" y="82" width="46" height="14" rx="3" fill="#fde8e8" stroke="#c0392b" stroke-width="0.8"/>
+  <text x="296" y="92" text-anchor="middle" font-size="8.5" fill="#c0392b">vis_gate ⊘</text>
+
+  <!-- no integrators, VLM fires inline -->
+  <text x="175" y="112" font-size="8.5" fill="#999" font-style="italic">1 VLM integrator (inline, gated)</text>
+</g>
+
+
+<!-- ─────────────────────────────────────────────
+     TEMPORAL  x=163 y=378  w=170 h=165
+     color: #c49e2e  light: #fdf8e6
+───────────────────────────────────────────── -->
+<g id="node-temporal" filter="url(#shadow)">
+  <rect x="163" y="378" width="170" height="165" rx="7" fill="#fdf8e6" stroke="#c49e2e" stroke-width="1.5"/>
+  <rect x="163" y="378" width="170" height="22" rx="7" fill="#c49e2e"/>
+  <rect x="163" y="390" width="170" height="10" fill="#c49e2e"/>
+  <text x="248" y="394" text-anchor="middle" font-size="11" font-weight="700" fill="#fff" letter-spacing="0.3">TEMPORAL</text>
+  <text x="248" y="412" text-anchor="middle" font-size="9" fill="#666" font-style="italic">Language understanding · STT prosody</text>
+  <line x1="173" y1="418" x2="323" y2="418" stroke="#e8d8a0" stroke-width="0.8"/>
+  <!-- switches -->
+  <text x="173" y="430" font-size="9" fill="#555">Switches (6):</text>
+  <!-- chip row 1 -->
+  <rect x="173" y="434" width="40" height="14" rx="3" fill="#fdefc0" stroke="#c49e2e" stroke-width="0.8"/>
+  <text x="193" y="444" text-anchor="middle" font-size="8.5" fill="#7a5e00">template</text>
+
+  <rect x="217" y="434" width="36" height="14" rx="3" fill="#fdefc0" stroke="#c49e2e" stroke-width="0.8"/>
+  <text x="235" y="444" text-anchor="middle" font-size="8.5" fill="#7a5e00">length</text>
+
+  <rect x="257" y="434" width="38" height="14" rx="3" fill="#fdefc0" stroke="#c49e2e" stroke-width="0.8"/>
+  <text x="276" y="444" text-anchor="middle" font-size="8.5" fill="#7a5e00">salience</text>
+
+  <!-- chip row 2 -->
+  <rect x="173" y="452" width="38" height="14" rx="3" fill="#fdefc0" stroke="#c49e2e" stroke-width="0.8"/>
+  <text x="192" y="462" text-anchor="middle" font-size="8.5" fill="#7a5e00">self_ref</text>
+
+  <rect x="215" y="452" width="44" height="14" rx="3" fill="#fdefc0" stroke="#c49e2e" stroke-width="0.8"/>
+  <text x="237" y="462" text-anchor="middle" font-size="8.5" fill="#7a5e00">epistemic</text>
+
+  <rect x="263" y="452" width="40" height="14" rx="3" fill="#fde8e8" stroke="#c0392b" stroke-width="0.8"/>
+  <text x="283" y="462" text-anchor="middle" font-size="8.5" fill="#c0392b">integ ⊘</text>
+
+  <line x1="173" y1="472" x2="323" y2="472" stroke="#e8d8a0" stroke-width="0.8"/>
+  <!-- integrators -->
+  <text x="173" y="484" font-size="9" fill="#555">Integrators (1):</text>
+  <rect x="173" y="488" width="4" height="30" rx="1" fill="#7ab356"/>
+  <text x="183" y="500" font-size="9" font-weight="600" fill="#333">understanding_integrator</text>
+  <text x="183" y="511" font-size="8.5" fill="#666">feature extraction · flash-lite</text>
+
+  <line x1="173" y1="524" x2="323" y2="524" stroke="#e8d8a0" stroke-width="0.8"/>
+  <!-- predictor note -->
+  <text x="173" y="536" font-size="8.5" fill="#999" font-style="italic">+ PredictorSwitch (window=8, 27% save rate)</text>
+</g>
+
+
+<!-- ─────────────────────────────────────────────
+     THALAMUS  x=556 y=18  w=170 h=112
+     color: #7a7a8a  light: #f4f4f6
+───────────────────────────────────────────── -->
+<g id="node-thalamus" filter="url(#shadow)">
+  <rect x="556" y="18" width="170" height="112" rx="7" fill="#f4f4f6" stroke="#7a7a8a" stroke-width="1.5"/>
+  <rect x="556" y="18" width="170" height="22" rx="7" fill="#7a7a8a"/>
+  <rect x="556" y="30" width="170" height="10" fill="#7a7a8a"/>
+  <text x="641" y="34" text-anchor="middle" font-size="11" font-weight="700" fill="#fff" letter-spacing="0.3">THALAMUS</text>
+  <text x="641" y="52" text-anchor="middle" font-size="9" fill="#666" font-style="italic">Message bus · attention spotlight</text>
+  <line x1="566" y1="58" x2="716" y2="58" stroke="#ccc" stroke-width="0.8"/>
+  <!-- switches (8 total, no LLM) -->
+  <text x="566" y="70" font-size="9" fill="#555">Switches (8) — no LLM:</text>
+  <text x="566" y="83" font-size="8.5" fill="#666">routing, salience threshold,</text>
+  <text x="566" y="95" font-size="8.5" fill="#666">topic focus, attention broadcast</text>
+  <text x="566" y="107" font-size="8.5" fill="#666">attention.focus → global workspace</text>
+  <text x="566" y="120" font-size="8" fill="#aaa" font-style="italic">All inter-cluster routing passes through here</text>
+</g>
+
+
+<!-- ─────────────────────────────────────────────
+     HIPPOCAMPUS  x=553 y=373  w=173 h=175
+     color: #2e9b82  light: #e8f8f4
+───────────────────────────────────────────── -->
+<g id="node-hippocampus" filter="url(#shadow)">
+  <rect x="553" y="373" width="173" height="175" rx="7" fill="#e8f8f4" stroke="#2e9b82" stroke-width="1.5"/>
+  <rect x="553" y="373" width="173" height="22" rx="7" fill="#2e9b82"/>
+  <rect x="553" y="385" width="173" height="10" fill="#2e9b82"/>
+  <text x="639" y="389" text-anchor="middle" font-size="11" font-weight="700" fill="#fff" letter-spacing="0.3">HIPPOCAMPUS</text>
+  <text x="639" y="407" text-anchor="middle" font-size="9" fill="#666" font-style="italic">Episodic + schema memory · LTM gatekeeper</text>
+  <line x1="563" y1="413" x2="716" y2="413" stroke="#b0e0d8" stroke-width="0.8"/>
+  <!-- switches -->
+  <text x="563" y="425" font-size="9" fill="#555">Switches (10) incl.:</text>
+  <rect x="563" y="429" width="50" height="14" rx="3" fill="#c8f0e8" stroke="#2e9b82" stroke-width="0.8"/>
+  <text x="588" y="439" text-anchor="middle" font-size="8.5" fill="#156a55">salience</text>
+  <rect x="617" y="429" width="60" height="14" rx="3" fill="#c8f0e8" stroke="#2e9b82" stroke-width="0.8"/>
+  <text x="647" y="439" text-anchor="middle" font-size="8.5" fill="#156a55">recall_reuse</text>
+  <rect x="681" y="429" width="35" height="14" rx="3" fill="#fde8e8" stroke="#c0392b" stroke-width="0.8"/>
+  <text x="698" y="439" text-anchor="middle" font-size="8.5" fill="#c0392b">gate ⊘</text>
+  <line x1="563" y1="449" x2="716" y2="449" stroke="#b0e0d8" stroke-width="0.8"/>
+  <!-- integrators -->
+  <text x="563" y="461" font-size="9" fill="#555">Integrators (2):</text>
+  <rect x="563" y="465" width="4" height="29" rx="1" fill="#4a7ecb"/>
+  <text x="573" y="477" font-size="9" font-weight="600" fill="#333">encoder</text>
+  <text x="573" y="488" font-size="8.5" fill="#666">turn summarisation · haiku</text>
+
+  <rect x="563" y="498" width="4" height="29" rx="1" fill="#4a7ecb"/>
+  <text x="573" y="510" font-size="9" font-weight="600" fill="#333">coordinator</text>
+  <text x="573" y="521" font-size="8.5" fill="#666">borderline salience decisions · haiku</text>
+
+  <line x1="563" y1="532" x2="716" y2="532" stroke="#b0e0d8" stroke-width="0.8"/>
+  <text x="563" y="542" font-size="8.5" fill="#999" font-style="italic">Sole gatekeeper to second_brain / LanceDB</text>
+</g>
+
+
+<!-- ─────────────────────────────────────────────
+     HYPOTHALAMUS  x=556 y=735  w=170 h=112
+     color: #c47a3a  light: #fef4e8
+───────────────────────────────────────────── -->
+<g id="node-hypothalamus" filter="url(#shadow)">
+  <rect x="556" y="735" width="170" height="112" rx="7" fill="#fef4e8" stroke="#c47a3a" stroke-width="1.5"/>
+  <rect x="556" y="735" width="170" height="22" rx="7" fill="#c47a3a"/>
+  <rect x="556" y="747" width="170" height="10" fill="#c47a3a"/>
+  <text x="641" y="751" text-anchor="middle" font-size="11" font-weight="700" fill="#fff" letter-spacing="0.3">HYPOTHALAMUS</text>
+  <text x="641" y="769" text-anchor="middle" font-size="9" fill="#666" font-style="italic">Neuromodulator state machine — no LLM</text>
+  <line x1="566" y1="775" x2="716" y2="775" stroke="#f0d4b0" stroke-width="0.8"/>
+
+  <text x="566" y="787" font-size="9" fill="#555">Switch-driven neuromodulator channels:</text>
+
+  <!-- DA chip -->
+  <rect x="566" y="791" width="34" height="14" rx="3" fill="#fde8c8" stroke="#c47a3a" stroke-width="0.8"/>
+  <text x="583" y="801" text-anchor="middle" font-size="8.5" fill="#7a4000">val→DA</text>
+
+  <rect x="604" y="791" width="42" height="14" rx="3" fill="#fde8c8" stroke="#c47a3a" stroke-width="0.8"/>
+  <text x="625" y="801" text-anchor="middle" font-size="8.5" fill="#7a4000">thr→GABA</text>
+
+  <rect x="650" y="791" width="40" height="14" rx="3" fill="#fde8c8" stroke="#c47a3a" stroke-width="0.8"/>
+  <text x="670" y="801" text-anchor="middle" font-size="8.5" fill="#7a4000">nov→ACh</text>
+
+  <rect x="694" y="791" width="26" height="14" rx="3" fill="#fde8e8" stroke="#c0392b" stroke-width="0.8"/>
+  <text x="707" y="801" text-anchor="middle" font-size="8.5" fill="#c0392b">sat ⊘</text>
+
+  <text x="566" y="820" font-size="8.5" fill="#666">DA, ACh, GABA, Glu — scalar levels,</text>
+  <text x="566" y="832" font-size="8.5" fill="#666">sum + exp decay, session-persistent,</text>
+  <text x="566" y="844" font-size="8.5" fill="#999" font-style="italic">free context for all clusters</text>
+</g>
+
+
+<!-- ─────────────────────────────────────────────
+     PARIETAL  x=868 y=8  w=165 h=132
+     color: #3a9b5c  light: #eaf8ef
+───────────────────────────────────────────── -->
+<g id="node-parietal" filter="url(#shadow)">
+  <rect x="868" y="8" width="165" height="132" rx="7" fill="#eaf8ef" stroke="#3a9b5c" stroke-width="1.5"/>
+  <rect x="868" y="8" width="165" height="22" rx="7" fill="#3a9b5c"/>
+  <rect x="868" y="20" width="165" height="10" fill="#3a9b5c"/>
+  <text x="950" y="24" text-anchor="middle" font-size="11" font-weight="700" fill="#fff" letter-spacing="0.3">PARIETAL</text>
+  <text x="950" y="42" text-anchor="middle" font-size="9" fill="#666" font-style="italic">Session state · entity tracking · spatial</text>
+  <line x1="878" y1="48" x2="1023" y2="48" stroke="#b8e8c8" stroke-width="0.8"/>
+  <!-- switches -->
+  <text x="878" y="60" font-size="9" fill="#555">Switches (5) — no LLM:</text>
+  <rect x="878" y="64" width="52" height="14" rx="3" fill="#c8ecd8" stroke="#3a9b5c" stroke-width="0.8"/>
+  <text x="904" y="74" text-anchor="middle" font-size="8.5" fill="#1a5a30">topic_shift</text>
+  <rect x="934" y="64" width="50" height="14" rx="3" fill="#c8ecd8" stroke="#3a9b5c" stroke-width="0.8"/>
+  <text x="959" y="74" text-anchor="middle" font-size="8.5" fill="#1a5a30">entity_track</text>
+  <!-- 6-turn ring buffer note -->
+  <text x="878" y="90" font-size="8.5" fill="#666">6-turn ring buffer, entity state,</text>
+  <text x="878" y="102" font-size="8.5" fill="#666">topic-shift detection</text>
+  <line x1="878" y1="108" x2="1023" y2="108" stroke="#b8e8c8" stroke-width="0.8"/>
+  <!-- integrator -->
+  <text x="878" y="120" font-size="9" fill="#555">Integrators (1):</text>
+  <rect x="878" y="124" width="4" height="10" rx="1" fill="#4a7ecb"/>
+  <text x="888" y="132" font-size="8.5" font-weight="600" fill="#333">self_reflector (metacognition · haiku)</text>
+</g>
+
+
+<!-- ─────────────────────────────────────────────
+     FRONTAL  x=849 y=328  w=204 h=269
+     color: #4a7ecb  light: #edf3fc
+───────────────────────────────────────────── -->
+<g id="node-frontal" filter="url(#shadow)">
+  <rect x="849" y="328" width="204" height="269" rx="7" fill="#edf3fc" stroke="#4a7ecb" stroke-width="1.5"/>
+  <rect x="849" y="328" width="204" height="22" rx="7" fill="#4a7ecb"/>
+  <rect x="849" y="340" width="204" height="10" fill="#4a7ecb"/>
+  <text x="951" y="344" text-anchor="middle" font-size="11" font-weight="700" fill="#fff" letter-spacing="0.3">FRONTAL LOBE</text>
+  <text x="951" y="362" text-anchor="middle" font-size="9" fill="#666" font-style="italic">Planning · drafting · critique · tool-call</text>
+  <line x1="859" y1="368" x2="1043" y2="368" stroke="#c0d4f0" stroke-width="0.8"/>
+
+  <!-- switches -->
+  <text x="859" y="380" font-size="9" fill="#555">Switches (7):</text>
+  <!-- row 1 -->
+  <rect x="859" y="384" width="34" height="14" rx="3" fill="#d0e4f8" stroke="#4a7ecb" stroke-width="0.8"/>
+  <text x="876" y="394" text-anchor="middle" font-size="8" fill="#1a3a6a">type→</text>
+  <rect x="897" y="384" width="36" height="14" rx="3" fill="#d0e4f8" stroke="#4a7ecb" stroke-width="0.8"/>
+  <text x="915" y="394" text-anchor="middle" font-size="8" fill="#1a3a6a">tokens</text>
+  <rect x="937" y="384" width="28" height="14" rx="3" fill="#d0e4f8" stroke="#4a7ecb" stroke-width="0.8"/>
+  <text x="951" y="394" text-anchor="middle" font-size="8" fill="#1a3a6a">tone</text>
+  <rect x="969" y="384" width="36" height="14" rx="3" fill="#d0e4f8" stroke="#4a7ecb" stroke-width="0.8"/>
+  <text x="987" y="394" text-anchor="middle" font-size="8" fill="#1a3a6a">draft_n</text>
+  <!-- row 2 (inhibitory) -->
+  <rect x="859" y="402" width="44" height="14" rx="3" fill="#fde8e8" stroke="#c0392b" stroke-width="0.8"/>
+  <text x="881" y="412" text-anchor="middle" font-size="8" fill="#c0392b">GABA ⊘</text>
+  <rect x="907" y="402" width="36" height="14" rx="3" fill="#fde8e8" stroke="#c0392b" stroke-width="0.8"/>
+  <text x="925" y="412" text-anchor="middle" font-size="8" fill="#c0392b">sat ⊘</text>
+  <rect x="947" y="402" width="56" height="14" rx="3" fill="#fde8e8" stroke="#c0392b" stroke-width="0.8"/>
+  <text x="975" y="412" text-anchor="middle" font-size="8" fill="#c0392b">DA→plan ⊘</text>
+
+  <line x1="859" y1="422" x2="1043" y2="422" stroke="#c0d4f0" stroke-width="0.8"/>
+  <!-- integrators -->
+  <text x="859" y="434" font-size="9" fill="#555">Integrators (8):</text>
+
+  <rect x="859" y="438" width="4" height="14" rx="1" fill="#4a7ecb"/>
+  <text x="869" y="449" font-size="9" font-weight="600" fill="#333">executive</text>
+  <text x="956" y="449" font-size="8.5" fill="#777">plans response · haiku</text>
+
+  <rect x="859" y="456" width="4" height="14" rx="1" fill="#4a7ecb"/>
+  <text x="869" y="467" font-size="9" font-weight="600" fill="#333">drafter_A / B / C</text>
+  <text x="956" y="467" font-size="8.5" fill="#777">parallel drafts · haiku</text>
+
+  <rect x="859" y="474" width="4" height="14" rx="1" fill="#4a7ecb"/>
+  <text x="869" y="485" font-size="9" font-weight="600" fill="#333">critic</text>
+  <text x="956" y="485" font-size="8.5" fill="#777">quality scoring · haiku</text>
+
+  <rect x="859" y="492" width="4" height="14" rx="1" fill="#4a7ecb"/>
+  <text x="869" y="503" font-size="9" font-weight="600" fill="#333">stoic_reframer</text>
+  <text x="956" y="503" font-size="8.5" fill="#777">threat reframe · haiku</text>
+
+  <rect x="859" y="510" width="4" height="14" rx="1" fill="#4a7ecb"/>
+  <text x="869" y="521" font-size="9" font-weight="600" fill="#333">empathy_critic</text>
+  <text x="956" y="521" font-size="8.5" fill="#777">emotion check · haiku</text>
+
+  <rect x="859" y="528" width="4" height="14" rx="1" fill="#4a7ecb"/>
+  <text x="869" y="539" font-size="9" font-weight="600" fill="#333">commitment_extractor</text>
+  <text x="956" y="539" font-size="8.5" fill="#777">intent tracking · haiku</text>
+
+  <line x1="859" y1="549" x2="1043" y2="549" stroke="#c0d4f0" stroke-width="0.8"/>
+  <!-- composite predictor note + drafter tournament note -->
+  <text x="859" y="561" font-size="8.5" fill="#999" font-style="italic">CompositePredictor: independently gates</text>
+  <text x="859" y="573" font-size="8.5" fill="#999" font-style="italic">executive &amp; critic suppression</text>
+  <text x="859" y="585" font-size="8.5" fill="#999" font-style="italic">Multiple Drafts tournament (Dennett)</text>
+</g>
+
+
+<!-- ─────────────────────────────────────────────
+     CEREBELLUM  x=878 y=743  w=156 h=90
+     color: #3a7a8b  light: #e8f4f7
+───────────────────────────────────────────── -->
+<g id="node-cerebellum" filter="url(#shadow)">
+  <rect x="878" y="743" width="156" height="90" rx="7" fill="#e8f4f7" stroke="#3a7a8b" stroke-width="1.5"/>
+  <rect x="878" y="743" width="156" height="22" rx="7" fill="#3a7a8b"/>
+  <rect x="878" y="755" width="156" height="10" fill="#3a7a8b"/>
+  <text x="956" y="759" text-anchor="middle" font-size="11" font-weight="700" fill="#fff" letter-spacing="0.3">CEREBELLUM</text>
+  <text x="956" y="777" text-anchor="middle" font-size="9" fill="#666" font-style="italic">Motor coordination · feedback</text>
+  <line x1="888" y1="783" x2="1024" y2="783" stroke="#b0d8e0" stroke-width="0.8"/>
+  <text x="888" y="796" font-size="8.5" fill="#666">Switch-only: timing, smoothing,</text>
+  <text x="888" y="808" font-size="8.5" fill="#666">motor plan refinement signals</text>
+  <text x="888" y="822" font-size="8.5" fill="#999" font-style="italic">Modulatory feedback → motor</text>
+</g>
+
+
+<!-- ─────────────────────────────────────────────
+     MOTOR CORTEX  x=1173 y=133  w=177 h=170
+     color: #c94930  light: #fceee8
+───────────────────────────────────────────── -->
+<g id="node-motor" filter="url(#shadow)">
+  <rect x="1173" y="133" width="177" height="170" rx="7" fill="#fceee8" stroke="#c94930" stroke-width="1.5"/>
+  <rect x="1173" y="133" width="177" height="22" rx="7" fill="#c94930"/>
+  <rect x="1173" y="145" width="177" height="10" fill="#c94930"/>
+  <text x="1261" y="149" text-anchor="middle" font-size="11" font-weight="700" fill="#fff" letter-spacing="0.3">MOTOR CORTEX</text>
+  <text x="1261" y="167" text-anchor="middle" font-size="9" fill="#666" font-style="italic">Tool use · autonomous task execution</text>
+  <line x1="1183" y1="173" x2="1340" y2="173" stroke="#f0c0b0" stroke-width="0.8"/>
+  <!-- switches -->
+  <text x="1183" y="185" font-size="9" fill="#555">Switches (6):</text>
+  <rect x="1183" y="189" width="30" height="14" rx="3" fill="#f8d8d0" stroke="#c94930" stroke-width="0.8"/>
+  <text x="1198" y="199" text-anchor="middle" font-size="8.5" fill="#7a1a00">gate</text>
+  <rect x="1217" y="189" width="28" height="14" rx="3" fill="#f8d8d0" stroke="#c94930" stroke-width="0.8"/>
+  <text x="1231" y="199" text-anchor="middle" font-size="8.5" fill="#7a1a00">tool</text>
+  <rect x="1249" y="189" width="42" height="14" rx="3" fill="#f8d8d0" stroke="#c94930" stroke-width="0.8"/>
+  <text x="1270" y="199" text-anchor="middle" font-size="8.5" fill="#7a1a00">publish</text>
+  <rect x="1295" y="189" width="34" height="14" rx="3" fill="#fde8e8" stroke="#c0392b" stroke-width="0.8"/>
+  <text x="1312" y="199" text-anchor="middle" font-size="8.5" fill="#c0392b">safety ⊘</text>
+  <rect x="1183" y="207" width="42" height="14" rx="3" fill="#fde8e8" stroke="#c0392b" stroke-width="0.8"/>
+  <text x="1204" y="217" text-anchor="middle" font-size="8.5" fill="#c0392b">budget ⊘</text>
+  <rect x="1229" y="207" width="44" height="14" rx="3" fill="#f8d8d0" stroke="#c94930" stroke-width="0.8"/>
+  <text x="1251" y="217" text-anchor="middle" font-size="8.5" fill="#7a1a00">fallback</text>
+  <line x1="1183" y1="227" x2="1340" y2="227" stroke="#f0c0b0" stroke-width="0.8"/>
+  <!-- integrators -->
+  <text x="1183" y="239" font-size="9" fill="#555">Integrators (2):</text>
+  <rect x="1183" y="243" width="4" height="29" rx="1" fill="#c44b2e"/>
+  <text x="1193" y="255" font-size="9" font-weight="600" fill="#333">tool_planner</text>
+  <text x="1193" y="266" font-size="8.5" fill="#666">per-step tool selection · local-code</text>
+  <rect x="1183" y="276" width="4" height="29" rx="1" fill="#c44b2e"/>
+  <text x="1193" y="288" font-size="9" font-weight="600" fill="#333">strategic_planner</text>
+  <text x="1193" y="299" font-size="8.5" fill="#666">multi-step autonomous jobs · local-code</text>
+</g>
+
+
+<!-- ─────────────────────────────────────────────
+     BRAINSTEM (DMN + Sleep)  x=1173 y=612  w=177 h=192
+     color: #6a6a7a  light: #f2f2f6
+───────────────────────────────────────────── -->
+<g id="node-brainstem" filter="url(#shadow)">
+  <rect x="1173" y="612" width="177" height="192" rx="7" fill="#f2f2f6" stroke="#6a6a7a" stroke-width="1.5"/>
+  <rect x="1173" y="612" width="177" height="22" rx="7" fill="#6a6a7a"/>
+  <rect x="1173" y="624" width="177" height="10" fill="#6a6a7a"/>
+  <text x="1261" y="628" text-anchor="middle" font-size="11" font-weight="700" fill="#fff" letter-spacing="0.3">BRAINSTEM / DMN</text>
+  <text x="1261" y="646" text-anchor="middle" font-size="9" fill="#666" font-style="italic">Autonomic · inner monologue · sleep</text>
+  <line x1="1183" y1="652" x2="1340" y2="652" stroke="#c8c8d8" stroke-width="0.8"/>
+
+  <!-- DMN sub-section -->
+  <text x="1183" y="664" font-size="9" font-weight="600" fill="#555">DMN Integrators (5 · local-general):</text>
+  <rect x="1183" y="668" width="4" height="13" rx="1" fill="#c49e2e"/>
+  <text x="1193" y="678" font-size="8.5" fill="#333">monologue — inner voice (→ drafters)</text>
+  <rect x="1183" y="683" width="4" height="13" rx="1" fill="#c49e2e"/>
+  <text x="1193" y="693" font-size="8.5" fill="#333">user_simulator — input prediction</text>
+  <rect x="1183" y="698" width="4" height="13" rx="1" fill="#c49e2e"/>
+  <text x="1193" y="708" font-size="8.5" fill="#333">anticipator — response prep</text>
+  <rect x="1183" y="713" width="4" height="13" rx="1" fill="#c49e2e"/>
+  <text x="1193" y="723" font-size="8.5" fill="#333">prefetcher — memory prefetch</text>
+  <rect x="1183" y="728" width="4" height="13" rx="1" fill="#c49e2e"/>
+  <text x="1193" y="738" font-size="8.5" fill="#333">speak_judge — proactive speech</text>
+
+  <line x1="1183" y1="744" x2="1340" y2="744" stroke="#c8c8d8" stroke-width="0.8"/>
+
+  <!-- Sleep sub-section -->
+  <text x="1183" y="756" font-size="9" font-weight="600" fill="#555">Sleep Integrators (2 · local-general):</text>
+  <rect x="1183" y="760" width="4" height="13" rx="1" fill="#3a7a8b"/>
+  <text x="1193" y="770" font-size="8.5" fill="#333">self_updater — self-model rewrite</text>
+  <rect x="1183" y="775" width="4" height="13" rx="1" fill="#3a7a8b"/>
+  <text x="1193" y="785" font-size="8.5" fill="#333">episode_synthesizer + REM consolidation</text>
+
+  <line x1="1183" y1="792" x2="1340" y2="792" stroke="#c8c8d8" stroke-width="0.8"/>
+  <!-- brainstem functions -->
+  <text x="1183" y="804" font-size="8.5" fill="#999" font-style="italic">heartbeat · cost monitor · articulation gate</text>
+</g>
+
+
+<!-- ═══════════════════════════════════════════
+     SECOND BRAIN annotation box
+════════════════════════════════════════════ -->
+<rect x="50" y="855" width="420" height="52" rx="6"
+      fill="#fffff8" stroke="#c49e2e" stroke-width="1.2" stroke-dasharray="4,3"/>
+<text x="260" y="873" text-anchor="middle" font-size="10" font-weight="700" fill="#7a5e00">SECOND BRAIN (Extended Mind)</text>
+<text x="260" y="887" text-anchor="middle" font-size="9" fill="#666">Episodic store: LanceDB vector index (all turns)</text>
+<text x="260" y="899" text-anchor="middle" font-size="9" fill="#666">Schema layer: self.md · user.md  |  Hebbian wiring: wiring.json</text>
+<!-- arrow from second brain to hippocampus -->
+<path d="M260,855 C260,820 400,700 553,530" fill="none"
+      stroke="#c49e2e" stroke-width="1.2" stroke-dasharray="4,3"
+      marker-end="url(#arr-mod)"/>
+<text x="390" y="720" font-size="8.5" fill="#c49e2e" transform="rotate(-35,390,720)">sole access via hippocampus</text>
+
+
+<!-- ═══════════════════════════════════════════
+     LEGEND
+════════════════════════════════════════════ -->
+<rect x="880" y="855" width="660" height="68" rx="6" fill="#f0f0f0" stroke="#ccc" stroke-width="1"/>
+<text x="1210" y="871" text-anchor="middle" font-size="10" font-weight="700" fill="#333">Legend</text>
+
+<!-- Excitatory edge -->
+<line x1="900" y1="884" x2="940" y2="884" stroke="#444" stroke-width="1.8" marker-end="url(#arr)"/>
+<text x="948" y="888" font-size="9" fill="#333">Excitatory signal</text>
+
+<!-- Modulatory edge -->
+<line x1="900" y1="902" x2="940" y2="902" stroke="#999" stroke-width="1.3" stroke-dasharray="5,3" marker-end="url(#arr-mod)"/>
+<text x="948" y="906" font-size="9" fill="#333">Modulatory / neuromodulator signal</text>
+
+<!-- Switch chip -->
+<rect x="1080" y="876" width="36" height="14" rx="3" fill="#e8d8a0" stroke="#c49e2e" stroke-width="0.8"/>
+<text x="1098" y="886" text-anchor="middle" font-size="8.5" fill="#7a5e00">switch</text>
+<text x="1122" y="888" font-size="9" fill="#333">Switch neuron (deterministic, no LLM)</text>
+
+<!-- Inhibitory chip -->
+<rect x="1080" y="896" width="36" height="14" rx="3" fill="#fde8e8" stroke="#c0392b" stroke-width="0.8"/>
+<text x="1098" y="906" text-anchor="middle" font-size="8.5" fill="#c0392b">sw ⊘</text>
+<text x="1122" y="908" font-size="9" fill="#333">Inhibitory switch (suppresses downstream)</text>
+
+<!-- Integrator cell -->
+<rect x="1310" y="876" width="4" height="29" rx="1" fill="#4a7ecb"/>
+<text x="1320" y="888" font-size="9" font-weight="600" fill="#333">cell_name</text>
+<text x="1320" y="900" font-size="8.5" fill="#666">model · role</text>
+<text x="1344" y="909" font-size="9" fill="#333">Integrator (LLM-backed)</text>
+
+<!-- model colour key -->
+<rect x="1450" y="874" width="10" height="10" rx="2" fill="#4a7ecb"/>
+<text x="1465" y="883" font-size="8.5" fill="#333">haiku</text>
+<rect x="1450" y="888" width="10" height="10" rx="2" fill="#7ab356"/>
+<text x="1465" y="897" font-size="8.5" fill="#333">flash-lite</text>
+<rect x="1450" y="902" width="10" height="10" rx="2" fill="#c49e2e"/>
+<text x="1465" y="911" font-size="8.5" fill="#333">local-general (7B)</text>
+<rect x="1510" y="902" width="10" height="10" rx="2" fill="#c44b2e"/>
+<text x="1525" y="911" font-size="8.5" fill="#333">local-code</text>
+
+
+<!-- ═══════════════════════════════════════════
+     COLUMN LABELS (faint, top)
+════════════════════════════════════════════ -->
+<text x="62" y="920" text-anchor="middle" font-size="8" fill="#bbb" font-style="italic">I/O</text>
+<text x="248" y="920" text-anchor="middle" font-size="8" fill="#bbb" font-style="italic">Sensory</text>
+<text x="641" y="920" text-anchor="middle" font-size="8" fill="#bbb" font-style="italic">Routing / Memory</text>
+<text x="950" y="920" text-anchor="middle" font-size="8" fill="#bbb" font-style="italic">Integration / Executive</text>
+<text x="1261" y="920" text-anchor="middle" font-size="8" fill="#bbb" font-style="italic">Output / Idle</text>
+<text x="1517" y="920" text-anchor="middle" font-size="8" fill="#bbb" font-style="italic">I/O</text>
+
+</g><!-- end translate group -->
+</svg>
+</body>
+</html>

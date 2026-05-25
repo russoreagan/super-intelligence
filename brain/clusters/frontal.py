@@ -348,7 +348,8 @@ class FrontalCluster:
             self._brainstem.endorse("switch_draft")
             self.last_turn_draft_scores = [{"draft_id": "switch_draft", "overall": 1.0,
                                              "coherence": 1.0, "relevance": 1.0,
-                                             "tone_fit": 1.0, "selected": True}]
+                                             "tone_fit": 1.0, "selected": True,
+                                             "critic_ran": False}]
             return response
 
         # --- Executive: predict-and-surprise gate ---
@@ -450,6 +451,7 @@ class FrontalCluster:
                         "draft_id": draft_id, "overall": 0.9,
                         "coherence": 0.9, "relevance": 0.9, "tone_fit": 0.9,
                         "selected": True, "subsystem": subsystem.name,
+                        "critic_ran": False,
                     }]
                     return result.response
                 break  # subsystem matched but returned no response — fall through
@@ -550,6 +552,7 @@ class FrontalCluster:
                 "coherence": predicted_score, "relevance": predicted_score,
                 "tone_fit": predicted_score, "empathy_score": predicted_score,
                 "overall": predicted_score, "selected": True, "vetoed": False,
+                "critic_ran": False,
             }]
             trace = self._record_trace_bypass()
             if trace is not None:
@@ -618,6 +621,7 @@ class FrontalCluster:
                         "overall": score.get("overall", 0.0),
                         "selected": False,
                         "vetoed": True,
+                        "critic_ran": True,
                     })
                     continue
 
@@ -633,6 +637,7 @@ class FrontalCluster:
                     "overall": overall,
                     "selected": False,
                     "vetoed": False,
+                    "critic_ran": True,
                 })
 
             if scored:
@@ -647,7 +652,7 @@ class FrontalCluster:
                 self._critic_predictor.record_outcome(critic_sig, best[2])
                 return best[1]
 
-        # Single draft — endorse directly
+        # Single draft — endorse directly (no critic ran; neutral score for Hebbian)
         draft_id, text = drafts[0]
         self._brainstem.add_draft(draft_id, text, 0.8)
         self._brainstem.endorse(draft_id)
@@ -660,6 +665,7 @@ class FrontalCluster:
             "overall": 0.8,
             "selected": True,
             "vetoed": False,
+            "critic_ran": False,
         }]
         return text
 

@@ -396,29 +396,38 @@ class SleepConsolidation:
 
     def _composite_outcome(self, trace) -> tuple[float, dict]:
         """Return (outcome, breakdown) for a single TurnTrace.
-        Outcome in roughly [-1, +1]."""
+        Outcome in roughly [-1, +1].
+
+        Signal sources:
+        - DA delta (50%): how much DA changed THIS turn vs start of turn.
+          Encodes whether the turn was rewarding (positive) or not (negative).
+          Prior DA is captured in trace.prior_neuromod at turn start.
+        - Critic score (30%): actual LLM critic assessment; only counted when the
+          critic actually ran (critic_ran=True). Single-draft turns contribute 0
+          so the DA delta carries the full directional signal for those turns.
+        - User emotion valence (20%): positive/negative valence of the user's
+          detected emotional state this turn (stored in trace.user_emotion).
+        """
         nm = trace.neuromod or {}
-        # DA delta vs neutral baseline (0.5)
         da = float(nm.get("DA", 0.5))
-        da_delta = (da - 0.5) * 2.0   # rescale to [-1, +1] roughly
 
-        # Critic overall for the selected draft
-        critic_overall = 0.5
-        for d in (trace.draft_scores or []):
-            if d.get("selected"):
-                critic_overall = float(d.get("overall", 0.5))
-                break
-        # Map [0, 1] → [-1, +1] so a 0.5 score is neutral
-        critic_term = (critic_overall - 0.5) * 2.0
+        # Per-turn DA delta: how much did DA change during THIS turn?
+        # Typical turn deltas are ±0.05–0.15; scale × 4 → ±0.2–0.6 range.
+        prior_nm = getattr(trace, "prior_neuromod", None) or {}
+        da_prior = float(prior_nm.get("DA", da))  # fallback to current if missing
+        da_delta = (da - da_prior) * 4.0
+        da_delta = max(-1.0, min(1.0, da_delta))
 
-        # User emotion valence delta — proxy: current trace's user_emotion vs neutral
-        # (We don't track per-turn deltas yet; use absolute valence as a proxy.)
-        # When user_emotion is recorded in features, we'd compare to prior turn.
-        user_emotion = ""
+        # Critic score — only trust it when the LLM critic actually ran.
+        critic_term = 0.0
         for d in (trace.draft_scores or []):
-            if isinstance(d, dict) and d.get("user_emotion"):
-                user_emotion = d["user_emotion"]
+            if d.get("selected") and d.get("critic_ran"):
+                critic_term = (float(d.get("overall", 0.5)) - 0.5) * 2.0
                 break
+
+        # User emotion valence: read from trace.user_emotion (set by run.py
+        # from features.user_emotion after temporal understanding fires).
+        user_emotion = getattr(trace, "user_emotion", "") or ""
         user_term = self._emotion_valence(user_emotion)
 
         outcome = 0.5 * da_delta + 0.3 * critic_term + 0.2 * user_term
@@ -426,6 +435,8 @@ class SleepConsolidation:
         outcome = max(-1.0, min(1.0, outcome))
         return outcome, {
             "da_delta": round(da_delta, 3),
+            "da_prior": round(da_prior, 3),
+            "da_current": round(da, 3),
             "critic": round(critic_term, 3),
             "user_emotion": round(user_term, 3),
         }
@@ -441,7 +452,7 @@ class SleepConsolidation:
 
     def _should_skip_hebbian(self, trace, outcome: float) -> tuple[bool, str]:
         """Skip Hebbian for turns where the entity wasn't in a state worth learning from."""
-        if abs(outcome) < 0.05:
+        if abs(outcome) < 0.02:
             return True, "outcome_near_zero"
         # Defuse path: the response started with "Let's slow down" or similar — a marker
         # we don't have explicitly. Use a proxy: very high GABA + low critic.
@@ -453,6 +464,86 @@ class SleepConsolidation:
         if emotion in ("confused", "flat"):
             return True, f"dissociated_emotion={emotion}"
         return False, ""
+
+    def _apply_drafter_competition(self, trace, outcome: float, plasticity: float,
+                                   gainers: list, losers: list) -> None:
+        """Extra reinforcement for multi-draft turns: winning drafter edges gain an
+        additional bonus; non-winning drafters that ran get a small penalty.
+        Applies only when critic_ran=True for the selected draft (real quality signal).
+        """
+        draft_scores = trace.draft_scores or []
+        # Only run when the critic actually compared multiple drafts
+        real_scored = [d for d in draft_scores if d.get("critic_ran")]
+        if len(real_scored) < 2:
+            return
+
+        selected = next((d for d in real_scored if d.get("selected")), None)
+        if selected is None:
+            return
+
+        winner_id = selected.get("draft_id", "")
+        winner_overall = float(selected.get("overall", 0.5))
+
+        bonus_scale = settings.get("hebbian_outcome_delta") * plasticity
+        for d in real_scored:
+            did = d.get("draft_id", "")
+            # Parse drafter index from "draft_{idx}_{turn_id}" format
+            parts = did.split("_")
+            if len(parts) < 2:
+                continue
+            try:
+                idx = int(parts[1])
+            except ValueError:
+                continue
+            drafter_name = f"frontal.drafter_{chr(65 + idx)}"
+            edge = ("frontal.executive", drafter_name)
+            if not self._wiring.has(*edge):
+                continue
+
+            prev = self._wiring.get_edge_weight(*edge)
+            if did == winner_id:
+                # Winner bonus: proportional to margin over median of losers
+                loser_scores = [float(x.get("overall", 0.5))
+                                for x in real_scored if x.get("draft_id") != winner_id]
+                margin = winner_overall - (sum(loser_scores) / len(loser_scores) if loser_scores else 0.5)
+                bonus = margin * bonus_scale * 0.5   # half the normal outcome delta as bonus
+                self._wiring.hebbian_update([edge[0], edge[1]], bonus)
+            else:
+                # Loser penalty: small negative nudge proportional to how far below winner
+                loser_score = float(d.get("overall", 0.5))
+                penalty_mag = (winner_overall - loser_score) * bonus_scale * 0.25
+                self._wiring.hebbian_update([edge[0], edge[1]], -penalty_mag)
+
+            now = self._wiring.get_edge_weight(*edge)
+            edge_delta = now - prev
+            if abs(edge_delta) > 0.001:
+                label = f"{edge[0]}→{edge[1]}"
+                if edge_delta > 0:
+                    gainers.append((label, edge_delta))
+                else:
+                    losers.append((label, edge_delta))
+                decisions.log(
+                    "drafter_competition_applied", turn_id=trace.turn_id,
+                    drafter=drafter_name, won=(did == winner_id),
+                    from_weight=round(prev, 4), to_weight=round(now, 4),
+                    delta=round(edge_delta, 4),
+                    winner_score=round(winner_overall, 3),
+                )
+
+    def _drafter_competition_edge_count(self, trace) -> int:
+        """Count of drafter competition edge updates (for total_updated accounting)."""
+        draft_scores = trace.draft_scores or []
+        real_scored = [d for d in draft_scores if d.get("critic_ran")]
+        if len(real_scored) < 2:
+            return 0
+        count = 0
+        for d in real_scored:
+            parts = d.get("draft_id", "").split("_")
+            if len(parts) >= 2 and parts[1].isdigit():
+                drafter_name = f"frontal.drafter_{chr(65 + int(parts[1]))}"
+                if self._wiring.has("frontal.executive", drafter_name):
+                    count += 1
+        return count
 
     def _run_hebbian_pass(self, session_id: str, full_traces: list) -> None:
         """Apply gentle decay then per-turn Hebbian updates along firing paths."""
@@ -505,6 +596,13 @@ class SleepConsolidation:
                         breakdown=breakdown,
                     )
 
+            # Competitive drafter reinforcement: when multiple drafters competed,
+            # additionally strengthen the winning drafter edge and weaken losers.
+            # This is separate from the path-based update above (which gives equal
+            # delta to all drafters that ran) and creates genuine drafter divergence.
+            self._apply_drafter_competition(trace, outcome, plasticity, gainers, losers)
+            total_updated += self._drafter_competition_edge_count(trace)
+
         # Persist
         try:
             self._wiring.save()
@@ -516,7 +614,21 @@ class SleepConsolidation:
         except Exception as e:
             logger.debug("[Memory consolidation] Wiring snapshot failed: %s", e)
 
-        # Session summary
+        # Session summary — also report signal quality so we can track how many
+        # turns had each component of the outcome signal actually contributing.
+        turns_with_critic = sum(
+            1 for t in full_traces
+            if any(d.get("critic_ran") and d.get("selected") for d in (t.draft_scores or []))
+        )
+        turns_with_user_emotion = sum(
+            1 for t in full_traces if getattr(t, "user_emotion", "")
+        )
+        turns_with_da_delta = sum(
+            1 for t in full_traces
+            if abs(float((getattr(t, "prior_neuromod", None) or {}).get("DA",
+                   float((t.neuromod or {}).get("DA", 0.5)))
+                   ) - float((t.neuromod or {}).get("DA", 0.5))) > 0.01
+        )
         top_gainers = sorted(gainers, key=lambda x: x[1], reverse=True)[:5]
         top_losers = sorted(losers, key=lambda x: x[1])[:5]
         decisions.log(
@@ -524,8 +636,16 @@ class SleepConsolidation:
             plasticity_modulator=round(plasticity, 3),
             edges_updated=total_updated,
             turns_skipped=skipped,
+            signal_quality={
+                "turns_with_critic_score": turns_with_critic,
+                "turns_with_user_emotion": turns_with_user_emotion,
+                "turns_with_da_delta": turns_with_da_delta,
+                "total_turns": len(full_traces),
+            },
             top_gainers=[{"edge": e, "delta": round(d, 4)} for e, d in top_gainers],
             top_losers=[{"edge": e, "delta": round(d, 4)} for e, d in top_losers],
         )
-        logger.info("[Memory consolidation] Hebbian: plasticity=%.2f edges_updated=%d turns_skipped=%d",
-                    plasticity, total_updated, skipped)
+        logger.info("[Memory consolidation] Hebbian: plasticity=%.2f edges_updated=%d "
+                    "turns_skipped=%d critic_turns=%d/%d",
+                    plasticity, total_updated, skipped,
+                    turns_with_critic, len(full_traces))
