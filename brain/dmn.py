@@ -28,7 +28,6 @@ from brain.model_router import ModelRouter
 from brain.settings import settings
 from brain.utils import get_idle_seconds
 
-
 # English function/stop words — filtered out before Jaccard overlap so that
 # common scaffolding ("the user has been...") doesn't make every thought look
 # like a duplicate. This is DIFFERENT from voice_bridge.bleed_overlap, which
@@ -323,7 +322,7 @@ class DefaultModeNetwork:
         self._monologue_cell = IntegratorCell(
             name="monologue",
             cluster="dmn",
-            model="local-general",
+            model="local",
             system_prompt=MONOLOGUE_SYSTEM,
             topics=["stream.thought"],
             max_calls_per_turn=1,
@@ -334,7 +333,7 @@ class DefaultModeNetwork:
         self._simulation_cell = IntegratorCell(
             name="user_simulator",
             cluster="dmn",
-            model="local-general",
+            model="local",
             system_prompt=SIMULATION_SYSTEM,
             topics=["stream.prediction"],
             max_calls_per_turn=1,
@@ -345,7 +344,7 @@ class DefaultModeNetwork:
         self._anticipator_cell = IntegratorCell(
             name="anticipator",
             cluster="dmn",
-            model="local-general",
+            model="local",
             system_prompt=ANTICIPATOR_SYSTEM,
             topics=["stream.anticipation"],
             max_calls_per_turn=1,
@@ -356,7 +355,7 @@ class DefaultModeNetwork:
         self._prefetcher_cell = IntegratorCell(
             name="prefetcher",
             cluster="dmn",
-            model="local-general",
+            model="local",
             system_prompt=PREFETCHER_SYSTEM,
             topics=["stream.prefetch"],
             max_calls_per_turn=1,
@@ -368,7 +367,7 @@ class DefaultModeNetwork:
         self._judge_cell = IntegratorCell(
             name="speak_judge",
             cluster="dmn",
-            model="local-general",
+            model="local",
             system_prompt=JUDGE_SYSTEM,
             topics=[],
             max_calls_per_turn=1,
