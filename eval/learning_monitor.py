@@ -68,6 +68,8 @@ class LearningMonitor:
             "gating_efficiency": gating_eff,
             "bypass_rate": bypass_rate,
             "llm_calls_saved": saved,
+            "modulated_switch_count": getattr(trace, "modulated_switch_count", 0),
+            "suppressed_switch_count": getattr(trace, "suppressed_switch_count", 0),
         }
         self._turn_metrics.append(metrics)
 

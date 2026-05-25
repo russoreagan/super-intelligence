@@ -53,6 +53,16 @@ def _make_dmn():
     dmn.anticipations = []
     # Phase 3b state
     dmn.prefetched = []
+    # Emotion + relationship state (set by update_context in production)
+    dmn._last_emotion = "neutral"
+    dmn._last_speaker_name = None
+    dmn._last_affection_score = 0
+    dmn._last_familiarity = "new"
+    # Recent angles window (dedup for thought directions)
+    from collections import deque as _deque
+    dmn._recent_angles = _deque(maxlen=5)
+    # Obs layer (optional; tests don't need it)
+    dmn._obs = None
     return dmn
 
 

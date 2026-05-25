@@ -85,6 +85,15 @@ class SwitchNeuron:
                                eff_threshold=eff_thr, mod_delta=mod_delta)
         except Exception:
             pass
+        # Increment modulated_switch_count when chemistry meaningfully shifted threshold
+        if abs(mod_delta) > 0.01:
+            try:
+                from brain.observability.firing_path import current_turn_trace
+                _tr = current_turn_trace.get()
+                if _tr is not None:
+                    _tr.modulated_switch_count += 1
+            except Exception:
+                pass
         return {
             "type": "activation",
             "level": signed * self.weight,
@@ -132,6 +141,11 @@ class SwitchNeuron:
                     ),
                 )
                 self._last_suppressed_at = time.time()
+                # Increment suppression counter on the active turn trace
+                from brain.observability.firing_path import current_turn_trace
+                _tr = current_turn_trace.get()
+                if _tr is not None:
+                    _tr.suppressed_switch_count += 1
             except Exception:
                 pass
         return False

@@ -93,7 +93,7 @@ class TestVoiceIdStorage:
                 await spy_speak("hello")
                 return called_with
 
-        result = asyncio.get_event_loop().run_until_complete(_run())
+        result = asyncio.run(_run())
         assert result["voice_id"] == "selected_voice_xyz"
 
     def test_speak_falls_back_to_env_var_when_no_voice_set(self):

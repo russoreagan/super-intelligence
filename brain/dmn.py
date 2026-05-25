@@ -805,6 +805,12 @@ class DefaultModeNetwork:
                         chem.get("NE", 0), chem.get("GABA", 0),
                         chem.get("5HT", 0), chem.get("OXT", 0),
                     )
+                    if self._obs:
+                        eff = self._idle_gate.effective_threshold(chem)
+                        self._obs.record_modulation_event(
+                            "idle_gate", "dmn", suppressed=True,
+                            chem=chem, level=0.6, effective_threshold=eff,
+                        )
                     continue
                 self._idle_gate.fire(0.6, "tick_allowed", snapshot=chem)
                 skip_prob = self._tick_skip_probability()

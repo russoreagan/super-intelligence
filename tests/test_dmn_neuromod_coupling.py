@@ -60,6 +60,13 @@ def _make_dmn(neuromod_snapshot: dict | None = None):
     dmn.last_assistant_message = ""
     dmn.anticipations = []
     dmn.prefetched = []
+    # Emotion + relationship state (added after fixture was written)
+    dmn._last_emotion = "neutral"
+    dmn._last_speaker_name = None
+    dmn._last_affection_score = 0
+    dmn._last_familiarity = "new"
+    dmn._recent_angles = deque(maxlen=5)
+    dmn._obs = None
     return dmn
 
 

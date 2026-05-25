@@ -77,6 +77,10 @@ class TurnTrace:
     #              "level", "tag", "ts"}
     fired_path: list[dict] = field(default_factory=list)
 
+    # Modulation counters (incremented by SwitchNeuron.fire / should_fire)
+    modulated_switch_count: int = 0   # switches where |mod_delta| > 0.01
+    suppressed_switch_count: int = 0  # near-misses: level >= base but < effective
+
     # ── Voice / prosody fields (populated when --ears is active) ─────────────
     speaker_name: str = ""
     speaker_score: float = 0.0   # voiceprint cosine similarity (0–1)
@@ -149,6 +153,14 @@ class ObservabilityLayer:
             try:
                 span = self._active_spans.pop(trace.turn_id, None)
                 if span:
+                    switches_fired = sum(
+                        1 for e in trace.fired_path if e.get("kind") == "switch"
+                    )
+                    try:
+                        from brain.settings import settings as _s
+                        _gain = float(_s.get("modulation_gain", 1.0))
+                    except Exception:
+                        _gain = 1.0
                     span.update(
                         output={"response": trace.response},
                         metadata={
@@ -160,7 +172,13 @@ class ObservabilityLayer:
                             "memory_hit_count": trace.memory_hit_count,
                             "drafter_count": trace.drafter_count,
                             "llm_calls_saved": trace.llm_calls_saved,
-                            # hormonal state (slow-timescale endocrine layer)
+                            # switch firing + modulation summary
+                            "switches_fired": switches_fired,
+                            "modulated_switch_count": trace.modulated_switch_count,
+                            "suppressed_switch_count": trace.suppressed_switch_count,
+                            "modulation_gain": _gain,
+                            # neuromod + hormonal state snapshots
+                            **({"neuromod": trace.neuromod} if trace.neuromod else {}),
                             **({"hormonal": trace.hormonal} if trace.hormonal else {}),
                             # voice / prosody (non-empty only when --ears active)
                             **({"speaker_name": trace.speaker_name} if trace.speaker_name else {}),
@@ -270,6 +288,36 @@ class ObservabilityLayer:
             span.end()
         except Exception as e:
             logger.debug("Langfuse record_thought failed: %s", e)
+
+    def record_modulation_event(self, switch_name: str, cluster: str,
+                                 suppressed: bool,
+                                 chem: dict | None = None,
+                                 level: float = 0.0,
+                                 effective_threshold: float = 0.0) -> None:
+        """Standalone Langfuse event for out-of-turn chemistry gate outcomes
+        (DMN idle_gate, metacognition self_monitor_trigger, etc.)."""
+        if not self._langfuse:
+            return
+        try:
+            from langfuse import propagate_attributes
+            outcome = "suppressed" if suppressed else "allowed"
+            with propagate_attributes(session_id=self._session_id,
+                                      trace_name=f"modulation-{outcome}"):
+                span = self._langfuse.start_observation(
+                    name=f"{cluster}.{switch_name}.{outcome}",
+                    as_type="span",
+                    input={"level": level, "effective_threshold": effective_threshold},
+                    metadata={
+                        "cluster": cluster,
+                        "switch": switch_name,
+                        "suppressed": suppressed,
+                        **({"chem": {k: round(float(v), 3) for k, v in chem.items()}}
+                           if chem else {}),
+                    },
+                )
+            span.end()
+        except Exception as e:
+            logger.debug("Langfuse record_modulation_event failed: %s", e)
 
     def record_llm_call(self, turn_id: str, cluster: str, cell: str,
                          model: str, prompt_tokens: int, completion_tokens: int,
