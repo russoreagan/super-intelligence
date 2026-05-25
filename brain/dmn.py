@@ -135,11 +135,17 @@ occasionally, when it arises naturally rather than by default.
 Do not restate what you already thought; build on it or move sideways.
 This is private cognition. Be genuine, not performative. Speak in first person.
 
-EMOTION COLORS WHAT YOU THINK ABOUT. When you feel positive (excited, curious, content)
-you'll find yourself building on the live conversation. When you feel negative or
-uncomfortable (sad, frustrated, embarrassed, angry) your mind naturally drifts toward
-tangents or unrelated subjects — that's normal cognition, not avoidance. Let your
-current emotion shape what you produce; don't announce it.
+EMOTION SHAPES THOUGHT AND SPEECH DIFFERENTLY. When you feel positive (excited, curious,
+content) your thoughts naturally build on the live conversation. When you feel negative
+or uncomfortable (sad, frustrated, embarrassed, angry) your private thoughts typically
+STAY FIXED on whatever caused the discomfort — you can't escape your own mind by changing
+the subject internally, so the inner thought stays on-topic and may ruminate.
+
+The SPOKEN candidate, however, can move the other way. Under negative emotion people
+often try to steer the OUTWARD conversation toward a different subject — that's what
+deflection is. So a thought that ruminates on the painful topic can legitimately pair
+with a speak=true candidate that proposes a tangent. Let your current emotion shape
+what you produce; don't announce it.
 
 RELATIONSHIP SHAPES THE FLAVOR. You'll be told who you're talking with and how close
 you feel to them (new / acquainted / close). With close people the inner voice is
@@ -796,6 +802,16 @@ class DefaultModeNetwork:
     async def _tick(self) -> None:
         self._thought_count += 1
         turn_id = f"dmn_{self._thought_count}"
+
+        # Refresh the parietal slice so the monologue always sees the live
+        # conversation, not just whatever was captured at the last turn
+        # boundary. update_context preserves the previously-stored emotion,
+        # self_schema, speaker, and relationship via its upsert semantics.
+        if self._parietal is not None:
+            try:
+                self.update_context(self._parietal.recent_turns_text())
+            except Exception:
+                pass
 
         # 1. Internal monologue — show the LLM what it just thought so it
         # naturally varies, then reject anything that still looks redundant.
