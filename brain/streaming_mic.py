@@ -80,6 +80,7 @@ class StreamingMicSession:
         self._socket_cm = None          # async context manager
         self._pumper_task: Optional[asyncio.Task] = None
         self._reader_task: Optional[asyncio.Task] = None
+        self._keepalive_task: Optional[asyncio.Task] = None
         self._main_loop: Optional[asyncio.AbstractEventLoop] = None
         self._running = False
         self._muted = False             # when True, mic audio is discarded
@@ -117,10 +118,11 @@ class StreamingMicSession:
         )
         self._stream.start()
 
-        # 3. Launch pumper + reader supervisor
+        # 3. Launch pumper + reader supervisor + keepalive
         self._running = True
         self._pumper_task = asyncio.create_task(self._pump_loop())
         self._reader_task = asyncio.create_task(self._reader_supervisor())
+        self._keepalive_task = asyncio.create_task(self._keepalive_loop())
 
     async def _open_deepgram(self) -> None:
         """Open a fresh Deepgram WebSocket session.
@@ -237,6 +239,29 @@ class StreamingMicSession:
                     await asyncio.sleep(backoff)
                     backoff = min(backoff * 2, 8.0)
 
+    async def _keepalive_loop(self) -> None:
+        """Send Deepgram KeepAlive JSON every 8 s to prevent 12-s inactivity timeout.
+
+        Deepgram closes the WS with 1011 if it receives no audio data AND no text
+        messages for ~12 s.  Pure-silence PCM (all-zero bytes sent when muted or
+        the noise gate fires) does NOT satisfy this check on nova-3 — only real
+        audio frames or an explicit KeepAlive text message do.  We send one every
+        8 s as a belt-and-suspenders guard; the pump loop continues to send silence
+        so VAD state is preserved across quiet gaps.
+        """
+        INTERVAL = 8.0
+        try:
+            while self._running:
+                await asyncio.sleep(INTERVAL)
+                if self._socket is not None:
+                    try:
+                        await self._socket.send_keep_alive()
+                        logger.debug("[StreamingMic] KeepAlive sent")
+                    except Exception as e:
+                        logger.debug("[StreamingMic] KeepAlive failed (will reconnect): %s", e)
+        except asyncio.CancelledError:
+            pass
+
     async def stop(self) -> None:
         self._running = False
         if self._stream is not None:
@@ -246,10 +271,10 @@ class StreamingMicSession:
             except Exception:
                 pass
             self._stream = None
-        for t in (self._pumper_task, self._reader_task):
+        for t in (self._pumper_task, self._reader_task, self._keepalive_task):
             if t is not None:
                 t.cancel()
-        for t in (self._pumper_task, self._reader_task):
+        for t in (self._pumper_task, self._reader_task, self._keepalive_task):
             if t is not None:
                 try:
                     await t
