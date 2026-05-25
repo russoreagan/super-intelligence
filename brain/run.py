@@ -513,22 +513,32 @@ async def session(args) -> None:
                 now_speaking = pns.is_speaking
                 if was_speaking and not now_speaking:
                     async with pending_lock:
-                        # Filter out utterances that look like TTS bleed-through.
-                        # These were queued WHILE the brain was speaking so we
-                        # couldn't check at enqueue time. Now TTS has ended and
-                        # last_spoken_text still holds what was just said.
-                        clean = [
-                            t for t in pending_during_tts
-                            if bleed_overlap(t, pns.last_spoken_text) < _BLEED_OVERLAP_THRESHOLD
-                        ]
-                        dropped = len(pending_during_tts) - len(clean)
-                        pending_during_tts.clear()
-                    if dropped:
-                        logger.debug("[I/O] voice → drained %d bleed utterance(s)", dropped)
-                    text, n = pick_dispatch_from_queue(clean)
-                    if text:
-                        logger.info("[I/O] voice → flushing %d queued utterance(s): %r", n, text[:80])
-                        await _dispatch_text(text)
+                        # If mic was muted while TTS was playing, throw the
+                        # queue away — user switched to text input and doesn't
+                        # want stale voice utterances dispatched post-TTS.
+                        if streaming_mic.is_muted:
+                            if pending_during_tts:
+                                logger.debug("[I/O] voice → discarded %d queued utterance(s) (mic muted)",
+                                             len(pending_during_tts))
+                            pending_during_tts.clear()
+                        else:
+                            # Filter out utterances that look like TTS bleed-through.
+                            # These were queued WHILE the brain was speaking so we
+                            # couldn't check at enqueue time. Now TTS has ended and
+                            # last_spoken_text still holds what was just said.
+                            clean = [
+                                t for t in pending_during_tts
+                                if bleed_overlap(t, pns.last_spoken_text) < _BLEED_OVERLAP_THRESHOLD
+                            ]
+                            dropped = len(pending_during_tts) - len(clean)
+                            pending_during_tts.clear()
+                            if dropped:
+                                logger.debug("[I/O] voice → drained %d bleed utterance(s)", dropped)
+                            text, n = pick_dispatch_from_queue(clean)
+                            if text:
+                                logger.info("[I/O] voice → flushing %d queued utterance(s): %r",
+                                            n, text[:80])
+                                await _dispatch_text(text)
                 was_speaking = now_speaking
 
         async def _voice_bridge() -> None:
@@ -540,6 +550,13 @@ async def session(args) -> None:
                 except Exception as e:
                     logger.warning("[I/O] voice bridge read failed: %s", e)
                     await asyncio.sleep(0.5)
+                    continue
+                # Guard: if the user muted between when this utterance was
+                # generated and when we dequeued it, discard it silently.
+                # mute() clears _utterance_start_s/_pending_words but can't
+                # reach utterances already sitting in the queue.
+                if streaming_mic.is_muted:
+                    logger.debug("[I/O] voice → discarded stale utterance (mic muted)")
                     continue
                 text = (utt.get("transcript") or "").strip()
 
