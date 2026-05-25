@@ -498,6 +498,22 @@ class DefaultModeNetwork:
         SleepConsolidation.consolidate() for the REM-style thought pass."""
         return list(self._session_thought_buf)
 
+    def recent_thoughts_tagged(self, n: int = 5) -> list[dict]:
+        """Return the last N thoughts with their speak_flagged signal.
+        Each entry: {thought: str, speak_flagged: bool}.
+        Used by run.py → frontal.py so the drafter knows which thoughts the
+        brain was already leaning toward voicing (speak gate flagged them as
+        candidates) versus ones that stayed fully internal."""
+        buf = self._session_thought_buf
+        if not buf:
+            # Fallback: if the buffer is empty (DMN not running), derive from
+            # the deque of plain strings with no speak flag.
+            return [{"thought": t, "speak_flagged": False}
+                    for t in list(self._recent_thoughts)[-n:]]
+        entries = buf[-n:]
+        return [{"thought": e["thought"], "speak_flagged": bool(e.get("speak_flagged"))}
+                for e in entries]
+
     def note_last_response(self, response: str) -> None:
         """Called by run.py after each turn end. Records whether the entity's
         last message ended with a question — if so, the DMN's next tick will

@@ -892,7 +892,7 @@ async def session(args) -> None:
             # Surface idle thoughts into this turn's drafter context so the
             # entity can reference what it was musing about (or quietly use
             # the priming effect even if it doesn't reference them aloud).
-            thoughts = dmn.recent_thoughts(n=4)
+            thoughts = dmn.recent_thoughts_tagged(n=4)
             if thoughts:
                 memory["recent_thoughts"] = thoughts
             # Consume any pre-prepared anticipations from the DMN. If the
@@ -918,7 +918,8 @@ async def session(args) -> None:
                 # wandering that proved useful).
                 from brain.voice_bridge import bleed_overlap as _word_overlap
                 useful: list[tuple[str, float]] = []
-                for t in thoughts:
+                for entry in thoughts:
+                    t = entry["thought"] if isinstance(entry, dict) else entry
                     o = _word_overlap(user_input, t)
                     if o >= 0.35:
                         useful.append((t, o))
@@ -951,7 +952,8 @@ async def session(args) -> None:
             ps_episodes, _ = egress.pseudonymize(memory.get("episodes", ""))
             if memory.get("recent_thoughts"):
                 ps_memory["recent_thoughts"] = [
-                    egress.pseudonymize(t)[0] for t in memory["recent_thoughts"]
+                    {**entry, "thought": egress.pseudonymize(entry["thought"])[0]}
+                    for entry in memory["recent_thoughts"]
                 ]
             ps_core_self, _ = egress.pseudonymize(memory.get("core", {}).get("self", ""))
             ps_core_user, _ = egress.pseudonymize(memory.get("core", {}).get("user", ""))

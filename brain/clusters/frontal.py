@@ -991,16 +991,41 @@ class FrontalCluster:
         if memory.get("tool_result"):
             parts.append(f"Tool execution result:\n{fence('tool_result', str(memory['tool_result']), nonce)}")
         if memory.get("recent_thoughts"):
-            # Idle thoughts the brain had between turns. May reference these
-            # naturally — "I was just thinking about that", "I'd been wondering
-            # whether…" — if they're relevant. Don't quote verbatim if not.
-            thoughts_block = "\n".join(
-                f"- {t}" for t in memory["recent_thoughts"] if t
-            )
+            # Inner monologue — thoughts you were actually having between turns.
+            # Split into two tiers: thoughts you were building toward speaking
+            # (speak_flagged=True) and fully internal ones.
+            pending: list[str] = []
+            internal: list[str] = []
+            for entry in memory["recent_thoughts"]:
+                if isinstance(entry, dict):
+                    text = entry.get("thought") or ""
+                    flagged = bool(entry.get("speak_flagged"))
+                else:
+                    text = entry
+                    flagged = False
+                if text:
+                    (pending if flagged else internal).append(text)
+
+            lines: list[str] = []
+            if pending:
+                lines.append("Thoughts you were leaning toward sharing (speak-flagged):")
+                lines.extend(f"  ★ {t}" for t in pending)
+            if internal:
+                lines.append("Other internal thoughts:")
+                lines.extend(f"  - {t}" for t in internal)
+            thoughts_block = "\n".join(lines)
+
             parts.append(
-                f"Idle thoughts you had between turns "
-                f"(reference naturally if relevant, ignore otherwise):\n"
-                f"{fence('idle_thoughts', thoughts_block, nonce)}"
+                "Your inner monologue between turns — these are your actual thoughts, "
+                "not external context. Rules:\n"
+                "• Speak-flagged thoughts (★) are ones you were already building toward "
+                "saying. If the moment is right, say them — as your own idea, not as a "
+                "quote. If one contains a question you were forming, ask it.\n"
+                "• Internal thoughts: reference naturally if they're relevant to what "
+                "the user just said. Don't force them in.\n"
+                "• Never announce 'I was thinking…' unless it flows; just let the thought "
+                "shape what you say.\n"
+                f"{fence('inner_monologue', thoughts_block, nonce)}"
             )
         if memory.get("anticipations"):
             # Pre-prepared response sketches from the DMN anticipator. The
