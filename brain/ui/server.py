@@ -121,7 +121,9 @@ class UIServer:
             """Re-exec the current process with the same args — restarts the brain."""
             async def _do_restart():
                 await asyncio.sleep(0.4)
-                os.execv(sys.executable, [sys.executable] + sys.argv)
+                cmd = [sys.executable] + sys.argv
+                logger.info("Restarting brain: %s", " ".join(cmd))
+                os.execv(sys.executable, cmd)
             asyncio.create_task(_do_restart())
             return {"ok": True}
 

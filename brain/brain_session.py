@@ -126,6 +126,20 @@ class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
         self._setup_voice_bridge()
         self._setup_loops()
 
+        # Emit a module summary so it's immediately obvious after restart
+        # (or any startup) which subsystems came up and which didn't.
+        _on  = lambda flag: "✓" if flag else "✗"
+        logger.info(
+            "Session %s online — UI:%s  Motor:%s  DMN:%s  Meta:%s  Voice:%s  Ears:%s",
+            self.session_id,
+            _on(self._ui_enabled),
+            _on(self.motor is not None),
+            _on(self.dmn is not None),
+            _on(self.meta is not None),
+            _on(self._streaming_mic is not None),
+            _on(self.ears is not None),
+        )
+
         if self.args.message:
             await self._run_single_message()
         elif self._ui_enabled:
