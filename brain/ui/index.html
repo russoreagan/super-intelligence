@@ -3696,8 +3696,28 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
             <input type="range" class="brain-slider child-slider" data-key="glu_suppression_weight" min="0.0" max="1.0" step="0.05" value="0.30">
           </div>
           <div class="ctrl-row">
+            <div class="ctrl-header"><span class="ctrl-label">Idle Thought Frequency</span><span class="ctrl-hint">seconds between cycles when user is inactive</span><span class="ctrl-value-display" id="val-dmn_idle_interval">25</span></div>
+            <input type="range" class="brain-slider" data-key="dmn_idle_interval" min="10" max="120" step="5" value="25">
+          </div>
+          <div class="ctrl-row">
             <div class="ctrl-header"><span class="ctrl-label">Deduplication Strictness</span><span class="ctrl-hint">higher = more unique thoughts required</span><span class="ctrl-value-display" id="val-dmn_overlap_threshold">0.35</span></div>
             <input type="range" class="brain-slider" data-key="dmn_overlap_threshold" min="0.1" max="0.8" step="0.05" value="0.35">
+          </div>
+          <div class="ctrl-row">
+            <div class="ctrl-header"><span class="ctrl-label">Speak Gate Poll Interval</span><span class="ctrl-hint">seconds between speak-gate evaluations</span><span class="ctrl-value-display" id="val-speak_gate_poll_interval">5.0</span></div>
+            <input type="range" class="brain-slider" data-key="speak_gate_poll_interval" min="1" max="30" step="1" value="5">
+          </div>
+          <div class="ctrl-row">
+            <div class="ctrl-header"><span class="ctrl-label">Speak Candidate Max Age</span><span class="ctrl-hint">drop unspoken candidates older than this (s)</span><span class="ctrl-value-display" id="val-speak_candidate_max_age_s">60</span></div>
+            <input type="range" class="brain-slider" data-key="speak_candidate_max_age_s" min="10" max="300" step="10" value="60">
+          </div>
+          <div class="ctrl-row">
+            <div class="ctrl-header"><span class="ctrl-label">Bridge Rewriter</span><span class="ctrl-hint">1 = rewrite topic-change interjections locally</span><span class="ctrl-value-display" id="val-speak_bridge_enabled">1</span></div>
+            <input type="range" class="brain-slider" data-key="speak_bridge_enabled" min="0" max="1" step="1" value="1">
+          </div>
+          <div class="ctrl-row">
+            <div class="ctrl-header"><span class="ctrl-label">Bridge Overlap Threshold</span><span class="ctrl-hint">topic overlap below this triggers rewrite</span><span class="ctrl-value-display" id="val-speak_bridge_overlap_threshold">0.20</span></div>
+            <input type="range" class="brain-slider" data-key="speak_bridge_overlap_threshold" min="0.0" max="0.8" step="0.05" value="0.20">
           </div>
         </div>
       </div>
@@ -3899,6 +3919,263 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
           <div class="ctrl-row">
             <div class="ctrl-header"><span class="ctrl-label">Change Threshold (RMS)</span><span class="ctrl-hint">minimum pixel difference to treat a frame as new</span><span class="ctrl-value-display" id="val-video_change_threshold">8.0</span></div>
             <input type="range" class="brain-slider" data-key="video_change_threshold" min="1.0" max="30.0" step="0.5" value="8.0">
+          </div>
+        </div>
+      </div>
+
+      <!-- S12: Endocrine / Hormonal System -->
+      <div class="settings-section" id="sec-12">
+        <div class="settings-section-head">
+          <span class="settings-section-num">12</span>
+          <div style="flex:1">
+            <div class="settings-section-title">Endocrine / Hormonal System</div>
+            <div class="settings-section-desc">Slow-acting hormones — OXT (bonding), CORT (stress), 5HT (mood) — and their cross-modulation</div>
+          </div>
+          <svg class="settings-section-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </div>
+        <div class="settings-section-body">
+          <div class="ctrl-row ctrl-master">
+            <div class="ctrl-header"><span class="ctrl-label">OXT — Bonding</span><span class="ctrl-hint">oxytocin: builds from warm exchanges, drained by hostility</span></div>
+          </div>
+          <div class="ctrl-row child-row">
+            <div class="ctrl-header"><span class="ctrl-label">OXT gain / warm turn</span><span class="ctrl-value-display" id="val-oxt_positive_increment">0.008</span></div>
+            <input type="range" class="brain-slider child-slider" data-key="oxt_positive_increment" min="0.001" max="0.05" step="0.001" value="0.008">
+          </div>
+          <div class="ctrl-row child-row">
+            <div class="ctrl-header"><span class="ctrl-label">OXT drain / hostile turn</span><span class="ctrl-value-display" id="val-oxt_hostility_drain">0.008</span></div>
+            <input type="range" class="brain-slider child-slider" data-key="oxt_hostility_drain" min="0.001" max="0.05" step="0.001" value="0.008">
+          </div>
+          <div class="ctrl-row child-row">
+            <div class="ctrl-header"><span class="ctrl-label">OXT CORT buffer rate</span><span class="ctrl-hint">OXT × this drains CORT per turn</span><span class="ctrl-value-display" id="val-oxt_cort_buffer_rate">0.020</span></div>
+            <input type="range" class="brain-slider child-slider" data-key="oxt_cort_buffer_rate" min="0.001" max="0.08" step="0.001" value="0.020">
+          </div>
+          <div class="ctrl-row child-row">
+            <div class="ctrl-header"><span class="ctrl-label">OXT CORT buffer threshold</span><span class="ctrl-hint">OXT must exceed this to buffer CORT</span><span class="ctrl-value-display" id="val-oxt_cort_buffer_threshold">0.40</span></div>
+            <input type="range" class="brain-slider child-slider" data-key="oxt_cort_buffer_threshold" min="0.1" max="0.8" step="0.05" value="0.40">
+          </div>
+          <div class="ctrl-row child-row">
+            <div class="ctrl-header"><span class="ctrl-label">OXT → DA lift</span><span class="ctrl-value-display" id="val-oxt_da_lift">0.05</span></div>
+            <input type="range" class="brain-slider child-slider" data-key="oxt_da_lift" min="0.0" max="0.2" step="0.01" value="0.05">
+          </div>
+          <div class="ctrl-row child-row">
+            <div class="ctrl-header"><span class="ctrl-label">OXT "Connected" threshold</span><span class="ctrl-hint">OXT above this + positive base → connected</span><span class="ctrl-value-display" id="val-hormonal_oxt_connected_threshold">0.60</span></div>
+            <input type="range" class="brain-slider child-slider" data-key="hormonal_oxt_connected_threshold" min="0.3" max="0.9" step="0.05" value="0.60">
+          </div>
+          <div class="ctrl-row ctrl-master" style="margin-top:0.75rem">
+            <div class="ctrl-header"><span class="ctrl-label">CORT — Stress</span><span class="ctrl-hint">cortisol: builds under sustained hostility or threat</span></div>
+          </div>
+          <div class="ctrl-row child-row">
+            <div class="ctrl-header"><span class="ctrl-label">CORT gain / hostile turn</span><span class="ctrl-value-display" id="val-cort_threat_increment">0.022</span></div>
+            <input type="range" class="brain-slider child-slider" data-key="cort_threat_increment" min="0.005" max="0.08" step="0.001" value="0.022">
+          </div>
+          <div class="ctrl-row child-row">
+            <div class="ctrl-header"><span class="ctrl-label">CORT trigger threshold</span><span class="ctrl-hint">hostility score required to build CORT</span><span class="ctrl-value-display" id="val-cort_hostility_threshold">0.35</span></div>
+            <input type="range" class="brain-slider child-slider" data-key="cort_hostility_threshold" min="0.1" max="0.7" step="0.05" value="0.35">
+          </div>
+          <div class="ctrl-row child-row">
+            <div class="ctrl-header"><span class="ctrl-label">CORT → DA suppress</span><span class="ctrl-value-display" id="val-cort_da_suppress">0.08</span></div>
+            <input type="range" class="brain-slider child-slider" data-key="cort_da_suppress" min="0.0" max="0.3" step="0.01" value="0.08">
+          </div>
+          <div class="ctrl-row child-row">
+            <div class="ctrl-header"><span class="ctrl-label">CORT → GABA amplify</span><span class="ctrl-value-display" id="val-cort_gaba_amplify">0.30</span></div>
+            <input type="range" class="brain-slider child-slider" data-key="cort_gaba_amplify" min="0.0" max="0.6" step="0.05" value="0.30">
+          </div>
+          <div class="ctrl-row child-row">
+            <div class="ctrl-header"><span class="ctrl-label">CORT "Withdrawn" threshold</span><span class="ctrl-hint">CORT above this → withdrawn/guarded state</span><span class="ctrl-value-display" id="val-hormonal_cort_withdrawn_threshold">0.45</span></div>
+            <input type="range" class="brain-slider child-slider" data-key="hormonal_cort_withdrawn_threshold" min="0.2" max="0.8" step="0.05" value="0.45">
+          </div>
+          <div class="ctrl-row ctrl-master" style="margin-top:0.75rem">
+            <div class="ctrl-header"><span class="ctrl-label">5HT — Mood</span><span class="ctrl-hint">serotonin: slow mood baseline; low → dysphoric coloring</span></div>
+          </div>
+          <div class="ctrl-row child-row">
+            <div class="ctrl-header"><span class="ctrl-label">5HT gain / rewarding turn</span><span class="ctrl-value-display" id="val-sht_reward_increment">0.003</span></div>
+            <input type="range" class="brain-slider child-slider" data-key="sht_reward_increment" min="0.001" max="0.02" step="0.001" value="0.003">
+          </div>
+          <div class="ctrl-row child-row">
+            <div class="ctrl-header"><span class="ctrl-label">5HT reward sentiment min</span><span class="ctrl-hint">min sentiment score to earn 5HT</span><span class="ctrl-value-display" id="val-sht_reward_sentiment_min">0.40</span></div>
+            <input type="range" class="brain-slider child-slider" data-key="sht_reward_sentiment_min" min="0.1" max="0.8" step="0.05" value="0.40">
+          </div>
+          <div class="ctrl-row child-row">
+            <div class="ctrl-header"><span class="ctrl-label">5HT drain / hostile turn</span><span class="ctrl-value-display" id="val-sht_hostility_drain">0.004</span></div>
+            <input type="range" class="brain-slider child-slider" data-key="sht_hostility_drain" min="0.001" max="0.02" step="0.001" value="0.004">
+          </div>
+          <div class="ctrl-row child-row">
+            <div class="ctrl-header"><span class="ctrl-label">5HT → DA floor lift</span><span class="ctrl-value-display" id="val-sht_da_floor_lift">0.12</span></div>
+            <input type="range" class="brain-slider child-slider" data-key="sht_da_floor_lift" min="0.0" max="0.4" step="0.01" value="0.12">
+          </div>
+          <div class="ctrl-row child-row">
+            <div class="ctrl-header"><span class="ctrl-label">5HT "Dysphoric" threshold</span><span class="ctrl-hint">5HT below this → dysphoric coloring</span><span class="ctrl-value-display" id="val-hormonal_sht_dysphoric_threshold">0.25</span></div>
+            <input type="range" class="brain-slider child-slider" data-key="hormonal_sht_dysphoric_threshold" min="0.05" max="0.5" step="0.05" value="0.25">
+          </div>
+        </div>
+      </div>
+
+      <!-- S13: Norepinephrine (NE) -->
+      <div class="settings-section" id="sec-13">
+        <div class="settings-section-head">
+          <span class="settings-section-num">13</span>
+          <div style="flex:1">
+            <div class="settings-section-title">Norepinephrine (NE)</div>
+            <div class="settings-section-desc">Focused alertness — inverted-U curve; too high narrows and scatters attention</div>
+          </div>
+          <svg class="settings-section-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </div>
+        <div class="settings-section-body">
+          <div class="ctrl-row">
+            <div class="ctrl-header"><span class="ctrl-label">NE ← Salience</span><span class="ctrl-value-display" id="val-ne_salience_weight">0.07</span></div>
+            <input type="range" class="brain-slider" data-key="ne_salience_weight" min="0.0" max="0.3" step="0.01" value="0.07">
+          </div>
+          <div class="ctrl-row">
+            <div class="ctrl-header"><span class="ctrl-label">NE ← Surprise</span><span class="ctrl-value-display" id="val-ne_surprise_weight">0.05</span></div>
+            <input type="range" class="brain-slider" data-key="ne_surprise_weight" min="0.0" max="0.3" step="0.01" value="0.05">
+          </div>
+          <div class="ctrl-row">
+            <div class="ctrl-header"><span class="ctrl-label">NE ← Hostility</span><span class="ctrl-value-display" id="val-ne_hostility_weight">0.10</span></div>
+            <input type="range" class="brain-slider" data-key="ne_hostility_weight" min="0.0" max="0.4" step="0.01" value="0.10">
+          </div>
+          <div class="ctrl-row">
+            <div class="ctrl-header"><span class="ctrl-label">NE ← Rushed prosody</span><span class="ctrl-value-display" id="val-ne_rush_increment">0.05</span></div>
+            <input type="range" class="brain-slider" data-key="ne_rush_increment" min="0.0" max="0.2" step="0.01" value="0.05">
+          </div>
+          <div class="ctrl-row">
+            <div class="ctrl-header"><span class="ctrl-label">High-NE threshold</span><span class="ctrl-hint">NE above this → heightened vigilance</span><span class="ctrl-value-display" id="val-ne_high_threshold">0.55</span></div>
+            <input type="range" class="brain-slider" data-key="ne_high_threshold" min="0.3" max="0.8" step="0.05" value="0.55">
+          </div>
+          <div class="ctrl-row">
+            <div class="ctrl-header"><span class="ctrl-label">NE scatter threshold</span><span class="ctrl-hint">NE above this → attention narrows and degrades</span><span class="ctrl-value-display" id="val-ne_scatter_threshold">0.82</span></div>
+            <input type="range" class="brain-slider" data-key="ne_scatter_threshold" min="0.5" max="0.99" step="0.05" value="0.82">
+          </div>
+        </div>
+      </div>
+
+      <!-- S14: Anandamide / AEA -->
+      <div class="settings-section" id="sec-14">
+        <div class="settings-section-head">
+          <span class="settings-section-num">14</span>
+          <div style="flex:1">
+            <div class="settings-section-title">Anandamide / AEA</div>
+            <div class="settings-section-desc">Endocannabinoid homeostatic buffer — rises under arousal, dampens NE/Glu, lifts DA (afterglow)</div>
+          </div>
+          <svg class="settings-section-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </div>
+        <div class="settings-section-body">
+          <div class="ctrl-row">
+            <div class="ctrl-header"><span class="ctrl-label">Arousal trigger (Glu+NE)</span><span class="ctrl-hint">Glu+NE sum above this builds AEA homeostasis</span><span class="ctrl-value-display" id="val-aea_arousal_threshold">0.65</span></div>
+            <input type="range" class="brain-slider" data-key="aea_arousal_threshold" min="0.3" max="1.0" step="0.05" value="0.65">
+          </div>
+          <div class="ctrl-row">
+            <div class="ctrl-header"><span class="ctrl-label">AEA arousal gain / turn</span><span class="ctrl-value-display" id="val-aea_arousal_increment">0.018</span></div>
+            <input type="range" class="brain-slider" data-key="aea_arousal_increment" min="0.002" max="0.08" step="0.002" value="0.018">
+          </div>
+          <div class="ctrl-row">
+            <div class="ctrl-header"><span class="ctrl-label">AEA social afterglow / turn</span><span class="ctrl-value-display" id="val-aea_positive_increment">0.005</span></div>
+            <input type="range" class="brain-slider" data-key="aea_positive_increment" min="0.001" max="0.03" step="0.001" value="0.005">
+          </div>
+          <div class="ctrl-row">
+            <div class="ctrl-header"><span class="ctrl-label">AEA CORT drain / turn</span><span class="ctrl-hint">stress erodes AEA buffer</span><span class="ctrl-value-display" id="val-aea_cort_drain">0.004</span></div>
+            <input type="range" class="brain-slider" data-key="aea_cort_drain" min="0.001" max="0.02" step="0.001" value="0.004">
+          </div>
+          <div class="ctrl-row">
+            <div class="ctrl-header"><span class="ctrl-label">AEA → NE suppression</span><span class="ctrl-value-display" id="val-aea_ne_suppression">0.50</span></div>
+            <input type="range" class="brain-slider" data-key="aea_ne_suppression" min="0.0" max="1.0" step="0.05" value="0.50">
+          </div>
+          <div class="ctrl-row">
+            <div class="ctrl-header"><span class="ctrl-label">AEA → Glu suppression</span><span class="ctrl-value-display" id="val-aea_glu_suppression">0.35</span></div>
+            <input type="range" class="brain-slider" data-key="aea_glu_suppression" min="0.0" max="1.0" step="0.05" value="0.35">
+          </div>
+          <div class="ctrl-row">
+            <div class="ctrl-header"><span class="ctrl-label">AEA → DA lift</span><span class="ctrl-value-display" id="val-aea_da_lift">0.04</span></div>
+            <input type="range" class="brain-slider" data-key="aea_da_lift" min="0.0" max="0.2" step="0.01" value="0.04">
+          </div>
+          <div class="ctrl-row">
+            <div class="ctrl-header"><span class="ctrl-label">AEA "Eased" threshold</span><span class="ctrl-hint">elevated AEA + stress base → eased state</span><span class="ctrl-value-display" id="val-aea_eased_threshold">0.58</span></div>
+            <input type="range" class="brain-slider" data-key="aea_eased_threshold" min="0.3" max="0.9" step="0.05" value="0.58">
+          </div>
+        </div>
+      </div>
+
+      <!-- S15: Time-weighted Decay -->
+      <div class="settings-section" id="sec-15">
+        <div class="settings-section-head">
+          <span class="settings-section-num">15</span>
+          <div style="flex:1">
+            <div class="settings-section-title">Time-weighted Decay</div>
+            <div class="settings-section-desc">Emotional state decays proportional to real elapsed time, not message count</div>
+          </div>
+          <svg class="settings-section-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </div>
+        <div class="settings-section-body">
+          <div class="ctrl-row">
+            <div class="ctrl-header"><span class="ctrl-label">Reference Interval (s)</span><span class="ctrl-hint">wall-clock seconds treated as "1 decay turn"</span><span class="ctrl-value-display" id="val-decay_reference_interval_s">60</span></div>
+            <input type="range" class="brain-slider" data-key="decay_reference_interval_s" min="10" max="300" step="10" value="60">
+          </div>
+          <div class="ctrl-row">
+            <div class="ctrl-header"><span class="ctrl-label">Decay Floor (turns)</span><span class="ctrl-hint">minimum decay even for instant replies</span><span class="ctrl-value-display" id="val-decay_min_turns">0.25</span></div>
+            <input type="range" class="brain-slider" data-key="decay_min_turns" min="0.05" max="1.0" step="0.05" value="0.25">
+          </div>
+          <div class="ctrl-row">
+            <div class="ctrl-header"><span class="ctrl-label">Decay Cap (turns)</span><span class="ctrl-hint">long silences treated as at most this many decay turns</span><span class="ctrl-value-display" id="val-decay_max_turns">10</span></div>
+            <input type="range" class="brain-slider" data-key="decay_max_turns" min="2" max="30" step="1" value="10">
+          </div>
+        </div>
+      </div>
+
+      <!-- S16: Switch Modulation & Resource Policy -->
+      <div class="settings-section" id="sec-16">
+        <div class="settings-section-head">
+          <span class="settings-section-num">16</span>
+          <div style="flex:1">
+            <div class="settings-section-title">Switch Modulation &amp; Resources</div>
+            <div class="settings-section-desc">Chemistry influence on gating + cloud/local compute budgets for background work</div>
+          </div>
+          <svg class="settings-section-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </div>
+        <div class="settings-section-body">
+          <div class="ctrl-row ctrl-master">
+            <div class="ctrl-header">
+              <span class="ctrl-label">Chemistry Influence</span>
+              <span class="ctrl-hint">MASTER — scales all neuromod effects on switch gating (0 = pure logic, 1 = full chemistry)</span>
+              <span class="ctrl-value-display" id="val-modulation_gain">1.00</span>
+            </div>
+            <input type="range" class="brain-slider" data-key="modulation_gain" min="0.0" max="2.0" step="0.05" value="1.0">
+          </div>
+          <div class="ctrl-row" style="margin-top:0.75rem">
+            <div class="ctrl-header"><span class="ctrl-label">Cloud Token Budget</span><span class="ctrl-hint">max combined input+output tokens for background cloud calls per session</span><span class="ctrl-value-display" id="val-bg_cloud_token_budget">50000</span></div>
+            <input type="range" class="brain-slider" data-key="bg_cloud_token_budget" min="5000" max="200000" step="5000" value="50000">
+          </div>
+          <div class="ctrl-row">
+            <div class="ctrl-header"><span class="ctrl-label">Cloud Max Tokens / Call</span><span class="ctrl-hint">output token cap per background cloud call</span><span class="ctrl-value-display" id="val-bg_cloud_max_tokens_per_call">512</span></div>
+            <input type="range" class="brain-slider" data-key="bg_cloud_max_tokens_per_call" min="128" max="4096" step="128" value="512">
+          </div>
+          <div class="ctrl-row">
+            <div class="ctrl-header"><span class="ctrl-label">Cloud Timeout (s)</span><span class="ctrl-hint">background cloud call timeout; falls back to local on expiry</span><span class="ctrl-value-display" id="val-bg_cloud_timeout_s">20</span></div>
+            <input type="range" class="brain-slider" data-key="bg_cloud_timeout_s" min="5" max="60" step="5" value="20">
+          </div>
+          <div class="ctrl-row">
+            <div class="ctrl-header"><span class="ctrl-label">Local Concurrency</span><span class="ctrl-hint">max simultaneous Ollama calls for background work</span><span class="ctrl-value-display" id="val-local_max_concurrent">3</span></div>
+            <input type="range" class="brain-slider" data-key="local_max_concurrent" min="1" max="8" step="1" value="3">
+          </div>
+        </div>
+      </div>
+
+      <!-- S17: Motor Cortex / Autonomous Tasks -->
+      <div class="settings-section" id="sec-17">
+        <div class="settings-section-head">
+          <span class="settings-section-num">17</span>
+          <div style="flex:1">
+            <div class="settings-section-title">Motor Cortex / Autonomous Tasks</div>
+            <div class="settings-section-desc">Ralph-loop limits for self-directed background jobs</div>
+          </div>
+          <svg class="settings-section-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </div>
+        <div class="settings-section-body">
+          <div class="ctrl-row">
+            <div class="ctrl-header">
+              <span class="ctrl-label">Ralph Max Total Attempts</span>
+              <span class="ctrl-hint">hard cap on tool dispatches across all stories + retries per job — prevents indefinite loops</span>
+              <span class="ctrl-value-display" id="val-ralph_max_total_attempts">12</span>
+            </div>
+            <input type="range" class="brain-slider" data-key="ralph_max_total_attempts" min="4" max="32" step="2" value="12">
           </div>
         </div>
       </div>

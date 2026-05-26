@@ -205,6 +205,35 @@ DEFAULTS: dict[str, float | int] = {
     # 1.0 = profiles fire at their declared strength (default).
     # >1.0 = amplified chemistry response; <1.0 = damped.
     "modulation_gain":             1.00,
+
+    # ── Section: Motor Cortex / Autonomous Tasks ─────────────────────────────
+    # ralph_max_total_attempts: hard ceiling on total tool dispatches across ALL
+    # stories + retries in a single internal job. Prevents runaway loops
+    # regardless of story count or per-story retry budget.
+    # Can also be overridden per-session via BRAIN_RALPH_MAX_ATTEMPTS env var.
+    "ralph_max_total_attempts":    12,
+
+    # ── Section 16: Resource Policy ───────────────────────────────────────────
+    # Controls how much compute the brain is allowed to use for autonomous /
+    # background work (self-initiated tasks, metacognition, DMN exploration).
+    #
+    # LOCAL (Ollama) — free to use liberally; semaphore prevents device overload.
+    # CLOUD (Anthropic / Gemini) — allowed for background work when genuinely
+    # more efficient, but budgeted to avoid accidental large bills.
+    #
+    # bg_cloud_token_budget: combined input+output token ceiling for all
+    #   background cloud calls in one session. Exhausted budget routes to local.
+    #   50k ≈ ~$0.04–0.20 at haiku/flash-lite prices — intentionally conservative.
+    "bg_cloud_token_budget":       50_000,
+    # bg_cloud_max_tokens_per_call: output token cap applied to every background
+    #   cloud call. Keeps individual calls short and cost-predictable.
+    "bg_cloud_max_tokens_per_call": 512,
+    # bg_cloud_timeout_s: hard timeout on each background cloud API call.
+    #   Falls back to local on timeout so background work never hangs.
+    "bg_cloud_timeout_s":          20.0,
+    # local_max_concurrent: max simultaneous Ollama inference calls.
+    #   Prevents saturating CPU/GPU during multi-cell background work.
+    "local_max_concurrent":        3,
 }
 
 

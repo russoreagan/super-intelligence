@@ -22,6 +22,7 @@ from brain.cell import IntegratorCell
 from brain.clusters.motor_subsystem import MotorSubsystem
 from brain.model_router import ModelRouter
 from brain.neuron import SwitchNeuron
+from brain.settings import settings as _brain_settings
 from brain.utils import safe_json_parse
 
 logger = logging.getLogger(__name__)
@@ -60,6 +61,8 @@ Available tools:
   analyze_image(path, question)             — analyze an image using visual processing;
                                               path: absolute file path; question: what to look for
 
+{path_hint}
+
 {cloud_connector_hint}
 {lobe_hint}
 
@@ -76,27 +79,70 @@ If you genuinely need information from the user to proceed and cannot reasonably
 Return ONLY the JSON object. No explanation."""
 
 
-# Strategic-mode prompt: produces an upfront plan for an internal directive.
-# Used only on the first planner call of an internal job; subsequent calls use the
-# tactical (per-step) prompt above with prior steps + results in context.
+# Strategic-mode prompt: Ralph-style decomposition into stories with acceptance criteria.
+# complexity drives whether the per-story retry loop and final verifier are activated.
 _STRATEGIC_SYSTEM = """You are the motor cortex planning a multi-step internal task.
-
-Given the overall goal, decompose it into a concrete plan of 2-8 steps. Each step is one
-discrete action a tool can perform. Steps should build on each other (later steps use
-earlier outputs).
+Use Ralph-style decomposition: break the goal into discrete stories, each with verifiable
+acceptance criteria. Order stories so foundational work comes first.
 
 Return STRICT JSON, nothing else:
 {
-  "steps": [
-    {"description": "<imperative, concrete action>", "expected_tool": "list_files|read_file|search_files|run_command|cloud_action"},
+  "stories": [
+    {
+      "id": "US-001",
+      "description": "<imperative, concrete action>",
+      "expected_tool": "list_files|read_file|search_files|write_file|run_command|cloud_action",
+      "acceptance_criteria": ["<specific checkable outcome from tool output>", ...]
+    },
     ...
   ],
-  "success_criteria": "<one sentence: what counts as done>",
+  "success_criteria": "<one sentence: what counts as overall done>",
   "complexity": "low|medium|high"
 }
 
-Plan for what you genuinely need to do — don't pad. If two steps could collapse, collapse them.
-If the goal is trivial (one tool call), return a single-step plan."""
+Guidelines:
+- 1-6 stories; collapse trivial operations into one story
+- acceptance_criteria must be verifiable from tool output (not vague like "it works")
+- complexity=high when: multiple interdependent changes, external services, or unclear path
+- complexity=low for single read/lookup operations
+- Adjust plan ambition based on the "Brain state" provided in the user message"""
+
+
+_CRITERIA_CHECK_SYSTEM = """You are a quality gate verifying whether a task story's acceptance criteria were met.
+Given the story description, acceptance criteria, and the tool execution output, evaluate each criterion.
+
+Return STRICT JSON:
+{
+  "verified": true,
+  "unmet": [],
+  "reason": "<one sentence>"
+}
+or:
+{
+  "verified": false,
+  "unmet": ["<criterion> — <why not met>"],
+  "reason": "<one sentence>"
+}
+
+verified=true only when ALL criteria are met. If acceptance_criteria is empty, set verified=true.
+Return ONLY the JSON object."""
+
+
+_VERIFIER_SYSTEM = """You are a final reviewer for a completed autonomous task.
+Given the goal, success criteria, and a summary of what was executed, determine if the task is genuinely complete.
+
+Return STRICT JSON:
+{
+  "approved": true,
+  "issues": ""
+}
+or:
+{
+  "approved": false,
+  "issues": "<what is missing or incorrect>"
+}
+
+Return ONLY the JSON object."""
 
 
 class MotorCortexCluster:
@@ -136,6 +182,7 @@ class MotorCortexCluster:
             self._cloud_hint = "No cloud connectors available — use local tools only."
 
         planner_system = _PLANNER_SYSTEM_BASE.format(
+            path_hint=self._build_path_hint(),
             cloud_connector_hint=self._cloud_hint,
             lobe_hint="Lobe capabilities (recall_memory, analyze_image) not yet configured.",
         )
@@ -174,6 +221,32 @@ class MotorCortexCluster:
             locality="local",
         )
         self._strategic_planner.set_router(router)
+
+        # Criteria checker: per-story acceptance criteria verification in Ralph-mode jobs.
+        self._criteria_checker = IntegratorCell(
+            name="criteria_checker",
+            cluster=CLUSTER,
+            model="local-code",
+            system_prompt=_CRITERIA_CHECK_SYSTEM,
+            topics=[],
+            max_calls_per_turn=1,
+            timeout_seconds=30.0,
+            locality="local",
+        )
+        self._criteria_checker.set_router(router)
+
+        # Verifier: final approval pass for medium/high complexity jobs.
+        self._verifier = IntegratorCell(
+            name="job_verifier",
+            cluster=CLUSTER,
+            model="local-code",
+            system_prompt=_VERIFIER_SYSTEM,
+            topics=[],
+            max_calls_per_turn=1,
+            timeout_seconds=30.0,
+            locality="local",
+        )
+        self._verifier.set_router(router)
 
         # Switches (~6 total; 2 inhibitory ≈ 33% — acceptable for small action cluster)
         # Modulator profiles per plan /Users/russ/.claude/plans/and-what-affects-these-memoized-parnas.md.
@@ -220,6 +293,7 @@ class MotorCortexCluster:
             else "No lobe capabilities registered."
         )
         self._planner.system_prompt = _PLANNER_SYSTEM_BASE.format(
+            path_hint=self._build_path_hint(),
             cloud_connector_hint=self._cloud_hint,
             lobe_hint=lobe_hint,
         )
@@ -407,122 +481,219 @@ class MotorCortexCluster:
             [{"role": "user", "content": f"Goal: {goal}\nBrain state: {chem_ctx}"}]
         )
         plan = safe_json_parse(raw_plan) or {}
-        steps_planned = plan.get("steps") or [{"description": goal, "expected_tool": "?"}]
+        # Support Ralph-style "stories" (with acceptance_criteria) and legacy "steps" format.
+        stories_planned = (
+            plan.get("stories")
+            or [{"description": s.get("description", ""), "expected_tool": s.get("expected_tool", "?"),
+                 "acceptance_criteria": [], "id": f"US-{i+1:03d}"}
+                for i, s in enumerate(plan.get("steps") or [])]
+            or [{"description": goal, "expected_tool": "?", "acceptance_criteria": [], "id": "US-001"}]
+        )
         success_criteria = plan.get("success_criteria", "")
+        complexity = plan.get("complexity", "low")
+        # Ralph loop activates for medium/high complexity: per-story retry + final verifier.
+        use_ralph = complexity in ("medium", "high")
+        _MAX_STORY_RETRIES = 2
 
-        logger.info("[InternalJob] %s — %d steps planned (criteria: %s)",
-                    goal[:60], len(steps_planned), success_criteria[:80])
+        logger.info("[InternalJob] %s — %d stories planned (complexity=%s, ralph=%s, criteria: %s)",
+                    goal[:60], len(stories_planned), complexity, use_ralph, success_criteria[:80])
         await emitter.emit_event({
             "type": "task_start",
             "job_id": job_id,
             "goal": goal,
-            "steps": [s.get("description", "") for s in steps_planned],
+            "steps": [s.get("description", "") for s in stories_planned],
             "success_criteria": success_criteria,
-            "complexity": plan.get("complexity", "?"),
+            "complexity": complexity,
         })
 
-        # 2. Step-by-step execution. Each step is a sub-goal handed to the
-        # tactical planner with the full plan + prior results as context.
+        # 2. Ralph-style story execution: per-story acceptance criteria with retry on failure.
+        # medium/high complexity activates the retry loop; low complexity executes linearly.
+        # _MAX_TOTAL_ATTEMPTS caps total tool dispatches across all stories + retries so the
+        # loop can never run indefinitely regardless of how many stories or retries remain.
+        # Priority: BRAIN_RALPH_MAX_ATTEMPTS env var > brain/settings.json > default 12.
+        _MAX_TOTAL_ATTEMPTS = int(
+            os.environ.get("BRAIN_RALPH_MAX_ATTEMPTS") or
+            _brain_settings.get("ralph_max_total_attempts", 12)
+        )
+        total_attempts = 0
+
         steps_taken: list[dict] = []
         results_log: list[str] = []
         last_result: dict | None = None
         clarification_question: str | None = None
         success = True
 
-        for idx, step in enumerate(steps_planned):
+        for idx, story in enumerate(stories_planned):
             if self._calls_this_turn >= effective_budget:
-                logger.warning("[InternalJob] Budget exhausted (%d) at step %d/%d",
-                                effective_budget, idx + 1, len(steps_planned))
+                logger.warning("[InternalJob] Budget exhausted (%d) at story %d/%d",
+                                effective_budget, idx + 1, len(stories_planned))
+                success = False
+                break
+            if total_attempts >= _MAX_TOTAL_ATTEMPTS:
+                logger.warning("[InternalJob] Ralph total-attempt cap (%d) reached at story %d/%d",
+                               _MAX_TOTAL_ATTEMPTS, idx + 1, len(stories_planned))
                 success = False
                 break
 
-            step_desc = step.get("description", "")
-            await emitter.emit_event({
-                "type": "task_step_start",
-                "job_id": job_id,
-                "step_index": idx,
-                "description": step_desc,
-                "expected_tool": step.get("expected_tool", ""),
-            })
+            story_desc = story.get("description", "")
+            story_criteria = story.get("acceptance_criteria", [])
+            story_passed = False
+            max_attempts = (_MAX_STORY_RETRIES + 1) if use_ralph else 1
 
-            # Build the tactical prompt with plan context for goal-coherence
-            tactical_features = {"raw_text": step_desc, "topic_summary": step_desc}
-            plan_summary = " | ".join(
-                f"{i+1}. {s.get('description', '')}" for i, s in enumerate(steps_planned)
-            )
-            extra_context = f"Overall goal: {goal}\nFull plan: {plan_summary}\nCurrent step ({idx+1}/{len(steps_planned)}): {step_desc}"
-            plan_prompt = self._build_plan_prompt(
-                step_desc, tactical_features, extra_context, steps_taken, results_log
-            )
-            raw = await self._planner.call([{"role": "user", "content": plan_prompt}])
-            tactical = safe_json_parse(raw) or {}
-            tool = tactical.get("tool", "none")
-            args = tactical.get("args", {})
-            reason = tactical.get("reason", "")
+            for attempt in range(max_attempts):
+                if self._calls_this_turn >= effective_budget:
+                    break
+                if total_attempts >= _MAX_TOTAL_ATTEMPTS:
+                    logger.warning("[InternalJob] Ralph total-attempt cap reached mid-story %d",
+                                   idx + 1)
+                    break
 
-            self._calls_this_turn += 1
+                retry_label = f" (retry {attempt})" if attempt > 0 else ""
+                await emitter.emit_event({
+                    "type": "task_step_start",
+                    "job_id": job_id,
+                    "step_index": idx,
+                    "description": story_desc + retry_label,
+                    "expected_tool": story.get("expected_tool", ""),
+                    "attempt": attempt,
+                })
 
-            if tool == "none":
-                logger.info("[InternalJob] Step %d skipped: %s", idx + 1, reason)
+                # Build tactical prompt; include acceptance criteria + retry hint
+                tactical_features = {"raw_text": story_desc, "topic_summary": story_desc}
+                plan_summary = " | ".join(
+                    f"{i+1}. {s.get('description', '')}" for i, s in enumerate(stories_planned)
+                )
+                criteria_hint = (
+                    "\nAcceptance criteria:\n" + "\n".join(f"  - {c}" for c in story_criteria)
+                    if story_criteria else ""
+                )
+                retry_hint = ""
+                if attempt > 0 and results_log:
+                    retry_hint = (
+                        f"\nPrevious attempt did not meet criteria. "
+                        f"Output was:\n{results_log[-1][:300]}\nTry a different approach."
+                    )
+                extra_context = (
+                    f"Overall goal: {goal}\nFull plan: {plan_summary}\n"
+                    f"Current story ({idx+1}/{len(stories_planned)}): {story_desc}"
+                    f"{criteria_hint}{retry_hint}"
+                )
+                plan_prompt = self._build_plan_prompt(
+                    story_desc, tactical_features, extra_context, steps_taken, results_log
+                )
+                raw = await self._planner.call([{"role": "user", "content": plan_prompt}])
+                tactical = safe_json_parse(raw) or {}
+                tool = tactical.get("tool", "none")
+                args = tactical.get("args", {})
+                reason = tactical.get("reason", "")
+
+                self._calls_this_turn += 1
+                total_attempts += 1
+
+                if tool == "none":
+                    logger.info("[InternalJob] Story %d skipped: %s", idx + 1, reason)
+                    await emitter.emit_event({
+                        "type": "task_step_done",
+                        "job_id": job_id, "step_index": idx,
+                        "success": True, "skipped": True,
+                        "output": reason[:200], "attempt": attempt,
+                    })
+                    steps_taken.append({"tool": "none", "args": {}, "reason": reason})
+                    results_log.append("")
+                    story_passed = True
+                    break
+
+                if tool == "ask_user":
+                    clarification_question = args.get("question", "I need more info to continue.")
+                    logger.info("[InternalJob] Clarification needed at story %d: %s",
+                                idx + 1, clarification_question)
+                    await emitter.emit_event({
+                        "type": "task_clarification",
+                        "job_id": job_id, "step_index": idx,
+                        "question": clarification_question,
+                    })
+                    success = False
+                    break
+
+                logger.info("[InternalJob] Story %d/%d attempt %d: %s — %s",
+                            idx + 1, len(stories_planned), attempt + 1, tool, reason[:80])
+
+                if tool == "cloud_action":
+                    last_result = await self._dispatch_cloud(args, job_id)
+                    output = (last_result or {}).get("output", "")
+                elif tool in ("recall_memory", "analyze_image"):
+                    output = await self._dispatch_lobe(tool, args, job_id)
+                    last_result = {
+                        "tool": tool, "args": args, "reason": reason, "output": output,
+                        "success": not output.startswith("[error]"),
+                    }
+                    await self._bus.publish_dict("motor.result", last_result, source=CLUSTER)
+                else:
+                    output = await self._dispatch(tool, args)
+                    last_result = {
+                        "tool": tool, "args": args, "reason": reason, "output": output,
+                        "success": not output.startswith("[error]") and not output.startswith("[blocked]"),
+                    }
+                    await self._bus.publish_dict("motor.result", last_result, source=CLUSTER)
+
+                step_success = not output.startswith("[error]") and not output.startswith("[blocked]")
+                steps_taken.append({"tool": tool, "args": args, "reason": reason})
+                results_log.append(output[:500] if output else "")
+                self._fire_outcome_switches(output, tool, self._chem_snapshot())
+
+                # Ralph: check acceptance criteria before marking story done
+                if use_ralph and story_criteria:
+                    verified, unmet = await self._check_story_criteria(
+                        story, output, f"{job_id}_{idx}_{attempt}"
+                    )
+                    logger.info("[InternalJob] Story %d criteria: verified=%s unmet=%s",
+                                idx + 1, verified, unmet)
+                else:
+                    verified = step_success
+                    unmet = []
+
                 await emitter.emit_event({
                     "type": "task_step_done",
                     "job_id": job_id, "step_index": idx,
-                    "success": True, "skipped": True,
-                    "output": reason[:200],
+                    "tool": tool,
+                    "success": step_success,
+                    "criteria_verified": verified,
+                    "output": (output or "")[:300],
+                    "attempt": attempt,
                 })
-                steps_taken.append({"tool": "none", "args": {}, "reason": reason})
-                results_log.append("")
-                continue
 
-            if tool == "ask_user":
-                clarification_question = args.get("question", "I need more info to continue.")
-                logger.info("[InternalJob] Clarification needed at step %d: %s",
-                            idx + 1, clarification_question)
-                await emitter.emit_event({
-                    "type": "task_clarification",
-                    "job_id": job_id, "step_index": idx,
-                    "question": clarification_question,
-                })
-                success = False  # paused, not failed; caller decides what to do
+                if verified:
+                    story_passed = True
+                    break
+                # criteria not met — retry if attempts remain
+
+            if clarification_question:
                 break
-
-            logger.info("[InternalJob] Step %d/%d: %s — %s",
-                        idx + 1, len(steps_planned), tool, reason[:80])
-
-            if tool == "cloud_action":
-                last_result = await self._dispatch_cloud(args, job_id)
-                output = (last_result or {}).get("output", "")
-            elif tool in ("recall_memory", "analyze_image"):
-                output = await self._dispatch_lobe(tool, args, job_id)
-                last_result = {
-                    "tool": tool, "args": args, "reason": reason, "output": output,
-                    "success": not output.startswith("[error]"),
-                }
-                await self._bus.publish_dict("motor.result", last_result, source=CLUSTER)
-            else:
-                output = await self._dispatch(tool, args)
-                last_result = {
-                    "tool": tool, "args": args, "reason": reason, "output": output,
-                    "success": not output.startswith("[error]") and not output.startswith("[blocked]"),
-                }
-                await self._bus.publish_dict("motor.result", last_result, source=CLUSTER)
-
-            step_success = not output.startswith("[error]") and not output.startswith("[blocked]")
-            if not step_success:
+            if not story_passed:
                 success = False
+                logger.warning("[InternalJob] Story %d/%d not verified after %d attempt(s): %s",
+                               idx + 1, len(stories_planned), max_attempts, story_desc[:60])
 
-            steps_taken.append({"tool": tool, "args": args, "reason": reason})
-            results_log.append(output[:500] if output else "")
-            self._fire_outcome_switches(output, tool, self._chem_snapshot())
+        # 3. Ralph: final verification pass for medium/high complexity jobs
+        verification_issues = ""
+        if use_ralph and success and not clarification_question and steps_taken:
+            approved, issues = await self._verify_job(
+                goal, success_criteria, steps_taken, results_log, job_id
+            )
+            if not approved:
+                verification_issues = issues
+                success = False
+                logger.warning("[InternalJob] Final verifier rejected: %s", issues[:120])
+            else:
+                logger.info("[InternalJob] Final verifier approved")
             await emitter.emit_event({
-                "type": "task_step_done",
-                "job_id": job_id, "step_index": idx,
-                "tool": tool,
-                "success": step_success,
-                "output": (output or "")[:300],
+                "type": "task_verified",
+                "job_id": job_id,
+                "approved": approved,
+                "issues": issues,
             })
 
-        # 3. Completion
+        # 4. Completion
         await self._notify_job_complete(goal, steps_taken, results_log, success)
         await emitter.emit_event({
             "type": "task_complete",
@@ -531,22 +702,62 @@ class MotorCortexCluster:
             "steps_completed": len(steps_taken),
             "clarification": clarification_question,
         })
-        logger.info("[InternalJob] Done: %s (success=%s, %d/%d steps)",
-                    goal[:60], success, len(steps_taken), len(steps_planned))
+        logger.info("[InternalJob] Done: %s (success=%s, ralph=%s, %d/%d stories)",
+                    goal[:60], success, use_ralph, len(steps_taken), len(stories_planned))
         if self._obs:
             self._obs.end_job(job_id, success=success,
                               steps_completed=len(steps_taken),
-                              steps_planned=len(steps_planned))
+                              steps_planned=len(stories_planned))
         return {
             "job_id": job_id, "goal": goal, "success": success,
             "steps_taken_count": len(steps_taken),
-            "steps_planned_count": len(steps_planned),
-            "steps": steps_taken,            # list of {tool, args, reason}
-            "results": results_log,          # parallel list of output strings (each truncated to 500ch)
-            "plan_steps": steps_planned,     # original strategic plan (list of {description, expected_tool})
+            "steps_planned_count": len(stories_planned),
+            "steps": steps_taken,
+            "results": results_log,
+            "plan_steps": stories_planned,
             "clarification": clarification_question,
             "last_output": (last_result or {}).get("output", "") if last_result else "",
+            "ralph_mode": use_ralph,
+            "verification_issues": verification_issues,
+            "total_attempts": total_attempts,
+            "attempt_cap": _MAX_TOTAL_ATTEMPTS,
         }
+
+    async def _check_story_criteria(self, story: dict, output: str,
+                                     check_id: str) -> tuple[bool, list[str]]:
+        """Verify a story's acceptance criteria against the tool output.
+        Returns (verified, unmet_criteria). Falls back to error-status check if no criteria."""
+        criteria = story.get("acceptance_criteria", [])
+        if not criteria:
+            ok = not output.startswith("[error]") and not output.startswith("[blocked]")
+            return ok, []
+        prompt = (
+            f"Story: {story.get('description', '')}\n"
+            f"Acceptance criteria:\n" + "\n".join(f"- {c}" for c in criteria) + "\n\n"
+            f"Tool output:\n{output[:1200]}"
+        )
+        self._criteria_checker.reset_turn(check_id)
+        raw = await self._criteria_checker.call([{"role": "user", "content": prompt}])
+        result = safe_json_parse(raw) or {}
+        return bool(result.get("verified", True)), result.get("unmet", [])
+
+    async def _verify_job(self, goal: str, success_criteria: str,
+                           steps: list[dict], results: list[str],
+                           job_id: str) -> tuple[bool, str]:
+        """Final approval pass for medium/high complexity jobs. Returns (approved, issues)."""
+        steps_summary = "\n".join(
+            f"{i+1}. {s['tool']}({list(s['args'].keys())}) → {r[:200]}"
+            for i, (s, r) in enumerate(zip(steps, results))
+        )
+        prompt = (
+            f"Goal: {goal}\n"
+            f"Success criteria: {success_criteria}\n\n"
+            f"Steps executed:\n{steps_summary}"
+        )
+        self._verifier.reset_turn(f"{job_id}_verify")
+        raw = await self._verifier.call([{"role": "user", "content": prompt}])
+        result = safe_json_parse(raw) or {}
+        return bool(result.get("approved", True)), result.get("issues", "")
 
     async def _execute_open_loop(self, procedure: dict, goal: str | None,
                                   turn_id: str) -> dict | None:
@@ -659,12 +870,26 @@ class MotorCortexCluster:
         last_result["prediction_errors"] = prediction_errors
         return last_result
 
+    def _build_path_hint(self) -> str:
+        if not self._allowed_paths:
+            return "Filesystem access: none configured (BRAIN_MOTOR_PATHS unset)."
+        primary = self._allowed_paths[0]
+        roots = "\n  ".join(self._allowed_paths)
+        return (
+            f"Filesystem access:\n"
+            f"  Working directory (CWD): {primary}\n"
+            f"  Allowed roots:\n  {roots}\n"
+            f"Always use paths relative to CWD (e.g. 'second_brain/schema/self.md') "
+            f"or absolute paths under the allowed roots. Never guess paths outside these roots."
+        )
+
     def _build_plan_prompt(self, goal: str, features: dict, subsystem_context: str,
                            steps_done: list[dict], results: list[str]) -> str:
         parts = [
             f"Goal: {goal}",
             f"Intent: {features.get('intent', 'task')}",
             f"Entities: {features.get('entities', [])}",
+            f"CWD: {self._allowed_paths[0] if self._allowed_paths else 'unknown'}",
         ]
         if subsystem_context.strip():
             parts.append(subsystem_context.strip())
