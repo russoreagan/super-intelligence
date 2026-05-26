@@ -4592,6 +4592,23 @@ function connect() {
 function sendMessage(text) {
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ type: 'user_message', text }));
+    // Close Deepgram immediately so the session doesn't sit open while the
+    // brain processes (which can take 10–30 s for complex turns). Sessions
+    // that live through idle time are the primary cause of silent drops.
+    // The session is reopened automatically when TTS ends (speaking event),
+    // or by the fallback timer below for text-only responses.
+    if (micActive && !pythonVoiceMode) {
+      clearTimeout(voiceRestartTimer);
+      ws.send(JSON.stringify({ type: 'voice_stop' }));
+      // Fallback for text-only mode where no speaking event fires:
+      // reopen after 5 s if the brain hasn't started TTS by then.
+      voiceRestartTimer = setTimeout(() => {
+        if (micActive && !pythonVoiceMode && !brainIsSpeaking
+            && ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'voice_start' }));
+        }
+      }, 5000);
+    }
   } else if (demoMode) {
     demoRespond(text);
   }
@@ -4731,20 +4748,20 @@ function handle(msg) {
     }
     case 'speaking': {
       const btn = document.getElementById('interrupt-btn');
-      btn.classList.toggle('visible', !!msg.active);
-      // Pause / resume browser-side Deepgram session around TTS playback.
-      // Without this, TTS audio bleeds into the mic and causes the Deepgram
-      // session to transcribe the brain's own speech, which either triggers
-      // a spurious user turn or causes the connection to die under load.
+      brainIsSpeaking = !!msg.active;
+      btn.classList.toggle('visible', brainIsSpeaking);
       if (!pythonVoiceMode && micActive) {
-        if (msg.active) {
-          // TTS starting — close server-side Deepgram so bleed isn't transcribed
+        clearTimeout(voiceRestartTimer);
+        if (brainIsSpeaking) {
+          // TTS starting — close Deepgram. The session was already closed by
+          // sendMessage, but guard here too for any edge-case path that skips it.
           if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ type: 'voice_stop' }));
           }
         } else {
-          // TTS ended — reopen Deepgram after a brief audio-settle delay
-          setTimeout(() => {
+          // TTS ended — reopen Deepgram after a brief audio-settle delay.
+          // This is the primary auto-resume mechanism between turns.
+          voiceRestartTimer = setTimeout(() => {
             if (micActive && !pythonVoiceMode && ws && ws.readyState === WebSocket.OPEN) {
               ws.send(JSON.stringify({ type: 'voice_start' }));
             }
@@ -5260,6 +5277,11 @@ const AUTO_SEND_DELAY_MS = 1500;
 // mute/unmute toggle that controls the server-side StreamingMicSession.
 let pythonVoiceMode = false;
 let pythonMicMuted = false;
+
+// Tracks whether the brain is currently speaking (TTS active).
+let brainIsSpeaking = false;
+// Timer used to reopen Deepgram after a turn when no TTS fires (text-only mode).
+let voiceRestartTimer = null;
 
 function handleVoiceMode(msg) {
   pythonVoiceMode = !!msg.active;

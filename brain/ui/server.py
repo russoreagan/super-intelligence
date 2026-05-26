@@ -360,15 +360,32 @@ class UIServer:
                                     logger.debug("Deepgram transcript handler: %s", e)
 
                     listen_task = asyncio.create_task(_listen())
+                    dg_closed_early = False
                     try:
                         while True:
                             chunk = await audio_queue.get()
                             if chunk is None:
                                 break
+                            # If _listen() finished, Deepgram closed the connection
+                            # from their end (timeout, server-side error, etc.).
+                            # Break immediately so _run_session exits and the
+                            # browser's transcript_error handler can restart.
+                            if listen_task.done():
+                                logger.info("UI: Deepgram closed connection from their end")
+                                dg_closed_early = True
+                                break
                             await conn.send_media(chunk)
                     finally:
                         listen_task.cancel()
                         logger.info("UI: Deepgram live session closed")
+                    # Notify the browser if Deepgram closed from their end (not
+                    # from a voice_stop) so it can reopen a fresh session.
+                    if dg_closed_early:
+                        with contextlib.suppress(Exception):
+                            await websocket.send_text(json.dumps({
+                                "type": "transcript_error",
+                                "msg": "Deepgram closed connection",
+                            }))
             except Exception as e:
                 logger.warning("Deepgram session error — voice input unavailable: %s", e)
                 with contextlib.suppress(Exception):
