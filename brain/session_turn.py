@@ -497,6 +497,26 @@ class _TurnMixin:
             except Exception as _qe:
                 logger.debug("quality_score emit failed: %s", _qe)
 
+        # Drain deliberate mood expressions published this turn (set_mood tool
+        # or [mood:X] inline markup) and attach to the trace for Langfuse.
+        mood_inbox = getattr(self, "_mood_expression_inbox", None)
+        if mood_inbox is not None:
+            import asyncio as _asyncio
+            # Give any call_soon-scheduled publishes a chance to land first.
+            await _asyncio.sleep(0)
+            while True:
+                try:
+                    mx = mood_inbox.get_nowait()
+                    if not mx.expired:
+                        trace.deliberate_emotions.append({
+                            "emotion": mx.payload.get("emotion", ""),
+                            "source":  mx.payload.get("source", ""),
+                            **({"preview": mx.payload["preview"]}
+                               if mx.payload.get("preview") else {}),
+                        })
+                except Exception:
+                    break
+
         trace.response = final
         trace.llm_calls = llm_calls
         trace.elapsed_s = turn_result.elapsed()

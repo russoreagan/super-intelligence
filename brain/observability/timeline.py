@@ -90,6 +90,11 @@ class TurnTrace:
     modulated_switch_count: int = 0   # switches where |mod_delta| > 0.01
     suppressed_switch_count: int = 0  # near-misses: level >= base but < effective
 
+    # ── Deliberate emotion expression (set_mood tool + inline markup) ─────────
+    # Each entry: {"emotion": str, "source": "tool"|"inline", "preview": str}
+    # Empty list means purely reactive emotional state this turn.
+    deliberate_emotions: list[dict] = field(default_factory=list)
+
     # ── Voice / prosody fields (populated when --ears is active) ─────────────
     speaker_name: str = ""
     speaker_score: float = 0.0   # voiceprint cosine similarity (0–1)
@@ -185,6 +190,38 @@ class ObservabilityLayer:
             except Exception as e:
                 logger.debug("Langfuse end_cluster(%s) failed: %s", cluster, e)
 
+    def record_deliberate_emotion(self, turn_id: str, emotion: str,
+                                   source: str, preview: str = "") -> None:
+        """Record one deliberate emotion expression within a turn.
+
+        Called by:
+          - MotorCortexCluster._set_mood()  → source="tool"
+          - session_turn draining meta.mood_expression → source="inline"
+
+        Appends to the active span's pending metadata so it's included when
+        record_turn() finalises the span.  Safe to call with no Langfuse config.
+        """
+        entry = {
+            "emotion": emotion,
+            "source": source,
+            **({"preview": preview[:80]} if preview else {}),
+        }
+        # Stash on the span object itself so record_turn() can pick it up
+        # without needing a separate dict.  Falls back gracefully if the span
+        # doesn't support arbitrary attribute assignment.
+        span = self._active_spans.get(turn_id)
+        if span is not None:
+            pending: list = getattr(span, "_deliberate_emotions", None)
+            if pending is None:
+                try:
+                    span._deliberate_emotions = []
+                    pending = span._deliberate_emotions
+                except AttributeError:
+                    pending = None
+            if pending is not None:
+                pending.append(entry)
+        logger.debug("Observability: deliberate_emotion turn=%s %s/%s", turn_id, source, emotion)
+
     def record_turn(self, trace: TurnTrace) -> None:
         self._traces.append(trace)
         if len(self._traces) > _TRACE_WINDOW:
@@ -198,6 +235,10 @@ class ObservabilityLayer:
             try:
                 span = self._active_spans.pop(trace.turn_id, None)
                 if span:
+                    # Pull any deliberate emotion entries stashed by record_deliberate_emotion()
+                    stashed = getattr(span, "_deliberate_emotions", None)
+                    if stashed:
+                        trace.deliberate_emotions.extend(stashed)
                     switches_fired = sum(
                         1 for e in trace.fired_path if e.get("kind") == "switch"
                     )
@@ -217,6 +258,9 @@ class ObservabilityLayer:
                             # ── emotion ───────────────────────────────────
                             "emotion": trace.emotion,
                             "emotion_core": trace.emotion_core,
+                            **({"deliberate_emotions": trace.deliberate_emotions}
+                               if trace.deliberate_emotions else {}),
+                            "deliberate_emotion_count": len(trace.deliberate_emotions),
                             **({"user_emotion": trace.user_emotion} if trace.user_emotion else {}),
                             # ── neuromod + hormonal snapshots ─────────────
                             **({"neuromod": trace.neuromod} if trace.neuromod else {}),

@@ -5375,8 +5375,8 @@ async function startListening() {
 
   micActive = true;
   micBtn.classList.add('listening');
-  micBtn.title = 'Listening… click to stop';
-  transcriptText.textContent = 'Listening…';
+  micBtn.title = 'Listening… release Space or click to send';
+  transcriptText.textContent = 'Hold Space — release to send…';
   transcriptBar.classList.add('visible');
 }
 
@@ -5493,8 +5493,14 @@ document.addEventListener('keydown', (e) => {
         ws.send(JSON.stringify({ type: 'mic_toggle' }));
       return;
     }
+    if (!micActive) startListening();
+  }
+});
+
+document.addEventListener('keyup', (e) => {
+  if (e.code === 'Space' && document.activeElement !== msgInput) {
+    if (pythonVoiceMode) return;
     if (micActive) stopListening(true);
-    else startListening();
   }
 });
 

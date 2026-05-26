@@ -475,6 +475,27 @@ class PNS:
                 display_text, tts_text = self._parse_mood_markup(text, base_tag)
                 has_inline_mood = (tts_text != display_text)
 
+                # Publish a meta.mood_expression event for each inline segment
+                # so session_turn can collect them for the Langfuse trace.
+                if has_inline_mood:
+                    import re as _re
+                    for _m in _re.finditer(
+                        r'\[mood:([^\]]+)\](.*?)\[/mood\]', text,
+                        _re.DOTALL | _re.IGNORECASE,
+                    ):
+                        _emotion = _m.group(1).strip().lower()
+                        _preview = _m.group(2).strip()[:80]
+                        import asyncio as _asyncio
+                        _asyncio.get_event_loop().call_soon(
+                            lambda e=_emotion, p=_preview: _asyncio.ensure_future(
+                                self._bus.publish_dict(
+                                    "meta.mood_expression",
+                                    {"emotion": e, "source": "inline", "preview": p},
+                                    source="pns",
+                                )
+                            )
+                        )
+
                 # Step 3: if set_mood() was called, override the whole-turn tag
                 # (only when there's no inline markup — inline markup takes precedence).
                 if deliberate_emotion and not has_inline_mood:

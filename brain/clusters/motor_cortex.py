@@ -189,6 +189,7 @@ class MotorCortexCluster:
 
     def reset_turn(self, turn_id: str) -> None:
         self._calls_this_turn = 0
+        self._current_turn_id = turn_id
         self._planner.reset_turn(turn_id)
 
     # ── Public entry point ─────────────────────────────────────────────────────
@@ -904,6 +905,13 @@ class MotorCortexCluster:
         await self._bus.publish_dict(
             "meta.deliberate_emotion", {"emotion": emotion}, source=CLUSTER
         )
+        # Also publish on the mood_expression topic so session_turn can
+        # collect all deliberate expressions (tool + inline) for the trace.
+        await self._bus.publish_dict(
+            "meta.mood_expression",
+            {"emotion": emotion, "source": "tool"},
+            source=CLUSTER,
+        )
 
         from brain.ui.emitter import emitter
         await emitter.emit_event({
@@ -911,6 +919,12 @@ class MotorCortexCluster:
             "emotion": emotion,
             "deliberate": True,
         })
+
+        # Record directly on the Langfuse span for this turn (if tracing active)
+        if self._obs:
+            turn_id = getattr(self, "_current_turn_id", "")
+            with contextlib.suppress(Exception):
+                self._obs.record_deliberate_emotion(turn_id, emotion, "tool")
 
         logger.info("[MotorCortex] set_mood: %s — %s", emotion, desc)
         return f"Mood set to '{emotion}' for this turn ({desc})."

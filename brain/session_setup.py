@@ -244,6 +244,9 @@ class _SetupMixin:
         self._enrollment_complete_inbox = self.bus.subscribe("auditory.enrollment_complete")
         self._speaker_id_inbox = self.bus.subscribe("auditory.speaker_id")
         self._song_match_inbox = self.bus.subscribe("auditory.song_match")
+        # Deliberate mood expressions (set_mood tool + inline markup) — collected
+        # each turn and flushed into the TurnTrace just before record_turn().
+        self._mood_expression_inbox = self.bus.subscribe("meta.mood_expression")
         if not (self.args.ears or os.environ.get("BRAIN_EARS", "false").lower() == "true"):
             return
         from brain.clusters.auditory_cortex import AuditoryCluster
