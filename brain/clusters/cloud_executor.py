@@ -287,7 +287,10 @@ class CloudExecutor:
         if not raw:
             return "(no output)"
 
-        result = screen_input(raw)
+        # Truncate first so the injection screen sees the same content the
+        # downstream cells will see — avoids blocking legitimately long output.
+        truncated = raw[:8000]
+        result = screen_input(truncated)
         if result.flagged:
             logger.warning(
                 "[CloudExecutor] Output failed injection screen (reason=%s) — "
@@ -297,7 +300,7 @@ class CloudExecutor:
             return "[output blocked: potential injection pattern detected in tool result]"
 
         # Wrap in fence tag so downstream cells treat it as data, not instructions
-        return fence("cloud_result", raw[:8000])
+        return fence("cloud_result", truncated)
 
     # ── Audit trail ───────────────────────────────────────────────────────────
 

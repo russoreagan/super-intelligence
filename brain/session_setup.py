@@ -1,0 +1,283 @@
+"""Setup phase methods for BrainSession — imported as _SetupMixin."""
+from __future__ import annotations
+
+import asyncio
+import logging
+import os
+
+from brain.settings import settings as _brain_settings
+
+logger = logging.getLogger("brain.run")
+
+
+class _SetupMixin:
+    # ── Eval bootstrap ────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _bootstrap_eval_system(obs) -> tuple:
+        """Initialize eval subsystem. Returns 6-tuple, all None if eval unavailable."""
+        eval_logger = baseline_runner = posthoc_scorer = None
+        emotion_judge = learning_monitor = learning_judge = None
+        try:
+            from eval.baseline import BaselineRunner
+            from eval.emotion_judge import EmotionJudge
+            from eval.learning_judge import LearningJudge
+            from eval.learning_monitor import LearningMonitor
+            from eval.scorer import PostHocScorer
+            from eval.turn_logger import EvalLogger
+            eval_logger = EvalLogger()
+            baseline_runner = BaselineRunner(eval_logger)
+            posthoc_scorer = PostHocScorer(eval_logger)
+            baseline_runner._scorer = posthoc_scorer
+            emotion_judge = EmotionJudge(eval_logger)
+            learning_monitor = LearningMonitor()
+            learning_judge = LearningJudge(eval_logger)
+            logger.info("Eval: logging to %s", eval_logger._path)
+        except Exception as _eval_err:
+            logger.debug("Eval system unavailable: %s", _eval_err)
+        for component in (baseline_runner, posthoc_scorer, emotion_judge, learning_monitor, learning_judge):
+            if component is not None:
+                component._obs = obs
+        return eval_logger, baseline_runner, posthoc_scorer, emotion_judge, learning_monitor, learning_judge
+
+    # ── Setup phases ──────────────────────────────────────────────────────────
+
+    async def _setup_core(self) -> None:
+        from brain.brainstem import Brainstem
+        from brain.bus import Bus
+        from brain.model_router import ModelRouter
+        from brain.observability.timeline import ObservabilityLayer
+        from brain.pns import PNS
+
+        self.bus = Bus()
+        self.obs = ObservabilityLayer(self.session_id)
+        (self._eval_logger, self._baseline_runner, self._posthoc_scorer,
+         self._emotion_judge, self._learning_monitor,
+         self._learning_judge) = self._bootstrap_eval_system(self.obs)
+        self.obs._eval_logger = self._eval_logger
+        self.router = ModelRouter(obs=self.obs)
+        self.brainstem = Brainstem(self.bus, self.router)
+        self._proactive_idle_threshold = _brain_settings.get("proactive_idle_threshold") or float(
+            os.environ.get("BRAIN_PROACTIVE_IDLE_THRESHOLD", "180")
+        )
+        self._proactive_response_window = _brain_settings.get("proactive_response_window") or float(
+            os.environ.get("BRAIN_PROACTIVE_RESPONSE_WINDOW", "8")
+        )
+        self.pns = PNS(self.bus, on_speaking_change=self._on_speaking_change)
+
+    async def _setup_wiring(self) -> None:
+        from brain.observability.decisions import decisions as decisions_log
+        from brain.wiring import Wiring
+        from brain.wiring_bootstrap import bootstrap as wiring_bootstrap
+
+        self.wiring = Wiring()
+        wiring_bootstrap(self.wiring)
+        self.wiring.snapshot_baseline()
+        self._wiring_frozen = os.environ.get("BRAIN_WIRING_FROZEN", "false").lower() == "true"
+        if self._wiring_frozen:
+            logger.info("Wiring FROZEN — weighted routing disabled (BRAIN_WIRING_FROZEN=true)")
+        else:
+            logger.info("Wiring: %d edges loaded", self.wiring.edge_count())
+        decisions_log.configure(eval_logger=self._eval_logger)
+
+    async def _setup_clusters(self) -> None:
+        from brain.clusters.frontal import FrontalCluster
+        from brain.clusters.hippocampus import HippocampusCluster
+        from brain.clusters.hypothalamus import HypothalamusCluster
+        from brain.clusters.occipital import OccipitalCluster
+        from brain.clusters.parietal import ParietalCluster
+        from brain.clusters.temporal import TemporalCluster
+        from brain.clusters.thalamus import ThalamusCluster
+        from brain.security import PseudonymizationGateway
+
+        self.thalamus = ThalamusCluster(self.bus)
+        self.temporal = TemporalCluster(self.bus, self.router, wiring=self.wiring)
+        self.occipital = OccipitalCluster(self.bus, self.router)
+        self.hypothalamus = HypothalamusCluster(self.bus)
+        self.parietal = ParietalCluster(self.bus)
+        self.hippocampus = HippocampusCluster(self.bus, self.router, wiring=self.wiring)
+        self.frontal = FrontalCluster(self.bus, self.brainstem, self.router, wiring=self.wiring)
+        self._core_context, recent_episodes = await self.hippocampus.boot(self.session_id)
+        self.parietal.seed(recent_episodes)
+        self._egress = PseudonymizationGateway()
+
+    async def _setup_ui(self) -> None:
+        self._ui_enabled = self.args.ui or os.environ.get("BRAIN_UI", "false").lower() == "true"
+        if not self._ui_enabled:
+            return
+
+        from brain.ui.emitter import emitter as _emitter
+        from brain.ui.server import UIServer
+
+        self._emitter = _emitter
+        _voice_flag = self.args.voice or os.environ.get("BRAIN_VOICE_MODE", "false").lower() == "true"
+        ui_server = UIServer(
+            self._emitter.get_queue(),
+            on_user_message=self._on_browser_message,
+            on_voice_change=self.pns.set_voice_id,
+            on_eval_mode=self._on_eval_mode,
+            on_mic_toggle=self._on_mic_toggle,
+            on_interrupt=self.pns.interrupt,
+            python_voice_mode=_voice_flag,
+            wiring=self.wiring,
+        )
+        ui_server.set_wiring_frozen(self._wiring_frozen)
+        self.brainstem.register_loop("ui_server", lambda: ui_server.start(port=8765), restart_on_crash=False)
+        self._ui_server = ui_server
+        await asyncio.sleep(0.3)
+
+    async def _setup_motor(self) -> None:
+        if not (self.args.motor or os.environ.get("BRAIN_MOTOR", "false").lower() == "true"):
+            self.frontal.set_capabilities(
+                "Tool use is DISABLED this session (motor cortex not enabled). "
+                "If asked to use external tools, explain that you'd need to be "
+                "restarted with --motor."
+            )
+            return
+
+        from brain.clusters.cloud_executor import CloudExecutor
+        from brain.clusters.follow_through import FollowThrough, ResultReporter
+        from brain.clusters.frontal_task import FrontalTaskSubsystem, PendingTask
+        from brain.clusters.lobe_bridge import LobeBridge
+        from brain.clusters.motor_cortex import MotorCortexCluster
+        from brain.clusters.motor_memory import MuscleMemorySubsystem
+        from brain.clusters.task_queue import PersistentTaskQueue
+
+        _motor_paths_raw = os.environ.get("BRAIN_MOTOR_PATHS", "")
+        _motor_paths = [p.strip() for p in _motor_paths_raw.split(":") if p.strip()]
+        _motor_cmds_raw = os.environ.get("BRAIN_MOTOR_COMMANDS", "")
+        _motor_cmds = set(_motor_cmds_raw.split(":")) if _motor_cmds_raw else None
+
+        cloud = CloudExecutor(self.bus, schema_store=self.hippocampus._schema)
+        if not _motor_paths and cloud._trusted_dirs:
+            _motor_paths = cloud._trusted_dirs[:]
+            logger.info("Motor cortex: inheriting trusted dirs from Claude Desktop: %s", _motor_paths)
+
+        self.motor = MotorCortexCluster(
+            self.bus, self.router,
+            allowed_paths=_motor_paths,
+            allowed_commands=_motor_cmds,
+            cloud_executor=cloud,
+        )
+        if _motor_paths:
+            logger.info("Motor cortex online. Allowed paths: %s", _motor_paths)
+        else:
+            logger.warning(
+                "Motor cortex enabled but no project paths are accessible — "
+                "add paths via BRAIN_MOTOR_PATHS or Claude Desktop trusted folders."
+            )
+
+        self._pending_task = PendingTask()
+        self.motor.set_pending_task(self._pending_task)
+        self.frontal.register_subsystem(FrontalTaskSubsystem(self._pending_task))
+        self.motor.register_subsystem(MuscleMemorySubsystem())
+        self._follow_through = FollowThrough(self.router)
+        self._result_reporter = ResultReporter(self.router)
+        self._task_queue = PersistentTaskQueue()
+
+        _recovered = self._task_queue.recover_interrupted()
+        if _recovered:
+            logger.info("[TaskQueue] %d task(s) recovered from previous session: %s",
+                        len(_recovered), "; ".join(t.goal[:60] for t in _recovered))
+
+        self._lobe_bridge = LobeBridge()
+        self._lobe_bridge.register("recall_memory", self._recall_memory)
+        self._lobe_bridge.register("analyze_image", self._analyze_image)
+        self.motor.set_lobe_bridge(self._lobe_bridge)
+        self.motor.set_observability(self.obs)
+
+        cap_lines = ["Tool use is ENABLED via the motor cortex. You can:"]
+        if _motor_paths:
+            cap_lines.append(
+                f"- Read / write / list / search files within: {', '.join(_motor_paths)}"
+            )
+            cap_lines.append("- Run safe shell commands (git, ls, grep, etc.) in those paths")
+        else:
+            cap_lines.append("- (Filesystem tools are blocked — BRAIN_MOTOR_PATHS is unset)")
+        if cloud and cloud.available:
+            cap_lines.append(
+                "- Invoke Claude Code as a cloud agent for tasks requiring external services "
+                "(email, calendar, messages, web search, documents, etc.). Available "
+                f"connectors: {cloud.connectors_summary()}."
+            )
+            cap_lines.append(
+                "When the user asks to 'use Claude', 'ask Claude', 'access my X', "
+                "'send a message to Y', etc., the brain dispatches a cloud_action and "
+                "you get the result back as 'Tool execution result' in your context."
+            )
+        self.frontal.set_capabilities("\n".join(cap_lines))
+
+    async def _setup_dmn(self) -> None:
+        if not (self.args.dmn or os.environ.get("BRAIN_DMN", "false").lower() == "true"):
+            return
+
+        from brain.dmn import DefaultModeNetwork
+        self.dmn = DefaultModeNetwork(
+            self.bus, self.router, self.hippocampus, self.parietal, obs=self.obs
+        )
+
+        if self._emitter:
+            self._dmn_orig_tick = self.dmn._tick
+            self.dmn._tick = self._dmn_tick_with_ui
+            self._thought_inbox = self.bus.subscribe("stream.thought")
+            self.brainstem.register_loop("forward_thoughts", self._forward_thoughts)
+
+        await self.dmn.start(self.session_id)
+
+        try:
+            _oq_text = self.hippocampus._schema.read("open_questions.md")
+            if _oq_text:
+                self.dmn.set_projects_context(_oq_text)
+                logger.info("[DMN] Projects context loaded (%d chars)", len(_oq_text))
+        except Exception as _oq_err:
+            logger.warning("[DMN] Could not load projects context: %s", _oq_err)
+
+    async def _setup_meta(self) -> None:
+        if not (self.args.metacognition or os.environ.get("BRAIN_METACOGNITION", "false").lower() == "true"):
+            return
+        from brain.metacognition import MetacognitionCell
+        self.meta = MetacognitionCell(self.bus, self.router, self.hippocampus._schema)
+        await self.meta.start()
+
+    async def _setup_auditory(self) -> None:
+        self._enrollment_complete_inbox = self.bus.subscribe("auditory.enrollment_complete")
+        self._speaker_id_inbox = self.bus.subscribe("auditory.speaker_id")
+        self._song_match_inbox = self.bus.subscribe("auditory.song_match")
+        if not (self.args.ears or os.environ.get("BRAIN_EARS", "false").lower() == "true"):
+            return
+        from brain.clusters.auditory_cortex import AuditoryCluster
+        self.ears = AuditoryCluster(self.bus)
+        self.brainstem.register_loop("ears", self.ears.run)
+
+    async def _setup_streaming_mic(self) -> None:
+        if not (self.args.voice or os.environ.get("BRAIN_VOICE_MODE", "false").lower() == "true"):
+            return
+        from brain.streaming_mic import StreamingMicSession
+        self._streaming_mic = StreamingMicSession(
+            self.bus,
+            is_speaking_fn=lambda: self.pns.is_speaking,
+            on_user_interrupt=self.pns.interrupt,
+        )
+        try:
+            await self._streaming_mic.start()
+        except Exception as e:
+            logger.error("[I/O] Streaming mic failed to start — voice input is offline: %s", e)
+            self._streaming_mic = None
+
+    def _setup_speak_gate(self) -> None:
+        if self.dmn is not None:
+            self.brainstem.register_loop("speak_gate", self._speak_gate_loop)
+
+    def _setup_voice_bridge(self) -> None:
+        from brain.voice_bridge import parse_barge_words
+        self._barge_in_words = parse_barge_words(os.environ.get("BRAIN_BARGE_IN_WORDS"))
+        if self._streaming_mic is None or not self._ui_enabled:
+            return
+        self._pending_lock = asyncio.Lock()
+        self.brainstem.register_loop("voice_bridge", self._voice_bridge)
+        self.brainstem.register_loop("tts_drain", self._drain_pending_when_tts_ends)
+
+    def _setup_loops(self) -> None:
+        self.brainstem.register_loop("heartbeat", self._heartbeat_with_ui)
+        if self.motor:
+            self.brainstem.register_loop("task_worker", self._task_worker_loop)

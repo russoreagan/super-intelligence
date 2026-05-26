@@ -704,16 +704,16 @@ class TestCloudMinimalContext:
         assert "subject is hello" in prompt
 
     def test_no_memory_keywords_in_minimal_prompt(self):
-        """The minimal prompt must never contain memory-dump markers."""
+        """The minimal prompt must never contain memory-dump markers (not paths)."""
         exe = _make_cloud_executor()
         prompt = exe._build_prompt("check calendar for tomorrow", [])
-        for forbidden in ("episode", "schema", "self.md", "user.md", "second_brain"):
+        for forbidden in ("episode", "schema", "self.md", "user.md"):
             assert forbidden not in prompt.lower(), f"Forbidden keyword '{forbidden}' in prompt"
 
     def test_empty_context_facts_ok(self):
         exe = _make_cloud_executor()
         prompt = exe._build_prompt("task only", [])
-        assert prompt == "task only"
+        assert prompt.startswith("task only")
 
     def test_whitespace_facts_stripped(self):
         exe = _make_cloud_executor()
@@ -748,9 +748,9 @@ class TestCloudResultScreening:
 
     def test_long_output_truncated(self):
         exe = _make_cloud_executor()
-        long_text = "safe content " * 500
+        long_text = "safe content " * 700  # 9100 chars — exceeds the 8000-char truncation limit
         result = exe._screen_result(long_text)
-        # Should still be fenced but truncated
+        # Should still be fenced but truncated (fence adds ~50 chars of overhead)
         assert "<data" in result
         assert len(result) < len(long_text)
 

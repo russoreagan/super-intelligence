@@ -67,6 +67,11 @@ def _make_dmn(neuromod_snapshot: dict | None = None):
     dmn._last_familiarity = "new"
     dmn._recent_angles = deque(maxlen=5)
     dmn._obs = None
+    # Active projects manifest (loaded from open_questions.md in production)
+    dmn._last_projects = ""
+    # Session thought buffer for sleep consolidation
+    dmn._session_thought_buf = []
+    dmn._session_thought_limit = 200
     return dmn
 
 

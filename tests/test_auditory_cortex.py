@@ -262,7 +262,7 @@ class TestSessionSpeakerRegistry:
 
     def test_new_speaker_is_pending(self, tmp_path):
         reg = self._registry(tmp_path)
-        spk, is_new = reg.match_or_create(self._vec(1))
+        spk, is_new, _ = reg.match_or_create(self._vec(1))
         assert is_new is True
         assert spk.enrollment_pending is True
         assert spk.store_id is None
@@ -271,22 +271,22 @@ class TestSessionSpeakerRegistry:
         """The same embedding should map to the same session speaker, not a new one."""
         reg = self._registry(tmp_path)
         v = self._vec(1)
-        spk1, new1 = reg.match_or_create(v)
-        spk2, new2 = reg.match_or_create(v)
+        spk1, new1, _ = reg.match_or_create(v)
+        spk2, new2, _ = reg.match_or_create(v)
         assert new1 is True
         assert new2 is False
         assert spk1.session_key == spk2.session_key
 
     def test_two_distinct_voices_get_distinct_keys(self, tmp_path):
         reg = self._registry(tmp_path)
-        spk_a, _ = reg.match_or_create(self._vec(1))
-        spk_b, _ = reg.match_or_create(self._vec(99))
+        spk_a, _, _s = reg.match_or_create(self._vec(1))
+        spk_b, _, _s = reg.match_or_create(self._vec(99))
         assert spk_a.session_key != spk_b.session_key
         assert len(reg.pending_enrollments()) == 2
 
     def test_complete_enrollment_new_person(self, tmp_path):
         reg = self._registry(tmp_path)
-        spk, _ = reg.match_or_create(self._vec(1))
+        spk, _, _s = reg.match_or_create(self._vec(1))
         result = reg.complete_enrollment(spk.session_key, "Alice")
         assert result["action"] == "enrolled"
         assert spk.enrollment_pending is False
@@ -302,14 +302,14 @@ class TestSessionSpeakerRegistry:
         from brain.clusters.auditory_cortex import SessionSpeakerRegistry
         reg = SessionSpeakerRegistry(store)
 
-        spk, _ = reg.match_or_create(self._vec(7))  # different-sounding voice
+        spk, _, _s = reg.match_or_create(self._vec(7))  # different-sounding voice
         result = reg.complete_enrollment(spk.session_key, "Russ")
         assert result["action"] == "merged"
         assert spk.store_name == "Russ"
 
     def test_idempotent_complete(self, tmp_path):
         reg = self._registry(tmp_path)
-        spk, _ = reg.match_or_create(self._vec(1))
+        spk, _, _s = reg.match_or_create(self._vec(1))
         reg.complete_enrollment(spk.session_key, "Alice")
         again = reg.complete_enrollment(spk.session_key, "Alice")
         assert again["action"] == "already_done"
@@ -322,7 +322,7 @@ class TestSessionSpeakerRegistry:
         store.enroll("Bob", v)
         from brain.clusters.auditory_cortex import SessionSpeakerRegistry
         reg = SessionSpeakerRegistry(store)
-        spk, is_new = reg.match_or_create(v)
+        spk, is_new, _ = reg.match_or_create(v)
         assert spk.store_name == "Bob"
         assert spk.enrollment_pending is False
 

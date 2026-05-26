@@ -55,7 +55,7 @@ def test_drafter_prompt_includes_recent_thoughts_when_provided():
         instruction={"response_type": "chitchat", "target_length": "brief",
                      "tone": "warm", "key_points": [], "drafter_count": 1},
     )
-    assert "Idle thoughts you had between turns" in prompt
+    assert "inner monologue between turns" in prompt
     assert "Wondering whether Russ" in prompt
     assert "memory consolidation" in prompt
 

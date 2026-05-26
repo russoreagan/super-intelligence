@@ -29,121 +29,13 @@ logger = logging.getLogger(__name__)
 
 CLUSTER = "motor_cortex"
 
-_DEFAULT_COMMANDS = {
-    "ls", "find", "grep", "cat", "head", "tail", "wc",
-    "npm", "npx", "node", "python", "python3", "uv",
-    "git", "curl", "echo", "mkdir", "cp", "mv", "rm",
-    "sed", "awk", "sort", "uniq", "diff",
-}
-
-_PLANNER_SYSTEM_BASE = """You are the motor cortex of a biologically-inspired AI brain.
-Your job: given a user request that requires an action, choose the right tool and exact arguments.
-
-Available tools:
-  read_file(path)                           — read a file's contents
-  write_file(path, content)                 — write (overwrite) a file
-  append_file(path, content)               — append content to a file
-  list_files(path, pattern, recursive)      — list files; pattern is a glob (e.g. "*.ts"); recursive is bool
-  run_command(cmd, cwd)                     — run a shell command; cwd is the working directory path
-  search_files(path, query, file_pattern)   — search for text within files recursively
-  cloud_action(task, is_write, context_facts, description)
-      — use Claude with cloud connectors for anything needing external services:
-        email, calendar, messages, web search, documents, music tools, etc.
-        task: precise English instruction for Claude to execute
-        is_write: true if the action sends, creates, modifies, or deletes anything; false for read/search
-        context_facts: list of specific facts Claude needs (e.g. ["recipient is John Smith"])
-                       — NEVER include memory dumps or personal history, only operational facts
-        description: one short sentence describing the action for user confirmation
-        NOTE: if the result contains a file path (e.g. second_brain/research/…), follow up
-        with read_file on that path to retrieve the full findings.
-  recall_memory(topic, entities)            — search episodic memory for context about a topic;
-                                              entities: optional list of names/topics to narrow the search
-  analyze_image(path, question)             — analyze an image using visual processing;
-                                              path: absolute file path; question: what to look for
-
-{path_hint}
-
-{cloud_connector_hint}
-{lobe_hint}
-
-Return JSON with exactly this shape:
-{{
-  "tool": "read_file"|"write_file"|"append_file"|"list_files"|"run_command"|"search_files"|"cloud_action"|"recall_memory"|"analyze_image"|"none",
-  "args": {{ ...tool-specific args as above... }},
-  "reason": "one sentence explaining why"
-}}
-
-If the request is conversational and needs no tool, return {{"tool": "none", "args": {{}}, "reason": "..."}}.
-If you genuinely need information from the user to proceed and cannot reasonably guess, return
-{{"tool": "ask_user", "args": {{"question": "..."}}, "reason": "..."}} — use sparingly; only when blocked.
-Return ONLY the JSON object. No explanation."""
-
-
-# Strategic-mode prompt: Ralph-style decomposition into stories with acceptance criteria.
-# complexity drives whether the per-story retry loop and final verifier are activated.
-_STRATEGIC_SYSTEM = """You are the motor cortex planning a multi-step internal task.
-Use Ralph-style decomposition: break the goal into discrete stories, each with verifiable
-acceptance criteria. Order stories so foundational work comes first.
-
-Return STRICT JSON, nothing else:
-{
-  "stories": [
-    {
-      "id": "US-001",
-      "description": "<imperative, concrete action>",
-      "expected_tool": "list_files|read_file|search_files|write_file|run_command|cloud_action",
-      "acceptance_criteria": ["<specific checkable outcome from tool output>", ...]
-    },
-    ...
-  ],
-  "success_criteria": "<one sentence: what counts as overall done>",
-  "complexity": "low|medium|high"
-}
-
-Guidelines:
-- 1-6 stories; collapse trivial operations into one story
-- acceptance_criteria must be verifiable from tool output (not vague like "it works")
-- complexity=high when: multiple interdependent changes, external services, or unclear path
-- complexity=low for single read/lookup operations
-- Adjust plan ambition based on the "Brain state" provided in the user message"""
-
-
-_CRITERIA_CHECK_SYSTEM = """You are a quality gate verifying whether a task story's acceptance criteria were met.
-Given the story description, acceptance criteria, and the tool execution output, evaluate each criterion.
-
-Return STRICT JSON:
-{
-  "verified": true,
-  "unmet": [],
-  "reason": "<one sentence>"
-}
-or:
-{
-  "verified": false,
-  "unmet": ["<criterion> — <why not met>"],
-  "reason": "<one sentence>"
-}
-
-verified=true only when ALL criteria are met. If acceptance_criteria is empty, set verified=true.
-Return ONLY the JSON object."""
-
-
-_VERIFIER_SYSTEM = """You are a final reviewer for a completed autonomous task.
-Given the goal, success criteria, and a summary of what was executed, determine if the task is genuinely complete.
-
-Return STRICT JSON:
-{
-  "approved": true,
-  "issues": ""
-}
-or:
-{
-  "approved": false,
-  "issues": "<what is missing or incorrect>"
-}
-
-Return ONLY the JSON object."""
-
+from brain.clusters.motor_dispatcher import ToolDispatcher
+from brain.clusters.motor_prompts import (
+    CRITERIA_CHECK_SYSTEM as _CRITERIA_CHECK_SYSTEM,
+    PLANNER_SYSTEM_BASE as _PLANNER_SYSTEM_BASE,
+    STRATEGIC_SYSTEM as _STRATEGIC_SYSTEM,
+    VERIFIER_SYSTEM as _VERIFIER_SYSTEM,
+)
 
 class MotorCortexCluster:
     def __init__(
@@ -162,15 +54,7 @@ class MotorCortexCluster:
         self._obs = None           # set post-init via set_observability()
         self._subsystems: list[MotorSubsystem] = []
 
-        # Resolve and normalise allowed path roots at startup
-        self._allowed_paths: list[str] = []
-        for p in (allowed_paths or []):
-            try:
-                self._allowed_paths.append(str(Path(p).resolve()))
-            except Exception:
-                logger.warning("[MotorCortex] Ignoring invalid allowed path: %s", p)
-
-        self._allowed_commands: set[str] = allowed_commands or set(_DEFAULT_COMMANDS)
+        self._dispatcher = ToolDispatcher(allowed_paths, allowed_commands)
 
         # Build planner prompt dynamically: include cloud connector hint if available
         if cloud_executor and cloud_executor.available:
@@ -871,17 +755,7 @@ class MotorCortexCluster:
         return last_result
 
     def _build_path_hint(self) -> str:
-        if not self._allowed_paths:
-            return "Filesystem access: none configured (BRAIN_MOTOR_PATHS unset)."
-        primary = self._allowed_paths[0]
-        roots = "\n  ".join(self._allowed_paths)
-        return (
-            f"Filesystem access:\n"
-            f"  Working directory (CWD): {primary}\n"
-            f"  Allowed roots:\n  {roots}\n"
-            f"Always use paths relative to CWD (e.g. 'second_brain/schema/self.md') "
-            f"or absolute paths under the allowed roots. Never guess paths outside these roots."
-        )
+        return self._dispatcher.build_path_hint()
 
     def _build_plan_prompt(self, goal: str, features: dict, subsystem_context: str,
                            steps_done: list[dict], results: list[str]) -> str:
@@ -889,7 +763,7 @@ class MotorCortexCluster:
             f"Goal: {goal}",
             f"Intent: {features.get('intent', 'task')}",
             f"Entities: {features.get('entities', [])}",
-            f"CWD: {self._allowed_paths[0] if self._allowed_paths else 'unknown'}",
+            f"CWD: {self._dispatcher._allowed_paths[0] if self._dispatcher._allowed_paths else 'unknown'}",
         ]
         if subsystem_context.strip():
             parts.append(subsystem_context.strip())
@@ -959,28 +833,61 @@ class MotorCortexCluster:
         try:
             if tool == "read_file":
                 return await asyncio.get_event_loop().run_in_executor(
-                    None, self._read_file, args.get("path", ""))
+                    None, self._dispatcher._read_file, args.get("path", ""))
             elif tool == "write_file":
                 return await asyncio.get_event_loop().run_in_executor(
-                    None, self._write_file, args.get("path", ""), args.get("content", ""))
+                    None, self._dispatcher._write_file, args.get("path", ""), args.get("content", ""))
             elif tool == "append_file":
                 return await asyncio.get_event_loop().run_in_executor(
-                    None, self._append_file, args.get("path", ""), args.get("content", ""))
+                    None, self._dispatcher._append_file, args.get("path", ""), args.get("content", ""))
             elif tool == "list_files":
                 return await asyncio.get_event_loop().run_in_executor(
-                    None, self._list_files,
+                    None, self._dispatcher._list_files,
                     args.get("path", "."), args.get("pattern", "*"), args.get("recursive", False))
             elif tool == "run_command":
-                return await self._run_command(args.get("cmd", ""), args.get("cwd", ""))
+                return await self._dispatcher._run_command(args.get("cmd", ""), args.get("cwd", ""))
             elif tool == "search_files":
                 return await asyncio.get_event_loop().run_in_executor(
-                    None, self._search_files,
+                    None, self._dispatcher._search_files,
                     args.get("path", "."), args.get("query", ""), args.get("file_pattern", "*"))
             else:
                 return f"[error] Unknown tool: {tool}"
         except Exception as e:
             logger.error("[MotorCortex] Tool %s failed: %s", tool, e)
             return f"[error] {tool} failed: {e}"
+
+    # ── Dispatcher delegation (preserve public API for callers and tests) ────────
+
+    def _validate_path(self, path: str) -> tuple[bool, str]:
+        return self._dispatcher._validate_path(path)
+
+    def _validate_command(self, cmd: str) -> tuple[bool, str]:
+        return self._dispatcher._validate_command(cmd)
+
+    def _read_file(self, path: str) -> str:
+        return self._dispatcher._read_file(path)
+
+    def _write_file(self, path: str, content: str) -> str:
+        return self._dispatcher._write_file(path, content)
+
+    def _append_file(self, path: str, content: str) -> str:
+        return self._dispatcher._append_file(path, content)
+
+    def _list_files(self, path: str, pattern: str = "*", recursive: bool = False) -> str:
+        return self._dispatcher._list_files(path, pattern, recursive)
+
+    async def _run_command(self, cmd: str, cwd: str = "") -> str:
+        return await self._dispatcher._run_command(cmd, cwd)
+
+    def _search_files(self, path: str, query: str, file_pattern: str = "*") -> str:
+        return self._dispatcher._search_files(path, query, file_pattern)
+
+    @property
+    def allowed_paths(self) -> list[str]:
+        return self._dispatcher.allowed_paths
+
+    def add_allowed_path(self, path: str) -> None:
+        self._dispatcher.add_allowed_path(path)
 
     # ── Chemistry helpers ──────────────────────────────────────────────────────
 
@@ -1078,177 +985,3 @@ class MotorCortexCluster:
         else:
             self._result_publisher.fire(0.7, "success",
                                          {"tool": tool}, snapshot=chem)
-
-    # ── Path / command safety ──────────────────────────────────────────────────
-
-    def _validate_path(self, path: str) -> tuple[bool, str]:
-        """Returns (is_safe, resolved_path_or_error_message)."""
-        if not self._allowed_paths:
-            return False, "No paths configured. Set BRAIN_MOTOR_PATHS env var."
-        if not path:
-            return False, "Empty path."
-        try:
-            resolved = str(Path(path).resolve())
-        except Exception as e:
-            return False, f"Invalid path '{path}': {e}"
-        for allowed in self._allowed_paths:
-            if resolved == allowed or resolved.startswith(allowed + os.sep):
-                return True, resolved
-        return False, (f"Path '{path}' (resolved: {resolved}) is outside allowed roots: "
-                       f"{self._allowed_paths}")
-
-    def _validate_command(self, cmd: str) -> tuple[bool, str]:
-        """Returns (is_safe, error_message_or_empty)."""
-        try:
-            parts = shlex.split(cmd)
-        except ValueError as e:
-            return False, f"Invalid command syntax: {e}"
-        if not parts:
-            return False, "Empty command."
-        base = os.path.basename(parts[0])
-        if base not in self._allowed_commands:
-            return False, (f"Command '{base}' is not in the allowed list. "
-                           f"Allowed: {sorted(self._allowed_commands)}")
-        return True, ""
-
-    # ── Tool implementations ───────────────────────────────────────────────────
-
-    def _read_file(self, path: str) -> str:
-        safe, resolved = self._validate_path(path)
-        if not safe:
-            return f"[blocked] {resolved}"
-        try:
-            content = Path(resolved).read_text(errors="replace")
-            if len(content) > 4000:
-                content = content[:4000] + "\n[... truncated at 4000 chars ...]"
-            return content
-        except FileNotFoundError:
-            return f"[error] File not found: {resolved}"
-        except PermissionError:
-            return f"[error] Permission denied: {resolved}"
-
-    def _write_file(self, path: str, content: str) -> str:
-        safe, resolved = self._validate_path(path)
-        if not safe:
-            return f"[blocked] {resolved}"
-        try:
-            Path(resolved).parent.mkdir(parents=True, exist_ok=True)
-            Path(resolved).write_text(content)
-            return f"Written {len(content)} bytes to {resolved}"
-        except PermissionError:
-            return f"[error] Permission denied: {resolved}"
-
-    def _append_file(self, path: str, content: str) -> str:
-        safe, resolved = self._validate_path(path)
-        if not safe:
-            return f"[blocked] {resolved}"
-        try:
-            Path(resolved).parent.mkdir(parents=True, exist_ok=True)
-            with open(resolved, "a") as f:
-                f.write(content)
-            return f"Appended {len(content)} bytes to {resolved}"
-        except PermissionError:
-            return f"[error] Permission denied: {resolved}"
-
-    def _list_files(self, path: str, pattern: str = "*", recursive: bool = False) -> str:
-        safe, resolved = self._validate_path(path)
-        if not safe:
-            return f"[blocked] {resolved}"
-        try:
-            p = Path(resolved)
-            if not p.is_dir():
-                return f"[error] Not a directory: {resolved}"
-            matches = list(p.rglob(pattern)) if recursive else list(p.glob(pattern))
-            if not matches:
-                return "(no files matched)"
-            lines = [str(m.relative_to(p)) for m in sorted(matches)[:200]]
-            result = "\n".join(lines)
-            if len(matches) > 200:
-                result += f"\n[... {len(matches) - 200} more files not shown ...]"
-            return result
-        except PermissionError:
-            return f"[error] Permission denied: {resolved}"
-
-    async def _run_command(self, cmd: str, cwd: str = "") -> str:
-        safe_cmd, err = self._validate_command(cmd)
-        if not safe_cmd:
-            return f"[blocked] {err}"
-
-        cwd_resolved = None
-        if cwd:
-            safe_cwd, resolved_cwd = self._validate_path(cwd)
-            if not safe_cwd:
-                return f"[blocked] cwd: {resolved_cwd}"
-            cwd_resolved = resolved_cwd
-        elif self._allowed_paths:
-            # Default cwd to first allowed path if none given
-            cwd_resolved = self._allowed_paths[0]
-
-        try:
-            parts = shlex.split(cmd)
-            proc = await asyncio.create_subprocess_exec(
-                *parts,
-                cwd=cwd_resolved,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-                env=os.environ.copy(),
-            )
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30.0)
-            output = stdout.decode(errors="replace")
-            if len(output) > 3000:
-                output = output[:3000] + "\n[... truncated ...]"
-            return output or "(command produced no output)"
-        except TimeoutError:
-            with contextlib.suppress(Exception):
-                proc.kill()
-            return "[error] Command timed out after 30s."
-        except FileNotFoundError:
-            return f"[error] Command not found: {shlex.split(cmd)[0]}"
-        except Exception as e:
-            return f"[error] {e}"
-
-    def _search_files(self, path: str, query: str, file_pattern: str = "*") -> str:
-        safe, resolved = self._validate_path(path)
-        if not safe:
-            return f"[blocked] {resolved}"
-        if not query:
-            return "[error] Empty search query."
-        try:
-            p = Path(resolved)
-            matches: list[str] = []
-            for fpath in p.rglob(file_pattern):
-                if not fpath.is_file():
-                    continue
-                try:
-                    text = fpath.read_text(errors="replace")
-                    for i, line in enumerate(text.splitlines(), 1):
-                        if query.lower() in line.lower():
-                            rel = fpath.relative_to(p)
-                            matches.append(f"{rel}:{i}: {line.rstrip()}")
-                            if len(matches) >= 100:
-                                break
-                except Exception:
-                    continue
-                if len(matches) >= 100:
-                    break
-            if not matches:
-                return f"(no matches for '{query}' in {resolved})"
-            result = "\n".join(matches)
-            if len(matches) == 100:
-                result += "\n[... search limited to 100 results ...]"
-            return result
-        except PermissionError:
-            return f"[error] Permission denied: {resolved}"
-
-    @property
-    def allowed_paths(self) -> list[str]:
-        return list(self._allowed_paths)
-
-    def add_allowed_path(self, path: str) -> None:
-        try:
-            resolved = str(Path(path).resolve())
-            if resolved not in self._allowed_paths:
-                self._allowed_paths.append(resolved)
-                logger.info("[MotorCortex] Added allowed path: %s", resolved)
-        except Exception as e:
-            logger.warning("[MotorCortex] Could not add path %s: %s", path, e)
