@@ -516,9 +516,17 @@ class _TurnMixin:
                 deferred_goal = self._pending_task.take() if self._pending_task else None
                 if deferred_goal:
                     try:
-                        goal = await self._follow_through.extract(user_input, final, turn_id) or deferred_goal
+                        extracted = await self._follow_through.extract(user_input, final, turn_id)
                     except Exception:
+                        extracted = None
+                    if extracted:
+                        goal = extracted
+                    else:
+                        # extract() returned None — the assistant's ack was too brief
+                        # to anchor a commitment. Fall back to the topic_summary-based
+                        # goal set by FrontalTaskSubsystem (already cleaner than raw_text).
                         goal = deferred_goal
+                        logger.debug("[FollowThrough] No commitment found in response — using topic goal: %s", goal[:80])
                     self._task_queue.enqueue(goal, source="user", priority=1)
                     logger.info("[FollowThrough] Task enqueued (task-mode): %s", goal[:120])
                     return

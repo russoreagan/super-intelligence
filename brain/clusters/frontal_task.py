@@ -63,7 +63,11 @@ class FrontalTaskSubsystem(FrontalSubsystem):
         instruction: dict,
         turn_id: str,
     ) -> SubsystemResult:
-        goal = features.get("raw_text") or features.get("topic_summary", "")
+        # Prefer topic_summary (clean 5-word description from discourse analysis)
+        # over raw_text (verbatim user question). follow_through.extract() will
+        # try to upgrade this to a proper imperative after the turn; topic_summary
+        # is a much better fallback than repeating the user's question verbatim.
+        goal = features.get("topic_summary") or features.get("raw_text", "")
         self._pending.set(goal)
         # Empty response → falls through to the drafter, which writes the acknowledgment.
         return SubsystemResult(response="")
