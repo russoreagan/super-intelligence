@@ -123,6 +123,8 @@ async def session(args) -> None:
         logger.debug("Eval system unavailable: %s", _eval_err)
 
     obs = ObservabilityLayer(session_id, eval_logger=eval_logger)
+    if baseline_runner is not None:
+        baseline_runner._obs = obs
     if posthoc_scorer is not None:
         posthoc_scorer._obs = obs
     if emotion_judge is not None:
@@ -201,6 +203,7 @@ async def session(args) -> None:
         os.environ.get("BRAIN_PROACTIVE_RESPONSE_WINDOW", "8")
     )
     _last_brain_spoke_ts: float = 0.0  # updated every time pns.emit completes
+    _last_turn_ts: float = time.time()  # updated at end of each user turn; used to detect return-after-absence
 
     # ── Wiring graph (Hebbian edge weights) ───────────────────────────────────
     wiring = Wiring()
@@ -418,6 +421,17 @@ async def session(args) -> None:
             dmn._tick = _dmn_tick_with_ui
 
         await dmn.start(session_id)
+
+        # Seed the DMN with the active projects manifest so it knows what work
+        # is pre-authorized without needing to ask. Refreshed once at boot;
+        # if open_questions.md changes mid-session the next boot picks it up.
+        try:
+            _oq_text = hippocampus._schema.read("open_questions.md")
+            if _oq_text:
+                dmn.set_projects_context(_oq_text)
+                logger.info("[DMN] Projects context loaded (%d chars)", len(_oq_text))
+        except Exception as _oq_err:
+            logger.warning("[DMN] Could not load projects context: %s", _oq_err)
 
     # Forward DMN stream-of-consciousness thoughts to the UI panel (shown as
     # italic, unspeakable thought bubbles between turns).
@@ -1013,6 +1027,33 @@ async def session(args) -> None:
                                core_context.get("self", ""),
                                speaker_name=_speaker_name_for_dmn,
                                relationship=_relationship)
+            # On return after a long absence, surface deferred thoughts and
+            # proposal summaries so the brain can weave them into its response.
+            ABSENCE_THRESHOLD_S = 300.0  # 5 minutes away = "returning"
+            absence_s = time.time() - _last_turn_ts
+            if absence_s >= ABSENCE_THRESHOLD_S and dmn.has_deferred_content():
+                deferred = dmn.take_deferred_thoughts()
+                proposals = dmn.list_proposals()
+                returning_context_parts = []
+                if deferred:
+                    returning_context_parts.append(
+                        f"Thoughts and questions saved while you were away:\n{deferred}"
+                    )
+                if proposals:
+                    awaiting = [p for p in proposals if "awaiting_review" in p.get("status", "")]
+                    if awaiting:
+                        prop_lines = "\n".join(
+                            f"- {p['title']} ({p['proposed']}) — {p['path']}"
+                            for p in awaiting
+                        )
+                        returning_context_parts.append(
+                            f"Work proposals ready for your review:\n{prop_lines}"
+                        )
+                if returning_context_parts:
+                    memory["returning_content"] = "\n\n".join(returning_context_parts)
+                    logger.info("[DMN] Surfacing deferred content on user return "
+                                "(absent %.0fs)", absence_s)
+
             # Surface idle thoughts into this turn's drafter context so the
             # entity can reference what it was musing about (or quietly use
             # the priming effect even if it doesn't reference them aloud).
@@ -1319,6 +1360,8 @@ async def session(args) -> None:
             dmn.note_last_response(final)
             dmn.resume()
 
+        _last_turn_ts = time.time()  # track when the last real user turn completed
+
         logger.info("Turn %s: %d LLM calls | %.2fs | emotion=%s",
                     turn_id, llm_calls, turn_result.elapsed(), affect.get("emotion"))
 
@@ -1332,22 +1375,34 @@ async def session(args) -> None:
     async def _run_task(task) -> None:
         """Execute one task from the queue and speak the result."""
         job_turn_id = f"task_{task.id}"
+        # Self-initiated tasks run under background resource policy:
+        # cloud calls are budgeted and capped; Ollama is rate-limited.
+        is_self = getattr(task, "source", "") == "self"
+        if is_self:
+            router.enter_background_mode()
         try:
             summary = await motor.execute_internal_job(task.goal, job_turn_id)
         except Exception as _e:
             logger.warning("[TaskWorker] Task [%s] execution failed: %s", task.id, _e)
             task_queue.mark_done(task.id, success=False)
             return
-
-        task_queue.mark_done(task.id, success=bool(summary.get("success")))
+        finally:
+            if is_self:
+                router.exit_background_mode()
 
         if summary.get("clarification"):
+            # Task hit a blocker — park it as blocked (not failed) so it can be
+            # resumed when the user answers. The brain treats blocked = idle.
             question = summary["clarification"]
-            logger.info("[TaskWorker] Speaking clarification: %s", question[:120])
+            task_queue.mark_blocked(task.id, reason=question)
+            logger.info("[TaskWorker] Task [%s] blocked on clarification: %s",
+                        task.id, question[:120])
             if emitter:
                 await emitter.emit_proactive_speech(question)
             await pns.emit(question, {"emotion": "curious"})
             return
+
+        task_queue.mark_done(task.id, success=bool(summary.get("success")))
 
         spoken_summary = await result_reporter.report(summary, job_turn_id)
         if not spoken_summary:
@@ -1538,6 +1593,14 @@ async def session(args) -> None:
                 full_traces=session_traces_full,
                 session_thoughts=dmn.session_thoughts() if dmn else [],
             )
+            # Refresh DMN's projects manifest — sleep may have rewritten open_questions.md
+            if dmn:
+                try:
+                    _oq_refreshed = hippocampus._schema.read("open_questions.md")
+                    if _oq_refreshed:
+                        dmn.set_projects_context(_oq_refreshed)
+                except Exception:
+                    pass
         except Exception as e:
             logger.warning("End-of-session memory consolidation failed — recent facts may not be saved: %s", e)
 

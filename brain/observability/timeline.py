@@ -127,7 +127,8 @@ class ObservabilityLayer:
             self._langfuse = Langfuse(
                 public_key=pk,
                 secret_key=sk,
-                host=os.environ.get("LANGFUSE_HOST", "https://cloud.langfuse.com"),
+                host=os.environ.get("LANGFUSE_HOST")
+                     or os.environ.get("LANGFUSE_BASE_URL", "https://cloud.langfuse.com"),
             )
             logger.info("Observability: Langfuse tracing connected")
         except Exception as e:
@@ -208,23 +209,38 @@ class ObservabilityLayer:
                     span.update(
                         output={"response": trace.response},
                         metadata={
+                            # ── core turn stats ───────────────────────────
                             "llm_calls": trace.llm_calls,
                             "elapsed_s": round(trace.elapsed_s, 3),
+                            "llm_calls_saved": trace.llm_calls_saved,
+                            "gating_bypassed_count": trace.gating_bypassed_count,
+                            # ── emotion ───────────────────────────────────
                             "emotion": trace.emotion,
                             "emotion_core": trace.emotion_core,
+                            **({"user_emotion": trace.user_emotion} if trace.user_emotion else {}),
+                            # ── neuromod + hormonal snapshots ─────────────
+                            **({"neuromod": trace.neuromod} if trace.neuromod else {}),
+                            **({"prior_neuromod": trace.prior_neuromod} if trace.prior_neuromod else {}),
+                            **({"hormonal": trace.hormonal} if trace.hormonal else {}),
+                            # ── memory ────────────────────────────────────
                             "memory_recalled": trace.memory_recalled,
                             "memory_hit_count": trace.memory_hit_count,
+                            # ── frontal / drafting ────────────────────────
                             "drafter_count": trace.drafter_count,
-                            "llm_calls_saved": trace.llm_calls_saved,
-                            # switch firing + modulation summary
+                            **({"selected_draft_id": trace.selected_draft_id} if trace.selected_draft_id else {}),
+                            **({"draft_scores": trace.draft_scores} if trace.draft_scores else {}),
+                            # ── token + cluster breakdown ─────────────────
+                            **({"cluster_tokens": trace.cluster_tokens} if trace.cluster_tokens else {}),
+                            **({"cluster_activations": trace.cluster_activations} if trace.cluster_activations else {}),
+                            # ── switch / modulation summary ───────────────
                             "switches_fired": switches_fired,
                             "modulated_switch_count": trace.modulated_switch_count,
                             "suppressed_switch_count": trace.suppressed_switch_count,
                             "modulation_gain": _gain,
-                            # neuromod + hormonal state snapshots
-                            **({"neuromod": trace.neuromod} if trace.neuromod else {}),
-                            **({"hormonal": trace.hormonal} if trace.hormonal else {}),
-                            # voice / prosody (non-empty only when --ears active)
+                            # ── predict-and-surprise / wiring ─────────────
+                            **({"predictor_outcomes": trace.predictor_outcomes} if trace.predictor_outcomes else {}),
+                            **({"fired_path": trace.fired_path} if trace.fired_path else {}),
+                            # ── voice / prosody (non-empty when --ears active)
                             **({"speaker_name": trace.speaker_name} if trace.speaker_name else {}),
                             **({"speaker_score": trace.speaker_score} if trace.speaker_score else {}),
                             **({"prosody_tone": trace.prosody_tone} if trace.prosody_tone else {}),
@@ -249,6 +265,15 @@ class ObservabilityLayer:
                                 "llm_calls": trace.llm_calls,
                                 "elapsed_s": round(trace.elapsed_s, 3),
                                 "emotion": trace.emotion,
+                                "emotion_core": trace.emotion_core,
+                                **({"neuromod": trace.neuromod} if trace.neuromod else {}),
+                                **({"hormonal": trace.hormonal} if trace.hormonal else {}),
+                                "memory_recalled": trace.memory_recalled,
+                                "drafter_count": trace.drafter_count,
+                                "llm_calls_saved": trace.llm_calls_saved,
+                                **({"cluster_tokens": trace.cluster_tokens} if trace.cluster_tokens else {}),
+                                **({"draft_scores": trace.draft_scores} if trace.draft_scores else {}),
+                                **({"fired_path": trace.fired_path} if trace.fired_path else {}),
                             },
                         )
                     span.end()
@@ -308,6 +333,37 @@ class ObservabilityLayer:
                 )
             except Exception as e:
                 logger.debug("Langfuse create_score(%s) failed: %s", name, e)
+
+    def record_baseline(self, turn_id: str, user_input: str,
+                        baseline_response: str, baseline_model: str,
+                        latency_s: float) -> None:
+        """Create a sibling Langfuse generation for the baseline comparison call.
+
+        Called by BaselineRunner after the plain LLM call completes. Creates a
+        separate generation span under the same session (not nested under the
+        brain-turn span, which is already closed) tagged with turn_id so it can
+        be correlated in the Langfuse UI.
+        """
+        if not self._langfuse:
+            return
+        try:
+            from langfuse import propagate_attributes
+            with propagate_attributes(session_id=self._session_id,
+                                      trace_name="baseline-call"):
+                gen = self._langfuse.start_observation(
+                    name="baseline-call",
+                    as_type="generation",
+                    model=baseline_model,
+                    input={"user": user_input},
+                    output={"response": baseline_response},
+                    metadata={
+                        "turn_id": turn_id,
+                        "latency_s": round(latency_s, 3),
+                    },
+                )
+            gen.end()
+        except Exception as e:
+            logger.debug("Langfuse record_baseline failed: %s", e)
 
     def record_thought(self, thought: str, direction: str, angle: str | None,
                        count: int, neuromod: dict | None = None) -> None:

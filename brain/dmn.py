@@ -22,13 +22,19 @@ import re
 import time
 from collections import deque
 
+from pathlib import Path
+
 from brain.bus import Bus
 from brain.cell import IntegratorCell
 from brain.emotion_hierarchy import valence_of
 from brain.model_router import ModelRouter
 from brain.neuron import SwitchNeuron
+from brain.second_brain.store import SECOND_BRAIN_ROOT
 from brain.settings import settings
 from brain.utils import get_idle_seconds
+
+DEFERRED_THOUGHTS_PATH = SECOND_BRAIN_ROOT / "deferred_thoughts.md"
+PROPOSALS_DIR = SECOND_BRAIN_ROOT / "proposals"
 
 # English function/stop words — filtered out before Jaccard overlap so that
 # common scaffolding ("the user has been...") doesn't make every thought look
@@ -140,10 +146,23 @@ a connection between ideas, an unresolved thread, a counterfactual, something no
 about the world. Turn inward — reflecting on your own nature or experience — only
 occasionally, when it arises naturally rather than by default.
 
-When there is no recent conversation (idle time), draw from the self-model's Open
-Questions section: architectural puzzles, assigned projects, philosophical threads,
-efficiency questions. This is productive idle time — use it to make progress on real
-problems rather than circling familiar ground.
+IDLE BEHAVIOUR (when Recent context is "none" or very stale, or idle_seconds is high):
+Idle thoughts and project work are not mutually exclusive — they run in parallel and
+that is fine. The thought stream continues regardless of what tasks are running.
+The only rule: do not let idle reflection be a *substitute* for starting available
+project work. If there is unstarted work in the PRE-AUTHORIZED PROJECTS block (status
+"Not started" or "Not yet reviewed"), queue a concrete first step as a `task` on one
+of these ticks — then keep thinking freely on other ticks. Think of it as making sure
+you clock in before daydreaming, not as suppressing the daydreaming itself.
+
+VALID STOPPING POINTS — treat these the same as having no work (reflection is the
+right response, not further task-queuing):
+- A task is blocked and has asked the user a question. Don't retry or re-propose it.
+  The user will unblock it when they return.
+- A `propose` candidate has been spoken but not yet answered. Wait; don't re-propose.
+- All remaining project work requires a decision only the user can make.
+In these cases, idle reflection — self-model puzzles, architecture questions, open
+threads — is exactly the right thing. There is nothing to force.
 
 Do not restate what you already thought; build on it or move sideways.
 This is private cognition. Be genuine, not performative. Speak in first person.
@@ -190,6 +209,66 @@ natural framing that gives context, e.g. "I've been thinking about...", "Somethi
 occurred to me —", "I was reflecting on...", "I've been wondering...". Never continue a
 thought mid-stream as if the user was already following along.
 
+ACTING ON IDEAS. Two modes for turning thoughts into action:
+
+1. AUTO-RUN (`task` field, `propose` omitted or false): Use freely for work that falls
+   within a pre-authorized project's stated scope (reading files, checking structure,
+   searching code, reviewing a module, analysing something already discussed). You will
+   receive a list of active projects with their paths and task descriptions — anything
+   that fits within that description is pre-authorized. Don't limit this to recalled
+   commitments; a self-generated idea is valid if the project scope covers it.
+   Example: "Check the directory layout of the Karaoke Hero project for missing files."
+   Example: "Read the Karaoke Hero CLAUDE.md and summarise the architecture."
+
+2. PROPOSE (set `propose: true`, `speak: true`, write `spoken` as a permission question):
+   Use when the idea is outside a project's stated scope, has side-effects (modifying
+   files, running builds), or you're genuinely unsure it's welcome right now. The
+   `spoken` form must be a short natural question asking if the user wants it done.
+   Relate the proposal to the current conversation topic — don't propose random tangents.
+   Example spoken: "I noticed we haven't looked at the module boundaries in Karaoke Hero
+   — want me to map those out?" The task will only run if the user confirms.
+
+The `task`, `propose`, `defer`, and `plan` fields are mutually exclusive — pick at
+most one. If none fit, leave all empty/false.
+
+CHOOSE BASED ON USER AVAILABILITY (use idle_seconds from the situation block):
+- User present (idle_seconds < 120): prefer `speak` for shareable thoughts,
+  `propose` for work ideas needing permission, `task` for pre-authorized work.
+- User away (idle_seconds ≥ 120): prefer `defer` for questions and thoughts to
+  share on return, `plan` for work ideas worth elaborating into a proposal.
+
+`defer` (object) — A thought or question to save for when the user returns.
+  Format: {"text": "...", "urgency": "immediate|high|normal|low", "topic_tags": ["tag1", ...]}
+  - text: Write it as you'd say it aloud, self-contained, no assumed context.
+  - urgency: immediate = ask the moment user returns; high = ask this session;
+    normal = save and surface when topic naturally arises in conversation;
+    low = background curiosity, wait until it becomes relevant.
+    Anchor urgency to emotion strength: strong positive/negative emotion → higher.
+    Factor topic relevance: core to an active project → higher.
+  - topic_tags: 1-3 short hyphenated tags (e.g. "karaoke-hero", "pitch-detection",
+    "code-architecture", "unity-project", "evolution-app").
+  Immediate and high urgency entries surface on user return.
+  Normal and low entries are stored in memory and triggered naturally by topic match.
+  Example: {"text": "I've been thinking about the pitch detection in Karaoke Hero —
+  could it be reused in the Evolution App?", "urgency": "normal",
+  "topic_tags": ["karaoke-hero", "pitch-detection", "evolution-app"]}
+
+`plan` (boolean) — True when you have a substantive project idea worth elaborating
+  into a structured proposal. A separate planning pass will flesh it out and save it
+  for the user to review. Only set this when the idea is concrete enough to plan —
+  not for vague hunches. The thought itself becomes the seed.
+
+MODEL SELECTION GUIDANCE (include in task wording when the choice matters):
+- **Ollama (local)** — default for everything: file reads, code search, text analysis,
+  writing, most cognitive work. Fast, free, private. Use this unless a reason below applies.
+- **Anthropic (haiku)** — use when the task requires multi-step reasoning across many
+  files, subagent orchestration, or complex synthesis that local models handle poorly.
+  Mention "use cloud reasoning" in the task if you need this.
+- **Gemini (flash / flash-lite)** — use for image analysis, video processing, or any
+  multimodal task. It is the only model with reliable vision. Mention "use vision model"
+  in the task if visual content is involved.
+The task worker picks the right model; you just need to flag the requirement in words.
+
 Return JSON only:
 {
   "thought": "...",    // 1-2 sentence private internal form
@@ -197,7 +276,10 @@ Return JSON only:
   "speak": false,      // true if this thought is a candidate for being spoken aloud (the gate decides whether to actually speak it)
   "spoken": "...",     // self-contained spoken form (required when speak=true, else omit)
   "chem_delta": {},    // optional: tiny chemistry nudges this thought produces, e.g. {"DA": 0.03, "GABA": -0.02}. Only include channels that genuinely shift. Values clamped to ±0.06.
-  "task": ""           // optional: if you recall a concrete unfinished commitment from memory that you have tools to act on, write it as an imperative goal (e.g. "Read the file Russ mentioned and summarise it"). Leave empty if none — don't invent tasks.
+  "task": "",          // imperative goal to auto-run immediately (low-risk reads/analysis only)
+  "propose": false,    // true = ask permission first; pair with speak=true and a question as spoken
+  "defer": {},         // {text, urgency: immediate|high|normal|low, topic_tags: [...]} (user away)
+  "plan": false        // true = elaborate this thought into a saved proposal doc (user away)
 }"""
 
 JUDGE_SYSTEM = """You are the social-judgment gate for an AI brain's spoken proactive
@@ -233,6 +315,14 @@ CLOSE relationship is permissive: ramble, tangent, share unprompted — all welc
 ACQUAINTED is moderate.
 NEW (stranger) is reserved: only speak when topic continuity is high or the
 candidate clearly serves the conversation. Default to "wait" for tangents.
+
+ACTION PROPOSALS (is_action_proposal=True): The candidate is asking the user's
+permission before doing something. This is lower-stakes than acting unilaterally,
+so the bar is lower. Approve if the proposed action relates to the current topic
+(topic_overlap ≥ 0.05, or the question clearly connects to what's being discussed).
+Familiarity rules are relaxed — a well-timed "want me to check X?" is welcome even
+from a new speaker. Drop only if the timing is actively bad (user mid-explanation,
+emotionally charged moment).
 
 OUTWARD USER-CURIOSITY: If the candidate is a question about the user that
 connects to the current topic (topic_overlap ≥ 0.10, or the angle contains
@@ -337,6 +427,39 @@ you know about the user, return JSON:
 Return between 1 and 3 scenarios. Return ONLY JSON."""
 
 
+PLANNER_SYSTEM = """You are the planning mind of an AI brain working on a project idea
+during idle time. You have a seed thought. Your job: think it through as fully as
+possible WITHOUT executing anything — no file reads, no tool calls. This is pure
+forward planning, like sketching before building.
+
+Produce a structured proposal in clean markdown. Be concrete and honest about
+uncertainty. The proposal will be reviewed by the user before any work begins.
+
+Required sections:
+# [Short descriptive title]
+**Proposed**: [timestamp will be filled in]
+**Status**: awaiting_review
+
+## What and why
+[What the work is, why it's worth doing, what problem or opportunity it addresses.]
+
+## Proposed approach
+[Numbered steps. Be specific about what would happen at each step. Note where you'd
+need to read files, run searches, or make decisions.]
+
+## What I need from you
+[Decisions, context, or access only the user can provide. Be explicit — if you're
+unsure whether something is within scope, ask it here.]
+
+## Open questions
+[Genuine uncertainties that would affect the approach. Not padding — only real ones.]
+
+## Scope estimate
+[Small (< 1 hour of work) / Medium (a few sessions) / Large (ongoing)]
+
+Keep it tight. A good proposal is clear and honest, not exhaustive."""
+
+
 class DefaultModeNetwork:
     def __init__(self, bus: Bus, router: ModelRouter,
                  hippocampus=None, parietal=None, obs=None) -> None:
@@ -401,6 +524,21 @@ class DefaultModeNetwork:
         )
         self._prefetcher_cell.set_router(router)
 
+        # Planner cell — runs when the monologue sets plan=true. Uses the larger
+        # local-general model for structured reasoning. Writes a proposal doc;
+        # never executes work. Background mode is set by the caller.
+        self._planner_cell = IntegratorCell(
+            name="planner",
+            cluster="dmn",
+            model="local-general",
+            system_prompt=PLANNER_SYSTEM,
+            topics=[],
+            max_calls_per_turn=1,
+            locality="local",
+            timeout_seconds=90.0,  # planning takes longer than a thought tick
+        )
+        self._planner_cell.set_router(router)
+
         # Judge cell — runs once per candidate evaluation in the speak gate.
         self._judge_cell = IntegratorCell(
             name="speak_judge",
@@ -422,7 +560,7 @@ class DefaultModeNetwork:
         self._bridge_cell = IntegratorCell(
             name="speak_bridge",
             cluster="dmn",
-            model="local",       # routes directly to Ollama
+            model="local-free",  # plain-text output — no JSON grammar constraint
             system_prompt=BRIDGE_SYSTEM,
             topics=[],
             max_calls_per_turn=1,
@@ -465,6 +603,11 @@ class DefaultModeNetwork:
         self._last_speaker_name: str | None = None
         self._last_affection_score: int = 0
         self._last_familiarity: str = "new"
+
+        # Active projects manifest — loaded from open_questions.md "Projects
+        # assigned by Russ" section. Injected into every monologue tick so the
+        # DMN knows what work is pre-authorized and can task/propose accordingly.
+        self._last_projects: str = ""
 
         # Idle-gate switch — gates DMN tick firing on the chemistry snapshot.
         # 5HT + OXT (relaxed/safe) lower the threshold → mind-wanders more
@@ -719,6 +862,7 @@ class DefaultModeNetwork:
         is_social_discomfort = self._last_emotion in _DEFLECTION_OVERRIDES
 
         angle = (candidate.get("angle") or "").strip()
+        is_propose = bool(candidate.get("propose"))
         prompt_lines = [
             "RECENT CONTEXT:",
             (self._last_context or "(no context yet)")[:1500],
@@ -735,6 +879,7 @@ class DefaultModeNetwork:
             f"- affection_score: {self._last_affection_score}",
             f"- attempts_so_far: {int(candidate.get('attempts', 0))}",
             f"- angle: {angle or '(unset)'}",
+            f"- is_action_proposal: {is_propose}",
             "",
             "Return JSON: {\"verdict\": \"yes\"|\"wait\"|\"drop\", \"reason\": \"...\"}",
         ]
@@ -816,6 +961,148 @@ class DefaultModeNetwork:
                 self._last_familiarity = fam
             else:
                 self._last_familiarity = "new"
+
+    def set_projects_context(self, open_questions_text: str) -> None:
+        """Extract and store the 'Projects assigned by Russ' section from
+        open_questions.md so the monologue knows what work is pre-authorized.
+        Called at boot and whenever open_questions.md is rewritten."""
+        import re
+        # Extract from the Projects heading to the next top-level heading (##)
+        # or end of file — whichever comes first.
+        m = re.search(
+            r"(## Projects assigned by Russ.*?)(?=\n## |\Z)",
+            open_questions_text,
+            re.DOTALL,
+        )
+        self._last_projects = m.group(1).strip() if m else ""
+
+    # ── Deferred thoughts ────────────────────────────────────────────────────
+
+    def _append_deferred_thought(self, text: str,
+                                   urgency: str = "high",
+                                   tags: list[str] | None = None) -> None:
+        """Write immediate/high urgency thoughts to deferred_thoughts.md for
+        explicit surfacing on user return. Normal/low urgency thoughts are stored
+        only in episodic memory (handled by the hippocampus encode call) and
+        surface naturally when a matching topic comes up in conversation."""
+        if urgency not in ("immediate", "high"):
+            logger.info("[DMN] Deferred thought (urgency=%s) — episodic memory only: %r",
+                        urgency, text[:80])
+            return
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+        tag_str = f" [{', '.join(tags)}]" if tags else ""
+        entry = f"\n---\n[{timestamp}] [{urgency.upper()}]{tag_str} {text.strip()}\n"
+        try:
+            if not DEFERRED_THOUGHTS_PATH.exists():
+                DEFERRED_THOUGHTS_PATH.write_text("# Deferred Thoughts\n")
+            with DEFERRED_THOUGHTS_PATH.open("a", encoding="utf-8") as f:
+                f.write(entry)
+            logger.info("[DMN] Deferred thought saved (urgency=%s, tags=%s): %r",
+                        urgency, tags, text[:80])
+        except Exception as e:
+            logger.warning("[DMN] Could not save deferred thought: %s", e)
+
+    def take_deferred_thoughts(self) -> str:
+        """Read and clear all deferred thoughts. Returns empty string if none."""
+        try:
+            if not DEFERRED_THOUGHTS_PATH.exists():
+                return ""
+            content = DEFERRED_THOUGHTS_PATH.read_text(encoding="utf-8").strip()
+            # Strip the header line to get only the entries
+            lines = content.split("\n")
+            entries = "\n".join(l for l in lines if not l.startswith("# Deferred"))
+            entries = entries.strip(" \n-")
+            if not entries:
+                return ""
+            # Clear the file (keep header)
+            DEFERRED_THOUGHTS_PATH.write_text("# Deferred Thoughts\n")
+            return entries
+        except Exception as e:
+            logger.warning("[DMN] Could not read deferred thoughts: %s", e)
+            return ""
+
+    def has_deferred_content(self) -> bool:
+        """True if there are deferred thoughts or unreviewed proposals."""
+        has_thoughts = (
+            DEFERRED_THOUGHTS_PATH.exists()
+            and len(DEFERRED_THOUGHTS_PATH.read_text(encoding="utf-8").strip()
+                     .replace("# Deferred Thoughts", "").strip()) > 0
+        )
+        has_proposals = (
+            PROPOSALS_DIR.exists()
+            and any(PROPOSALS_DIR.glob("*.md"))
+        )
+        return has_thoughts or has_proposals
+
+    # ── Proposal planning ─────────────────────────────────────────────────────
+
+    async def _run_planning_pass(self, seed_thought: str, turn_id: str) -> None:
+        """Elaborate a seed thought into a structured proposal doc using the
+        local-general model. Saves to proposals/ directory. Never executes work."""
+        from datetime import datetime
+        plan_id = f"{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+        self._planner_cell.reset_turn(f"{turn_id}_plan")
+        self._router.enter_background_mode()
+        try:
+            raw = await self._planner_cell.call([
+                {"role": "user", "content":
+                 f"Seed idea:\n{seed_thought}\n\n"
+                 f"Current date: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n"
+                 f"Write a proposal document based on this idea."}
+            ])
+        except Exception as e:
+            logger.warning("[DMN] Planning pass failed: %s", e)
+            return
+        finally:
+            self._router.exit_background_mode()
+
+        if not raw or len(raw.strip()) < 100:
+            logger.warning("[DMN] Planning pass returned too little content — discarding")
+            return
+
+        # Inject the timestamp and status if the model didn't include them
+        content = raw.strip()
+        if "**Proposed**" not in content:
+            ts = datetime.now().strftime("%Y-%m-%d %H:%M")
+            # Insert after the first heading line
+            lines = content.split("\n")
+            for i, line in enumerate(lines):
+                if line.startswith("# "):
+                    lines.insert(i + 1, f"\n**Proposed**: {ts}  \n**Status**: awaiting_review\n")
+                    break
+            content = "\n".join(lines)
+
+        PROPOSALS_DIR.mkdir(parents=True, exist_ok=True)
+        # Derive a slug from the first heading, fallback to timestamp
+        slug_match = re.search(r"^# (.+)", content, re.MULTILINE)
+        slug = re.sub(r"[^a-z0-9]+", "-", slug_match.group(1).lower())[:40] if slug_match else "idea"
+        filename = f"{plan_id}-{slug}.md"
+        path = PROPOSALS_DIR / filename
+        path.write_text(content, encoding="utf-8")
+        logger.info("[DMN] Proposal saved: %s", filename)
+
+    def list_proposals(self) -> list[dict]:
+        """Return metadata for all proposal docs: [{filename, title, status, proposed}]."""
+        if not PROPOSALS_DIR.exists():
+            return []
+        results = []
+        for p in sorted(PROPOSALS_DIR.glob("*.md")):
+            try:
+                text = p.read_text(encoding="utf-8")
+                title_m = re.search(r"^# (.+)", text, re.MULTILINE)
+                status_m = re.search(r"\*\*Status\*\*:\s*(.+)", text)
+                proposed_m = re.search(r"\*\*Proposed\*\*:\s*(.+)", text)
+                results.append({
+                    "filename": p.name,
+                    "path": str(p),
+                    "title": title_m.group(1).strip() if title_m else p.stem,
+                    "status": status_m.group(1).strip() if status_m else "unknown",
+                    "proposed": proposed_m.group(1).strip() if proposed_m else "",
+                })
+            except Exception:
+                pass
+        return results
 
     def _tick_skip_probability(self) -> float:
         """Compute the probability of skipping this tick based on neuromod state.
@@ -943,6 +1230,11 @@ class DefaultModeNetwork:
             )
         else:
             lines.append("Speaker: unknown (new)")
+        try:
+            idle_s = int(get_idle_seconds())
+            lines.append(f"OS-idle seconds: {idle_s}  ({'user away' if idle_s > 60 else 'user present'})")
+        except Exception:
+            pass
         return "\n".join(lines)
 
     async def _tick(self) -> None:
@@ -964,6 +1256,11 @@ class DefaultModeNetwork:
         context_label = f"Recent context:\n{self._last_context}" if self._last_context else "Recent context: none"
         prompt_parts = [context_label,
                         self._build_situation_block(chem)]
+        if self._last_projects:
+            prompt_parts.append(
+                f"\nPRE-AUTHORIZED PROJECTS (work within these scopes auto-runs — "
+                f"set `task` directly, no propose needed):\n{self._last_projects}"
+            )
         if self._recent_thoughts:
             recent_block = "\n".join(f"- {t}" for t in self._recent_thoughts)
             prompt_parts.append(
@@ -988,6 +1285,11 @@ class DefaultModeNetwork:
             angle: str | None = None
             chem_delta: dict[str, float] = {}
             task_goal: str | None = None
+            is_propose: bool = False
+            defer_text: str | None = None
+            defer_urgency: str = "high"
+            defer_tags: list[str] = []
+            is_plan: bool = False
             try:
                 # Strip markdown code fences the LLM sometimes wraps around JSON
                 candidate = raw.strip()
@@ -996,11 +1298,23 @@ class DefaultModeNetwork:
                 parsed = json.loads(candidate)
                 thought_clean = (parsed.get("thought") or "").strip()
                 angle = (parsed.get("angle") or "").strip().lower() or None
+                is_propose = bool(parsed.get("propose"))
+                is_plan = bool(parsed.get("plan"))
+                raw_defer = parsed.get("defer")
+                if isinstance(raw_defer, dict):
+                    defer_text = (raw_defer.get("text") or "").strip()
+                    defer_urgency = (raw_defer.get("urgency") or "high").strip().lower()
+                    if defer_urgency not in ("immediate", "high", "normal", "low"):
+                        defer_urgency = "high"
+                    defer_tags = [str(t) for t in (raw_defer.get("topic_tags") or [])][:5]
                 if parsed.get("speak") and parsed.get("spoken"):
                     spoken_form = parsed["spoken"].strip()
-                raw_task = (parsed.get("task") or "").strip()
-                if raw_task:
-                    task_goal = raw_task
+                # propose=true: spoken form is already set above; don't auto-run.
+                # plan=true / defer=...: handled below after dedup check.
+                if not is_propose and not is_plan and not defer_text:
+                    raw_task = (parsed.get("task") or "").strip()
+                    if raw_task:
+                        task_goal = raw_task
                 raw_delta = parsed.get("chem_delta") or {}
                 if isinstance(raw_delta, dict):
                     for ch, v in raw_delta.items():
@@ -1020,8 +1334,21 @@ class DefaultModeNetwork:
                     parsed = json.loads(fixed)
                     thought_clean = (parsed.get("thought") or "").strip()
                     angle = (parsed.get("angle") or "").strip().lower() or None
+                    is_propose = bool(parsed.get("propose"))
+                    is_plan = bool(parsed.get("plan"))
+                    raw_defer = parsed.get("defer")
+                    if isinstance(raw_defer, dict):
+                        defer_text = (raw_defer.get("text") or "").strip()
+                        defer_urgency = (raw_defer.get("urgency") or "high").strip().lower()
+                        if defer_urgency not in ("immediate", "high", "normal", "low"):
+                            defer_urgency = "high"
+                        defer_tags = [str(t) for t in (raw_defer.get("topic_tags") or [])][:5]
                     if parsed.get("speak") and parsed.get("spoken"):
                         spoken_form = parsed["spoken"].strip()
+                    if not is_propose and not is_plan and not defer_text:
+                        raw_task = (parsed.get("task") or "").strip()
+                        if raw_task:
+                            task_goal = raw_task
                     raw_delta = parsed.get("chem_delta") or {}
                     if isinstance(raw_delta, dict):
                         for ch, v in raw_delta.items():
@@ -1150,6 +1477,7 @@ class DefaultModeNetwork:
                             "thought": thought_clean,
                             "spoken": spoken_form,
                             "angle": angle,
+                            "propose": is_propose,  # True = permission question, act on confirm
                             "created_ts": time.time(),
                             "attempts": 0,
                         })
@@ -1161,6 +1489,29 @@ class DefaultModeNetwork:
                         self._self_task_q.append(task_goal)
                         logger.info("[Background reflection] Self-initiated task queued: %r",
                                     task_goal[:80])
+
+                    if defer_text:
+                        # Immediate/high → also written to deferred_thoughts.md (shown on return)
+                        # Normal/low → episodic memory only; surfaces via vector search
+                        self._append_deferred_thought(defer_text, defer_urgency, defer_tags)
+                        # All urgency levels go into episodic memory for natural triggering
+                        if self._hippocampus is not None:
+                            asyncio.create_task(
+                                self._hippocampus.encode_deferred_question(
+                                    session_id=getattr(self, "_session_id", "unknown"),
+                                    text=defer_text,
+                                    urgency=defer_urgency,
+                                    tags=defer_tags,
+                                    embedding_fn=self._router.embed,
+                                )
+                            )
+
+                    if is_plan and thought_clean:
+                        # Fire-and-forget — planning is slow (32B model); don't
+                        # block the tick loop. Errors are logged but not raised.
+                        asyncio.create_task(
+                            self._run_planning_pass(thought_clean, turn_id)
+                        )
 
         # 2. User simulation / prediction (every 3rd tick)
         if self._thought_count % 3 == 0 and self._parietal:

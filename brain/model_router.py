@@ -17,6 +17,7 @@ MODEL_MAP = {
     "flash": "gemini-2.5-flash",
     "flash-lite": "gemini-2.5-flash-lite",
     "local": "local",
+    "local-free": "local-free",       # same model as local, plain-text output (no JSON grammar)
     "local-code": "local-code",       # routes to OLLAMA_CODE_MODEL (qwen2.5-coder:14b)
     "local-general": "local-general", # routes to OLLAMA_GENERAL_MODEL (qwen2.5:32b)
 }
@@ -40,6 +41,56 @@ class ModelRouter:
         self._obs = obs
         # Local-first embeddings; flip to "google" if Ollama is unreachable.
         self._embed_backend = "ollama"
+
+        # ── Resource policy ───────────────────────────────────────────────────
+        # Background mode: set True while running autonomous/self-initiated work.
+        # Cloud calls in this mode are budgeted and capped to prevent bill creep.
+        self._bg_mode: bool = False
+        # Session-level token counter for background cloud usage (in + out combined).
+        self._bg_cloud_tokens_used: int = 0
+        # Lazily-created semaphore; limits concurrent Ollama calls to protect device.
+        self._local_semaphore: "asyncio.Semaphore | None" = None
+
+    # ── Background mode controls ──────────────────────────────────────────────
+
+    def enter_background_mode(self) -> None:
+        """Mark subsequent calls as background/autonomous. Cloud calls will be
+        budgeted and capped. Always pair with exit_background_mode() in a
+        try/finally block."""
+        self._bg_mode = True
+
+    def exit_background_mode(self) -> None:
+        """Return to interactive mode. Call in a finally block."""
+        self._bg_mode = False
+
+    @property
+    def _bg_mode(self) -> bool:  # type: ignore[override]
+        return getattr(self, "_bg_mode_val", False)
+
+    @_bg_mode.setter
+    def _bg_mode(self, v: bool) -> None:
+        self._bg_mode_val = v
+
+    @property
+    def bg_cloud_tokens_used(self) -> int:
+        """Total input+output tokens spent on background cloud calls this session."""
+        return self._bg_cloud_tokens_used
+
+    @property
+    def bg_cloud_budget_remaining(self) -> int:
+        """How many background cloud tokens are left before fallback to local."""
+        from brain.settings import settings as _settings; _s = _settings.get
+        budget = int(_s("bg_cloud_token_budget") or 50_000)
+        return max(0, budget - self._bg_cloud_tokens_used)
+
+    def _get_local_semaphore(self) -> "asyncio.Semaphore":
+        """Lazily-created concurrency limiter for Ollama calls."""
+        if self._local_semaphore is None:
+            import asyncio
+            from brain.settings import settings as _settings; _s = _settings.get
+            limit = int(_s("local_max_concurrent") or 3)
+            self._local_semaphore = asyncio.Semaphore(limit)
+        return self._local_semaphore
 
     def _get_anthropic(self):
         if self._anthropic_client is None:
@@ -66,6 +117,9 @@ class ModelRouter:
                    *, cluster: str = "", cell: str = "", turn_id: str = "",
                    locality: str = "either", max_tokens: int = 1024,
                    skills: list[str] | None = None) -> str:
+        import asyncio
+        from brain.settings import settings as _settings; _s = _settings.get
+
         model_id = MODEL_MAP.get(model_key, model_key)
 
         # Locality enforcement: local cells must never dispatch to cloud APIs
@@ -74,18 +128,76 @@ class ModelRouter:
             logger.warning(
                 "[Security] Memory cell %s/%s is restricted to local-only inference but model '%s' "
                 "routes to a cloud API — redirecting to Ollama. If Ollama isn't running this call "
-                "will fail. Fix: run 'ollama serve' and 'ollama pull qwen2.5:7b'.",
+                "will fail. Fix: run 'ollama serve' and 'ollama pull qwen2.5:14b'.",
                 cluster, cell, model_id,
             )
-            model_key = model_key if model_key in ("local", "local-code", "local-general") else "local"
+            model_key = model_key if model_key in ("local", "local-free", "local-code", "local-general") else "local"
             model_id = model_key
+            _is_cloud = False
+
+        # Background mode: apply cloud budget + per-call caps to protect against
+        # runaway spend on autonomous work.
+        if self._bg_mode and _is_cloud:
+            budget = int(_s("bg_cloud_token_budget") or 50_000)
+            if self._bg_cloud_tokens_used >= budget:
+                logger.warning(
+                    "[Resource] Background cloud budget exhausted (%d/%d tokens used) "
+                    "— routing %s/%s to local for this call.",
+                    self._bg_cloud_tokens_used, budget, cluster, cell,
+                )
+                model_key = "local"
+                model_id = "local"
+                _is_cloud = False
+            else:
+                # Cap output tokens for background calls
+                call_cap = int(_s("bg_cloud_max_tokens_per_call") or 512)
+                if max_tokens > call_cap:
+                    logger.debug(
+                        "[Resource] Background call %s/%s: capping max_tokens %d→%d",
+                        cluster, cell, max_tokens, call_cap,
+                    )
+                    max_tokens = call_cap
 
         start = time.time()
+        bg_timeout = float(_s("bg_cloud_timeout_s") or 20.0) if (self._bg_mode and _is_cloud) else None
+
         if model_id.startswith("claude"):
-            text, in_tok, out_tok = await self._call_anthropic(model_id, system_prompt, messages, max_tokens)
+            try:
+                coro = self._call_anthropic(model_id, system_prompt, messages, max_tokens)
+                if bg_timeout:
+                    text, in_tok, out_tok = await asyncio.wait_for(coro, timeout=bg_timeout)
+                else:
+                    text, in_tok, out_tok = await coro
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "[Resource] Background cloud call %s/%s timed out after %.0fs — falling back to local.",
+                    cluster, cell, bg_timeout,
+                )
+                text, in_tok, out_tok = await self._call_local(system_prompt, messages, max_tokens)
+            if self._bg_mode:
+                self._bg_cloud_tokens_used += in_tok + out_tok
+                logger.debug("[Resource] BG cloud tokens used: %d/%d (this call: %d+%d)",
+                             self._bg_cloud_tokens_used,
+                             int(_s("bg_cloud_token_budget") or 50_000), in_tok, out_tok)
         elif model_id.startswith("gemini"):
-            text, in_tok, out_tok = await self._call_google(model_id, system_prompt, messages, max_tokens)
-        elif model_id in ("local", "local-code", "local-general"):
+            try:
+                coro = self._call_google(model_id, system_prompt, messages, max_tokens)
+                if bg_timeout:
+                    text, in_tok, out_tok = await asyncio.wait_for(coro, timeout=bg_timeout)
+                else:
+                    text, in_tok, out_tok = await coro
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "[Resource] Background cloud call %s/%s timed out after %.0fs — falling back to local.",
+                    cluster, cell, bg_timeout,
+                )
+                text, in_tok, out_tok = await self._call_local(system_prompt, messages, max_tokens)
+            if self._bg_mode:
+                self._bg_cloud_tokens_used += in_tok + out_tok
+                logger.debug("[Resource] BG cloud tokens used: %d/%d (this call: %d+%d)",
+                             self._bg_cloud_tokens_used,
+                             int(_s("bg_cloud_token_budget") or 50_000), in_tok, out_tok)
+        elif model_id in ("local", "local-free", "local-code", "local-general"):
             if skills:
                 from brain.skill_loader import SkillLoader
                 skill_block = SkillLoader.load_many(skills)
@@ -179,19 +291,49 @@ class ModelRouter:
                           messages: list[dict], max_tokens: int = 1024,
                           local_variant: str = "local") -> tuple[str, int, int]:
         flat_messages = [{"role": m["role"], "content": self._flatten_content(m["content"])} for m in messages]
+        base_model = os.environ.get("OLLAMA_MODEL", "qwen2.5:14b")
         if local_variant == "local-code":
             model_name = OLLAMA_CODE_MODEL
         elif local_variant == "local-general":
             model_name = OLLAMA_GENERAL_MODEL
         else:
-            model_name = os.environ.get("OLLAMA_MODEL", "qwen2.5:7b")
-        payload = {
+            # local and local-free both use the base model
+            model_name = base_model
+
+        options: dict = {"num_predict": max_tokens}
+        use_json_format = False
+
+        if local_variant == "local-code":
+            # Tool planner — deterministic; large context for system prompt + skill blocks
+            options["temperature"] = 0.1
+            options["num_ctx"] = 8192
+            use_json_format = True
+        elif local_variant == "local-general":
+            # Sleep consolidation (all three cells return JSON)
+            options["temperature"] = 0.3
+            options["num_ctx"] = 8192
+            use_json_format = True
+        elif local_variant == "local-free":
+            # Plain-text output only (speak_bridge rewriter) — needs creative latitude
+            options["temperature"] = 0.7
+            options["num_ctx"] = 2048
+        else:
+            # local — hippocampus + all DMN JSON cells; format:json ensures valid structure
+            # while temp=0.3 keeps content focused without killing variety in thought fields
+            options["temperature"] = 0.3
+            options["num_ctx"] = 4096
+            use_json_format = True
+
+        payload: dict = {
             "model": model_name,
             "messages": [{"role": "system", "content": system_prompt}] + flat_messages,
             "stream": False,
-            "options": {"num_predict": max_tokens},
+            "options": options,
         }
-        r = await self._get_http().post(f"{OLLAMA_HOST}/api/chat", json=payload, timeout=60)
+        if use_json_format:
+            payload["format"] = "json"
+        async with self._get_local_semaphore():
+            r = await self._get_http().post(f"{OLLAMA_HOST}/api/chat", json=payload, timeout=60)
         r.raise_for_status()
         data = r.json()
         in_tok = int(data.get("prompt_eval_count", 0))

@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 TASK_QUEUE_PATH = SECOND_BRAIN_ROOT / "task_queue.json"
 
-Status = Literal["pending", "running", "completed", "failed"]
+Status = Literal["pending", "running", "completed", "failed", "blocked"]
 Source = Literal["user", "self", "recovery"]
 
 # Cap total stored tasks (completed + failed entries are trimmed when over limit)
@@ -101,6 +101,7 @@ class PersistentTaskQueue:
         when the brain last shut down, re-marking them as pending with
         priority 0 and source 'recovery'.
         """
+        # Blocked tasks are intentionally excluded — they need user input, not retry.
         interrupted = [t for t in self._tasks if t.status in ("pending", "running")]
         if not interrupted:
             return []
@@ -172,6 +173,37 @@ class PersistentTaskQueue:
                 logger.info("[TaskQueue] Task [%s] → %s", task_id, t.status)
                 return
         logger.warning("[TaskQueue] mark_done: task %r not found", task_id)
+
+    def mark_blocked(self, task_id: str, reason: str = "") -> None:
+        """Park a task as blocked — waiting for user input before it can continue.
+        Blocked tasks are preserved (not failed) and excluded from has_pending()
+        so the brain treats them as idle, not as work to retry."""
+        for t in self._tasks:
+            if t.id == task_id:
+                t.status = "blocked"
+                # Store the blocking question/reason in the goal so it's visible
+                # in the task list and can be shown to the user.
+                if reason and reason not in t.goal:
+                    t.goal = f"{t.goal}\n[BLOCKED: {reason}]"
+                self._save()
+                logger.info("[TaskQueue] Task [%s] blocked: %s", task_id, reason[:80])
+                return
+        logger.warning("[TaskQueue] mark_blocked: task %r not found", task_id)
+
+    def unblock(self, task_id: str) -> bool:
+        """Re-queue a blocked task as pending so it runs on the next idle cycle.
+        Returns True if the task was found and unblocked."""
+        for t in self._tasks:
+            if t.id == task_id and t.status == "blocked":
+                # Strip the [BLOCKED: ...] annotation before re-running
+                import re
+                t.goal = re.sub(r"\n\[BLOCKED:.*?\]$", "", t.goal, flags=re.DOTALL).strip()
+                t.status = "pending"
+                t.started_at = None
+                self._save()
+                logger.info("[TaskQueue] Task [%s] unblocked and re-queued", task_id)
+                return True
+        return False
 
     # ── Introspection ─────────────────────────────────────────────────────────
 

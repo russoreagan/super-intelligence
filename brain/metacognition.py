@@ -342,10 +342,14 @@ class MetacognitionCell:
         # Publish raw stats to meta.stats
         await self._bus.publish_dict("meta.stats", stats, source="metacognition")
 
-        # LLM reflection
+        # LLM reflection — runs under background resource policy (budgeted cloud)
         self._reflector.reset_turn(turn_id)
         prompt = f"Recent processing statistics:\n{json.dumps(stats, indent=2)}"
-        raw = await self._reflector.call([{"role": "user", "content": prompt}])
+        self._router.enter_background_mode()
+        try:
+            raw = await self._reflector.call([{"role": "user", "content": prompt}])
+        finally:
+            self._router.exit_background_mode()
 
         reflection: dict = safe_json_parse(raw) or {}
 

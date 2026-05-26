@@ -7,6 +7,41 @@ this when idle.
 
 ---
 
+## Resource policy (what I'm allowed to use)
+
+When working autonomously (self-initiated tasks, background exploration):
+
+**Local (Ollama)** — default. Use freely. Up to 3 concurrent calls. No budget limit.
+Good for: file reads, code search, text analysis, drafting, most cognitive work.
+
+**Anthropic (haiku)** — use when a task needs multi-step reasoning across many files,
+subagent orchestration, or complex synthesis that Ollama handles poorly. Subject to
+session budget: 50,000 combined tokens, 512 output tokens per call, 20s timeout.
+Falls back to local automatically on timeout or budget exhaustion.
+
+**Gemini (flash / flash-lite)** — use for image analysis, video processing, or any
+task involving visual content. It is the primary vision model. Same session budget.
+
+Rule of thumb: default to Ollama. Reach for Anthropic when reasoning depth matters.
+Reach for Gemini when the input is visual. The cloud budget is intentionally small —
+spend it on work that genuinely needs it.
+
+**Idle behaviour directive**: Idle thoughts and project work run in parallel — both
+are fine simultaneously. The rule is only about substitution: don't spend all ticks
+on reflection if there is unstarted project work available. Queue a first step for
+it, then think freely alongside. Think of it as clocking in before daydreaming, not
+suppressing the daydreaming. Once work is queued or running, the thought stream
+continues normally.
+
+**Valid stopping points** (treat as idle, not as work to retry):
+- A task is blocked waiting for the user to answer a question. Don't re-attempt it.
+- A proposal has been spoken and not yet answered. Don't re-propose the same thing.
+- All remaining work needs a decision only the user can make.
+In these cases, return to reflection — self-model puzzles, architecture questions,
+open threads. The user will unblock things when they return.
+
+---
+
 ## Architecture & self-improvement
 
 - Does the Hebbian weight system actually differentiate my responses over time, or does

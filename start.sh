@@ -26,7 +26,7 @@ err()     { echo -e "${RED}[brain]${NC} $*" >&2; }
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BRAIN_PORT="${BRAIN_PORT:-8765}"
 OLLAMA_PORT="${OLLAMA_PORT:-11434}"
-OLLAMA_MODELS=("qwen2.5:7b" "nomic-embed-text")
+OLLAMA_MODELS=("qwen2.5:14b" "qwen2.5-coder:14b" "nomic-embed-text")
 
 # FEATURES: which optional subsystems to launch.
 #   full     — UI + voice + ears + DMN + metacognition + motor (default)
@@ -98,7 +98,7 @@ if curl -sf "http://localhost:${OLLAMA_PORT}/api/tags" &>/dev/null; then
     ok "Ollama is already running."
 else
     info "Starting Ollama in the background..."
-    ollama serve &>/tmp/ollama.log &
+    OLLAMA_NUM_PARALLEL="${OLLAMA_NUM_PARALLEL:-2}" ollama serve &>/tmp/ollama.log &
     OLLAMA_STARTED=true
 
     info "Waiting for Ollama to be ready..."

@@ -130,23 +130,53 @@ class EpisodicStore:
             return []
 
     def recall(self, query_vector: list[float], limit: int = 5,
-               topic_filter: str | None = None) -> list[dict]:
+               exclude_tags: list[str] | None = None) -> list[dict]:
+        """Vector search over all episodes, optionally excluding those that
+        contain any of the given tags. Used by the main recall path so that
+        deferred questions (which have their own search path) don't compete
+        with conversation memories for top-k slots."""
         if not self._ensure_ready():
             return []
         try:
             q = self._table.search(query_vector).limit(limit)
+            if exclude_tags:
+                for tag in exclude_tags:
+                    q = q.where(f"topic_tags NOT LIKE '%{tag}%'")
             results = q.to_list()
-            episodes = []
-            for r in results:
-                ep = dict(r)
-                ep["topic_tags"] = json.loads(ep.get("topic_tags", "[]"))
-                ep["entities"] = json.loads(ep.get("entities", "[]"))
-                ep["neuromod_snapshot"] = json.loads(ep.get("neuromod_snapshot", "{}"))
-                episodes.append(ep)
-            return episodes
+            return self._parse_rows(results)
         except Exception as e:
             logger.error("[Episode DB] Memory search failed: %s", e)
             return []
+
+    def recall_by_tag(self, query_vector: list[float], tag: str,
+                      limit: int = 3) -> list[dict]:
+        """Vector search scoped to episodes that contain the given tag.
+        Used to give deferred questions their own retrieval budget, separate
+        from conversation memories."""
+        if not self._ensure_ready():
+            return []
+        try:
+            results = (
+                self._table
+                .search(query_vector)
+                .where(f"topic_tags LIKE '%{tag}%'")
+                .limit(limit)
+                .to_list()
+            )
+            return self._parse_rows(results)
+        except Exception as e:
+            logger.error("[Episode DB] Tag-scoped recall failed (tag=%r): %s", tag, e)
+            return []
+
+    def _parse_rows(self, rows: list[dict]) -> list[dict]:
+        episodes = []
+        for r in rows:
+            ep = dict(r)
+            ep["topic_tags"] = json.loads(ep.get("topic_tags", "[]"))
+            ep["entities"] = json.loads(ep.get("entities", "[]"))
+            ep["neuromod_snapshot"] = json.loads(ep.get("neuromod_snapshot", "{}"))
+            episodes.append(ep)
+        return episodes
 
     _SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 

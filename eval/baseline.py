@@ -16,6 +16,7 @@ import time
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from brain.observability.timeline import ObservabilityLayer
     from eval.scorer import PostHocScorer
     from eval.turn_logger import EvalLogger
 
@@ -27,9 +28,10 @@ BASELINE_SYSTEM = (
 
 
 class BaselineRunner:
-    def __init__(self, eval_logger: EvalLogger) -> None:
+    def __init__(self, eval_logger: EvalLogger, obs: ObservabilityLayer | None = None) -> None:
         from brain.model_router import ModelRouter
         self._eval_logger = eval_logger
+        self._obs = obs
         self._router = ModelRouter(obs=None)   # dedicated instance — no shared state
         self._turn_counter = 0
         self._sample_every = int(os.environ.get("BRAIN_EVAL_SAMPLE_EVERY", "20"))
@@ -84,6 +86,14 @@ class BaselineRunner:
             baseline_model="haiku",
             baseline_latency_s=round(latency, 3),
         )
+        if self._obs:
+            self._obs.record_baseline(
+                turn_id=turn_id,
+                user_input=user_input,
+                baseline_response=baseline_response,
+                baseline_model="haiku",
+                latency_s=latency,
+            )
         logger.debug("BaselineRunner: patch written for turn %s (%.2fs)", turn_id, latency)
 
         # Hand off to post-hoc scorer (it needs the baseline response)

@@ -178,22 +178,46 @@ class HippocampusCluster:
 
         schema_context = "\n".join(f"[{f}] {line}" for f, line in schema_hits[:6])
 
-        # Episodic recall (vector search if embedding available)
+        # Episodic recall — two parallel searches so deferred questions don't
+        # compete with conversation memories for top-k slots:
+        #   1. Main search: conversation memories only (excludes deferred_question)
+        #   2. Deferred search: deferred_question episodes only, own budget of 2
         episodes = []
+        deferred_episodes = []
         if embedding_fn and query:
             try:
                 vec = await embedding_fn(query)
-                episodes = self._episodic.recall(vec, limit=max(2, episode_k))
+                episodes = self._episodic.recall(
+                    vec, limit=max(2, episode_k),
+                    exclude_tags=["deferred_question"],
+                )
+                deferred_episodes = self._episodic.recall_by_tag(
+                    vec, tag="deferred_question", limit=2,
+                )
             except Exception as e:
                 logger.warning("[Memory] Episode search failed — response won't include relevant past memories: %s", e)
 
         episode_text = ""
         if episodes:
+            episode_text = "\n".join(
+                f"[{ep.get('ts', 0):.0f}] {ep.get('user_input', '')} → "
+                f"{ep.get('entity_response', '')[:200]}"
+                for ep in episodes
+            )
+        if deferred_episodes:
             parts = []
-            for ep in episodes:
-                parts.append(f"[{ep.get('ts', 0):.0f}] {ep.get('user_input', '')} → "
-                              f"{ep.get('entity_response', '')[:200]}")
-            episode_text = "\n".join(parts)
+            for ep in deferred_episodes:
+                response = ep.get("entity_response", "")
+                question_text = response.removeprefix("[PENDING QUESTION] ").strip()
+                if question_text:
+                    parts.append(f"- {question_text}")
+            if parts:
+                if episode_text:
+                    episode_text += "\n"
+                episode_text += (
+                    "\nPENDING QUESTIONS (from idle reflection — now relevant):\n"
+                    + "\n".join(parts)
+                )
 
         result = {
             "schema": schema_context,
@@ -402,6 +426,58 @@ class HippocampusCluster:
                         overlap_with_user_input, thought[:80])
         except Exception as e:
             logger.warning("[Memory] Idle-thought encoding failed: %s", e)
+
+    async def encode_deferred_question(self, session_id: str, text: str,
+                                        urgency: str = "high",
+                                        tags: list[str] | None = None,
+                                        embedding_fn=None) -> None:
+        """Encode a deferred question or idle thought into episodic memory so
+        it can surface naturally when a relevant topic arises later.
+
+        All urgency levels are stored here. Immediate/high urgency entries are
+        ALSO written to deferred_thoughts.md (handled by the DMN caller) for
+        explicit surfacing on user return. Normal/low urgency entries rely
+        entirely on vector search to resurface — the brain "remembers" the
+        question when the topic comes up again, the way a person might.
+
+        Stored as an episode with topic_tags=["deferred_question", urgency, ...tags]
+        and entity_response prefixed with "[PENDING QUESTION]" so the recall
+        pipeline can present them distinctly from conversation memories.
+        """
+        if not text.strip():
+            return
+        # Map urgency to surprise_score so high-priority questions get stronger
+        # memory signal and surface more readily in vector recall.
+        _urgency_surprise = {"immediate": 0.8, "high": 0.6, "normal": 0.4, "low": 0.2}
+        surprise = _urgency_surprise.get(urgency, 0.5)
+        topic_tags = ["deferred_question", urgency] + [t for t in (tags or []) if t]
+        try:
+            vec = None
+            if embedding_fn:
+                try:
+                    vec = await embedding_fn(text)
+                except Exception as e:
+                    logger.debug("[Memory] Deferred-question embed failed: %s", e)
+            turn_id = f"defer_{int(time.time())}_{uuid.uuid4().hex[:6]}"
+            episode = Episode(
+                session_id=session_id,
+                turn_id=turn_id,
+                ts=time.time(),
+                user_input="(idle — deferred question)",
+                entity_response=f"[PENDING QUESTION] {text}",
+                topic_tags=topic_tags,
+                emotion_state="curious",
+                user_emotion="unknown",
+                entities=[],
+                neuromod_snapshot={"DA": 0.5, "GABA": 0.1, "ACh": 0.4, "Glu": 0.3},
+                surprise_score=surprise,
+                vector=vec,
+            )
+            self._episodic.encode(episode)
+            logger.info("[Memory] Deferred question encoded (urgency=%s, tags=%s): %r",
+                        urgency, tags, text[:80])
+        except Exception as e:
+            logger.warning("[Memory] Deferred-question encoding failed: %s", e)
 
     async def _store_episode(self, session_id: str, turn_id: str,
                               user_input: str, entity_response: str,
