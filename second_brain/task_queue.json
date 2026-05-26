@@ -35,12 +35,100 @@
   {
     "id": "672a7027",
     "goal": "i should already have most of the main components there. im not trying to procedurally generate songs i wouldnt say. its not expected to do it in realtime or anything, i just want to be able to use the tools i have to capture audio from online, then build the note map, get lyrics, and so on so it can be added to the library.",
-    "status": "pending",
+    "status": "completed",
+    "source": "recovery",
+    "priority": 0,
+    "created_at": 1779741560.685441,
+    "started_at": 1779746596.165038,
+    "completed_at": 1779746696.0531049,
+    "success": true
+  },
+  {
+    "id": "447a1ea7",
+    "goal": "i don't want you capturing audio from an online source",
+    "status": "completed",
     "source": "user",
     "priority": 1,
-    "created_at": 1779741560.685441,
-    "started_at": null,
-    "completed_at": null,
-    "success": null
+    "created_at": 1779746734.068047,
+    "started_at": 1779746766.843033,
+    "completed_at": 1779746856.791214,
+    "success": true
+  },
+  {
+    "id": "e356d9c0",
+    "goal": "i did find a standardized format online somewhere and that should be available in the project somewhere. see if you can find that. i had to modify it slightly i believe, but mostly its following the same format that rock band uses",
+    "status": "completed",
+    "source": "user",
+    "priority": 1,
+    "created_at": 1779746884.460713,
+    "started_at": 1779746903.511541,
+    "completed_at": 1779746995.04787,
+    "success": true
+  },
+  {
+    "id": "58ee4547",
+    "goal": "Search the format documentation for references to 'stem separator' and 'note chart' terminology",
+    "status": "completed",
+    "source": "user",
+    "priority": 1,
+    "created_at": 1779747059.755338,
+    "started_at": 1779747084.9058712,
+    "completed_at": 1779747153.201011,
+    "success": true
+  },
+  {
+    "id": "b0746f8c",
+    "goal": "great so those are areas you can dig into to understand the current implementation. the note chart isnt working very well right now. the stem separator is working ok i think. let's focus on the note chart for now and see if you can find any ways to improve it.",
+    "status": "completed",
+    "source": "user",
+    "priority": 1,
+    "created_at": 1779747262.7249951,
+    "started_at": 1779747295.87988,
+    "completed_at": 1779747377.5642529,
+    "success": true
+  },
+  {
+    "id": "f7738b4a",
+    "goal": "try the web search again",
+    "status": "completed",
+    "source": "recovery",
+    "priority": 0,
+    "created_at": 1779747801.675688,
+    "started_at": 1779747833.999715,
+    "completed_at": 1779747912.544894,
+    "success": true
+  },
+  {
+    "id": "e5145542",
+    "goal": "found some of the most critical files i'll paste them in here in a minute",
+    "status": "failed",
+    "source": "user",
+    "priority": 1,
+    "created_at": 1779747908.956588,
+    "started_at": 1779747934.587331,
+    "completed_at": 1779748007.0916119,
+    "success": false
+  },
+  {
+    "id": "3d53498a",
+    "goal": "Examine the files in the pipeline (chart_writer.py, lane_mapper.py, guitar.py, bass.py, drums.py) and Unity (ChartParser.cs, ChartData.cs, GuitarBassHighway.cs, NoteHighway.cs) to identify where quality is breaking down in transcription, lane mapping, or chart parsing/rendering.",
+    "status": "failed",
+    "source": "user",
+    "priority": 1,
+    "created_at": 1779747937.382118,
+    "started_at": 1779748015.22672,
+    "completed_at": 1779748094.933169,
+    "success": false
+  },
+  {
+    "id": "340767c4",
+    "goal": "List the contents of the Karaoke Hero directory and find the pipeline and Unity chart files.",
+    "status": "failed",
+    "source": "user",
+    "priority": 1,
+    "created_at": 1779748328.787551,
+    "started_at": 1779748352.2562408,
+    "completed_at": 1779748425.43218,
+    "success": false
   }
 ]
