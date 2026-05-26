@@ -31,6 +31,8 @@ DEFAULTS: dict[str, float | int] = {
     "hostility_GABA_threshold_med":  0.20,
     "hostility_GABA_increment_med":  0.05,
     "hostile_intent_Glu_bonus":    0.15,
+    # 1 = AI can deliberately set its own mood via set_mood tool; 0 = disabled
+    "emotional_expression_enabled": 1,
 
     # ── Section 2: Neuromodulator Homeostasis ─────────────────────────────────
     "valence_to_DA_decay":         0.85,

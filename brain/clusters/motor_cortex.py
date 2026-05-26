@@ -861,11 +861,59 @@ class MotorCortexCluster:
                     args.get("score_name", ""),
                     args.get("session_id", ""),
                 )
+            elif tool == "set_mood":
+                return await self._set_mood(args.get("emotion", ""))
             else:
                 return f"[error] Unknown tool: {tool}"
         except Exception as e:
             logger.error("[MotorCortex] Tool %s failed: %s", tool, e)
             return f"[error] {tool} failed: {e}"
+
+    # ── Deliberate mood control (audio + visual only) ─────────────────────────
+
+    async def _set_mood(self, emotion: str) -> str:
+        """Signal a deliberate emotional performance for this turn.
+
+        PURELY cosmetic/audio — does NOT write to neuromod or hormonal channels
+        and does not affect any cognitive system.  Two effects only:
+          1. Publishes meta.deliberate_emotion so PNS uses the matching
+             ElevenLabs audio tag for this turn's TTS.
+          2. Emits an emotion event to the UI badge (dashed border = deliberate).
+
+        For sub-turn (per-sentence) emotion, use [mood:X]...[/mood] markup
+        directly in the response text instead of this tool.
+        """
+        from brain.settings import settings as _s
+        if not _s.get("emotional_expression_enabled", 1):
+            return "[blocked] Emotional expression is disabled in settings."
+
+        from brain.emotion_presets import EMOTION_PRESETS, VALID_EMOTIONS
+
+        if emotion == "auto":
+            await self._bus.publish_dict(
+                "meta.deliberate_emotion", {"emotion": None}, source=CLUSTER
+            )
+            from brain.ui.emitter import emitter
+            await emitter.emit_event({"type": "emotion_lock_cleared"})
+            return "Deliberate mood cleared — voice will follow reactive emotional state."
+
+        if emotion not in EMOTION_PRESETS:
+            return f"[error] Unknown emotion '{emotion}'. Available: {', '.join(VALID_EMOTIONS)}"
+
+        desc = EMOTION_PRESETS[emotion]["desc"]
+        await self._bus.publish_dict(
+            "meta.deliberate_emotion", {"emotion": emotion}, source=CLUSTER
+        )
+
+        from brain.ui.emitter import emitter
+        await emitter.emit_event({
+            "type": "emotion",
+            "emotion": emotion,
+            "deliberate": True,
+        })
+
+        logger.info("[MotorCortex] set_mood: %s — %s", emotion, desc)
+        return f"Mood set to '{emotion}' for this turn ({desc})."
 
     # ── Dispatcher delegation (preserve public API for callers and tests) ────────
 

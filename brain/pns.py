@@ -94,6 +94,8 @@ class PNS:
         self._interrupt_event: asyncio.Event = asyncio.Event()
         self._speak_lock: asyncio.Lock = asyncio.Lock()  # serializes TTS calls
         self._on_speaking_change = on_speaking_change  # Callable[[bool], None] | None
+        # Deliberate mood: set_mood tool publishes here; consumed once per _speak() call.
+        self._deliberate_emotion_inbox = bus.subscribe("meta.deliberate_emotion")
 
     async def receive_text(self, text: str, image_path: str | None = None) -> None:
         """Post user input to the bus."""
@@ -320,6 +322,57 @@ class PNS:
         return f"{tag} {shaped}"
 
     @staticmethod
+    def _parse_mood_markup(text: str, base_tag: str | None = None) -> tuple[str, str]:
+        """Parse [mood:X]...[/mood] inline markers in the AI's response text.
+
+        Returns (display_text, tts_text):
+          - display_text: markup stripped — clean for chat display.
+          - tts_text: [mood:X] replaced with ElevenLabs v3 audio tag inline;
+                      after each segment, base_tag (the reactive affect tag) is
+                      restored so the rest of the sentence returns to normal voice.
+
+        Segments without markup are unchanged.  Unknown emotion names are stripped
+        silently (no tag injected) so the response still renders.
+
+        Example:
+          input:  "Sure. [mood:angry] This is unacceptable! [/mood] Anyway, let's fix it."
+          display: "Sure. This is unacceptable! Anyway, let's fix it."
+          tts v3: "Sure. [angrily] This is unacceptable! [base_tag] Anyway, let's fix it."
+        """
+        import re
+        from brain.emotion_presets import get_tag
+
+        pattern = re.compile(r'\[mood:([^\]]+)\](.*?)\[/mood\]', re.DOTALL | re.IGNORECASE)
+
+        def replace_for_display(m: re.Match) -> str:
+            return m.group(2).strip()
+
+        def replace_for_tts(m: re.Match) -> str:
+            emotion = m.group(1).strip().lower()
+            segment = m.group(2).strip()
+            el_tag = get_tag(emotion)
+            reset = f" {base_tag}" if base_tag else ""
+            if el_tag:
+                return f"{el_tag} {segment}{reset}"
+            return f"{segment}{reset}"
+
+        display_text = pattern.sub(replace_for_display, text)
+        tts_text = pattern.sub(replace_for_tts, text)
+        return display_text, tts_text
+
+    def _drain_deliberate_emotion(self) -> str | None:
+        """Consume the most recent meta.deliberate_emotion bus message (if any)."""
+        result: str | None = None
+        while True:
+            try:
+                msg = self._deliberate_emotion_inbox.get_nowait()
+                if not msg.expired:
+                    result = msg.payload.get("emotion")  # None = cleared
+            except asyncio.QueueEmpty:
+                break
+        return result
+
+    @staticmethod
     def _voice_params_from_affect(affect: dict) -> dict:
         """voice_modulation_switch (PLAN.md): map entity state → ElevenLabs voice settings.
         Low DA → slower/lower; high arousal (Glu) + positive DA → faster/brighter;
@@ -405,19 +458,49 @@ class PNS:
                 voice_settings = VoiceSettings(**vs_kwargs)
 
             model_id = os.environ.get("ELEVENLABS_MODEL_ID", "eleven_v3").strip() or "eleven_v3"
+
+            # Check for a deliberate whole-turn emotion set via set_mood() tool.
+            # Consumed once here so it doesn't bleed into subsequent turns.
+            deliberate_emotion = self._drain_deliberate_emotion()
+            has_inline_mood = False
+
             # Only shape the text for v3 (audio tags). Other models would
             # literally read "[gently]" out loud.
             if model_id == "eleven_v3":
-                shaped_text = self._shape_for_v3(text, affect or {})
+                # Step 1: resolve the base (reactive) tag from affect.
+                base_tag = self._v3_audio_tag_from_affect(affect or {})
+
+                # Step 2: parse [mood:X]...[/mood] inline markup.
+                # display_text has markup stripped; tts_text has ElevenLabs tags inline.
+                display_text, tts_text = self._parse_mood_markup(text, base_tag)
+                has_inline_mood = (tts_text != display_text)
+
+                # Step 3: if set_mood() was called, override the whole-turn tag
+                # (only when there's no inline markup — inline markup takes precedence).
+                if deliberate_emotion and not has_inline_mood:
+                    from brain.emotion_presets import get_tag as _get_tag
+                    override_tag = _get_tag(deliberate_emotion)
+                    if override_tag:
+                        tts_text = f"{override_tag} {tts_text}"
+                elif not has_inline_mood:
+                    # Standard reactive shaping: use affect-derived tag + breath pauses.
+                    tts_text = self._shape_for_v3(tts_text, affect or {})
+
+                shaped_text = tts_text
                 tag_preview = shaped_text[: shaped_text.find("]") + 1] if shaped_text.startswith("[") else "—"
             else:
-                shaped_text = text
+                # Non-v3: strip any [mood:X] markup so it doesn't get read aloud.
+                display_text, _ = self._parse_mood_markup(text, None)
+                shaped_text = display_text
                 tag_preview = "—"
+
             logger.info(
-                "[I/O] TTS: voice=%s model=%s stability=%.2f style=%.2f speed=%.2f emotion=%s tag=%s",
+                "[I/O] TTS: voice=%s model=%s stability=%.2f style=%.2f speed=%.2f "
+                "emotion=%s tag=%s deliberate=%s inline_mood=%s",
                 voice_id, model_id,
                 params["stability"], params["style"], params["speed"],
                 (affect or {}).get("emotion"), tag_preview,
+                deliberate_emotion or "—", has_inline_mood if model_id == "eleven_v3" else False,
             )
 
             # Split into sentence-sized chunks so ElevenLabs starts generating

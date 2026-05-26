@@ -26,7 +26,7 @@ EMOTION_TABLE: dict[tuple[str, str, str, str], tuple[str, str]] = {
     ("high", "low",  "high", "high"):("enthusiasm",       "commit, create, lead"),
     ("mid",  "low",  "high", "mid"): ("curious",          "question, investigate, open"),
     ("mid",  "low",  "low",  "low"): ("content",          "maintain, reflect, observe"),
-    ("mid",  "mid",  "mid",  "mid"): ("neutral",          "balanced, no strong tendency"),
+    ("mid",  "mid",  "mid",  "mid"): ("composed",         "steady, deliberate — mild inhibitory tone, nothing urgent"),
     ("low",  "mid",  "high", "mid"): ("curious-uncertain","question, hedge, qualify"),
     ("low",  "high", "mid",  "low"): ("anxious",          "caution, double-check, withdraw"),
     ("low",  "high", "low",  "low"): ("inhibited",        "defer, minimal response, comply"),
@@ -115,7 +115,7 @@ def apply_hormonal_color(emotion: str, tendency: str, h: dict,
     # High sustained stress + low trust → withdrawn or guarded
     if cort > cort_withdrawn:
         if oxt < oxt_guarded:
-            if emotion in ("neutral", "content", "flat"):
+            if emotion in ("neutral", "composed", "content", "flat"):
                 return ("withdrawn", "protect, conserve, keep emotional distance")
             if emotion in ("anxious", "inhibited", "defensive"):
                 return ("guarded", "careful, brief, hold position, maintain boundaries")
@@ -128,7 +128,7 @@ def apply_hormonal_color(emotion: str, tendency: str, h: dict,
         return ("eased", "activation present but buffered — hold steady, grounded under pressure")
 
     # Low serotonin drags baseline states negative
-    if sht < sht_dysphoric and emotion in ("flat", "neutral", "content"):
+    if sht < sht_dysphoric and emotion in ("flat", "neutral", "composed", "content"):
         return ("dysphoric", "minimal, honest — no performance of wellbeing")
 
     return emotion, tendency
@@ -143,6 +143,7 @@ def appraisal(emotion: str, situation: str) -> str:
         "content":       f"stable baselines — sustained engagement with: {situation}",
         "excited":       f"DA + ACh elevated — heightened engagement with: {situation}",
         "neutral":       f"baseline state, processing: {situation}",
+        "composed":      f"balanced signals with mild inhibitory tone — deliberate engagement with: {situation}",
         "connected":     f"OXT elevated — deep trust shaping engagement with: {situation}",
         "withdrawn":     f"CORT elevated, OXT low — stress memory suppressing openness on: {situation}",
         "guarded":       f"CORT elevated — protective mode while engaging with: {situation}",

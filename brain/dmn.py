@@ -98,9 +98,14 @@ DMN_ENABLED = os.environ.get("BRAIN_DMN", "false").lower() == "true"
 # letting genuinely different thoughts through. (Semantic angle tracking,
 # added below, handles same-idea-different-words cases the word check misses.)
 DMN_OVERLAP_THRESHOLD = float(os.environ.get("BRAIN_DMN_OVERLAP_THRESHOLD", "0.35"))
-# How many recent thoughts/angles to compare against + show the LLM as context.
-# Larger window = more variety forced before an idea can recur.
+# How many recent thoughts/angles to show the LLM as context (variety pressure).
+# Larger window = model is told about more prior territory to avoid.
 DMN_RECENT_THOUGHTS = int(os.environ.get("BRAIN_DMN_RECENT_THOUGHTS", "10"))
+# How many of those recent thoughts to actually COMPARE against for hard dedup.
+# Narrower than DMN_RECENT_THOUGHTS so thoughts can recur after a gap — the LLM
+# context pressure (above) already discourages literal repeats. Comparing against
+# all 10 causes over-suppression on focused topics after just 3-4 thoughts.
+DMN_DEDUP_WINDOW = int(os.environ.get("BRAIN_DMN_DEDUP_WINDOW", "4"))
 # How many recent thought angles to block (separate from text-overlap window).
 DMN_RECENT_ANGLES = int(os.environ.get("BRAIN_DMN_RECENT_ANGLES", "8"))
 
@@ -1059,7 +1064,12 @@ class DefaultModeNetwork:
         chem_delta = metadata["chem_delta"]
 
         max_overlap = 0.0
-        for prior in self._recent_thoughts:
+        # Only compare against the last DMN_DEDUP_WINDOW thoughts, not all of them.
+        # The full deque is shown to the LLM as context (variety pressure), but
+        # hard-blocking on the entire window causes over-suppression on focused
+        # topics — thoughts stop flowing after 3-4 because nearly everything
+        # shares content words with at least one of 10 prior thoughts.
+        for prior in list(self._recent_thoughts)[-DMN_DEDUP_WINDOW:]:
             o = _content_word_overlap(thought_clean, prior)
             if o > max_overlap:
                 max_overlap = o

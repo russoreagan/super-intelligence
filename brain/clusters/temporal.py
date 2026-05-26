@@ -283,9 +283,8 @@ class TemporalCluster:
         inhibitor_weight = self._inhibitor_weight()
         confidence_floor = max(0.4, 0.6 / max(0.5, inhibitor_weight))
 
-        # Chemistry modulation: high GABA (negative coefficient) shifts the
-        # inhibitor's effective threshold down, which here translates to a
-        # lower confidence floor — easier to skip the LLM under high inhibition.
+        # Chemistry modulation: high ACh (positive coefficient on integrator_inhibitor)
+        # raises inhibitor threshold → harder to skip → integrator stays engaged when curious.
         chem_shift = self._integrator_inhibitor.modulation_delta(chem)
         confidence_floor = max(0.30, min(0.90, confidence_floor + chem_shift))
 

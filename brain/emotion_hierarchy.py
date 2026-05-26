@@ -85,12 +85,34 @@ EMOTION_PARENTS: dict[str, tuple[str, str | None]] = {
     # ── cognitive / arousal (no feeling-wheel home) ───────────────────────
     "thoughtful":         ("cognitive", "deliberative"),
     "curious-uncertain":  ("cognitive", "deliberative"),
+    "engaged":            ("cognitive", "deliberative"),
     "cautious-agitated":  ("cognitive", "tense"),
+    "cautious-warm":      ("cognitive", "tense"),   # CORT-modulated warmth
+    "stirred":            ("cognitive", "tense"),   # Glu-driven alertness
     "restless":           ("cognitive", "tense"),
     "flat":               ("cognitive", "minimal"),
 
+    # ── fear family (additions) ───────────────────────────────────────────
+    "stressed":           ("fear", "tense"),        # GABA+Glu stress state
+    "overwhelmed":        ("fear", "overwhelmed"),  # system taxed, submissive
+    "uneasy":             ("fear", "tense"),        # GABA+Glu rising
+    "guarded":            ("fear", "anxious"),      # high CORT + anxious base
+    "vigilant":           ("fear", "anxious"),      # NE-driven sharp attention
+
+    # ── happy family (additions) ──────────────────────────────────────────
+    "serene":             ("happy", "peaceful"),    # DA high, everything settled
+    "lively":             ("happy", "energetic"),   # DA+ACh elevated, warm
+    "eased":              ("happy", "peaceful"),    # stress buffered by AEA
+    "connected":          ("happy", "loving"),      # high OXT + positive base
+
+    # ── sad family (additions) ────────────────────────────────────────────
+    "withdrawn":          ("sad", "lonely"),        # high CORT, low OXT
+    "dysphoric":          ("sad", "depressed"),     # low 5HT baseline
+
     # ── neutral ───────────────────────────────────────────────────────────
     "neutral":       ("neutral", None),
+    "settled":       ("neutral", None),   # quiet baseline: low GABA, moderate DA
+    "composed":      ("neutral", None),   # balanced with mild inhibitory tone present
 }
 
 

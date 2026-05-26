@@ -235,6 +235,16 @@ class _TurnMixin:
                 f"Context: {vision_features.get('context_for_response', '')}"
             )
 
+        # ── Recent background task results ────────────────────────────────────
+        # Inject completed async task results so the LLM knows what actually
+        # happened — prevents confabulation when the user asks about past tasks.
+        if getattr(self, "_recent_task_results", None):
+            lines = []
+            for r in self._recent_task_results:
+                status = "completed" if r["success"] else "failed"
+                lines.append(f"- [{status}] {r['goal'][:80]}: {r['summary']}")
+            memory["recent_task_results"] = "\n".join(lines)
+
         # ── Motor Cortex: tool execution ──────────────────────────────────────
         if self.motor:
             cloud = getattr(self.motor, "_cloud", None)
@@ -598,6 +608,34 @@ class _TurnMixin:
 
         return final, affect
 
+    def _task_is_on_topic(self, task_goal: str) -> bool:
+        """Return True if the task goal is topically related to the current conversation.
+
+        Uses word overlap against recent parietal turns (topic summaries + user text).
+        A low threshold (0.12) catches broad relevance — we only suppress when the
+        task is clearly about a different project or subject entirely.
+        """
+        recent = self.parietal.recent_turns(n=4)
+        if not recent:
+            return True  # no conversation yet — always surface
+        convo_words: set[str] = set()
+        for turn in recent:
+            for field in ("topic", "user", "intent"):
+                text = turn.get(field) or ""
+                convo_words.update(text.lower().split())
+        task_words = set(task_goal.lower().split())
+        if not task_words or not convo_words:
+            return True
+        # Strip ultra-common stop words so "the", "a", "I" don't inflate overlap
+        _STOPS = {"the", "a", "an", "i", "to", "and", "or", "of", "in", "it",
+                  "is", "was", "for", "on", "with", "that", "this", "be", "are"}
+        task_words -= _STOPS
+        convo_words -= _STOPS
+        if not task_words:
+            return True
+        overlap = len(task_words & convo_words) / len(task_words)
+        return overlap >= 0.12
+
     async def _run_task(self, task) -> None:
         job_turn_id = f"task_{task.id}"
         is_self = getattr(task, "source", "") == "self"
@@ -613,14 +651,20 @@ class _TurnMixin:
             if is_self:
                 self.router.exit_background_mode()
 
+        on_topic = self._task_is_on_topic(task.goal)
+
         if summary.get("clarification"):
             question = summary["clarification"]
             self._task_queue.mark_blocked(task.id, reason=question)
             logger.info("[TaskWorker] Task [%s] blocked on clarification: %s",
                         task.id, question[:120])
-            if self._emitter:
-                await self._emitter.emit_proactive_speech(question)
-            await self.pns.emit(question, {"emotion": "curious"})
+            if on_topic:
+                if self._emitter:
+                    await self._emitter.emit_proactive_speech(question)
+                await self.pns.emit(question, {"emotion": "curious"})
+            else:
+                logger.info("[TaskWorker] Task [%s] clarification held — off-topic (will surface "
+                            "in context when relevant)", task.id)
             return
 
         self._task_queue.mark_done(task.id, success=bool(summary.get("success")))
@@ -631,6 +675,15 @@ class _TurnMixin:
                 if summary.get("success")
                 else "I couldn't finish that — something went wrong."
             )
+        # Always store in ring buffer — LLM context gets the result regardless of topic.
+        self._recent_task_results.append({
+            "goal": task.goal,
+            "summary": spoken_summary,
+            "success": bool(summary.get("success")),
+            "ts": time.time(),
+        })
+        if len(self._recent_task_results) > 3:
+            self._recent_task_results.pop(0)
         logger.info("[TaskWorker] Reporting result [%s]: %s", task.id, spoken_summary[:160])
         if self._emitter:
             await self._emitter.emit_event({
@@ -638,9 +691,14 @@ class _TurnMixin:
                 "job_id": summary.get("job_id"),
                 "summary": spoken_summary,
             })
-            await self._emitter.emit_proactive_speech(spoken_summary)
-        await self.pns.emit(spoken_summary,
-                            {"emotion": "lively" if summary.get("success") else "concerned"})
+            if on_topic:
+                await self._emitter.emit_proactive_speech(spoken_summary)
+            else:
+                logger.info("[TaskWorker] Task [%s] result held from speech — off-topic "
+                            "(will surface in LLM context on next turn)", task.id)
+        if on_topic:
+            await self.pns.emit(spoken_summary,
+                                {"emotion": "lively" if summary.get("success") else "concerned"})
 
 
 # ── Module-level helpers (used inside _process_turn_body) ─────────────────────

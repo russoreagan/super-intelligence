@@ -191,8 +191,12 @@ input, select, textarea { font: inherit; color: inherit; background: none; borde
   background: oklch(0.20 0.01 250 / 0.5);
   color: var(--fg-dim);
   border: 1px solid var(--line-soft);
-  transition: background 2s ease, color 2s ease, border-color 2s ease;
+  transition: background 2s ease, color 2s ease, border-color 2s ease, border-style 0.3s;
   white-space: nowrap;
+}
+#emotion-badge.deliberate {
+  border-style: dashed;
+  border-width: 1.5px;
 }
 #active-label {
   font-family: var(--mono);
@@ -3579,6 +3583,10 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
             <div class="ctrl-header"><span class="ctrl-label">Threat Sensitivity</span><span class="ctrl-hint">lower = responds to subtler hostility</span><span class="ctrl-value-display" id="val-hostility_GABA_threshold_high">0.50</span></div>
             <input type="range" class="brain-slider" data-key="hostility_GABA_threshold_high" min="0.2" max="0.9" step="0.05" value="0.50">
           </div>
+          <div class="ctrl-row">
+            <div class="ctrl-header"><span class="ctrl-label">Emotional Expression</span><span class="ctrl-hint">1 = AI can deliberately emulate emotions via set_mood</span><span class="ctrl-value-display" id="val-emotional_expression_enabled">1</span></div>
+            <input type="range" class="brain-slider" data-key="emotional_expression_enabled" min="0" max="1" step="1" value="1">
+          </div>
         </div>
       </div>
 
@@ -4658,7 +4666,8 @@ function handle(msg) {
         }
     case 'emotion': {
       const badge = document.getElementById('emotion-badge');
-      badge.textContent = msg.emotion;
+      badge.textContent = msg.deliberate ? `<${msg.emotion}>` : msg.emotion;
+      badge.classList.toggle('deliberate', !!msg.deliberate);
       // Derive badge colors from MOOD_BG_COLORS so it matches the background glow
       const moodCfg = MOOD_BG_COLORS[msg.emotion] || MOOD_BG_COLORS.neutral;
       const { l: ml, c: mc, h: mh } = moodCfg;
@@ -4673,6 +4682,11 @@ function handle(msg) {
       moodDot.style.background = badgeText;
       moodDot.style.boxShadow  = `0 0 7px ${badgeText}`;
       setMoodBackground(msg.emotion);
+      break;
+    }
+    case 'emotion_lock_cleared': {
+      const badge = document.getElementById('emotion-badge');
+      if (badge) badge.classList.remove('deliberate');
       break;
     }
     case 'user_emotion': {

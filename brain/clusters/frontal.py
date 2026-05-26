@@ -873,6 +873,12 @@ class FrontalCluster:
             parts.append(f"Relevant past episodes:\n{fence('past_episodes', memory['episodes'], nonce)}")
         if memory.get("tool_result"):
             parts.append(f"Tool execution result:\n{fence('tool_result', str(memory['tool_result']), nonce)}")
+        if memory.get("recent_task_results"):
+            parts.append(
+                "Background tasks completed since the last turn — these are REAL results, "
+                "not speculative. Reference them accurately:\n"
+                f"{fence('completed_tasks', memory['recent_task_results'], nonce)}"
+            )
         if memory.get("recent_thoughts"):
             # Inner monologue — thoughts you were actually having between turns.
             # Split into two tiers: thoughts you were building toward speaking

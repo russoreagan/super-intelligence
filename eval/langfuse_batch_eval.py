@@ -20,9 +20,8 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import json
+import asyncio
 import logging
-import os
 import re
 import sys
 from datetime import datetime, timedelta, timezone
@@ -38,8 +37,9 @@ logger = logging.getLogger(__name__)
 
 _MODEL = "claude-haiku-4-5-20251001"
 _MAX_TOKENS = 200  # score + one-line reasoning only
+_CONCURRENCY = 10
 
-# ── Shared LLM helper ─────────────────────────────────────────────────────────
+# ── Shared async LLM helper ───────────────────────────────────────────────────
 
 _client: Any = None
 
@@ -48,14 +48,14 @@ def _get_client() -> Any:
     global _client
     if _client is None:
         import anthropic
-        _client = anthropic.Anthropic()
+        _client = anthropic.AsyncAnthropic()
     return _client
 
 
-def _score(system: str, prompt: str) -> tuple[float, str]:
-    """Call Haiku, parse 'SCORE: X.XX' and optional 'REASONING: ...'."""
+async def _score(system: str, prompt: str) -> tuple[float, str]:
+    """Call Haiku async, parse 'SCORE: X.XX' and optional 'REASONING: ...'."""
     try:
-        msg = _get_client().messages.create(
+        msg = await _get_client().messages.create(
             model=_MODEL,
             max_tokens=_MAX_TOKENS,
             system=system,
@@ -217,132 +217,154 @@ SCORE: <0.0–1.0>
 REASONING: <one sentence>"""
 
 
-# ── Evaluator functions ───────────────────────────────────────────────────────
+# ── Score definitions ─────────────────────────────────────────────────────────
 
-def _prompt(user_input: str, brain_response: str) -> str:
-    return f"User message:\n{user_input}\n\nAI response:\n{brain_response}"
+_TURN_SCORES = [
+    ("voice.naturalness",     _VOICE_NATURALNESS),
+    ("voice.speakability",    _VOICE_SPEAKABILITY),
+    ("voice.length_fit",      _VOICE_LENGTH_FIT),
+    ("self_model.calibration",_SELF_MODEL_CALIBRATION),
+    ("self_model.coherence",  _SELF_MODEL_COHERENCE),
+    ("grounding.directness",  _GROUNDING_DIRECTNESS),
+    ("grounding.specificity", _GROUNDING_SPECIFICITY),
+    ("grounding.focus",       _GROUNDING_FOCUS),
+]
 
-
-def eval_voice_naturalness(*, input, output, expected_output, metadata, **kwargs) -> list:
-    from langfuse.experiment import Evaluation
-    score, reason = _score(_VOICE_NATURALNESS, _prompt(input, output))
-    return [Evaluation(name="voice.naturalness", value=score, comment=reason, data_type="NUMERIC")]
-
-
-def eval_voice_speakability(*, input, output, expected_output, metadata, **kwargs) -> list:
-    from langfuse.experiment import Evaluation
-    score, reason = _score(_VOICE_SPEAKABILITY, _prompt(input, output))
-    return [Evaluation(name="voice.speakability", value=score, comment=reason, data_type="NUMERIC")]
-
-
-def eval_voice_length_fit(*, input, output, expected_output, metadata, **kwargs) -> list:
-    from langfuse.experiment import Evaluation
-    score, reason = _score(_VOICE_LENGTH_FIT, _prompt(input, output))
-    return [Evaluation(name="voice.length_fit", value=score, comment=reason, data_type="NUMERIC")]
-
-
-def eval_self_model_calibration(*, input, output, expected_output, metadata, **kwargs) -> list:
-    from langfuse.experiment import Evaluation
-    score, reason = _score(_SELF_MODEL_CALIBRATION, _prompt(input, output))
-    return [Evaluation(name="self_model.calibration", value=score, comment=reason, data_type="NUMERIC")]
-
-
-def eval_self_model_coherence(*, input, output, expected_output, metadata, **kwargs) -> list:
-    from langfuse.experiment import Evaluation
-    score, reason = _score(_SELF_MODEL_COHERENCE, _prompt(input, output))
-    return [Evaluation(name="self_model.coherence", value=score, comment=reason, data_type="NUMERIC")]
-
-
-def eval_grounding_directness(*, input, output, expected_output, metadata, **kwargs) -> list:
-    from langfuse.experiment import Evaluation
-    score, reason = _score(_GROUNDING_DIRECTNESS, _prompt(input, output))
-    return [Evaluation(name="grounding.directness", value=score, comment=reason, data_type="NUMERIC")]
-
-
-def eval_grounding_specificity(*, input, output, expected_output, metadata, **kwargs) -> list:
-    from langfuse.experiment import Evaluation
-    score, reason = _score(_GROUNDING_SPECIFICITY, _prompt(input, output))
-    return [Evaluation(name="grounding.specificity", value=score, comment=reason, data_type="NUMERIC")]
-
-
-def eval_grounding_focus(*, input, output, expected_output, metadata, **kwargs) -> list:
-    from langfuse.experiment import Evaluation
-    score, reason = _score(_GROUNDING_FOCUS, _prompt(input, output))
-    return [Evaluation(name="grounding.focus", value=score, comment=reason, data_type="NUMERIC")]
-
-
-_ALL_EVALUATORS = [
-    eval_voice_naturalness,
-    eval_voice_speakability,
-    eval_voice_length_fit,
-    eval_self_model_calibration,
-    eval_self_model_coherence,
-    eval_grounding_directness,
-    eval_grounding_specificity,
-    eval_grounding_focus,
+_THOUGHT_SCORES = [
+    ("thought.depth",      _THOUGHT_DEPTH),
+    ("thought.self_model", _THOUGHT_SELF_MODEL),
+    ("thought.coherence",  _THOUGHT_COHERENCE),
 ]
 
 
-# ── Inner monologue evaluator functions ───────────────────────────────────────
+# ── Core async runner ─────────────────────────────────────────────────────────
 
-def eval_thought_depth(*, input, output, expected_output, metadata, **kwargs) -> list:
-    from langfuse.experiment import Evaluation
-    score, reason = _score(_THOUGHT_DEPTH, f"Thought:\n{input}")
-    return [Evaluation(name="thought.depth", value=score, comment=reason, data_type="NUMERIC")]
-
-
-def eval_thought_self_model(*, input, output, expected_output, metadata, **kwargs) -> list:
-    from langfuse.experiment import Evaluation
-    score, reason = _score(_THOUGHT_SELF_MODEL, f"Thought:\n{input}")
-    return [Evaluation(name="thought.self_model", value=score, comment=reason, data_type="NUMERIC")]
+def _already_scored(trace: Any, names: list[str]) -> bool:
+    scores = getattr(trace, "scores", None) or []
+    scored = {getattr(s, "name", "") for s in scores}
+    return all(n in scored for n in names)
 
 
-def eval_thought_coherence(*, input, output, expected_output, metadata, **kwargs) -> list:
-    from langfuse.experiment import Evaluation
-    direction = (metadata or {}).get("direction", "unknown")
-    angle = (metadata or {}).get("angle", "")
-    prompt = f"Direction: {direction}\nAngle: {angle}\n\nThought:\n{input}"
-    score, reason = _score(_THOUGHT_COHERENCE, prompt)
-    return [Evaluation(name="thought.coherence", value=score, comment=reason, data_type="NUMERIC")]
+async def _score_turn(lf: Any, trace: Any, sem: asyncio.Semaphore) -> None:
+    async with sem:
+        inp = getattr(trace, "input", None) or {}
+        out = getattr(trace, "output", None) or {}
+        user = (inp.get("user", "") if isinstance(inp, dict) else "") or ""
+        response = (out.get("response", "") if isinstance(out, dict) else "") or ""
+        if not user or not response:
+            return
+
+        score_names = [n for n, _ in _TURN_SCORES]
+        if _already_scored(trace, score_names):
+            return
+
+        prompt = f"User message:\n{user}\n\nAI response:\n{response}"
+        tasks = [_score(system, prompt) for _, system in _TURN_SCORES]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        for (name, _), result in zip(_TURN_SCORES, results):
+            if isinstance(result, Exception):
+                logger.warning("Score %s failed for trace %s: %s", name, trace.id, result)
+                continue
+            value, comment = result
+            try:
+                lf.create_score(trace_id=trace.id, name=name, value=value,
+                                comment=comment, data_type="NUMERIC")
+            except Exception as e:
+                logger.warning("Failed to post score %s: %s", name, e)
+
+        logger.info("Scored turn %s", trace.id)
 
 
-_THOUGHT_EVALUATORS = [
-    eval_thought_depth,
-    eval_thought_self_model,
-    eval_thought_coherence,
-]
+async def _score_thought(lf: Any, trace: Any, sem: asyncio.Semaphore) -> None:
+    async with sem:
+        inp = getattr(trace, "input", None) or {}
+        meta = getattr(trace, "metadata", None) or {}
+        thought = (inp.get("thought", "") if isinstance(inp, dict) else "") or ""
+        if not thought:
+            return
+
+        score_names = [n for n, _ in _THOUGHT_SCORES]
+        if _already_scored(trace, score_names):
+            return
+
+        direction = (meta.get("direction", "unknown") if isinstance(meta, dict) else "unknown")
+        angle = (meta.get("angle", "") if isinstance(meta, dict) else "")
+
+        prompts = [
+            f"Thought:\n{thought}",
+            f"Thought:\n{thought}",
+            f"Direction: {direction}\nAngle: {angle}\n\nThought:\n{thought}",
+        ]
+        tasks = [_score(system, prompt) for (_, system), prompt in zip(_THOUGHT_SCORES, prompts)]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        for (name, _), result in zip(_THOUGHT_SCORES, results):
+            if isinstance(result, Exception):
+                logger.warning("Score %s failed for trace %s: %s", name, trace.id, result)
+                continue
+            value, comment = result
+            try:
+                lf.create_score(trace_id=trace.id, name=name, value=value,
+                                comment=comment, data_type="NUMERIC")
+            except Exception as e:
+                logger.warning("Failed to post score %s: %s", name, e)
+
+        logger.info("Scored thought %s", trace.id)
 
 
-# ── Mappers ───────────────────────────────────────────────────────────────────
+async def _run(scope: str, since_hours: float, limit: int, concurrency: int) -> None:
+    import os
+    from langfuse import Langfuse
+    from langfuse.api import AsyncLangfuseAPI
 
-def mapper(*, item: Any, **kwargs) -> Any:
-    from langfuse.batch_evaluation import EvaluatorInputs
-    inp = getattr(item, "input", None) or {}
-    out = getattr(item, "output", None) or {}
-    meta = getattr(item, "metadata", None) or {}
-    user = (inp.get("user", "") if isinstance(inp, dict) else "") or ""
-    response = (out.get("response", "") if isinstance(out, dict) else "") or ""
-    if not user or not response:
-        return None
-    return EvaluatorInputs(
-        input=user,
-        output=response,
-        metadata=meta if isinstance(meta, dict) else {},
+    lf = Langfuse(
+        public_key=os.environ["LANGFUSE_PUBLIC_KEY"],
+        secret_key=os.environ["LANGFUSE_SECRET_KEY"],
+        host=os.environ.get("LANGFUSE_BASE_URL", os.environ.get("LANGFUSE_HOST", "https://cloud.langfuse.com")),
     )
-
-
-def thought_mapper(*, item: Any, **kwargs) -> Any:
-    from langfuse.batch_evaluation import EvaluatorInputs
-    inp = getattr(item, "input", None) or {}
-    meta = getattr(item, "metadata", None) or {}
-    thought = (inp.get("thought", "") if isinstance(inp, dict) else "") or ""
-    if not thought:
-        return None
-    return EvaluatorInputs(
-        input=thought,
-        output="",
-        metadata=meta if isinstance(meta, dict) else {},
+    api = AsyncLangfuseAPI(
+        base_url=os.environ.get("LANGFUSE_BASE_URL", os.environ.get("LANGFUSE_HOST", "https://cloud.langfuse.com")),
+        username=os.environ["LANGFUSE_PUBLIC_KEY"],
+        password=os.environ["LANGFUSE_SECRET_KEY"],
     )
+    sem = asyncio.Semaphore(concurrency)
+    since_dt = datetime.now(timezone.utc) - timedelta(hours=since_hours)
+
+    async def fetch_and_score(trace_name: str, scorer, label: str) -> None:
+        print(f"\nFetching {label} since last {since_hours}h (max {limit})...")
+        page, fetched, processed = 1, 0, 0
+        while fetched < limit:
+            batch_size = min(50, limit - fetched)
+            try:
+                resp = await api.trace.list(
+                    name=trace_name,
+                    limit=batch_size,
+                    page=page,
+                    from_timestamp=since_dt,
+                )
+            except Exception as e:
+                print(f"  Fetch error: {e}", file=sys.stderr)
+                break
+            traces = getattr(resp, "data", []) or []
+            if not traces:
+                break
+            fetched += len(traces)
+            await asyncio.gather(*[scorer(lf, t, sem) for t in traces])
+            processed += len(traces)
+            print(f"  Page {page}: {len(traces)} traces (total processed: {processed})")
+            if len(traces) < batch_size:
+                break
+            page += 1
+
+        print(f"  Done — {processed} {label} scored.")
+
+    if scope in ("turns", "both"):
+        await fetch_and_score("brain-turn", _score_turn, "brain-turn traces")
+    if scope in ("thoughts", "both"):
+        await fetch_and_score("dmn-thought", _score_thought, "inner monologue thoughts")
+
+    lf.flush()
 
 
 # ── UI setup guide ────────────────────────────────────────────────────────────
@@ -526,14 +548,14 @@ def main() -> None:
     )
 
     parser = argparse.ArgumentParser(
-        description="Run Langfuse SDK batch evaluation on brain-turn traces.",
+        description="Run LLM-as-a-judge evaluation on brain-turn and dmn-thought traces.",
     )
     parser.add_argument("--since", type=float, default=2.0, metavar="HOURS",
                         help="Evaluate traces from the last N hours (default 2)")
     parser.add_argument("--limit", type=int, default=200, metavar="N",
-                        help="Max traces to evaluate (default 200)")
-    parser.add_argument("--concurrency", type=int, default=5,
-                        help="Max concurrent evaluations (default 5)")
+                        help="Max traces to evaluate per type (default 200)")
+    parser.add_argument("--concurrency", type=int, default=10,
+                        help="Max concurrent LLM calls (default 10)")
     parser.add_argument("--scope", choices=["turns", "thoughts", "both"], default="turns",
                         help="turns=brain-turn, thoughts=dmn-thought, both=all (default: turns)")
     parser.add_argument("--print-setup", action="store_true",
@@ -545,45 +567,17 @@ def main() -> None:
         return
 
     try:
-        from langfuse import Langfuse
+        from langfuse import Langfuse  # noqa: F401
     except ImportError:
         print("Error: langfuse package not found — pip install langfuse", file=sys.stderr)
         sys.exit(1)
 
-    # SDK reads LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, and
-    # LANGFUSE_HOST / LANGFUSE_BASE_URL automatically from the environment.
-    lf = Langfuse()
-
-    since_dt = datetime.now(timezone.utc) - timedelta(hours=args.since)
-
-    def _run_eval(trace_name: str, mp, evaluators: list, label: str) -> None:
-        filt = json.dumps([
-            {"type": "stringOptions", "column": "name", "operator": "any of",
-             "value": [trace_name]},
-            {"type": "datetime", "column": "timestamp", "operator": ">=",
-             "value": since_dt.isoformat()},
-        ])
-        print(f"\nRunning batch evaluation on {label} "
-              f"from the last {args.since}h (max {args.limit})...")
-        result = lf.run_batched_evaluation(
-            scope="traces",
-            mapper=mp,
-            filter=filt,
-            max_items=args.limit,
-            max_concurrency=args.concurrency,
-            evaluators=evaluators,
-            fetch_trace_fields="core,io,scores",
-            verbose=True,
-        )
-        print(f"  Fetched:   {result.total_items_fetched}")
-        print(f"  Processed: {result.total_items_processed}")
-        print(f"  Failed:    {result.total_items_failed}")
-
-    if args.scope in ("turns", "both"):
-        _run_eval("brain-turn", mapper, _ALL_EVALUATORS, "brain-turn traces")
-    if args.scope in ("thoughts", "both"):
-        _run_eval("dmn-thought", thought_mapper, _THOUGHT_EVALUATORS, "dmn-thought (inner monologue)")
-
+    asyncio.run(_run(
+        scope=args.scope,
+        since_hours=args.since,
+        limit=args.limit,
+        concurrency=args.concurrency,
+    ))
     print("\nDone.")
 
 

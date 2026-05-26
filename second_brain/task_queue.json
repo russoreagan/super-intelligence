@@ -130,5 +130,126 @@
     "started_at": 1779748352.2562408,
     "completed_at": 1779748425.43218,
     "success": false
+  },
+  {
+    "id": "769d0ce2",
+    "goal": "Read CLAUDE.md and README.md in the Karaoke Hero project to understand its architecture and goals.",
+    "status": "completed",
+    "source": "self",
+    "priority": 2,
+    "created_at": 1779775755.8001988,
+    "started_at": 1779775758.801707,
+    "completed_at": 1779775907.4165812,
+    "success": true
+  },
+  {
+    "id": "e7ff4a44",
+    "goal": "you were going to look at how your system works so you can do that but it wouldn't be in the second brain folder it would be in the super intelligence app in a different folder",
+    "status": "failed",
+    "source": "user",
+    "priority": 1,
+    "created_at": 1779775901.223765,
+    "started_at": 1779775965.829335,
+    "completed_at": 1779776148.803672,
+    "success": false
+  },
+  {
+    "id": "3bc150cf",
+    "goal": "Search the super intelligence app folder recursively for files that mention neuromodulators",
+    "status": "completed",
+    "source": "user",
+    "priority": 1,
+    "created_at": 1779776091.2677078,
+    "started_at": 1779776168.78985,
+    "completed_at": 1779776304.340342,
+    "success": true
+  },
+  {
+    "id": "cbdb77b7",
+    "goal": "let me give you the github link and that will have a read me that probably explains it well",
+    "status": "completed",
+    "source": "user",
+    "priority": 1,
+    "created_at": 1779776255.511727,
+    "started_at": 1779776323.149687,
+    "completed_at": 1779776443.333453,
+    "success": true
+  },
+  {
+    "id": "563cb502",
+    "goal": "Read CLAUDE.md and README.md from the Karaoke Hero project to understand its architecture and goals.",
+    "status": "completed",
+    "source": "self",
+    "priority": 2,
+    "created_at": 1779776457.561321,
+    "started_at": 1779776460.563427,
+    "completed_at": 1779776566.251145,
+    "success": true
+  },
+  {
+    "id": "4867e4d8",
+    "goal": "Search the Super Intelligence app folder for neuromodulator-related code files to examine the current chemical weighting, triggering patterns, and feedback loops for optimization opportunities.",
+    "status": "completed",
+    "source": "user",
+    "priority": 1,
+    "created_at": 1779776536.565984,
+    "started_at": 1779776610.4248772,
+    "completed_at": 1779776730.617708,
+    "success": true
+  },
+  {
+    "id": "d92f686f",
+    "goal": "Retrieve and analyze the current wiring.json, recent turns from eval/turns.jsonl (decisions log), and generate a plasticity summary to identify which edges are changing and why, in order to assess whether the system is over-specializing, under-learning, or experiencing signal noise.",
+    "status": "completed",
+    "source": "user",
+    "priority": 1,
+    "created_at": 1779776681.763508,
+    "started_at": 1779776796.2591202,
+    "completed_at": 1779776998.704243,
+    "success": true
+  },
+  {
+    "id": "df33319b",
+    "goal": "Pull and retrieve the wiring log and recent turns files to analyze the learning curve and determine whether this is a tuning problem or something deeper.",
+    "status": "completed",
+    "source": "user",
+    "priority": 1,
+    "created_at": 1779777052.4968371,
+    "started_at": 1779777079.318718,
+    "completed_at": 1779777199.49129,
+    "success": true
+  },
+  {
+    "id": "22e568c4",
+    "goal": "AI displaying sadness",
+    "status": "completed",
+    "source": "user",
+    "priority": 1,
+    "created_at": 1779777975.315883,
+    "started_at": 1779778051.833073,
+    "completed_at": 1779778186.875844,
+    "success": true
+  },
+  {
+    "id": "abb5b68e",
+    "goal": "Retrieve and display the wiring log file to identify where the feedback is breaking.",
+    "status": "completed",
+    "source": "user",
+    "priority": 1,
+    "created_at": 1779778689.820077,
+    "started_at": 1779778710.810336,
+    "completed_at": 1779778842.983755,
+    "success": true
+  },
+  {
+    "id": "74eb54c8",
+    "goal": "Retrieve and examine the wiring files to identify actual component names and data format details that can be provided to help the user understand the code structure.",
+    "status": "completed",
+    "source": "user",
+    "priority": 1,
+    "created_at": 1779779336.1227038,
+    "started_at": 1779779372.6176581,
+    "completed_at": 1779779509.9389582,
+    "success": true
   }
 ]

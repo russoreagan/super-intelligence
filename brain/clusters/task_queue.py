@@ -205,6 +205,36 @@ class PersistentTaskQueue:
                 return True
         return False
 
+    def cancel(self, task_id: str) -> bool:
+        """Cancel a pending or blocked task. Running tasks cannot be cancelled mid-execution.
+        Returns True if the task was found and cancelled."""
+        for t in self._tasks:
+            if t.id == task_id and t.status in ("pending", "blocked"):
+                t.status = "failed"
+                t.completed_at = time.time()
+                t.success = False
+                self._save()
+                logger.info("[TaskQueue] Task [%s] cancelled", task_id)
+                return True
+        return False
+
+    def update_goal(self, task_id: str, new_goal: str) -> bool:
+        """Update the goal of a pending task. Returns True if found and updated."""
+        new_goal = new_goal.strip()
+        if not new_goal:
+            return False
+        for t in self._tasks:
+            if t.id == task_id and t.status == "pending":
+                t.goal = new_goal
+                self._save()
+                logger.info("[TaskQueue] Task [%s] goal updated: %s", task_id, new_goal[:80])
+                return True
+        return False
+
+    def all_tasks(self) -> list[Task]:
+        """Return all tasks (any status), newest first."""
+        return list(reversed(self._tasks))
+
     # ── Introspection ─────────────────────────────────────────────────────────
 
     def has_pending(self) -> bool:

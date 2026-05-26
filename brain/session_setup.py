@@ -174,6 +174,7 @@ class _SetupMixin:
         self._follow_through = FollowThrough(self.router)
         self._result_reporter = ResultReporter(self.router)
         self._task_queue = PersistentTaskQueue()
+        self._recent_task_results: list[dict] = []   # ring buffer: last 3 completed tasks
 
         _recovered = self._task_queue.recover_interrupted()
         if _recovered:
