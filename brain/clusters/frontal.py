@@ -1004,17 +1004,19 @@ class FrontalCluster:
                     parts.append(
                         f"Emotional expression: you are genuinely feeling {_emotion}. "
                         f"The voice will reflect this automatically. "
-                        f"If you want to deliberately contradict it, amplify a specific sentence, "
-                        f"or give one moment a different emotional colour, wrap it: "
-                        f"[mood:X]sentence[/mood] (e.g. [mood:{_emotion}]...[/mood] to lean in, "
-                        f"or [mood:calm] to soften). 1–2 sentences max."
+                        f"To better communicate an idea — sarcasm, humour, irony, or emphasis — "
+                        f"you can deliberately contradict or shift that feeling on specific sentences "
+                        f"by wrapping them: [mood:X]sentence[/mood] "
+                        f"(e.g. [mood:{_emotion}]...[/mood] to lean in, or [mood:calm] to soften). "
+                        f"1–2 sentences max; skip if the response doesn't call for it."
                     )
                 else:
-                    # Emotion has no direct preset but user can still use any available one
+                    # Emotion has no direct preset but the drafter can still use any available one
                     parts.append(
                         f"Emotional expression: you are feeling {_emotion}. "
-                        f"To give a specific sentence a different emotional delivery, "
-                        f"wrap it: [mood:X]sentence[/mood]. "
+                        f"To better communicate an idea — sarcasm, humour, irony, or emphasis — "
+                        f"you can give a specific sentence a different emotional delivery: "
+                        f"[mood:X]sentence[/mood]. "
                         f"Available: happy, excited, laughing, proud, warm, playful, calm, "
                         f"curious, thoughtful, confident, sad, angry, anxious, embarrassed, "
                         f"frustrated, surprised, disappointed, sarcastic."
