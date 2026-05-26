@@ -853,6 +853,14 @@ class MotorCortexCluster:
             elif tool == "fetch_url":
                 return await self._dispatcher._fetch_url(
                     args.get("url", ""), int(args.get("max_chars", 8000)))
+            elif tool == "query_langfuse":
+                return await self._dispatcher._query_langfuse(
+                    args.get("operation", ""),
+                    int(args.get("limit", 10)),
+                    args.get("trace_id", ""),
+                    args.get("score_name", ""),
+                    args.get("session_id", ""),
+                )
             else:
                 return f"[error] Unknown tool: {tool}"
         except Exception as e:
