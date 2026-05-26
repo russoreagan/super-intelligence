@@ -4732,6 +4732,25 @@ function handle(msg) {
     case 'speaking': {
       const btn = document.getElementById('interrupt-btn');
       btn.classList.toggle('visible', !!msg.active);
+      // Pause / resume browser-side Deepgram session around TTS playback.
+      // Without this, TTS audio bleeds into the mic and causes the Deepgram
+      // session to transcribe the brain's own speech, which either triggers
+      // a spurious user turn or causes the connection to die under load.
+      if (!pythonVoiceMode && micActive) {
+        if (msg.active) {
+          // TTS starting — close server-side Deepgram so bleed isn't transcribed
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'voice_stop' }));
+          }
+        } else {
+          // TTS ended — reopen Deepgram after a brief audio-settle delay
+          setTimeout(() => {
+            if (micActive && !pythonVoiceMode && ws && ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: 'voice_start' }));
+            }
+          }, 400);
+        }
+      }
       break;
     }
     case 'transcript':       handleTranscriptEvent(msg); break;
@@ -5394,10 +5413,23 @@ function handleTranscriptEvent(msg) {
 }
 
 function handleTranscriptError(msg) {
-  transcriptText.textContent = '⚠ ' + (msg.msg || 'Voice error');
+  transcriptText.textContent = '⚠ Reconnecting mic…';
   transcriptBar.classList.add('visible');
-  stopListening(false);
   setTimeout(() => transcriptBar.classList.remove('visible'), 3000);
+  if (micActive && !pythonVoiceMode) {
+    // Don't fully stop — the Deepgram connection died but MediaRecorder is
+    // still running. Clear the dead server session and open a fresh one.
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'voice_stop' }));
+    }
+    setTimeout(() => {
+      if (micActive && !pythonVoiceMode && ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'voice_start' }));
+      }
+    }, 300);
+  } else {
+    stopListening(false);
+  }
 }
 
 micBtn.addEventListener('click', () => {

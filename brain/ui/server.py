@@ -415,6 +415,10 @@ class UIServer:
                     elif t == "interrupt" and self._on_interrupt:
                         self._on_interrupt()
                     elif t == "voice_start":
+                        # If a previous session died silently (task finished without
+                        # a voice_stop), clear it so we get a fresh connection.
+                        if dg_conn is not None and dg_conn._task.done():
+                            dg_conn = None
                         if dg_conn is None:
                             dg_conn = await self._start_deepgram(websocket)
                     elif t == "voice_stop":
