@@ -850,6 +850,9 @@ class MotorCortexCluster:
                 return await asyncio.get_event_loop().run_in_executor(
                     None, self._dispatcher._search_files,
                     args.get("path", "."), args.get("query", ""), args.get("file_pattern", "*"))
+            elif tool == "fetch_url":
+                return await self._dispatcher._fetch_url(
+                    args.get("url", ""), int(args.get("max_chars", 8000)))
             else:
                 return f"[error] Unknown tool: {tool}"
         except Exception as e:
