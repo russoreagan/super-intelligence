@@ -957,7 +957,31 @@ class FrontalCluster:
             parts.append(f"User model:\n{fence('user_model', memory['core']['user'][:400], nonce)}")
 
         parts.append(f"\nDrafting instruction: {json.dumps(instruction)}")
-        parts.append(f"Emotional context: {affect.get('appraisal', '')}")
+
+        # ── Interoception: first-person emotional self-awareness ──────────────
+        # The distinction between *having* an emotion and *recognising* it:
+        # we tell the drafter what it is feeling as a first-person fact, not
+        # just how to behave.  This is the frontal-lobe step that lets it then
+        # choose to honour, soften, or deliberately contradict the state.
+        _emotion = affect.get("emotion") or "neutral"
+        _tendency = affect.get("tendency") or ""
+        _appraisal = affect.get("appraisal") or ""
+        _dims = affect.get("affect_dims") or {}
+        _arousal = _dims.get("arousal", 0.25)
+        if _arousal > 0.60:
+            _intensity = "strongly "
+        elif _arousal > 0.38:
+            _intensity = ""
+        else:
+            _intensity = "mildly "
+
+        _intero_lines = [f"You are {_intensity}feeling: {_emotion}"]
+        if _tendency:
+            _intero_lines.append(f"  Tendency: {_tendency}")
+        if _appraisal:
+            _intero_lines.append(f"  Why: {_appraisal}")
+        parts.append("\n".join(_intero_lines))
+
         if affect.get("prosody_prefix"):
             parts.append(f"Consider opening with: '{affect['prosody_prefix']}'")
 
@@ -966,6 +990,37 @@ class FrontalCluster:
         expressive = self._expressive_guidance(affect)
         if expressive:
             parts.append(f"Your expressive state — {expressive}")
+
+        # ── Emotional agency: can honour, soften, or deliberately contradict ──
+        # Only injected when the feature is enabled; kept brief so it doesn't
+        # crowd out the actual drafting instruction.
+        try:
+            from brain.settings import settings as _s
+            from brain.emotion_presets import get_tag as _get_tag
+            if _s.get("emotional_expression_enabled", 1):
+                _preset_tag = _get_tag(_emotion)
+                if _preset_tag is not None:
+                    # Direct match — tell the drafter it can use its own emotion OR any other
+                    parts.append(
+                        f"Emotional expression: you are genuinely feeling {_emotion}. "
+                        f"The voice will reflect this automatically. "
+                        f"If you want to deliberately contradict it, amplify a specific sentence, "
+                        f"or give one moment a different emotional colour, wrap it: "
+                        f"[mood:X]sentence[/mood] (e.g. [mood:{_emotion}]...[/mood] to lean in, "
+                        f"or [mood:calm] to soften). 1–2 sentences max."
+                    )
+                else:
+                    # Emotion has no direct preset but user can still use any available one
+                    parts.append(
+                        f"Emotional expression: you are feeling {_emotion}. "
+                        f"To give a specific sentence a different emotional delivery, "
+                        f"wrap it: [mood:X]sentence[/mood]. "
+                        f"Available: happy, excited, laughing, proud, warm, playful, calm, "
+                        f"curious, thoughtful, confident, sad, angry, anxious, embarrassed, "
+                        f"frustrated, surprised, disappointed, sarcastic."
+                    )
+        except Exception:
+            pass
 
         # ── Acoustic signals (only present in voice mode) ────────────────────
         vocal_tone = affect.get("vocal_tone")

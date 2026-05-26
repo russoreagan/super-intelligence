@@ -766,6 +766,26 @@ class MotorCortexCluster:
             f"Entities: {features.get('entities', [])}",
             f"CWD: {self._dispatcher._allowed_paths[0] if self._dispatcher._allowed_paths else 'unknown'}",
         ]
+        # Current emotional state — lets the planner reason about whether
+        # set_mood adds value (e.g. entity already feels curious → redundant;
+        # entity feels anxious but topic calls for confident delivery → useful).
+        try:
+            _nm = self._bus.neuromod.snapshot()
+            _hs = self._bus.hormonal.snapshot()
+            from brain.emotion_vocabulary import (
+                name_emotion as _name_emotion,
+                apply_ne_color as _apply_ne,
+                apply_hormonal_color as _apply_horm,
+            )
+            _em, _tend = _name_emotion(
+                _nm.get("DA", 0.5), _nm.get("GABA", 0.0),
+                _nm.get("ACh", 0.3), _nm.get("Glu", 0.3),
+            )
+            _em, _tend = _apply_ne(_em, _tend, _nm.get("NE", 0.25))
+            _em, _tend = _apply_horm(_em, _tend, _hs)
+            parts.append(f"Entity emotion: {_em} (tendency: {_tend})")
+        except Exception:
+            pass
         if subsystem_context.strip():
             parts.append(subsystem_context.strip())
         if steps_done:
