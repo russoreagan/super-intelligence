@@ -174,7 +174,7 @@ Upload images via the browser UI (`/upload_image`). Occipital cortex passes them
 ## Default Mode Network
 
 With `--dmn`:
-- Idle thoughts fire every ~15 s when no user input is active
+- Idle thoughts fire every ~8 s during conversation, ~25 s when the OS reports the user is idle
 - **Bidirectional coupling**: DMN thoughts influence neuromodulator state; neuromodulator state gates DMN firing
 - **Feedback loops**: thoughts can re-trigger downstream emotion/memory updates
 - **Thought deduplication**: near-duplicate thoughts are suppressed; recent unique thoughts are surfaced
@@ -236,7 +236,7 @@ Buckets recent turns by whether gating fired (proxied via `llm_calls_saved > 0` 
 ## Testing
 
 ```bash
-uv run pytest                                           # full suite (310+)
+uv run pytest                                           # full suite (656+)
 uv run pytest tests/test_predictor_gating.py            # predictor + bypass helper
 uv run pytest tests/test_hebbian_pass.py                # wiring + sleep Hebbian pass
 uv run pytest tests/test_decisions_log.py               # decisions → disk + UI
@@ -248,6 +248,11 @@ uv run pytest tests/test_hormonal_system.py             # endocrine channels
 
 ```
 brain/
+  run.py                  — 3-line entry point: parses args, delegates to BrainSession
+  brain_session.py        — BrainSession: __init__, run(), run modes, shutdown
+  session_setup.py        — _SetupMixin: all _setup_* methods (core, wiring, clusters, …)
+  session_loops.py        — _LoopsMixin: callbacks + background loops (speak gate, voice bridge, …)
+  session_turn.py         — _TurnMixin: process_turn, _process_turn_body, _run_task
   bus.py                  — topic-tagged pub/sub blackboard + neuromodulator state
   brainstem.py            — heartbeat, budget enforcer, articulation gate
   cell.py                 — IntegratorCell (LLM-backed, firing-path hook)
@@ -255,6 +260,7 @@ brain/
   predictor.py            — PredictorSwitch + CompositePredictor + emotion-aware bypass
   wiring.py               — Edge graph + Hebbian update + decay + history snapshots
   wiring_bootstrap.py     — declares the initial cluster-to-cluster edge graph
+  hebbian.py              — HebbianUpdater: outcome computation + per-edge weight updates
   pns.py                  — peripheral I/O (text in, TTS out, voice shaping)
   streaming_mic.py        — Deepgram streaming session (with KeepAlive)
   model_router.py         — cloud-or-local LLM dispatch by model key
@@ -262,13 +268,16 @@ brain/
   skill_loader.py         — loads brain/skills/*.md and injects into local model prompts
   skills/                 — skill markdown files (injected into Ollama calls only)
   dmn.py                  — Default Mode Network: idle thinking loop
+  dmn_prompts.py          — prompt strings for DMN cells (monologue, simulation, …)
   metacognition.py        — self-monitor cell publishing meta.* topics
   sleep.py                — consolidation: episode synthesis + self-model update + Hebbian pass
+  sleep_prompts.py        — prompt strings for sleep consolidation cells
   emotion_hierarchy.py    — 3-tier feeling-wheel taxonomy
   emotion_vocabulary.py   — neuromod → (emotion, tendency) lookup
   clusters/
     temporal.py           — language understanding + predictor + weighted switch order
     frontal.py            — Multiple Drafts engine + executive/critic predictors + weighted drafter selection
+    frontal_prompts.py    — prompt strings for executive, drafter, and critic cells
     frontal_subsystem.py  — FrontalSubsystem ABC + SubsystemResult
     frontal_task.py       — FrontalTaskSubsystem + PendingTask (intent → motor handoff)
     follow_through.py     — SMA loop: spoken commitments → self-directed motor tasks
@@ -278,6 +287,8 @@ brain/
     parietal.py           — session state ring buffer
     occipital.py          — vision integrator (VLM)
     motor_cortex.py       — tool use (file I/O + shell, sandboxed)
+    motor_prompts.py      — prompt strings for motor planner and result reporter
+    motor_dispatcher.py   — ToolDispatcher: routes tool calls to handlers
     motor_subsystem.py    — MotorSubsystem ABC (before_plan / after_job hooks)
     motor_memory.py       — MuscleMemorySubsystem + ProcedureStore (LanceDB-backed)
     cloud_executor.py     — Claude Code subprocess for cloud actions (WebSearch + WebFetch)
@@ -305,7 +316,7 @@ eval/
   compare.py              — gating on/off comparison runner
   baseline.py             — baseline-model runner for eval
   scorer.py               — post-hoc judge scorer
-tests/                    — pytest suite (310+ tests)
+tests/                    — pytest suite (656+ tests)
 ```
 
 ## Troubleshooting
