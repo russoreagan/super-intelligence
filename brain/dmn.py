@@ -942,21 +942,43 @@ class DefaultModeNetwork:
         self._thought_count += 1
         turn_id = f"dmn_{self._thought_count}"
 
-        # Refresh the parietal slice so the monologue always sees the live
-        # conversation, not just whatever was captured at the last turn
-        # boundary. update_context preserves the previously-stored emotion,
-        # self_schema, speaker, and relationship via its upsert semantics.
+        # Refresh parietal slice so the monologue always sees the live conversation
         if self._parietal is not None:
             with contextlib.suppress(Exception):
                 self.update_context(self._parietal.recent_turns_text())
 
-        # 1. Internal monologue — show the LLM what it just thought so it
-        # naturally varies, then reject anything that still looks redundant.
-        self._monologue_cell.reset_turn(turn_id)
+        # 1. Internal monologue
         chem = self._chem_snapshot()
+        thought_clean, metadata = await self._run_monologue(turn_id, chem)
+        if thought_clean:
+            await self._process_thought(thought_clean, metadata, turn_id)
+
+        # 2. User simulation / prediction (every 3rd tick)
+        if self._thought_count % 3 == 0 and self._parietal:
+            await self._run_simulation(turn_id)
+
+        # 3. Anticipator — pre-think likely responses to the entity's last question
+        if self.last_was_question and not self.anticipations:
+            await self._run_anticipator(turn_id)
+
+        # 4. Prefetcher — proactively pull memory for topics likely to resurface
+        if (self._thought_count % 4 == 0
+                and self._hippocampus is not None
+                and not self.prefetched):
+            await self._run_prefetcher(turn_id)
+
+    async def _run_monologue(self, turn_id: str, chem: dict) -> tuple[str, dict]:
+        """Build prompt, call the monologue cell, parse response.
+
+        Returns (thought_clean, metadata) where metadata keys are:
+        angle, spoken_form, task_goal, is_propose, is_plan,
+        defer_text, defer_urgency, defer_tags, chem_delta.
+        Empty thought_clean means the cell returned nothing or parsing yielded nothing.
+        """
+        self._monologue_cell.reset_turn(turn_id)
+
         context_label = f"Recent context:\n{self._last_context}" if self._last_context else "Recent context: none"
-        prompt_parts = [context_label,
-                        self._build_situation_block(chem)]
+        prompt_parts = [context_label, self._build_situation_block(chem)]
         if self._last_projects:
             prompt_parts.append(
                 f"\nPRE-AUTHORIZED PROJECTS (work within these scopes auto-runs — "
@@ -974,237 +996,181 @@ class DefaultModeNetwork:
                 f"\nConceptual territory already covered (choose a DIFFERENT angle):\n"
                 f"{angles_block}"
             )
+
         raw = await self._monologue_cell.call([
             {"role": "user", "content": "\n".join(prompt_parts)}
         ])
         if not raw:
             logger.warning("[Background reflection] Monologue cell returned empty — model may be unavailable")
-        if raw:
-            # Parse JSON response; fall back to treating the whole response as
-            # plain thought text so old-style outputs don't silently vanish.
-            spoken_form: str | None = None
-            angle: str | None = None
-            chem_delta: dict[str, float] = {}
-            task_goal: str | None = None
-            is_propose: bool = False
-            defer_text: str | None = None
-            defer_urgency: str = "high"
-            defer_tags: list[str] = []
-            is_plan: bool = False
-            parsed = self._parse_monologue_response(raw)
-            if parsed is None:
-                thought_clean = raw.strip()
+            return "", {}
+
+        metadata: dict = {
+            "angle": None, "spoken_form": None, "task_goal": None,
+            "is_propose": False, "is_plan": False,
+            "defer_text": None, "defer_urgency": "high", "defer_tags": [],
+            "chem_delta": {},
+        }
+
+        parsed = self._parse_monologue_response(raw)
+        if parsed is None:
+            thought_clean = raw.strip()
+        else:
+            thought_clean = (parsed.get("thought") or "").strip()
+            metadata["angle"] = (parsed.get("angle") or "").strip().lower() or None
+            metadata["is_propose"] = bool(parsed.get("propose"))
+            metadata["is_plan"] = bool(parsed.get("plan"))
+            raw_defer = parsed.get("defer")
+            if isinstance(raw_defer, dict):
+                metadata["defer_text"] = (raw_defer.get("text") or "").strip()
+                defer_urgency = (raw_defer.get("urgency") or "high").strip().lower()
+                if defer_urgency not in ("immediate", "high", "normal", "low"):
+                    defer_urgency = "high"
+                metadata["defer_urgency"] = defer_urgency
+                metadata["defer_tags"] = [str(t) for t in (raw_defer.get("topic_tags") or [])][:5]
+            if parsed.get("speak") and parsed.get("spoken"):
+                metadata["spoken_form"] = parsed["spoken"].strip()
+            if not metadata["is_propose"] and not metadata["is_plan"] and not metadata["defer_text"]:
+                raw_task = (parsed.get("task") or "").strip()
+                if raw_task:
+                    metadata["task_goal"] = raw_task
+            raw_delta = parsed.get("chem_delta") or {}
+            if isinstance(raw_delta, dict):
+                chem_delta: dict[str, float] = {}
+                for ch, v in raw_delta.items():
+                    if ch in _CHEM_ALLOWED:
+                        try:
+                            chem_delta[ch] = max(-_CHEM_MAX_DELTA, min(_CHEM_MAX_DELTA, float(v)))
+                        except (TypeError, ValueError):
+                            pass
+                metadata["chem_delta"] = chem_delta
+
+        return thought_clean, metadata
+
+    async def _process_thought(self, thought_clean: str, metadata: dict, turn_id: str) -> None:
+        """Dedup-check and, if novel, record, publish, and dispatch side-effects for one thought."""
+        angle = metadata["angle"]
+        spoken_form = metadata["spoken_form"]
+        task_goal = metadata["task_goal"]
+        is_propose = metadata["is_propose"]
+        is_plan = metadata["is_plan"]
+        defer_text = metadata["defer_text"]
+        defer_urgency = metadata["defer_urgency"]
+        defer_tags = metadata["defer_tags"]
+        chem_delta = metadata["chem_delta"]
+
+        max_overlap = 0.0
+        for prior in self._recent_thoughts:
+            o = _content_word_overlap(thought_clean, prior)
+            if o > max_overlap:
+                max_overlap = o
+
+        if max_overlap > settings.get("dmn_overlap_threshold"):
+            self._suppressed_count += 1
+            logger.info(
+                "[Background reflection] Suppressed redundant thought "
+                "(overlap %.2f, total suppressed=%d): %r",
+                max_overlap, self._suppressed_count, thought_clean[:60],
+            )
+            return
+
+        self._recent_thoughts.append(thought_clean)
+        if angle:
+            self._recent_angles.append(angle)
+
+        direction = _classify_thought(thought_clean)
+        neuromod_snapshot = self._bus.neuromod.snapshot()
+
+        if self._obs:
+            self._obs.record_thought(
+                thought=thought_clean, direction=direction, angle=angle,
+                count=self._thought_count, neuromod=neuromod_snapshot,
+            )
+
+        da_level = float(neuromod_snapshot.get("DA", 0.5))
+        em_valence = valence_of(self._last_emotion)
+        salient = (
+            da_level > 0.62
+            or spoken_form is not None
+            or abs(em_valence) > 0.45
+        )
+        buf_entry: dict = {
+            "thought": thought_clean, "angle": angle or "",
+            "direction": direction, "speak_flagged": spoken_form is not None,
+            "emotion": self._last_emotion,
+            "neuromod": {k: round(v, 3) for k, v in neuromod_snapshot.items()},
+            "salient": salient, "ts": time.time(),
+        }
+        self._session_thought_buf.append(buf_entry)
+        if len(self._session_thought_buf) > self._session_thought_limit:
+            for i, e in enumerate(self._session_thought_buf):
+                if not e["salient"]:
+                    self._session_thought_buf.pop(i)
+                    break
             else:
-                thought_clean = (parsed.get("thought") or "").strip()
-                angle = (parsed.get("angle") or "").strip().lower() or None
-                is_propose = bool(parsed.get("propose"))
-                is_plan = bool(parsed.get("plan"))
-                raw_defer = parsed.get("defer")
-                if isinstance(raw_defer, dict):
-                    defer_text = (raw_defer.get("text") or "").strip()
-                    defer_urgency = (raw_defer.get("urgency") or "high").strip().lower()
-                    if defer_urgency not in ("immediate", "high", "normal", "low"):
-                        defer_urgency = "high"
-                    defer_tags = [str(t) for t in (raw_defer.get("topic_tags") or [])][:5]
-                if parsed.get("speak") and parsed.get("spoken"):
-                    spoken_form = parsed["spoken"].strip()
-                if not is_propose and not is_plan and not defer_text:
-                    raw_task = (parsed.get("task") or "").strip()
-                    if raw_task:
-                        task_goal = raw_task
-                raw_delta = parsed.get("chem_delta") or {}
-                if isinstance(raw_delta, dict):
-                    for ch, v in raw_delta.items():
-                        if ch in _CHEM_ALLOWED:
-                            try:
-                                chem_delta[ch] = max(-_CHEM_MAX_DELTA,
-                                                     min(_CHEM_MAX_DELTA, float(v)))
-                            except (TypeError, ValueError):
-                                pass
+                self._session_thought_buf.pop(0)
 
-            if not thought_clean:
-                pass  # nothing to do
+        tick_deltas = _INWARD_DELTA if direction == "inward" else _OUTWARD_DELTA
+        for channel, delta in tick_deltas.items():
+            self._bus.neuromod.add(channel, delta)
+
+        hormonal_channels = {"5HT", "CORT", "OXT", "AEA"}
+        for channel, delta in chem_delta.items():
+            if channel in hormonal_channels:
+                self._bus.hormonal.add(channel, delta)
             else:
-                # Word-set overlap rejection — angles are used as prompt-level
-                # hints only (the LLM sees blocked angles and picks a different
-                # one). A hard angle block would exhaust the LLM's label space
-                # and silence all thoughts. The overlap check catches near-
-                # duplicate phrasing as a safety net.
-                max_overlap = 0.0
-                for prior in self._recent_thoughts:
-                    o = _content_word_overlap(thought_clean, prior)
-                    if o > max_overlap:
-                        max_overlap = o
+                self._bus.neuromod.add(channel, delta)
 
-                if max_overlap > settings.get("dmn_overlap_threshold"):
-                    self._suppressed_count += 1
-                    logger.info(
-                        "[Background reflection] Suppressed redundant thought "
-                        "(overlap %.2f, total suppressed=%d): %r",
-                        max_overlap, self._suppressed_count, thought_clean[:60],
+        await self._bus.publish_dict(
+            "stream.thought",
+            {"thought": thought_clean, "ts": time.time(),
+             "count": self._thought_count, "direction": direction,
+             "proactive": spoken_form is not None, "chem_delta": chem_delta},
+            source="dmn",
+        )
+        logger.debug("[Background reflection] Thought #%d (%s): %s",
+                     self._thought_count, direction, thought_clean[:80])
+
+        if spoken_form:
+            self._candidate_q.append({
+                "thought": thought_clean, "spoken": spoken_form,
+                "angle": angle, "propose": is_propose,
+                "created_ts": time.time(), "attempts": 0,
+            })
+            logger.info("[Background reflection] Speak candidate queued (queue=%d): %r",
+                        len(self._candidate_q), spoken_form[:80])
+
+        if task_goal:
+            self._self_task_q.append(task_goal)
+            logger.info("[Background reflection] Self-initiated task queued: %r", task_goal[:80])
+
+        if defer_text:
+            self._append_deferred_thought(defer_text, defer_urgency, defer_tags)
+            if self._hippocampus is not None:
+                asyncio.create_task(
+                    self._hippocampus.encode_deferred_question(
+                        session_id=getattr(self, "_session_id", "unknown"),
+                        text=defer_text, urgency=defer_urgency, tags=defer_tags,
+                        embedding_fn=self._router.embed,
                     )
-                    # Don't publish, don't record — let the next tick try again
-                else:
-                    self._recent_thoughts.append(thought_clean)
-                    if angle:
-                        self._recent_angles.append(angle)
-
-                    # Classify thought direction and apply neuromod feedback.
-                    direction = _classify_thought(thought_clean)
-
-                    neuromod_snapshot = self._bus.neuromod.snapshot()
-                    if self._obs:
-                        self._obs.record_thought(
-                            thought=thought_clean,
-                            direction=direction,
-                            angle=angle,
-                            count=self._thought_count,
-                            neuromod=neuromod_snapshot,
-                        )
-
-                    # Hippocampal tagging: mark thoughts salient when DA is
-                    # elevated (reward/engagement signal), when the thought was
-                    # flagged as a speak candidate (passed relevance bar), or
-                    # when the current emotion has strong valence — these are
-                    # the conditions under which real memories get tagged for
-                    # consolidation during sleep. Neutral-state noise is kept in
-                    # the buffer but not marked salient, so the REM pass can
-                    # still look for recurrence across non-salient thoughts
-                    # without treating each individual one as important.
-                    da_level = float(neuromod_snapshot.get("DA", 0.5))
-                    em_valence = valence_of(self._last_emotion)
-                    salient = (
-                        da_level > 0.62          # elevated dopamine
-                        or spoken_form is not None  # passed speak-gate bar
-                        or abs(em_valence) > 0.45   # strong emotion
-                    )
-                    buf_entry: dict = {
-                        "thought": thought_clean,
-                        "angle": angle or "",
-                        "direction": direction,
-                        "speak_flagged": spoken_form is not None,
-                        "emotion": self._last_emotion,
-                        "neuromod": {k: round(v, 3) for k, v in neuromod_snapshot.items()},
-                        "salient": salient,
-                        "ts": time.time(),
-                    }
-                    self._session_thought_buf.append(buf_entry)
-                    # Hard cap — evict oldest non-salient entry first; if all
-                    # are salient, evict the oldest overall.
-                    if len(self._session_thought_buf) > self._session_thought_limit:
-                        # Try to drop oldest non-salient entry
-                        for i, e in enumerate(self._session_thought_buf):
-                            if not e["salient"]:
-                                self._session_thought_buf.pop(i)
-                                break
-                        else:
-                            self._session_thought_buf.pop(0)
-
-                    # Fixed tick deltas always apply — they model chemistry
-                    # drifting back toward baseline as time passes (passive decay).
-                    tick_deltas = _INWARD_DELTA if direction == "inward" else _OUTWARD_DELTA
-                    for channel, delta in tick_deltas.items():
-                        self._bus.neuromod.add(channel, delta)
-
-                    # Content-driven deltas from the model — what this particular
-                    # thought does to chemistry based on its actual substance.
-                    # Neuromod and hormonal buses are separate — route accordingly.
-                    hormonal_channels = {"5HT", "CORT", "OXT", "AEA"}
-                    for channel, delta in chem_delta.items():
-                        if channel in hormonal_channels:
-                            self._bus.hormonal.add(channel, delta)
-                        else:
-                            self._bus.neuromod.add(channel, delta)
-
-                    await self._bus.publish_dict(
-                        "stream.thought",
-                        {"thought": thought_clean, "ts": time.time(),
-                         "count": self._thought_count, "direction": direction,
-                         "proactive": spoken_form is not None,
-                         "chem_delta": chem_delta},
-                        source="dmn",
-                    )
-                    logger.debug("[Background reflection] Thought #%d (%s): %s",
-                                 self._thought_count, direction, thought_clean[:80])
-
-                    if spoken_form:
-                        # Don't speak directly — push into the candidate queue.
-                        # The speak gate (driven from run.py) will apply
-                        # heuristic + judge gates before promoting to
-                        # _proactive_q for TTS.
-                        self._candidate_q.append({
-                            "thought": thought_clean,
-                            "spoken": spoken_form,
-                            "angle": angle,
-                            "propose": is_propose,  # True = permission question, act on confirm
-                            "created_ts": time.time(),
-                            "attempts": 0,
-                        })
-                        logger.info("[Background reflection] Speak candidate queued "
-                                    "(queue=%d): %r",
-                                    len(self._candidate_q), spoken_form[:80])
-
-                    if task_goal:
-                        self._self_task_q.append(task_goal)
-                        logger.info("[Background reflection] Self-initiated task queued: %r",
-                                    task_goal[:80])
-
-                    if defer_text:
-                        # Immediate/high → also written to deferred_thoughts.md (shown on return)
-                        # Normal/low → episodic memory only; surfaces via vector search
-                        self._append_deferred_thought(defer_text, defer_urgency, defer_tags)
-                        # All urgency levels go into episodic memory for natural triggering
-                        if self._hippocampus is not None:
-                            asyncio.create_task(
-                                self._hippocampus.encode_deferred_question(
-                                    session_id=getattr(self, "_session_id", "unknown"),
-                                    text=defer_text,
-                                    urgency=defer_urgency,
-                                    tags=defer_tags,
-                                    embedding_fn=self._router.embed,
-                                )
-                            )
-
-                    if is_plan and thought_clean:
-                        # Fire-and-forget — planning is slow (32B model); don't
-                        # block the tick loop. Errors are logged but not raised.
-                        asyncio.create_task(
-                            self._run_planning_pass(thought_clean, turn_id)
-                        )
-
-        # 2. User simulation / prediction (every 3rd tick)
-        if self._thought_count % 3 == 0 and self._parietal:
-            self._simulation_cell.reset_turn(turn_id + "_sim")
-            raw = await self._simulation_cell.call([
-                {"role": "user", "content": self._last_context or "No context yet."}
-            ])
-            try:
-                self.predicted_next = json.loads(raw)
-                await self._bus.publish_dict(
-                    "stream.prediction",
-                    self.predicted_next,
-                    source="dmn",
                 )
-                logger.debug("[Background reflection] Anticipating: %s (confidence=%.2f)",
-                             self.predicted_next.get("predicted_input", "")[:60],
-                             self.predicted_next.get("confidence", 0))
-            except Exception:
-                pass
 
-        # 3. Anticipator — if the entity's last message ended with a question,
-        # pre-think 2-3 likely user answers and sketch responses for each.
-        # Runs once per question (then anticipations get consumed by the next
-        # actual turn). Skips if we already have anticipations queued.
-        if self.last_was_question and not self.anticipations:
-            await self._run_anticipator(turn_id)
+        if is_plan and thought_clean:
+            asyncio.create_task(self._run_planning_pass(thought_clean, turn_id))
 
-        # 4. Prefetcher — every 4th tick, identify topics likely to come up
-        # again and proactively pull related episodes from memory. Skip if
-        # we already have prefetched context waiting (next turn will use it).
-        if (self._thought_count % 4 == 0
-                and self._hippocampus is not None
-                and not self.prefetched):
-            await self._run_prefetcher(turn_id)
+    async def _run_simulation(self, turn_id: str) -> None:
+        """Run the user-simulation cell and publish the predicted next input."""
+        self._simulation_cell.reset_turn(turn_id + "_sim")
+        raw = await self._simulation_cell.call([
+            {"role": "user", "content": self._last_context or "No context yet."}
+        ])
+        try:
+            self.predicted_next = json.loads(raw)
+            await self._bus.publish_dict("stream.prediction", self.predicted_next, source="dmn")
+            logger.debug("[Background reflection] Anticipating: %s (confidence=%.2f)",
+                         self.predicted_next.get("predicted_input", "")[:60],
+                         self.predicted_next.get("confidence", 0))
+        except Exception:
+            pass
 
     def _idle_decay(self) -> None:
         """Decay ACh and Glu 15% toward their resting floors per tick.

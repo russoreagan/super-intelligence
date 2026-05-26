@@ -177,47 +177,85 @@ class FrontalCluster:
 
     async def process(self, features: dict, affect: dict, memory: dict,
                       parietal_context: str, turn_id: str, image_path: str | None = None) -> str:
-        """
-        Run the Multiple Drafts engine. Returns the committed response.
-        """
+        """Run the Multiple Drafts engine. Returns the committed response."""
         nm = self._bus.neuromod.snapshot()
         chem = self._chem_snapshot()
-        self.last_turn_draft_scores = []   # reset for this turn
+        self.last_turn_draft_scores = []
 
-        # --- v0.2 Stoic reframer: try to reframe before going defensive ---
-        # GABA_inhibitor switch — fires when GABA clears its (chemistry-shifted)
-        # threshold. CORT lowers threshold (defensive sooner); OXT buffers.
+        # 1. Safety gate — reframe hostile input or defuse under severe stress
+        features, early = await self._run_safety_gate(nm, chem, features, affect, turn_id)
+        if early is not None:
+            return early
+
+        # 2. Canned response shortcut (switch-only routes)
+        canned = self._check_canned_response(features, affect)
+        if canned is not None:
+            return canned
+
+        # 3. Executive: predict or run the integrator to get routing instruction
+        exec_sig = composite_signature(features, affect)
+        instruction = await self._run_executive(nm, chem, exec_sig, features, affect,
+                                                 memory, parietal_context, turn_id)
+
+        # 4. Subsystem dispatch (task planner, etc.) — first match wins
+        subsystem_response = await self._try_subsystem_dispatch(
+            instruction, features, affect, memory, parietal_context, turn_id)
+        if subsystem_response is not None:
+            return subsystem_response
+
+        # 5. Drafter cascade + critic selection
+        return await self._run_drafters_and_select(
+            nm, chem, exec_sig, instruction, features, affect,
+            memory, parietal_context, turn_id, image_path)
+
+    async def _run_safety_gate(
+        self, nm: dict, chem: dict, features: dict, affect: dict, turn_id: str,
+    ) -> tuple[dict, str | None]:
+        """GABA-inhibitor gate — reframe hostile input or defuse under severe stress.
+
+        Returns (possibly_modified_features, early_response).
+        early_response is non-None only when the defuse path fires; in that case
+        process() must return the value immediately.
+        """
         if self._GABA_inhibitor.should_fire(nm["GABA"], chem, turn_id):
             self._GABA_inhibitor.fire(nm["GABA"], "reframe_trigger",
                                       {"GABA": round(nm["GABA"], 3)}, snapshot=chem)
             reframe = await self._attempt_reframe(features, affect, turn_id)
             if reframe and reframe.get("succeeded"):
-                # Reframe succeeded — update features to route normally
                 features = dict(features)
                 features["_reframe"] = reframe["reframe"]
                 features["_reframe_approach"] = reframe["response_approach"]
                 logger.debug("[Response engine] Reframed hostile input: %s", reframe["reframe"][:60])
             elif nm["GABA"] > settings.get("gaba_skip_threshold_high"):
-                # Reframe failed and GABA very high → defuse path
                 logger.debug("[Response engine] Stress response active — using de-escalation response path")
-                return await self._defuse_response(features, affect, turn_id)
+                return features, await self._defuse_response(features, affect, turn_id)
+        return features, None
 
-        # --- Canned response (switch-only) ---
-        if features.get("switch_only") and features.get("canned_response"):
-            response = features["canned_response"]
-            if affect.get("prosody_prefix") and features.get("intent") not in ("greeting", "ack"):
-                response = affect["prosody_prefix"] + response
-            self._brainstem.add_draft("switch_draft", response, 1.0)
-            self._brainstem.endorse("switch_draft")
-            self.last_turn_draft_scores = [{"draft_id": "switch_draft", "overall": 1.0,
-                                             "coherence": 1.0, "relevance": 1.0,
-                                             "tone_fit": 1.0, "selected": True,
-                                             "critic_ran": False}]
-            return response
+    def _check_canned_response(self, features: dict, affect: dict) -> str | None:
+        """Return a canned response for switch-only routes, or None to continue normally."""
+        if not (features.get("switch_only") and features.get("canned_response")):
+            return None
+        response = features["canned_response"]
+        if affect.get("prosody_prefix") and features.get("intent") not in ("greeting", "ack"):
+            response = affect["prosody_prefix"] + response
+        self._brainstem.add_draft("switch_draft", response, 1.0)
+        self._brainstem.endorse("switch_draft")
+        self.last_turn_draft_scores = [{"draft_id": "switch_draft", "overall": 1.0,
+                                         "coherence": 1.0, "relevance": 1.0,
+                                         "tone_fit": 1.0, "selected": True,
+                                         "critic_ran": False}]
+        return response
 
-        # --- Executive: predict-and-surprise gate ---
+    async def _run_executive(
+        self, nm: dict, chem: dict, exec_sig: tuple,
+        features: dict, affect: dict, memory: dict,
+        parietal_context: str, turn_id: str,
+    ) -> dict:
+        """Run the executive integrator or use the predictor shortcut.
+
+        Returns the routing instruction dict.
+        """
         instruction: dict | None = None
-        exec_sig = composite_signature(features, affect)
         bypass, bypass_reason = should_bypass_gating(affect, features)
 
         if bypass:
@@ -233,7 +271,6 @@ class FrontalCluster:
         else:
             predicted, confidence = self._exec_predictor.predict(exec_sig)
             if predicted and self._exec_predictor.should_skip_integrator(predicted, confidence):
-                # Skip the executive LLM call — synthesize instruction from prediction
                 response_type, target_length, tone = predicted
                 instruction = {
                     "response_type": response_type,
@@ -268,13 +305,10 @@ class FrontalCluster:
             exec_context = self._build_exec_context(features, affect, memory, parietal_context, nm)
             exec_messages = [{"role": "user", "content": exec_context}]
             exec_raw = await self._executive.call(exec_messages)
-
             instruction = safe_json_parse(exec_raw)
             if not instruction:
                 instruction = {"response_type": "chitchat", "target_length": "medium",
                                "tone": "neutral", "key_points": [], "drafter_count": 1}
-
-            # Record actual for predictor learning
             actual = (
                 instruction.get("response_type", "chitchat"),
                 instruction.get("target_length", "medium"),
@@ -296,9 +330,13 @@ class FrontalCluster:
                     "correct": (predicted_now == actual) if predicted_now else None,
                 })
 
-        # --- Subsystem dispatch ---
-        # Check registered subsystems before the conversational path.
-        # First match wins; conversational drafter/critic fires as fallback.
+        return instruction
+
+    async def _try_subsystem_dispatch(
+        self, instruction: dict, features: dict, affect: dict,
+        memory: dict, parietal_context: str, turn_id: str,
+    ) -> str | None:
+        """Try registered subsystems. Returns a response string, or None to fall through to drafters."""
         response_type = instruction.get("response_type", "chitchat")
         for subsystem in self._subsystems:
             if subsystem.can_handle(response_type, features):
@@ -317,29 +355,30 @@ class FrontalCluster:
                         "critic_ran": False,
                     }]
                     return result.response
-                break  # subsystem matched but returned no response — fall through
+                break  # subsystem matched but returned no response — fall through to drafters
+        return None
 
+    async def _run_drafters_and_select(
+        self, nm: dict, chem: dict, exec_sig: tuple,
+        instruction: dict, features: dict, affect: dict,
+        memory: dict, parietal_context: str, turn_id: str,
+        image_path: str | None = None,
+    ) -> str:
+        """Drafter cascade + critic selection. Returns the committed response text."""
         drafter_count = min(int(instruction.get("drafter_count", 1)), 3)
-        # Arousal modulator: fires on Glu-deficit (1-Glu) clearing threshold.
-        # CORT modulator means stress fires it more readily → drops drafter count.
         glu_deficit = 1.0 - nm["Glu"]
         if self._arousal_modulator.should_fire(glu_deficit, chem, turn_id):
             self._arousal_modulator.fire(glu_deficit, "low_arousal_drop_count",
                                           {"Glu": round(nm["Glu"], 3)}, snapshot=chem)
             drafter_count = max(1, drafter_count - 1)
-        # Drafter count router fires with the resolved count as the tag.
         self._drafter_count_selector.fire(min(1.0, drafter_count / 3.0),
                                           str(drafter_count), snapshot=chem)
 
-        # Mode routers — fire to record which mode the turn engages.
         if features.get("epistemic_action") and self._epistemic_mode.should_fire(0.6, chem, turn_id):
             self._epistemic_mode.fire(0.6, "epistemic", snapshot=chem)
         if features.get("self_reference") and self._self_ref_mode.should_fire(0.6, chem, turn_id):
             self._self_ref_mode.fire(0.6, "self_reference", snapshot=chem)
 
-        # Response-type / length / tone routers — fire with the executive's
-        # chosen route as the tag. These switches participate in the Hebbian
-        # weight surface so frequently-used routes accumulate weight.
         self._response_type_router.fire(
             0.8, instruction.get("response_type", "chitchat"), snapshot=chem,
         )
@@ -349,27 +388,20 @@ class FrontalCluster:
         self._tone_selector.fire(
             0.6, instruction.get("tone", "neutral"), snapshot=chem,
         )
-        # Planner trigger fires when the executive routed to action/task.
         if instruction.get("response_type") in ("task", "action"):
-            # low_DA inhibitor: fires on DA-deficit (1-DA) clearing threshold.
             da_deficit = 1.0 - nm["DA"]
             if self._low_DA_inhibits_planner.should_fire(da_deficit, chem, turn_id):
                 self._low_DA_inhibits_planner.fire(
                     da_deficit, "planner_suppressed_low_DA",
                     {"DA": round(nm["DA"], 3)}, snapshot=chem,
                 )
-                # Suppress the planner trigger — apathy/low motivation.
                 logger.debug("[Response engine] Planner suppressed by low-DA inhibitor")
             else:
                 self._planner_trigger.fire(0.8, "task_or_action", snapshot=chem)
 
-        # --- Drafters ---
         drafter_prompt = self._build_drafter_prompt(features, memory, parietal_context,
                                                      affect, instruction)
-
-        # Weighted drafter selection (Hebbian-driven, ε-greedy)
         drafter_indices = self._select_drafters(drafter_count, turn_id)
-
         draft_tasks = [
             self._run_drafter(i, drafter_prompt, turn_id, image_path=image_path)
             for i in drafter_indices
@@ -385,15 +417,12 @@ class FrontalCluster:
                 drafts.append((did, text))
 
         if not drafts:
-            # Template fallback fires when all drafters returned nothing.
             self._template_fallback.fire(1.0, "no_drafts", snapshot=chem)
             return "I'm not sure how to respond to that."
 
-        # --- Critics (only if ≥2 drafts) ---
         user_emotion = features.get("user_emotion", "neutral")
         run_empathy = user_emotion not in ("neutral", "unknown", "")
 
-        # --- Critic-skip predictor: skip critic call on familiar high-quality patterns ---
         critic_sig = exec_sig + (instruction.get("response_type", "chitchat"),
                                   instruction.get("tone", "neutral"))
         critic_avg = self._critic_predictor.avg_recent_outcome(critic_sig)
@@ -405,7 +434,6 @@ class FrontalCluster:
                 and critic_avg is not None
                 and critic_avg > 0.8
                 and self._critic_predictor.should_skip_integrator(critic_pred, critic_conf)):
-            # Skip critic: endorse the first draft with the predicted score
             draft_id, text = drafts[0]
             predicted_score = float(critic_avg)
             self._brainstem.add_draft(draft_id, text, predicted_score)
@@ -419,7 +447,6 @@ class FrontalCluster:
             }]
             trace = self._record_trace_bypass()
             if trace is not None:
-                # We skipped 1 critic call (plus N-1 more if all drafts would've been scored)
                 trace.llm_calls_saved += len(drafts)
                 trace.predictor_outcomes.append({
                     "cluster": CLUSTER, "stage": "critic",
@@ -482,9 +509,7 @@ class FrontalCluster:
                         "tone_fit": score.get("tone_fit", 0.5),
                         "empathy_score": empathy_score,
                         "overall": score.get("overall", 0.0),
-                        "selected": False,
-                        "vetoed": True,
-                        "critic_ran": True,
+                        "selected": False, "vetoed": True, "critic_ran": True,
                     })
                     continue
 
@@ -498,37 +523,28 @@ class FrontalCluster:
                     "tone_fit": score.get("tone_fit", 0.5),
                     "empathy_score": empathy_score,
                     "overall": overall,
-                    "selected": False,
-                    "vetoed": False,
-                    "critic_ran": True,
+                    "selected": False, "vetoed": False, "critic_ran": True,
                 })
 
             if scored:
                 best = max(scored, key=lambda x: x[2])
-                # Mark the winner
                 for entry in self.last_turn_draft_scores:
                     if entry["draft_id"] == best[0]:
                         entry["selected"] = True
                         break
-                # Record critic outcome for the critic-skip predictor to learn from
                 self._critic_predictor.record(critic_sig, ("ok",))
                 self._critic_predictor.record_outcome(critic_sig, best[2])
                 return best[1]
 
-        # Single draft — endorse directly (no critic ran; neutral score for Hebbian)
+        # Single draft — endorse directly
         draft_id, text = drafts[0]
         self._brainstem.add_draft(draft_id, text, 0.8)
         self._brainstem.endorse(draft_id)
         self.last_turn_draft_scores = [{
             "draft_id": draft_id,
-            "coherence": 0.8,
-            "relevance": 0.8,
-            "tone_fit": 0.8,
-            "empathy_score": 0.5,
-            "overall": 0.8,
-            "selected": True,
-            "vetoed": False,
-            "critic_ran": False,
+            "coherence": 0.8, "relevance": 0.8, "tone_fit": 0.8,
+            "empathy_score": 0.5, "overall": 0.8,
+            "selected": True, "vetoed": False, "critic_ran": False,
         }]
         return text
 
