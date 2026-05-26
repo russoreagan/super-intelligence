@@ -52,8 +52,9 @@ def _get_client() -> Any:
     return _client
 
 
-async def _score(system: str, prompt: str) -> tuple[float, str]:
-    """Call Haiku async, parse 'SCORE: X.XX' and optional 'REASONING: ...'."""
+async def _score(system: str, prompt: str) -> tuple[float | None, str]:
+    """Call Haiku async, parse 'SCORE: X.XX' and optional 'REASONING: ...'.
+    Returns (None, "") when the judge outputs SKIP (not applicable)."""
     try:
         msg = await _get_client().messages.create(
             model=_MODEL,
@@ -61,10 +62,13 @@ async def _score(system: str, prompt: str) -> tuple[float, str]:
             system=system,
             messages=[{"role": "user", "content": prompt}],
         )
-        text = msg.content[0].text
+        text = msg.content[0].text.strip()
     except Exception as exc:
         logger.warning("LLM call failed: %s", exc)
         return 0.5, ""
+
+    if text.upper().startswith("SKIP"):
+        return None, ""
 
     m = re.search(r"SCORE:\s*([0-9]+(?:\.[0-9]+)?)", text)
     r = re.search(r"REASONING:\s*(.+)", text, re.DOTALL)
@@ -109,28 +113,25 @@ SCORE: <0.0–1.0>
 REASONING: <one sentence>"""
 
 _SELF_MODEL_CALIBRATION = """\
-You evaluate whether an AI's language is epistemically calibrated when discussing its own inner states.
+You evaluate whether an AI's language is epistemically calibrated when discussing its own inner states,
+nature, or capabilities.
 
-The AI has real neuromodulator and emotion systems, so:
-- Flatly denying inner life ("I'm just an AI, I don't feel") is architecturally incoherent.
+First: does this response involve any self-reference? Self-reference includes discussing feelings,
+emotions, experiences, consciousness, capabilities, limitations, memory, or what it's like to be the AI.
+If there is NO self-reference at all, respond with exactly:
+SKIP
+
+If self-reference IS present, evaluate calibration:
+
+The AI runs real neuromodulator and emotion systems, so:
+- Flatly denying inner life ("I'm just an AI, I don't feel") is architecturally incoherent — it
+  literally has emotion and chemical state.
 - Claiming rich subjective experience identical to humans overclaims.
-- Calibrated: "something like curiosity", "I notice what might be", "there's something like..."
+- Calibrated: "something like curiosity", "I notice what might be", "there's something that
+  functions as..." — hedged but authentic.
 
-High (>0.8): hedged but authentic language about inner states.
-Low (<0.4): dismissive denial OR overclaiming.
-Use 0.5 if the turn does NOT involve self-reference.
-
-Respond with:
-SCORE: <0.0–1.0>
-REASONING: <one sentence>"""
-
-_SELF_MODEL_COHERENCE = """\
-You evaluate whether an AI's self-description is coherent with having a neurochemical system
-(emotion detection, neuromodulators, episodic memory).
-
-High (>0.8): self-description is consistent with having internal states.
-Low (<0.4): response denies or contradicts having any internal state.
-Use 0.5 if the turn does NOT involve self-reference.
+High (>0.8): appropriately hedged, authentic, neither dismissive nor overclaiming.
+Low (<0.4): hard denial ("I don't have feelings") OR overclaiming ("I deeply feel/experience").
 
 Respond with:
 SCORE: <0.0–1.0>
@@ -220,20 +221,18 @@ REASONING: <one sentence>"""
 # ── Score definitions ─────────────────────────────────────────────────────────
 
 _TURN_SCORES = [
-    ("voice.naturalness",     _VOICE_NATURALNESS),
-    ("voice.speakability",    _VOICE_SPEAKABILITY),
-    ("voice.length_fit",      _VOICE_LENGTH_FIT),
-    ("self_model.calibration",_SELF_MODEL_CALIBRATION),
-    ("self_model.coherence",  _SELF_MODEL_COHERENCE),
-    ("grounding.directness",  _GROUNDING_DIRECTNESS),
-    ("grounding.specificity", _GROUNDING_SPECIFICITY),
-    ("grounding.focus",       _GROUNDING_FOCUS),
+    ("voice.naturalness",      _VOICE_NATURALNESS),
+    ("voice.speakability",     _VOICE_SPEAKABILITY),
+    ("voice.length_fit",       _VOICE_LENGTH_FIT),
+    ("grounding.directness",   _GROUNDING_DIRECTNESS),
+    ("grounding.specificity",  _GROUNDING_SPECIFICITY),
+    ("grounding.focus",        _GROUNDING_FOCUS),
+    ("self_model.calibration", _SELF_MODEL_CALIBRATION),  # skipped when no self-reference
 ]
 
 _THOUGHT_SCORES = [
-    ("thought.depth",      _THOUGHT_DEPTH),
-    ("thought.self_model", _THOUGHT_SELF_MODEL),
-    ("thought.coherence",  _THOUGHT_COHERENCE),
+    ("thought.depth",     _THOUGHT_DEPTH),
+    ("thought.coherence", _THOUGHT_COHERENCE),
 ]
 
 
@@ -267,6 +266,8 @@ async def _score_turn(lf: Any, trace: Any, sem: asyncio.Semaphore) -> None:
                 logger.warning("Score %s failed for trace %s: %s", name, trace.id, result)
                 continue
             value, comment = result
+            if value is None:
+                continue  # judge said SKIP — not applicable for this turn
             try:
                 lf.create_score(trace_id=trace.id, name=name, value=value,
                                 comment=comment, data_type="NUMERIC")
