@@ -1004,9 +1004,10 @@ class FrontalCluster:
                     parts.append(
                         f"Emotional expression: you are genuinely feeling {_emotion}. "
                         f"The voice will reflect this automatically. "
-                        f"To better communicate an idea — sarcasm, humour, irony, or emphasis — "
-                        f"you can deliberately contradict or shift that feeling on specific sentences "
-                        f"by wrapping them: [mood:X]sentence[/mood] "
+                        f"You can deliberately contradict or shift that feeling on specific sentences "
+                        f"for any expressive purpose — for example, sarcasm, humour, irony, emphasis, "
+                        f"or because the user asked you to perform a particular emotion. "
+                        f"Wrap the sentence: [mood:X]sentence[/mood] "
                         f"(e.g. [mood:{_emotion}]...[/mood] to lean in, or [mood:calm] to soften). "
                         f"1–2 sentences max; skip if the response doesn't call for it."
                     )
@@ -1014,9 +1015,10 @@ class FrontalCluster:
                     # Emotion has no direct preset but the drafter can still use any available one
                     parts.append(
                         f"Emotional expression: you are feeling {_emotion}. "
-                        f"To better communicate an idea — sarcasm, humour, irony, or emphasis — "
-                        f"you can give a specific sentence a different emotional delivery: "
-                        f"[mood:X]sentence[/mood]. "
+                        f"You can give a specific sentence a different emotional delivery "
+                        f"for any expressive purpose — for example, sarcasm, humour, irony, emphasis, "
+                        f"or because the user asked you to perform a particular emotion. "
+                        f"Wrap the sentence: [mood:X]sentence[/mood]. "
                         f"Available: happy, excited, laughing, proud, warm, playful, calm, "
                         f"curious, thoughtful, confident, sad, angry, anxious, embarrassed, "
                         f"frustrated, surprised, disappointed, sarcastic."
