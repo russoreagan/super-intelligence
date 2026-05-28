@@ -325,7 +325,7 @@ class ModelRouter:
             # local — hippocampus + all DMN JSON cells; format:json ensures valid structure
             # while temp=0.3 keeps content focused without killing variety in thought fields
             options["temperature"] = 0.3
-            options["num_ctx"] = 4096
+            options["num_ctx"] = 10240
             use_json_format = True
 
         payload: dict = {

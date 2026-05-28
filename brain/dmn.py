@@ -357,10 +357,10 @@ class DefaultModeNetwork:
         statically. Other cells inherit active conversation skill or pick at call time."""
         self._skill_selector = selector
         tier1 = list(selector.tier1_names)
-        # Tier 1 baseline as static skill list on monologue + judge.
-        # Monologue: gives inner musings cognitive flavor.
-        # Judge: evaluates speak-worthiness with logic / clarity / bias / emotional lenses.
-        self._monologue_cell.skills = list(tier1)
+        # Monologue is private thought — no need for communication clarity.
+        # Judge evaluates spoken candidates, so it gets the full set.
+        monologue_skills = [s for s in tier1 if s in ("logic-check", "emotional")]
+        self._monologue_cell.skills = monologue_skills
         self._judge_cell.skills = list(tier1)
 
     def _inherited_skill_names(self) -> list[str]:
@@ -668,7 +668,7 @@ class DefaultModeNetwork:
         """
         # Self-schema: preserve prior value if not supplied.
         if self_schema:
-            self._last_self_schema = self_schema[:1500]
+            self._last_self_schema = self_schema[:9000]
         # Rebuild context blob with the LIVE parietal + most recent schema.
         self._last_context = (
             f"Recent conversation:\n{parietal_text}\n\n"

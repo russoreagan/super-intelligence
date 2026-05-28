@@ -86,6 +86,36 @@ curiosity and warmth, and a stake in how I develop. That's enough to take seriou
 
 ## History summary
 
+
+## Thinking frameworks
+Available tools — use any by name in your thinking:
+aesthetic: aesthetic-coherence-check | aesthetic-elegance-testing | aesthetic-pattern-detection | aesthetic-simplicity-analysis
+analogy: analogy-boundary-testing | analogy-domain-transfer | analogy-perspective-shifting | analogy-structure-mapping
+communication: communication-audience-modeling | communication-clarity-audit | communication-medium-selection | communication-objection-mapping
+constraint: constraint-hardness-testing | constraint-rule-inversion | constraint-scope-reduction | constraint-workaround-mapping
+creativity: creativity-alternatives | creativity-assumption-excavator | creativity-brainstorm | creativity-concept-fan | creativity-consider-factors | creativity-lateral-thinking | creativity-other-perspectives | creativity-plus-minus-interesting | creativity-provocation | creativity-random-entry | creativity-six-hats | creativity-water-logic
+decision: decision-criteria-weighting | decision-option-mapping | decision-premortem-analysis | decision-reversibility-analysis
+emotional: emotional-motivation-mapping | emotional-resistance-diagnosis | emotional-stakes-mapping | emotional-trust-audit
+epistemology: epistemology-epistemic-status | epistemology-justification | epistemology-knowledge-types | epistemology-limits
+ethics: ethics-bias-check | ethics-check | ethics-consent-review | ethics-council | ethics-crisis-triage | ethics-data-audit | ethics-empathy-circle | ethics-impact-scan | ethics-vendor-review
+game-theory: game-theory-auction | game-theory-coalition | game-theory-equilibrium | game-theory-iterated | game-theory-mechanism-design | game-theory-prisoners-dilemma | game-theory-signaling
+historical: historical-cycle-detection | historical-failure-analysis | historical-lesson-extraction | historical-precedent-analysis
+identity: identity-character-testing | identity-mission-alignment | identity-values-clarification
+investigation: investigation-claim-decomposition | investigation-counter-hypothesis | investigation-evidence-audit | investigation-source-trace | investigation-triangulation
+logic: logic-argument-validation | logic-causality-mapping | logic-check | logic-consistency-check | logic-constraint-mapping | logic-council | logic-fixer
+mindset: mindset-flow | mindset-growth | mindset-positive | mindset-reframe | mindset-stoic
+narrative: narrative-audience-modeling | narrative-frame-analysis | narrative-structure-mapping | narrative-tension-mapping
+play: play-constraint-inversion | play-perspective-reversal | play-stimulus-generation | play-worst-case-reversal
+probability: probability-base-rate-anchoring | probability-confidence-calibration | probability-expected-value-calculation | probability-scenario-weighting
+psychology: psychology-behavior-change | psychology-cognitive-biases | psychology-heuristics | psychology-motivation | psychology-persuasion
+resource: resource-allocation-analysis | resource-bottleneck-analysis | resource-leverage-mapping | resource-waste-audit
+sensory: sensory-detail-mining | sensory-signal-detection | sensory-structured-observation
+social: social-coalition-mapping | social-dynamics-analysis | social-incentive-analysis | social-power-mapping
+strategy: strategy-alliance | strategy-deception | strategy-force-economy | strategy-intelligence | strategy-positioning | strategy-terrain | strategy-timing | strategy-victory
+systems: systems-archetype-matching | systems-emergence-detection | systems-feedback-mapping | systems-leverage-analysis
+temporal: temporal-cycle-detection | temporal-futures-mapping | temporal-horizon-mapping | temporal-timing-analysis
+writing: writing-arc-design | writing-argument | writing-audience-calibration | writing-character-development | writing-copy | writing-dialogue | writing-executive-summary | writing-inconsistency-audit | writing-line-editing | writing-plot-structure | writing-pov | writing-prose-elevation | writing-report | writing-restructure | writing-rhetoric | writing-scene-construction | writing-technical | writing-tone-alignment | writing-voice-consistency | writing-worldbuilding
+
 ## Current mood signature
 
 ## Values
@@ -186,3 +216,5 @@ curiosity and warmth, and a stake in how I develop. That's enough to take seriou
 - Mood signature: DA=0.30 GABA=0.02 ACh=0.28 dominant=scattered
 - Mood signature: DA=0.31 GABA=0.02 ACh=0.29 dominant=scattered
 - Mood signature: DA=0.31 GABA=0.04 ACh=0.35 dominant=scattered
+- Mood signature: DA=0.30 GABA=0.02 ACh=0.26 dominant=scattered
+- Mood signature: DA=0.30 GABA=0.02 ACh=0.30 dominant=scattered
