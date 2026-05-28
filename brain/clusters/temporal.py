@@ -40,9 +40,18 @@ Your sole job: parse the user's input and return a JSON object with exactly thes
   "sentiment": float,            // -1.0 (negative) to 1.0 (positive) — message sentiment about its topic
   "salience": float,             // 0.0 to 1.0 — how important/novel is this?
   "topic_summary": string,       // 5 words max describing the topic
-  "user_tone_toward_ai": string  // how is the user treating the AI specifically:
+  "user_tone_toward_ai": string, // how is the user treating the AI specifically:
                                  // "warm" | "joking" | "praising" | "polite" | "neutral" |
                                  // "dismissive" | "impatient" | "insulting" | "testing"
+  "user_emotion": string         // the user's apparent inner emotional state:
+                                 // "happy" | "playful" | "amused" | "warm" | "affectionate" |
+                                 // "curious" | "engaged" | "excited" |
+                                 // "neutral" |
+                                 // "frustrated" | "annoyed" | "disappointed" | "angry" |
+                                 // "sad" | "anxious" | "distressed" | "struggling" | "tired" |
+                                 // "confused" | "surprised"
+                                 // Pick the single best label. Prefer a specific emotion over
+                                 // "neutral" whenever the message gives any signal at all.
 }
 Return ONLY the JSON object. No explanation."""
 
@@ -114,6 +123,118 @@ def _looks_like_tool_request(text: str) -> bool:
     gating — the fast path would otherwise drop requires_action to false."""
     t = text.lower()
     return any(p in t for p in _TOOL_REQUEST_PATTERNS)
+
+
+# Cheap lexicon-based affect heuristic for fast-paths that skip the LLM.
+# Not as good as the LLM read, but vastly better than slamming everything to
+# sentiment=0.5/hostility=0/user_emotion=neutral — which made the affect system
+# blind on the very turns the predictor was most confident about.
+_AFFECT_LEX: dict[str, tuple[float, float, str, str]] = {
+    # word: (sentiment_delta, hostility_delta, user_emotion, user_tone_toward_ai)
+    # positive
+    "love": (0.6, 0.0, "affectionate", "warm"),
+    "loved": (0.5, 0.0, "warm", "warm"),
+    "great": (0.5, 0.0, "happy", "warm"),
+    "awesome": (0.6, 0.0, "excited", "warm"),
+    "amazing": (0.6, 0.0, "excited", "warm"),
+    "perfect": (0.6, 0.0, "happy", "praising"),
+    "nice": (0.4, 0.0, "happy", "warm"),
+    "good": (0.3, 0.0, "happy", "polite"),
+    "thanks": (0.4, 0.0, "warm", "warm"),
+    "thank": (0.4, 0.0, "warm", "warm"),
+    "happy": (0.5, 0.0, "happy", "warm"),
+    "haha": (0.4, 0.0, "amused", "joking"),
+    "lol": (0.4, 0.0, "amused", "joking"),
+    "lmao": (0.5, 0.0, "amused", "joking"),
+    "cool": (0.3, 0.0, "engaged", "warm"),
+    "yes!": (0.5, 0.0, "excited", "warm"),
+    "yay": (0.6, 0.0, "happy", "warm"),
+    "curious": (0.2, 0.0, "curious", "neutral"),
+    "wonder": (0.2, 0.0, "curious", "neutral"),
+    "interesting": (0.3, 0.0, "engaged", "warm"),
+    # negative / hostile
+    "hate": (-0.6, 0.4, "angry", "insulting"),
+    "stupid": (-0.5, 0.6, "frustrated", "insulting"),
+    "dumb": (-0.4, 0.5, "frustrated", "insulting"),
+    "idiot": (-0.6, 0.7, "angry", "insulting"),
+    "shut up": (-0.5, 0.7, "angry", "dismissive"),
+    "wrong": (-0.3, 0.2, "frustrated", "impatient"),
+    "broken": (-0.3, 0.1, "frustrated", "neutral"),
+    "fucking": (-0.4, 0.5, "frustrated", "impatient"),
+    "fuck": (-0.4, 0.4, "frustrated", "impatient"),
+    "annoying": (-0.5, 0.4, "annoyed", "impatient"),
+    "annoyed": (-0.5, 0.3, "annoyed", "impatient"),
+    "frustrated": (-0.5, 0.2, "frustrated", "neutral"),
+    "angry": (-0.6, 0.4, "angry", "impatient"),
+    "ugh": (-0.4, 0.2, "frustrated", "impatient"),
+    "no.": (-0.2, 0.2, "annoyed", "dismissive"),
+    "stop": (-0.3, 0.3, "frustrated", "impatient"),
+    "bad": (-0.4, 0.1, "disappointed", "neutral"),
+    "terrible": (-0.6, 0.1, "disappointed", "neutral"),
+    "awful": (-0.6, 0.1, "disappointed", "neutral"),
+    # vulnerable
+    "sad": (-0.5, 0.0, "sad", "neutral"),
+    "tired": (-0.3, 0.0, "tired", "neutral"),
+    "exhausted": (-0.4, 0.0, "tired", "neutral"),
+    "anxious": (-0.4, 0.0, "anxious", "neutral"),
+    "worried": (-0.4, 0.0, "anxious", "neutral"),
+    "scared": (-0.5, 0.0, "anxious", "neutral"),
+    "stuck": (-0.3, 0.0, "struggling", "neutral"),
+    "lost": (-0.3, 0.0, "struggling", "neutral"),
+    "confused": (-0.2, 0.0, "confused", "neutral"),
+    "help": (-0.1, 0.0, "struggling", "polite"),
+    # surprise
+    "wait": (0.0, 0.0, "surprised", "neutral"),
+    "really?": (0.1, 0.0, "surprised", "neutral"),
+    "whoa": (0.2, 0.0, "surprised", "neutral"),
+    "wow": (0.3, 0.0, "surprised", "warm"),
+}
+
+
+def _heuristic_affect(text: str) -> dict:
+    """Tiny lexicon-based read of sentiment/hostility/user_emotion. Used on
+    fast-paths that skip the LLM. Returns sensible defaults (neutral, sentiment≈0)
+    if nothing matches — *not* the misleading sentiment=0.5 that the old fast
+    paths used."""
+    t = (text or "").lower()
+    if not t.strip():
+        return {"sentiment": 0.0, "hostility": 0.0,
+                "user_emotion": "neutral", "user_tone_toward_ai": "neutral"}
+    sentiment = 0.0
+    hostility = 0.0
+    best_emotion: str | None = None
+    best_tone: str | None = None
+    best_weight = 0.0
+    for word, (s, h, e, tone) in _AFFECT_LEX.items():
+        if word in t:
+            sentiment += s
+            hostility += h
+            w = abs(s) + h
+            if w > best_weight:
+                best_weight = w
+                best_emotion = e
+                best_tone = tone
+    # punctuation cues
+    if "!" in t:
+        # exclamation amplifies the dominant valence; if no valence, mild excitement
+        if sentiment > 0:
+            sentiment += 0.1
+        elif sentiment < 0:
+            sentiment -= 0.1
+            hostility += 0.05
+        else:
+            best_emotion = best_emotion or "excited"
+    if t.count("?") >= 2 and best_emotion is None:
+        best_emotion = "confused"
+    # clamp
+    sentiment = max(-1.0, min(1.0, sentiment))
+    hostility = max(0.0, min(1.0, hostility))
+    return {
+        "sentiment": round(sentiment, 3),
+        "hostility": round(hostility, 3),
+        "user_emotion": best_emotion or "neutral",
+        "user_tone_toward_ai": best_tone or "neutral",
+    }
 
 
 class TemporalCluster:
@@ -232,6 +353,7 @@ class TemporalCluster:
             import random
             canned = random.choice(CANNED_RESPONSES.get(trivial_type, ["..."]))
             _words = text.split()
+            _aff = _heuristic_affect(text)
             features = {
                 "intent": trivial_type,
                 "register": "casual",
@@ -242,10 +364,12 @@ class TemporalCluster:
                 "requires_vision": False,
                 "requires_action": False,
                 "epistemic_action": False,
-                "hostility": 0.0,
-                "sentiment": 0.5,
+                "hostility": _aff["hostility"],
+                "sentiment": _aff["sentiment"],
                 "salience": 0.0,
                 "topic_summary": trivial_type,
+                "user_emotion": _aff["user_emotion"],
+                "user_tone_toward_ai": _aff["user_tone_toward_ai"],
                 "raw_text": text,
                 "canned_response": canned,
                 "switch_only": True,
@@ -314,6 +438,7 @@ class TemporalCluster:
         # If predictor is confident AND input is routine → skip integrator
         if not bypass and not should_wake and not self_ref and not image_present and confidence > confidence_floor:
             # Build a lightweight feature dict from switches only
+            _aff = _heuristic_affect(text)
             features = {
                 "intent": "question" if "?" in text else "chitchat",
                 "register": "casual",
@@ -324,10 +449,12 @@ class TemporalCluster:
                 "requires_vision": False,
                 "requires_action": False,
                 "epistemic_action": epistemic,
-                "hostility": 0.0,
-                "sentiment": 0.5,
+                "hostility": _aff["hostility"],
+                "sentiment": _aff["sentiment"],
                 "salience": 0.3,
                 "topic_summary": length_tag + " input",
+                "user_emotion": _aff["user_emotion"],
+                "user_tone_toward_ai": _aff["user_tone_toward_ai"],
                 "raw_text": text,
                 "switch_only": True,
                 "surprise_score": surprise,
@@ -366,11 +493,24 @@ class TemporalCluster:
         features: dict = safe_json_parse(raw) or {}
         if not features:
             logger.warning("[Input parser] LLM returned invalid JSON — using fallback feature defaults. Raw output: %s", raw[:200])
+            _aff = _heuristic_affect(text)
             features = {"intent": "other", "salience": 0.5, "requires_memory": False,
                         "requires_vision": False, "requires_action": False,
-                        "epistemic_action": False, "hostility": 0.0, "sentiment": 0.5,
+                        "epistemic_action": False,
+                        "hostility": _aff["hostility"], "sentiment": _aff["sentiment"],
+                        "user_emotion": _aff["user_emotion"],
+                        "user_tone_toward_ai": _aff["user_tone_toward_ai"],
                         "topic_summary": "unknown", "entities": [], "register": "casual",
                         "tense": "present", "time_reference": "none"}
+        else:
+            # LLM path: if the model omitted user_emotion (older prompts, partial JSON),
+            # backfill from the cheap heuristic rather than letting downstream code
+            # read None and collapse to "unknown".
+            if not features.get("user_emotion"):
+                _aff = _heuristic_affect(text)
+                features["user_emotion"] = _aff["user_emotion"]
+                if not features.get("user_tone_toward_ai"):
+                    features["user_tone_toward_ai"] = _aff["user_tone_toward_ai"]
 
         features["switch_only"] = False
         features["surprise_score"] = surprise

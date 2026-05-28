@@ -96,11 +96,15 @@ class HypothalamusCluster:
         # NE: focused alertness — rises with salience, surprise, and threat.
         # Distinct from Glu (general arousal): NE is the sharp attentional spotlight,
         # with an inverted-U performance curve (too much narrows attention).
+        # NE is NOT scaled by er_scale — its inverted-U performance curve
+        # (Yerkes-Dodson) is governed by its own weights and should not be
+        # amplified by the emotional reactivity dial (which controls valence/
+        # arousal swings, not alertness overload).
         ne_delta = (
             salience  * settings.get("ne_salience_weight") +
             surprise  * settings.get("ne_surprise_weight") +
             hostility * settings.get("ne_hostility_weight")
-        ) * er_scale
+        )
         nm.add("NE", ne_delta * turns)
 
         # Satiation: if salience is low (routine), desensitize
@@ -276,6 +280,35 @@ class HypothalamusCluster:
             tendency = f"metacognition appraisal: {override_reason}"
             logger.debug("Hypothalamus: emotion override → %s (%s)",
                          override_emotion, override_reason)
+
+        # ── Coarse text-affect fallback ───────────────────────────────────────
+        # If the neuromod basin still names "neutral" but the text signal is
+        # clearly emotional, nudge toward a coarse label rather than reporting
+        # neutral. Catches the common case where a single negative / affectionate
+        # message hasn't yet moved the slow-decaying neuromods enough to leave
+        # the neutral region. Skipped when metacognition already overrode.
+        if not override_emotion and emotion == "neutral":
+            user_emo = (features.get("user_emotion") or "").lower()
+            fallback = None
+            if hostility > 0.55:
+                fallback = ("wary", f"hostility={hostility:.2f}")
+            elif sentiment < -0.45:
+                fallback = ("down", f"sentiment={sentiment:.2f}")
+            elif sentiment > 0.55:
+                fallback = ("content", f"sentiment={sentiment:.2f}")
+            elif user_emo in ("frustrated", "annoyed", "disappointed", "angry"):
+                fallback = ("irritated", f"user_emotion={user_emo}")
+            elif user_emo in ("sad", "anxious", "distressed", "struggling", "tired"):
+                fallback = ("concerned", f"user_emotion={user_emo}")
+            elif user_emo in ("happy", "playful", "amused", "warm",
+                              "affectionate", "excited"):
+                fallback = ("warm", f"user_emotion={user_emo}")
+            elif user_emo in ("curious", "engaged"):
+                fallback = ("engaged", f"user_emotion={user_emo}")
+            if fallback:
+                emotion, why = fallback
+                tendency = f"text-affect fallback: {why}"
+                logger.debug("Hypothalamus: text-affect fallback %s → %s", why, emotion)
 
         appraisal_str = appraisal(emotion, features.get("topic_summary", "input"))
         prefix = prosody_prefix(emotion)
