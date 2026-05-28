@@ -9,6 +9,7 @@ import re
 from collections import deque
 
 from brain.bus import Bus
+from brain.clusters.skill_selector import ActiveSkillContext
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +23,7 @@ class ParietalCluster:
         self._ring: deque[dict] = deque(maxlen=RING_SIZE)
         self._entities: dict[str, int] = {}  # entity -> turn count last seen
         self._turn_count = 0
+        self.active_skill_context: ActiveSkillContext | None = None
 
     def seed(self, episodes: list[dict]) -> None:
         """Pre-populate the ring from recent episodic history (called once at boot).
@@ -83,3 +85,12 @@ class ParietalCluster:
     @property
     def turn_count(self) -> int:
         return self._turn_count
+
+    def set_active_skill_context(self, ctx: ActiveSkillContext | None) -> None:
+        """Selector writes back the updated context after each turn."""
+        self.active_skill_context = ctx
+
+    def clear_active_skill_context(self, reason: str = "") -> None:
+        if self.active_skill_context is not None:
+            logger.debug("parietal: clearing active skill context (%s)", reason)
+            self.active_skill_context = None

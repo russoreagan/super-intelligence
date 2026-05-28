@@ -161,6 +161,15 @@ class ModelRouter:
         start = time.time()
         bg_timeout = float(_s("bg_cloud_timeout_s") or 20.0) if (self._bg_mode and _is_cloud) else None
 
+        # Inject skill text into system prompt before dispatch — applies to all backends
+        # (Haiku, Gemini, local). Previously this was scoped to local-only, which silently
+        # dropped skills passed to cloud cells like frontal drafters.
+        if skills:
+            from brain.skill_loader import SkillLoader
+            skill_block = SkillLoader.load_many(skills)
+            if skill_block:
+                system_prompt = f"{system_prompt}\n\n{skill_block}"
+
         if model_id.startswith("claude"):
             try:
                 coro = self._call_anthropic(model_id, system_prompt, messages, max_tokens)
@@ -198,11 +207,6 @@ class ModelRouter:
                              self._bg_cloud_tokens_used,
                              int(_s("bg_cloud_token_budget") or 50_000), in_tok, out_tok)
         elif model_id in ("local", "local-free", "local-code", "local-general"):
-            if skills:
-                from brain.skill_loader import SkillLoader
-                skill_block = SkillLoader.load_many(skills)
-                if skill_block:
-                    system_prompt = f"{system_prompt}\n\n{skill_block}"
             text, in_tok, out_tok = await self._call_local(
                 system_prompt, messages, max_tokens, local_variant=model_id
             )
@@ -329,6 +333,7 @@ class ModelRouter:
             "messages": [{"role": "system", "content": system_prompt}] + flat_messages,
             "stream": False,
             "options": options,
+            "keep_alive": "10m",  # keep model hot between DMN ticks
         }
         if use_json_format:
             payload["format"] = "json"

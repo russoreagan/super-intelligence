@@ -32,6 +32,7 @@ from brain.predictor import (
     should_bypass_gating,
 )
 from brain.security import fence
+from brain.skill_loader import SkillLoader
 from brain.settings import settings
 from brain.utils import safe_json_parse
 from brain.wiring import Wiring
@@ -164,10 +165,26 @@ class FrontalCluster:
         # Eval: populated each turn with critic scores for all drafts — read by run.py
         self.last_turn_draft_scores: list[dict] = []
 
+        # Skill selector — picks reasoning/EI framework per turn. Wired by session_setup.
+        # Held alongside parietal (which owns the cross-turn ActiveSkillContext).
+        self._skill_selector = None
+        self._parietal = None
+        self._current_skill_bundle = None  # per-turn cache, set in process()
+        self._current_query_vec: list[float] | None = None  # cache for build_active_context
+
     def register_subsystem(self, subsystem: FrontalSubsystem) -> None:
         """Register a frontal subsystem. Called once at boot before any turns fire."""
         self._subsystems.append(subsystem)
         logger.info("[Frontal] Registered subsystem: %s", subsystem.name)
+
+    def set_skill_selector(self, selector, parietal) -> None:
+        """Wire the SkillSelector and ParietalCluster reference.
+
+        Called by session_setup once both have been instantiated. The selector
+        owns the embedding index; parietal owns the ActiveSkillContext across turns.
+        """
+        self._skill_selector = selector
+        self._parietal = parietal
 
     def set_capabilities(self, summary: str | None) -> None:
         """Provide a human-readable list of what the entity can actually do
@@ -196,6 +213,11 @@ class FrontalCluster:
         exec_sig = composite_signature(features, affect)
         instruction = await self._run_executive(nm, chem, exec_sig, features, affect,
                                                  memory, parietal_context, turn_id)
+
+        # 3a. Skill selection — picks a reasoning/EI framework for the drafters.
+        # Sticky across turns via parietal.active_skill_context. Gated by turn type
+        # and emotion (see SkillSelector.gate_conversational).
+        await self._select_skills_for_turn(features, instruction, turn_id)
 
         # 4. Subsystem dispatch (task planner, etc.) — first match wins
         subsystem_response = await self._try_subsystem_dispatch(
@@ -230,6 +252,89 @@ class FrontalCluster:
                 logger.debug("[Response engine] Stress response active — using de-escalation response path")
                 return features, await self._defuse_response(features, affect, turn_id)
         return features, None
+
+    async def _select_skills_for_turn(
+        self, features: dict, instruction: dict, turn_id: str,
+    ) -> None:
+        """Pick the active thinking/EI skill for this turn.
+
+        Stores result on self._current_skill_bundle for the drafter prompt to consume.
+        Also updates parietal.active_skill_context for cross-turn stickiness.
+        """
+        self._current_skill_bundle = None
+        self._current_query_vec = None
+        if self._skill_selector is None or self._parietal is None:
+            return
+
+        user_input = features.get("raw_text") or features.get("topic_summary") or ""
+        user_emotion = features.get("user_emotion") or features.get("emotion") or ""
+        recent_turns = []
+        try:
+            recent_turns = [
+                f"User: {t['user']}\nBrain: {t.get('response', '')}"
+                for t in self._parietal.recent_turns(2)
+            ]
+        except Exception:
+            pass
+
+        active = self._parietal.active_skill_context
+
+        # If the previous turn ended awaiting user direction, lock the leaf from this reply
+        if active is not None and active.awaiting_user_direction:
+            active = await self._skill_selector.lock_leaf_from_reply(user_input, active)
+            self._parietal.set_active_skill_context(active)
+            decisions.log(
+                "skill_leaf_locked",
+                turn_id=turn_id, cluster=CLUSTER,
+                category=active.category, leaf=active.current_leaf,
+            )
+
+        try:
+            bundle, updated_active, log_extras = await self._skill_selector.select_conversational(
+                user_input=user_input,
+                executive_out=instruction,
+                user_emotion=user_emotion,
+                recent_turns=recent_turns,
+                active=active,
+                turn_id=turn_id,
+            )
+        except Exception as e:
+            logger.warning("[Frontal] Skill selector failed: %s", e)
+            return
+
+        if bundle is None:
+            decisions.log(
+                "skill_selector_gated_out",
+                turn_id=turn_id, cluster=CLUSTER, **log_extras,
+            )
+            return
+
+        # Persist updated active context (build a new one if selector just picked a skill)
+        if updated_active is None and bundle.chosen:
+            query_vec = await self._router.embed(user_input)
+            if query_vec is not None:
+                self._current_query_vec = query_vec
+                updated_active = self._skill_selector.build_active_context(bundle, query_vec)
+
+        if updated_active is not None:
+            self._parietal.set_active_skill_context(updated_active)
+
+        self._current_skill_bundle = bundle
+
+        decisions.log(
+            "skill_selector_pick" if bundle.pick_source != "active_reuse" else "skill_active_reused",
+            turn_id=turn_id, cluster=CLUSTER,
+            pick_source=bundle.pick_source,
+            chosen=bundle.chosen,
+            needs_guided_question=bundle.needs_guided_question,
+            **log_extras,
+        )
+        if bundle.needs_guided_question:
+            decisions.log(
+                "skill_guided_question_emitted",
+                turn_id=turn_id, cluster=CLUSTER,
+                chosen=bundle.chosen,
+            )
 
     def _check_canned_response(self, features: dict, affect: dict) -> str | None:
         """Return a canned response for switch-only routes, or None to continue normally."""
@@ -855,6 +960,47 @@ class FrontalCluster:
                     "Don't perform enthusiasm you're not feeling.")
         return None
 
+    def _render_skill_block(self, nonce: str) -> str:
+        """Render the active skill bundle for the drafter prompt, or empty string."""
+        bundle = getattr(self, "_current_skill_bundle", None)
+        if bundle is None or getattr(self, "_skill_selector", None) is None:
+            return ""
+        loader = SkillLoader  # lazy reference
+        sections: list[str] = []
+
+        baseline = []
+        for name in bundle.tier1:
+            text = loader.load(name)
+            if text:
+                baseline.append(text)
+        if baseline:
+            sections.append(
+                "THINKING FOUNDATIONS — habits to apply on any deliberate response:\n"
+                + "\n\n".join(baseline)
+            )
+
+        for name in bundle.chosen:
+            text = loader.load(name)
+            if text:
+                sections.append(
+                    f"SITUATIONAL FRAMEWORK ({name}):\n{text}"
+                )
+
+        if not sections:
+            return ""
+
+        guidance = (
+            "Use these as habits of thought, not scripts to recite. Don't announce them.\n"
+        )
+        if bundle.needs_guided_question:
+            guidance += (
+                "The user's request is broad. Surface 2-3 specific angles you could take "
+                "and ask which they want, in natural conversational tone. Don't enumerate "
+                "skill names; describe the work.\n"
+            )
+        body = "\n\n".join(sections) + "\n\n" + guidance
+        return f"Active reasoning framework:\n{fence('thinking_framework', body, nonce)}"
+
     def _build_drafter_prompt(self, features: dict, memory: dict,
                                parietal: str, affect: dict, instruction: dict) -> str:
         nonce = str(uuid.uuid4())[:8]
@@ -873,6 +1019,14 @@ class FrontalCluster:
             parts.append(f"Relevant past episodes:\n{fence('past_episodes', memory['episodes'], nonce)}")
         if memory.get("tool_result"):
             parts.append(f"Tool execution result:\n{fence('tool_result', str(memory['tool_result']), nonce)}")
+
+        # Thinking/EI framework block — injected by the SkillSelector. Renders Tier 1
+        # baseline plus any chosen leaf for this turn. Drafters apply these as habits
+        # of thought, not scripts to recite.
+        skill_block = self._render_skill_block(nonce)
+        if skill_block:
+            parts.append(skill_block)
+
         if memory.get("recent_task_results"):
             parts.append(
                 "Background tasks completed since the last turn — these are REAL results, "
