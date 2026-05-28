@@ -673,7 +673,7 @@ class DefaultModeNetwork:
         """
         # Self-schema: preserve prior value if not supplied.
         if self_schema:
-            self._last_self_schema = self_schema[:9000]
+            self._last_self_schema = self_schema[:5000]
         # Rebuild context blob with the LIVE parietal + most recent schema.
         self._last_context = (
             f"Recent conversation:\n{parietal_text}\n\n"
@@ -709,7 +709,7 @@ class DefaultModeNetwork:
             open_questions_text,
             re.DOTALL,
         )
-        self._last_projects = m.group(1).strip() if m else ""
+        self._last_projects = (m.group(1).strip() if m else "")[:3000]
 
     # ── Deferred thoughts ────────────────────────────────────────────────────
 
