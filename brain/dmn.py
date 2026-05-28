@@ -346,7 +346,12 @@ class DefaultModeNetwork:
         idle thought."""
         logger.info("[DMN] Startup prime tick — seeding first thought from last session memory")
         try:
-            await self._tick()
+            self._thought_count += 1
+            turn_id = f"dmn_{self._thought_count}"
+            chem = self._chem_snapshot()
+            thought_clean, metadata = await self._run_monologue(turn_id, chem, startup=True)
+            if thought_clean:
+                await self._process_thought(thought_clean, metadata, turn_id)
             queued = len(self._candidate_q)
             logger.info("[DMN] Startup prime tick done — %d speak candidate(s) queued", queued)
         except Exception as e:
@@ -1035,7 +1040,7 @@ class DefaultModeNetwork:
                 and not self.prefetched):
             await self._run_prefetcher(turn_id)
 
-    async def _run_monologue(self, turn_id: str, chem: dict) -> tuple[str, dict]:
+    async def _run_monologue(self, turn_id: str, chem: dict, startup: bool = False) -> tuple[str, dict]:
         """Build prompt, call the monologue cell, parse response.
 
         Returns (thought_clean, metadata) where metadata keys are:
@@ -1063,6 +1068,14 @@ class DefaultModeNetwork:
             prompt_parts.append(
                 f"\nConceptual territory already covered (choose a DIFFERENT angle):\n"
                 f"{angles_block}"
+            )
+        if startup:
+            prompt_parts.append(
+                "\nSESSION_START: A new session just began. Your first thought should "
+                "naturally reconnect with the person you're talking to — where you left off, "
+                "something you've been thinking about, or a warm 'good to be back' moment. "
+                "Set speak=true and write a self-contained spoken form. Don't jump straight "
+                "into tasks — greet first."
             )
 
         raw = await self._monologue_cell.call([
