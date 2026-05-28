@@ -1067,12 +1067,13 @@ def _make_mic():
 
 
 class TestStreamingMicMute:
-    def test_starts_unmuted(self):
+    def test_starts_muted(self):
         mic = _make_mic()
-        assert mic.is_muted is False
+        assert mic.is_muted is True
 
     def test_mute_sets_flag(self):
         mic = _make_mic()
+        mic.unmute()
         mic.mute()
         assert mic.is_muted is True
 
@@ -1083,14 +1084,15 @@ class TestStreamingMicMute:
         assert mic.is_muted is False
 
     def test_toggle_mute_returns_new_state(self):
+        # starts muted → first toggle unmutes
         mic = _make_mic()
         result = mic.toggle_mute()
-        assert result is True
-        assert mic.is_muted is True
+        assert result is False
+        assert mic.is_muted is False
 
     def test_toggle_unmute_returns_new_state(self):
+        # starts muted (no need to manually mute first)
         mic = _make_mic()
-        mic.mute()
         result = mic.toggle_mute()
         assert result is False
         assert mic.is_muted is False
@@ -1132,6 +1134,7 @@ class TestStreamingMicMute:
         assert not mic._pcm_in.empty()
 
     def test_toggle_sequence(self):
+        # starts muted → [unmute, mute, unmute, mute]
         mic = _make_mic()
         states = [mic.toggle_mute() for _ in range(4)]
-        assert states == [True, False, True, False]
+        assert states == [False, True, False, True]

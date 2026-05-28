@@ -97,6 +97,7 @@ def _make_session(messages: list[Any] | None = None) -> tuple:
 
 def test_mute_sets_flag():
     session, _ = _make_session()
+    session.unmute()   # start from known unmuted state
     assert not session.is_muted
     session.mute()
     assert session.is_muted
@@ -111,13 +112,15 @@ def test_unmute_clears_flag():
 
 def test_mute_toggle_returns_new_state():
     session, _ = _make_session()
-    assert session.toggle_mute() is True    # muted
+    # starts muted → first toggle unmutes, second remutes
     assert session.toggle_mute() is False   # unmuted
+    assert session.toggle_mute() is True    # muted
 
 
 def test_mute_resets_in_progress_utterance_start():
     """mute() must clear _utterance_start_s so the next utterance gets a fresh timestamp."""
     session, _ = _make_session()
+    session.unmute()
     session._utterance_start_s = 3.0   # simulates being mid-utterance when muted
     session.mute()
     assert session._utterance_start_s is None
@@ -126,6 +129,7 @@ def test_mute_resets_in_progress_utterance_start():
 def test_mute_resets_pending_words():
     """mute() must clear _pending_words so stale words don't appear in the next utterance."""
     session, _ = _make_session()
+    session.unmute()
     session._pending_words = [{"word": "hello", "start": 1.0, "end": 1.3, "speaker": 0}]
     session.mute()
     assert session._pending_words == []
@@ -151,6 +155,7 @@ def test_is_user_speaking_false_when_muted():
 
 def test_is_user_speaking_true_when_unmuted_with_pending():
     session, _ = _make_session()
+    session.unmute()
     session._utterance_start_s = 1.0
     assert session.is_user_speaking
 
@@ -177,6 +182,7 @@ async def test_speech_started_during_mute_does_not_overwrite_cleared_start():
     msgs = [_speech_started(5.0)]
     session, _ = _make_session(msgs)
     # Simulate: was mid-utterance, user muted (state cleared), then Deepgram fires SpeechStarted
+    session.unmute()
     session._utterance_start_s = 2.0
     session.mute()   # clears _utterance_start_s → None
     assert session._utterance_start_s is None
@@ -250,6 +256,7 @@ async def test_second_utterance_after_mute_unmute():
         _utterance_end(1.3),
     ]
     session, bus = _make_session(phase1)
+    session.unmute()
     await session._read_loop()
 
     utt1 = session.utterances.get_nowait()
@@ -291,6 +298,7 @@ async def test_second_utterance_after_mute_mid_utterance():
     """Muting while an utterance is in progress must not corrupt the next utterance."""
     # SpeechStarted fires, then user mutes before UtteranceEnd
     session, _ = _make_session([])
+    session.unmute()
     session._utterance_start_s = 1.0
     session._pending_words = [{"word": "partial", "start": 1.0, "end": 1.2, "speaker": 0}]
 
@@ -363,6 +371,7 @@ def test_enqueue_chunk_passes_audio_when_unmuted_above_gate():
     from brain.streaming_mic import StreamingMicSession
     bus = _FakeBus()
     session = StreamingMicSession(bus=bus, is_speaking_fn=lambda: False)
+    session.unmute()
     session.NOISE_GATE_RMS = 0.0   # disable gate
 
     # Build a chunk with high RMS (large int16 values)
@@ -399,6 +408,7 @@ def test_noise_gate_passes_loud_audio():
     from brain.streaming_mic import StreamingMicSession
     bus = _FakeBus()
     session = StreamingMicSession(bus=bus, is_speaking_fn=lambda: False)
+    session.unmute()
     session.NOISE_GATE_RMS = 100.0
 
     n_samples = 160
@@ -416,6 +426,7 @@ def test_enqueue_chunk_drops_oldest_when_full():
     from brain.streaming_mic import StreamingMicSession
     bus = _FakeBus()
     session = StreamingMicSession(bus=bus, is_speaking_fn=lambda: False)
+    session.unmute()
     session.NOISE_GATE_RMS = 0.0
 
     # Fill the queue to capacity (maxsize=200)
