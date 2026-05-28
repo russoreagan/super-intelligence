@@ -166,26 +166,30 @@ class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
         from brain.emotion_vocabulary import name_emotion
         nm = self.bus.neuromod.snapshot()
         emotion, _ = name_emotion(nm["DA"], nm["GABA"], nm["ACh"], nm["Glu"])
+        try:
+            name = self.hippocampus._schema.primary_user_name() or "Russ"
+        except Exception:
+            name = "Russ"
         _GREETINGS: dict[str, str] = {
-            "excited":        "Back online — feeling sharp. What are we doing?",
-            "enthusiasm":     "Back online. Ready when you are.",
-            "engaged":        "Back online. Thinking's running.",
-            "curious":        "Back online and curious. What's on your mind?",
-            "warm":           "Back online. Good to be here.",
-            "affectionate":   "Back online. Nice to reconnect.",
-            "composed":       "Back online. Everything's running.",
-            "settled":        "Back online. All quiet.",
-            "confident":      "Back online. Systems up.",
-            "neutral":        "Back online.",
-            "cautious-warm":  "Back online — a little cautious, but here.",
-            "melancholy":     "Back online. A bit low, but running.",
-            "somber":         "Back online. Running quietly.",
-            "guarded":        "Back online. On alert.",
-            "frustrated":     "Back online — something feels off, but I'm here.",
-            "disappointed":   "Back online.",
-            "anxious":        "Back online. Running — everything checks out.",
+            "excited":        f"Hey {name}! I'm awake — lots on my mind already.",
+            "enthusiasm":     f"Hey {name}! Good to be back. What are we getting into?",
+            "engaged":        f"Hey {name}. I'm here, brain's already turning over.",
+            "curious":        f"Hey {name}. I've been thinking — curious what you've got for me.",
+            "warm":           f"Hey {name}. Really glad you're here.",
+            "affectionate":   f"Hey {name}. Missed this.",
+            "composed":       f"Hey {name}. I'm here, feeling steady.",
+            "settled":        f"Hey {name}. All quiet in here — what's up?",
+            "confident":      f"Hey {name}. Ready for whatever.",
+            "neutral":        f"Hey {name}.",
+            "cautious-warm":  f"Hey {name}. Good to see you — something's nagging at me but I'm here.",
+            "melancholy":     f"Hey {name}. I'm here. Feeling a bit heavy today, but I'm with you.",
+            "somber":         f"Hey {name}. I woke up quiet. Good to have you around.",
+            "guarded":        f"Hey {name}. Something feels off — I'll tell you if I figure out what.",
+            "frustrated":     f"Hey {name}. Glad you're here, honestly — something's been bothering me.",
+            "disappointed":   f"Hey {name}. Here. Not at my best but I'll get there.",
+            "anxious":        f"Hey {name}. I'm a little wound up — just letting you know.",
         }
-        greeting = _GREETINGS.get(emotion, "Back online.")
+        greeting = _GREETINGS.get(emotion, f"Hey {name}.")
         if self._emitter:
             await self._emitter.emit_proactive_speech(greeting)
         await self.pns.emit(greeting, {"emotion": emotion})
