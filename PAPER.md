@@ -203,7 +203,27 @@ A **plasticity modulator** scales the learning rate by session-averaged DA × AC
 
 **Competitive drafter reinforcement** runs at sleep consolidation for turns where the critic compared multiple real drafts. The winning drafter's edge to the executive receives an additional bonus proportional to its margin over the other drafters; losing drafters receive a small penalty. This creates genuine competitive selection pressure between drafters over time, separate from the path-level Hebbian update that treats all traversed edges equally.
 
-### 4.8 Additional modules
+### 4.8 Dynamic reasoning framework selection
+
+A major architectural addition is a per-turn skill routing system that dynamically selects a reasoning or emotional intelligence framework from a library of 171 skills and injects it into the response drafters' prompts. The selection is invisible to the user — it shapes how the drafters think, not what they explicitly say — and is designed to be used as a "habit of thought" rather than a script.
+
+**The skill library** spans 27 categories: logic, ethics, creativity, strategy, writing, decision-making, probability, game theory, epistemology, psychology, systems thinking, narrative, communication, emotional intelligence, and more. Each category contains a router (overview level) and multiple leaves (specialized techniques). A 768-dimensional embedding index (nomic-embed-text) is precomputed across all 171 entries and loaded at boot. Four tier-1 baseline skills — logic check, communication clarity, ethics bias check, and emotional awareness — are injected into every qualifying turn as a permanent baseline. The remaining 167 form a ranked pool selected per turn.
+
+**Selection operates on three paths**:
+
+- **Conversational path** (user-facing turns): First gated — chitchat, simple acknowledgements, and low-stakes turns skip selection entirely. Substantive turns and any turn where the user is in emotional distress activate selection. The current input plus executive key points are embedded and ranked against all 171 entries by cosine similarity. If the top candidate's score exceeds the second by a clear margin, it is selected directly without an LLM call. Otherwise, the top five candidates are forwarded to a lightweight LLM (Haiku) for disambiguation, which returns a skill selection and a brief rationale. The selected skill's block is then injected into each drafter's prompt.
+
+- **Autonomous path** (DMN planner): Background deliberation always receives skill support, using a local model and a more aggressive candidate pool. Up to two frameworks can be selected for heavyweight planning turns.
+
+- **Rumination path**: An open-ended meta-reflection loop where a meta-cell decides on each iteration whether to transform, branch, reframe, or stop, applying a newly selected framework to the prior thought on each pass until a stable conclusion is reached.
+
+**Sticky context** prevents framework thrashing across turns. Once a skill category becomes active, it is stored in the parietal cluster and reused for up to 8 turns. At each turn, the current input is compared against the anchor embedding: if cosine similarity drops below a drift threshold, the context is cleared and a new selection is made; otherwise the prior framework is reused. This allows coherent exploration of a problem space — the system maintains a consistent reasoning approach across a multi-turn conversation rather than switching frameworks turn-by-turn.
+
+**Guided questions** are emitted when the embedding scores of multiple leaves within a category are nearly equal: rather than guessing, the system asks the user which angle would be most useful. Once the user responds, the selected leaf is locked in for the remainder of the sticky window.
+
+The effect is that response quality on substantive turns is shaped not only by the drafter's model capabilities but by a dynamically chosen epistemological stance — whether the current turn calls for causal analysis, probabilistic reasoning, ethical pressure-testing, creative divergence, or something else. The framework is applied as a thinking habit, not an announced methodology.
+
+### 4.9 Additional modules
 
 **Auditory cortex**: handles all acoustic processing beyond simple transcription. Speaker enrollment uses ECAPA-TDNN — a speaker verification neural network — to produce dense speaker embeddings from raw audio segments. A session-level registry matches new embeddings against known speakers at a permissive threshold; a persistent cross-session store uses a stricter threshold for durable identity. When a new speaker appears, the system attempts to extract their name from the conversation and creates a persistent profile: a running-mean embedding (capped at 20 samples for stability), a per-speaker prosody baseline (F0 mean and energy mean), and an affection score updated by sentiment across interactions. This allows the system to recognize returning speakers across sessions, greet them by name, and apply their individual prosody baseline for emotion detection as described in §4.4. Song fingerprinting (Shazam-style spectral matching) runs continuously on ambient audio and publishes recognized song metadata to the shared bus, available to the DMN for context or for spontaneous mention.
 

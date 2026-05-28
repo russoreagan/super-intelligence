@@ -49,6 +49,7 @@ class Task:
     started_at: float | None = None
     completed_at: float | None = None
     success: bool | None = None
+    job_id: str | None = None  # linked JobStore entry (set when execution starts)
 
     def to_dict(self) -> dict:
         return asdict(self)

@@ -1,0 +1,31 @@
+{
+  "job_id": "job_t1",
+  "task_id": null,
+  "goal": "trivial task",
+  "success": true,
+  "source": "user",
+  "ralph_mode": false,
+  "total_attempts": 1,
+  "steps": [
+    {
+      "tool": "none",
+      "args": {},
+      "reason": "trivial"
+    }
+  ],
+  "results": [
+    ""
+  ],
+  "written_files": [],
+  "plan_steps": [
+    {
+      "description": "task",
+      "expected_tool": "none",
+      "acceptance_criteria": [],
+      "id": "US-001"
+    }
+  ],
+  "spoken_summary": null,
+  "created_at": "2026-05-28T05:31:31.650767+00:00",
+  "completed_at": "2026-05-28T05:31:31.650770+00:00"
+}

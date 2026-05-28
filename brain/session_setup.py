@@ -185,6 +185,14 @@ class _SetupMixin:
             _motor_paths = cloud._trusted_dirs[:]
             logger.info("Motor cortex: inheriting trusted dirs from Claude Desktop: %s", _motor_paths)
 
+        # Always include the project root so the agent can read/write its own
+        # codebase regardless of how it was launched (start.sh vs direct invocation).
+        from pathlib import Path as _Path
+        _project_root = str(_Path(__file__).parent.parent.resolve())
+        if _project_root not in _motor_paths:
+            _motor_paths.insert(0, _project_root)
+            logger.info("Motor cortex: project root auto-added to allowed paths: %s", _project_root)
+
         self.motor = MotorCortexCluster(
             self.bus, self.router,
             allowed_paths=_motor_paths,

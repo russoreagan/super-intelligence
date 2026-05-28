@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 
 CLUSTER = "motor_cortex"
 
+from brain.clusters.job_store import JobStore
 from brain.clusters.motor_dispatcher import ToolDispatcher
 from brain.clusters.motor_prompts import (
     CRITERIA_CHECK_SYSTEM as _CRITERIA_CHECK_SYSTEM,
@@ -52,6 +53,7 @@ class MotorCortexCluster:
         self._pending_task = None  # set post-init via set_pending_task()
         self._lobe_bridge = None   # set post-init via set_lobe_bridge()
         self._obs = None           # set post-init via set_observability()
+        self.job_store = JobStore()
         self._subsystems: list[MotorSubsystem] = []
 
         self._dispatcher = ToolDispatcher(allowed_paths, allowed_commands)
@@ -309,7 +311,10 @@ class MotorCortexCluster:
                 not r.startswith("[error]") and not r.startswith("[blocked]")
                 for r in results_log
             )
-            await self._notify_job_complete(task_goal, steps_taken, results_log, success)
+            await self._notify_job_complete(
+                task_goal, steps_taken, results_log, success,
+                job_id=turn_id,
+            )
             step_summary = "; ".join(
                 f"{s['tool']}→{'ok' if not results_log[i].startswith('[error]') else 'err'}"
                 for i, s in enumerate(steps_taken)
@@ -579,7 +584,14 @@ class MotorCortexCluster:
             })
 
         # 4. Completion
-        await self._notify_job_complete(goal, steps_taken, results_log, success)
+        await self._notify_job_complete(
+            goal, steps_taken, results_log, success,
+            job_id=job_id,
+            source="self" if getattr(self, "_current_source", "") == "self" else "user",
+            ralph_mode=use_ralph,
+            total_attempts=total_attempts,
+            plan_steps=stories_planned,
+        )
         await emitter.emit_event({
             "type": "task_complete",
             "job_id": job_id,
@@ -745,7 +757,10 @@ class MotorCortexCluster:
                         sub.mark_diverged(proc_id)
 
         if steps_taken:
-            await self._notify_job_complete(goal or "", steps_taken, results_log, success)
+            await self._notify_job_complete(
+                goal or "", steps_taken, results_log, success,
+                job_id=turn_id,
+            )
 
         if last_result is None:
             last_result = {}
@@ -800,9 +815,39 @@ class MotorCortexCluster:
             parts.append("Select the right tool and arguments.")
         return "\n".join(parts)
 
-    async def _notify_job_complete(self, goal: str, steps: list[dict],
-                                   results: list[str], success: bool) -> None:
-        """Fire after_job hooks on all motor subsystems."""
+    async def _notify_job_complete(
+        self,
+        goal: str,
+        steps: list[dict],
+        results: list[str],
+        success: bool,
+        *,
+        job_id: str | None = None,
+        task_id: str | None = None,
+        source: str = "user",
+        ralph_mode: bool = False,
+        total_attempts: int = 0,
+        plan_steps: list[dict] | None = None,
+    ) -> None:
+        """Fire after_job hooks and persist the job record."""
+        # Persist output before subsystem hooks (hooks may raise)
+        if job_id:
+            try:
+                self.job_store.save(
+                    job_id=job_id,
+                    goal=goal,
+                    steps=steps,
+                    results=results,
+                    success=success,
+                    task_id=task_id,
+                    source=source,
+                    ralph_mode=ralph_mode,
+                    total_attempts=total_attempts,
+                    plan_steps=plan_steps,
+                )
+            except Exception as e:
+                logger.warning("[MotorCortex] JobStore.save failed: %s", e)
+
         for sub in self._subsystems:
             try:
                 import inspect

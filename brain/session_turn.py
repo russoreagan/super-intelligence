@@ -691,6 +691,13 @@ class _TurnMixin:
 
     async def _run_task(self, task) -> None:
         job_turn_id = f"task_{task.id}"
+        job_id = f"job_{job_turn_id}"
+        # Record the job_id on the task so the queue entry links to the store
+        try:
+            task.job_id = job_id
+            self._task_queue._save()
+        except Exception:
+            pass
         is_self = getattr(task, "source", "") == "self"
         if is_self:
             self.router.enter_background_mode()
@@ -722,6 +729,15 @@ class _TurnMixin:
 
         self._task_queue.mark_done(task.id, success=bool(summary.get("success")))
         spoken_summary = await self._result_reporter.report(summary, job_turn_id)
+        # Persist the spoken summary and task linkage in the job record
+        job_id = summary.get("job_id")
+        if job_id and hasattr(self.motor, "job_store"):
+            try:
+                self.motor.job_store.link_task(job_id, task.id)
+                if spoken_summary:
+                    self.motor.job_store.update_summary(job_id, spoken_summary)
+            except Exception as _je:
+                logger.debug("[TaskWorker] job_store update failed: %s", _je)
         if not spoken_summary:
             spoken_summary = (
                 "Done — but I don't have a clean summary to share."
