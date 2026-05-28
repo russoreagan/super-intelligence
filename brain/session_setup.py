@@ -273,6 +273,7 @@ class _SetupMixin:
                     _self_schema = self.hippocampus._core_context.get("self", "")
                     self.dmn.update_context(_seed, self_schema=_self_schema)
                     logger.info("[DMN] Seeded with %d recent episodes", len(_recent))
+                    asyncio.create_task(self.dmn.prime_startup())
         except Exception as _seed_err:
             logger.debug("[DMN] Could not seed last session context: %s", _seed_err)
 

@@ -334,6 +334,16 @@ class DefaultModeNetwork:
         )
         self._loop_task = asyncio.create_task(self._loop())
 
+    async def prime_startup(self) -> None:
+        """Fire one tick immediately so the seeded last-session context produces
+        a 'where were we?' thought before the normal interval loop kicks in.
+        Skips the chemistry gate — this is a deliberate wakeup, not a random
+        idle thought."""
+        try:
+            await self._tick()
+        except Exception as e:
+            logger.debug("[DMN] Startup prime tick failed: %s", e)
+
     def pause(self) -> None:
         """No-op in the continuous-thought design.
 
