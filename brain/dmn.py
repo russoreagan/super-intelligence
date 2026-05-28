@@ -339,10 +339,13 @@ class DefaultModeNetwork:
         a 'where were we?' thought before the normal interval loop kicks in.
         Skips the chemistry gate — this is a deliberate wakeup, not a random
         idle thought."""
+        logger.info("[DMN] Startup prime tick — seeding first thought from last session memory")
         try:
             await self._tick()
+            queued = len(self._candidate_q)
+            logger.info("[DMN] Startup prime tick done — %d speak candidate(s) queued", queued)
         except Exception as e:
-            logger.debug("[DMN] Startup prime tick failed: %s", e)
+            logger.warning("[DMN] Startup prime tick failed: %s", e)
 
     def pause(self) -> None:
         """No-op in the continuous-thought design.
