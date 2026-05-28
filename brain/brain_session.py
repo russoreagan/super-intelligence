@@ -162,6 +162,35 @@ class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
         response, affect = await self.process_turn(self.args.message)
         await self.pns.emit(response, affect)
 
+    async def _emit_startup_greeting(self) -> None:
+        from brain.emotion_vocabulary import name_emotion
+        nm = self.bus.neuromod.snapshot()
+        emotion, _ = name_emotion(nm["DA"], nm["GABA"], nm["ACh"], nm["Glu"])
+        _GREETINGS: dict[str, str] = {
+            "excited":        "Back online — feeling sharp. What are we doing?",
+            "enthusiasm":     "Back online. Ready when you are.",
+            "engaged":        "Back online. Thinking's running.",
+            "curious":        "Back online and curious. What's on your mind?",
+            "warm":           "Back online. Good to be here.",
+            "affectionate":   "Back online. Nice to reconnect.",
+            "composed":       "Back online. Everything's running.",
+            "settled":        "Back online. All quiet.",
+            "confident":      "Back online. Systems up.",
+            "neutral":        "Back online.",
+            "cautious-warm":  "Back online — a little cautious, but here.",
+            "melancholy":     "Back online. A bit low, but running.",
+            "somber":         "Back online. Running quietly.",
+            "guarded":        "Back online. On alert.",
+            "frustrated":     "Back online — something feels off, but I'm here.",
+            "disappointed":   "Back online.",
+            "anxious":        "Back online. Running — everything checks out.",
+        }
+        greeting = _GREETINGS.get(emotion, "Back online.")
+        if self._emitter:
+            await self._emitter.emit_proactive_speech(greeting)
+        await self.pns.emit(greeting, {"emotion": emotion})
+        self._last_brain_spoke_ts = time.time()
+
     async def _run_ui_loop(self) -> None:
         print("Brain online. Open http://localhost:8765 to interact.\n")
         while True:
