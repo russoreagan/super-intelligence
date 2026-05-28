@@ -146,6 +146,15 @@ class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
             _on(self._streaming_mic is not None),
             _on(self.ears is not None),
         )
+        if self._ui_server is not None:
+            self._ui_server.set_subsystem_status({
+                "ui":    self._ui_enabled,
+                "motor": self.motor is not None,
+                "dmn":   self.dmn is not None,
+                "meta":  self.meta is not None,
+                "voice": self._streaming_mic is not None,
+                "ears":  self.ears is not None,
+            })
 
         if self.args.message:
             await self._run_single_message()

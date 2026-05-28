@@ -272,6 +272,7 @@ input, select, textarea { font: inherit; color: inherit; background: none; borde
 }
 
 .ws-pill {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -283,7 +284,11 @@ input, select, textarea { font: inherit; color: inherit; background: none; borde
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--fg-mute);
+  cursor: default;
+  transition: background 180ms, border-color 180ms;
 }
+.ws-pill:hover { background: var(--bg-1); }
+.ws-pill.degraded { border-color: oklch(0.65 0.18 55 / 0.5); color: oklch(0.72 0.14 55); }
 #ws-indicator {
   width: 6px; height: 6px;
   border-radius: 50%;
@@ -295,10 +300,47 @@ input, select, textarea { font: inherit; color: inherit; background: none; borde
   box-shadow: 0 0 8px var(--ok);
   animation: dot-pulse 2.4s ease-in-out infinite;
 }
+#ws-indicator.degraded {
+  background: oklch(0.72 0.14 55);
+  box-shadow: 0 0 8px oklch(0.72 0.14 55 / 0.6);
+}
 @keyframes dot-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.5; }
 }
+/* Status tooltip */
+.status-tooltip {
+  display: none;
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  min-width: 140px;
+  z-index: 200;
+  box-shadow: 0 4px 16px oklch(0 0 0 / 0.4);
+}
+.ws-pill:hover .status-tooltip { display: block; }
+.status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 3px 0;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: var(--fg-dim);
+}
+.status-row-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--fg-faint);
+  flex-shrink: 0;
+}
+.status-row-dot.up   { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
+.status-row-dot.down { background: oklch(0.55 0.18 25); }
 
 /* ---------- MAIN ---------- */
 #main {
@@ -3202,9 +3244,17 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
       <button id="settings-btn" title="Brain settings" class="icon-btn">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
       </button>
-      <div class="ws-pill">
-        <span id="ws-indicator" title="WebSocket status"></span>
-        <span>Link</span>
+      <div class="ws-pill" id="status-pill">
+        <span id="ws-indicator"></span>
+        <span id="status-label">Link</span>
+        <div class="status-tooltip" id="status-tooltip">
+          <div class="status-row"><span>UI</span><span class="status-row-dot" id="sub-ui"></span></div>
+          <div class="status-row"><span>Motor</span><span class="status-row-dot" id="sub-motor"></span></div>
+          <div class="status-row"><span>DMN</span><span class="status-row-dot" id="sub-dmn"></span></div>
+          <div class="status-row"><span>Meta</span><span class="status-row-dot" id="sub-meta"></span></div>
+          <div class="status-row"><span>Voice</span><span class="status-row-dot" id="sub-voice"></span></div>
+          <div class="status-row"><span>Ears</span><span class="status-row-dot" id="sub-ears"></span></div>
+        </div>
       </div>
     </div>
   </header>
@@ -4625,7 +4675,13 @@ function connect() {
   ws.onopen = () => {
     wsConnected = true;
     demoMode = false;
-    document.getElementById('ws-indicator').classList.add('connected');
+    const ind = document.getElementById('ws-indicator');
+    const lbl = document.getElementById('status-label');
+    const pill = document.getElementById('status-pill');
+    ind.classList.add('connected');
+    ind.classList.remove('degraded');
+    if (pill) pill.classList.remove('degraded');
+    if (lbl) lbl.textContent = 'Online';
     // Reset any turn state left over from a crash or restart.
     setTyping(false);
     document.getElementById('send-btn').disabled = false;
@@ -4637,7 +4693,11 @@ function connect() {
 
   ws.onclose = () => {
     wsConnected = false;
-    document.getElementById('ws-indicator').classList.remove('connected');
+    const ind = document.getElementById('ws-indicator');
+    const lbl = document.getElementById('status-label');
+    ind.classList.remove('connected');
+    ind.classList.remove('degraded');
+    if (lbl) lbl.textContent = 'Offline';
     if (!demoMode) setTimeout(connect, 2000);
   };
 
@@ -4842,6 +4902,31 @@ function handle(msg) {
     case 'wiring_status': {
       const tag = document.getElementById('frozen-tag');
       if (tag) tag.style.display = msg.frozen ? 'inline' : 'none';
+      break;
+    }
+    case 'subsystem_status': {
+      const subs = { ui: msg.ui, motor: msg.motor, dmn: msg.dmn, meta: msg.meta, voice: msg.voice, ears: msg.ears };
+      let allUp = true;
+      for (const [key, up] of Object.entries(subs)) {
+        const dot = document.getElementById(`sub-${key}`);
+        if (dot) { dot.className = 'status-row-dot ' + (up ? 'up' : 'down'); }
+        if (!up) allUp = false;
+      }
+      const pill = document.getElementById('status-pill');
+      const ind  = document.getElementById('ws-indicator');
+      const lbl  = document.getElementById('status-label');
+      if (pill && ind && lbl) {
+        if (allUp) {
+          pill.classList.remove('degraded');
+          ind.classList.remove('degraded');
+          lbl.textContent = 'Online';
+        } else {
+          pill.classList.add('degraded');
+          ind.classList.add('degraded');
+          ind.classList.remove('connected');
+          lbl.textContent = 'Degraded';
+        }
+      }
       break;
     }
     case 'task_planning':
@@ -5586,6 +5671,8 @@ function enterDemoMode() {
   if (demoMode) return;
   demoMode = true;
   document.getElementById('ws-indicator').classList.remove('connected');
+  const lbl = document.getElementById('status-label');
+  if (lbl) lbl.textContent = 'Demo';
   // session id for demo
   sessionId = 'demo-' + Math.random().toString(36).slice(2, 6);
   document.getElementById('stat-session').textContent = sessionId;

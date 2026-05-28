@@ -65,12 +65,17 @@ class UIServer:
         self._last_emotion: str = ""
         self._last_thoughts: list[dict] = []
         self._wiring_frozen: bool = False
+        self._subsystem_status: dict[str, bool] = {}
         self._wiring = wiring
         self._bus = bus  # for publishing to auditory pipeline from press-to-talk
         self._app = None
 
     def set_wiring_frozen(self, frozen: bool) -> None:
         self._wiring_frozen = bool(frozen)
+
+    def set_subsystem_status(self, status: dict[str, bool]) -> None:
+        """Store subsystem up/down flags to broadcast on every connect."""
+        self._subsystem_status = dict(status)
 
     def set_message_handler(self, fn: Callable[[str], None]) -> None:
         self._on_user_message = fn
@@ -288,6 +293,14 @@ class UIServer:
                     "type": "wiring_status",
                     "frozen": self._wiring_frozen,
                 }))
+
+            # Subsystem health — sent on every connect so status pill is always current
+            if self._subsystem_status:
+                with contextlib.suppress(Exception):
+                    await websocket.send_text(json.dumps({
+                        "type": "subsystem_status",
+                        **self._subsystem_status,
+                    }))
 
             # Replay recent thoughts so the feed isn't blank on reconnect
             for thought_event in list(self._last_thoughts):
