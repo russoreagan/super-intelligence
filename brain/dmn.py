@@ -673,7 +673,7 @@ class DefaultModeNetwork:
         """
         # Self-schema: preserve prior value if not supplied.
         if self_schema:
-            self._last_self_schema = self_schema[:5000]
+            self._last_self_schema = self_schema[:8000]
         # Rebuild context blob with the LIVE parietal + most recent schema.
         self._last_context = (
             f"Recent conversation:\n{parietal_text}\n\n"
@@ -698,18 +698,53 @@ class DefaultModeNetwork:
                 self._last_familiarity = "new"
 
     def set_projects_context(self, open_questions_text: str) -> None:
-        """Extract and store the 'Projects assigned by Russ' section from
-        open_questions.md so the monologue knows what work is pre-authorized.
-        Called at boot and whenever open_questions.md is rewritten."""
+        """Extract and store a compact project digest from open_questions.md.
+        Called at boot and whenever open_questions.md is rewritten.
+
+        Injects only project name + priority + one-line task description rather
+        than the full section (which includes a 100-line folder map). The DMN
+        has full file-read access via its `task` field when it needs details.
+        """
         import re
-        # Extract from the Projects heading to the next top-level heading (##)
-        # or end of file — whichever comes first.
-        m = re.search(
-            r"(## Projects assigned by Russ.*?)(?=\n## |\Z)",
+        projects_m = re.search(
+            r"## Projects assigned by Russ(.*?)(?=\n## |\Z)",
             open_questions_text,
             re.DOTALL,
         )
-        self._last_projects = (m.group(1).strip() if m else "")[:3000]
+        if not projects_m:
+            self._last_projects = ""
+            return
+
+        section = projects_m.group(1)
+        lines: list[str] = []
+
+        # Extract each ### project block and summarise to 2-3 lines
+        for block_m in re.finditer(
+            r"### (.+?)\n(.*?)(?=\n### |\Z)", section, re.DOTALL
+        ):
+            name = block_m.group(1).strip()
+            body = block_m.group(2)
+
+            # Grab PRIMARY/secondary marker
+            priority_m = re.search(r"\((PRIMARY|secondary)\)", name, re.I)
+            priority = f" ({priority_m.group(1).upper()})" if priority_m else ""
+            # Strip priority tag from name for cleaner display
+            clean_name = re.sub(r"\s*\(PRIMARY\)|\s*\(secondary\)", "", name, flags=re.I).strip()
+
+            # Grab first **Task**: line as one-liner
+            task_m = re.search(r"\*\*Task\*\*:\s*(.+?)(?:\n|$)", body)
+            task_line = task_m.group(1).strip()[:120] if task_m else ""
+
+            # Grab Status line if present
+            status_m = re.search(r"\*\*Status\*\*:\s*(.+?)(?:\n|$)", body)
+            status = f" — {status_m.group(1).strip()}" if status_m else ""
+
+            entry = f"- **{clean_name}**{priority}{status}"
+            if task_line:
+                entry += f": {task_line}"
+            lines.append(entry)
+
+        self._last_projects = "\n".join(lines)
 
     # ── Deferred thoughts ────────────────────────────────────────────────────
 

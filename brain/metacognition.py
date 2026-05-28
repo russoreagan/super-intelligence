@@ -357,7 +357,8 @@ class MetacognitionCell:
             await self._bus.publish_dict("meta.reflection", reflection, source="metacognition")
             logger.info("[Self-monitor] %s", reflection.get("reflection", "")[:120])
 
-            # Update self.md with current mood signature
+            # Update self.md with current mood signature — replace the section
+            # rather than append, so historical lines don't accumulate over sessions.
             if self._schema:
                 mood_line = (
                     f"DA={stats['neuromod_averages'].get('DA', 0):.2f} "
@@ -365,9 +366,7 @@ class MetacognitionCell:
                     f"ACh={stats['neuromod_averages'].get('ACh', 0):.2f} "
                     f"dominant={stats['dominant_emotion']}"
                 )
-                fact = sanitize_fact(f"Mood signature: {mood_line}")
-                if fact:
-                    await self._schema.aappend_fact("self.md", fact)
+                await self._schema.upsert_section("self.md", "Current mood signature", mood_line)
 
     def summary(self) -> dict:
         return self._compute_stats()
