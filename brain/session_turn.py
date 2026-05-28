@@ -244,13 +244,13 @@ class _TurnMixin:
                 embedding_fn=self.router.embed,
             )
             await self._emit_end("hippocampus", turn_id)
-            # Recognition signal: finding relevant memories is an attention/novelty event.
-            # Kept small (cap 0.04) so that frequent recall across turns doesn't
-            # accumulate enough ACh to suppress DMN thought flow.
-            episode_hits = len([ln for ln in memory.get("episodes", "").splitlines() if ln.strip()])
-            if episode_hits > 0:
-                ach_delta = min(0.04, episode_hits * 0.01)
-                self.bus.neuromod.add("ACh", ach_delta)
+            # Emotional weight of recalled episodes: strong positive memory → ACh
+            # (recognition/warmth), strong negative → GABA (threat). Only fires
+            # when hippocampus finds a memory that clears the significance threshold.
+            recall_affect = memory.get("recall_affect", {})
+            if recall_affect:
+                for channel, delta in recall_affect.items():
+                    self.bus.neuromod.add(channel, delta)
                 _snap = self.bus.neuromod.snapshot()
                 trace.neuromod_midturn.append({"trigger": "hippocampus_recall", "snapshot": _snap})
                 if self._emitter:

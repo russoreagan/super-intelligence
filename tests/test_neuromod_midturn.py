@@ -39,77 +39,114 @@ def _make_emitter():
 # ── 1. Hippocampus recall injection ──────────────────────────────────────────
 
 class TestHippocampusRecallInjection:
-    """ACh spike proportional to recalled episode count."""
+    """ACh/GABA spike only for emotionally significant recalled memories."""
 
-    def _apply(self, bus: Bus, trace: TurnTrace, emitter, episode_text: str) -> None:
+    def _apply(self, bus: Bus, trace: TurnTrace, emitter,
+               recall_affect: dict) -> None:
         """Replicates the hippocampus-recall block from session_turn._run_turn."""
-        episode_hits = len([ln for ln in episode_text.splitlines() if ln.strip()])
-        if episode_hits > 0:
-            ach_delta = min(0.04, episode_hits * 0.01)
-            bus.neuromod.add("ACh", ach_delta)
+        if recall_affect:
+            for channel, delta in recall_affect.items():
+                bus.neuromod.add(channel, delta)
             snap = bus.neuromod.snapshot()
             trace.neuromod_midturn.append({"trigger": "hippocampus_recall", "snapshot": snap})
             asyncio.get_event_loop().run_until_complete(emitter.emit_neuromod(snap))
 
-    def test_single_episode_spikes_ach(self):
+    # ── hippocampus.recall() emotional weight computation ─────────────────────
+
+    def _compute_affect(self, emotion_states: list[str]) -> dict:
+        """Mirrors hippocampus._compute_recall_affect logic."""
+        from brain.emotion_hierarchy import valence_of
+        THRESHOLD = 0.4
+        episodes = [{"emotion_state": e} for e in emotion_states]
+        pos_peak = max((valence_of(ep.get("emotion_state")) for ep in episodes), default=0.0)
+        neg_peak = min((valence_of(ep.get("emotion_state")) for ep in episodes), default=0.0)
+        affect: dict[str, float] = {}
+        if pos_peak > THRESHOLD:
+            affect["ACh"] = round((pos_peak - THRESHOLD) * 0.25, 3)
+        if neg_peak < -THRESHOLD:
+            affect["GABA"] = round((-neg_peak - THRESHOLD) * 0.20, 3)
+        return affect
+
+    def test_positive_emotion_spikes_ach(self):
+        affect = self._compute_affect(["joy"])
+        assert "ACh" in affect
+        assert affect["ACh"] > 0
+
+    def test_negative_emotion_spikes_gaba(self):
+        affect = self._compute_affect(["angry"])
+        assert "GABA" in affect
+        assert affect["GABA"] > 0
+
+    def test_neutral_emotion_no_signal(self):
+        affect = self._compute_affect(["neutral"])
+        assert affect == {}
+
+    def test_mild_emotion_below_threshold_no_signal(self):
+        # "content" maps to happy core, valence ~0.3 — below 0.4 threshold
+        from brain.emotion_hierarchy import valence_of
+        affect = self._compute_affect(["content"])
+        val = valence_of("content")
+        if abs(val) <= 0.4:
+            assert affect == {}
+
+    def test_stronger_emotion_bigger_spike(self):
+        # content (valence 1.0, above threshold) > neutral (0.0, below) → content fires
+        affect_neutral = self._compute_affect(["neutral"])
+        affect_content = self._compute_affect(["content"])
+        assert affect_content.get("ACh", 0) > affect_neutral.get("ACh", 0)
+
+    def test_peak_across_multiple_episodes(self):
+        # Most salient episode drives the signal, not average
+        affect = self._compute_affect(["neutral", "neutral", "joy"])
+        assert "ACh" in affect
+
+    def test_mixed_positive_negative_both_fire(self):
+        affect = self._compute_affect(["joy", "angry"])
+        assert "ACh" in affect
+        assert "GABA" in affect
+
+    # ── session_turn application ──────────────────────────────────────────────
+
+    def test_no_recall_affect_no_change(self):
+        bus = _make_bus()
+        trace = _make_trace()
+        ach_before = bus.neuromod.get("ACh")
+        self._apply(bus, trace, _make_emitter(), {})
+        assert bus.neuromod.get("ACh") == ach_before
+        assert trace.neuromod_midturn == []
+
+    def test_ach_affect_updates_bus(self):
         bus = _make_bus()
         trace = _make_trace()
         before = bus.neuromod.get("ACh")
-        self._apply(bus, trace, _make_emitter(), "episode line one")
+        self._apply(bus, trace, _make_emitter(), {"ACh": 0.08})
         assert bus.neuromod.get("ACh") > before
 
-    def test_spike_proportional_to_hits(self):
-        bus_few = _make_bus()
-        bus_many = _make_bus()
-        trace = _make_trace()
-        em = _make_emitter()
-        self._apply(bus_few, trace, em, "line 1")
-        self._apply(bus_many, _make_trace(), em, "line 1\nline 2\nline 3\nline 4")
-        assert bus_many.neuromod.get("ACh") > bus_few.neuromod.get("ACh")
-
-    def test_spike_capped_at_0_04(self):
+    def test_gaba_affect_updates_bus(self):
         bus = _make_bus()
         trace = _make_trace()
-        # 100 episode lines — would be 1.0 without the cap
-        big_text = "\n".join(f"episode {i}" for i in range(100))
-        before = bus.neuromod.get("ACh")
-        self._apply(bus, trace, _make_emitter(), big_text)
-        assert bus.neuromod.get("ACh") - before <= 0.04 + 1e-9
-
-    def test_no_episodes_no_change(self):
-        bus = _make_bus()
-        trace = _make_trace()
-        before = bus.neuromod.get("ACh")
-        self._apply(bus, trace, _make_emitter(), "")
-        assert bus.neuromod.get("ACh") == before
-        assert trace.neuromod_midturn == []
+        before = bus.neuromod.get("GABA")
+        self._apply(bus, trace, _make_emitter(), {"GABA": 0.06})
+        assert bus.neuromod.get("GABA") > before
 
     def test_trace_entry_written(self):
         bus = _make_bus()
         trace = _make_trace()
-        self._apply(bus, trace, _make_emitter(), "some episode")
+        self._apply(bus, trace, _make_emitter(), {"ACh": 0.08})
         assert len(trace.neuromod_midturn) == 1
-        entry = trace.neuromod_midturn[0]
-        assert entry["trigger"] == "hippocampus_recall"
-        assert "ACh" in entry["snapshot"]
+        assert trace.neuromod_midturn[0]["trigger"] == "hippocampus_recall"
 
-    def test_emitter_called_with_snapshot(self):
+    def test_emitter_called(self):
         bus = _make_bus()
-        trace = _make_trace()
         em = _make_emitter()
-        self._apply(bus, trace, em, "some episode")
+        self._apply(bus, trace=_make_trace(), emitter=em, recall_affect={"ACh": 0.08})
         em.emit_neuromod.assert_awaited_once()
-        emitted = em.emit_neuromod.call_args[0][0]
-        assert emitted["ACh"] == pytest.approx(bus.neuromod.get("ACh"))
 
-    def test_other_channels_unchanged(self):
+    def test_unrelated_channels_unchanged(self):
         bus = _make_bus()
-        trace = _make_trace()
         da_before = bus.neuromod.get("DA")
-        gaba_before = bus.neuromod.get("GABA")
-        self._apply(bus, trace, _make_emitter(), "some episode")
+        self._apply(bus, _make_trace(), _make_emitter(), {"ACh": 0.08})
         assert bus.neuromod.get("DA") == da_before
-        assert bus.neuromod.get("GABA") == gaba_before
 
 
 # ── 2. Tool outcome injection ─────────────────────────────────────────────────

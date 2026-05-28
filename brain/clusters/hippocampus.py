@@ -219,10 +219,31 @@ class HippocampusCluster:
                     + "\n".join(parts)
                 )
 
+        # Compute emotional weight of recalled episodes. Strong positive valence
+        # → ACh spike (recognition/warmth); strong negative → GABA spike (threat).
+        # Only fires when at least one episode clears the significance threshold.
+        recall_affect: dict[str, float] = {}
+        if episodes:
+            from brain.emotion_hierarchy import valence_of
+            _THRESHOLD = 0.4  # |valence| must exceed this to register
+            pos_peak = max(
+                (valence_of(ep.get("emotion_state")) for ep in episodes),
+                default=0.0,
+            )
+            neg_peak = min(
+                (valence_of(ep.get("emotion_state")) for ep in episodes),
+                default=0.0,
+            )
+            if pos_peak > _THRESHOLD:
+                recall_affect["ACh"] = round((pos_peak - _THRESHOLD) * 0.25, 3)
+            if neg_peak < -_THRESHOLD:
+                recall_affect["GABA"] = round((-neg_peak - _THRESHOLD) * 0.20, 3)
+
         result = {
             "schema": schema_context,
             "episodes": episode_text,
             "core": self._core_context,
+            **({"recall_affect": recall_affect} if recall_affect else {}),
         }
 
         # Cache for potential reuse next turn
