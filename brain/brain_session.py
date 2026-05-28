@@ -162,39 +162,6 @@ class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
         response, affect = await self.process_turn(self.args.message)
         await self.pns.emit(response, affect)
 
-    async def _emit_startup_greeting(self) -> None:
-        from brain.emotion_vocabulary import name_emotion
-        nm = self.bus.neuromod.snapshot()
-        emotion, _ = name_emotion(nm["DA"], nm["GABA"], nm["ACh"], nm["Glu"])
-        try:
-            name = self.hippocampus._schema.primary_user_name() or "Russ"
-        except Exception:
-            name = "Russ"
-        _GREETINGS: dict[str, str] = {
-            "excited":        f"Hey {name}! I'm awake — lots on my mind already.",
-            "enthusiasm":     f"Hey {name}! Good to be back. What are we getting into?",
-            "engaged":        f"Hey {name}. I'm here, brain's already turning over.",
-            "curious":        f"Hey {name}. I've been thinking — curious what you've got for me.",
-            "warm":           f"Hey {name}. Really glad you're here.",
-            "affectionate":   f"Hey {name}. Missed this.",
-            "composed":       f"Hey {name}. I'm here, feeling steady.",
-            "settled":        f"Hey {name}. All quiet in here — what's up?",
-            "confident":      f"Hey {name}. Ready for whatever.",
-            "neutral":        f"Hey {name}.",
-            "cautious-warm":  f"Hey {name}. Good to see you — something's nagging at me but I'm here.",
-            "melancholy":     f"Hey {name}. I'm here. Feeling a bit heavy today, but I'm with you.",
-            "somber":         f"Hey {name}. I woke up quiet. Good to have you around.",
-            "guarded":        f"Hey {name}. Something feels off — I'll tell you if I figure out what.",
-            "frustrated":     f"Hey {name}. Glad you're here, honestly — something's been bothering me.",
-            "disappointed":   f"Hey {name}. Here. Not at my best but I'll get there.",
-            "anxious":        f"Hey {name}. I'm a little wound up — just letting you know.",
-        }
-        greeting = _GREETINGS.get(emotion, f"Hey {name}.")
-        if self._emitter:
-            await self._emitter.emit_proactive_speech(greeting)
-        await self.pns.emit(greeting, {"emotion": emotion})
-        self._last_brain_spoke_ts = time.time()
-
     async def _run_ui_loop(self) -> None:
         print("Brain online. Open http://localhost:8765 to interact.\n")
         while True:

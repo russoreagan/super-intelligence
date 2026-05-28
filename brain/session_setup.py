@@ -252,6 +252,30 @@ class _SetupMixin:
         except Exception as _oq_err:
             logger.warning("[DMN] Could not load projects context: %s", _oq_err)
 
+        # Seed DMN with last session memory so its first thoughts are grounded
+        # in where things were left off, rather than starting cold.
+        try:
+            _recent = self.hippocampus._episodic.recall_recent(limit=4)
+            if _recent:
+                _lines = []
+                for ep in reversed(_recent):
+                    u = (ep.get("user_input") or "").strip()[:200]
+                    r = (ep.get("entity_response") or "").strip()[:200]
+                    tags = ep.get("topic_tags") or []
+                    if u or r:
+                        _lines.append(
+                            f"[{', '.join(tags[:3]) if tags else 'unknown topic'}]\n"
+                            f"  User: {u}\n  Me: {r}"
+                        )
+                if _lines:
+                    _seed = "Last session (oldest → newest):\n\n" + "\n\n".join(_lines)
+                    _seed += "\n\n(New session just started.)"
+                    _self_schema = self.hippocampus._core_context.get("self", "")
+                    self.dmn.update_context(_seed, self_schema=_self_schema)
+                    logger.info("[DMN] Seeded with %d recent episodes", len(_recent))
+        except Exception as _seed_err:
+            logger.debug("[DMN] Could not seed last session context: %s", _seed_err)
+
     async def _setup_meta(self) -> None:
         if not (self.args.metacognition or os.environ.get("BRAIN_METACOGNITION", "false").lower() == "true"):
             return
