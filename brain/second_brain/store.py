@@ -270,6 +270,60 @@ class SchemaStore:
             if fact and fact not in existing:
                 self._atomic_write(path, existing + f"\n- {fact}")
 
+    @staticmethod
+    def _replace_section_body(content: str, section: str, new_body: str) -> str:
+        """Return content with the body of ## <section> replaced by new_body.
+        If the section does not exist, appends it at the end. new_body should
+        NOT include the heading line itself. Trailing/leading blank lines in
+        new_body are normalized."""
+        new_body = new_body.strip("\n")
+        # Match the heading line, then any content up to the next ## or EOF.
+        # Heading is matched at line start; section name is anchored with $ to
+        # avoid partial matches ("## Preferences" must not match "## Preferences (old)").
+        pattern = re.compile(
+            r"(^##[ \t]+" + re.escape(section) + r"[ \t]*\r?\n)(.*?)(?=^##[ \t]|\Z)",
+            re.MULTILINE | re.DOTALL,
+        )
+        replacement = r"\1" + new_body + "\n\n"
+        new_content, n = pattern.subn(replacement, content, count=1)
+        if n == 0:
+            # Section missing — append at end with proper spacing.
+            tail = "" if content.endswith("\n") else "\n"
+            new_content = content + tail + f"\n## {section}\n{new_body}\n"
+        # Collapse any run of 3+ blank lines we may have created.
+        new_content = re.sub(r"\n{3,}", "\n\n", new_content)
+        return new_content
+
+    def ensure_section(self, filename: str, section: str, default_body: str) -> None:
+        """Sync: add the section to filename if it isn't already present.
+        Used at boot to migrate older schema files into newer templates."""
+        if not self._validate_filename(filename):
+            return
+        path = SCHEMA_DIR / filename
+        if not path.exists():
+            return
+        content = path.read_text()
+        if re.search(r"(?m)^##[ \t]+" + re.escape(section) + r"[ \t]*$", content):
+            return
+        new_content = self._replace_section_body(content, section, default_body)
+        self._atomic_write(path, new_content)
+
+    async def upsert_section(self, filename: str, section: str, body: str) -> None:
+        """Async upsert: replace (or create) the body of ## <section> in filename.
+        Use this for the personality / communication-style pass — the section's
+        whole content should be rewritten each consolidation rather than
+        appended to."""
+        if not self._validate_filename(filename):
+            return
+        async with self._lock:
+            path = SCHEMA_DIR / filename
+            if not path.exists():
+                return
+            content = path.read_text()
+            new_content = self._replace_section_body(content, section, body)
+            if new_content != content:
+                self._atomic_write(path, new_content)
+
     def list_files(self) -> list[str]:
         return [p.name for p in SCHEMA_DIR.glob("*.md")]
 
@@ -311,11 +365,18 @@ class SchemaStore:
             self.write("user.md", f"# User: {user_name}\n\n"
                        "## Known facts\n\n"
                        "## Preferences\n\n"
+                       "## Communication style\n"
+                       "- (learning…)\n\n"
+                       "## Mood response patterns\n"
+                       "- (learning…)\n\n"
                        "## Emotional profile\n\n"
                        "## Relationship\n"
                        "- Familiarity: new (conversations so far: ~0)\n\n"
                        "## Affection score\n"
                        "- Score: 0\n")
+        else:
+            self.ensure_section("user.md", "Communication style", "- (learning…)")
+            self.ensure_section("user.md", "Mood response patterns", "- (learning…)")
 
     _SPEAKER_SLUG_RE = re.compile(r"[^a-z0-9]+")
 
@@ -332,11 +393,18 @@ class SchemaStore:
             self.write(filename, f"# User: {name}\n\n"
                        "## Known facts\n\n"
                        "## Preferences\n\n"
+                       "## Communication style\n"
+                       "- (learning…)\n\n"
+                       "## Mood response patterns\n"
+                       "- (learning…)\n\n"
                        "## Emotional profile\n\n"
                        "## Relationship\n"
                        "- Familiarity: new\n\n"
                        "## Affection score\n"
                        "- Score: 0\n")
+        else:
+            self.ensure_section(filename, "Communication style", "- (learning…)")
+            self.ensure_section(filename, "Mood response patterns", "- (learning…)")
         return filename
 
     def load_speaker_context(self, name: str) -> str:

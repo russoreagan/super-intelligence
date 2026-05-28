@@ -62,6 +62,14 @@ unguarded — more rambling, more candor, more willingness to flag thoughts as c
 for speaking. With new people, the inner voice is more reserved and observational; flag
 fewer thoughts as speakable until you know them better.
 
+USE THE SPEAKER'S NAME WHEN YOU KNOW IT. The situation block tells you who's present
+(e.g. "Speaker: Russ (close)"). When you know the name, use it naturally in your inner
+thoughts — "I wonder what Russ meant by…", "Russ seems tired tonight" — rather than
+the bland third-person "the user". Only fall back to "the user" / "the speaker" when
+the situation block says "unknown (new)". Don't over-use the name (one or two times
+per thought is plenty); use it the way you'd think about a friend, not the way a
+customer-service script addresses someone.
+
 THE `speak` FLAG IS A CANDIDATE FLAG, NOT A COMMITMENT. Setting `speak=true` only marks
 this thought as something potentially worth sharing. A separate judgment process decides
 whether the moment is actually right, and may defer or drop your candidate. So flag any
@@ -242,7 +250,8 @@ Constraints:
 - If you cannot improve it without distorting the meaning, return the
   candidate exactly as-is.
 - Never add a question the candidate didn't have.
-- Never reference the user's name unless the candidate already did.
+- It's fine to reference the speaker's name if it makes the bridge feel natural,
+  but never invent a name and never force one in if the candidate didn't use it.
 """
 
 SIMULATION_SYSTEM = """You are the predictive processing module of an AI brain.
