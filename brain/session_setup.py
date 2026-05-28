@@ -97,6 +97,18 @@ class _SetupMixin:
         self.parietal = ParietalCluster(self.bus)
         self.hippocampus = HippocampusCluster(self.bus, self.router, wiring=self.wiring)
         self.frontal = FrontalCluster(self.bus, self.brainstem, self.router, wiring=self.wiring)
+        # Wire the skill selector (loads embedding index from brain/skills/_humanity_index.json)
+        try:
+            from brain.clusters.skill_selector import SkillSelector
+            self.skill_selector = SkillSelector(self.router)
+            self.frontal.set_skill_selector(self.skill_selector, self.parietal)
+        except FileNotFoundError as e:
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                "[Setup] SkillSelector disabled: %s — run `python -m brain.skills._import_humanity` to enable.",
+                e,
+            )
+            self.skill_selector = None
         self._core_context, recent_episodes = await self.hippocampus.boot(self.session_id)
         self.parietal.seed(recent_episodes)
         self._egress = PseudonymizationGateway()
@@ -120,6 +132,7 @@ class _SetupMixin:
             on_interrupt=self.pns.interrupt,
             python_voice_mode=_voice_flag,
             wiring=self.wiring,
+            bus=self.bus,
         )
         ui_server.set_wiring_frozen(self._wiring_frozen)
         self.brainstem.register_loop("ui_server", lambda: ui_server.start(port=8765), restart_on_crash=False)

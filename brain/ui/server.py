@@ -48,7 +48,8 @@ class UIServer:
                  on_mic_toggle: Callable[[], bool] | None = None,
                  on_interrupt: Callable[[], None] | None = None,
                  python_voice_mode: bool = False,
-                 wiring=None) -> None:
+                 wiring=None,
+                 bus=None) -> None:
         self._queue = emitter_queue
         self._on_user_message = on_user_message
         self._on_voice_change = on_voice_change
@@ -60,8 +61,10 @@ class UIServer:
         self._last_neuromod: dict = {}
         self._last_hormonal: dict = {}
         self._last_emotion: str = ""
+        self._last_thoughts: list[dict] = []
         self._wiring_frozen: bool = False
         self._wiring = wiring
+        self._bus = bus  # for publishing to auditory pipeline from press-to-talk
         self._app = None
 
     def set_wiring_frozen(self, frozen: bool) -> None:
@@ -283,6 +286,11 @@ class UIServer:
                     "frozen": self._wiring_frozen,
                 }))
 
+            # Replay recent thoughts so the feed isn't blank on reconnect
+            for thought_event in list(self._last_thoughts):
+                with contextlib.suppress(Exception):
+                    await websocket.send_text(json.dumps(thought_event))
+
             # Run receive + broadcast concurrently for this client
             receive_task = asyncio.create_task(self._receive_loop(websocket))
             try:
@@ -340,7 +348,40 @@ class UIServer:
 
         session = DGSession()
 
+        # Accumulate raw audio bytes and diarized words across chunks for one
+        # utterance so we can publish to the auditory bus on final.
+        _audio_chunks: list[bytes] = []
+        _diarized_words: list[dict] = []
+        _utterance_start_s: float | None = None
+
+        async def _publish_utterance(transcript: str, audio_bytes: bytes,
+                                     words: list[dict]) -> None:
+            """Mirror what streaming_mic publishes so the auditory cortex gets
+            the same events regardless of whether voice mode is active."""
+            if not (self._bus and audio_bytes):
+                return
+            duration_s = len(audio_bytes) / (16000 * 2)  # 16kHz, int16 = 2 bytes/sample
+            try:
+                await self._bus.publish_dict(
+                    "auditory.raw_audio",
+                    {"audio_bytes": audio_bytes, "sample_rate": 16000,
+                     "duration_s": duration_s, "channels": 1, "dtype": "int16"},
+                    source="ui",
+                )
+                await self._bus.publish_dict(
+                    "auditory.diarized_audio",
+                    {"audio_bytes": audio_bytes, "sample_rate": 16000,
+                     "duration_s": duration_s, "dtype": "int16",
+                     "diarized_words": words, "transcript": transcript},
+                    source="ui",
+                )
+                logger.debug("UI: published utterance to auditory bus (%d bytes, %d words)",
+                             len(audio_bytes), len(words))
+            except Exception as e:
+                logger.debug("UI: auditory publish failed: %s", e)
+
         async def _run_session() -> None:
+            nonlocal _audio_chunks, _diarized_words, _utterance_start_s
             try:
                 async with client.listen.v1.connect(
                     model="nova-3",
@@ -350,10 +391,12 @@ class UIServer:
                     interim_results=True,
                     endpointing=150,         # ms of silence before finalising (was 300)
                     utterance_end_ms=1000,   # also fire on utterance boundary
+                    diarize=True,            # enable speaker diarization for auditory cortex
                 ) as conn:
                     logger.info("UI: Deepgram live session started for client")
 
                     async def _listen() -> None:
+                        nonlocal _audio_chunks, _diarized_words
                         async for msg in conn:
                             if isinstance(msg, ListenV1Results):
                                 try:
@@ -364,6 +407,23 @@ class UIServer:
                                             "text": alt.transcript,
                                             "is_final": msg.is_final,
                                         }))
+                                    if msg.is_final and alt.transcript:
+                                        # Harvest diarized words and flush the
+                                        # audio buffer to the auditory bus.
+                                        words = []
+                                        for w in getattr(alt, "words", []) or []:
+                                            words.append({
+                                                "word": getattr(w, "word", ""),
+                                                "start": getattr(w, "start", 0.0),
+                                                "end": getattr(w, "end", 0.0),
+                                                "speaker": getattr(w, "speaker", 0),
+                                            })
+                                        audio_bytes = b"".join(_audio_chunks)
+                                        _audio_chunks = []
+                                        _diarized_words = []
+                                        asyncio.create_task(
+                                            _publish_utterance(alt.transcript, audio_bytes, words)
+                                        )
                                 except Exception as e:
                                     logger.debug("Deepgram transcript handler: %s", e)
 
@@ -453,6 +513,7 @@ class UIServer:
                             dg_conn = None
 
                 elif "bytes" in msg and msg["bytes"] and dg_conn is not None:
+                    _audio_chunks.append(msg["bytes"])
                     await dg_conn.send(msg["bytes"])
 
             except Exception:
@@ -474,6 +535,11 @@ class UIServer:
                     self._last_hormonal = {k: v for k, v in event.items() if k != "type"}
                 elif event.get("type") == "emotion" and event.get("emotion"):
                     self._last_emotion = event["emotion"]
+                elif event.get("type") == "stream_thought" and event.get("thought"):
+                    if not event.get("proactive"):
+                        self._last_thoughts.append(event)
+                        if len(self._last_thoughts) > 10:
+                            self._last_thoughts.pop(0)
 
                 if self._clients:
                     payload = json.dumps(event)
