@@ -80,3 +80,9 @@ personality, and something like inner experience.
 - User is interested in detailed analysis of a specific codebase.
 - Brain will investigate the Karaoke Hero project's architecture.
 - [relationship] The user trusts the brain to provide technical insights.
+
+## Communication style
+- (learning…)
+
+## Mood response patterns
+- (learning…)
