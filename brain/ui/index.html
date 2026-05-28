@@ -4716,13 +4716,13 @@ function sendMessage(text) {
     // that live through idle time are the primary cause of silent drops.
     // The session is reopened automatically when TTS ends (speaking event),
     // or by the fallback timer below for text-only responses.
-    if (micActive && !pythonVoiceMode) {
+    if (micActive && micState === 'off') {
       clearTimeout(voiceRestartTimer);
       ws.send(JSON.stringify({ type: 'voice_stop' }));
       // Fallback for text-only mode where no speaking event fires:
       // reopen after 5 s if the brain hasn't started TTS by then.
       voiceRestartTimer = setTimeout(() => {
-        if (micActive && !pythonVoiceMode && !brainIsSpeaking
+        if (micActive && micState === 'off' && !brainIsSpeaking
             && ws && ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: 'voice_start' }));
         }
@@ -4823,7 +4823,7 @@ function handle(msg) {
       if (msg.user_input) { forceScrollChat(); appendUserMessage(msg.user_input); }
       // Voice path: clear the input box once the brain officially picks up
       // the transcribed utterance (the spoken text "flies" into the chat).
-      if (pythonVoiceMode && msgInput.value.trim() === (msg.user_input || '').trim()) {
+      if (micState !== 'off' && msgInput.value.trim() === (msg.user_input || '').trim()) {
         msgInput.value = '';
         msgInput.style.height = 'auto';
       }
@@ -4875,7 +4875,7 @@ function handle(msg) {
       const btn = document.getElementById('interrupt-btn');
       brainIsSpeaking = !!msg.active;
       btn.classList.toggle('visible', brainIsSpeaking);
-      if (!pythonVoiceMode && micActive) {
+      if (micState === 'off' && micActive) {
         clearTimeout(voiceRestartTimer);
         if (brainIsSpeaking) {
           // TTS starting — close Deepgram. The session was already closed by
@@ -4887,7 +4887,7 @@ function handle(msg) {
           // TTS ended — reopen Deepgram after a brief audio-settle delay.
           // This is the primary auto-resume mechanism between turns.
           voiceRestartTimer = setTimeout(() => {
-            if (micActive && !pythonVoiceMode && ws && ws.readyState === WebSocket.OPEN) {
+            if (micActive && micState === 'off' && ws && ws.readyState === WebSocket.OPEN) {
               ws.send(JSON.stringify({ type: 'voice_start' }));
             }
           }, 400);
@@ -4897,7 +4897,7 @@ function handle(msg) {
     }
     case 'transcript':       handleTranscriptEvent(msg); break;
     case 'transcript_error': handleTranscriptError(msg); break;
-    case 'voice_mode':       handleVoiceMode(msg); break;
+    case 'mic_state':        handleMicState(msg.status); break;
     case 'decision':         handleDecisionEvent(msg); break;
     case 'wiring_status': {
       const tag = document.getElementById('frozen-tag');
@@ -5428,38 +5428,34 @@ micBtn.classList.remove('listening');
 micBtn.classList.add('muted');
 micBtn.title = 'Hold Space to talk';
 
-// When Python-side voice mode is active, the mic button is a persistent
-// mute/unmute toggle that controls the server-side StreamingMicSession.
-let pythonVoiceMode = false;
-let pythonMicMuted = false;
+// Single source of truth for mic state: 'off' | 'muted' | 'active'
+// 'off'    = no Python voice mode (browser press-to-talk only)
+// 'muted'  = Python voice active, mic silenced
+// 'active' = Python voice active, mic listening
+let micState = 'off';
 
 // Tracks whether the brain is currently speaking (TTS active).
 let brainIsSpeaking = false;
 // Timer used to reopen Deepgram after a turn when no TTS fires (text-only mode).
 let voiceRestartTimer = null;
 
-function handleVoiceMode(msg) {
-  pythonVoiceMode = !!msg.active;
-  pythonMicMuted = !!msg.muted;
-  // In Python voice mode the chat input box doubles as the listening
-  // indicator — keep the bottom transcript bar hidden so we don't show the
-  // same info twice. Browser-side MediaRecorder paths still use the bar.
+function handleMicState(status) {
+  micState = status || 'off';
   transcriptBar.classList.remove('visible');
-  if (pythonVoiceMode) {
-    if (pythonMicMuted) {
-      micBtn.classList.remove('listening');
-      micBtn.classList.add('muted');
-      micBtn.title = 'Mic muted — click to unmute';
-      msgInput.classList.remove('voice-listening');
-      msgInput.placeholder = 'Type a message… (mic muted)';
-    } else {
-      micBtn.classList.remove('muted');
-      micBtn.classList.add('listening');
-      micBtn.title = 'Mic active — click to mute';
-      msgInput.classList.add('voice-listening');
-      msgInput.placeholder = '🎙  Listening — speak or type a message…';
-    }
+  if (micState === 'active') {
+    micBtn.classList.remove('muted');
+    micBtn.classList.add('listening');
+    micBtn.title = 'Mic active — click to mute';
+    msgInput.classList.add('voice-listening');
+    msgInput.placeholder = '🎙  Listening — speak or type a message…';
+  } else if (micState === 'muted') {
+    micBtn.classList.remove('listening');
+    micBtn.classList.add('muted');
+    micBtn.title = 'Mic muted — click to unmute';
+    msgInput.classList.remove('voice-listening');
+    msgInput.placeholder = 'Type a message… (mic muted)';
   }
+  // 'off' — leave button in its default press-to-talk state (set at page load)
 }
 
 function _micReset() {
@@ -5554,11 +5550,11 @@ function handleTranscriptEvent(msg) {
   // Two code paths fire this:
   //   - Browser-side MediaRecorder (micActive=true): user is press-to-talk,
   //     transcripts stream in interim+final, auto-send after a pause.
-  //   - Python streaming_mic in pythonVoiceMode: only final transcripts
+  //   - Python streaming_mic in micState !== 'off': only final transcripts
   //     arrive (the voice bridge in run.py emits them AND auto-dispatches
   //     the turn). We just visualise the heard text in the chat input box
   //     — it'll get cleared automatically on turn_start.
-  if (pythonVoiceMode && msg.final) {
+  if (micState !== 'off' && msg.final) {
     const text = (msg.text || '').trim();
     if (!text) return;
     msgInput.value = text;
@@ -5599,14 +5595,14 @@ function handleTranscriptError(msg) {
   transcriptText.textContent = '⚠ Reconnecting mic…';
   transcriptBar.classList.add('visible');
   setTimeout(() => transcriptBar.classList.remove('visible'), 3000);
-  if (micActive && !pythonVoiceMode) {
+  if (micActive && micState === 'off') {
     // Don't fully stop — the Deepgram connection died but MediaRecorder is
     // still running. Clear the dead server session and open a fresh one.
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: 'voice_stop' }));
     }
     setTimeout(() => {
-      if (micActive && !pythonVoiceMode && ws && ws.readyState === WebSocket.OPEN) {
+      if (micActive && micState === 'off' && ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'voice_start' }));
       }
     }, 300);
@@ -5616,7 +5612,7 @@ function handleTranscriptError(msg) {
 }
 
 micBtn.addEventListener('click', () => {
-  if (pythonVoiceMode) {
+  if (micState !== 'off') {
     if (ws && ws.readyState === WebSocket.OPEN)
       ws.send(JSON.stringify({ type: 'mic_toggle' }));
     return;
@@ -5635,7 +5631,7 @@ interruptBtn.addEventListener('click', () => {
 document.addEventListener('keydown', (e) => {
   if (e.code === 'Space' && document.activeElement !== msgInput && !e.repeat) {
     e.preventDefault();
-    if (pythonVoiceMode) {
+    if (micState !== 'off') {
       if (ws && ws.readyState === WebSocket.OPEN)
         ws.send(JSON.stringify({ type: 'mic_toggle' }));
       return;
@@ -5646,7 +5642,7 @@ document.addEventListener('keydown', (e) => {
 
 document.addEventListener('keyup', (e) => {
   if (e.code === 'Space' && document.activeElement !== msgInput) {
-    if (pythonVoiceMode) return;
+    if (micState !== 'off') return;
     if (micActive) stopListening(true);
   }
 });

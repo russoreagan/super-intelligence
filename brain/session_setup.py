@@ -122,7 +122,6 @@ class _SetupMixin:
         from brain.ui.server import UIServer
 
         self._emitter = _emitter
-        _voice_flag = self.args.voice or os.environ.get("BRAIN_VOICE_MODE", "false").lower() == "true"
         ui_server = UIServer(
             self._emitter.get_queue(),
             on_user_message=self._on_browser_message,
@@ -131,7 +130,6 @@ class _SetupMixin:
             on_mic_toggle=self._on_mic_toggle,
             is_muted_fn=self._is_mic_muted,
             on_interrupt=self.pns.interrupt,
-            python_voice_mode=_voice_flag,
             wiring=self.wiring,
             bus=self.bus,
         )

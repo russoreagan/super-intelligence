@@ -48,7 +48,6 @@ class UIServer:
                  on_mic_toggle: Callable[[], bool] | None = None,
                  is_muted_fn: Callable[[], bool] | None = None,
                  on_interrupt: Callable[[], None] | None = None,
-                 python_voice_mode: bool = False,
                  wiring=None,
                  bus=None) -> None:
         self._queue = emitter_queue
@@ -56,9 +55,8 @@ class UIServer:
         self._on_voice_change = on_voice_change
         self._on_eval_mode = on_eval_mode
         self._on_mic_toggle = on_mic_toggle      # () -> is_muted (bool) — toggles
-        self._is_muted_fn = is_muted_fn          # () -> is_muted (bool) — read-only
+        self._is_muted_fn = is_muted_fn          # () -> is_muted (bool) — read-only; None = no Python voice
         self._on_interrupt = on_interrupt
-        self._python_voice_mode = python_voice_mode
         self._clients: set = set()
         self._last_neuromod: dict = {}
         self._last_hormonal: dict = {}
@@ -76,6 +74,13 @@ class UIServer:
     def set_subsystem_status(self, status: dict[str, bool]) -> None:
         """Store subsystem up/down flags to broadcast on every connect."""
         self._subsystem_status = dict(status)
+
+    def _mic_status(self) -> str:
+        """Single status string for the mic: 'off' | 'muted' | 'active'.
+        'off' means no Python voice mode. 'muted'/'active' reflect current state."""
+        if self._is_muted_fn is None:
+            return "off"
+        return "muted" if self._is_muted_fn() else "active"
 
     def set_message_handler(self, fn: Callable[[str], None]) -> None:
         self._on_user_message = fn
@@ -260,14 +265,11 @@ class UIServer:
             self._clients.add(websocket)
             logger.info("UI: client connected (%d total)", len(self._clients))
 
-            # Tell the client whether Python voice mode is active so it
-            # switches the mic button from press-to-talk to a persistent toggle.
+            # Send current mic state so the button reflects reality on connect.
             with contextlib.suppress(Exception):
-                _muted = self._is_muted_fn() if self._is_muted_fn is not None else False
                 await websocket.send_text(json.dumps({
-                    "type": "voice_mode",
-                    "active": self._python_voice_mode,
-                    "muted": _muted,
+                    "type": "mic_state",
+                    "status": self._mic_status(),
                 }))
 
             # Send current neuromod + hormonal state immediately on connect
@@ -498,13 +500,12 @@ class UIServer:
                         if text:
                             await self._on_user_message(text)
                     elif t == "mic_toggle" and self._on_mic_toggle:
-                        is_muted = self._on_mic_toggle()
+                        self._on_mic_toggle()
                         # Echo new state back so the button updates
                         with contextlib.suppress(Exception):
                             await websocket.send_text(json.dumps({
-                                "type": "voice_mode",
-                                "active": self._python_voice_mode,
-                                "muted": is_muted,
+                                "type": "mic_state",
+                                "status": self._mic_status(),
                             }))
                     elif t == "set_voice" and self._on_voice_change:
                         vid = data.get("voice_id", "").strip()

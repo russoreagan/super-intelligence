@@ -85,7 +85,7 @@ class StreamingMicSession:
         self._device_monitor_task: asyncio.Task | None = None
         self._main_loop: asyncio.AbstractEventLoop | None = None
         self._running = False
-        self._muted = False             # when True, mic audio is discarded
+        self._muted = True              # start muted; user must explicitly unmute
         self._current_device_id = None  # track active device for change detection
         self._device_listener_active = False  # CoreAudio listener status
 

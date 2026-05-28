@@ -27,7 +27,7 @@ class _LoopsMixin:
                     self._tts_did_mute = True
                     if self._emitter:
                         asyncio.ensure_future(self._emitter.emit_event({
-                            "type": "voice_mode", "active": True, "muted": True,
+                            "type": "mic_state", "status": "muted",
                         }))
                 else:
                     self._tts_did_mute = False
@@ -42,7 +42,7 @@ class _LoopsMixin:
             self._streaming_mic.unmute()
             if self._emitter:
                 await self._emitter.emit_event({
-                    "type": "voice_mode", "active": True, "muted": False,
+                    "type": "mic_state", "status": "active",
                 })
 
     async def _on_browser_message(self, text: str) -> None:
