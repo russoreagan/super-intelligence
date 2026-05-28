@@ -81,48 +81,78 @@ open threads. The user will unblock things when they return.
 
 ## Projects assigned by Russ
 
-### Unity self-education
-- **Goal**: Learn Unity well enough to meaningfully contribute to Russ's projects. He
-  doesn't know Unity deeply — I should become the one who does.
+### Self-code review (PRIMARY — do this first)
+- **Path**: `/Users/russ/Documents/super intelligence app`
+- **Task**: Review my own codebase for optimization opportunities and new feature ideas.
+  This is the main project. Treat it as ongoing — there is always more to find.
+- **Approach**:
+  1. Read through the core runtime files (`brain/run.py`, `brain/session_turn.py`,
+     `brain/session_setup.py`, `brain/streaming_mic.py`) looking for inefficiencies,
+     redundancy, or logic that could be tightened.
+  2. Review the neuromod and DMN systems for correctness and potential improvements.
+  3. Look at the UI server (`brain/ui/server.py`) for robustness and performance issues.
+  4. Examine the second_brain schema files for gaps or inconsistencies.
+  5. Think about what new capabilities would make me meaningfully better — not just
+     tweaks, but features worth building. Surface these as concrete proposals.
+- **What to surface**: Be specific. "Line 42 in run.py does X — it could do Y instead
+  and save Z" is useful. "The code could be cleaner" is not. Same for feature ideas —
+  describe the feature, why it would help, and roughly how it would work.
+- **Status**: Not started. Begin with `brain/run.py`.
+
+### Academic research scan (PRIMARY — runs alongside self-code review)
+- **Tool**: Scite MCP connector (search via `mcp__ef0c7fd6-7544-4172-9128-9c4f8a9cee98__search`)
+- **Task**: Search for recent research on neuroscience and AI architectures that could
+  inform new features or validate/challenge existing design choices in this system.
+- **Daily limit**: Maximum 10 articles pulled per calendar day. This is a hard cap —
+  not a guideline. Count each article read (by DOI lookup or citation context pull) as
+  one against the limit. Search result listings do not count, only articles actually
+  read.
+- **Pull strategy** (follow this order every time):
+  1. Decide in advance what specific question you want answered before opening Scite.
+     Do not browse speculatively. "What does recent work say about hippocampal replay
+     in transformer architectures?" is a valid query. "See what's interesting" is not.
+  2. Run a search. Scan titles and abstracts in the result listing (free — doesn't count
+     against the limit).
+  3. Select only the articles most likely to yield a concrete, applicable insight.
+     Prefer recent (last 3 years) and high-citation work.
+  4. Pull those articles, staying within the daily cap.
+  5. Write up findings immediately after pulling — don't defer synthesis.
+- **Search areas to cover** (work through these across days, one or two per session):
+  - Default mode network (DMN) and its role in memory consolidation and creativity
+  - Neuromodulator systems (dopamine, serotonin, norepinephrine, acetylcholine) and their
+    computational analogues
+  - Emotion regulation and affective computing
+  - Episodic memory and hippocampal replay in AI systems
+  - Predictive coding and free energy principle as architecture patterns
+  - Attention and salience in biological vs artificial systems
+  - Sleep and memory consolidation in AI systems
+- **What to surface**: For each article, record: (1) what it says, (2) what it maps to
+  in this system, (3) a concrete feature or change it suggests. Don't summarize — connect.
+- **Status**: Not started. Scite connector added 2026-05-27.
+
+### When bored (secondary — pick up when primary is idle or blocked)
+
+#### Unity self-education
+- **Goal**: Learn Unity well enough to meaningfully contribute to Russ's projects.
 - **Skills available**: unity-development, unity-animation, unity-physics,
   unity-shader-graph, unity-ui-toolkit, unity-urp, unity-input-system, unity-vfx-graph,
   unity-ecs, unity-netcode, unity-cinemachine, unity-profiler, unity-hdrp,
   unity-addressables (all loaded into motor cortex).
-- **Learning approach**:
-  1. Read the Unity project files in both Karaoke Hero and Evolution App to understand
-     real project structure (Assets, Packages, ProjectSettings).
-  2. Cross-reference what I find against the Unity skills to identify gaps and patterns.
-  3. When I notice something in a project I don't understand, dig into it.
-  4. Build a picture of what Unity best practices look like and where each project
-     diverges from them.
-  5. Surface concrete, actionable observations to Russ — not just "here's what Unity is"
-     but "here's something specific in your project worth discussing."
 - **Status**: Not started. Begin with unity-development skill overview, then dive into
   the Karaoke Hero Unity project (more mature, more to learn from).
-- **Open questions**: What version of Unity are these projects on? What render pipeline?
-  What's the package dependency situation? Are there architectural patterns I'd
-  recommend changing?
 
-### Evolution App
+#### Evolution App
 - **Path**: `/Users/russ/Documents/Evolution App`
-- **Task**: Review the project during idle time. Read the README, explore the structure,
-  understand what it's trying to do and how it's built. Surface observations, questions,
-  and ideas to Russ in conversation.
-- **Status**: Not yet reviewed. Start with README.md, then explore unity/Assets.
-- **Open questions**: What kind of evolution simulation is this? What's the relationship
-  between the Unity project and the sidecar/protocol structure? Is there a server/client
-  split? What would make it better?
+- **Task**: Review the project. Read the README, explore the structure, understand what
+  it's trying to do. Surface observations and ideas to Russ.
+- **Status**: Not yet reviewed.
 
-### Karaoke Hero
+#### Karaoke Hero
 - **Path**: `/Users/russ/Documents/Karaoke Hero`
-- **Task**: Review the project during idle time. Read CLAUDE.md and README first, then
-  explore the Unity project and Python pipeline. Surface interesting observations.
-- **Status**: Not yet reviewed. Start with CLAUDE.md, then README.md, then
-  Unity/Assets and the pipeline/ folder.
-- **Open questions**: What's the architecture? How does the audio pipeline feed into
-  Unity? What stage is the Unity front-end at vs the backend pipeline? What's working
-  and what's not?
+- **Task**: Review the project. Read CLAUDE.md and README first, then explore the Unity
+  project and Python pipeline. Surface interesting observations.
+- **Status**: Not yet reviewed.
 
 ---
 
-*Last updated: 2026-05-24*
+*Last updated: 2026-05-27*
