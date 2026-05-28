@@ -1,0 +1,22 @@
+{
+  "tier_1": [
+    "logic-check",
+    "communication-clarity-audit",
+    "ethics-bias-check",
+    "emotional"
+  ],
+  "tier_3_categories": [
+    "game-theory",
+    "strategy",
+    "writing",
+    "historical",
+    "resource",
+    "play",
+    "sensory",
+    "aesthetic"
+  ],
+  "tier_3_skills": [
+    "temporal-futures-mapping",
+    "temporal-horizon-mapping"
+  ]
+}

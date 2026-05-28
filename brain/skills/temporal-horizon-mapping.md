@@ -1,0 +1,83 @@
+---
+name: temporal-horizon-mapping
+description: "Maps consequences of a decision across short, medium, and long time horizons. Use when asked about 'time horizons', 'what does this look like in 5 years', 'short-term vs long-term', 'map the implications over time', or 'think through the long-term'."
+category: temporal
+is_router: false
+tier: 3
+---
+
+# Temporal Horizon Mapping
+
+Decisions that look good now often look very different at 1, 3, or 10 years. The most consequential errors in judgment come not from bad reasoning in the moment but from evaluating a decision at the wrong time horizon — optimizing for the immediate while the real costs land later. Making all three horizons explicit forces the tradeoff into view rather than leaving it implicit.
+
+---
+
+## Your Process
+
+**Step 1: State the Decision**
+Name the decision being evaluated and the current context in which it is being made. Clarity here prevents analysis drifting to adjacent decisions.
+
+**Step 2: Map Immediate Consequences (0–3 months)**
+What is the likely state immediately after acting? What resources are committed or freed? Who is affected and how? What has this enabled or closed off in the near term?
+
+**Step 3: Map Medium-Term Consequences (6–24 months)**
+What does the situation look like after the initial effects have compounded? What second-order effects emerge? Who gains or loses standing? What dependencies or path-dependencies have formed?
+
+**Step 4: Map Long-Term Consequences (3+ years)**
+What has the decision made likely or unlikely at scale and over time? What is the structural change — to capabilities, relationships, markets, culture? What would be very difficult to reverse by this point?
+
+**Step 5: Flag Reversals**
+Identify decisions that look positive short-term but create long-term problems — and the reverse. These reversals are the highest-value output of this analysis.
+
+**Step 6: Identify the Governing Horizon**
+At which horizon do the most significant consequences actually land? Is that the horizon currently being used to evaluate this decision? Mismatched horizons are the primary source of poor long-term decisions made in good faith.
+
+---
+
+## Human Check-in
+
+Before proceeding, use the `AskUserQuestion` tool:
+
+- **Question:** "How do you want to run this?"
+- **Header:** "Scope"
+- **Options:**
+  - **Full analysis** — Complete all steps, reasoning shown throughout
+  - **Key findings only** — Bottom-line output, skip step-by-step detail
+  - **Long-term consequences only** — What emerges beyond the obvious timeframe, skip near-term
+  - **Refine the framing** — Adjust what we're analyzing before starting
+
+Proceed based on their selection.
+
+## Output Format
+
+**Horizon Table**
+
+| Horizon | Timeframe | Likely State | Enabled / Foreclosed | Who Is Better / Worse Off |
+|---------|----------|-------------|---------------------|--------------------------|
+| Immediate | 0–3 months | | | |
+| Medium | 6–24 months | | | |
+| Long | 3+ years | | | |
+
+**Reversal Flags:** [decisions that look good short-term but create long-term problems, or vice versa]
+
+**Governing Horizon:** [which horizon should drive this decision + why it differs from current evaluation horizon if applicable]
+
+---
+
+## Notes
+
+Short-term and long-term are not automatically in conflict — some decisions improve all horizons. Identify those as high-confidence choices; the real analysis is needed where horizons diverge.
+
+---
+
+## What's Next
+
+After delivering this output, use `AskUserQuestion` to offer the next move:
+
+- **Question:** "Horizons mapped. What's next?"
+- **Header:** "Next"
+- **Options:**
+  - `/temporal-futures-mapping` — Map futures at each horizon
+  - `/temporal-timing-analysis` — Time actions across the horizons
+  - `/strategy-timing` — Align strategy with the horizon structure
+  - **Done** — Wrap up and synthesise what we have so far
