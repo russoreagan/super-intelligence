@@ -57,6 +57,11 @@ class _LoopsMixin:
             return self._streaming_mic.toggle_mute()
         return False
 
+    def _is_mic_muted(self) -> bool:
+        if self._streaming_mic is not None:
+            return self._streaming_mic.is_muted
+        return False
+
     async def _emit(self, cluster: str, intensity: float, note: str, turn_id: str = "") -> None:
         if self._emitter:
             await self._emitter.emit(cluster, intensity, note, turn_id)

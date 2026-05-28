@@ -245,10 +245,11 @@ class _TurnMixin:
             )
             await self._emit_end("hippocampus", turn_id)
             # Recognition signal: finding relevant memories is an attention/novelty event.
-            # More hits → bigger ACh spike. Cap at +0.12 to avoid overwhelming the signal.
+            # Kept small (cap 0.04) so that frequent recall across turns doesn't
+            # accumulate enough ACh to suppress DMN thought flow.
             episode_hits = len([ln for ln in memory.get("episodes", "").splitlines() if ln.strip()])
             if episode_hits > 0:
-                ach_delta = min(0.12, episode_hits * 0.03)
+                ach_delta = min(0.04, episode_hits * 0.01)
                 self.bus.neuromod.add("ACh", ach_delta)
                 _snap = self.bus.neuromod.snapshot()
                 trace.neuromod_midturn.append({"trigger": "hippocampus_recall", "snapshot": _snap})

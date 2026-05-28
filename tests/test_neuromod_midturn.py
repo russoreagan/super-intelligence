@@ -45,7 +45,7 @@ class TestHippocampusRecallInjection:
         """Replicates the hippocampus-recall block from session_turn._run_turn."""
         episode_hits = len([ln for ln in episode_text.splitlines() if ln.strip()])
         if episode_hits > 0:
-            ach_delta = min(0.12, episode_hits * 0.03)
+            ach_delta = min(0.04, episode_hits * 0.01)
             bus.neuromod.add("ACh", ach_delta)
             snap = bus.neuromod.snapshot()
             trace.neuromod_midturn.append({"trigger": "hippocampus_recall", "snapshot": snap})
@@ -67,14 +67,14 @@ class TestHippocampusRecallInjection:
         self._apply(bus_many, _make_trace(), em, "line 1\nline 2\nline 3\nline 4")
         assert bus_many.neuromod.get("ACh") > bus_few.neuromod.get("ACh")
 
-    def test_spike_capped_at_0_12(self):
+    def test_spike_capped_at_0_04(self):
         bus = _make_bus()
         trace = _make_trace()
-        # 100 episode lines — would be 3.0 without the cap
+        # 100 episode lines — would be 1.0 without the cap
         big_text = "\n".join(f"episode {i}" for i in range(100))
         before = bus.neuromod.get("ACh")
         self._apply(bus, trace, _make_emitter(), big_text)
-        assert bus.neuromod.get("ACh") - before <= 0.12 + 1e-9
+        assert bus.neuromod.get("ACh") - before <= 0.04 + 1e-9
 
     def test_no_episodes_no_change(self):
         bus = _make_bus()

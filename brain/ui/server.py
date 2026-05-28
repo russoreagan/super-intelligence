@@ -46,6 +46,7 @@ class UIServer:
                  on_voice_change: Callable[[str], None] | None = None,
                  on_eval_mode: Callable[[bool], None] | None = None,
                  on_mic_toggle: Callable[[], bool] | None = None,
+                 is_muted_fn: Callable[[], bool] | None = None,
                  on_interrupt: Callable[[], None] | None = None,
                  python_voice_mode: bool = False,
                  wiring=None,
@@ -54,7 +55,8 @@ class UIServer:
         self._on_user_message = on_user_message
         self._on_voice_change = on_voice_change
         self._on_eval_mode = on_eval_mode
-        self._on_mic_toggle = on_mic_toggle      # () -> is_muted (bool)
+        self._on_mic_toggle = on_mic_toggle      # () -> is_muted (bool) — toggles
+        self._is_muted_fn = is_muted_fn          # () -> is_muted (bool) — read-only
         self._on_interrupt = on_interrupt
         self._python_voice_mode = python_voice_mode
         self._clients: set = set()
@@ -256,10 +258,11 @@ class UIServer:
             # Tell the client whether Python voice mode is active so it
             # switches the mic button from press-to-talk to a persistent toggle.
             with contextlib.suppress(Exception):
+                _muted = self._is_muted_fn() if self._is_muted_fn is not None else False
                 await websocket.send_text(json.dumps({
                     "type": "voice_mode",
                     "active": self._python_voice_mode,
-                    "muted": False,
+                    "muted": _muted,
                 }))
 
             # Send current neuromod + hormonal state immediately on connect

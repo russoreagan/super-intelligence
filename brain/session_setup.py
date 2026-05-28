@@ -129,6 +129,7 @@ class _SetupMixin:
             on_voice_change=self.pns.set_voice_id,
             on_eval_mode=self._on_eval_mode,
             on_mic_toggle=self._on_mic_toggle,
+            is_muted_fn=self._is_mic_muted,
             on_interrupt=self.pns.interrupt,
             python_voice_mode=_voice_flag,
             wiring=self.wiring,
