@@ -124,8 +124,10 @@ class _LoopsMixin:
             msg = await self._thought_inbox.get()
             thought = msg.payload.get("thought", "") if not msg.expired else ""
             chem_delta = msg.payload.get("chem_delta", {}) if not msg.expired else {}
+            proactive = bool(msg.payload.get("proactive", False)) if not msg.expired else False
             if thought:
-                await self._emitter.emit_stream_thought(thought, chem_delta=chem_delta)
+                await self._emitter.emit_stream_thought(thought, chem_delta=chem_delta,
+                                                        proactive=proactive)
 
     async def _heartbeat_with_ui(self) -> None:
         while True:
@@ -278,6 +280,7 @@ class _LoopsMixin:
             try:
                 self.dmn.pause()
                 dmn_thoughts = self.dmn.session_thoughts() or []
+                self.dmn._session_thought_buf.clear()
             except Exception:
                 dmn_thoughts = []
         n_turns = len(traces)

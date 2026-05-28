@@ -248,6 +248,8 @@ class _SetupMixin:
         self.dmn = DefaultModeNetwork(
             self.bus, self.router, self.hippocampus, self.parietal, obs=self.obs
         )
+        if getattr(self, "skill_selector", None) is not None:
+            self.dmn.set_skill_selector(self.skill_selector)
 
         if self._emitter:
             self._dmn_orig_tick = self.dmn._tick

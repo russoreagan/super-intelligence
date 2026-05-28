@@ -157,6 +157,7 @@ class DefaultModeNetwork:
         self._hippocampus = hippocampus
         self._parietal = parietal
         self._obs = obs
+        self._skill_selector = None  # wired by session_setup after instantiation
         self._running = False
         self._last_context: str = ""
         self._thought_count = 0
@@ -177,6 +178,7 @@ class DefaultModeNetwork:
             topics=["stream.thought"],
             max_calls_per_turn=1,
             locality="local",
+            timeout_seconds=60.0,
         )
         self._monologue_cell.set_router(router)
 
@@ -188,6 +190,7 @@ class DefaultModeNetwork:
             topics=["stream.prediction"],
             max_calls_per_turn=1,
             locality="local",
+            timeout_seconds=60.0,
         )
         self._simulation_cell.set_router(router)
 
@@ -199,6 +202,7 @@ class DefaultModeNetwork:
             topics=["stream.anticipation"],
             max_calls_per_turn=1,
             locality="local",
+            timeout_seconds=60.0,
         )
         self._anticipator_cell.set_router(router)
 
@@ -210,6 +214,7 @@ class DefaultModeNetwork:
             topics=["stream.prefetch"],
             max_calls_per_turn=1,
             locality="local",
+            timeout_seconds=60.0,
         )
         self._prefetcher_cell.set_router(router)
 
@@ -346,6 +351,29 @@ class DefaultModeNetwork:
             logger.info("[DMN] Startup prime tick done — %d speak candidate(s) queued", queued)
         except Exception as e:
             logger.warning("[DMN] Startup prime tick failed: %s", e)
+
+    def set_skill_selector(self, selector) -> None:
+        """Wire the SkillSelector. Tier-1 baseline applied to monologue + judge
+        statically. Other cells inherit active conversation skill or pick at call time."""
+        self._skill_selector = selector
+        tier1 = list(selector.tier1_names)
+        # Tier 1 baseline as static skill list on monologue + judge.
+        # Monologue: gives inner musings cognitive flavor.
+        # Judge: evaluates speak-worthiness with logic / clarity / bias / emotional lenses.
+        self._monologue_cell.skills = list(tier1)
+        self._judge_cell.skills = list(tier1)
+
+    def _inherited_skill_names(self) -> list[str]:
+        """Skill names from parietal.active_skill_context, if any."""
+        parietal = getattr(self, "_parietal", None)
+        if parietal is None:
+            return []
+        active = getattr(parietal, "active_skill_context", None)
+        if active is None:
+            return []
+        if active.current_leaf:
+            return [active.current_leaf]
+        return [active.category]
 
     def pause(self) -> None:
         """No-op in the continuous-thought design.
@@ -745,6 +773,28 @@ class DefaultModeNetwork:
         from datetime import datetime
         plan_id = f"{datetime.now().strftime('%Y%m%d-%H%M%S')}"
         self._planner_cell.reset_turn(f"{turn_id}_plan")
+
+        # Pick a thinking framework for the planner via autonomous selector.
+        # The planner is the DMN's heaviest thinker — give it the deepest framework support.
+        picked_skills: list[str] = []
+        if self._skill_selector is not None:
+            try:
+                bundle = await self._skill_selector.select_autonomous(
+                    prompt=seed_thought, turn_id=f"{turn_id}_plan",
+                )
+                if bundle:
+                    picked_skills = list(bundle.tier1) + list(bundle.chosen)
+                    from brain.observability.decisions import decisions as _decisions
+                    _decisions.log(
+                        "dmn_skill_pick",
+                        turn_id=turn_id, cluster="dmn",
+                        cell="planner", chosen=bundle.chosen,
+                        pick_source=bundle.pick_source,
+                    )
+            except Exception as e:
+                logger.debug("[DMN] Planner skill selection failed: %s", e)
+        self._planner_cell.skills = picked_skills
+
         self._router.enter_background_mode()
         try:
             raw = await self._planner_cell.call([
@@ -1183,6 +1233,7 @@ class DefaultModeNetwork:
     async def _run_simulation(self, turn_id: str) -> None:
         """Run the user-simulation cell and publish the predicted next input."""
         self._simulation_cell.reset_turn(turn_id + "_sim")
+        self._simulation_cell.skills = self._inherited_skill_names()
         raw = await self._simulation_cell.call([
             {"role": "user", "content": self._last_context or "No context yet."}
         ])
@@ -1214,6 +1265,7 @@ class DefaultModeNetwork:
 
     async def _run_prefetcher(self, turn_id: str) -> None:
         self._prefetcher_cell.reset_turn(turn_id + "_pre")
+        self._prefetcher_cell.skills = self._inherited_skill_names()
         prompt = self._last_context or "No context yet."
         raw = await self._prefetcher_cell.call([{"role": "user", "content": prompt}])
         try:
@@ -1271,6 +1323,7 @@ class DefaultModeNetwork:
 
     async def _run_anticipator(self, turn_id: str) -> None:
         self._anticipator_cell.reset_turn(turn_id + "_ant")
+        self._anticipator_cell.skills = self._inherited_skill_names()
         prompt = (
             f"{self._last_context or 'No context yet.'}\n\n"
             f"Your last message (which ended with a question): "

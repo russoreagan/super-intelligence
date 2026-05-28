@@ -70,10 +70,11 @@ class ActivationEmitter:
                 "ts": time.time(),
             })
 
-    async def emit_stream_thought(self, thought: str, chem_delta: dict | None = None) -> None:
+    async def emit_stream_thought(self, thought: str, chem_delta: dict | None = None,
+                                   proactive: bool = False) -> None:
         with contextlib.suppress(asyncio.QueueFull):
             self._queue.put_nowait({"type": "stream_thought", "thought": thought,
-                                    "chem_delta": chem_delta or {}})
+                                    "chem_delta": chem_delta or {}, "proactive": proactive})
 
     async def emit_proactive_speech(self, text: str) -> None:
         with contextlib.suppress(asyncio.QueueFull):
