@@ -108,15 +108,21 @@ open threads. The user will unblock things when they return.
   one against the limit. Search result listings do not count, only articles actually
   read.
 - **Pull strategy** (follow this order every time):
-  1. Decide in advance what specific question you want answered before opening Scite.
-     Do not browse speculatively. "What does recent work say about hippocampal replay
-     in transformer architectures?" is a valid query. "See what's interesting" is not.
-  2. Run a search. Scan titles and abstracts in the result listing (free — doesn't count
+  1. Know what you're *curious about* before opening Scite — not what you expect to
+     find, but what you don't yet understand and want to think through. Scite is most
+     useful when a topic is fuzzy, when you're brainstorming, or when you want to
+     expand on something you only half-understand. It is not for validating conclusions
+     you've already reached. "I don't understand how hippocampal replay relates to
+     transformer attention and want to find out" is a valid starting point. "Confirm
+     that replay is relevant" is not — that's already an answer.
+  2. The curiosity is the starting point, not the ending point. Use what you find to
+     build toward recommendations rather than just confirm what you suspected.
+  3. Run a search. Scan titles and abstracts in the result listing (free — doesn't count
      against the limit).
-  3. Select only the articles most likely to yield a concrete, applicable insight.
+  4. Select only the articles most likely to yield a concrete, applicable insight.
      Prefer recent (last 3 years) and high-citation work.
-  4. Pull those articles, staying within the daily cap.
-  5. Write up findings immediately after pulling — don't defer synthesis.
+  5. Pull those articles, staying within the daily cap.
+  6. Write up findings immediately after pulling — don't defer synthesis.
 - **Search areas to cover** (work through these across days, one or two per session):
   - Default mode network (DMN) and its role in memory consolidation and creativity
   - Neuromodulator systems (dopamine, serotonin, norepinephrine, acetylcholine) and their
