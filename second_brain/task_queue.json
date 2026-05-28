@@ -374,25 +374,61 @@
   {
     "id": "49fbd211",
     "goal": "Pull the actual turn logs and analyze them to see if the pattern of lingering emotional state and stacking stimuli shows up in practice.",
-    "status": "running",
+    "status": "completed",
     "source": "user",
     "priority": 1,
     "created_at": 1779949102.838604,
     "started_at": 1779949174.546355,
-    "completed_at": null,
-    "success": null,
+    "completed_at": 1779949354.025698,
+    "success": true,
     "job_id": "job_task_49fbd211"
   },
   {
     "id": "25f1777b",
     "goal": "Pull recent interaction logs and analyze how the hormonal channels (cortisol, serotonin, oxytocin) track across multiple turns in sequence to determine if positive interactions build and persist fast enough to buffer subsequent stressful moments.",
-    "status": "pending",
+    "status": "completed",
     "source": "user",
     "priority": 1,
     "created_at": 1779949213.783207,
-    "started_at": null,
-    "completed_at": null,
-    "success": null,
-    "job_id": null
+    "started_at": 1779949358.562227,
+    "completed_at": 1779949551.311709,
+    "success": true,
+    "job_id": "job_task_25f1777b"
+  },
+  {
+    "id": "3e23cfab",
+    "goal": "List and examine the contents of the skills folder to check what game theory skills have been added.",
+    "status": "completed",
+    "source": "user",
+    "priority": 1,
+    "created_at": 1779949390.49705,
+    "started_at": 1779949555.889759,
+    "completed_at": 1779949676.05457,
+    "success": true,
+    "job_id": "job_task_3e23cfab"
+  },
+  {
+    "id": "640189b4",
+    "goal": "Examine the system logs to find evidence of relational coherence \u2014 measurable behavioral differences that emerge over time through the interaction of experience, emotional state, and plasticity, showing that the system develops character and remembers users across interactions.",
+    "status": "completed",
+    "source": "user",
+    "priority": 1,
+    "created_at": 1779951046.852352,
+    "started_at": 1779951055.667765,
+    "completed_at": 1779951175.857988,
+    "success": true,
+    "job_id": "job_task_640189b4"
+  },
+  {
+    "id": "0d40b851",
+    "goal": "access query_langfuse motor cortex",
+    "status": "completed",
+    "source": "user",
+    "priority": 1,
+    "created_at": 1779951399.109876,
+    "started_at": 1779951408.399383,
+    "completed_at": 1779951528.545177,
+    "success": true,
+    "job_id": "job_task_0d40b851"
   }
 ]

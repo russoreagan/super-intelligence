@@ -95,6 +95,12 @@ class TurnTrace:
     # Empty list means purely reactive emotional state this turn.
     deliberate_emotions: list[dict] = field(default_factory=list)
 
+    # ── Mid-turn neuromod updates (new injection points within a single turn) ──
+    # Each entry: {"trigger": str, "snapshot": dict[str, float]}
+    # Triggers: "hippocampus_recall", "tool_success", "tool_failure",
+    #           "tool_exception", "draft_quality_low", "draft_quality_high"
+    neuromod_midturn: list[dict] = field(default_factory=list)
+
     # ── Voice / prosody fields (populated when --ears is active) ─────────────
     speaker_name: str = ""
     speaker_score: float = 0.0   # voiceprint cosine similarity (0–1)
@@ -266,6 +272,7 @@ class ObservabilityLayer:
                             **({"neuromod": trace.neuromod} if trace.neuromod else {}),
                             **({"prior_neuromod": trace.prior_neuromod} if trace.prior_neuromod else {}),
                             **({"hormonal": trace.hormonal} if trace.hormonal else {}),
+                            **({"neuromod_midturn": trace.neuromod_midturn} if trace.neuromod_midturn else {}),
                             # ── memory ────────────────────────────────────
                             "memory_recalled": trace.memory_recalled,
                             "memory_hit_count": trace.memory_hit_count,

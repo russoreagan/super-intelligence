@@ -244,6 +244,16 @@ class _TurnMixin:
                 embedding_fn=self.router.embed,
             )
             await self._emit_end("hippocampus", turn_id)
+            # Recognition signal: finding relevant memories is an attention/novelty event.
+            # More hits → bigger ACh spike. Cap at +0.12 to avoid overwhelming the signal.
+            episode_hits = len([ln for ln in memory.get("episodes", "").splitlines() if ln.strip()])
+            if episode_hits > 0:
+                ach_delta = min(0.12, episode_hits * 0.03)
+                self.bus.neuromod.add("ACh", ach_delta)
+                _snap = self.bus.neuromod.snapshot()
+                trace.neuromod_midturn.append({"trigger": "hippocampus_recall", "snapshot": _snap})
+                if self._emitter:
+                    await self._emitter.emit_neuromod(_snap)
         else:
             memory = {"core": self._core_context, "schema": "", "episodes": ""}
 
@@ -292,6 +302,7 @@ class _TurnMixin:
                     memory["tool_result"] = "[task_queued]\nTask acknowledged — working on it now."
                     logger.info("[MotorCortex] Task mode — deferring planning to background")
                 else:
+                    tool_result = None
                     try:
                         tool_result = await self.motor.execute(features, turn_id)
                         if tool_result:
@@ -310,7 +321,33 @@ class _TurnMixin:
                                         tool_name, len(output), tool_result.get("success"))
                     except Exception as _mc_err:
                         logger.error("Motor cortex failed this turn: %s", _mc_err)
+                        # Unexpected tool failure is frustrating — GABA + NE spike.
+                        self.bus.neuromod.add("GABA", 0.10)
+                        self.bus.neuromod.add("NE", 0.08)
+                        _snap = self.bus.neuromod.snapshot()
+                        trace.neuromod_midturn.append({"trigger": "tool_exception", "snapshot": _snap})
+                        if self._emitter:
+                            await self._emitter.emit_neuromod(_snap)
                 await self._emit_end("motor_cortex", turn_id)
+                # Neuromod update from tool outcome.
+                if tool_result:
+                    if tool_result.get("success") is False:
+                        # Failed tool: frustration signal — GABA (threat/inhibition) + NE (alertness).
+                        self.bus.neuromod.add("GABA", 0.08)
+                        self.bus.neuromod.add("NE", 0.06)
+                        self.bus.neuromod.add("DA", -0.05)
+                        _snap = self.bus.neuromod.snapshot()
+                        trace.neuromod_midturn.append({"trigger": "tool_failure", "snapshot": _snap})
+                        if self._emitter:
+                            await self._emitter.emit_neuromod(_snap)
+                    elif tool_result.get("success"):
+                        # Successful tool: reward signal.
+                        self.bus.neuromod.add("DA", 0.07)
+                        self.bus.neuromod.add("Glu", 0.04)
+                        _snap = self.bus.neuromod.snapshot()
+                        trace.neuromod_midturn.append({"trigger": "tool_success", "snapshot": _snap})
+                        if self._emitter:
+                            await self._emitter.emit_neuromod(_snap)
 
         parietal_context = self.parietal.recent_turns_text()
 
@@ -459,6 +496,25 @@ class _TurnMixin:
             response = self._egress.depseudonymize(response)
             if self._egress.vault_size > 0:
                 logger.debug("Egress: %s", self._egress.audit_summary())
+            # Draft quality feeds back into chemistry: struggling to form a good
+            # response is cognitively effortful (GABA/NE up); nailing it feels good (DA up).
+            if draft_scores:
+                best = max(draft_scores, key=lambda d: d.get("overall", 0.5))
+                overall = best.get("overall", 0.5)
+                if overall < 0.4:
+                    self.bus.neuromod.add("GABA", 0.06)
+                    self.bus.neuromod.add("NE", 0.04)
+                    _trigger = "draft_quality_low"
+                elif overall > 0.7:
+                    self.bus.neuromod.add("DA", 0.05)
+                    _trigger = "draft_quality_high"
+                else:
+                    _trigger = None
+                if _trigger:
+                    _snap = self.bus.neuromod.snapshot()
+                    trace.neuromod_midturn.append({"trigger": _trigger, "snapshot": _snap})
+                    if self._emitter:
+                        await self._emitter.emit_neuromod(_snap)
             await self._emit_end("frontal", turn_id)
 
         # ── Brainstem: articulation ───────────────────────────────────────────
