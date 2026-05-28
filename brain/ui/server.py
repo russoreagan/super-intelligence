@@ -59,6 +59,7 @@ class UIServer:
         self._clients: set = set()
         self._last_neuromod: dict = {}
         self._last_hormonal: dict = {}
+        self._last_emotion: str = ""
         self._wiring_frozen: bool = False
         self._wiring = wiring
         self._app = None
@@ -269,6 +270,11 @@ class UIServer:
                     await websocket.send_text(json.dumps(
                         {"type": "hormonal", **self._last_hormonal}
                     ))
+            if self._last_emotion:
+                with contextlib.suppress(Exception):
+                    await websocket.send_text(json.dumps(
+                        {"type": "emotion", "emotion": self._last_emotion}
+                    ))
 
             # Tell the client about wiring state (frozen tag in plasticity panel)
             with contextlib.suppress(Exception):
@@ -461,11 +467,13 @@ class UIServer:
         while True:
             try:
                 event = await asyncio.wait_for(self._queue.get(), timeout=0.1)
-                # Cache latest neuromod + hormonal for new clients
+                # Cache latest neuromod + hormonal + emotion for new clients
                 if event.get("type") == "neuromod":
                     self._last_neuromod = {k: v for k, v in event.items() if k != "type"}
                 elif event.get("type") == "hormonal":
                     self._last_hormonal = {k: v for k, v in event.items() if k != "type"}
+                elif event.get("type") == "emotion" and event.get("emotion"):
+                    self._last_emotion = event["emotion"]
 
                 if self._clients:
                     payload = json.dumps(event)

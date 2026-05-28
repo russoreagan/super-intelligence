@@ -2,9 +2,12 @@
 Brain run.py — session lifecycle and cluster wiring.
 See brain/CONSTITUTION.md for design commitments.
 
+Automatically starts Ollama (local LLM server) on startup if not already running.
+
 Usage:
     uv run python -m brain.run
     uv run python -m brain.run --message "Hi, I'm Russ"
+    uv run python -m brain.run --voice --dmn --metacognition --ui --motor  # everything
     uv run python -m brain.run --ui              # browser UI at http://localhost:8765
     uv run python -m brain.run --ui --dmn        # + stream of consciousness
     uv run python -m brain.run --ui --metacognition
@@ -28,6 +31,8 @@ import argparse
 import asyncio
 import logging
 import os
+import subprocess
+import time
 
 from dotenv import load_dotenv
 
@@ -42,6 +47,29 @@ from brain.security import SecretRedactingFilter  # noqa: E402
 _redact_filter = SecretRedactingFilter()
 logging.getLogger().addFilter(_redact_filter)
 logger = logging.getLogger("brain.run")
+
+
+def ensure_ollama_running() -> None:
+    """Start Ollama if not already running."""
+    try:
+        result = subprocess.run(["pgrep", "-f", "ollama.*serve"], capture_output=True)
+        if result.returncode == 0:
+            logger.info("Ollama is already running")
+            return
+    except FileNotFoundError:
+        pass
+
+    logger.info("Starting Ollama...")
+    try:
+        subprocess.Popen(
+            ["ollama", "serve"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        time.sleep(2)
+        logger.info("Ollama started")
+    except FileNotFoundError:
+        logger.warning("Ollama not found. Install with: brew install ollama")
 
 
 async def session(args) -> None:
@@ -77,6 +105,7 @@ def main() -> None:
     if args.motor:
         os.environ["BRAIN_MOTOR"] = "true"
 
+    ensure_ollama_running()
     asyncio.run(session(args))
 
 

@@ -126,6 +126,25 @@ class _SetupMixin:
         self._ui_server = ui_server
         await asyncio.sleep(0.3)
 
+        # Emit initial chemistry + emotion so the UI shows the correct resting
+        # state immediately, rather than sitting on the HTML default "neutral"
+        # until the first turn fires.
+        from brain.emotion_vocabulary import apply_hormonal_color, name_emotion
+        _nm = self.bus.neuromod.snapshot()
+        _hs = self.bus.hormonal.snapshot()
+        _emotion, _tendency = name_emotion(_nm["DA"], _nm["GABA"], _nm["ACh"], _nm["Glu"])
+        _emotion, _tendency = apply_hormonal_color(
+            _emotion, _tendency, _hs,
+            oxt_connected=_brain_settings.get("hormonal_oxt_connected_threshold"),
+            cort_withdrawn=_brain_settings.get("hormonal_cort_withdrawn_threshold"),
+            oxt_guarded=_brain_settings.get("hormonal_oxt_guarded_threshold"),
+            sht_dysphoric=_brain_settings.get("hormonal_sht_dysphoric_threshold"),
+            aea_eased=_brain_settings.get("aea_eased_threshold"),
+        )
+        await self._emitter.emit_neuromod(_nm)
+        await self._emitter.emit_hormonal(_hs)
+        await self._emitter.emit_emotion(_emotion)
+
     async def _setup_motor(self) -> None:
         if not (self.args.motor or os.environ.get("BRAIN_MOTOR", "false").lower() == "true"):
             self.frontal.set_capabilities(

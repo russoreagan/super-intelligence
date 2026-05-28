@@ -4,7 +4,11 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import re
 import time
+
+# Strip [mood:X]...[/mood] markup from display text — TTS handles its own expansion.
+_MOOD_MARKUP_RE = re.compile(r'\[mood:[^\]]+\](.*?)\[/mood\]', re.DOTALL | re.IGNORECASE)
 
 from brain.emotion_hierarchy import core_of
 from brain.security import EGRESS_MODE
@@ -174,6 +178,21 @@ class _TurnMixin:
                         features["_speaker_unknown"] = True
             if latest_song:
                 features["song_match"] = latest_song
+
+        # ── Default speaker for typed input ───────────────────────────────────
+        # When ears are off (or no diarization arrived) there is no voice-based
+        # identity. Treat the keyboard as the primary user — otherwise DMN /
+        # metacognition / hippocampus all default to "the user" and lose the
+        # relationship binding that's already loaded for that name.
+        if not (isinstance(features, dict) and features.get("speaker_name")):
+            try:
+                _primary = self.hippocampus._schema.primary_user_name()
+            except Exception:
+                _primary = ""
+            if _primary:
+                features = dict(features)
+                features["speaker_name"] = _primary
+                features["_speaker_assumed_primary"] = True
 
         # ── Hypothalamus + Thalamus: parallel ─────────────────────────────────
         await self._emit("hypothalamus", 0.6, "updating affect", turn_id)
@@ -448,6 +467,9 @@ class _TurnMixin:
             self.brainstem.add_draft(f"final_{turn_id}", response, 0.9)
             self.brainstem.endorse(f"final_{turn_id}")
         final = await self.brainstem.articulation_gate(turn)
+        # Split raw (for PNS TTS — needs [mood:X] tags) from display (for chat/memory/traces).
+        raw_final = final
+        final = _MOOD_MARKUP_RE.sub(lambda m: m.group(1).strip(), raw_final)
         await self._emit_end("brainstem", turn_id)
 
         await self._emit("parietal", 0.3, "updating context", turn_id)
@@ -598,6 +620,17 @@ class _TurnMixin:
             "emotion": affect.get("emotion", "neutral"),
             "topic_tags": features.get("entities", []),
             "speaker_name": features.get("speaker_name", ""),
+            # Personality-observation signals (rolled up at sleep time).
+            "user_emotion": features.get("user_emotion", ""),
+            "user_tone_toward_ai": features.get("user_tone_toward_ai", ""),
+            "msg_length": features.get("msg_length", ""),
+            "intent": features.get("intent", ""),
+            "requires_action": bool(features.get("requires_action")),
+            "register": features.get("register", ""),
+            "prosody_tone": affect.get("vocal_tone") or "",
+            "pace_label": affect.get("pace_label") or "",
+            "hesitant_speech": bool(affect.get("hesitant_speech")),
+            "response_chars": len(final or ""),
         })
 
         await self._emit("hippocampus", 0.45, "encoding episode", turn_id)
@@ -626,7 +659,7 @@ class _TurnMixin:
         with contextlib.suppress(Exception):
             reset_current_trace(_ctx_token)
 
-        return final, affect
+        return raw_final, affect
 
     def _task_is_on_topic(self, task_goal: str) -> bool:
         """Return True if the task goal is topically related to the current conversation.

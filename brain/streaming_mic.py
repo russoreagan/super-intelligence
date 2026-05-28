@@ -82,9 +82,12 @@ class StreamingMicSession:
         self._pumper_task: asyncio.Task | None = None
         self._reader_task: asyncio.Task | None = None
         self._keepalive_task: asyncio.Task | None = None
+        self._device_monitor_task: asyncio.Task | None = None
         self._main_loop: asyncio.AbstractEventLoop | None = None
         self._running = False
         self._muted = False             # when True, mic audio is discarded
+        self._current_device_id = None  # track active device for change detection
+        self._device_listener_active = False  # CoreAudio listener status
 
     # ── lifecycle ──────────────────────────────────────────────────────────
 
@@ -98,6 +101,8 @@ class StreamingMicSession:
 
         # 2. Start mic input stream (sounddevice callback runs in PortAudio thread)
         import sounddevice as sd
+
+        self._current_device_id = sd.default.device[0]  # track which device we're using
 
         def _audio_callback(indata, frames, time_info, status):  # noqa: ANN001
             if status:
@@ -117,11 +122,15 @@ class StreamingMicSession:
         )
         self._stream.start()
 
-        # 3. Launch pumper + reader supervisor + keepalive
+        # 3. Register for macOS CoreAudio device change notifications
+        self._setup_coreaudio_notifications()
+
+        # 4. Launch pumper + reader supervisor + keepalive + device monitor
         self._running = True
         self._pumper_task = asyncio.create_task(self._pump_loop())
         self._reader_task = asyncio.create_task(self._reader_supervisor())
         self._keepalive_task = asyncio.create_task(self._keepalive_loop())
+        self._device_monitor_task = asyncio.create_task(self._monitor_device_changes())
 
     async def _open_deepgram(self) -> None:
         """Open a fresh Deepgram WebSocket session.
@@ -272,15 +281,78 @@ class StreamingMicSession:
             except Exception:
                 pass
             self._stream = None
-        for t in (self._pumper_task, self._reader_task, self._keepalive_task):
+        for t in (self._pumper_task, self._reader_task, self._keepalive_task, self._device_monitor_task):
             if t is not None:
                 t.cancel()
-        for t in (self._pumper_task, self._reader_task, self._keepalive_task):
+        for t in (self._pumper_task, self._reader_task, self._keepalive_task, self._device_monitor_task):
             if t is not None:
                 with contextlib.suppress(asyncio.CancelledError, Exception):
                     await t
         await self._close_deepgram()
         logger.info("[StreamingMic] session closed")
+
+    def _setup_coreaudio_notifications(self) -> None:
+        """Setup device change detection (no-op; handled by _monitor_device_changes polling)."""
+        # CoreAudio callback mechanism is complex with PyObjC, so we use polling instead.
+        # This is a pragmatic approach that works reliably.
+        self._device_listener_active = True
+        logger.debug("[StreamingMic] Device monitoring enabled (polling-based)")
+
+    def _restart_stream(self) -> None:
+        """Restart the mic stream (called when device changes)."""
+        if self._stream is None:
+            return
+        try:
+            logger.info("[StreamingMic] Restarting mic stream due to device change")
+            self._stream.stop()
+            self._stream.close()
+            self._stream = None
+        except Exception as e:
+            logger.warning("[StreamingMic] Error closing old stream: %s", e)
+
+        try:
+            import sounddevice as sd
+
+            def _audio_callback(indata, frames, time_info, status):  # noqa: ANN001
+                if status:
+                    logger.debug("[StreamingMic] PortAudio status: %s", status)
+                chunk = bytes(indata)
+                with contextlib.suppress(RuntimeError):
+                    self._main_loop.call_soon_threadsafe(self._enqueue_chunk, chunk)
+
+            self._stream = sd.RawInputStream(
+                samplerate=SAMPLE_RATE,
+                channels=CHANNELS,
+                dtype="int16",
+                blocksize=BLOCKSIZE,
+                callback=_audio_callback,
+            )
+            self._stream.start()
+            logger.info("[StreamingMic] Mic stream restarted")
+        except Exception as e:
+            logger.error("[StreamingMic] Failed to restart stream: %s", e)
+
+    async def _monitor_device_changes(self) -> None:
+        """Poll for device changes and restart stream if device changed."""
+        try:
+            import sounddevice as sd
+
+            while self._running:
+                try:
+                    current_device = sd.default.device[0]
+                    if current_device != self._current_device_id:
+                        logger.info(
+                            "[StreamingMic] Input device changed: %s -> %s",
+                            self._current_device_id,
+                            current_device,
+                        )
+                        self._current_device_id = current_device
+                        self._restart_stream()
+                except Exception as e:
+                    logger.debug("[StreamingMic] Device poll error: %s", e)
+                await asyncio.sleep(1.0)  # Check every second for device changes
+        except asyncio.CancelledError:
+            pass
 
     @property
     def is_muted(self) -> bool:
