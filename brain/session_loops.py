@@ -250,6 +250,135 @@ class _LoopsMixin:
                 continue
             await self._dispatch_text(text)
 
+    # ── Periodic in-process sleep consolidation ──────────────────────────────
+
+    async def consolidate_now(self, reason: str = "manual") -> dict:
+        """Force a consolidation pass on the buffered traces. Safe to call
+        anytime; single-flight protected. Returns a small status dict."""
+        if self._sleep is None or self._consolidation_lock is None:
+            return {"ran": False, "reason": "sleep_loop_disabled"}
+        if self._consolidation_lock.locked():
+            return {"ran": False, "reason": "already_running"}
+        if not self._session_traces:
+            return {"ran": False, "reason": "no_buffered_turns"}
+        async with self._consolidation_lock:
+            return await self._run_consolidation(reason)
+
+    async def _run_consolidation(self, reason: str) -> dict:
+        """Body of a consolidation pass. Snapshots & clears the trace buffers
+        BEFORE running the LLM work so new turns during consolidation start a
+        fresh batch. DMN is paused during the pass so it doesn't compete for
+        the LLM. Caller is responsible for holding _consolidation_lock."""
+        traces = list(self._session_traces)
+        traces_full = list(self._session_traces_full)
+        self._session_traces.clear()
+        self._session_traces_full.clear()
+        dmn_thoughts = []
+        if self.dmn:
+            try:
+                self.dmn.pause()
+                dmn_thoughts = self.dmn.session_thoughts() or []
+            except Exception:
+                dmn_thoughts = []
+        n_turns = len(traces)
+        logger.info("[Sleep] In-process consolidation starting (%s, %d turns)",
+                    reason, n_turns)
+        start = time.time()
+        ok = True
+        try:
+            await self._sleep.consolidate(
+                self.session_id, traces,
+                full_traces=traces_full,
+                session_thoughts=dmn_thoughts,
+            )
+            # Refresh DMN's project context from the (possibly rewritten)
+            # open_questions.md so any sleep-time edits land immediately.
+            if self.dmn:
+                try:
+                    _oq = self.hippocampus._schema.read("open_questions.md")
+                    if _oq:
+                        self.dmn.set_projects_context(_oq)
+                except Exception:
+                    pass
+        except Exception as exc:
+            ok = False
+            logger.warning("[Sleep] In-process consolidation failed (%s): %s",
+                           reason, exc)
+        finally:
+            if self.dmn:
+                with contextlib.suppress(Exception):
+                    self.dmn.resume()
+            self._last_consolidation_ts = time.time()
+        elapsed = time.time() - start
+        logger.info("[Sleep] In-process consolidation done in %.1fs (ok=%s, %d turns)",
+                    elapsed, ok, n_turns)
+        return {"ran": True, "ok": ok, "turns": n_turns,
+                "elapsed_s": round(elapsed, 1), "reason": reason}
+
+    async def _periodic_sleep_loop(self) -> None:
+        """Check periodically whether to fire an in-process consolidation pass.
+        Fires when either the user has been idle long enough OR enough wall-clock
+        has elapsed since the last pass, and a minimum number of turns have
+        accumulated in the trace buffer.
+
+        Reads from /settings (sleep_check_interval_s, sleep_idle_threshold_s,
+        sleep_hard_cap_s, sleep_min_turns), with env vars taking precedence
+        for one-off CLI overrides:
+          BRAIN_SLEEP_CHECK_S, BRAIN_SLEEP_IDLE_S, BRAIN_SLEEP_HARD_S,
+          BRAIN_SLEEP_MIN_TURNS.
+
+        Settings are re-read each check, so changes saved in the UI take effect
+        on the NEXT check tick (no restart needed for cadence tuning).
+        """
+        def _resolved() -> tuple[float, float, float, int]:
+            check_s = float(os.environ.get(
+                "BRAIN_SLEEP_CHECK_S",
+                _brain_settings.get("sleep_check_interval_s")))
+            idle_s = float(os.environ.get(
+                "BRAIN_SLEEP_IDLE_S",
+                _brain_settings.get("sleep_idle_threshold_s")))
+            hard_s = float(os.environ.get(
+                "BRAIN_SLEEP_HARD_S",
+                _brain_settings.get("sleep_hard_cap_s")))
+            min_turns = int(os.environ.get(
+                "BRAIN_SLEEP_MIN_TURNS",
+                _brain_settings.get("sleep_min_turns")))
+            return check_s, idle_s, hard_s, min_turns
+
+        # Stagger first check so it doesn't fire immediately at boot.
+        initial_check, _, _, _ = _resolved()
+        await asyncio.sleep(min(initial_check, 60.0))
+        while True:
+            try:
+                check_s, idle_s, hard_s, min_turns = _resolved()
+                await asyncio.sleep(check_s)
+                if self._sleep is None or self._consolidation_lock is None:
+                    return
+                if self._consolidation_lock.locked():
+                    continue
+                buffered = len(self._session_traces)
+                if buffered < min_turns:
+                    continue
+                now = time.time()
+                idle_for = now - self._last_turn_ts
+                since_last = now - self._last_consolidation_ts
+                if idle_for >= idle_s:
+                    reason = f"idle_{int(idle_for)}s"
+                elif since_last >= hard_s:
+                    reason = f"hard_cap_{int(since_last)}s"
+                else:
+                    continue
+                # Don't fire while the brain is actively speaking — wait for
+                # the next tick. Avoids competing for the LLM and audio path.
+                if getattr(self.pns, "is_speaking", False):
+                    continue
+                async with self._consolidation_lock:
+                    await self._run_consolidation(reason)
+            except asyncio.CancelledError:
+                return
+            except Exception as exc:
+                logger.error("[Sleep] periodic loop error: %s", exc, exc_info=True)
+
     async def _task_worker_loop(self) -> None:
         while True:
             try:

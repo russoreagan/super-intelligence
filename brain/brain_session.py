@@ -109,6 +109,13 @@ class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
         self._session_traces_full: list = []
         self._pending_encodes: set[asyncio.Task] = set()
 
+        # Periodic in-process consolidation (sleep) — runs while the app keeps
+        # running, so long-lived sessions don't lose learning. See
+        # _periodic_sleep_loop and consolidate_now in session_loops.
+        self._sleep: "SleepConsolidation | None" = None  # type: ignore[name-defined]
+        self._consolidation_lock: asyncio.Lock | None = None
+        self._last_consolidation_ts: float = time.time()
+
     # ── Main entry point ──────────────────────────────────────────────────────
 
     async def run(self) -> None:
@@ -188,6 +195,19 @@ class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
             if not user_input:
                 continue
 
+            # Slash commands intercepted before the turn pipeline. /consolidate
+            # forces an in-process sleep pass on whatever has buffered so far.
+            if user_input.strip().lower().startswith("/consolidate"):
+                status = await self.consolidate_now(reason="manual_ui")
+                msg = (f"Consolidation: ran on {status.get('turns', 0)} turns "
+                       f"in {status.get('elapsed_s', 0)}s ✓"
+                       if status.get("ran") else
+                       f"Consolidation skipped: {status.get('reason', 'unknown')}")
+                if self._emitter:
+                    await self.pns.emit(msg, {})
+                self._last_brain_spoke_ts = time.time()
+                continue
+
             image_path = None
             if "[image:" in user_input:
                 m = re.search(r'\[image:([^\]]+)\]', user_input)
@@ -234,6 +254,15 @@ class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
             if not user_input:
                 continue
 
+            if user_input.strip().lower().startswith("/consolidate"):
+                status = await self.consolidate_now(reason="manual_cli")
+                if status.get("ran"):
+                    print(f"Brain: Consolidation ran on {status.get('turns', 0)} "
+                          f"turns in {status.get('elapsed_s', 0)}s.")
+                else:
+                    print(f"Brain: Consolidation skipped — {status.get('reason')}.")
+                continue
+
             image_path = None
             if "[image:" in user_input:
                 m = re.search(r'\[image:([^\]]+)\]', user_input)
@@ -267,11 +296,15 @@ class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
 
         if self._session_traces:
             try:
-                from brain.sleep import SleepConsolidation
-                sleep = SleepConsolidation(
-                    self.router, self.hippocampus._schema, self.hippocampus._episodic,
-                    wiring=self.wiring,
-                )
+                # Reuse the periodic-sleep instance if it exists; fall back to a
+                # fresh one (older boot paths / BRAIN_SLEEP_PERIODIC=false).
+                sleep = self._sleep
+                if sleep is None:
+                    from brain.sleep import SleepConsolidation
+                    sleep = SleepConsolidation(
+                        self.router, self.hippocampus._schema, self.hippocampus._episodic,
+                        wiring=self.wiring,
+                    )
                 logger.info(
                     "Running end-of-session memory consolidation "
                     "(summarising facts, updating self-model, applying Hebbian updates)..."

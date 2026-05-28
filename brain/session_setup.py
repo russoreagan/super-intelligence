@@ -304,3 +304,21 @@ class _SetupMixin:
         self.brainstem.register_loop("heartbeat", self._heartbeat_with_ui)
         if self.motor:
             self.brainstem.register_loop("task_worker", self._task_worker_loop)
+        # Periodic in-process consolidation. Lets the brain run for days
+        # without losing learning to a never-fired end-of-session pass.
+        # Toggle via the Sleep Consolidation section in /settings (sleep_periodic_enabled)
+        # or, for one-off CLI runs, BRAIN_SLEEP_PERIODIC=false.
+        import os as _os
+        from brain.settings import settings as _settings
+        _env_on = _os.environ.get("BRAIN_SLEEP_PERIODIC", "").lower()
+        _settings_on = int(_settings.get("sleep_periodic_enabled")) == 1
+        _enabled = (_settings_on and _env_on != "false") or _env_on == "true"
+        if _enabled:
+            from brain.sleep import SleepConsolidation
+            self._sleep = SleepConsolidation(
+                self.router, self.hippocampus._schema, self.hippocampus._episodic,
+                wiring=self.wiring,
+            )
+            import asyncio as _asyncio
+            self._consolidation_lock = _asyncio.Lock()
+            self.brainstem.register_loop("periodic_sleep", self._periodic_sleep_loop)

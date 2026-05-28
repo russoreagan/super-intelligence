@@ -208,6 +208,20 @@ DEFAULTS: dict[str, float | int] = {
     # >1.0 = amplified chemistry response; <1.0 = damped.
     "modulation_gain":             1.00,
 
+    # ── Section: Sleep Consolidation ─────────────────────────────────────────
+    # Periodic in-process consolidation lets the brain learn (extract facts,
+    # update self-model, run Hebbian, observe personality + mood-response
+    # patterns) without ever exiting the process. The brainstem wakes on
+    # `sleep_check_interval_s`, and runs a pass if EITHER the user has been
+    # idle ≥ `sleep_idle_threshold_s` OR ≥ `sleep_hard_cap_s` has elapsed
+    # since the last pass, and there are ≥ `sleep_min_turns` buffered.
+    # End-of-session consolidation always runs as a safety net.
+    "sleep_periodic_enabled":      1,         # 1 = on, 0 = off
+    "sleep_check_interval_s":      1800.0,    # 30 min — how often to check
+    "sleep_idle_threshold_s":      7200.0,    # 2 h  — fire after this much user idle
+    "sleep_hard_cap_s":            21600.0,   # 6 h  — fire regardless of idle
+    "sleep_min_turns":             5,         # don't bother with tiny batches
+
     # ── Section: Motor Cortex / Autonomous Tasks ─────────────────────────────
     # ralph_max_total_attempts: hard ceiling on total tool dispatches across ALL
     # stories + retries in a single internal job. Prevents runaway loops
