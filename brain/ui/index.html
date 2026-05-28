@@ -4681,7 +4681,7 @@ function connect() {
     ind.classList.add('connected');
     ind.classList.remove('degraded');
     if (pill) pill.classList.remove('degraded');
-    if (lbl) lbl.textContent = 'Online';
+    if (lbl) lbl.textContent = 'Booting';
     // Reset any turn state left over from a crash or restart.
     setTyping(false);
     document.getElementById('send-btn').disabled = false;
