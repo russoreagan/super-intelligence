@@ -3450,7 +3450,7 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
                 </svg>
                 Stop
               </button>
-              <button id="mic-btn" title="Toggle voice / text input" aria-label="Input mode">
+              <button id="mic-btn" class="muted" title="Hold Space to talk" aria-label="Input mode">
                 <div class="mode-thumb"></div>
                 <span class="mode-side mode-mic">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -4484,9 +4484,10 @@ function renderRegionList() {
 /* =====================================================================
    ELEVENLABS VOICE LIST
    ===================================================================== */
-async function loadVoices({ silent = false } = {}) {
+async function loadVoices({ silent = false, _attempt = 0 } = {}) {
   const sel = document.getElementById('voice-select');
   const nameEl = document.getElementById('voice-name');
+  const DELAYS = [3000, 6000, 12000]; // backoff: 3 s, 6 s, 12 s (4 attempts total)
 
   try {
     const res = await fetch('/voices');
@@ -4507,19 +4508,16 @@ async function loadVoices({ silent = false } = {}) {
     if (saved && voices.find(v => v.voice_id === saved)) {
       sel.value = saved;
     } else {
-      localStorage.removeItem('brain_voice_id'); // clear stale/demo ID
+      localStorage.removeItem('brain_voice_id');
       sel.value = voices[0].voice_id;
     }
     nameEl.textContent = sel.options[sel.selectedIndex].textContent;
     // Notify server of the selected voice (handles the race where onopen fired first)
     sel.dispatchEvent(new Event('change'));
 
-    // Surface server-side filtering reasons (e.g. v3 doesn't serve professional
-    // voice clones, so they were hidden from the dropdown).
     if (data.message) {
       sel.title = data.message;
       console.info('[voices]', data.message);
-      // Also append a small note next to the voice-name label
       const note = document.getElementById('voice-filter-note') || (() => {
         const span = document.createElement('span');
         span.id = 'voice-filter-note';
@@ -4531,14 +4529,13 @@ async function loadVoices({ silent = false } = {}) {
       note.title = data.message;
     }
   } catch (e) {
-    console.warn('loadVoices failed:', e.message);
-    // Auto-retry once after 3 s if the server might still be starting up
-    if (!loadVoices._retried) {
-      loadVoices._retried = true;
-      setTimeout(() => loadVoices({ silent: true }), 3000);
-    }
-    if (!silent) {
-      nameEl.textContent = 'No voice';
+    console.warn(`loadVoices attempt ${_attempt + 1} failed:`, e.message);
+    if (_attempt < DELAYS.length) {
+      nameEl.textContent = 'Loading…';
+      setTimeout(() => loadVoices({ silent: true, _attempt: _attempt + 1 }), DELAYS[_attempt]);
+    } else {
+      console.error('loadVoices gave up after', DELAYS.length + 1, 'attempts');
+      if (!silent) nameEl.textContent = 'No voice';
     }
   }
 }
@@ -5287,6 +5284,11 @@ let finalTranscript = '';
 let autoSendTimer = null;
 const AUTO_SEND_DELAY_MS = 1500;
 
+// Force text mode on every load — mic is off until user holds Space.
+micBtn.classList.remove('listening');
+micBtn.classList.add('muted');
+micBtn.title = 'Hold Space to talk';
+
 // When Python-side voice mode is active, the mic button is a persistent
 // mute/unmute toggle that controls the server-side StreamingMicSession.
 let pythonVoiceMode = false;
@@ -5324,7 +5326,9 @@ function handleVoiceMode(msg) {
 function _micReset() {
   micActive = false;
   micBtn.classList.remove('listening');
-  micBtn.title = 'Click to speak (or press Space)';
+  micBtn.classList.add('muted');
+  micBtn.title = 'Hold Space to talk';
+  msgInput.classList.remove('voice-listening');
   transcriptBar.classList.remove('visible');
   transcriptText.textContent = '';
 }
@@ -5335,7 +5339,9 @@ async function startListening() {
     if (demoMode) {
       // simulate listening
       micActive = true;
+      micBtn.classList.remove('muted');
       micBtn.classList.add('listening');
+      msgInput.classList.add('voice-listening');
       transcriptText.textContent = 'Listening… (demo mode)';
       transcriptBar.classList.add('visible');
       setTimeout(() => {
@@ -5374,9 +5380,11 @@ async function startListening() {
   mediaRecorder.start(250);
 
   micActive = true;
+  micBtn.classList.remove('muted');
   micBtn.classList.add('listening');
   micBtn.title = 'Listening… release Space or click to send';
-  transcriptText.textContent = 'Hold Space — release to send…';
+  msgInput.classList.add('voice-listening');
+  transcriptText.textContent = 'Listening… release Space to send';
   transcriptBar.classList.add('visible');
 }
 

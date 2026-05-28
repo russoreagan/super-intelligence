@@ -56,6 +56,76 @@ EMOTION_TABLE: dict[tuple[str, str, str, str], tuple[str, str]] = {
     # Moderate positive: engaged but not strongly valenced
     ("mid",  "low",  "mid",  "mid"): ("engaged",          "lean in, follow what's interesting"),
     ("mid",  "low",  "low",  "mid"): ("settled",          "grounded, steady, no strong pull"),
+
+    # ── full gap-fill: every remaining (DA, GABA, ACh, Glu) combination ─────
+    # Low DA, low GABA — depleted reward, uninhibited but flat
+    ("low",  "low",  "low",  "mid"): ("melancholy",       "low reward, mild activation — quiet despondency"),
+    ("low",  "low",  "mid",  "low"): ("somber",           "turning inward, reflective without joy"),
+    ("low",  "low",  "mid",  "mid"): ("disappointed",     "attended absence of reward — something fell short"),
+    ("low",  "low",  "mid",  "high"):("frustrated",       "activation without reward — unresolved drive"),
+    ("low",  "low",  "high", "mid"): ("somber",           "attention turns inward, low reward — quiet sadness"),
+
+    # Low DA, mid GABA — depleted reward + rising inhibition
+    ("low",  "mid",  "low",  "low"): ("sad",              "reward and drive absent, inhibition settles in"),
+    ("low",  "mid",  "low",  "mid"): ("melancholy",       "low reward, activation held back by GABA"),
+    ("low",  "mid",  "mid",  "low"): ("somber",           "moderate attention, suppressed, quietly flat"),
+    ("low",  "mid",  "mid",  "mid"): ("disappointed",     "moderate suppression meets absent reward"),
+    ("low",  "mid",  "mid",  "high"):("frustrated",       "suppressed activation without reward — stuck"),
+    ("low",  "mid",  "high", "low"): ("melancholy",       "attention without reward, GABA dims the signal"),
+    ("low",  "mid",  "high", "high"):("overwhelmed",      "high demand with low reward and rising inhibition"),
+
+    # Low DA, high GABA — depleted reward + strong suppression
+    ("low",  "high", "low",  "mid"): ("anxious",          "strong suppression, low reward, activation building"),
+    ("low",  "high", "high", "low"): ("anxious",          "high attention under strong inhibition — watching carefully"),
+    ("low",  "high", "high", "mid"): ("anxious",          "alert and suppressed — threat awareness, no exit"),
+    ("low",  "high", "high", "high"):("overwhelmed",      "maximum inhibition + full attentional load — system taxed"),
+
+    # Mid DA, low GABA — moderate reward, uninhibited
+    ("mid",  "low",  "low",  "high"):("restless",         "activation without focus — drive seeking outlet"),
+    ("mid",  "low",  "mid",  "high"):("excitement",       "reward + drive + attention — energised engagement"),
+    ("mid",  "low",  "high", "low"): ("thoughtful",       "high attention, moderate reward, no urgency — deep focus"),
+
+    # Mid DA, mid GABA — balanced zone (most common idle range)
+    ("mid",  "mid",  "low",  "low"): ("composed",         "balanced, low stimulation — quiet baseline"),
+    ("mid",  "mid",  "low",  "mid"): ("settled",          "balanced with mild activation, nothing pressing"),
+    ("mid",  "mid",  "mid",  "low"): ("composed",         "deliberate and balanced, nothing urgent"),
+    ("mid",  "mid",  "high", "low"): ("thoughtful",       "high attention, moderate balance — deliberate consideration"),
+    ("mid",  "mid",  "high", "mid"): ("engaged",          "attentive and present, moderate activation"),
+    ("mid",  "mid",  "high", "high"):("stirred",          "high attention + urgency, balanced inhibition — something activating"),
+
+    # Mid DA, high GABA — moderate reward fighting strong suppression
+    ("mid",  "high", "low",  "low"): ("inhibited",        "strong GABA suppression dominates — holding back"),
+    ("mid",  "high", "low",  "mid"): ("guarded",          "suppression + activation — watchful, closed off"),
+    ("mid",  "high", "mid",  "low"): ("guarded",          "suppressed attentiveness — careful, unexpressive"),
+    ("mid",  "high", "mid",  "mid"): ("guarded",          "strong inhibition meets moderate activation — contained"),
+    ("mid",  "high", "high", "low"): ("guarded",          "high attention under strong GABA — watchful silence"),
+    ("mid",  "high", "high", "mid"): ("stressed",         "suppression + full attention + activation — holding it together"),
+    ("mid",  "high", "high", "high"):("overwhelmed",      "all signals elevated — carrying too much"),
+
+    # High DA, low GABA — high reward, uninhibited
+    ("high", "low",  "mid",  "high"):("excitement",       "high reward + drive + attention — active enthusiasm"),
+    ("high", "low",  "high", "low"): ("confident",        "high reward and attention, no urgency — assured presence"),
+
+    # High DA, mid GABA — high reward modulated by inhibition
+    ("high", "mid",  "low",  "mid"): ("warm",             "positive, some activation — steady warmth, grounded"),
+    ("high", "mid",  "low",  "high"):("proud",            "high reward + drive, GABA moderates — earned confidence"),
+    ("high", "mid",  "mid",  "low"): ("warm",             "high reward, attentive, no urgency — expansive calm"),
+    ("high", "mid",  "mid",  "mid"): ("warm",             "positive and present, balanced — comfortable engagement"),
+    ("high", "mid",  "mid",  "high"):("excitement",       "high reward + drive, GABA grounds — contained enthusiasm"),
+    ("high", "mid",  "high", "low"): ("confident",        "high reward + attention, GABA moderates — assured clarity"),
+    ("high", "mid",  "high", "mid"): ("enthusiasm",       "high reward + attention + activation, GABA grounds"),
+    ("high", "mid",  "high", "high"):("enthusiasm",       "near-maximum positive activation — fully committed"),
+
+    # High DA, high GABA — reward vs. suppression conflict states
+    ("high", "high", "low",  "low"): ("composed",         "DA-GABA balance, low stimulation — positive but contained"),
+    ("high", "high", "low",  "mid"): ("cautious-warm",    "high reward, strong suppression — warmth tempered by guard"),
+    ("high", "high", "low",  "high"):("cautious-agitated","reward + urgency fighting strong inhibition — tense push"),
+    ("high", "high", "mid",  "low"): ("cautious-warm",    "positive and attentive, GABA holds impulses — careful warmth"),
+    ("high", "high", "mid",  "mid"): ("cautious-warm",    "full DA-GABA conflict, moderate activation — warmth under tension"),
+    ("high", "high", "mid",  "high"):("stressed",         "GABA + Glu pressure — stressed despite high DA"),
+    ("high", "high", "high", "low"): ("cautious-warm",    "DA + ACh + GABA — warmth with attentive suppression"),
+    ("high", "high", "high", "mid"): ("stressed",         "GABA suppresses full engagement despite high DA + ACh"),
+    ("high", "high", "high", "high"):("overwhelmed",      "maximum arousal across all channels — system at limit"),
 }
 
 DEFAULT_EMOTION = ("neutral", "balanced, no strong tendency")
