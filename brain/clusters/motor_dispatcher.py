@@ -404,13 +404,36 @@ class ToolDispatcher:
             return "Filesystem access: none configured (BRAIN_MOTOR_PATHS unset)."
         primary = self._allowed_paths[0]
         roots = "\n  ".join(self._allowed_paths)
+        # Build a list of known key subdirectories so the planner never guesses paths.
+        key_dirs = self._known_subdirs(primary)
+        key_dirs_hint = (
+            f"\n  Key directories under CWD:\n" +
+            "\n".join(f"    {d}" for d in key_dirs)
+            if key_dirs else ""
+        )
         return (
             f"Filesystem access:\n"
             f"  Working directory (CWD): {primary}\n"
-            f"  Allowed roots:\n  {roots}\n"
-            f"Always use paths relative to CWD (e.g. 'second_brain/schema/self.md') "
-            f"or absolute paths under the allowed roots. Never guess paths outside these roots."
+            f"  Allowed roots:\n  {roots}"
+            f"{key_dirs_hint}\n"
+            f"Always use absolute paths (e.g. '{primary}/second_brain/schema/self.md'). "
+            f"Never guess subdirectory names — use list_files or the key directories above."
         )
+
+    @staticmethod
+    def _known_subdirs(root: str) -> list[str]:
+        """Return a sorted list of first-level subdirectories under root that exist,
+        excluding hidden dirs, __pycache__, and .venv."""
+        _SKIP = {"__pycache__", ".venv", ".git", "node_modules", ".mypy_cache"}
+        try:
+            p = Path(root)
+            dirs = sorted(
+                str(d) for d in p.iterdir()
+                if d.is_dir() and d.name not in _SKIP and not d.name.startswith(".")
+            )
+            return dirs[:20]  # cap to keep prompt short
+        except Exception:
+            return []
 
     @property
     def allowed_paths(self) -> list[str]:

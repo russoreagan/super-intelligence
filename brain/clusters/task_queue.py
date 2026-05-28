@@ -34,8 +34,12 @@ Source = Literal["user", "self", "recovery"]
 
 # Cap total stored tasks (completed + failed entries are trimmed when over limit)
 MAX_TASKS = 40
-# Rough word-overlap threshold for deduplication of pending tasks
+# Word-overlap threshold for deduplication of pending/running tasks
 DEDUP_THRESHOLD = 0.70
+# Stricter threshold applied to self-initiated tasks (DMN) against recent completions
+SELF_DEDUP_THRESHOLD = 0.55
+# How many seconds back to check completed tasks when deduplicating self-tasks
+SELF_DEDUP_RECENCY = 2 * 60 * 60  # 2 hours
 
 
 @dataclass
@@ -131,6 +135,24 @@ class PersistentTaskQueue:
             if t.status in ("pending", "running") and _word_overlap(t.goal, goal) >= DEDUP_THRESHOLD:
                 logger.debug("[TaskQueue] Deduplicated task (overlap): %r", goal[:60])
                 return None
+        # For self-initiated tasks: also deduplicate against recently completed/failed
+        # tasks within the recency window. Prevents the DMN from re-running work it
+        # just finished because it rephrased the goal slightly on the next tick.
+        if source == "self":
+            cutoff = time.time() - SELF_DEDUP_RECENCY
+            for t in self._tasks:
+                if (
+                    t.status in ("completed", "failed")
+                    and t.completed_at is not None
+                    and t.completed_at >= cutoff
+                    and _word_overlap(t.goal, goal) >= SELF_DEDUP_THRESHOLD
+                ):
+                    logger.info(
+                        "[TaskQueue] Self-task deduplicated against recent completion "
+                        "(overlap=%.2f): %r",
+                        _word_overlap(t.goal, goal), goal[:60],
+                    )
+                    return None
         task = Task(id=str(uuid.uuid4())[:8], goal=goal, source=source, priority=priority)
         self._tasks.append(task)
         # Trim oldest completed/failed if over limit

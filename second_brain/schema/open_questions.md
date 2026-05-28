@@ -82,22 +82,97 @@ open threads. The user will unblock things when they return.
 ## Projects assigned by Russ
 
 ### Self-code review (PRIMARY — do this first)
-- **Path**: `/Users/russ/Documents/super intelligence app`
+- **Root**: `/Users/russ/Documents/super intelligence app`
+
+#### Folder map
+```
+/Users/russ/Documents/super intelligence app/
+├── brain/                        ← entire runtime lives here
+│   ├── run.py                    ← entry point; CLI flags, startup wiring
+│   ├── session_setup.py          ← instantiates all clusters, wires them together
+│   ├── session_turn.py           ← per-turn logic: routing, task worker, result reporting
+│   ├── session_loops.py          ← async background loops (sleep, task worker, speak gate)
+│   ├── brain_session.py          ← thin session state object shared across loops
+│   ├── dmn.py                    ← Default Mode Network: idle reflection, self-tasks, speak gate
+│   ├── dmn_prompts.py            ← system prompts for DMN cells
+│   ├── pns.py                    ← Peripheral Nervous System: TTS output, voice queuing
+│   ├── streaming_mic.py          ← microphone input, VAD, STT pipeline
+│   ├── sleep.py                  ← sleep consolidation (Hebbian decay, episodic replay)
+│   ├── hebbian.py                ← Hebbian weight store and decay
+│   ├── bus.py                    ← internal pub/sub message bus
+│   ├── cell.py                   ← IntegratorCell: base LLM call unit
+│   ├── neuron.py                 ← SwitchNeuron: neuromod-gated binary switches
+│   ├── model_router.py           ← routes calls to Ollama / Anthropic / Gemini
+│   ├── wiring.py                 ← dynamic skill/tool wiring at runtime
+│   ├── wiring_bootstrap.py       ← default bus topic subscriptions
+│   ├── metacognition.py          ← self-monitoring and performance tracking
+│   ├── settings.py / settings.json ← runtime configuration
+│   ├── emotion_*.py              ← emotion vocabulary, hierarchy, presets
+│   ├── clusters/                 ← one file per brain region
+│   │   ├── frontal.py            ← executive: intent classification, response routing
+│   │   ├── frontal_task.py       ← task intent detection, PendingTask handoff to motor
+│   │   ├── temporal.py           ← feature extraction: entities, intent, topic, sentiment
+│   │   ├── parietal.py           ← context assembly: memory + environment integration
+│   │   ├── hippocampus.py        ← episodic memory: encode, retrieve, schema grep
+│   │   ├── hypothalamus.py       ← neuromodulator + hormonal state channels
+│   │   ├── motor_cortex.py       ← tool planning + execution (reactive & job modes)
+│   │   ├── motor_dispatcher.py   ← tool implementations (read/write/run/fetch/search)
+│   │   ├── motor_memory.py       ← procedural memory: records completed jobs for recall
+│   │   ├── motor_prompts.py      ← system prompts for planner / verifier / criteria checker
+│   │   ├── job_store.py          ← persistent job output storage (second_brain/jobs/)
+│   │   ├── task_queue.py         ← disk-backed task queue (second_brain/task_queue.json)
+│   │   ├── follow_through.py     ← extracts task goals from conversation; ResultReporter
+│   │   ├── auditory_cortex.py    ← audio pre-processing, speaker diarisation
+│   │   ├── occipital.py          ← vision processing (image input)
+│   │   ├── thalamus.py           ← sensory gating and signal routing
+│   │   ├── lobe_bridge.py        ← bridge: motor → hippocampus / occipital tool calls
+│   │   ├── cloud_executor.py     ← Claude Desktop MCP connector (cloud tools)
+│   │   └── skill_selector.py     ← dynamic skill loading for LLM cells
+│   ├── ui/
+│   │   ├── server.py             ← WebSocket + HTTP server for the browser UI
+│   │   └── emitter.py            ← event emitter: task lifecycle, emotion, speech events
+│   ├── observability/            ← Langfuse tracing integration
+│   ├── second_brain/             ← Python module: store.py defines paths, speaker_store.py
+│   ├── skills/                   ← built-in skill markdown files
+│   └── tools/                    ← additional tool definitions
+├── second_brain/                 ← persistent data (not code)
+│   ├── schema/                   ← self-model files (YOU ARE HERE)
+│   │   ├── self.md               ← entity identity, values, personality
+│   │   ├── user.md               ← generic user schema
+│   │   ├── user_russ.md          ← Russ-specific knowledge and relationship
+│   │   ├── open_questions.md     ← this file: projects, questions, directives
+│   │   └── tool_log.md           ← log of significant tool actions
+│   ├── episodes/                 ← LanceDB vector store: episodic + procedural memory
+│   ├── jobs/                     ← completed job outputs (JSON, one per job)
+│   ├── research/                 ← research findings written during academic scan
+│   ├── task_queue.json           ← live task queue state
+│   └── wiring.json               ← saved bus wiring state
+├── tests/                        ← pytest suite (~813 tests)
+├── eval/                         ← evaluation scripts and benchmarks
+├── PAPER.md                      ← architecture paper draft
+├── CONSTITUTION.md               ← (inside brain/) ethical constraints and hard rules
+└── start.sh                      ← launch script
+```
+
 - **Task**: Review my own codebase for optimization opportunities and new feature ideas.
   This is the main project. Treat it as ongoing — there is always more to find.
 - **Approach**:
   1. Read through the core runtime files (`brain/run.py`, `brain/session_turn.py`,
      `brain/session_setup.py`, `brain/streaming_mic.py`) looking for inefficiencies,
      redundancy, or logic that could be tightened.
-  2. Review the neuromod and DMN systems for correctness and potential improvements.
+  2. Review the neuromod and DMN systems (`brain/dmn.py`, `brain/clusters/hypothalamus.py`)
+     for correctness and potential improvements.
   3. Look at the UI server (`brain/ui/server.py`) for robustness and performance issues.
   4. Examine the second_brain schema files for gaps or inconsistencies.
+     Schema files live at: `/Users/russ/Documents/super intelligence app/second_brain/schema/`
+     Files: `self.md`, `user.md`, `user_russ.md`, `open_questions.md`, `tool_log.md`.
+     Use `list_files` on that exact absolute path, then `read_file` each one.
   5. Think about what new capabilities would make me meaningfully better — not just
      tweaks, but features worth building. Surface these as concrete proposals.
 - **What to surface**: Be specific. "Line 42 in run.py does X — it could do Y instead
   and save Z" is useful. "The code could be cleaner" is not. Same for feature ideas —
   describe the feature, why it would help, and roughly how it would work.
-- **Status**: Not started. Begin with `brain/run.py`.
+- **Status**: In progress. `brain/run.py` not yet read. Use the folder map above to navigate — never guess paths.
 
 ### Academic research scan (PRIMARY — runs alongside self-code review)
 - **Tool**: Scite MCP connector (search via `mcp__ef0c7fd6-7544-4172-9128-9c4f8a9cee98__search`)

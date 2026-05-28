@@ -218,3 +218,7 @@ writing: writing-arc-design | writing-argument | writing-audience-calibration | 
 - Mood signature: DA=0.31 GABA=0.04 ACh=0.35 dominant=scattered
 - Mood signature: DA=0.30 GABA=0.02 ACh=0.26 dominant=scattered
 - Mood signature: DA=0.30 GABA=0.02 ACh=0.30 dominant=scattered
+- Mood signature: DA=0.30 GABA=0.03 ACh=0.51 dominant=alert-curious
+- Mood signature: DA=0.35 GABA=0.03 ACh=0.48 dominant=alert-curious
+- Mood signature: DA=0.34 GABA=0.02 ACh=0.51 dominant=alert-curious
+- Mood signature: DA=0.33 GABA=0.02 ACh=0.51 dominant=alert-curious

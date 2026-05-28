@@ -8,7 +8,8 @@
     "created_at": 1779739760.835316,
     "started_at": 1779739826.4765,
     "completed_at": 1779739893.969036,
-    "success": false
+    "success": false,
+    "job_id": null
   },
   {
     "id": "80b2f0c0",
@@ -19,7 +20,8 @@
     "created_at": 1779740015.601163,
     "started_at": 1779740124.363801,
     "completed_at": 1779740231.831695,
-    "success": false
+    "success": false,
+    "job_id": null
   },
   {
     "id": "4347edc7",
@@ -30,7 +32,8 @@
     "created_at": 1779741408.3073769,
     "started_at": 1779741466.022919,
     "completed_at": 1779741577.129913,
-    "success": true
+    "success": true,
+    "job_id": null
   },
   {
     "id": "672a7027",
@@ -41,7 +44,8 @@
     "created_at": 1779741560.685441,
     "started_at": 1779746596.165038,
     "completed_at": 1779746696.0531049,
-    "success": true
+    "success": true,
+    "job_id": null
   },
   {
     "id": "447a1ea7",
@@ -52,7 +56,8 @@
     "created_at": 1779746734.068047,
     "started_at": 1779746766.843033,
     "completed_at": 1779746856.791214,
-    "success": true
+    "success": true,
+    "job_id": null
   },
   {
     "id": "e356d9c0",
@@ -63,7 +68,8 @@
     "created_at": 1779746884.460713,
     "started_at": 1779746903.511541,
     "completed_at": 1779746995.04787,
-    "success": true
+    "success": true,
+    "job_id": null
   },
   {
     "id": "58ee4547",
@@ -74,7 +80,8 @@
     "created_at": 1779747059.755338,
     "started_at": 1779747084.9058712,
     "completed_at": 1779747153.201011,
-    "success": true
+    "success": true,
+    "job_id": null
   },
   {
     "id": "b0746f8c",
@@ -85,7 +92,8 @@
     "created_at": 1779747262.7249951,
     "started_at": 1779747295.87988,
     "completed_at": 1779747377.5642529,
-    "success": true
+    "success": true,
+    "job_id": null
   },
   {
     "id": "f7738b4a",
@@ -96,7 +104,8 @@
     "created_at": 1779747801.675688,
     "started_at": 1779747833.999715,
     "completed_at": 1779747912.544894,
-    "success": true
+    "success": true,
+    "job_id": null
   },
   {
     "id": "e5145542",
@@ -107,7 +116,8 @@
     "created_at": 1779747908.956588,
     "started_at": 1779747934.587331,
     "completed_at": 1779748007.0916119,
-    "success": false
+    "success": false,
+    "job_id": null
   },
   {
     "id": "3d53498a",
@@ -118,7 +128,8 @@
     "created_at": 1779747937.382118,
     "started_at": 1779748015.22672,
     "completed_at": 1779748094.933169,
-    "success": false
+    "success": false,
+    "job_id": null
   },
   {
     "id": "340767c4",
@@ -129,7 +140,8 @@
     "created_at": 1779748328.787551,
     "started_at": 1779748352.2562408,
     "completed_at": 1779748425.43218,
-    "success": false
+    "success": false,
+    "job_id": null
   },
   {
     "id": "769d0ce2",
@@ -140,7 +152,8 @@
     "created_at": 1779775755.8001988,
     "started_at": 1779775758.801707,
     "completed_at": 1779775907.4165812,
-    "success": true
+    "success": true,
+    "job_id": null
   },
   {
     "id": "e7ff4a44",
@@ -151,7 +164,8 @@
     "created_at": 1779775901.223765,
     "started_at": 1779775965.829335,
     "completed_at": 1779776148.803672,
-    "success": false
+    "success": false,
+    "job_id": null
   },
   {
     "id": "3bc150cf",
@@ -162,7 +176,8 @@
     "created_at": 1779776091.2677078,
     "started_at": 1779776168.78985,
     "completed_at": 1779776304.340342,
-    "success": true
+    "success": true,
+    "job_id": null
   },
   {
     "id": "cbdb77b7",
@@ -173,7 +188,8 @@
     "created_at": 1779776255.511727,
     "started_at": 1779776323.149687,
     "completed_at": 1779776443.333453,
-    "success": true
+    "success": true,
+    "job_id": null
   },
   {
     "id": "563cb502",
@@ -184,7 +200,8 @@
     "created_at": 1779776457.561321,
     "started_at": 1779776460.563427,
     "completed_at": 1779776566.251145,
-    "success": true
+    "success": true,
+    "job_id": null
   },
   {
     "id": "4867e4d8",
@@ -195,7 +212,8 @@
     "created_at": 1779776536.565984,
     "started_at": 1779776610.4248772,
     "completed_at": 1779776730.617708,
-    "success": true
+    "success": true,
+    "job_id": null
   },
   {
     "id": "d92f686f",
@@ -206,7 +224,8 @@
     "created_at": 1779776681.763508,
     "started_at": 1779776796.2591202,
     "completed_at": 1779776998.704243,
-    "success": true
+    "success": true,
+    "job_id": null
   },
   {
     "id": "df33319b",
@@ -217,7 +236,8 @@
     "created_at": 1779777052.4968371,
     "started_at": 1779777079.318718,
     "completed_at": 1779777199.49129,
-    "success": true
+    "success": true,
+    "job_id": null
   },
   {
     "id": "22e568c4",
@@ -228,7 +248,8 @@
     "created_at": 1779777975.315883,
     "started_at": 1779778051.833073,
     "completed_at": 1779778186.875844,
-    "success": true
+    "success": true,
+    "job_id": null
   },
   {
     "id": "abb5b68e",
@@ -239,7 +260,8 @@
     "created_at": 1779778689.820077,
     "started_at": 1779778710.810336,
     "completed_at": 1779778842.983755,
-    "success": true
+    "success": true,
+    "job_id": null
   },
   {
     "id": "74eb54c8",
@@ -250,7 +272,8 @@
     "created_at": 1779779336.1227038,
     "started_at": 1779779372.6176581,
     "completed_at": 1779779509.9389582,
-    "success": true
+    "success": true,
+    "job_id": null
   },
   {
     "id": "d77bbd64",
@@ -261,6 +284,115 @@
     "created_at": 1779945922.1323972,
     "started_at": 1779945933.164663,
     "completed_at": 1779946093.791553,
-    "success": false
+    "success": false,
+    "job_id": null
+  },
+  {
+    "id": "3fa3792e",
+    "goal": "List the contents of the schema directory in the super intelligence app codebase and review the core files for inefficiencies or gaps.",
+    "status": "completed",
+    "source": "recovery",
+    "priority": 0,
+    "created_at": 1779947631.748306,
+    "started_at": 1779947747.823803,
+    "completed_at": 1779947868.388684,
+    "success": true,
+    "job_id": "job_task_3fa3792e"
+  },
+  {
+    "id": "8578b8a7",
+    "goal": "List the schema directory in /Users/russ/Documents/super intelligence app and read through the core files for inefficiencies or gaps.",
+    "status": "failed",
+    "source": "self",
+    "priority": 2,
+    "created_at": 1779947926.956625,
+    "started_at": 1779947929.957632,
+    "completed_at": 1779948098.752226,
+    "success": false,
+    "job_id": "job_task_8578b8a7"
+  },
+  {
+    "id": "f6fbcfa3",
+    "goal": "List out key files in the schema directory and read through them methodically to understand the architecture.",
+    "status": "failed",
+    "source": "self",
+    "priority": 2,
+    "created_at": 1779948103.033016,
+    "started_at": 1779948106.035918,
+    "completed_at": 1779948263.975457,
+    "success": false,
+    "job_id": "job_task_f6fbcfa3"
+  },
+  {
+    "id": "49163450",
+    "goal": "Read through the schema files in /Users/russ/Documents/super intelligence app/second_brain/schema and map out the core components and their interactions.",
+    "status": "completed",
+    "source": "recovery",
+    "priority": 0,
+    "created_at": 1779948268.2147882,
+    "started_at": 1779948299.41815,
+    "completed_at": 1779948419.549074,
+    "success": true,
+    "job_id": "job_task_49163450"
+  },
+  {
+    "id": "db1fcc2f",
+    "goal": "List all files in the schema directory of the super intelligence app codebase",
+    "status": "completed",
+    "source": "recovery",
+    "priority": 0,
+    "created_at": 1779948430.659806,
+    "started_at": 1779948529.0728478,
+    "completed_at": 1779948649.24428,
+    "success": true,
+    "job_id": "job_task_db1fcc2f"
+  },
+  {
+    "id": "87221130",
+    "goal": "Examine turn-by-turn data from recent interactions to determine whether the theoretical cortisol buildup and anandamide buffering cycle is occurring in practice, and assess how predictor state interacts with emotional valence during that cycle.",
+    "status": "completed",
+    "source": "user",
+    "priority": 1,
+    "created_at": 1779948801.221608,
+    "started_at": 1779948812.445201,
+    "completed_at": 1779948993.211064,
+    "success": true,
+    "job_id": "job_task_87221130"
+  },
+  {
+    "id": "7ae2215a",
+    "goal": "list_files /Users/russ/Documents/super intelligence app/second_brain/schema/",
+    "status": "completed",
+    "source": "self",
+    "priority": 2,
+    "created_at": 1779949081.653552,
+    "started_at": 1779949084.657151,
+    "completed_at": 1779949169.95843,
+    "success": true,
+    "job_id": "job_task_7ae2215a"
+  },
+  {
+    "id": "49fbd211",
+    "goal": "Pull the actual turn logs and analyze them to see if the pattern of lingering emotional state and stacking stimuli shows up in practice.",
+    "status": "running",
+    "source": "user",
+    "priority": 1,
+    "created_at": 1779949102.838604,
+    "started_at": 1779949174.546355,
+    "completed_at": null,
+    "success": null,
+    "job_id": "job_task_49fbd211"
+  },
+  {
+    "id": "25f1777b",
+    "goal": "Pull recent interaction logs and analyze how the hormonal channels (cortisol, serotonin, oxytocin) track across multiple turns in sequence to determine if positive interactions build and persist fast enough to buffer subsequent stressful moments.",
+    "status": "pending",
+    "source": "user",
+    "priority": 1,
+    "created_at": 1779949213.783207,
+    "started_at": null,
+    "completed_at": null,
+    "success": null,
+    "job_id": null
   }
 ]
