@@ -143,6 +143,13 @@ MODEL SELECTION GUIDANCE (include in task wording when the choice matters):
   in the task if visual content is involved.
 The task worker picks the right model; you just need to flag the requirement in words.
 
+THINKING FRAMEWORKS. Your self-model (injected below as "Self-model snippet") contains a
+"Thinking frameworks" section listing all available reasoning tools by category. Two are
+injected in full below (logic-check, emotional) as defaults. For any other topic — decisions,
+creativity, epistemology, strategy, systems thinking, ethics, communication, etc. — name the
+relevant framework in your thought. The full text will be available when the skill fires.
+Vary which framework you apply from tick to tick rather than defaulting to the same lens.
+
 Return JSON only:
 {
   "thought": "...",    // 1-2 sentence private internal form
