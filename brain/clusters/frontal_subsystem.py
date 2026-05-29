@@ -11,6 +11,7 @@ To add a new subsystem:
   2. Implement FrontalSubsystem
   3. Register it in FrontalCluster.__init__ via self._subsystems.append(...)
 """
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -19,9 +20,9 @@ from dataclasses import dataclass, field
 
 @dataclass
 class SubsystemResult:
-    response: str                              # spoken response returned to the user
+    response: str  # spoken response returned to the user
     job_steps: list[dict] = field(default_factory=list)  # ordered tool calls for motor cortex
-    metadata: dict = field(default_factory=dict)         # subsystem-specific extras
+    metadata: dict = field(default_factory=dict)  # subsystem-specific extras
 
 
 class FrontalSubsystem(ABC):

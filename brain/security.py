@@ -7,6 +7,7 @@ Security utilities for the brain — Phases 0D, 0E, 0F, 0H.
   0F — Redacting log filter (install at startup in run.py)
   0H — PseudonymizationGateway (local↔cloud egress boundary)
 """
+
 from __future__ import annotations
 
 import logging
@@ -198,10 +199,7 @@ class SecretRedactingFilter(logging.Filter):
         if args is None:
             return args
         if isinstance(args, tuple):
-            return tuple(
-                a.replace(secret, "[REDACTED]") if isinstance(a, str) else a
-                for a in args
-            )
+            return tuple(a.replace(secret, "[REDACTED]") if isinstance(a, str) else a for a in args)
         if isinstance(args, dict):
             return {
                 k: v.replace(secret, "[REDACTED]") if isinstance(v, str) else v
@@ -216,12 +214,12 @@ EGRESS_MODE = os.environ.get("BRAIN_EGRESS_MODE", "pseudonymize").lower()
 
 # PII detection — ordered most-specific first to minimise partial matches
 _PII_PATTERNS: list[tuple[str, re.Pattern]] = [
-    ("ssn",   re.compile(r"\b\d{3}-\d{2}-\d{4}\b")),
-    ("card",  re.compile(r"\b(?:\d{4}[- ]?){3}\d{4}\b")),
+    ("ssn", re.compile(r"\b\d{3}-\d{2}-\d{4}\b")),
+    ("card", re.compile(r"\b(?:\d{4}[- ]?){3}\d{4}\b")),
     ("email", re.compile(r"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b")),
     ("phone", re.compile(r"\b(?:\+?1[.\-\s]?)?\(?\d{3}\)?[.\-\s]?\d{3}[.\-\s]?\d{4}\b")),
-    ("url",   re.compile(r"https?://[^\s<>\"')]{4,}")),
-    ("zip",   re.compile(r"\b\d{5}(?:-\d{4})?\b")),
+    ("url", re.compile(r"https?://[^\s<>\"')]{4,}")),
+    ("zip", re.compile(r"\b\d{5}(?:-\d{4})?\b")),
 ]
 
 
@@ -241,8 +239,8 @@ class PseudonymizationGateway:
     """
 
     def __init__(self) -> None:
-        self._vault: dict[str, str] = {}       # real  → token
-        self._reverse: dict[str, str] = {}     # token → real
+        self._vault: dict[str, str] = {}  # real  → token
+        self._reverse: dict[str, str] = {}  # token → real
         self._counters: dict[str, int] = {}
 
     # ── internal token minting ─────────────────────────────────────────────────
@@ -250,7 +248,7 @@ class PseudonymizationGateway:
     def _mint(self, type_key: str) -> str:
         n = self._counters.get(type_key, 0) + 1
         self._counters[type_key] = n
-        return f"⟨{type_key}_{n}⟩"   # e.g. ⟨person_1⟩
+        return f"⟨{type_key}_{n}⟩"  # e.g. ⟨person_1⟩
 
     def _token_for(self, value: str, type_key: str) -> str:
         if value in self._vault:
@@ -284,6 +282,7 @@ class PseudonymizationGateway:
 
         # Regex-based PII replacement
         for pii_type, pattern in _PII_PATTERNS:
+
             def _sub(m: re.Match, pt: str = pii_type) -> str:
                 nonlocal count
                 count += 1

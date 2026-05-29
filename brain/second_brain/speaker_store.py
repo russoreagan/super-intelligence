@@ -9,6 +9,7 @@ Each file: <speaker_id>.json with fields:
 
 Cosine similarity identifies speakers across sessions.
 """
+
 from __future__ import annotations
 
 import json
@@ -31,7 +32,7 @@ class SpeakerStore:
     def __init__(self, profiles_dir: Path | str | None = None) -> None:
         self._dir = Path(profiles_dir or _DEFAULT_PROFILES_DIR)
         self._dir.mkdir(parents=True, exist_ok=True)
-        self._profiles: dict[str, dict] = {}   # id → raw dict (with "embedding" as ndarray)
+        self._profiles: dict[str, dict] = {}  # id → raw dict (with "embedding" as ndarray)
         self._load_all()
 
     def _load_all(self) -> None:
@@ -118,8 +119,12 @@ class SpeakerStore:
             return
         data = self._profiles[speaker_id]
         bl = data.get("prosody_baseline") or {
-            "jitter": 0.0, "shimmer": 0.0, "energy_mean": 0.0,
-            "f0_std": 0.0, "f0_mean_hz": 0.0, "count": 0,
+            "jitter": 0.0,
+            "shimmer": 0.0,
+            "energy_mean": 0.0,
+            "f0_std": 0.0,
+            "f0_mean_hz": 0.0,
+            "count": 0,
         }
         n = bl["count"]
         for key in ("jitter", "shimmer", "energy_mean", "f0_std", "f0_mean_hz"):

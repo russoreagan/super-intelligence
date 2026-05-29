@@ -7,6 +7,7 @@ Brainstem — autonomic functions. Pure code, no LLMs.
 - Idle / sleep trigger
 - Background loop registry (supervised restart, crash tracking)
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -26,17 +27,17 @@ QUIESCENCE_WINDOW = 0.8  # seconds of no new drafts before articulating
 
 # Restart backoff: delay = min(MAX_BACKOFF, BASE ** crash_count) seconds
 _BACKOFF_BASE = 2.0
-_BACKOFF_MAX  = 30.0
+_BACKOFF_MAX = 30.0
 
 
 @dataclass
 class LoopState:
     name: str
     restart_on_crash: bool
-    started_at: float      = field(default_factory=time.time)
-    crash_count: int       = 0
+    started_at: float = field(default_factory=time.time)
+    crash_count: int = 0
     last_crash_at: float | None = None
-    last_error: str        = ""
+    last_error: str = ""
     task: asyncio.Task | None = field(default=None, repr=False)
 
     @property
@@ -110,9 +111,7 @@ class Brainstem:
         """
         state = LoopState(name=name, restart_on_crash=restart_on_crash)
         self._loops[name] = state
-        state.task = asyncio.create_task(
-            self._supervise(state, coro_fn), name=f"bs:{name}"
-        )
+        state.task = asyncio.create_task(self._supervise(state, coro_fn), name=f"bs:{name}")
         logger.debug("[Brainstem] Loop registered: %s", name)
         return state
 
@@ -137,14 +136,15 @@ class Brainstem:
                 state.last_error = str(exc)
                 logger.error(
                     "[Brainstem] Loop %r crashed (crash #%d): %s",
-                    state.name, state.crash_count, exc, exc_info=True,
+                    state.name,
+                    state.crash_count,
+                    exc,
+                    exc_info=True,
                 )
                 if not state.restart_on_crash:
                     return
                 delay = min(_BACKOFF_MAX, _BACKOFF_BASE ** min(state.crash_count, 5))
-                logger.info(
-                    "[Brainstem] Restarting loop %r in %.1fs", state.name, delay
-                )
+                logger.info("[Brainstem] Restarting loop %r in %.1fs", state.name, delay)
                 await asyncio.sleep(delay)
 
     def loop_status(self) -> dict[str, dict]:
@@ -180,7 +180,10 @@ class Brainstem:
         self._session_cost_calls += t.llm_calls
         logger.debug(
             "Turn %s ended: %d LLM calls, %.2fs, response length %d",
-            t.turn_id, t.llm_calls, t.elapsed(), len(t.response)
+            t.turn_id,
+            t.llm_calls,
+            t.elapsed(),
+            len(t.response),
         )
         return t
 
@@ -189,7 +192,8 @@ class Brainstem:
         if self._current_turn and self._current_turn.budget_exhausted():
             logger.warning(
                 "Turn %s: per-turn LLM call limit reached (max=%d) — set BRAIN_MAX_LLM_CALLS_PER_TURN to allow more",
-                self._current_turn.turn_id, MAX_LLM_CALLS,
+                self._current_turn.turn_id,
+                MAX_LLM_CALLS,
             )
             return False
         return True
@@ -222,7 +226,9 @@ class Brainstem:
         while not turn.committed:
             await asyncio.sleep(0.1)
             if turn.timed_out():
-                logger.warning("Turn %s: hit max wait time — using best draft ready so far", turn.turn_id)
+                logger.warning(
+                    "Turn %s: hit max wait time — using best draft ready so far", turn.turn_id
+                )
                 break
             if turn.quiescent() and turn.endorsed:
                 logger.debug("Turn %s: quiescent with endorsed drafts", turn.turn_id)
@@ -260,12 +266,12 @@ class Brainstem:
         status = self.loop_status()
         crashed = {n: s for n, s in status.items() if s["status"] == "crashed"}
         if crashed:
-            logger.warning("[Brainstem] Crashed loops: %s",
-                           {n: s["last_error"] for n, s in crashed.items()})
+            logger.warning(
+                "[Brainstem] Crashed loops: %s", {n: s["last_error"] for n, s in crashed.items()}
+            )
         else:
             logger.debug("[Brainstem] All %d loop(s) healthy", len(status))
         if emitter:
             await emitter.emit("brainstem", 0.2, "heartbeat", "hb")
             await asyncio.sleep(0.8)
             await emitter.emit("brainstem", 0.0, "done", "hb")
-

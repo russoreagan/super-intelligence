@@ -1,6 +1,7 @@
 """
 Shared test fixtures and doubles for the brain test suite.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -19,6 +20,7 @@ def pytest_configure(config):
 
 
 # Tell pytest-asyncio to treat every async test as asyncio automatically.
+
 
 def pytest_collection_modifyitems(items):
     pass  # placeholder; asyncio_mode handled via ini option below
@@ -93,6 +95,7 @@ class FakeRouter:
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def fake_router() -> FakeRouter:
     """Return a fresh FakeRouter for each test."""
@@ -111,8 +114,7 @@ def _isolate_dmn_novelty_state(tmp_path, monkeypatch):
         import brain.dmn as _dmn
     except Exception:
         return
-    monkeypatch.setattr(_dmn, "NOVELTY_STATE_PATH",
-                        tmp_path / "dmn_novelty.json", raising=False)
+    monkeypatch.setattr(_dmn, "NOVELTY_STATE_PATH", tmp_path / "dmn_novelty.json", raising=False)
 
 
 @pytest.fixture
@@ -125,6 +127,7 @@ def fake_schema_store(tmp_path, monkeypatch):
     """
     try:
         import brain.second_brain.store as store_mod  # type: ignore
+
         schema_dir = tmp_path / "schema"
         schema_dir.mkdir(parents=True, exist_ok=True)
         monkeypatch.setattr(store_mod, "SCHEMA_DIR", schema_dir)

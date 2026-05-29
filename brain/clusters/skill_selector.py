@@ -17,6 +17,7 @@ Two modes:
     the next move (skill + which prior thought + mode: transform/branch/
     reframe/stop). Used by the DMN planner and monologue.
 """
+
 from __future__ import annotations
 
 import json
@@ -37,11 +38,11 @@ INDEX_PATH = Path(__file__).resolve().parents[1] / "skills" / "_humanity_index.j
 TIERS_PATH = Path(__file__).resolve().parents[1] / "skills" / "_humanity_tiers.json"
 
 # Thresholds — tunable per session-log analysis.
-TIER_3_MIN_SCORE = 0.55          # Tier-3 must clear this cosine to enter the pool
-CLEAR_WINNER_MARGIN = 0.15       # Top-1 vs top-2; if exceeded, skip LLM
-GUIDED_QUESTION_AMBIGUITY = 0.08 # Margin within active router for "ambiguous" question
-TOPIC_DRIFT_THRESHOLD = 0.4      # Cosine below this clears active context
-STICKY_TURN_BUDGET = 8            # Turns before soft-decay of active context
+TIER_3_MIN_SCORE = 0.55  # Tier-3 must clear this cosine to enter the pool
+CLEAR_WINNER_MARGIN = 0.15  # Top-1 vs top-2; if exceeded, skip LLM
+GUIDED_QUESTION_AMBIGUITY = 0.08  # Margin within active router for "ambiguous" question
+TOPIC_DRIFT_THRESHOLD = 0.4  # Cosine below this clears active context
+STICKY_TURN_BUDGET = 8  # Turns before soft-decay of active context
 
 CONVERSATIONAL_TOP_K = 5
 AUTONOMOUS_TOP_K = 10
@@ -50,6 +51,7 @@ AUTONOMOUS_TOP_K = 10
 # ---------------------------------------------------------------------------
 # Datatypes
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class ActiveSkillContext:
@@ -73,6 +75,7 @@ class SkillBundle:
 # ---------------------------------------------------------------------------
 # Index
 # ---------------------------------------------------------------------------
+
 
 class _Index:
     """In-memory wrapper around _humanity_index.json with cosine search."""
@@ -99,7 +102,7 @@ class _Index:
     def cosine(a: list[float], b: list[float]) -> float:
         if not a or not b or len(a) != len(b):
             return 0.0
-        num = sum(x * y for x, y in zip(a, b))
+        num = sum(x * y for x, y in zip(a, b, strict=False))
         na = math.sqrt(sum(x * x for x in a))
         nb = math.sqrt(sum(x * x for x in b))
         if na == 0 or nb == 0:
@@ -107,7 +110,8 @@ class _Index:
         return num / (na * nb)
 
     def rank(
-        self, query_vec: list[float],
+        self,
+        query_vec: list[float],
         *,
         include_tier_1: bool = False,
         tier_3_floor: float = TIER_3_MIN_SCORE,
@@ -217,17 +221,24 @@ class SkillSelector:
         return self._index.get(name)
 
     def gate_conversational(
-        self, *, response_type: str = "", user_emotion: str = "",
+        self,
+        *,
+        response_type: str = "",
+        user_emotion: str = "",
     ) -> bool:
         """Return True if this turn qualifies for skill injection."""
         if response_type in {"informative", "task", "defuse", "introspective", "recall"}:
             return True
-        if user_emotion in {
-            "distressed", "sad", "frustrated", "anxious", "angry",
-            "overwhelmed", "upset", "hostile",
-        }:
-            return True
-        return False
+        return user_emotion in {
+            "distressed",
+            "sad",
+            "frustrated",
+            "anxious",
+            "angry",
+            "overwhelmed",
+            "upset",
+            "hostile",
+        }
 
     async def select_conversational(
         self,
@@ -248,7 +259,8 @@ class SkillSelector:
         key_points = executive_out.get("key_points", [])
 
         if not self.gate_conversational(
-            response_type=response_type, user_emotion=user_emotion,
+            response_type=response_type,
+            user_emotion=user_emotion,
         ):
             log_extras["gated"] = True
             return None, active, log_extras
@@ -290,7 +302,11 @@ class SkillSelector:
         top = ranked[:CONVERSATIONAL_TOP_K]
         if not top:
             log_extras["no_candidates"] = True
-            return SkillBundle(tier1=self.tier1_names, chosen=[], pick_source="no_candidates"), None, log_extras
+            return (
+                SkillBundle(tier1=self.tier1_names, chosen=[], pick_source="no_candidates"),
+                None,
+                log_extras,
+            )
 
         log_extras["candidates"] = [(s["name"], round(score, 3)) for s, score in top]
 
@@ -300,15 +316,19 @@ class SkillSelector:
         if top1_score - top2_score >= CLEAR_WINNER_MARGIN:
             picked = top[0][0]
             log_extras["pick_path"] = "embed_winner"
-            return self._build_bundle_from_pick(
-                picked, query_vec, active=None, top_results=top,
-            ), None, log_extras
+            return (
+                self._build_bundle_from_pick(
+                    picked,
+                    query_vec,
+                    active=None,
+                    top_results=top,
+                ),
+                None,
+                log_extras,
+            )
 
         # 5. LLM pick
-        prompt_candidates = "\n".join(
-            f"- {s['name']}: {s['description'][:200]}"
-            for s, _ in top
-        )
+        prompt_candidates = "\n".join(f"- {s['name']}: {s['description'][:200]}" for s, _ in top)
         context_block = (
             f"Turn type: {response_type}\n"
             f"Tone: {executive_out.get('tone', '')}\n"
@@ -324,13 +344,24 @@ class SkillSelector:
         pick = self._parse_json_field(raw, "skill")
         if not pick or pick not in self._index._by_name:
             log_extras["pick_path"] = "llm_null"
-            return SkillBundle(tier1=self.tier1_names, chosen=[], pick_source="llm_null"), None, log_extras
+            return (
+                SkillBundle(tier1=self.tier1_names, chosen=[], pick_source="llm_null"),
+                None,
+                log_extras,
+            )
 
         picked = self._index.get(pick)
         log_extras["pick_path"] = "llm_pick"
-        return self._build_bundle_from_pick(
-            picked, query_vec, active=None, top_results=top,
-        ), None, log_extras
+        return (
+            self._build_bundle_from_pick(
+                picked,
+                query_vec,
+                active=None,
+                top_results=top,
+            ),
+            None,
+            log_extras,
+        )
 
     def _build_bundle_from_pick(
         self,
@@ -349,9 +380,12 @@ class SkillSelector:
             leaves = self._index.leaves_in_category(picked["category"])
             if leaves:
                 leaf_scores = sorted(
-                    ((leaf["name"], self._index.cosine(query_vec, leaf["embedding"]))
-                     for leaf in leaves),
-                    key=lambda p: p[1], reverse=True,
+                    (
+                        (leaf["name"], self._index.cosine(query_vec, leaf["embedding"]))
+                        for leaf in leaves
+                    ),
+                    key=lambda p: p[1],
+                    reverse=True,
                 )
                 if len(leaf_scores) >= 2:
                     top1, top2 = leaf_scores[0][1], leaf_scores[1][1]
@@ -401,8 +435,11 @@ class SkillSelector:
         if query_vec is None:
             return active
         ranked = self._index.rank(
-            query_vec, include_tier_1=True, tier_3_floor=0.0,
-            only_category=active.category, only_leaves=True,
+            query_vec,
+            include_tier_1=True,
+            tier_3_floor=0.0,
+            only_category=active.category,
+            only_leaves=True,
         )
         if ranked:
             active.current_leaf = ranked[0][0]["name"]
@@ -411,14 +448,18 @@ class SkillSelector:
         return active
 
     async def background_explore(
-        self, active: ActiveSkillContext, recent_turn_text: str,
+        self,
+        active: ActiveSkillContext,
+        recent_turn_text: str,
     ) -> list[tuple[str, float]]:
         """Free Ollama-side rescan over ALL leaves to surface alternatives to the active leaf.
         Result written to active.background_candidates and consulted on next turn."""
         query_vec = await self._router.embed(recent_turn_text)
         if query_vec is None:
             return []
-        ranked = self._index.rank(query_vec, include_tier_1=False, tier_3_floor=0.0, only_leaves=True)
+        ranked = self._index.rank(
+            query_vec, include_tier_1=False, tier_3_floor=0.0, only_leaves=True
+        )
         active.background_candidates = [(s["name"], round(score, 3)) for s, score in ranked[:5]]
         return active.background_candidates
 
@@ -441,9 +482,7 @@ class SkillSelector:
         if not top:
             return SkillBundle(tier1=self.tier1_names, chosen=[], pick_source="no_candidates")
 
-        prompt_candidates = "\n".join(
-            f"- {s['name']}: {s['description'][:200]}" for s, _ in top
-        )
+        prompt_candidates = "\n".join(f"- {s['name']}: {s['description'][:200]}" for s, _ in top)
         msg_text = f"Thought:\n{prompt[:500]}\n\nCandidates:\n{prompt_candidates}"
         self._autonomous_cell.reset_turn(turn_id)
         raw = await self._autonomous_cell.call([{"role": "user", "content": msg_text}])
@@ -453,9 +492,7 @@ class SkillSelector:
         if not chosen:
             # Fall back to embedding winner
             chosen = [top[0][0]["name"]]
-        return SkillBundle(
-            tier1=self.tier1_names, chosen=chosen, pick_source="autonomous"
-        )
+        return SkillBundle(tier1=self.tier1_names, chosen=chosen, pick_source="autonomous")
 
     async def ruminate(
         self,
@@ -476,12 +513,17 @@ class SkillSelector:
         frameworks + reframe (brooding that tries to settle a worry); "engaged"
         leans on generative frameworks + branch/transform (curious deepening).
         """
-        chain: list[dict] = [{
-            "thought": seed_thought, "skill": None, "parent": None, "mode": "seed",
-        }]
+        chain: list[dict] = [
+            {
+                "thought": seed_thought,
+                "skill": None,
+                "parent": None,
+                "mode": "seed",
+            }
+        ]
         started = time.time()
 
-        for step in range(max_iters):
+        for _step in range(max_iters):
             if time.time() - started > time_budget_s:
                 break
             decision = await self._meta_decide(chain, turn_id=turn_id, flavor=flavor)
@@ -496,13 +538,17 @@ class SkillSelector:
                 break
 
             base_thought = chain[base_idx]["thought"]
-            new_thought = await self._apply_skill(skill, base_thought, decision.get("mode", "transform"), turn_id)
-            chain.append({
-                "thought": new_thought,
-                "skill": skill,
-                "parent": base_idx,
-                "mode": decision.get("mode", "transform"),
-            })
+            new_thought = await self._apply_skill(
+                skill, base_thought, decision.get("mode", "transform"), turn_id
+            )
+            chain.append(
+                {
+                    "thought": new_thought,
+                    "skill": skill,
+                    "parent": base_idx,
+                    "mode": decision.get("mode", "transform"),
+                }
+            )
 
         final = await self._synthesize_chain(chain, turn_id=turn_id)
         return final, chain
@@ -511,14 +557,20 @@ class SkillSelector:
 
     # Flavor → preferred skill pools / modes for rumination.
     _ANXIOUS_SKILLS = (
-        "decision-premortem-analysis", "constraint-scope-reduction",
-        "logic-consistency-check", "emotional-resistance-diagnosis",
-        "decision-reversibility-analysis", "logic-check",
+        "decision-premortem-analysis",
+        "constraint-scope-reduction",
+        "logic-consistency-check",
+        "emotional-resistance-diagnosis",
+        "decision-reversibility-analysis",
+        "logic-check",
     )
     _ENGAGED_SKILLS = (
-        "creativity-lateral-thinking", "analogy-domain-transfer",
-        "systems-feedback-mapping", "creativity-concept-fan",
-        "analogy-perspective-shifting", "systems-leverage-analysis",
+        "creativity-lateral-thinking",
+        "analogy-domain-transfer",
+        "systems-feedback-mapping",
+        "creativity-concept-fan",
+        "analogy-perspective-shifting",
+        "systems-leverage-analysis",
     )
 
     def _fallback_skill(self, flavor: str) -> str | None:
@@ -531,8 +583,9 @@ class SkillSelector:
         tier2 = [s for s in self._index.skills if s["tier"] == 2 and not s["is_router"]]
         return random.choice(tier2)["name"] if tier2 else None
 
-    async def _meta_decide(self, chain: list[dict], *, turn_id: str = "",
-                           flavor: str = "engaged") -> dict:
+    async def _meta_decide(
+        self, chain: list[dict], *, turn_id: str = "", flavor: str = "engaged"
+    ) -> dict:
         """Ask the meta-cell for the next move."""
         recent = chain[-5:]
         chain_summary = "\n".join(
@@ -542,14 +595,15 @@ class SkillSelector:
         # Compact skill catalog (names + 1-line descriptions). Cap at all-non-routers.
         skill_catalog = "\n".join(
             f"- {s['name']}: {s['description'][:120]}"
-            for s in self._index.skills if not s["is_router"]
+            for s in self._index.skills
+            if not s["is_router"]
         )[:8000]  # rough token cap
         flavor_hint = (
             "This reflection is ANXIOUS (worried/brooding): lean toward 'reframe' and "
             "resolution/closure frameworks (decision, constraint, logic-consistency, "
             "emotional-resistance) that help SETTLE the worry."
-            if flavor == "anxious" else
-            "This reflection is ENGAGED (curious/interested): lean toward 'branch' and "
+            if flavor == "anxious"
+            else "This reflection is ENGAGED (curious/interested): lean toward 'branch' and "
             "'transform' with generative frameworks (creativity, analogy, systems) that "
             "DEEPEN and expand the idea."
         )
@@ -564,7 +618,12 @@ class SkillSelector:
         try:
             return json.loads(self._strip_to_json(raw))
         except Exception:
-            return {"mode": "stop", "skill": None, "base_idx": len(chain) - 1, "why": "parse-failed"}
+            return {
+                "mode": "stop",
+                "skill": None,
+                "base_idx": len(chain) - 1,
+                "why": "parse-failed",
+            }
 
     async def _apply_skill(self, skill_name: str, thought: str, mode: str, turn_id: str) -> str:
         """Apply a skill to a thought, returning a refined/branched/reframed take."""
@@ -639,7 +698,7 @@ class SkillSelector:
         e = text.rfind("}")
         if s == -1 or e == -1 or e <= s:
             return "{}"
-        return text[s:e + 1]
+        return text[s : e + 1]
 
     @classmethod
     def _parse_json_field(cls, raw: str, field_name: str) -> Any:

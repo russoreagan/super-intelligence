@@ -8,15 +8,15 @@ Coverage:
   - invoke() when handler raises wraps exception as [error]
   - available is False when empty, True after registration
 """
+
 from __future__ import annotations
 
-import pytest
 from brain.clusters.lobe_bridge import LobeBridge
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 async def _echo_handler(*, topic: str = "", **_kwargs) -> str:
     return f"echoed: {topic}"
@@ -29,6 +29,7 @@ async def _fail_handler(**_kwargs) -> str:
 # ---------------------------------------------------------------------------
 # Registration & introspection
 # ---------------------------------------------------------------------------
+
 
 class TestLobeBridgeRegistration:
     def test_empty_bridge_has_no_capabilities(self):
@@ -66,6 +67,7 @@ class TestLobeBridgeRegistration:
 # Invocation
 # ---------------------------------------------------------------------------
 
+
 class TestLobeBridgeInvoke:
     async def test_invoke_dispatches_to_handler(self):
         bridge = LobeBridge()
@@ -82,8 +84,9 @@ class TestLobeBridgeInvoke:
 
         bridge = LobeBridge()
         bridge.register("analyze_image", capturing_handler)
-        await bridge.invoke("analyze_image", path="/tmp/img.png",
-                            question="what is in this image", turn_id="t1")
+        await bridge.invoke(
+            "analyze_image", path="/tmp/img.png", question="what is in this image", turn_id="t1"
+        )
         assert received["path"] == "/tmp/img.png"
         assert received["question"] == "what is in this image"
         assert received["turn_id"] == "t1"

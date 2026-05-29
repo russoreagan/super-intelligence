@@ -2,6 +2,7 @@
 Thalamus — intelligent router and attention gater. Advisory only; clusters can ignore.
 ~8 switches, usually no LLM. Manages global workspace spotlight.
 """
+
 from __future__ import annotations
 
 import logging
@@ -47,7 +48,9 @@ class ThalamusCluster:
         }
 
         if features.get("requires_memory") or features.get("epistemic_action"):
-            priorities["hippocampus"] += settings.get("hippocampus_priority_base") + salience * settings.get("hippocampus_salience_weight")
+            priorities["hippocampus"] += settings.get(
+                "hippocampus_priority_base"
+            ) + salience * settings.get("hippocampus_salience_weight")
         if features.get("requires_vision"):
             priorities["occipital"] += settings.get("occipital_priority_base")
         if intent in ("hostile", "task"):

@@ -5,6 +5,7 @@ We stub out the Deepgram socket and asyncio bus so tests run without any
 network or hardware access.  Each test drives the async-for loop in
 _read_loop by feeding hand-crafted message objects.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -14,6 +15,7 @@ from typing import Any
 import pytest
 
 # ── helpers ──────────────────────────────────────────────────────────────────
+
 
 def _word(word: str, start: float, end: float, speaker: int = 0) -> SimpleNamespace:
     return SimpleNamespace(
@@ -92,6 +94,7 @@ def _make_session(messages: list[Any]) -> tuple:
 
 # ── tests ─────────────────────────────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_read_loop_returns_immediately_when_socket_is_none():
     from brain.streaming_mic import StreamingMicSession
@@ -132,13 +135,13 @@ async def test_ptt_hold_suppresses_mid_phrase_utterance_end():
     msgs = [
         _speech_started(0.0),
         _results([_word("the", 0.0, 0.2), _word("hold", 0.2, 0.5)]),
-        _utterance_end(0.5),                                   # mid-pause — must be suppressed
+        _utterance_end(0.5),  # mid-pause — must be suppressed
         _results([_word("to", 1.0, 1.2), _word("talk", 1.2, 1.6)]),
-        _utterance_end(1.6),                                   # still held — suppressed
+        _utterance_end(1.6),  # still held — suppressed
     ]
     session, bus = _make_session(msgs)
-    session._ptt_hold_active = True       # simulate Space held
-    session._ptt_release_grace_s = 0.0    # no real wait in test
+    session._ptt_hold_active = True  # simulate Space held
+    session._ptt_release_grace_s = 0.0  # no real wait in test
 
     await session._read_loop()
     # Nothing dispatched while held, despite two UtteranceEnd events
@@ -150,7 +153,7 @@ async def test_ptt_hold_suppresses_mid_phrase_utterance_end():
     utt = session.utterances.get_nowait()
     assert utt["transcript"] == "the hold to talk"
     assert utt["from_ptt_flush"] is True
-    assert session.is_muted is True       # flush re-mutes
+    assert session.is_muted is True  # flush re-mutes
 
 
 @pytest.mark.asyncio
@@ -158,8 +161,8 @@ async def test_interim_results_are_ignored():
     """Only is_final=True Results should accumulate words."""
     msgs = [
         _speech_started(0.5),
-        _results([_word("hel", 0.5, 0.7)], is_final=False),   # interim — discard
-        _results([_word("hello", 0.5, 0.9)], is_final=True),   # final — keep
+        _results([_word("hel", 0.5, 0.7)], is_final=False),  # interim — discard
+        _results([_word("hello", 0.5, 0.9)], is_final=True),  # final — keep
         _utterance_end(0.9),
     ]
     session, bus = _make_session(msgs)
@@ -223,9 +226,9 @@ async def test_multiple_results_events_before_utterance_end():
 async def test_speech_started_only_records_first_timestamp():
     """Second SpeechStarted (mid-sentence pause) must not overwrite the start time."""
     msgs = [
-        _speech_started(1.0),   # original burst — should be the utterance start
+        _speech_started(1.0),  # original burst — should be the utterance start
         _results([_word("hmm", 1.0, 1.2)]),
-        _speech_started(2.5),   # second burst after a pause — MUST be ignored
+        _speech_started(2.5),  # second burst after a pause — MUST be ignored
         _results([_word("okay", 2.5, 2.9)]),
         _utterance_end(2.9),
     ]

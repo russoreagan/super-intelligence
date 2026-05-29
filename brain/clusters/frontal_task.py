@@ -7,6 +7,7 @@ Motor then owns the full execution loop, adapting step by step.
 
 Frontal sets the intent. Motor decides how to achieve it. No duplicate planning.
 """
+
 from __future__ import annotations
 
 import logging

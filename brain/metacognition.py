@@ -8,6 +8,7 @@ Watches: cost per turn, drafter win rates, neuromod variance, surprise trends.
 Posts to meta.* topic. Other clusters can subscribe.
 Updates self.md "Current mood signature" section.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -23,7 +24,6 @@ from brain.bus import Bus
 from brain.cell import IntegratorCell
 from brain.model_router import ModelRouter
 from brain.neuron import SwitchNeuron
-from brain.security import sanitize_fact
 from brain.settings import settings
 from brain.utils import safe_json_parse
 
@@ -37,6 +37,7 @@ META_ENABLED = os.environ.get("BRAIN_METACOGNITION", "false").lower() == "true"
 # building the DMN's relationship context) can read the same fields the
 # instance methods read. Pure regex-on-schema, no LLM, no side effects.
 
+
 def read_affection_score(schema, speaker_name: str = "") -> int:
     """Read the current numeric affection score from a speaker's schema.
     Returns 0 on any failure or missing field (the neutral default)."""
@@ -44,6 +45,7 @@ def read_affection_score(schema, speaker_name: str = "") -> int:
         return 0
     try:
         import re
+
         if speaker_name:
             content = schema.read(schema.speaker_filename(speaker_name))
         else:
@@ -62,6 +64,7 @@ def read_familiarity(schema, speaker_name: str = "") -> str:
         return "new"
     try:
         import re
+
         if speaker_name:
             content = schema.read(schema.speaker_filename(speaker_name))
         else:
@@ -70,6 +73,8 @@ def read_familiarity(schema, speaker_name: str = "") -> str:
         return m.group(1).lower() if m else "new"
     except Exception:
         return "new"
+
+
 META_INTERVAL = float(os.environ.get("BRAIN_META_INTERVAL", "30"))  # seconds
 
 SELF_REFLECTION_SYSTEM = """You are the metacognitive layer of an AI brain — the part that
@@ -117,38 +122,51 @@ class MetacognitionCell:
         # about own behaviour) lowers threshold → reflects more frequently.
         # GABA (defensive state) raises threshold → don't spiral when stressed.
         self._self_monitor_trigger = SwitchNeuron(
-            "self_monitor_trigger", "metacognition", polarity="excitatory",
+            "self_monitor_trigger",
+            "metacognition",
+            polarity="excitatory",
             threshold=0.5,
             modulators={"ACh": -0.10, "GABA": +0.10},
         )
 
-    def record_turn(self, turn_id: str, llm_calls: int, elapsed_s: float,
-                    emotion: str, neuromod: dict, surprise_score: float,
-                    drafter_won: str | None = None,
-                    features: dict | None = None,
-                    draft_scores: list[dict] | None = None) -> None:
-        self._turn_stats.append({
-            "turn_id": turn_id,
-            "llm_calls": llm_calls,
-            "elapsed_s": elapsed_s,
-            "emotion": emotion,
-            "surprise_score": surprise_score,
-            "drafter_won": drafter_won,
-            "ts": time.time(),
-        })
+    def record_turn(
+        self,
+        turn_id: str,
+        llm_calls: int,
+        elapsed_s: float,
+        emotion: str,
+        neuromod: dict,
+        surprise_score: float,
+        drafter_won: str | None = None,
+        features: dict | None = None,
+        draft_scores: list[dict] | None = None,
+    ) -> None:
+        self._turn_stats.append(
+            {
+                "turn_id": turn_id,
+                "llm_calls": llm_calls,
+                "elapsed_s": elapsed_s,
+                "emotion": emotion,
+                "surprise_score": surprise_score,
+                "drafter_won": drafter_won,
+                "ts": time.time(),
+            }
+        )
         self._neuromod_history.append({"ts": time.time(), **neuromod})
 
         # Decrement all cooldowns by one turn
-        self._override_cooldowns = {
-            e: c - 1 for e, c in self._override_cooldowns.items() if c > 1
-        }
+        self._override_cooldowns = {e: c - 1 for e, c in self._override_cooldowns.items() if c > 1}
 
         # Appraise this turn for context-driven emotion override.
         # Fire-and-forget — must not block the run loop.
         with contextlib.suppress(RuntimeError):
-            asyncio.create_task(self._appraise_and_emit(
-                features or {}, neuromod, draft_scores or [],
-            ))
+            asyncio.create_task(
+                self._appraise_and_emit(
+                    features or {},
+                    neuromod,
+                    draft_scores or [],
+                )
+            )
 
     # ── Appraisal: detect context-driven emotions ─────────────────────────
     # These are emotions that pure neuromods can't produce — they require
@@ -171,7 +189,9 @@ class MetacognitionCell:
     def familiarity(self, speaker_name: str = "") -> str:
         return self._familiarity(speaker_name)
 
-    def _appraise(self, features: dict, neuromod: dict, draft_scores: list[dict]) -> tuple[str | None, str]:
+    def _appraise(
+        self, features: dict, neuromod: dict, draft_scores: list[dict]
+    ) -> tuple[str | None, str]:
         """Return (emotion_override, reason). Order matters — first match wins.
         Reasons go into the bus payload for observability and debugging."""
         user_tone = (features.get("user_tone_toward_ai") or "neutral").lower()
@@ -189,17 +209,27 @@ class MetacognitionCell:
 
         # 2. Apologetic — user is correcting or expressing displeasure AND
         # the previous turn shows we said something off.
-        if (user_emotion in ("frustrated", "disappointed", "annoyed", "angry")
-                and user_tone in ("dismissive", "impatient", "insulting")
-                and len(self._turn_stats) >= 2):
+        if (
+            user_emotion in ("frustrated", "disappointed", "annoyed", "angry")
+            and user_tone in ("dismissive", "impatient", "insulting")
+            and len(self._turn_stats) >= 2
+        ):
             prev = self._turn_stats[-2]
             if prev.get("surprise_score", 0) > 0.5:
                 return "apologetic", "user pushed back after a surprising prior turn"
 
         # 3. Sympathetic — user is struggling (regardless of whether they're
         # warm toward us). The entity should feel for them.
-        if user_emotion in ("sad", "anxious", "distressed", "struggling",
-                            "hurt", "lonely", "scared", "overwhelmed"):
+        if user_emotion in (
+            "sad",
+            "anxious",
+            "distressed",
+            "struggling",
+            "hurt",
+            "lonely",
+            "scared",
+            "overwhelmed",
+        ):
             return "sympathetic", f"user emotion: {user_emotion}"
 
         # 4. Proud — well-executed turn (high score) with positive reception.
@@ -207,9 +237,11 @@ class MetacognitionCell:
         # gratitude. Specific patterns beat general ones.
         if draft_scores:
             selected = next((d for d in draft_scores if d.get("selected")), None)
-            if selected and selected.get("overall", 0) > 0.85 \
-                    and user_tone in ("warm", "praising"):
-                return "proud", f"high-quality response (overall={selected['overall']:.2f}) received warmly"
+            if selected and selected.get("overall", 0) > 0.85 and user_tone in ("warm", "praising"):
+                return (
+                    "proud",
+                    f"high-quality response (overall={selected['overall']:.2f}) received warmly",
+                )
 
         # 5. Grateful — user is praising without an obvious accomplishment to
         # be proud of. The entity's appraisal of being valued.
@@ -225,27 +257,36 @@ class MetacognitionCell:
 
         # 7. Disappointed — low DA + high salience (we wanted to engage but
         # the situation deflated).
-        if float(neuromod.get("DA", 0.5)) < settings.get("da_threshold_disappointed") \
-                and float(features.get("salience", 0.3)) > 0.6:
+        if (
+            float(neuromod.get("DA", 0.5)) < settings.get("da_threshold_disappointed")
+            and float(features.get("salience", 0.3)) > 0.6
+        ):
             return "disappointed", "low DA on a high-salience turn"
 
         # 8. Flirty — only with high affection AND warm playful context AND
         # not a serious/task topic. Read the room.
-        if affection >= 40 and user_tone in ("warm", "joking", "praising") \
-                and user_emotion in ("happy", "playful", "amused", "warm", "affectionate") \
-                and intent not in ("hostile", "task", "informative", "epistemic"):
+        if (
+            affection >= 40
+            and user_tone in ("warm", "joking", "praising")
+            and user_emotion in ("happy", "playful", "amused", "warm", "affectionate")
+            and intent not in ("hostile", "task", "informative", "epistemic")
+        ):
             return "flirty", f"high affection ({affection}) + warm playful context"
 
         return None, ""
 
-    async def _appraise_and_emit(self, features: dict, neuromod: dict,
-                                  draft_scores: list[dict]) -> None:
+    async def _appraise_and_emit(
+        self, features: dict, neuromod: dict, draft_scores: list[dict]
+    ) -> None:
         candidate, reason = self._appraise(features, neuromod, draft_scores)
         if candidate is None:
             return
         if candidate in self._override_cooldowns:
-            logger.debug("[Self-monitor] %s on cooldown (%d turns left) — skipped",
-                         candidate, self._override_cooldowns[candidate])
+            logger.debug(
+                "[Self-monitor] %s on cooldown (%d turns left) — skipped",
+                candidate,
+                self._override_cooldowns[candidate],
+            )
             return
         self._override_cooldowns[candidate] = self._cooldown_turns
         try:
@@ -270,7 +311,9 @@ class MetacognitionCell:
         emotion_counts: dict[str, int] = {}
         for e in emotions:
             emotion_counts[e] = emotion_counts.get(e, 0) + 1
-        dominant_emotion = max(emotion_counts, key=emotion_counts.get) if emotion_counts else "neutral"
+        dominant_emotion = (
+            max(emotion_counts, key=emotion_counts.get) if emotion_counts else "neutral"
+        )
 
         drafter_wins: dict[str, int] = {}
         for t in self._turn_stats:
@@ -310,7 +353,9 @@ class MetacognitionCell:
 
     async def start(self) -> None:
         if not META_ENABLED:
-            logger.debug("[Self-monitor] Disabled — set BRAIN_METACOGNITION=true to enable periodic self-reflection")
+            logger.debug(
+                "[Self-monitor] Disabled — set BRAIN_METACOGNITION=true to enable periodic self-reflection"
+            )
             return
         logger.info("[Self-monitor] Active — will reflect on behaviour every %.0fs", META_INTERVAL)
         asyncio.create_task(self._loop())
@@ -333,8 +378,12 @@ class MetacognitionCell:
         # the meta.stats event below (raw stats are free).
         chem = self._chem_snapshot()
         if not self._self_monitor_trigger.should_fire(0.6, chem, turn_id):
-            logger.debug("[Self-monitor] Reflection LLM call suppressed by chemistry gate "
-                          "(ACh=%.2f GABA=%.2f)", chem.get("ACh", 0), chem.get("GABA", 0))
+            logger.debug(
+                "[Self-monitor] Reflection LLM call suppressed by chemistry gate "
+                "(ACh=%.2f GABA=%.2f)",
+                chem.get("ACh", 0),
+                chem.get("GABA", 0),
+            )
             await self._bus.publish_dict("meta.stats", stats, source="metacognition")
             return
         self._self_monitor_trigger.fire(0.6, "reflection_engaged", snapshot=chem)

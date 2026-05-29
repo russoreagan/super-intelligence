@@ -1,4 +1,5 @@
 """Shared utilities for the brain package."""
+
 from __future__ import annotations
 
 import json
@@ -32,7 +33,7 @@ def safe_json_parse(raw: str) -> dict | None:
     try:
         return json.loads(raw)
     except Exception:
-        m = re.search(r'\{.*\}', raw, re.DOTALL)
+        m = re.search(r"\{.*\}", raw, re.DOTALL)
         if m:
             try:
                 return json.loads(m.group(0))

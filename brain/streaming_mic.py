@@ -14,6 +14,7 @@ The PCM corresponding to each utterance is sliced from a rolling buffer using
 Deepgram's absolute timestamps, so the audio sent to the cortex exactly matches
 the words Deepgram returned.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -27,7 +28,7 @@ logger = logging.getLogger(__name__)
 SAMPLE_RATE = 16000
 CHANNELS = 1
 BYTES_PER_SAMPLE = 2  # int16
-BLOCKSIZE = 1600       # 100 ms per callback at 16 kHz
+BLOCKSIZE = 1600  # 100 ms per callback at 16 kHz
 
 
 class _RollingPCM:
@@ -37,7 +38,7 @@ class _RollingPCM:
         self._sr = sample_rate
         self._max_bytes = int(sample_rate * BYTES_PER_SAMPLE * max_seconds)
         self._buf = bytearray()
-        self._discarded = 0   # bytes dropped off the front
+        self._discarded = 0  # bytes dropped off the front
 
     def append(self, chunk: bytes) -> None:
         self._buf.extend(chunk)
@@ -76,23 +77,25 @@ class StreamingMicSession:
         self._pending_words: list[dict] = []
         self._utterance_start_s: float | None = None
 
-        self._stream = None             # sounddevice InputStream
-        self._socket = None             # Deepgram AsyncV1SocketClient
-        self._socket_cm = None          # async context manager
+        self._stream = None  # sounddevice InputStream
+        self._socket = None  # Deepgram AsyncV1SocketClient
+        self._socket_cm = None  # async context manager
         self._pumper_task: asyncio.Task | None = None
         self._reader_task: asyncio.Task | None = None
         self._keepalive_task: asyncio.Task | None = None
         self._device_monitor_task: asyncio.Task | None = None
         self._main_loop: asyncio.AbstractEventLoop | None = None
         self._running = False
-        self._muted = True              # start muted; user must explicitly unmute
+        self._muted = True  # start muted; user must explicitly unmute
         # PTT hold: True while Space is held. When True, UtteranceEnd events from
         # Deepgram are suppressed — words keep accumulating across mid-sentence
         # pauses so the WHOLE held phrase is dispatched as one utterance on release.
         self._ptt_hold_active = False
         # Push-to-talk release grace: on key-up we keep the feed live briefly so
         # Deepgram can deliver trailing final Results before we finalize + mute.
-        self._ptt_release_grace_s = float(os.environ.get("BRAIN_PTT_RELEASE_GRACE_MS", "350")) / 1000.0
+        self._ptt_release_grace_s = (
+            float(os.environ.get("BRAIN_PTT_RELEASE_GRACE_MS", "350")) / 1000.0
+        )
         self._current_device_id = None  # track active device for change detection
         self._device_listener_active = False  # CoreAudio listener status
 
@@ -139,6 +142,7 @@ class StreamingMicSession:
                                        e.g. 'claude:5,chloé:3,ableton:5'.
         """
         from deepgram import AsyncDeepgramClient
+
         client = AsyncDeepgramClient(api_key=os.environ["DEEPGRAM_API_KEY"])
 
         # Trade-off: high endpointing = catches whole sentences (no fragments)
@@ -168,7 +172,7 @@ class StreamingMicSession:
             "smart_format": True,
             "diarize": True,
             "language": language,
-            "numerals": True,        # "five" → "5"
+            "numerals": True,  # "five" → "5"
         }
         # nova-3 uses `keyterm` (whole phrases, no boost number);
         # older models use `keywords` (word:boost pairs). Try keyterm first
@@ -182,7 +186,10 @@ class StreamingMicSession:
         logger.info(
             "[StreamingMic] Deepgram session open (nova-3, lang=%s, endpointing=%dms, "
             "utterance_end=%dms, %d keyword boosts)",
-            language, endpointing_ms, utterance_end_ms, len(keywords),
+            language,
+            endpointing_ms,
+            utterance_end_ms,
+            len(keywords),
         )
 
     async def _close_deepgram(self) -> None:
@@ -214,8 +221,9 @@ class StreamingMicSession:
             except asyncio.CancelledError:
                 return
             except Exception as e:
-                logger.error("[StreamingMic] read loop crashed — reconnecting in %.1fs: %s",
-                             backoff, e)
+                logger.error(
+                    "[StreamingMic] read loop crashed — reconnecting in %.1fs: %s", backoff, e
+                )
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, 8.0)
 
@@ -230,12 +238,13 @@ class StreamingMicSession:
                     self._utterance_start_s = None
                     self._pending_words = []
                     backoff = 0.5  # reset after a successful open
-                    break          # connected — fall through to _read_loop
+                    break  # connected — fall through to _read_loop
                 except asyncio.CancelledError:
                     return
                 except Exception as e:
-                    logger.error("[StreamingMic] Deepgram reconnect failed (%.1fs backoff): %s",
-                                 backoff, e)
+                    logger.error(
+                        "[StreamingMic] Deepgram reconnect failed (%.1fs backoff): %s", backoff, e
+                    )
                     await asyncio.sleep(backoff)
                     backoff = min(backoff * 2, 8.0)
 
@@ -258,7 +267,9 @@ class StreamingMicSession:
                         await self._socket.send_keep_alive()
                         logger.debug("[StreamingMic] KeepAlive sent")
                     except Exception as e:
-                        logger.warning("[StreamingMic] KeepAlive failed — connection may drop: %s", e)
+                        logger.warning(
+                            "[StreamingMic] KeepAlive failed — connection may drop: %s", e
+                        )
         except asyncio.CancelledError:
             pass
 
@@ -271,10 +282,20 @@ class StreamingMicSession:
             except Exception:
                 pass
             self._stream = None
-        for t in (self._pumper_task, self._reader_task, self._keepalive_task, self._device_monitor_task):
+        for t in (
+            self._pumper_task,
+            self._reader_task,
+            self._keepalive_task,
+            self._device_monitor_task,
+        ):
             if t is not None:
                 t.cancel()
-        for t in (self._pumper_task, self._reader_task, self._keepalive_task, self._device_monitor_task):
+        for t in (
+            self._pumper_task,
+            self._reader_task,
+            self._keepalive_task,
+            self._device_monitor_task,
+        ):
             if t is not None:
                 with contextlib.suppress(asyncio.CancelledError, Exception):
                     await t
@@ -422,8 +443,9 @@ class StreamingMicSession:
         """Await the next completed utterance. Returns dict with transcript/audio/words."""
         return await self.utterances.get()
 
-    async def _finalize_pending(self, last_end: float | None = None,
-                                from_flush: bool = False) -> None:
+    async def _finalize_pending(
+        self, last_end: float | None = None, from_flush: bool = False
+    ) -> None:
         """Build an utterance from the accumulated words + sliced PCM, publish it
         to the auditory bus, and hand it to next_utterance(). Resets utterance
         state. No-op when there's nothing pending. Shared by Deepgram's
@@ -434,10 +456,15 @@ class StreamingMicSession:
         if not self._pending_words and self._utterance_start_s is None:
             return
         if last_end is None:
-            last_end = self._pending_words[-1]["end"] if self._pending_words else (
-                self._utterance_start_s or 0.0)
-        start = self._utterance_start_s if self._utterance_start_s is not None else (
-            self._pending_words[0]["start"] if self._pending_words else last_end
+            last_end = (
+                self._pending_words[-1]["end"]
+                if self._pending_words
+                else (self._utterance_start_s or 0.0)
+            )
+        start = (
+            self._utterance_start_s
+            if self._utterance_start_s is not None
+            else (self._pending_words[0]["start"] if self._pending_words else last_end)
         )
         transcript = " ".join(w["word"] for w in self._pending_words if w["word"]).strip()
         audio_bytes = self._pcm_buffer.slice(start, last_end)
@@ -450,8 +477,13 @@ class StreamingMicSession:
         if not transcript and not audio_bytes:
             return
 
-        logger.info("[StreamingMic] utterance: %r (%.2fs, %d words, %d bytes)",
-                    transcript[:60], last_end - start, len(diarized), len(audio_bytes))
+        logger.info(
+            "[StreamingMic] utterance: %r (%.2fs, %d words, %d bytes)",
+            transcript[:60],
+            last_end - start,
+            len(diarized),
+            len(audio_bytes),
+        )
 
         # Feed the auditory cortex pipeline (prosody + speaker ID + dynamics)
         if audio_bytes:
@@ -480,16 +512,18 @@ class StreamingMicSession:
             )
 
         # Hand the utterance to whoever's awaiting next_utterance()
-        await self.utterances.put({
-            "transcript": transcript,
-            "audio_bytes": audio_bytes,
-            "sample_rate": SAMPLE_RATE,
-            "diarized_words": diarized,
-            "duration_s": float(last_end - start),
-            # PTT flush: mic will be muted by the time the voice bridge reads this,
-            # so bypass the is_muted discard check.
-            "from_ptt_flush": from_flush,
-        })
+        await self.utterances.put(
+            {
+                "transcript": transcript,
+                "audio_bytes": audio_bytes,
+                "sample_rate": SAMPLE_RATE,
+                "diarized_words": diarized,
+                "duration_s": float(last_end - start),
+                # PTT flush: mic will be muted by the time the voice bridge reads this,
+                # so bypass the is_muted discard check.
+                "from_ptt_flush": from_flush,
+            }
+        )
 
     async def flush(self) -> None:
         """Push-to-talk release: keep the feed live for a short grace so trailing
@@ -525,6 +559,7 @@ class StreamingMicSession:
             # If the chunk is below the gate, replace with silence so the WS
             # stays warm but background noise doesn't reach Deepgram.
             import struct
+
             n = len(chunk) // 2
             if n > 0:
                 samples = struct.unpack(f"<{n}h", chunk)
@@ -563,11 +598,14 @@ class StreamingMicSession:
                         consecutive_failures += 1
                         # Throttle: warn at most once per 5s during a reconnect storm
                         import time as _time
+
                         now = _time.time()
                         if now - last_warn_ts > 5.0:
-                            logger.warning("[StreamingMic] send_media failed "
-                                           "(%d consecutive): %s",
-                                           consecutive_failures, e)
+                            logger.warning(
+                                "[StreamingMic] send_media failed (%d consecutive): %s",
+                                consecutive_failures,
+                                e,
+                            )
                             last_warn_ts = now
                         await asyncio.sleep(0.05)
         except asyncio.CancelledError:
@@ -614,13 +652,18 @@ class StreamingMicSession:
                             alt = alts[0]
                             words = getattr(alt, "words", []) or []
                             for w in words:
-                                self._pending_words.append({
-                                    "word": getattr(w, "word", "") or getattr(w, "punctuated_word", ""),
-                                    "start": float(getattr(w, "start", 0.0)),
-                                    "end": float(getattr(w, "end", 0.0)),
-                                    "speaker": int(getattr(w, "speaker", 0) or 0),
-                                    "speaker_confidence": float(getattr(w, "speaker_confidence", 1.0) or 1.0),
-                                })
+                                self._pending_words.append(
+                                    {
+                                        "word": getattr(w, "word", "")
+                                        or getattr(w, "punctuated_word", ""),
+                                        "start": float(getattr(w, "start", 0.0)),
+                                        "end": float(getattr(w, "end", 0.0)),
+                                        "speaker": int(getattr(w, "speaker", 0) or 0),
+                                        "speaker_confidence": float(
+                                            getattr(w, "speaker_confidence", 1.0) or 1.0
+                                        ),
+                                    }
+                                )
                     except Exception as e:
                         logger.debug("[StreamingMic] results parse error: %s", e)
 
@@ -643,8 +686,7 @@ class StreamingMicSession:
                     await self._finalize_pending(last_end)
 
                 elif mtype == "Metadata":
-                    logger.debug("[StreamingMic] Metadata: %s",
-                                 getattr(message, "request_id", "?"))
+                    logger.debug("[StreamingMic] Metadata: %s", getattr(message, "request_id", "?"))
         except asyncio.CancelledError:
             raise  # propagate so _reader_supervisor handles shutdown cleanly
         except Exception as e:

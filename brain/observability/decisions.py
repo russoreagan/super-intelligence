@@ -16,6 +16,7 @@ Then call from anywhere:
                   predicted={"response_type": "chitchat"},
                   emotional_context={"emotion": "content"})
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -36,8 +37,7 @@ class DecisionLog:
         self._eval_logger: EvalLogger | None = None
         self._emitter = None
 
-    def configure(self, eval_logger: EvalLogger | None = None,
-                  emitter: Any = None) -> None:
+    def configure(self, eval_logger: EvalLogger | None = None, emitter: Any = None) -> None:
         self._eval_logger = eval_logger
         # If emitter not supplied, fall back to the module-level singleton
         if emitter is not None:
@@ -45,12 +45,12 @@ class DecisionLog:
         else:
             try:
                 from brain.ui.emitter import emitter as _emitter
+
                 self._emitter = _emitter
             except Exception:
                 self._emitter = None
 
-    def log(self, decision: str, *, turn_id: str = "", cluster: str = "",
-            **fields: Any) -> dict:
+    def log(self, decision: str, *, turn_id: str = "", cluster: str = "", **fields: Any) -> dict:
         """Record a decision. Returns the record for inline use."""
         record = {
             "type": "decision",

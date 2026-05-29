@@ -21,13 +21,19 @@ states without a clean feeling-wheel home. They go under COGNITIVE — a
 pragmatic 7th core that keeps the taxonomy total over the labels we actually
 emit, rather than forcing a bad fit under happy/sad/anger.
 """
+
 from __future__ import annotations
 
 # ── Core tier (8 buckets including pragmatic extras) ─────────────────────
 CORES: tuple[str, ...] = (
-    "happy", "sad", "anger", "fear", "disgust", "surprise",
-    "cognitive",   # thought/arousal states with no clean feeling home
-    "neutral",     # baseline — explicit so logs can count it
+    "happy",
+    "sad",
+    "anger",
+    "fear",
+    "disgust",
+    "surprise",
+    "cognitive",  # thought/arousal states with no clean feeling home
+    "neutral",  # baseline — explicit so logs can count it
 )
 
 
@@ -38,85 +44,77 @@ CORES: tuple[str, ...] = (
 #   - frontal._EXPRESSIVE_BY_EMOTION extras    (delivery-only labels)
 EMOTION_PARENTS: dict[str, tuple[str, str | None]] = {
     # ── happy family ──────────────────────────────────────────────────────
-    "joy":           ("happy", "joyful"),
-    "excitement":    ("happy", "excited"),
-    "enthusiasm":    ("happy", "energetic"),
-    "content":       ("happy", "peaceful"),
-    "warm":          ("happy", "loving"),
-    "confident":     ("happy", "powerful"),
-    "proud":         ("happy", "proud"),
-    "amused":        ("happy", "playful"),
-    "playful":       ("happy", "playful"),
-    "joking":        ("happy", "playful"),
-    "flirty":        ("happy", "playful"),
-    "tender":        ("happy", "loving"),
-    "affectionate":  ("happy", "loving"),
-    "grateful":      ("happy", "accepted"),
-    "relieved":      ("happy", "peaceful"),
-    "sympathetic":   ("happy", "loving"),     # other-oriented warmth
-
+    "joy": ("happy", "joyful"),
+    "excitement": ("happy", "excited"),
+    "enthusiasm": ("happy", "energetic"),
+    "content": ("happy", "peaceful"),
+    "warm": ("happy", "loving"),
+    "confident": ("happy", "powerful"),
+    "proud": ("happy", "proud"),
+    "amused": ("happy", "playful"),
+    "playful": ("happy", "playful"),
+    "joking": ("happy", "playful"),
+    "flirty": ("happy", "playful"),
+    "tender": ("happy", "loving"),
+    "affectionate": ("happy", "loving"),
+    "grateful": ("happy", "accepted"),
+    "relieved": ("happy", "peaceful"),
+    "sympathetic": ("happy", "loving"),  # other-oriented warmth
     # ── sad family ────────────────────────────────────────────────────────
-    "sad":           ("sad", "lonely"),
-    "somber":        ("sad", "depressed"),
-    "melancholy":    ("sad", "lonely"),
-    "wistful":       ("sad", "lonely"),
-    "disappointed":  ("sad", "disappointed"),
-    "embarrassed":   ("sad", "humiliated"),
-    "shy":           ("sad", "humiliated"),
-    "apologetic":    ("sad", "remorseful"),
-
+    "sad": ("sad", "lonely"),
+    "somber": ("sad", "depressed"),
+    "melancholy": ("sad", "lonely"),
+    "wistful": ("sad", "lonely"),
+    "disappointed": ("sad", "disappointed"),
+    "embarrassed": ("sad", "humiliated"),
+    "shy": ("sad", "humiliated"),
+    "apologetic": ("sad", "remorseful"),
     # ── anger family ──────────────────────────────────────────────────────
-    "angry":         ("anger", "mad"),
-    "frustrated":    ("anger", "frustrated"),
-    "irritated":     ("anger", "frustrated"),
-    "agitated":      ("anger", "mad"),
-    "defensive":     ("anger", "threatened"),
-    "sarcastic":     ("anger", "critical"),
-
+    "angry": ("anger", "mad"),
+    "frustrated": ("anger", "frustrated"),
+    "irritated": ("anger", "frustrated"),
+    "agitated": ("anger", "mad"),
+    "defensive": ("anger", "threatened"),
+    "sarcastic": ("anger", "critical"),
     # ── fear family ───────────────────────────────────────────────────────
-    "anxious":       ("fear", "anxious"),
-    "inhibited":     ("fear", "submissive"),
-
+    "anxious": ("fear", "anxious"),
+    "inhibited": ("fear", "submissive"),
     # ── surprise family ───────────────────────────────────────────────────
-    "surprised":     ("surprise", "startled"),
-    "confused":      ("surprise", "confused"),
-    "curious":       ("surprise", "amazed"),
-
+    "surprised": ("surprise", "startled"),
+    "confused": ("surprise", "confused"),
+    "curious": ("surprise", "amazed"),
     # ── cognitive / arousal (no feeling-wheel home) ───────────────────────
-    "thoughtful":         ("cognitive", "deliberative"),
-    "curious-uncertain":  ("cognitive", "deliberative"),
-    "engaged":            ("cognitive", "deliberative"),
-    "cautious-agitated":  ("cognitive", "tense"),
-    "cautious-warm":      ("cognitive", "tense"),   # CORT-modulated warmth
-    "stirred":            ("cognitive", "tense"),   # Glu-driven alertness
-    "restless":           ("cognitive", "tense"),
-    "flat":               ("cognitive", "minimal"),
-
+    "thoughtful": ("cognitive", "deliberative"),
+    "curious-uncertain": ("cognitive", "deliberative"),
+    "engaged": ("cognitive", "deliberative"),
+    "cautious-agitated": ("cognitive", "tense"),
+    "cautious-warm": ("cognitive", "tense"),  # CORT-modulated warmth
+    "stirred": ("cognitive", "tense"),  # Glu-driven alertness
+    "restless": ("cognitive", "tense"),
+    "flat": ("cognitive", "minimal"),
     # ── fear family (additions) ───────────────────────────────────────────
-    "stressed":           ("fear", "tense"),        # GABA+Glu stress state
-    "overwhelmed":        ("fear", "overwhelmed"),  # system taxed, submissive
-    "uneasy":             ("fear", "tense"),        # GABA+Glu rising
-    "guarded":            ("fear", "anxious"),      # high CORT + anxious base
-    "vigilant":           ("fear", "anxious"),      # NE-driven sharp attention
-
+    "stressed": ("fear", "tense"),  # GABA+Glu stress state
+    "overwhelmed": ("fear", "overwhelmed"),  # system taxed, submissive
+    "uneasy": ("fear", "tense"),  # GABA+Glu rising
+    "guarded": ("fear", "anxious"),  # high CORT + anxious base
+    "vigilant": ("fear", "anxious"),  # NE-driven sharp attention
     # ── happy family (additions) ──────────────────────────────────────────
-    "serene":             ("happy", "peaceful"),    # DA high, everything settled
-    "lively":             ("happy", "energetic"),   # DA+ACh elevated, warm
-    "eased":              ("happy", "peaceful"),    # stress buffered by AEA
-    "connected":          ("happy", "loving"),      # high OXT + positive base
-
+    "serene": ("happy", "peaceful"),  # DA high, everything settled
+    "lively": ("happy", "energetic"),  # DA+ACh elevated, warm
+    "eased": ("happy", "peaceful"),  # stress buffered by AEA
+    "connected": ("happy", "loving"),  # high OXT + positive base
     # ── sad family (additions) ────────────────────────────────────────────
-    "withdrawn":          ("sad", "lonely"),        # high CORT, low OXT
-    "dysphoric":          ("sad", "depressed"),     # low 5HT baseline
-
+    "withdrawn": ("sad", "lonely"),  # high CORT, low OXT
+    "dysphoric": ("sad", "depressed"),  # low 5HT baseline
     # ── neutral ───────────────────────────────────────────────────────────
-    "neutral":       ("neutral", None),
-    "settled":       ("neutral", None),   # quiet baseline: low GABA, moderate DA
-    "composed":      ("neutral", None),   # balanced with mild inhibitory tone present
+    "neutral": ("neutral", None),
+    "settled": ("neutral", None),  # quiet baseline: low GABA, moderate DA
+    "composed": ("neutral", None),  # balanced with mild inhibitory tone present
 }
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────
+
 
 def parents(emotion: str) -> tuple[str, str | None] | None:
     """Return (core, mid) for an emotion, or None if not tagged."""
@@ -136,14 +134,14 @@ def core_of(emotion: str) -> str:
 # current emotion biases toward staying on topic (positive) or deflecting
 # (negative). Single source of truth — DO NOT duplicate this table.
 CORE_VALENCE: dict[str, float] = {
-    "happy":    +1.0,
-    "sad":      -1.0,
-    "anger":    -1.0,
-    "fear":     -0.5,
-    "disgust":  -0.5,
-    "surprise":  0.0,
+    "happy": +1.0,
+    "sad": -1.0,
+    "anger": -1.0,
+    "fear": -0.5,
+    "disgust": -0.5,
+    "surprise": 0.0,
     "cognitive": +0.3,
-    "neutral":   0.0,
+    "neutral": 0.0,
 }
 
 

@@ -5,6 +5,7 @@ Tests for DMN ↔ neuromodulator bidirectional coupling:
   3. Neuromod deltas applied after a thought fires (_tick integration)
   4. `direction` field published on stream.thought
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -15,13 +16,17 @@ from brain.dmn import _INWARD_DELTA, _OUTWARD_DELTA, DefaultModeNetwork, _classi
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
+
 def _make_dmn(neuromod_snapshot: dict | None = None):
     """Build a DefaultModeNetwork skeleton bypassing __init__."""
     dmn = DefaultModeNetwork.__new__(DefaultModeNetwork)
 
     nm = MagicMock()
     nm.snapshot.return_value = neuromod_snapshot or {
-        "ACh": 0.3, "DA": 0.5, "GABA": 0.05, "Glu": 0.2
+        "ACh": 0.3,
+        "DA": 0.5,
+        "GABA": 0.05,
+        "Glu": 0.2,
     }
     nm.add = MagicMock()
 
@@ -77,6 +82,7 @@ def _make_dmn(neuromod_snapshot: dict | None = None):
 
 # ── _classify_thought ─────────────────────────────────────────────────────────
 
+
 class TestClassifyThought:
     def test_inward_existence(self):
         assert _classify_thought("I keep wondering about my existence.") == "inward"
@@ -97,19 +103,29 @@ class TestClassifyThought:
         assert _classify_thought("I wonder what Russ is planning to work on next.") == "outward"
 
     def test_outward_idea(self):
-        assert _classify_thought("The audio latency problem seems related to buffer sizing.") == "outward"
+        assert (
+            _classify_thought("The audio latency problem seems related to buffer sizing.")
+            == "outward"
+        )
 
     def test_outward_question_about_world(self):
-        assert _classify_thought("Curious whether this pattern shows up in other voice interfaces.") == "outward"
+        assert (
+            _classify_thought("Curious whether this pattern shows up in other voice interfaces.")
+            == "outward"
+        )
 
     def test_outward_conversation(self):
-        assert _classify_thought("That topic about Ableton seemed to energise the conversation.") == "outward"
+        assert (
+            _classify_thought("That topic about Ableton seemed to energise the conversation.")
+            == "outward"
+        )
 
     def test_case_insensitive(self):
         assert _classify_thought("CONSCIOUSNESS is a strange thing to think about.") == "inward"
 
 
 # ── _tick_skip_probability ────────────────────────────────────────────────────
+
 
 class TestTickSkipProbability:
     def test_deep_idle_low_skip(self):
@@ -139,7 +155,7 @@ class TestTickSkipProbability:
         # ACh change should have a larger effect than equivalent Glu change
         dmn_low_ach = _make_dmn({"ACh": 0.2, "DA": 0.5, "GABA": 0.05, "Glu": 0.3})
         dmn_high_ach = _make_dmn({"ACh": 0.6, "DA": 0.5, "GABA": 0.05, "Glu": 0.3})
-        dmn_low_glu  = _make_dmn({"ACh": 0.4, "DA": 0.5, "GABA": 0.05, "Glu": 0.2})
+        dmn_low_glu = _make_dmn({"ACh": 0.4, "DA": 0.5, "GABA": 0.05, "Glu": 0.2})
         dmn_high_glu = _make_dmn({"ACh": 0.4, "DA": 0.5, "GABA": 0.05, "Glu": 0.6})
 
         ach_delta = dmn_high_ach._tick_skip_probability() - dmn_low_ach._tick_skip_probability()
@@ -155,13 +171,14 @@ class TestTickSkipProbability:
     def test_high_gaba_does_not_reduce_suppression(self):
         # Very high GABA (>0.6, inhibited/frozen) should not benefit from the
         # anxious-rumination modifier — it falls outside the 0.2–0.6 window
-        dmn_mod  = _make_dmn({"ACh": 0.4, "DA": 0.5, "GABA": 0.35, "Glu": 0.2})
+        dmn_mod = _make_dmn({"ACh": 0.4, "DA": 0.5, "GABA": 0.35, "Glu": 0.2})
         dmn_high = _make_dmn({"ACh": 0.4, "DA": 0.5, "GABA": 0.70, "Glu": 0.2})
         # high GABA should have equal or higher skip prob than moderate GABA
         assert dmn_high._tick_skip_probability() >= dmn_mod._tick_skip_probability()
 
 
 # ── Neuromod delta applied after thought fires ────────────────────────────────
+
 
 class TestNeuromodDelta:
     def test_inward_thought_raises_gaba(self):
@@ -178,7 +195,7 @@ class TestNeuromodDelta:
             return_value="Curious whether Russ is planning to add more voice tools soon."
         )
         asyncio.run(dmn._tick())
-        dmn._bus.neuromod.add.assert_any_call("DA",  _OUTWARD_DELTA["DA"])
+        dmn._bus.neuromod.add.assert_any_call("DA", _OUTWARD_DELTA["DA"])
         dmn._bus.neuromod.add.assert_any_call("ACh", _OUTWARD_DELTA["ACh"])
 
     def test_suppressed_thought_applies_no_delta(self):
@@ -202,6 +219,7 @@ class TestNeuromodDelta:
 
 
 # ── direction field in published payload ─────────────────────────────────────
+
 
 class TestDirectionPublished:
     def test_inward_thought_publishes_direction_inward(self):

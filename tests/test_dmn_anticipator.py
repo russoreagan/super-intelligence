@@ -4,6 +4,7 @@ question, the DMN's anticipator pre-thinks 2-3 likely user answers and
 sketches a response for each. Surfaced to next turn's drafter as
 'scenarios you pre-thought'.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -13,8 +14,10 @@ from brain.clusters.frontal import FrontalCluster
 
 # ── note_last_response heuristic ─────────────────────────────────────────
 
+
 def _make_dmn():
     from brain.dmn import DefaultModeNetwork
+
     dmn = DefaultModeNetwork.__new__(DefaultModeNetwork)
     dmn._bus = MagicMock()
     dmn._bus.publish_dict = AsyncMock()
@@ -61,6 +64,7 @@ def test_note_last_response_clears_stale_anticipations():
 
 # ── take_anticipations ───────────────────────────────────────────────────
 
+
 def test_take_anticipations_returns_and_clears():
     dmn = _make_dmn()
     dmn.anticipations = [
@@ -79,18 +83,30 @@ def test_take_anticipations_empty():
 
 # ── anticipator LLM tick ─────────────────────────────────────────────────
 
+
 def test_run_anticipator_parses_scenarios():
     import json
+
     dmn = _make_dmn()
     dmn.last_assistant_message = "What kind of plugin do you mean?"
-    dmn._anticipator_cell.call = AsyncMock(return_value=json.dumps({
-        "scenarios": [
-            {"user_answer": "synth", "response_sketch": "Try Wavetable or Operator",
-             "context_needed": []},
-            {"user_answer": "effects", "response_sketch": "Reverb or Echo are good",
-             "context_needed": ["which Ableton version"]},
-        ]
-    }))
+    dmn._anticipator_cell.call = AsyncMock(
+        return_value=json.dumps(
+            {
+                "scenarios": [
+                    {
+                        "user_answer": "synth",
+                        "response_sketch": "Try Wavetable or Operator",
+                        "context_needed": [],
+                    },
+                    {
+                        "user_answer": "effects",
+                        "response_sketch": "Reverb or Echo are good",
+                        "context_needed": ["which Ableton version"],
+                    },
+                ]
+            }
+        )
+    )
     asyncio.run(dmn._run_anticipator(turn_id="t1"))
     assert len(dmn.anticipations) == 2
     assert dmn.anticipations[0]["user_answer"] == "synth"
@@ -100,28 +116,38 @@ def test_run_anticipator_parses_scenarios():
 
 def test_run_anticipator_caps_at_three_scenarios():
     import json
+
     dmn = _make_dmn()
-    dmn._anticipator_cell.call = AsyncMock(return_value=json.dumps({
-        "scenarios": [
-            {"user_answer": f"answer {i}", "response_sketch": f"sketch {i}"}
-            for i in range(7)
-        ]
-    }))
+    dmn._anticipator_cell.call = AsyncMock(
+        return_value=json.dumps(
+            {
+                "scenarios": [
+                    {"user_answer": f"answer {i}", "response_sketch": f"sketch {i}"}
+                    for i in range(7)
+                ]
+            }
+        )
+    )
     asyncio.run(dmn._run_anticipator(turn_id="t1"))
     assert len(dmn.anticipations) == 3
 
 
 def test_run_anticipator_skips_incomplete_scenarios():
     import json
+
     dmn = _make_dmn()
-    dmn._anticipator_cell.call = AsyncMock(return_value=json.dumps({
-        "scenarios": [
-            {"user_answer": "valid", "response_sketch": "sketch"},
-            {"user_answer": "missing sketch"},
-            {"response_sketch": "missing answer"},
-            {},
-        ]
-    }))
+    dmn._anticipator_cell.call = AsyncMock(
+        return_value=json.dumps(
+            {
+                "scenarios": [
+                    {"user_answer": "valid", "response_sketch": "sketch"},
+                    {"user_answer": "missing sketch"},
+                    {"response_sketch": "missing answer"},
+                    {},
+                ]
+            }
+        )
+    )
     asyncio.run(dmn._run_anticipator(turn_id="t1"))
     assert len(dmn.anticipations) == 1
     assert dmn.anticipations[0]["user_answer"] == "valid"
@@ -137,6 +163,7 @@ def test_run_anticipator_survives_bad_json():
 
 # ── Drafter prompt surfaces anticipations ───────────────────────────────
 
+
 def _frontal_skel():
     f = FrontalCluster.__new__(FrontalCluster)
     f._capabilities_summary = ""
@@ -147,14 +174,21 @@ def test_drafter_prompt_includes_anticipations():
     f = _frontal_skel()
     prompt = f._build_drafter_prompt(
         features={"raw_text": "synth"},
-        memory={"anticipations": [
-            {"user_answer": "synth", "response_sketch": "Try Wavetable or Operator"},
-            {"user_answer": "effects", "response_sketch": "Reverb is good"},
-        ]},
+        memory={
+            "anticipations": [
+                {"user_answer": "synth", "response_sketch": "Try Wavetable or Operator"},
+                {"user_answer": "effects", "response_sketch": "Reverb is good"},
+            ]
+        },
         parietal="",
         affect={"emotion": "neutral", "appraisal": ""},
-        instruction={"response_type": "chitchat", "target_length": "brief",
-                     "tone": "warm", "key_points": [], "drafter_count": 1},
+        instruction={
+            "response_type": "chitchat",
+            "target_length": "brief",
+            "tone": "warm",
+            "key_points": [],
+            "drafter_count": 1,
+        },
     )
     assert "Scenarios you pre-thought" in prompt
     assert "Wavetable" in prompt
@@ -168,7 +202,12 @@ def test_drafter_prompt_omits_anticipations_when_none():
         memory={},
         parietal="",
         affect={"emotion": "neutral", "appraisal": ""},
-        instruction={"response_type": "chitchat", "target_length": "brief",
-                     "tone": "warm", "key_points": [], "drafter_count": 1},
+        instruction={
+            "response_type": "chitchat",
+            "target_length": "brief",
+            "tone": "warm",
+            "key_points": [],
+            "drafter_count": 1,
+        },
     )
     assert "pre-thought" not in prompt

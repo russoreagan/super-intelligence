@@ -2,6 +2,7 @@
 Parietal Lobe — persistent session state. 0 LLMs, all state-tracking switches.
 Ring buffer of recent turns, entity tracker, topic tracker.
 """
+
 from __future__ import annotations
 
 import logging
@@ -62,8 +63,7 @@ class ParietalCluster:
     def _strip_role_tags(text: str) -> str:
         """Remove lines that start with 'User:' or 'Brain:' to prevent role spoofing."""
         return "\n".join(
-            line for line in text.splitlines()
-            if not re.match(r"^\s*(User|Brain)\s*:", line)
+            line for line in text.splitlines() if not re.match(r"^\s*(User|Brain)\s*:", line)
         )
 
     def recent_turns_text(self, n: int = 4) -> str:

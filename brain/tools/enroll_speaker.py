@@ -16,6 +16,7 @@ Usage:
 
 Profiles are stored in: brain/second_brain/speaker_profiles/
 """
+
 from __future__ import annotations
 
 import argparse
@@ -130,8 +131,9 @@ def main() -> None:
     group.add_argument("--list", action="store_true", help="List enrolled speakers")
     group.add_argument("--delete", metavar="SPEAKER_ID", help="Delete a speaker profile")
     parser.add_argument("--name", help="Speaker name (required for --record and --file)")
-    parser.add_argument("--duration", type=int, default=5,
-                        help="Recording duration in seconds (default: 5)")
+    parser.add_argument(
+        "--duration", type=int, default=5, help="Recording duration in seconds (default: 5)"
+    )
     args = parser.parse_args()
 
     if args.list:
@@ -145,6 +147,7 @@ def main() -> None:
             enroll_from_mic(args.name, duration=args.duration)
         else:
             from pathlib import Path
+
             if not Path(args.file).exists():
                 print(f"ERROR: File not found: {args.file}")
                 sys.exit(1)

@@ -6,6 +6,7 @@ Tests for the endocrine / hormonal system:
   - Hypothalamus integration (hormonal updates + affect dict population)
   - Tracing (TurnTrace carries hormonal field)
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -19,19 +20,22 @@ from brain.settings import settings
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+
 def _thresholds() -> dict:
     return {
-        "oxt_connected":  settings.get("hormonal_oxt_connected_threshold"),
+        "oxt_connected": settings.get("hormonal_oxt_connected_threshold"),
         "cort_withdrawn": settings.get("hormonal_cort_withdrawn_threshold"),
-        "oxt_guarded":    settings.get("hormonal_oxt_guarded_threshold"),
-        "sht_dysphoric":  settings.get("hormonal_sht_dysphoric_threshold"),
+        "oxt_guarded": settings.get("hormonal_oxt_guarded_threshold"),
+        "sht_dysphoric": settings.get("hormonal_sht_dysphoric_threshold"),
     }
 
 
 def _color(emotion: str, tendency: str, h: dict) -> tuple[str, str]:
     t = _thresholds()
     return apply_hormonal_color(
-        emotion, tendency, h,
+        emotion,
+        tendency,
+        h,
         oxt_connected=t["oxt_connected"],
         cort_withdrawn=t["cort_withdrawn"],
         oxt_guarded=t["oxt_guarded"],
@@ -42,6 +46,7 @@ def _color(emotion: str, tendency: str, h: dict) -> tuple[str, str]:
 def _make_hyp():
     """Build a HypothalamusCluster with a real Bus, no LLMs."""
     from brain.clusters.hypothalamus import HypothalamusCluster
+
     bus = Bus()
     hyp = HypothalamusCluster(bus)
     return bus, hyp
@@ -75,6 +80,7 @@ def _hostile_features(**overrides) -> dict:
 
 # ── HormonalState unit tests ──────────────────────────────────────────────────
 
+
 class TestHormonalState:
     def test_initial_values(self):
         hs = HormonalState()
@@ -101,7 +107,7 @@ class TestHormonalState:
 
     def test_decay_reduces_all_channels(self):
         hs = HormonalState()
-        hs.add("OXT", 0.4)   # push OXT above floor
+        hs.add("OXT", 0.4)  # push OXT above floor
         hs.add("CORT", 0.3)
         hs.add("5HT", 0.2)
         before = hs.snapshot()
@@ -116,9 +122,9 @@ class TestHormonalState:
         for _ in range(2000):
             hs.decay()
         snap = hs.snapshot()
-        assert snap["5HT"]  >= HormonalState._FLOORS["5HT"]
+        assert snap["5HT"] >= HormonalState._FLOORS["5HT"]
         assert snap["CORT"] >= HormonalState._FLOORS["CORT"]
-        assert snap["OXT"]  >= HormonalState._FLOORS["OXT"]
+        assert snap["OXT"] >= HormonalState._FLOORS["OXT"]
 
     def test_snapshot_is_copy(self):
         hs = HormonalState()
@@ -156,6 +162,7 @@ class TestHormonalState:
 
 
 # ── apply_hormonal_color tests ────────────────────────────────────────────────
+
 
 class TestApplyHormonalColor:
     def test_high_oxt_warm_to_connected(self):
@@ -232,12 +239,18 @@ class TestApplyHormonalColor:
 
 # ── Signal balance / reachability tests ──────────────────────────────────────
 
+
 class TestSignalBalance:
     """Verify that extreme hormonal states are reachable in plausible turn counts."""
 
-    def _run_turns(self, hs: HormonalState, n: int,
-                   oxt_delta: float = 0.0, cort_delta: float = 0.0,
-                   sht_delta: float = 0.0) -> None:
+    def _run_turns(
+        self,
+        hs: HormonalState,
+        n: int,
+        oxt_delta: float = 0.0,
+        cort_delta: float = 0.0,
+        sht_delta: float = 0.0,
+    ) -> None:
         for _ in range(n):
             if oxt_delta:
                 hs.add("OXT", oxt_delta)
@@ -306,7 +319,7 @@ class TestSignalBalance:
     def test_oxt_decays_slowly_preserving_relationship_memory(self):
         # OXT should retain >70% of its value after 100 turns of no interaction
         hs = HormonalState()
-        hs.add("OXT", 0.40)   # push to 0.70
+        hs.add("OXT", 0.40)  # push to 0.70
         peak = hs.get("OXT")
         for _ in range(100):
             hs.decay()
@@ -334,6 +347,7 @@ class TestSignalBalance:
 
 
 # ── Hypothalamus integration tests ────────────────────────────────────────────
+
 
 class TestHypothalamusHormonalIntegration:
     def test_affect_dict_contains_hormonal(self):
@@ -396,12 +410,20 @@ class TestHypothalamusHormonalIntegration:
             asyncio.run(hyp.process(_hostile_features()))
             hyp.decay_turn()
         affect = asyncio.run(hyp.process(_hostile_features()))
-        assert affect["emotion"] in ("guarded", "withdrawn", "angry", "inhibited",
-                                     "cautious-agitated", "defensive",
-                                     "stressed", "overwhelmed", "uneasy",
-                                     "vigilant", "scattered", "eased"), (
-            f"Expected a stress-state emotion after sustained hostility, got: {affect['emotion']}"
-        )
+        assert affect["emotion"] in (
+            "guarded",
+            "withdrawn",
+            "angry",
+            "inhibited",
+            "cautious-agitated",
+            "defensive",
+            "stressed",
+            "overwhelmed",
+            "uneasy",
+            "vigilant",
+            "scattered",
+            "eased",
+        ), f"Expected a stress-state emotion after sustained hostility, got: {affect['emotion']}"
 
     def test_sustained_positivity_produces_connected(self):
         bus, hyp = _make_hyp()
@@ -426,9 +448,11 @@ class TestHypothalamusHormonalIntegration:
 
 # ── Tracing / TurnTrace tests ─────────────────────────────────────────────────
 
+
 class TestHormonalTracing:
     def test_turn_trace_has_hormonal_field(self):
         from brain.observability.timeline import TurnTrace
+
         trace = TurnTrace(
             turn_id="t1",
             session_id="s1",
@@ -439,11 +463,13 @@ class TestHormonalTracing:
 
     def test_turn_trace_hormonal_default_empty(self):
         from brain.observability.timeline import TurnTrace
+
         trace = TurnTrace(turn_id="t1", session_id="s1", user_input="hi")
         assert trace.hormonal == {}
 
     def test_record_turn_appends_hormonal_to_history(self):
         from brain.observability.timeline import ObservabilityLayer, TurnTrace
+
         obs = ObservabilityLayer(session_id="test")
         trace = TurnTrace(
             turn_id="t1",
@@ -462,6 +488,7 @@ class TestHormonalTracing:
 
     def test_record_turn_without_hormonal_still_works(self):
         from brain.observability.timeline import ObservabilityLayer, TurnTrace
+
         obs = ObservabilityLayer(session_id="test")
         trace = TurnTrace(
             turn_id="t1",
@@ -479,6 +506,7 @@ class TestHormonalTracing:
         import asyncio
 
         from brain.ui.emitter import ActivationEmitter
+
         em = ActivationEmitter()
         snap = {"5HT": 0.5, "CORT": 0.05, "OXT": 0.3}
         asyncio.run(em.emit_hormonal(snap))
@@ -491,6 +519,7 @@ class TestHormonalTracing:
         import asyncio
 
         from brain.ui.emitter import ActivationEmitter
+
         em = ActivationEmitter()
         asyncio.run(em.emit_hormonal({"5HT": 0.12345678, "CORT": 0.0, "OXT": 0.0}))
         event = em.get_queue().get_nowait()
@@ -499,11 +528,13 @@ class TestHormonalTracing:
 
 # ── Norepinephrine (NE) tests ────────────────────────────────────────────────
 
+
 class TestNorepinephrine:
     """Unit tests for NE as 5th neuromod channel and apply_ne_color()."""
 
     def test_ne_present_in_neuromod_snapshot(self):
         from brain.bus import Bus
+
         bus = Bus()
         snap = bus.neuromod.snapshot()
         assert "NE" in snap
@@ -511,6 +542,7 @@ class TestNorepinephrine:
 
     def test_ne_floor_respected_on_decay(self):
         from brain.bus import Neuromodulators
+
         nm = Neuromodulators()
         for _ in range(200):
             nm.decay()
@@ -518,33 +550,39 @@ class TestNorepinephrine:
 
     def test_ne_add_clamps_at_one(self):
         from brain.bus import Neuromodulators
+
         nm = Neuromodulators()
         nm.add("NE", 10.0)
         assert nm.get("NE") == pytest.approx(1.0)
 
     def test_apply_ne_color_no_change_in_optimal_range(self):
         from brain.emotion_vocabulary import apply_ne_color
+
         e, t = apply_ne_color("curious", "investigate", ne=0.40)
         assert e == "curious"
         assert t == "investigate"
 
     def test_apply_ne_color_high_ne_anxious_to_vigilant(self):
         from brain.emotion_vocabulary import apply_ne_color
+
         e, _ = apply_ne_color("anxious", "caution", ne=0.65)
         assert e == "vigilant"
 
     def test_apply_ne_color_high_ne_stressed_to_vigilant(self):
         from brain.emotion_vocabulary import apply_ne_color
+
         e, _ = apply_ne_color("stressed", "careful", ne=0.62)
         assert e == "vigilant"
 
     def test_apply_ne_color_high_ne_curious_to_alert_curious(self):
         from brain.emotion_vocabulary import apply_ne_color
+
         e, _ = apply_ne_color("curious", "investigate", ne=0.70)
         assert e == "alert-curious"
 
     def test_apply_ne_color_very_high_ne_scattered(self):
         from brain.emotion_vocabulary import apply_ne_color
+
         # Above ne_scatter_threshold (0.75), any emotion becomes scattered
         e, _ = apply_ne_color("joy", "approach", ne=0.80)
         assert e == "scattered"
@@ -564,8 +602,9 @@ class TestNorepinephrine:
 
     def test_ne_in_affect_dims(self):
         from brain.emotion_vocabulary import compute_affect_dims
+
         # High NE should raise arousal dimension
-        low_ne  = compute_affect_dims(
+        low_ne = compute_affect_dims(
             {"DA": 0.5, "GABA": 0.05, "ACh": 0.2, "Glu": 0.3, "NE": 0.20},
             {"5HT": 0.5, "CORT": 0.05, "OXT": 0.3, "AEA": 0.3},
         )
@@ -579,11 +618,13 @@ class TestNorepinephrine:
 
 # ── Anandamide / AEA tests ───────────────────────────────────────────────────
 
+
 class TestAnandamide:
     """Unit tests for AEA as 4th hormonal channel and its homeostatic effects."""
 
     def test_aea_present_in_hormonal_snapshot(self):
         from brain.bus import Bus
+
         bus = Bus()
         snap = bus.hormonal.snapshot()
         assert "AEA" in snap
@@ -591,6 +632,7 @@ class TestAnandamide:
 
     def test_aea_floor_respected_on_decay(self):
         from brain.bus import HormonalState
+
         hs = HormonalState()
         for _ in range(500):
             hs.decay()
@@ -598,6 +640,7 @@ class TestAnandamide:
 
     def test_aea_decays_faster_than_oxt(self):
         from brain.bus import HormonalState
+
         hs = HormonalState()
         hs.add("AEA", 0.4)
         hs.add("OXT", 0.4)
@@ -608,6 +651,7 @@ class TestAnandamide:
 
     def test_aea_suppress_no_effect_at_baseline(self):
         from brain.bus import HormonalState
+
         hs = HormonalState()
         # AEA at 0.30 (baseline) → no suppression
         ne_scale, glu_scale = hs.aea_suppress(ne_rate=0.50, glu_rate=0.35)
@@ -616,6 +660,7 @@ class TestAnandamide:
 
     def test_aea_suppress_reduces_scales_above_baseline(self):
         from brain.bus import HormonalState
+
         hs = HormonalState()
         hs._levels["AEA"] = 0.70
         ne_scale, glu_scale = hs.aea_suppress(ne_rate=0.50, glu_rate=0.35)
@@ -625,6 +670,7 @@ class TestAnandamide:
 
     def test_aea_suppress_never_below_floor(self):
         from brain.bus import HormonalState
+
         hs = HormonalState()
         hs._levels["AEA"] = 1.0
         ne_scale, glu_scale = hs.aea_suppress(ne_rate=5.0, glu_rate=5.0)
@@ -649,29 +695,42 @@ class TestAnandamide:
 
     def test_aea_eased_buffers_stress_emotion(self):
         from brain.emotion_vocabulary import apply_hormonal_color
+
         # High AEA + stressed base → "eased"
         h = {"OXT": 0.3, "CORT": 0.1, "5HT": 0.5, "AEA": 0.70}
         e, _ = apply_hormonal_color(
-            "stressed", "careful", h,
-            oxt_connected=0.60, cort_withdrawn=0.45,
-            oxt_guarded=0.35, sht_dysphoric=0.25, aea_eased=0.58,
+            "stressed",
+            "careful",
+            h,
+            oxt_connected=0.60,
+            cort_withdrawn=0.45,
+            oxt_guarded=0.35,
+            sht_dysphoric=0.25,
+            aea_eased=0.58,
         )
         assert e == "eased"
 
     def test_aea_no_eased_below_threshold(self):
         from brain.emotion_vocabulary import apply_hormonal_color
+
         h = {"OXT": 0.3, "CORT": 0.1, "5HT": 0.5, "AEA": 0.40}
         e, _ = apply_hormonal_color(
-            "stressed", "careful", h,
-            oxt_connected=0.60, cort_withdrawn=0.45,
-            oxt_guarded=0.35, sht_dysphoric=0.25, aea_eased=0.58,
+            "stressed",
+            "careful",
+            h,
+            oxt_connected=0.60,
+            cort_withdrawn=0.45,
+            oxt_guarded=0.35,
+            sht_dysphoric=0.25,
+            aea_eased=0.58,
         )
         assert e != "eased"
 
     def test_aea_lifts_valence_in_affect_dims(self):
         from brain.emotion_vocabulary import compute_affect_dims
+
         nm = {"DA": 0.5, "GABA": 0.05, "ACh": 0.2, "Glu": 0.3, "NE": 0.25}
-        low_aea  = compute_affect_dims(nm, {"5HT": 0.5, "CORT": 0.05, "OXT": 0.3, "AEA": 0.10})
+        low_aea = compute_affect_dims(nm, {"5HT": 0.5, "CORT": 0.05, "OXT": 0.3, "AEA": 0.10})
         high_aea = compute_affect_dims(nm, {"5HT": 0.5, "CORT": 0.05, "OXT": 0.3, "AEA": 0.90})
         assert high_aea["valence"] > low_aea["valence"]
         assert high_aea["arousal"] < low_aea["arousal"]

@@ -11,6 +11,7 @@ Coverage:
   - embed() returns None when both backends unavailable
   - EMBEDDING_DIM constant agreement between router and store
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -29,19 +30,23 @@ PROJECT_ROOT = Path(__file__).parent.parent
 # EMBEDDING_DIM alignment
 # ---------------------------------------------------------------------------
 
+
 def test_embedding_dim_model_router_equals_768():
     from brain.model_router import EMBEDDING_DIM
+
     assert EMBEDDING_DIM == 768, "ModelRouter EMBEDDING_DIM must be 768"
 
 
 def test_embedding_dim_store_equals_768():
     from brain.second_brain.store import EMBEDDING_DIM as STORE_DIM
+
     assert STORE_DIM == 768, "EpisodicStore EMBEDDING_DIM must be 768"
 
 
 def test_embedding_dim_agreement():
     from brain.model_router import EMBEDDING_DIM as ROUTER_DIM
     from brain.second_brain.store import EMBEDDING_DIM as STORE_DIM
+
     assert ROUTER_DIM == STORE_DIM, (
         f"EMBEDDING_DIM mismatch: router={ROUTER_DIM}, store={STORE_DIM}"
     )
@@ -50,6 +55,7 @@ def test_embedding_dim_agreement():
 # ---------------------------------------------------------------------------
 # EpisodicStore: session_id guard
 # ---------------------------------------------------------------------------
+
 
 class _DummyTable:
     def search(self):
@@ -74,6 +80,7 @@ class _DummyDB:
 def _make_episodic_store(tmp_path):
     """Create an EpisodicStore that won't try to use real LanceDB."""
     import brain.second_brain.store as store_mod
+
     store = store_mod.EpisodicStore.__new__(store_mod.EpisodicStore)
     store._db = _DummyDB()
     store._table = _DummyTable()
@@ -103,6 +110,7 @@ def test_recall_by_session_accepts_valid_id(tmp_path):
 # ---------------------------------------------------------------------------
 # SchemaStore: filename guard
 # ---------------------------------------------------------------------------
+
 
 def test_schema_store_rejects_traversal(fake_schema_store):
     store = fake_schema_store
@@ -141,6 +149,7 @@ def test_schema_store_accepts_valid_filename(fake_schema_store):
 # SchemaStore: concurrent aappend_fact — no interleave / corruption
 # ---------------------------------------------------------------------------
 
+
 async def test_aappend_fact_concurrent_no_interleave(fake_schema_store):
     store = fake_schema_store
     if not hasattr(store, "aappend_fact"):
@@ -163,6 +172,7 @@ async def test_aappend_fact_concurrent_no_interleave(fake_schema_store):
 # SchemaStore: aappend_fact dedup
 # ---------------------------------------------------------------------------
 
+
 async def test_aappend_fact_deduplicates(fake_schema_store):
     store = fake_schema_store
     if not hasattr(store, "aappend_fact"):
@@ -181,8 +191,10 @@ async def test_aappend_fact_deduplicates(fake_schema_store):
 # Turn timeout: brainstem constant exists and cell respects it
 # ---------------------------------------------------------------------------
 
+
 def test_turn_timeout_constant_exists():
     from brain.brainstem import TURN_TIMEOUT
+
     assert isinstance(TURN_TIMEOUT, (int, float))
     assert TURN_TIMEOUT > 0
 
@@ -198,8 +210,11 @@ async def test_integrator_cell_timeout(fake_router):
     fake_router.call = _slow  # type: ignore[method-assign]
 
     cell = IntegratorCell(
-        name="slow_cell", cluster="test", model="haiku",
-        system_prompt="test", topics=[],
+        name="slow_cell",
+        cluster="test",
+        model="haiku",
+        system_prompt="test",
+        topics=[],
         timeout_seconds=0.05,
     )
     cell.set_router(fake_router)
@@ -212,6 +227,7 @@ async def test_integrator_cell_timeout(fake_router):
 # ---------------------------------------------------------------------------
 # embed() returns None when backends fail
 # ---------------------------------------------------------------------------
+
 
 async def test_embed_returns_none_on_total_failure():
     from brain.model_router import ModelRouter
@@ -234,6 +250,7 @@ async def test_embed_returns_none_on_total_failure():
 # ---------------------------------------------------------------------------
 # gather(return_exceptions=True) — exceptions do not propagate
 # ---------------------------------------------------------------------------
+
 
 async def test_gather_return_exceptions_degrades_gracefully():
     """Verify the pattern used in run.py: an exception in one task doesn't

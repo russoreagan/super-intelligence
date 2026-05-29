@@ -12,6 +12,7 @@ threshold is shifted by Σ coeff_c × (snapshot[c] − 0.5), clamped to
 high channel; negative = easier. Identity default (empty modulators) preserves
 prior behaviour at every call site.
 """
+
 from __future__ import annotations
 
 import time
@@ -23,9 +24,9 @@ from dataclasses import dataclass, field
 class SwitchNeuron:
     name: str
     cluster: str
-    polarity: str = "excitatory"   # "excitatory" | "inhibitory"
+    polarity: str = "excitatory"  # "excitatory" | "inhibitory"
     threshold: float = 0.5
-    weight: float = 1.0            # Hebbian edge weight (persisted via wiring.py)
+    weight: float = 1.0  # Hebbian edge weight (persisted via wiring.py)
     modulators: dict[str, float] = field(default_factory=dict)
     min_threshold: float = 0.05
     max_threshold: float = 0.95
@@ -52,6 +53,7 @@ class SwitchNeuron:
             shift += coeff * (float(level) - 0.5)
         try:
             from brain.settings import settings as _settings
+
             gain = float(_settings.get("modulation_gain", 1.0))
         except Exception:
             gain = 1.0
@@ -66,8 +68,13 @@ class SwitchNeuron:
         """Effective − base. Useful for telemetry."""
         return self.effective_threshold(snapshot) - self.threshold
 
-    def fire(self, level: float, tag: str, evidence: dict | None = None,
-             snapshot: dict[str, float] | None = None) -> dict:
+    def fire(
+        self,
+        level: float,
+        tag: str,
+        evidence: dict | None = None,
+        snapshot: dict[str, float] | None = None,
+    ) -> dict:
         """Produce a Switch→Switch activation payload."""
         self._last_fired = time.time()
         self._fire_count += 1
@@ -81,14 +88,23 @@ class SwitchNeuron:
         # Record on the current turn's firing path (no-op if no trace bound)
         try:
             from brain.observability.firing_path import record_switch_fire
-            record_switch_fire(self.name, self.cluster, level, tag, self.polarity,
-                               eff_threshold=eff_thr, mod_delta=mod_delta)
+
+            record_switch_fire(
+                self.name,
+                self.cluster,
+                level,
+                tag,
+                self.polarity,
+                eff_threshold=eff_thr,
+                mod_delta=mod_delta,
+            )
         except Exception:
             pass
         # Increment modulated_switch_count when chemistry meaningfully shifted threshold
         if abs(mod_delta) > 0.01:
             try:
                 from brain.observability.firing_path import current_turn_trace
+
                 _tr = current_turn_trace.get()
                 if _tr is not None:
                     _tr.modulated_switch_count += 1
@@ -104,9 +120,9 @@ class SwitchNeuron:
             "evidence": ev,
         }
 
-    def should_fire(self, input_level: float,
-                    snapshot: dict[str, float] | None = None,
-                    turn_id: str = "") -> bool:
+    def should_fire(
+        self, input_level: float, snapshot: dict[str, float] | None = None, turn_id: str = ""
+    ) -> bool:
         """Did the input clear the (chemistry-shifted) threshold?
 
         When modulation suppresses a fire that would otherwise have happened
@@ -121,9 +137,9 @@ class SwitchNeuron:
         if snapshot is not None and self.modulators and input_level >= self.threshold:
             try:
                 from brain.observability.decisions import decisions
+
                 # Only record the channels this switch actually listens to.
-                chem_relevant = {c: round(float(snapshot.get(c, 0.5)), 3)
-                                 for c in self.modulators}
+                chem_relevant = {c: round(float(snapshot.get(c, 0.5)), 3) for c in self.modulators}
                 decisions.log(
                     "switch_suppressed_by_modulation",
                     turn_id=turn_id,
@@ -143,6 +159,7 @@ class SwitchNeuron:
                 self._last_suppressed_at = time.time()
                 # Increment suppression counter on the active turn trace
                 from brain.observability.firing_path import current_turn_trace
+
                 _tr = current_turn_trace.get()
                 if _tr is not None:
                     _tr.suppressed_switch_count += 1
@@ -175,8 +192,12 @@ class StatefulSwitch(SwitchNeuron):
         return self._state
 
 
-def make_threshold_gate(name: str, cluster: str, fn: Callable[..., tuple[bool, float, str, dict]],
-                        polarity: str = "excitatory") -> Callable:
+def make_threshold_gate(
+    name: str,
+    cluster: str,
+    fn: Callable[..., tuple[bool, float, str, dict]],
+    polarity: str = "excitatory",
+) -> Callable:
     """
     Factory: wraps a pure function (args → (fires, level, tag, evidence)) into a
     switch that can be called directly in cluster logic.

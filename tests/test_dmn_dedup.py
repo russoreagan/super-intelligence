@@ -4,6 +4,7 @@ Tests for DMN thought-deduplication:
   - near-duplicate output is suppressed via word-overlap (Jaccard)
   - genuinely different thoughts pass through and join the recent buffer
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -15,6 +16,7 @@ def _make_dmn():
     from collections import deque
 
     from brain.dmn import DefaultModeNetwork
+
     dmn = DefaultModeNetwork.__new__(DefaultModeNetwork)
     dmn._bus = MagicMock()
     dmn._bus.publish_dict = AsyncMock()
@@ -60,6 +62,7 @@ def _make_dmn():
     dmn._last_familiarity = "new"
     # Recent angles window (dedup for thought directions)
     from collections import deque as _deque
+
     dmn._recent_angles = _deque(maxlen=5)
     # Obs layer (optional; tests don't need it)
     dmn._obs = None
@@ -73,7 +76,9 @@ def _make_dmn():
 
 def test_first_thought_is_published_and_recorded():
     dmn = _make_dmn()
-    dmn._monologue_cell.call = AsyncMock(return_value="I'm noticing the audio bleed issue keeps coming up.")
+    dmn._monologue_cell.call = AsyncMock(
+        return_value="I'm noticing the audio bleed issue keeps coming up."
+    )
     asyncio.run(dmn._tick())
     assert len(dmn._recent_thoughts) == 1
     assert dmn._recent_thoughts[0].startswith("I'm noticing")
@@ -83,9 +88,7 @@ def test_first_thought_is_published_and_recorded():
 
 def test_duplicate_thought_is_suppressed():
     dmn = _make_dmn()
-    dmn._recent_thoughts.append(
-        "Audio bleed was killing the conversation flow every single time."
-    )
+    dmn._recent_thoughts.append("Audio bleed was killing the conversation flow every single time.")
     # New thought is near-verbatim; word overlap >0.45 → suppressed
     dmn._monologue_cell.call = AsyncMock(
         return_value="The audio bleed was killing the conversation flow every time."
@@ -98,9 +101,7 @@ def test_duplicate_thought_is_suppressed():
 
 def test_genuinely_different_thought_passes_through():
     dmn = _make_dmn()
-    dmn._recent_thoughts.append(
-        "I keep thinking about how the user phrases tool requests."
-    )
+    dmn._recent_thoughts.append("I keep thinking about how the user phrases tool requests.")
     dmn._monologue_cell.call = AsyncMock(
         return_value="I wonder what triggered Russ to bring up his kid earlier."
     )
@@ -161,9 +162,7 @@ def test_suppressed_thought_does_not_join_recent():
     otherwise the same content could perpetually re-suppress new variations."""
     dmn = _make_dmn()
     dmn._recent_thoughts.append("The audio is finally working correctly.")
-    dmn._monologue_cell.call = AsyncMock(
-        return_value="The audio is finally working correctly now."
-    )
+    dmn._monologue_cell.call = AsyncMock(return_value="The audio is finally working correctly now.")
     asyncio.run(dmn._tick())
     assert len(dmn._recent_thoughts) == 1  # not added
     assert dmn._suppressed_count == 1
@@ -172,14 +171,19 @@ def test_suppressed_thought_does_not_join_recent():
 def test_memory_seed_injected_when_idle_and_on_interval():
     """Every Nth idle tick, a random episode is surfaced into _memory_seed."""
     import brain.dmn as dmn_mod
+
     dmn = _make_dmn()
     dmn._memory_seed = ""
     dmn._hippocampus = MagicMock()
-    dmn._hippocampus._episodic.sample_random = MagicMock(return_value=[{
-        "user_input": "can you reuse the pitch detection?",
-        "entity_response": "yes, the Karaoke module already does it.",
-        "topic_tags": ["karaoke-hero", "pitch-detection"],
-    }])
+    dmn._hippocampus._episodic.sample_random = MagicMock(
+        return_value=[
+            {
+                "user_input": "can you reuse the pitch detection?",
+                "entity_response": "yes, the Karaoke module already does it.",
+                "topic_tags": ["karaoke-hero", "pitch-detection"],
+            }
+        ]
+    )
     dmn._thought_count = dmn_mod.DMN_MEMORY_SEED_EVERY  # lands on the interval
     # Force "idle" so the gate allows surfacing.
     orig = dmn_mod.get_idle_seconds
@@ -194,12 +198,19 @@ def test_memory_seed_injected_when_idle_and_on_interval():
 
 def test_memory_seed_skipped_when_user_active():
     import brain.dmn as dmn_mod
+
     dmn = _make_dmn()
     dmn._memory_seed = ""
     dmn._hippocampus = MagicMock()
-    dmn._hippocampus._episodic.sample_random = MagicMock(return_value=[{
-        "user_input": "x", "entity_response": "y", "topic_tags": [],
-    }])
+    dmn._hippocampus._episodic.sample_random = MagicMock(
+        return_value=[
+            {
+                "user_input": "x",
+                "entity_response": "y",
+                "topic_tags": [],
+            }
+        ]
+    )
     dmn._thought_count = dmn_mod.DMN_MEMORY_SEED_EVERY
     orig = dmn_mod.get_idle_seconds
     dmn_mod.get_idle_seconds = lambda: 5.0  # user present
@@ -222,7 +233,6 @@ def test_frame_repetition_gate_catches_template_collapse():
         "I should explore recent studies on Hebbian plasticity dynamics.",
         "I should consider recent research on episodic memory consolidation.",
     ]
-    suppressed_before = 0
     for i, t in enumerate(templates):
         dmn._monologue_cell.call = AsyncMock(return_value=t)
         asyncio.run(dmn._tick())
