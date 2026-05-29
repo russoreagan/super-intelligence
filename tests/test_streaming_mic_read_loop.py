@@ -124,6 +124,36 @@ async def test_full_utterance_ends_up_in_queue():
 
 
 @pytest.mark.asyncio
+async def test_ptt_hold_suppresses_mid_phrase_utterance_end():
+    """Push-to-talk: a mid-sentence pause makes Deepgram fire UtteranceEnd, but
+    while the hold is active that must NOT dispatch a partial. Words keep
+    accumulating; flush() on release dispatches the whole phrase as one utterance.
+    Regression for the 'clipped before I let go of Space' bug."""
+    msgs = [
+        _speech_started(0.0),
+        _results([_word("the", 0.0, 0.2), _word("hold", 0.2, 0.5)]),
+        _utterance_end(0.5),                                   # mid-pause — must be suppressed
+        _results([_word("to", 1.0, 1.2), _word("talk", 1.2, 1.6)]),
+        _utterance_end(1.6),                                   # still held — suppressed
+    ]
+    session, bus = _make_session(msgs)
+    session._ptt_hold_active = True       # simulate Space held
+    session._ptt_release_grace_s = 0.0    # no real wait in test
+
+    await session._read_loop()
+    # Nothing dispatched while held, despite two UtteranceEnd events
+    assert session.utterances.empty()
+
+    # Release → flush dispatches the full accumulated phrase as one utterance
+    await session.flush()
+    assert session.utterances.qsize() == 1
+    utt = session.utterances.get_nowait()
+    assert utt["transcript"] == "the hold to talk"
+    assert utt["from_ptt_flush"] is True
+    assert session.is_muted is True       # flush re-mutes
+
+
+@pytest.mark.asyncio
 async def test_interim_results_are_ignored():
     """Only is_final=True Results should accumulate words."""
     msgs = [

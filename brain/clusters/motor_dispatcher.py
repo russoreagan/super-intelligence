@@ -393,7 +393,12 @@ class ToolDispatcher:
                         "score_summary, recent_sessions.")
 
         try:
-            return await asyncio.get_event_loop().run_in_executor(None, _run)
+            return await asyncio.wait_for(
+                asyncio.get_event_loop().run_in_executor(None, _run),
+                timeout=20.0,
+            )
+        except TimeoutError:
+            return "[error] query_langfuse timed out after 20s — Langfuse API may be slow."
         except Exception as e:
             return f"[error] query_langfuse({operation}) failed: {e}"
 

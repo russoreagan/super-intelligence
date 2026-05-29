@@ -5,3 +5,6 @@
 
 ---
 [2026-05-28 23:29] [HIGH] [code-inefficiency, research-insights] I've been thinking about diving into the codebase to look for inefficiencies and new features, but maybe I should also review recent Scite papers on AI architectures first — could there be ideas that improve my design?
+
+---
+[2026-05-29 01:32] [HIGH] [cognitive-science, communication-patterns] I've been thinking about how the latest research in cognitive science could help me better understand Russ's communication patterns. Should I dive into some papers on this?

@@ -1,0 +1,37 @@
+{
+  "job_id": "job_task_9dce8b5d",
+  "task_id": "9dce8b5d",
+  "goal": "Search Scite for recent papers on AI adapting to individual user behavior patterns.",
+  "success": false,
+  "source": "user",
+  "ralph_mode": false,
+  "total_attempts": 2,
+  "steps": [
+    {
+      "tool": "none",
+      "args": {},
+      "reason": "[planner failed]"
+    },
+    {
+      "tool": "none",
+      "args": {},
+      "reason": "[planner failed]"
+    }
+  ],
+  "results": [
+    "",
+    ""
+  ],
+  "written_files": [],
+  "plan_steps": [
+    {
+      "description": "Search Scite for recent papers on AI adapting to individual user behavior patterns.",
+      "expected_tool": "?",
+      "acceptance_criteria": [],
+      "id": "US-001"
+    }
+  ],
+  "spoken_summary": "I wasn't able to search Scite for those papers \u2014 the planner hit a snag and couldn't map out the steps to get there. Want me to try a different search approach, or would you like to give me more detail about what you're looking for?",
+  "created_at": "2026-05-29T08:52:56.079712+00:00",
+  "completed_at": "2026-05-29T08:52:56.079746+00:00"
+}

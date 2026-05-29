@@ -1693,3 +1693,182 @@ class TestToolAppropriatenessHelper:
         from brain.clusters.motor_cortex import _tool_appropriateness_warning
         assert _tool_appropriateness_warning(
             "list_files", "categorize files", "") is None
+
+
+import asyncio
+import pytest
+
+
+class TestDispatchTimeout:
+    """_dispatch wraps every tool call in a timeout and retries transient errors."""
+
+    @pytest.mark.asyncio
+    async def test_timeout_returns_error_string(self, tmp_path):
+        """A hanging _dispatch_once produces [error] timed out, not an infinite hang.
+
+        We patch _dispatch_once (the inner single-call method) directly so we
+        can inject a true async hang without fighting the executor wrapping.
+        """
+        motor, _ = _make_motor(tmp_path)
+
+        async def hang_once(tool, args):
+            await asyncio.sleep(9999)
+
+        motor._dispatch_once = hang_once  # type: ignore
+        import brain.clusters.motor_cortex as mc_mod
+        original = mc_mod._TOOL_TIMEOUT_S
+        mc_mod._TOOL_TIMEOUT_S = 0.05   # 50ms ceiling
+        mc_mod._TOOL_RETRIES = 0        # no retries so the test stays fast
+        try:
+            result = await motor._dispatch("read_file", {"path": str(tmp_path / "x.txt")})
+        finally:
+            mc_mod._TOOL_TIMEOUT_S = original
+            mc_mod._TOOL_RETRIES = 1
+
+        assert result.startswith("[error]")
+        assert "timed out" in result
+
+    @pytest.mark.asyncio
+    async def test_transient_error_retried(self, tmp_path):
+        """A [error] result is retried; second attempt succeeds."""
+        f = tmp_path / "data.txt"
+        f.write_text("hello")
+        motor, _ = _make_motor(tmp_path)
+
+        call_count = {"n": 0}
+        original_read = motor._dispatcher._read_file
+
+        def flaky_read(path):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                return "[error] transient IO failure"
+            return original_read(path)
+
+        motor._dispatcher._read_file = flaky_read  # type: ignore
+        import brain.clusters.motor_cortex as mc_mod
+        original_retries = mc_mod._TOOL_RETRIES
+        mc_mod._TOOL_RETRIES = 1
+        try:
+            result = await motor._dispatch("read_file", {"path": str(f)})
+        finally:
+            mc_mod._TOOL_RETRIES = original_retries
+
+        assert result == "hello"
+        assert call_count["n"] == 2  # one fail + one success
+
+    @pytest.mark.asyncio
+    async def test_blocked_is_not_retried(self, tmp_path):
+        """[blocked] safety responses are never retried."""
+        motor, _ = _make_motor(tmp_path)
+        call_count = {"n": 0}
+
+        def blocked_read(path):
+            call_count["n"] += 1
+            return "[blocked] outside allowed paths"
+
+        motor._dispatcher._read_file = blocked_read  # type: ignore
+        import brain.clusters.motor_cortex as mc_mod
+        original_retries = mc_mod._TOOL_RETRIES
+        mc_mod._TOOL_RETRIES = 3   # would retry 3 times if not blocked
+        try:
+            result = await motor._dispatch("read_file", {"path": "/etc/passwd"})
+        finally:
+            mc_mod._TOOL_RETRIES = original_retries
+
+        assert result.startswith("[blocked]")
+        assert call_count["n"] == 1  # exactly once — no retries
+
+    @pytest.mark.asyncio
+    async def test_unknown_tool_is_not_retried(self, tmp_path):
+        """[error] Unknown tool is not retried (not a transient error)."""
+        motor, _ = _make_motor(tmp_path)
+        import brain.clusters.motor_cortex as mc_mod
+        original_retries = mc_mod._TOOL_RETRIES
+        mc_mod._TOOL_RETRIES = 3
+        try:
+            result = await motor._dispatch("no_such_tool", {})
+        finally:
+            mc_mod._TOOL_RETRIES = original_retries
+
+        assert "Unknown tool" in result
+
+    @pytest.mark.asyncio
+    async def test_all_retries_exhausted_returns_last_error(self, tmp_path):
+        """When all retries fail, the last [error] is returned."""
+        motor, _ = _make_motor(tmp_path)
+        call_count = {"n": 0}
+
+        def always_fails(path):
+            call_count["n"] += 1
+            return f"[error] attempt {call_count['n']} failed"
+
+        motor._dispatcher._read_file = always_fails  # type: ignore
+        import brain.clusters.motor_cortex as mc_mod
+        original_retries = mc_mod._TOOL_RETRIES
+        mc_mod._TOOL_RETRIES = 2
+        try:
+            result = await motor._dispatch("read_file", {"path": str(tmp_path / "x")})
+        finally:
+            mc_mod._TOOL_RETRIES = original_retries
+
+        assert result.startswith("[error]")
+        assert call_count["n"] == 3  # 1 initial + 2 retries
+
+
+class TestJobWallClockDeadline:
+    """execute_internal_job respects the wall-clock deadline."""
+
+    def _make_job_router(self, strategic_plan, tactical_steps):
+        """Reuse TestExecuteInternalJob's helper pattern."""
+        import json as _json
+        responses = [_json.dumps(strategic_plan)] + [_json.dumps(s) for s in tactical_steps]
+        call_count = {"n": 0}
+
+        class JobRouter:
+            async def call(self, model_key, system_prompt, messages, **kwargs):
+                idx = call_count["n"]
+                call_count["n"] += 1
+                if idx < len(responses):
+                    return responses[idx]
+                return _json.dumps({"tool": "none", "args": {}, "reason": "done"})
+
+            async def embed(self, text):
+                return [0.0] * 768
+
+        return JobRouter()
+
+    @pytest.mark.asyncio
+    async def test_job_stops_at_deadline(self, tmp_path):
+        """When the wall-clock deadline is hit before all stories complete,
+        success=False is returned rather than running indefinitely."""
+        f = tmp_path / "x.txt"
+        f.write_text("x")
+        strategic = {
+            "stories": [
+                {"id": f"US-{i:03d}", "description": f"step {i}",
+                 "expected_tool": "read_file", "acceptance_criteria": []}
+                for i in range(5)
+            ],
+            "success_criteria": "all done", "complexity": "low",
+        }
+        tactical = [{"tool": "read_file", "args": {"path": str(f)}, "reason": "r"}] * 10
+
+        router = self._make_job_router(strategic, tactical)
+        from brain.bus import Bus
+        from brain.clusters.motor_cortex import MotorCortexCluster
+        motor = MotorCortexCluster(Bus(), router, allowed_paths=[str(tmp_path)])
+
+        import brain.clusters.motor_cortex as mc_mod
+        original_timeout = mc_mod._JOB_TIMEOUT_S
+        mc_mod._JOB_TIMEOUT_S = 0.0          # deadline already passed
+        mock_emitter = MagicMock()
+        mock_emitter.emit_event = AsyncMock()
+        try:
+            with patch("brain.ui.emitter.emitter", mock_emitter):
+                result = await motor.execute_internal_job("do 5 things", "t1")
+        finally:
+            mc_mod._JOB_TIMEOUT_S = original_timeout
+
+        # With deadline=0, the first story-loop check fires immediately
+        assert result["success"] is False
+        assert result["steps_taken_count"] == 0  # stopped before any steps

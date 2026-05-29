@@ -155,6 +155,20 @@ class CompositePredictor:
         return sum(scores) / len(scores)
 
 
+def prediction_match_frac(predicted, actual) -> float:
+    """Partial-position match in [0, 1] — the same notion CompositePredictor.surprise()
+    uses for partial credit. For string labels (PredictorSwitch) this is just 0/1 equality.
+    Used so the lenient gating notion and the strict exact-match accuracy metric agree on
+    a shared, interpretable measure of 'how close was the prediction'."""
+    if predicted is None or actual is None:
+        return 0.0
+    if not isinstance(predicted, tuple):
+        return 1.0 if predicted == actual else 0.0
+    if not isinstance(actual, tuple):
+        return 0.0
+    return sum(1 for a, b in zip(predicted, actual, strict=False) if a == b) / max(len(predicted), 1)
+
+
 def input_signature(text: str) -> str:
     """Cheap structural fingerprint of input text (no LLM)."""
     words = text.strip().split()

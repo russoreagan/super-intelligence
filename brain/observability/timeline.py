@@ -337,7 +337,7 @@ class ObservabilityLayer:
                         "critic.overall": selected.get("overall", 0),
                         "critic.coherence": selected.get("coherence", 0),
                         "critic.tone_fit": selected.get("tone_fit", 0),
-                        "critic.empathy": selected.get("empathy_score", 0),
+                        "critic.empathy": selected.get("empathy_score"),  # None when empathy check didn't run → dropped by _post_scores
                     })
 
                 # Trim old trace_ids to avoid unbounded growth in long sessions

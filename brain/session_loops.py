@@ -31,24 +31,32 @@ class _LoopsMixin:
                         }))
                 else:
                     self._tts_did_mute = False
+                # Pause the physical input stream so the TTS output stream doesn't
+                # collide with it on a shared audio device (Scarlett full-duplex →
+                # CoreAudio err -10863, which silently kills mic capture for the
+                # rest of the session). We're muted during TTS anyway.
+                self._streaming_mic.pause_capture()
             else:
-                if self._tts_did_mute:
-                    self._tts_did_mute = False
-                    asyncio.ensure_future(self._restore_mic_after_tts())
+                # Always run the restore on speaking-end: capture was paused above
+                # regardless of who muted, so it must always be resumed.
+                asyncio.ensure_future(self._restore_mic_after_tts())
 
     async def _restore_mic_after_tts(self) -> None:
-        """After the entity finishes speaking, restore the mic to whatever the
-        user wants — live only if push-to-talk is still held, otherwise stay
-        muted. (Hold-to-talk: we must NOT auto-reopen the mic just because TTS
-        ended — that was the old always-on behaviour.)"""
-        await asyncio.sleep(self._mic_unmute_delay_s)
+        """After the entity finishes speaking, re-open the (paused) input stream
+        and restore the mic to whatever the user wants — live only if push-to-talk
+        is still held, otherwise muted. (Hold-to-talk: we must NOT auto-reopen the
+        mic just because TTS ended — that was the old always-on behaviour.)"""
         mic = self._streaming_mic
         if mic is None:
             return
+        # Re-open the physical stream first (paused during TTS), then settle state.
+        mic.resume_capture()
+        await asyncio.sleep(self._mic_unmute_delay_s)
         if self._ptt_held:
             mic.unmute()
         else:
             mic.mute()
+        self._tts_did_mute = False
         self._emit_mic_state()
 
     def _emit_mic_state(self) -> None:
@@ -76,7 +84,7 @@ class _LoopsMixin:
             return
         if want_live:
             if not self.pns.is_speaking:
-                mic.unmute()
+                mic.unmute(ptt_hold=True)
             self._emit_mic_state()
         else:
             asyncio.ensure_future(self._release_mic())
@@ -285,7 +293,10 @@ class _LoopsMixin:
                 logger.warning("[I/O] voice bridge read failed: %s", e)
                 await asyncio.sleep(0.5)
                 continue
-            if self._streaming_mic.is_muted:
+            if self._streaming_mic.is_muted and not utt.get("from_ptt_flush"):
+                # Discard utterances that arrived while muted (e.g. TTS bleed-through
+                # in always-on mode). But PTT flush utterances are intentional — the
+                # mic is muted *after* the utterance is queued, so don't discard them.
                 logger.debug("[I/O] voice → discarded stale utterance (mic muted)")
                 continue
             text = (utt.get("transcript") or "").strip()

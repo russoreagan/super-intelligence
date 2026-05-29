@@ -29,6 +29,34 @@ logger = logging.getLogger(__name__)
 
 CLUSTER = "motor_cortex"
 
+# ── Timeout / retry configuration ─────────────────────────────────────────────
+# Per-tool dispatch timeout: how long a single tool call may run before it is
+# killed and returns [error]. Covers all tools — sync file ops run in executor,
+# async ops (run_command, fetch_url, query_langfuse) have their own inner
+# timeouts but the envelope here is the hard ceiling.
+# Override: BRAIN_TOOL_TIMEOUT_SECONDS env var > brain/settings.json > 30s default.
+_TOOL_TIMEOUT_S: float = float(
+    os.environ.get("BRAIN_TOOL_TIMEOUT_SECONDS") or
+    _brain_settings.get("tool_timeout_seconds", 30)
+)
+
+# Per-dispatch retry count for transient [error] outputs (not [blocked]).
+# A retry only fires when the tool returned [error] — it does NOT retry [blocked]
+# (safety sandbox) or deliberate tool="none" skips.
+# Override: BRAIN_TOOL_RETRIES env var > brain/settings.json > 1 default.
+_TOOL_RETRIES: int = int(
+    os.environ.get("BRAIN_TOOL_RETRIES") or
+    _brain_settings.get("tool_retries", 1)
+)
+
+# Wall-clock deadline for a complete internal job (all stories + retries).
+# Prevents a slow local model or pathological retry loop from running forever.
+# Override: BRAIN_JOB_TIMEOUT_SECONDS env var > brain/settings.json > 300s (5 min).
+_JOB_TIMEOUT_S: float = float(
+    os.environ.get("BRAIN_JOB_TIMEOUT_SECONDS") or
+    _brain_settings.get("job_timeout_seconds", 300)
+)
+
 # Single source of truth for every tool name the motor cortex can actually
 # dispatch (local _dispatch, cloud_action, lobe-bridge, ask_user, none). Used to
 # neutralize hallucinated/typo'd expected_tool values from the strategic planner.
@@ -384,6 +412,12 @@ class MotorCortexCluster:
         effective_budget = budget if budget > 0 else self._effective_job_budget(chem)
         chem_ctx = self._chem_description(chem)
 
+        # Wall-clock deadline for the entire job. Prevents a slow local model or
+        # a pathological retry loop from hanging the task worker indefinitely.
+        # _JOB_TIMEOUT_S defaults to 300s; override via BRAIN_JOB_TIMEOUT_SECONDS.
+        import time as _time
+        _job_deadline = _time.monotonic() + _JOB_TIMEOUT_S
+
         # Open a Langfuse trace so all LLM calls inside this job are nested under it.
         # record_llm_call() uses _active_spans[job_id] as the parent — the same
         # mechanism as per-turn tracing, keyed by job_id instead of turn_id.
@@ -469,6 +503,11 @@ class MotorCortexCluster:
                                _MAX_TOTAL_ATTEMPTS, idx + 1, len(stories_planned))
                 success = False
                 break
+            if _time.monotonic() >= _job_deadline:
+                logger.warning("[InternalJob] Wall-clock deadline (%.0fs) reached at story %d/%d",
+                               _JOB_TIMEOUT_S, idx + 1, len(stories_planned))
+                success = False
+                break
 
             story_desc = story.get("description", "")
             story_criteria = story.get("acceptance_criteria", [])
@@ -484,6 +523,10 @@ class MotorCortexCluster:
                 if total_attempts >= _MAX_TOTAL_ATTEMPTS:
                     logger.warning("[InternalJob] Ralph total-attempt cap reached mid-story %d",
                                    idx + 1)
+                    break
+                if _time.monotonic() >= _job_deadline:
+                    logger.warning("[InternalJob] Wall-clock deadline reached mid-story %d attempt %d",
+                                   idx + 1, attempt + 1)
                     break
 
                 retry_label = f" (retry {attempt})" if attempt > 0 else ""
@@ -1009,6 +1052,47 @@ class MotorCortexCluster:
     # ── Tool dispatcher ────────────────────────────────────────────────────────
 
     async def _dispatch(self, tool: str, args: dict) -> str:
+        """Dispatch a single tool call with per-call timeout and transient-error retry.
+
+        Every call is wrapped in asyncio.wait_for(_TOOL_TIMEOUT_S) so a hung
+        filesystem, slow network mount, or unresponsive API can never freeze the
+        whole job. On a [error] result (transient — not [blocked], not [error] Unknown
+        tool) the call is retried up to _TOOL_RETRIES times. [blocked] responses are
+        safety-sandbox decisions and are never retried.
+        """
+        for attempt in range(_TOOL_RETRIES + 1):
+            try:
+                output = await asyncio.wait_for(
+                    self._dispatch_once(tool, args),
+                    timeout=_TOOL_TIMEOUT_S,
+                )
+            except TimeoutError:
+                msg = f"[error] {tool} timed out after {_TOOL_TIMEOUT_S:.0f}s"
+                logger.warning("[MotorCortex] %s (attempt %d/%d)",
+                               msg, attempt + 1, _TOOL_RETRIES + 1)
+                output = msg
+            except Exception as e:
+                msg = f"[error] {tool} failed: {e}"
+                logger.error("[MotorCortex] Tool %s raised on attempt %d: %s",
+                             tool, attempt + 1, e)
+                output = msg
+
+            # Don't retry safety blocks, unknown-tool errors, or success
+            is_transient_error = (
+                output.startswith("[error]")
+                and not output.startswith("[error] Unknown tool")
+                and not output.startswith("[error] Command not found")
+            )
+            if not is_transient_error or attempt >= _TOOL_RETRIES:
+                return output
+
+            logger.info("[MotorCortex] Tool %s transient error — retrying (%d/%d): %s",
+                        tool, attempt + 1, _TOOL_RETRIES, output[:120])
+
+        return output  # unreachable; satisfies type checker
+
+    async def _dispatch_once(self, tool: str, args: dict) -> str:
+        """Single (non-retrying) tool dispatch. Called by _dispatch."""
         try:
             if tool == "read_file":
                 return await asyncio.get_event_loop().run_in_executor(

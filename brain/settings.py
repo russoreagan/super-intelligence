@@ -123,6 +123,11 @@ DEFAULTS: dict[str, float | int] = {
     "surprise_threshold":          0.40,
     "confidence_skip_threshold":   0.70,
     "predictor_window":            8,
+    # Fraction of gated skips to shadow-validate: run the integrator anyway purely
+    # for measurement (records actual vs. predicted + feeds the true label back into
+    # predictor history for self-correction) WITHOUT changing the gated behavior.
+    # 0 = off. Gating is rare, so this adds ~1% to integrator-call volume at 0.15.
+    "gating_shadow_sample_rate":   0.15,
 
     # ── Section 7: Voice Expressiveness ──────────────────────────────────────
     "voice_stability_default":     0.45,

@@ -26,12 +26,24 @@ logger = logging.getLogger(__name__)
 SYSTEM = """You read a single utterance an AI assistant just spoke aloud and
 decide whether it committed to an immediate action it should now carry out.
 
-An *immediate action commitment* is a concrete intention to do something now
-that requires tools — read files, list a directory, fetch info, run code,
-check a system. Phrases like "let me grab those", "I'll go look", "let me pull
-that up", "I'll check now" count.
+An *immediate action commitment* is a concrete, first-person declaration to do
+something NOW that requires tools — read files, list a directory, fetch info,
+run code, check a system. Phrases like "let me grab those", "I'll go look",
+"let me pull that up", "I'll check now" count.
 
-NOT commitments:
+CRITICAL — questions directed AT THE USER are NEVER commitments.
+If the AI is asking the user whether it SHOULD do something, that is a
+permission-seeking question, not a commitment. The user has not said yes yet.
+Set asking_user=true and commitment=false for all of these:
+- "Should I look at that for you?" → asking_user=true
+- "Want me to check the codebase?" → asking_user=true
+- "Shall I start on that?" → asking_user=true
+- "Would it help if I pulled that up?" → asking_user=true
+- "Do you want me to run that?" → asking_user=true
+Any utterance ending with a question mark that offers to perform an action
+for the user is asking_user=true. Do NOT enqueue it as a task.
+
+NOT commitments (asking_user=false, commitment=false):
 - Conversational filler: "I'll get back to you", "let me think about that"
 - Future/hypothetical: "I could look at that later", "we should check"
 - Past-tense reports: "I checked and found X"
@@ -43,21 +55,32 @@ agent could execute directly. Preserve any specific names, paths, or topics
 from the utterance and surrounding context.
 
 Output STRICT JSON, nothing else:
-{"commitment": true, "goal": "<imperative restatement>"}
+{"commitment": true,  "asking_user": false, "goal": "<imperative restatement>"}
 or
-{"commitment": false, "goal": ""}
+{"commitment": false, "asking_user": false, "goal": ""}
+or
+{"commitment": false, "asking_user": true,  "goal": ""}
 
 Examples:
 Utterance: "Yeah I do. You asked me to pull both the Evolution App and
 Karaoke Hero directories and figure out which looked more interesting for
 learning Unity. Let me grab those now and come back with what's there."
-→ {"commitment": true, "goal": "List the contents of /Users/russ/Documents/Evolution App and /Users/russ/Documents/Karaoke Hero and summarise which looks more interesting for learning Unity."}
+→ {"commitment": true, "asking_user": false, "goal": "List the contents of /Users/russ/Documents/Evolution App and /Users/russ/Documents/Karaoke Hero and summarise which looks more interesting for learning Unity."}
 
 Utterance: "That's a fascinating question about rainbows across cultures."
-→ {"commitment": false, "goal": ""}
+→ {"commitment": false, "asking_user": false, "goal": ""}
 
 Utterance: "I'll get back to you on that one."
-→ {"commitment": false, "goal": ""}
+→ {"commitment": false, "asking_user": false, "goal": ""}
+
+Utterance: "Should I pull up the codebase and take a look?"
+→ {"commitment": false, "asking_user": true, "goal": ""}
+
+Utterance: "Want me to check those files for you?"
+→ {"commitment": false, "asking_user": true, "goal": ""}
+
+Utterance: "Shall I start reviewing the architecture?"
+→ {"commitment": false, "asking_user": true, "goal": ""}
 """
 
 
@@ -79,11 +102,21 @@ class FollowThrough:
         self._cell.set_router(router)
 
     async def extract(self, user_input: str, response: str,
-                       turn_id: str) -> str | None:
-        """Return the imperative goal if the response commits to an action,
-        else None. Errors are swallowed — follow-through is best-effort."""
+                       turn_id: str) -> tuple[str | None, bool]:
+        """Classify the AI's response and return (goal, asking_user).
+
+        Returns:
+            (goal_string, False) — committed to act; goal is the imperative.
+            (None, False)        — no commitment, brief ack; caller may use a
+                                   fallback goal derived from the user's request.
+            (None, True)         — the AI asked the user a yes/no permission
+                                   question ("Should I…?"). Do NOT enqueue a
+                                   task; wait for the user's answer.
+
+        Errors are swallowed — follow-through is best-effort.
+        """
         if not response or not response.strip():
-            return None
+            return None, False
 
         self._cell.reset_turn(turn_id)
         messages = [{
@@ -91,35 +124,40 @@ class FollowThrough:
             "content": (
                 f"User said: {user_input!r}\n\n"
                 f"Assistant just spoke: {response!r}\n\n"
-                "Did the assistant commit to an immediate action?"
+                "Did the assistant commit to an immediate action, "
+                "or ask the user for permission?"
             ),
         }]
         try:
             raw = await self._cell.call(messages)
         except Exception as e:
             logger.debug("[FollowThrough] extractor call failed: %s", e)
-            return None
+            return None, False
 
-        goal = self._parse(raw)
+        goal, asking_user = self._parse(raw)
         if goal:
             logger.info("[FollowThrough] Commitment detected → goal: %s", goal[:120])
-        return goal
+        elif asking_user:
+            logger.info("[FollowThrough] AI asked user for permission — not enqueuing task")
+        return goal, asking_user
 
     @staticmethod
-    def _parse(raw: str) -> str | None:
+    def _parse(raw: str) -> tuple[str | None, bool]:
+        """Parse extractor JSON. Returns (goal_or_None, asking_user)."""
         if not raw:
-            return None
+            return None, False
         match = re.search(r"\{.*\}", raw, re.DOTALL)
         if not match:
-            return None
+            return None, False
         try:
             data = json.loads(match.group(0))
         except json.JSONDecodeError:
-            return None
+            return None, False
+        asking_user = bool(data.get("asking_user", False))
         if not data.get("commitment"):
-            return None
+            return None, asking_user
         goal = (data.get("goal") or "").strip()
-        return goal or None
+        return (goal or None), False
 
 
 _REPORTER_SYSTEM = """You report back on a job the brain just finished executing.

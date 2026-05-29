@@ -42,9 +42,25 @@ class LearningMonitor:
         """Compute per-turn structural metrics and post to Langfuse. Returns the metrics dict."""
         outcomes = trace.predictor_outcomes or []
 
-        total_outcomes = len(outcomes)
-        correct = sum(1 for o in outcomes if o.get("correct"))
-        accuracy = correct / total_outcomes if total_outcomes > 0 else None
+        # Accuracy is computed ONLY over outcomes where a prediction was actually
+        # validated (correct is True/False). correct=None means either the integrator
+        # was gated (no ground truth) or no prediction existed — counting those in the
+        # denominator silently deflates accuracy toward 0 and was the root cause of the
+        # misleading 0.158 figure.
+        validated = [o for o in outcomes if o.get("correct") is not None]
+        correct = sum(1 for o in validated if o.get("correct"))
+        accuracy = correct / len(validated) if validated else None
+
+        # Partial-position match (reconciles with surprise's lenient notion).
+        match_fracs = [o["match_frac"] for o in outcomes if o.get("match_frac") is not None]
+        avg_match_frac = sum(match_fracs) / len(match_fracs) if match_fracs else None
+
+        # Shadow-validated gated skips — the honest "are our gates safe?" measure,
+        # taken on exactly the decisions the gate actually made.
+        shadow = [o for o in outcomes if o.get("shadow")]
+        shadow_validated = [o for o in shadow if o.get("correct") is not None]
+        gate_hits = sum(1 for o in shadow_validated if o.get("correct"))
+        gate_hit_rate = gate_hits / len(shadow_validated) if shadow_validated else None
 
         confidences = [o["confidence"] for o in outcomes if o.get("confidence") is not None]
         avg_confidence = sum(confidences) / len(confidences) if confidences else None
@@ -52,20 +68,28 @@ class LearningMonitor:
         surprises = [o["surprise"] for o in outcomes if o.get("surprise") is not None]
         avg_surprise = sum(surprises) / len(surprises) if surprises else None
 
+        # Raw run/gate counts so gating_efficiency is interpretable at a glance.
+        gate_count = sum(1 for o in outcomes if o.get("integrator_woken") is False)
+        run_count = sum(1 for o in outcomes if o.get("integrator_woken") is True)
+
         saved = trace.llm_calls_saved or 0
         total_calls = (trace.llm_calls or 0) + saved
         gating_eff = saved / total_calls if total_calls > 0 else 0.0
 
         bypassed = trace.gating_bypassed_count or 0
-        total_integrators = total_outcomes + bypassed
+        total_integrators = len(outcomes) + bypassed
         bypass_rate = bypassed / total_integrators if total_integrators > 0 else 0.0
 
         metrics = {
             "turn_idx": len(self._turn_metrics),
             "predictor_accuracy": accuracy,
+            "predictor_match_frac": avg_match_frac,
+            "gate_hit_rate": gate_hit_rate,
             "avg_predictor_confidence": avg_confidence,
             "avg_surprise": avg_surprise,
             "gating_efficiency": gating_eff,
+            "gate_count": gate_count,
+            "run_count": run_count,
             "bypass_rate": bypass_rate,
             "llm_calls_saved": saved,
             "modulated_switch_count": getattr(trace, "modulated_switch_count", 0),
@@ -110,7 +134,8 @@ class LearningMonitor:
             "total_llm_calls_saved": sum(m.get("llm_calls_saved", 0) for m in self._turn_metrics),
         }
 
-        for key in ("predictor_accuracy", "gating_efficiency", "avg_surprise"):
+        for key in ("predictor_accuracy", "predictor_match_frac", "gate_hit_rate",
+                    "gating_efficiency", "avg_surprise"):
             e_val = _avg(early, key)
             l_val = _avg(late, key)
             summary[f"early_{key}"] = e_val

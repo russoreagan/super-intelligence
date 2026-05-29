@@ -16,7 +16,7 @@ from brain.cell import IntegratorCell
 from brain.model_router import ModelRouter
 from brain.neuron import SwitchNeuron
 from brain.observability.decisions import decisions
-from brain.predictor import PredictorSwitch, input_signature
+from brain.predictor import PredictorSwitch, input_signature, prediction_match_frac
 from brain.utils import safe_json_parse
 from brain.wiring import Wiring
 
@@ -482,6 +482,38 @@ class TemporalCluster:
                     "integrator_woken": False,
                     "bypass_reason": None, "correct": None,
                 })
+
+            # Shadow-validation: occasionally run the understanding LLM anyway purely
+            # for measurement. The fast-path features already drive behavior (we discard
+            # the shadow parse → zero behavior change); we record whether the gated
+            # intent matched the LLM's intent, and feed the true intent back into the
+            # predictor history so a bad gate self-corrects.
+            shadow_rate = float(settings.get("gating_shadow_sample_rate", 0.0))
+            if shadow_rate > 0 and _random.random() < shadow_rate:
+                gated_intent = features["intent"]
+                self._understanding.reset_turn(turn_id)
+                shadow_raw = await self._understanding.call(
+                    [{"role": "user", "content": text}])
+                shadow_features = safe_json_parse(shadow_raw) or {}
+                actual_intent = shadow_features.get("intent", "other")
+                self._predictor.record(sig, actual_intent)
+                if trace is not None:
+                    trace.predictor_outcomes.append({
+                        "cluster": CLUSTER, "stage": "understanding",
+                        "predicted": gated_intent, "actual": actual_intent,
+                        "confidence": round(confidence, 3),
+                        "surprise": round(surprise, 3),
+                        "match_frac": round(prediction_match_frac(gated_intent, actual_intent), 3),
+                        "integrator_woken": False, "shadow": True,
+                        "bypass_reason": None,
+                        "correct": (gated_intent == actual_intent),
+                    })
+                decisions.log(
+                    "shadow_validate_understanding", turn_id=turn_id, cluster=CLUSTER,
+                    predicted=gated_intent, actual=actual_intent,
+                    correct=(gated_intent == actual_intent),
+                )
+
             logger.debug("[Input parser] Skipping LLM parse — predictor confident (%.2f), using fast-path features", confidence)
             return features
 
@@ -536,6 +568,7 @@ class TemporalCluster:
                 "predicted": predicted_tag, "actual": actual_tag,
                 "confidence": round(confidence, 3),
                 "surprise": round(surprise, 3),
+                "match_frac": round(prediction_match_frac(predicted_tag, actual_tag), 3) if predicted_tag else None,
                 "integrator_woken": True,
                 "bypass_reason": bypass_reason if bypass else None,
                 "correct": (predicted_tag == actual_tag) if predicted_tag else None,

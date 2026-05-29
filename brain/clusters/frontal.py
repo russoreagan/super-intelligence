@@ -29,6 +29,7 @@ from brain.observability.decisions import decisions
 from brain.predictor import (
     CompositePredictor,
     composite_signature,
+    prediction_match_frac,
     should_bypass_gating,
 )
 from brain.security import fence
@@ -404,21 +405,37 @@ class FrontalCluster:
                                        "user_emotion": features.get("user_emotion")},
                     cost_saved_est=0.0015,
                 )
+                # Shadow-validation: occasionally run the integrator anyway purely for
+                # measurement. The gated prediction still drives behavior (we discard the
+                # shadow instruction → zero behavior change); we only record whether the
+                # gate was correct and feed the true label back into history so a
+                # confidently-wrong signature self-corrects over time.
+                shadow_rate = float(settings.get("gating_shadow_sample_rate", 0.0))
+                if shadow_rate > 0 and _random.random() < shadow_rate:
+                    _shadow_instr, shadow_actual = await self._run_executive_llm(
+                        features, affect, memory, parietal_context, nm, turn_id)
+                    shadow_surprise = self._exec_predictor.surprise(predicted, shadow_actual, confidence)
+                    self._exec_predictor.record(exec_sig, shadow_actual)
+                    if trace is not None:
+                        trace.predictor_outcomes.append({
+                            "cluster": CLUSTER, "stage": "executive",
+                            "predicted": list(predicted), "actual": list(shadow_actual),
+                            "confidence": round(confidence, 3),
+                            "surprise": round(shadow_surprise, 3),
+                            "match_frac": round(prediction_match_frac(predicted, shadow_actual), 3),
+                            "integrator_woken": False, "shadow": True,
+                            "bypass_reason": None,
+                            "correct": (predicted == shadow_actual),
+                        })
+                    decisions.log(
+                        "shadow_validate_executive", turn_id=turn_id, cluster=CLUSTER,
+                        predicted=list(predicted), actual=list(shadow_actual),
+                        correct=(predicted == shadow_actual),
+                    )
 
         if instruction is None:
-            self._executive.reset_turn(turn_id)
-            exec_context = self._build_exec_context(features, affect, memory, parietal_context, nm)
-            exec_messages = [{"role": "user", "content": exec_context}]
-            exec_raw = await self._executive.call(exec_messages)
-            instruction = safe_json_parse(exec_raw)
-            if not instruction:
-                instruction = {"response_type": "chitchat", "target_length": "medium",
-                               "tone": "neutral", "key_points": [], "drafter_count": 1}
-            actual = (
-                instruction.get("response_type", "chitchat"),
-                instruction.get("target_length", "medium"),
-                instruction.get("tone", "neutral"),
-            )
+            instruction, actual = await self._run_executive_llm(
+                features, affect, memory, parietal_context, nm, turn_id)
             predicted_now, conf_now = self._exec_predictor.predict(exec_sig)
             surprise_now = self._exec_predictor.surprise(predicted_now, actual, conf_now)
             self._exec_predictor.record(exec_sig, actual)
@@ -430,12 +447,34 @@ class FrontalCluster:
                     "actual": list(actual),
                     "confidence": round(conf_now, 3),
                     "surprise": round(surprise_now, 3),
+                    "match_frac": round(prediction_match_frac(predicted_now, actual), 3) if predicted_now else None,
                     "integrator_woken": True,
                     "bypass_reason": bypass_reason if bypass else None,
                     "correct": (predicted_now == actual) if predicted_now else None,
                 })
 
         return instruction
+
+    async def _run_executive_llm(
+        self, features: dict, affect: dict, memory: dict,
+        parietal_context: str, nm: dict, turn_id: str,
+    ) -> tuple[dict, tuple]:
+        """Run the executive integrator LLM. Returns (instruction, actual_tuple).
+        Shared by the normal ran-path and the gating shadow-validation path."""
+        self._executive.reset_turn(turn_id)
+        exec_context = self._build_exec_context(features, affect, memory, parietal_context, nm)
+        exec_messages = [{"role": "user", "content": exec_context}]
+        exec_raw = await self._executive.call(exec_messages)
+        instruction = safe_json_parse(exec_raw)
+        if not instruction:
+            instruction = {"response_type": "chitchat", "target_length": "medium",
+                           "tone": "neutral", "key_points": [], "drafter_count": 1}
+        actual = (
+            instruction.get("response_type", "chitchat"),
+            instruction.get("target_length", "medium"),
+            instruction.get("tone", "neutral"),
+        )
+        return instruction, actual
 
     async def _try_subsystem_dispatch(
         self, instruction: dict, features: dict, affect: dict,
@@ -574,7 +613,7 @@ class FrontalCluster:
 
             async def _score_one(draft_id: str, text: str):
                 score = await self._score_draft(text, drafter_prompt, turn_id)
-                empathy_score = 0.5
+                empathy_score = None  # stays None when the empathy check doesn't run
                 if score.get("veto"):
                     return draft_id, text, score, None, True
                 overall = score.get("overall", 0.5)
@@ -597,7 +636,9 @@ class FrontalCluster:
                     logger.warning("[Response engine] Draft scoring failed: %s", r)
                     continue
                 draft_id, text, score, empathy, vetoed = r
-                empathy_score = (empathy or {}).get("empathy_score", 0.5) if empathy else 0.5
+                # None when the empathy check didn't run — so it's dropped from posted
+                # scores rather than leaking a flat 0.5 into the critic.empathy stream.
+                empathy_score = empathy.get("empathy_score") if empathy else None
                 overall = score.get("overall", 0.5)
                 if run_empathy and empathy and not vetoed:
                     empathy_score = empathy.get("empathy_score", 0.5)
@@ -648,7 +689,7 @@ class FrontalCluster:
         self.last_turn_draft_scores = [{
             "draft_id": draft_id,
             "coherence": 0.8, "relevance": 0.8, "tone_fit": 0.8,
-            "empathy_score": 0.5, "overall": 0.8,
+            "empathy_score": None, "overall": 0.8,
             "selected": True, "vetoed": False, "critic_ran": False,
         }]
         return text

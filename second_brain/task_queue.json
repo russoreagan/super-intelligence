@@ -1,29 +1,5 @@
 [
   {
-    "id": "e5145542",
-    "goal": "found some of the most critical files i'll paste them in here in a minute",
-    "status": "failed",
-    "source": "user",
-    "priority": 1,
-    "created_at": 1779747908.956588,
-    "started_at": 1779747934.587331,
-    "completed_at": 1779748007.0916119,
-    "success": false,
-    "job_id": null
-  },
-  {
-    "id": "3d53498a",
-    "goal": "Examine the files in the pipeline (chart_writer.py, lane_mapper.py, guitar.py, bass.py, drums.py) and Unity (ChartParser.cs, ChartData.cs, GuitarBassHighway.cs, NoteHighway.cs) to identify where quality is breaking down in transcription, lane mapping, or chart parsing/rendering.",
-    "status": "failed",
-    "source": "user",
-    "priority": 1,
-    "created_at": 1779747937.382118,
-    "started_at": 1779748015.22672,
-    "completed_at": 1779748094.933169,
-    "success": false,
-    "job_id": null
-  },
-  {
     "id": "340767c4",
     "goal": "List the contents of the Karaoke Hero directory and find the pipeline and Unity chart files.",
     "status": "failed",
@@ -478,5 +454,29 @@
     "completed_at": 1780032121.718933,
     "success": true,
     "job_id": "job_task_c32e1830"
+  },
+  {
+    "id": "d8ccd364",
+    "goal": "Search for recent research on neuroscience and AI architectures that could inform the design of my system.",
+    "status": "failed",
+    "source": "recovery",
+    "priority": 0,
+    "created_at": 1780043386.892653,
+    "started_at": 1780043882.250083,
+    "completed_at": 1780044302.4736798,
+    "success": false,
+    "job_id": "job_task_d8ccd364"
+  },
+  {
+    "id": "9dce8b5d",
+    "goal": "Search Scite for recent papers on AI adapting to individual user behavior patterns.",
+    "status": "failed",
+    "source": "recovery",
+    "priority": 0,
+    "created_at": 1780044307.1169522,
+    "started_at": 1780044356.060291,
+    "completed_at": 1780044776.297324,
+    "success": false,
+    "job_id": "job_task_9dce8b5d"
   }
 ]

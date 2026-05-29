@@ -86,6 +86,10 @@ class StreamingMicSession:
         self._main_loop: asyncio.AbstractEventLoop | None = None
         self._running = False
         self._muted = True              # start muted; user must explicitly unmute
+        # PTT hold: True while Space is held. When True, UtteranceEnd events from
+        # Deepgram are suppressed — words keep accumulating across mid-sentence
+        # pauses so the WHOLE held phrase is dispatched as one utterance on release.
+        self._ptt_hold_active = False
         # Push-to-talk release grace: on key-up we keep the feed live briefly so
         # Deepgram can deliver trailing final Results before we finalize + mute.
         self._ptt_release_grace_s = float(os.environ.get("BRAIN_PTT_RELEASE_GRACE_MS", "350")) / 1000.0
@@ -106,24 +110,7 @@ class StreamingMicSession:
         import sounddevice as sd
 
         self._current_device_id = sd.default.device[0]  # track which device we're using
-
-        def _audio_callback(indata, frames, time_info, status):  # noqa: ANN001
-            if status:
-                logger.debug("[StreamingMic] PortAudio status: %s", status)
-            # indata is a numpy int16 array, shape (frames, channels)
-            chunk = bytes(indata)
-            # Thread-safe handoff: schedule put_nowait on the asyncio loop
-            with contextlib.suppress(RuntimeError):
-                self._main_loop.call_soon_threadsafe(self._enqueue_chunk, chunk)
-
-        self._stream = sd.RawInputStream(
-            samplerate=SAMPLE_RATE,
-            channels=CHANNELS,
-            dtype="int16",
-            blocksize=BLOCKSIZE,
-            callback=_audio_callback,
-        )
-        self._stream.start()
+        self._open_input_stream()
 
         # 3. Register for macOS CoreAudio device change notifications
         self._setup_coreaudio_notifications()
@@ -301,36 +288,66 @@ class StreamingMicSession:
         self._device_listener_active = True
         logger.debug("[StreamingMic] Device monitoring enabled (polling-based)")
 
+    def _open_input_stream(self) -> None:
+        """Open + start the sounddevice mic input stream. Shared by start(),
+        _restart_stream(), and resume_capture()."""
+        import sounddevice as sd
+
+        def _audio_callback(indata, frames, time_info, status):  # noqa: ANN001
+            if status:
+                logger.debug("[StreamingMic] PortAudio status: %s", status)
+            # indata is a numpy int16 array, shape (frames, channels)
+            chunk = bytes(indata)
+            # Thread-safe handoff: schedule put_nowait on the asyncio loop
+            with contextlib.suppress(RuntimeError):
+                self._main_loop.call_soon_threadsafe(self._enqueue_chunk, chunk)
+
+        self._stream = sd.RawInputStream(
+            samplerate=SAMPLE_RATE,
+            channels=CHANNELS,
+            dtype="int16",
+            blocksize=BLOCKSIZE,
+            callback=_audio_callback,
+        )
+        self._stream.start()
+
+    def _close_input_stream(self) -> None:
+        """Stop + close the mic input stream (best-effort)."""
+        if self._stream is not None:
+            try:
+                self._stream.stop()
+                self._stream.close()
+            except Exception as e:
+                logger.warning("[StreamingMic] Error closing input stream: %s", e)
+            self._stream = None
+
+    def pause_capture(self) -> None:
+        """Stop the physical mic input stream — used during TTS playback so the
+        output stream doesn't collide with the input stream on a shared audio
+        device (e.g. a Scarlett 2i2 doing full-duplex, which triggers CoreAudio
+        err -10863 and silently kills mic capture). The Deepgram socket stays
+        open (keepalive), so we resume cleanly afterwards."""
+        if self._stream is not None:
+            logger.debug("[StreamingMic] Pausing capture (TTS playback)")
+            self._close_input_stream()
+
+    def resume_capture(self) -> None:
+        """Re-open the mic input stream after pause_capture()."""
+        if self._stream is None and self._running:
+            try:
+                self._open_input_stream()
+                logger.debug("[StreamingMic] Capture resumed")
+            except Exception as e:
+                logger.error("[StreamingMic] Failed to resume capture: %s", e)
+
     def _restart_stream(self) -> None:
-        """Restart the mic stream (called when device changes)."""
+        """Restart the mic stream (called when the input device changes)."""
         if self._stream is None:
             return
+        logger.info("[StreamingMic] Restarting mic stream due to device change")
+        self._close_input_stream()
         try:
-            logger.info("[StreamingMic] Restarting mic stream due to device change")
-            self._stream.stop()
-            self._stream.close()
-            self._stream = None
-        except Exception as e:
-            logger.warning("[StreamingMic] Error closing old stream: %s", e)
-
-        try:
-            import sounddevice as sd
-
-            def _audio_callback(indata, frames, time_info, status):  # noqa: ANN001
-                if status:
-                    logger.debug("[StreamingMic] PortAudio status: %s", status)
-                chunk = bytes(indata)
-                with contextlib.suppress(RuntimeError):
-                    self._main_loop.call_soon_threadsafe(self._enqueue_chunk, chunk)
-
-            self._stream = sd.RawInputStream(
-                samplerate=SAMPLE_RATE,
-                channels=CHANNELS,
-                dtype="int16",
-                blocksize=BLOCKSIZE,
-                callback=_audio_callback,
-            )
-            self._stream.start()
+            self._open_input_stream()
             logger.info("[StreamingMic] Mic stream restarted")
         except Exception as e:
             logger.error("[StreamingMic] Failed to restart stream: %s", e)
@@ -376,16 +393,22 @@ class StreamingMicSession:
         """Discard mic audio until unmute(). Socket stays warm — no reconnect needed."""
         if not self._muted:
             self._muted = True
+            self._ptt_hold_active = False
             # Reset any in-progress utterance so stale timestamps / words don't
             # corrupt the first real utterance after unmute.
             self._utterance_start_s = None
             self._pending_words = []
             logger.info("[StreamingMic] Muted")
 
-    def unmute(self) -> None:
+    def unmute(self, ptt_hold: bool = False) -> None:
+        """Unmute the mic. When ptt_hold=True (spacebar hold-to-talk), suppress
+        Deepgram's UtteranceEnd so the whole held phrase accumulates into ONE
+        utterance dispatched on release (flush). When False (toggle/always-on),
+        utterances dispatch normally on each UtteranceEnd."""
         if self._muted:
             self._muted = False
-            logger.info("[StreamingMic] Unmuted")
+            self._ptt_hold_active = ptt_hold
+            logger.info("[StreamingMic] Unmuted%s", " (PTT hold)" if ptt_hold else "")
 
     def toggle_mute(self) -> bool:
         """Toggle mute state. Returns new is_muted value."""
@@ -399,11 +422,15 @@ class StreamingMicSession:
         """Await the next completed utterance. Returns dict with transcript/audio/words."""
         return await self.utterances.get()
 
-    async def _finalize_pending(self, last_end: float | None = None) -> None:
+    async def _finalize_pending(self, last_end: float | None = None,
+                                from_flush: bool = False) -> None:
         """Build an utterance from the accumulated words + sliced PCM, publish it
         to the auditory bus, and hand it to next_utterance(). Resets utterance
         state. No-op when there's nothing pending. Shared by Deepgram's
-        UtteranceEnd and the push-to-talk flush() path."""
+        UtteranceEnd and the push-to-talk flush() path.
+
+        `from_flush=True` is set by flush() so the voice bridge knows to dispatch
+        the utterance even though the mic will be muted by the time it is read."""
         if not self._pending_words and self._utterance_start_s is None:
             return
         if last_end is None:
@@ -459,6 +486,9 @@ class StreamingMicSession:
             "sample_rate": SAMPLE_RATE,
             "diarized_words": diarized,
             "duration_s": float(last_end - start),
+            # PTT flush: mic will be muted by the time the voice bridge reads this,
+            # so bypass the is_muted discard check.
+            "from_ptt_flush": from_flush,
         })
 
     async def flush(self) -> None:
@@ -471,7 +501,7 @@ class StreamingMicSession:
         if self._ptt_release_grace_s > 0:
             await asyncio.sleep(self._ptt_release_grace_s)
         with contextlib.suppress(Exception):
-            await self._finalize_pending()
+            await self._finalize_pending(from_flush=True)
         self.mute()
 
     # ── internal: mic side ─────────────────────────────────────────────────
@@ -600,6 +630,14 @@ class StreamingMicSession:
                         # Reset state so the next real utterance starts clean.
                         self._utterance_start_s = None
                         self._pending_words = []
+                        continue
+                    if self._ptt_hold_active:
+                        # PTT hold in progress — DON'T finalize yet. Words keep
+                        # accumulating in _pending_words across mid-sentence pauses.
+                        # SpeechStarted only sets _utterance_start_s when it's None
+                        # (preserving the original hold-start timestamp), so the
+                        # full phrase will slice correctly when flush() fires on release.
+                        logger.debug("[StreamingMic] UtteranceEnd suppressed (PTT hold active)")
                         continue
                     last_end = float(getattr(message, "last_word_end", 0.0))
                     await self._finalize_pending(last_end)

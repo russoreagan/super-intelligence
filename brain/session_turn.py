@@ -633,23 +633,31 @@ class _TurnMixin:
                 deferred_goal = self._pending_task.take() if self._pending_task else None
                 if deferred_goal:
                     try:
-                        extracted = await self._follow_through.extract(user_input, final, turn_id)
+                        extracted, asking_user = await self._follow_through.extract(
+                            user_input, final, turn_id)
                     except Exception:
-                        extracted = None
+                        extracted, asking_user = None, False
+                    if asking_user:
+                        # The AI asked the user "Should I…?" — do NOT start the task.
+                        # The user hasn't said yes yet. Discard the deferred goal;
+                        # it will be re-deposited if the user confirms on the next turn.
+                        logger.info("[FollowThrough] AI asked permission — deferred goal discarded, waiting for user answer")
+                        return
                     if extracted:
                         goal = extracted
                     else:
-                        # extract() returned None — the assistant's ack was too brief
-                        # to anchor a commitment. Fall back to the topic_summary-based
-                        # goal set by FrontalTaskSubsystem (already cleaner than raw_text).
+                        # extract() returned None with no question — the assistant's
+                        # ack was too brief to anchor a commitment. Fall back to the
+                        # topic_summary-based goal set by FrontalTaskSubsystem.
                         goal = deferred_goal
-                        logger.debug("[FollowThrough] No commitment found in response — using topic goal: %s", goal[:80])
+                        logger.debug("[FollowThrough] No commitment found — using topic goal: %s", goal[:80])
                     self._task_queue.enqueue(goal, source="user", priority=1)
                     logger.info("[FollowThrough] Task enqueued (task-mode): %s", goal[:120])
                     return
                 try:
-                    goal = await self._follow_through.extract(user_input, final, turn_id)
-                    if goal:
+                    goal, asking_user = await self._follow_through.extract(
+                        user_input, final, turn_id)
+                    if goal and not asking_user:
                         self._task_queue.enqueue(goal, source="user", priority=1)
                         logger.info("[FollowThrough] Task enqueued (reactive): %s", goal[:120])
                 except Exception as _e:
