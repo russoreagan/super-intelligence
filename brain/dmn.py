@@ -99,7 +99,7 @@ def _cosine(a: list[float] | None, b: list[float] | None) -> float:
     if not a or not b or len(a) != len(b):
         return 0.0
     import math as _math
-    num = sum(x * y for x, y in zip(a, b))
+    num = sum(x * y for x, y in zip(a, b, strict=True))
     na = _math.sqrt(sum(x * x for x in a))
     nb = _math.sqrt(sum(x * x for x in b))
     if na == 0 or nb == 0:
@@ -1588,7 +1588,8 @@ class DefaultModeNetwork:
         max_cos = 0.0
         if not is_dup and new_emb is not None:
             sem_thr = float(settings.get("dmn_semantic_dup_threshold") or 0.88)
-            for prior, prior_emb in zip(self._recent_thoughts, self._recent_embeddings):
+            for prior, prior_emb in zip(self._recent_thoughts, self._recent_embeddings,
+                                        strict=False):
                 if exempt_seed is not None and prior == exempt_seed:
                     continue
                 if not prior_emb:

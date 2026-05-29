@@ -99,6 +99,22 @@ def fake_router() -> FakeRouter:
     return FakeRouter()
 
 
+@pytest.fixture(autouse=True)
+def _isolate_dmn_novelty_state(tmp_path, monkeypatch):
+    """Keep DMN tests from polluting the real ``second_brain/`` directory.
+
+    The DMN persists its novelty/dedup state to disk on every accepted thought,
+    so any test that drives ``_process_thought`` would otherwise write a real
+    ``second_brain/dmn_novelty.json``. Redirect that path to a per-test temp file.
+    """
+    try:
+        import brain.dmn as _dmn
+    except Exception:
+        return
+    monkeypatch.setattr(_dmn, "NOVELTY_STATE_PATH",
+                        tmp_path / "dmn_novelty.json", raising=False)
+
+
 @pytest.fixture
 def fake_schema_store(tmp_path, monkeypatch):
     """
