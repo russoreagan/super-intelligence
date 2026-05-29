@@ -2,6 +2,7 @@
 Tests for predict-and-surprise gating: PredictorSwitch, CompositePredictor,
 should_bypass_gating helper, and firing-path capture under both skip and call paths.
 """
+
 from __future__ import annotations
 
 from brain.predictor import (
@@ -13,6 +14,7 @@ from brain.predictor import (
 )
 
 # ── PredictorSwitch ──────────────────────────────────────────────────────────
+
 
 def test_predictor_no_history_returns_max_surprise():
     p = PredictorSwitch(name="t", cluster="c")
@@ -47,9 +49,9 @@ def test_predictor_wrong_prediction_high_surprise():
 
 # ── CompositePredictor ──────────────────────────────────────────────────────
 
+
 def test_composite_predictor_skips_only_with_high_confidence():
-    cp = CompositePredictor(name="exec", cluster="frontal",
-                             confidence_skip_threshold=0.7)
+    cp = CompositePredictor(name="exec", cluster="frontal", confidence_skip_threshold=0.7)
     sig = ("chitchat", "casual", False, "mid", "low")
     # Record one weak example — confidence will be low
     cp.record(sig, ("chitchat", "brief", "warm"))
@@ -88,6 +90,7 @@ def test_composite_outcome_score_history():
 
 # ── composite_signature ─────────────────────────────────────────────────────
 
+
 def test_composite_signature_buckets_neuromods():
     features = {"intent": "task", "register": "formal", "requires_memory": True}
     affect = {"neuromod": {"DA": 0.8, "GABA": 0.05, "ACh": 0.5, "Glu": 0.3}}
@@ -96,6 +99,7 @@ def test_composite_signature_buckets_neuromods():
 
 
 # ── should_bypass_gating ────────────────────────────────────────────────────
+
 
 def test_bypass_when_GABA_flagged_high():
     bypass, reason = should_bypass_gating({"high_GABA": True}, {})
@@ -138,6 +142,7 @@ def test_no_bypass_when_calm():
 
 # ── input_signature ──────────────────────────────────────────────────────────
 
+
 def test_input_signature_buckets_length_and_question():
     assert "tiny" in input_signature("hi")
     assert "long" in input_signature("word " * 20)
@@ -146,6 +151,7 @@ def test_input_signature_buckets_length_and_question():
 
 
 # ── Firing-path capture from a switch ───────────────────────────────────────
+
 
 def test_switch_fire_appends_to_current_trace(monkeypatch):
     from brain.neuron import SwitchNeuron
@@ -169,6 +175,7 @@ def test_switch_fire_appends_to_current_trace(monkeypatch):
 def test_switch_fire_noop_without_trace():
     """fire() must not crash when no trace context is bound."""
     from brain.neuron import SwitchNeuron
+
     sw = SwitchNeuron(name="alpha", cluster="testcluster")
     # Should simply return the payload without error.
     payload = sw.fire(0.5, "tag")

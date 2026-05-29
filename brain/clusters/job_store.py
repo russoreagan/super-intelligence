@@ -13,13 +13,13 @@ Config (env vars override settings.json):
   BRAIN_JOB_STORE_MAX_JOBS — max number of job files to keep (default 100)
   BRAIN_JOB_STORE_MAX_MB   — max total size in MB (default 100)
 """
+
 from __future__ import annotations
 
 import json
 import logging
 import os
 from datetime import UTC, datetime
-from pathlib import Path
 
 from brain.second_brain.store import SECOND_BRAIN_ROOT
 
@@ -34,6 +34,7 @@ _DEFAULT_MAX_MB = 100
 def _max_jobs() -> int:
     try:
         from brain.settings import settings
+
         return int(
             os.environ.get("BRAIN_JOB_STORE_MAX_JOBS")
             or settings.get("job_store_max_jobs", _DEFAULT_MAX_JOBS)
@@ -45,6 +46,7 @@ def _max_jobs() -> int:
 def _max_bytes() -> int:
     try:
         from brain.settings import settings
+
         mb = int(
             os.environ.get("BRAIN_JOB_STORE_MAX_MB")
             or settings.get("job_store_max_mb", _DEFAULT_MAX_MB)
@@ -102,8 +104,13 @@ class JobStore:
         }
         self._write(job_id, record)
         self._cleanup()
-        logger.info("[JobStore] Saved job %s (success=%s, %d steps, %d files)",
-                    job_id, success, len(steps), len(written_files))
+        logger.info(
+            "[JobStore] Saved job %s (success=%s, %d steps, %d files)",
+            job_id,
+            success,
+            len(steps),
+            len(written_files),
+        )
 
     def update_summary(self, job_id: str, spoken_summary: str) -> bool:
         """Attach a spoken summary to an existing job record. Returns True if found."""
@@ -152,17 +159,19 @@ class JobStore:
         for f in files[:limit]:
             try:
                 record = json.loads(f.read_text())
-                out.append({
-                    "job_id": record.get("job_id"),
-                    "task_id": record.get("task_id"),
-                    "goal": record.get("goal"),
-                    "success": record.get("success"),
-                    "source": record.get("source"),
-                    "written_files": record.get("written_files", []),
-                    "spoken_summary": record.get("spoken_summary"),
-                    "created_at": record.get("created_at"),
-                    "steps_count": len(record.get("steps", [])),
-                })
+                out.append(
+                    {
+                        "job_id": record.get("job_id"),
+                        "task_id": record.get("task_id"),
+                        "goal": record.get("goal"),
+                        "success": record.get("success"),
+                        "source": record.get("source"),
+                        "written_files": record.get("written_files", []),
+                        "spoken_summary": record.get("spoken_summary"),
+                        "created_at": record.get("created_at"),
+                        "steps_count": len(record.get("steps", [])),
+                    }
+                )
             except Exception:
                 pass
         return out
@@ -205,6 +214,7 @@ class JobStore:
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
 
 def _extract_written_files(steps: list[dict]) -> list[str]:
     """Collect paths from any write_file or append_file steps."""

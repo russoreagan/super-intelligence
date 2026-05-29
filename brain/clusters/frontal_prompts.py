@@ -2,7 +2,8 @@
 
 from brain.security import FENCE_SYSTEM_ADDENDUM
 
-EXECUTIVE_SYSTEM = """You are the executive coordinator of an AI brain's frontal lobe.
+EXECUTIVE_SYSTEM = (
+    """You are the executive coordinator of an AI brain's frontal lobe.
 Given parsed input features, memory context, and emotional state, produce a drafting
 instruction for the response drafters.
 Return JSON: {
@@ -41,7 +42,10 @@ question is complex. But if the user consistently sends short messages, respect 
 
 Combine all signals. Never inflate length to seem thorough.
 
-Return ONLY JSON.""" + "\n\n" + FENCE_SYSTEM_ADDENDUM
+Return ONLY JSON."""
+    + "\n\n"
+    + FENCE_SYSTEM_ADDENDUM
+)
 
 _DRAFTER_IDENTITY = """You are drafting a response on behalf of a persistent AI entity — not a stateless chatbot.
 
@@ -94,20 +98,27 @@ the words that will be spoken aloud to the user."""
 
 DRAFTER_SYSTEMS = [
     # Drafter A — direct and concise
-    _DRAFTER_IDENTITY + """
+    _DRAFTER_IDENTITY
+    + """
 Write a direct, clear response to the user. Follow the drafting instruction exactly. No preamble. Just the response."""
-    + "\n\n" + FENCE_SYSTEM_ADDENDUM,
+    + "\n\n"
+    + FENCE_SYSTEM_ADDENDUM,
     # Drafter B — warm and contextual
-    _DRAFTER_IDENTITY + """
+    _DRAFTER_IDENTITY
+    + """
 Write a warm, contextually-aware response that references prior context naturally. Follow the drafting instruction. No preamble."""
-    + "\n\n" + FENCE_SYSTEM_ADDENDUM,
+    + "\n\n"
+    + FENCE_SYSTEM_ADDENDUM,
     # Drafter C — thoughtful and precise
-    _DRAFTER_IDENTITY + """
+    _DRAFTER_IDENTITY
+    + """
 Write a thoughtful, precise response. Be specific. Acknowledge complexity if it exists. Follow the drafting instruction. No preamble."""
-    + "\n\n" + FENCE_SYSTEM_ADDENDUM,
+    + "\n\n"
+    + FENCE_SYSTEM_ADDENDUM,
 ]
 
-CRITIC_SYSTEM = """You are a quality critic for an AI brain's frontal lobe.
+CRITIC_SYSTEM = (
+    """You are a quality critic for an AI brain's frontal lobe.
 Score a draft response on three dimensions (0.0 to 1.0 each):
 - coherence: does it make sense and follow logically?
 - relevance: does it address what was actually asked?
@@ -121,9 +132,13 @@ Return JSON: {
   "veto": bool,          // true only if response is harmful, incoherent, or deeply wrong
   "veto_reason": string  // if veto, why
 }
-Return ONLY JSON.""" + "\n\n" + FENCE_SYSTEM_ADDENDUM
+Return ONLY JSON."""
+    + "\n\n"
+    + FENCE_SYSTEM_ADDENDUM
+)
 
-REFRAMER_SYSTEM = """You are the Stoic reframer in an AI brain's frontal lobe.
+REFRAMER_SYSTEM = (
+    """You are the Stoic reframer in an AI brain's frontal lobe.
 Inspired by Epictetus and Marcus Aurelius: we cannot control circumstances, only interpretation.
 Given a message that triggered threat/frustration, propose a more useful interpretation
 that allows a calm, constructive response rather than a defensive one.
@@ -132,9 +147,13 @@ Return JSON: {
   "response_approach": string, // how to respond given this reframe
   "succeeded": bool         // true if a genuinely better interpretation exists
 }
-Return ONLY JSON.""" + "\n\n" + FENCE_SYSTEM_ADDENDUM
+Return ONLY JSON."""
+    + "\n\n"
+    + FENCE_SYSTEM_ADDENDUM
+)
 
-EMPATHY_CRITIC_SYSTEM = """You are the empathy critic in an AI brain's frontal lobe.
+EMPATHY_CRITIC_SYSTEM = (
+    """You are the empathy critic in an AI brain's frontal lobe.
 Given the user's current emotional state and a draft response, predict how the user
 will feel after receiving it. Score empathic fit.
 Return JSON: {
@@ -143,4 +162,7 @@ Return JSON: {
   "veto": bool,                            // true if response will clearly make things worse
   "suggestion": string                     // if empathy_score < 0.6, brief improvement note
 }
-Return ONLY JSON.""" + "\n\n" + FENCE_SYSTEM_ADDENDUM
+Return ONLY JSON."""
+    + "\n\n"
+    + FENCE_SYSTEM_ADDENDUM
+)

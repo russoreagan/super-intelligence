@@ -13,6 +13,7 @@ Sources:
   self      — self-initiated by the DMN based on memory / idle reasoning
   recovery  — re-queued at boot from an interrupted previous session
 """
+
 from __future__ import annotations
 
 import json
@@ -48,7 +49,7 @@ class Task:
     goal: str
     status: Status = "pending"
     source: Source = "user"
-    priority: int = 1        # lower number = higher priority
+    priority: int = 1  # lower number = higher priority
     created_at: float = field(default_factory=time.time)
     started_at: float | None = None
     completed_at: float | None = None
@@ -59,8 +60,8 @@ class Task:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, d: dict) -> "Task":
-        known = {f for f in cls.__dataclass_fields__}  # type: ignore[attr-defined]
+    def from_dict(cls, d: dict) -> Task:
+        known = set(cls.__dataclass_fields__)  # type: ignore[attr-defined]
         return cls(**{k: v for k, v in d.items() if k in known})
 
 
@@ -116,8 +117,9 @@ class PersistentTaskQueue:
             task.priority = 0
             task.started_at = None
         self._save()
-        logger.info("[TaskQueue] Recovered %d interrupted task(s) from previous session",
-                    len(interrupted))
+        logger.info(
+            "[TaskQueue] Recovered %d interrupted task(s) from previous session", len(interrupted)
+        )
         return interrupted
 
     # ── Queue operations ──────────────────────────────────────────────────────
@@ -132,7 +134,10 @@ class PersistentTaskQueue:
             return None
         # Deduplicate against pending/running tasks
         for t in self._tasks:
-            if t.status in ("pending", "running") and _word_overlap(t.goal, goal) >= DEDUP_THRESHOLD:
+            if (
+                t.status in ("pending", "running")
+                and _word_overlap(t.goal, goal) >= DEDUP_THRESHOLD
+            ):
                 logger.debug("[TaskQueue] Deduplicated task (overlap): %r", goal[:60])
                 return None
         # For self-initiated tasks: also deduplicate against recently completed/failed
@@ -150,7 +155,8 @@ class PersistentTaskQueue:
                     logger.info(
                         "[TaskQueue] Self-task deduplicated against recent completion "
                         "(overlap=%.2f): %r",
-                        _word_overlap(t.goal, goal), goal[:60],
+                        _word_overlap(t.goal, goal),
+                        goal[:60],
                     )
                     return None
         task = Task(id=str(uuid.uuid4())[:8], goal=goal, source=source, priority=priority)
@@ -162,8 +168,13 @@ class PersistentTaskQueue:
                     self._tasks.pop(i)
                     break
         self._save()
-        logger.info("[TaskQueue] Enqueued [%s] source=%s priority=%d: %s",
-                    task.id, source, priority, goal[:80])
+        logger.info(
+            "[TaskQueue] Enqueued [%s] source=%s priority=%d: %s",
+            task.id,
+            source,
+            priority,
+            goal[:80],
+        )
         return task
 
     def take_next(self) -> Task | None:
@@ -181,8 +192,9 @@ class PersistentTaskQueue:
         task.status = "running"
         task.started_at = time.time()
         self._save()
-        logger.info("[TaskQueue] Starting task [%s] source=%s: %s",
-                    task.id, task.source, task.goal[:80])
+        logger.info(
+            "[TaskQueue] Starting task [%s] source=%s: %s", task.id, task.source, task.goal[:80]
+        )
         return task
 
     def mark_done(self, task_id: str, success: bool) -> None:
@@ -220,6 +232,7 @@ class PersistentTaskQueue:
             if t.id == task_id and t.status == "blocked":
                 # Strip the [BLOCKED: ...] annotation before re-running
                 import re
+
                 t.goal = re.sub(r"\n\[BLOCKED:.*?\]$", "", t.goal, flags=re.DOTALL).strip()
                 t.status = "pending"
                 t.started_at = None
@@ -278,6 +291,7 @@ class PersistentTaskQueue:
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
 
 def _word_overlap(a: str, b: str) -> float:
     """Symmetric word-set overlap in [0, 1]."""

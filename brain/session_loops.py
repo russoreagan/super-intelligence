@@ -1,4 +1,5 @@
 """Callback and background loop methods for BrainSession — imported as _LoopsMixin."""
+
 from __future__ import annotations
 
 import asyncio
@@ -26,9 +27,14 @@ class _LoopsMixin:
                     self._streaming_mic.mute()
                     self._tts_did_mute = True
                     if self._emitter:
-                        asyncio.ensure_future(self._emitter.emit_event({
-                            "type": "mic_state", "status": "muted",
-                        }))
+                        asyncio.ensure_future(
+                            self._emitter.emit_event(
+                                {
+                                    "type": "mic_state",
+                                    "status": "muted",
+                                }
+                            )
+                        )
                 else:
                     self._tts_did_mute = False
                 # Pause the physical input stream so the TTS output stream doesn't
@@ -93,7 +99,7 @@ class _LoopsMixin:
         mic = self._streaming_mic
         if mic is None:
             return
-        await mic.flush()      # finalize the held utterance, then mute
+        await mic.flush()  # finalize the held utterance, then mute
         self._emit_mic_state()
 
     def _on_mic_ptt(self, down: bool) -> None:
@@ -144,6 +150,7 @@ class _LoopsMixin:
 
     def _track_encode(self, task: asyncio.Task) -> None:
         self._pending_encodes.add(task)
+
         def _done(t: asyncio.Task) -> None:
             self._pending_encodes.discard(t)
             exc = t.exception() if not t.cancelled() else None
@@ -152,6 +159,7 @@ class _LoopsMixin:
                     "Memory write failed for this turn — episode will not be saved to long-term memory: %s",
                     exc,
                 )
+
         task.add_done_callback(_done)
 
     async def _dispatch_text(self, text: str) -> None:
@@ -179,8 +187,9 @@ class _LoopsMixin:
             chem_delta = msg.payload.get("chem_delta", {}) if not msg.expired else {}
             proactive = bool(msg.payload.get("proactive", False)) if not msg.expired else False
             if thought:
-                await self._emitter.emit_stream_thought(thought, chem_delta=chem_delta,
-                                                        proactive=proactive)
+                await self._emitter.emit_stream_thought(
+                    thought, chem_delta=chem_delta, proactive=proactive
+                )
 
     async def _heartbeat_with_ui(self) -> None:
         while True:
@@ -199,8 +208,9 @@ class _LoopsMixin:
                 now = time.time()
                 since_last_spoke = now - self._last_brain_spoke_ts
                 idle_s = get_idle_seconds()
-                user_active = (self._proactive_idle_threshold <= 0
-                               or idle_s < self._proactive_idle_threshold)
+                user_active = (
+                    self._proactive_idle_threshold <= 0 or idle_s < self._proactive_idle_threshold
+                )
                 if not user_active:
                     while self.dmn.candidate_count() > 0:
                         c = self.dmn.take_oldest_candidate()
@@ -214,7 +224,8 @@ class _LoopsMixin:
                 if self.pns.is_speaking or not self._ui_message_queue.empty():
                     continue
                 if self._streaming_mic is not None and getattr(
-                        self._streaming_mic, "is_user_speaking", False):
+                    self._streaming_mic, "is_user_speaking", False
+                ):
                     continue
                 if since_last_spoke < self._proactive_response_window:
                     continue
@@ -226,12 +237,18 @@ class _LoopsMixin:
                     if age > SPEAK_CAND_MAX_AGE:
                         logger.info(
                             "[Speak gate] Dropping aged candidate (age=%.0fs > %.0fs): %r",
-                            age, SPEAK_CAND_MAX_AGE, (c.get("spoken") or "")[:60],
+                            age,
+                            SPEAK_CAND_MAX_AGE,
+                            (c.get("spoken") or "")[:60],
                         )
                         continue
                     verdict, reason = await self.dmn.judge_candidate(c)
-                    logger.info("[Speak gate] verdict=%s reason=%s candidate=%r",
-                                verdict, reason, (c.get("spoken") or "")[:60])
+                    logger.info(
+                        "[Speak gate] verdict=%s reason=%s candidate=%r",
+                        verdict,
+                        reason,
+                        (c.get("spoken") or "")[:60],
+                    )
                     if verdict == "yes":
                         try:
                             bridged = await self.dmn.bridge_if_needed(c)
@@ -247,7 +264,8 @@ class _LoopsMixin:
                         if int(c.get("attempts", 0)) >= SPEAK_CAND_MAX_ATTEMPTS:
                             logger.info(
                                 "[Speak gate] Dropping candidate after %d attempts: %r",
-                                int(c.get("attempts", 0)), (c.get("spoken") or "")[:60],
+                                int(c.get("attempts", 0)),
+                                (c.get("spoken") or "")[:60],
                             )
                         else:
                             self.dmn.return_candidate(c)
@@ -269,21 +287,26 @@ class _LoopsMixin:
                 async with self._pending_lock:
                     if self._streaming_mic.is_muted:
                         if self._pending_during_tts:
-                            logger.debug("[I/O] voice → discarded %d queued utterance(s) (mic muted)",
-                                         len(self._pending_during_tts))
+                            logger.debug(
+                                "[I/O] voice → discarded %d queued utterance(s) (mic muted)",
+                                len(self._pending_during_tts),
+                            )
                         self._pending_during_tts.clear()
                     else:
                         from brain.voice_bridge import pick_dispatch_from_queue
+
                         text, n = pick_dispatch_from_queue(self._pending_during_tts)
                         self._pending_during_tts.clear()
                         if text:
-                            logger.info("[I/O] voice → flushing %d queued utterance(s): %r",
-                                        n, text[:80])
+                            logger.info(
+                                "[I/O] voice → flushing %d queued utterance(s): %r", n, text[:80]
+                            )
                             await self._dispatch_text(text)
             was_speaking = now_speaking
 
     async def _voice_bridge(self) -> None:
         from brain.voice_bridge import classify_utterance
+
         while True:
             try:
                 utt = await self._streaming_mic.next_utterance()
@@ -350,13 +373,13 @@ class _LoopsMixin:
             except Exception:
                 dmn_thoughts = []
         n_turns = len(traces)
-        logger.info("[Sleep] In-process consolidation starting (%s, %d turns)",
-                    reason, n_turns)
+        logger.info("[Sleep] In-process consolidation starting (%s, %d turns)", reason, n_turns)
         start = time.time()
         ok = True
         try:
             await self._sleep.consolidate(
-                self.session_id, traces,
+                self.session_id,
+                traces,
                 full_traces=traces_full,
                 session_thoughts=dmn_thoughts,
             )
@@ -371,18 +394,23 @@ class _LoopsMixin:
                     pass
         except Exception as exc:
             ok = False
-            logger.warning("[Sleep] In-process consolidation failed (%s): %s",
-                           reason, exc)
+            logger.warning("[Sleep] In-process consolidation failed (%s): %s", reason, exc)
         finally:
             if self.dmn:
                 with contextlib.suppress(Exception):
                     self.dmn.resume()
             self._last_consolidation_ts = time.time()
         elapsed = time.time() - start
-        logger.info("[Sleep] In-process consolidation done in %.1fs (ok=%s, %d turns)",
-                    elapsed, ok, n_turns)
-        return {"ran": True, "ok": ok, "turns": n_turns,
-                "elapsed_s": round(elapsed, 1), "reason": reason}
+        logger.info(
+            "[Sleep] In-process consolidation done in %.1fs (ok=%s, %d turns)", elapsed, ok, n_turns
+        )
+        return {
+            "ran": True,
+            "ok": ok,
+            "turns": n_turns,
+            "elapsed_s": round(elapsed, 1),
+            "reason": reason,
+        }
 
     async def _periodic_sleep_loop(self) -> None:
         """Check periodically whether to fire an in-process consolidation pass.
@@ -399,19 +427,20 @@ class _LoopsMixin:
         Settings are re-read each check, so changes saved in the UI take effect
         on the NEXT check tick (no restart needed for cadence tuning).
         """
+
         def _resolved() -> tuple[float, float, float, int]:
-            check_s = float(os.environ.get(
-                "BRAIN_SLEEP_CHECK_S",
-                _brain_settings.get("sleep_check_interval_s")))
-            idle_s = float(os.environ.get(
-                "BRAIN_SLEEP_IDLE_S",
-                _brain_settings.get("sleep_idle_threshold_s")))
-            hard_s = float(os.environ.get(
-                "BRAIN_SLEEP_HARD_S",
-                _brain_settings.get("sleep_hard_cap_s")))
-            min_turns = int(os.environ.get(
-                "BRAIN_SLEEP_MIN_TURNS",
-                _brain_settings.get("sleep_min_turns")))
+            check_s = float(
+                os.environ.get("BRAIN_SLEEP_CHECK_S", _brain_settings.get("sleep_check_interval_s"))
+            )
+            idle_s = float(
+                os.environ.get("BRAIN_SLEEP_IDLE_S", _brain_settings.get("sleep_idle_threshold_s"))
+            )
+            hard_s = float(
+                os.environ.get("BRAIN_SLEEP_HARD_S", _brain_settings.get("sleep_hard_cap_s"))
+            )
+            min_turns = int(
+                os.environ.get("BRAIN_SLEEP_MIN_TURNS", _brain_settings.get("sleep_min_turns"))
+            )
             return check_s, idle_s, hard_s, min_turns
 
         # Stagger first check so it doesn't fire immediately at boot.
@@ -465,10 +494,14 @@ class _LoopsMixin:
                     continue
                 task = self._task_queue.take_next()
                 if task:
-                    source_label = {"recovery": "📋 resuming", "self": "💭 self-initiated",
-                                    "user": "▶ executing"}.get(task.source, "▶")
-                    logger.info("[TaskWorker] %s task [%s]: %s",
-                                source_label, task.id, task.goal[:80])
+                    source_label = {
+                        "recovery": "📋 resuming",
+                        "self": "💭 self-initiated",
+                        "user": "▶ executing",
+                    }.get(task.source, "▶")
+                    logger.info(
+                        "[TaskWorker] %s task [%s]: %s", source_label, task.id, task.goal[:80]
+                    )
                     await self._run_task(task)
             except asyncio.CancelledError:
                 return

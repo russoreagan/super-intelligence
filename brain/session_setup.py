@@ -1,4 +1,5 @@
 """Setup phase methods for BrainSession — imported as _SetupMixin."""
+
 from __future__ import annotations
 
 import asyncio
@@ -25,6 +26,7 @@ class _SetupMixin:
             from eval.learning_monitor import LearningMonitor
             from eval.scorer import PostHocScorer
             from eval.turn_logger import EvalLogger
+
             eval_logger = EvalLogger()
             baseline_runner = BaselineRunner(eval_logger)
             posthoc_scorer = PostHocScorer(eval_logger)
@@ -35,10 +37,23 @@ class _SetupMixin:
             logger.info("Eval: logging to %s", eval_logger._path)
         except Exception as _eval_err:
             logger.debug("Eval system unavailable: %s", _eval_err)
-        for component in (baseline_runner, posthoc_scorer, emotion_judge, learning_monitor, learning_judge):
+        for component in (
+            baseline_runner,
+            posthoc_scorer,
+            emotion_judge,
+            learning_monitor,
+            learning_judge,
+        ):
             if component is not None:
                 component._obs = obs
-        return eval_logger, baseline_runner, posthoc_scorer, emotion_judge, learning_monitor, learning_judge
+        return (
+            eval_logger,
+            baseline_runner,
+            posthoc_scorer,
+            emotion_judge,
+            learning_monitor,
+            learning_judge,
+        )
 
     # ── Setup phases ──────────────────────────────────────────────────────────
 
@@ -51,9 +66,14 @@ class _SetupMixin:
 
         self.bus = Bus()
         self.obs = ObservabilityLayer(self.session_id)
-        (self._eval_logger, self._baseline_runner, self._posthoc_scorer,
-         self._emotion_judge, self._learning_monitor,
-         self._learning_judge) = self._bootstrap_eval_system(self.obs)
+        (
+            self._eval_logger,
+            self._baseline_runner,
+            self._posthoc_scorer,
+            self._emotion_judge,
+            self._learning_monitor,
+            self._learning_judge,
+        ) = self._bootstrap_eval_system(self.obs)
         self.obs._eval_logger = self._eval_logger
         self.router = ModelRouter(obs=self.obs)
         self.brainstem = Brainstem(self.bus, self.router)
@@ -100,10 +120,12 @@ class _SetupMixin:
         # Wire the skill selector (loads embedding index from brain/skills/_humanity_index.json)
         try:
             from brain.clusters.skill_selector import SkillSelector
+
             self.skill_selector = SkillSelector(self.router)
             self.frontal.set_skill_selector(self.skill_selector, self.parietal)
         except FileNotFoundError as e:
             import logging as _logging
+
             _logging.getLogger(__name__).warning(
                 "[Setup] SkillSelector disabled: %s — run `python -m brain.skills._import_humanity` to enable.",
                 e,
@@ -135,7 +157,9 @@ class _SetupMixin:
             bus=self.bus,
         )
         ui_server.set_wiring_frozen(self._wiring_frozen)
-        self.brainstem.register_loop("ui_server", lambda: ui_server.start(port=8765), restart_on_crash=False)
+        self.brainstem.register_loop(
+            "ui_server", lambda: ui_server.start(port=8765), restart_on_crash=False
+        )
         self._ui_server = ui_server
         await asyncio.sleep(0.3)
 
@@ -143,11 +167,14 @@ class _SetupMixin:
         # state immediately, rather than sitting on the HTML default "neutral"
         # until the first turn fires.
         from brain.emotion_vocabulary import apply_hormonal_color, name_emotion
+
         _nm = self.bus.neuromod.snapshot()
         _hs = self.bus.hormonal.snapshot()
         _emotion, _tendency = name_emotion(_nm["DA"], _nm["GABA"], _nm["ACh"], _nm["Glu"])
         _emotion, _tendency = apply_hormonal_color(
-            _emotion, _tendency, _hs,
+            _emotion,
+            _tendency,
+            _hs,
             oxt_connected=_brain_settings.get("hormonal_oxt_connected_threshold"),
             cort_withdrawn=_brain_settings.get("hormonal_cort_withdrawn_threshold"),
             oxt_guarded=_brain_settings.get("hormonal_oxt_guarded_threshold"),
@@ -183,18 +210,22 @@ class _SetupMixin:
         cloud = CloudExecutor(self.bus, schema_store=self.hippocampus._schema)
         if not _motor_paths and cloud._trusted_dirs:
             _motor_paths = cloud._trusted_dirs[:]
-            logger.info("Motor cortex: inheriting trusted dirs from Claude Desktop: %s", _motor_paths)
+            logger.info(
+                "Motor cortex: inheriting trusted dirs from Claude Desktop: %s", _motor_paths
+            )
 
         # Always include the project root so the agent can read/write its own
         # codebase regardless of how it was launched (start.sh vs direct invocation).
         from pathlib import Path as _Path
+
         _project_root = str(_Path(__file__).parent.parent.resolve())
         if _project_root not in _motor_paths:
             _motor_paths.insert(0, _project_root)
             logger.info("Motor cortex: project root auto-added to allowed paths: %s", _project_root)
 
         self.motor = MotorCortexCluster(
-            self.bus, self.router,
+            self.bus,
+            self.router,
             allowed_paths=_motor_paths,
             allowed_commands=_motor_cmds,
             cloud_executor=cloud,
@@ -214,12 +245,15 @@ class _SetupMixin:
         self._follow_through = FollowThrough(self.router)
         self._result_reporter = ResultReporter(self.router)
         self._task_queue = PersistentTaskQueue()
-        self._recent_task_results: list[dict] = []   # ring buffer: last 3 completed tasks
+        self._recent_task_results: list[dict] = []  # ring buffer: last 3 completed tasks
 
         _recovered = self._task_queue.recover_interrupted()
         if _recovered:
-            logger.info("[TaskQueue] %d task(s) recovered from previous session: %s",
-                        len(_recovered), "; ".join(t.goal[:60] for t in _recovered))
+            logger.info(
+                "[TaskQueue] %d task(s) recovered from previous session: %s",
+                len(_recovered),
+                "; ".join(t.goal[:60] for t in _recovered),
+            )
 
         self._lobe_bridge = LobeBridge()
         self._lobe_bridge.register("recall_memory", self._recall_memory)
@@ -253,6 +287,7 @@ class _SetupMixin:
             return
 
         from brain.dmn import DefaultModeNetwork
+
         self.dmn = DefaultModeNetwork(
             self.bus, self.router, self.hippocampus, self.parietal, obs=self.obs
         )
@@ -300,16 +335,21 @@ class _SetupMixin:
                         topics.extend(ep.get("topic_tags") or [])
                     logger.info(
                         "[DMN] Seeded with %d recent episodes (topics: %s)",
-                        len(_recent), ", ".join(dict.fromkeys(topics))[:120] or "unknown",
+                        len(_recent),
+                        ", ".join(dict.fromkeys(topics))[:120] or "unknown",
                     )
                     asyncio.create_task(self.dmn.prime_startup())
         except Exception as _seed_err:
             logger.debug("[DMN] Could not seed last session context: %s", _seed_err)
 
     async def _setup_meta(self) -> None:
-        if not (self.args.metacognition or os.environ.get("BRAIN_METACOGNITION", "false").lower() == "true"):
+        if not (
+            self.args.metacognition
+            or os.environ.get("BRAIN_METACOGNITION", "false").lower() == "true"
+        ):
             return
         from brain.metacognition import MetacognitionCell
+
         self.meta = MetacognitionCell(self.bus, self.router, self.hippocampus._schema)
         await self.meta.start()
 
@@ -323,6 +363,7 @@ class _SetupMixin:
         if not (self.args.ears or os.environ.get("BRAIN_EARS", "false").lower() == "true"):
             return
         from brain.clusters.auditory_cortex import AuditoryCluster
+
         self.ears = AuditoryCluster(self.bus)
         self.brainstem.register_loop("ears", self.ears.run)
 
@@ -330,6 +371,7 @@ class _SetupMixin:
         if not (self.args.voice or os.environ.get("BRAIN_VOICE_MODE", "false").lower() == "true"):
             return
         from brain.streaming_mic import StreamingMicSession
+
         self._streaming_mic = StreamingMicSession(
             self.bus,
             is_speaking_fn=lambda: self.pns.is_speaking,
@@ -347,6 +389,7 @@ class _SetupMixin:
 
     def _setup_voice_bridge(self) -> None:
         from brain.voice_bridge import parse_barge_words
+
         self._barge_in_words = parse_barge_words(os.environ.get("BRAIN_BARGE_IN_WORDS"))
         if self._streaming_mic is None or not self._ui_enabled:
             return
@@ -363,16 +406,22 @@ class _SetupMixin:
         # Toggle via the Sleep Consolidation section in /settings (sleep_periodic_enabled)
         # or, for one-off CLI runs, BRAIN_SLEEP_PERIODIC=false.
         import os as _os
+
         from brain.settings import settings as _settings
+
         _env_on = _os.environ.get("BRAIN_SLEEP_PERIODIC", "").lower()
         _settings_on = int(_settings.get("sleep_periodic_enabled")) == 1
         _enabled = (_settings_on and _env_on != "false") or _env_on == "true"
         if _enabled:
             from brain.sleep import SleepConsolidation
+
             self._sleep = SleepConsolidation(
-                self.router, self.hippocampus._schema, self.hippocampus._episodic,
+                self.router,
+                self.hippocampus._schema,
+                self.hippocampus._episodic,
                 wiring=self.wiring,
             )
             import asyncio as _asyncio
+
             self._consolidation_lock = _asyncio.Lock()
             self.brainstem.register_loop("periodic_sleep", self._periodic_sleep_loop)

@@ -1,4 +1,5 @@
 """Turn processing methods for BrainSession — imported as _TurnMixin."""
+
 from __future__ import annotations
 
 import asyncio
@@ -7,24 +8,37 @@ import logging
 import re
 import time
 
-# Strip [mood:X]...[/mood] markup from display text — TTS handles its own expansion.
-_MOOD_MARKUP_RE = re.compile(r'\[mood:[^\]]+\](.*?)\[/mood\]', re.DOTALL | re.IGNORECASE)
-
 from brain.emotion_hierarchy import core_of
 from brain.emotion_presets import strip_reaction_tags
 from brain.security import EGRESS_MODE
 
+# Strip [mood:X]...[/mood] markup from display text — TTS handles its own expansion.
+_MOOD_MARKUP_RE = re.compile(r"\[mood:[^\]]+\](.*?)\[/mood\]", re.DOTALL | re.IGNORECASE)
+
 logger = logging.getLogger("brain.run")
 
-_CANCEL_WORDS = frozenset(["never mind", "nevermind", "skip", "cancel", "forget it",
-                            "don't bother", "no thanks", "not now"])
+_CANCEL_WORDS = frozenset(
+    [
+        "never mind",
+        "nevermind",
+        "skip",
+        "cancel",
+        "forget it",
+        "don't bother",
+        "no thanks",
+        "not now",
+    ]
+)
 
 
 class _TurnMixin:
     # ── Turn processing ───────────────────────────────────────────────────────
 
-    async def process_turn(self, user_input: str, image_path: str | None = None) -> tuple[str, dict]:
+    async def process_turn(
+        self, user_input: str, image_path: str | None = None
+    ) -> tuple[str, dict]:
         from brain.brainstem import TURN_TIMEOUT
+
         try:
             return await asyncio.wait_for(
                 self._process_turn_body(user_input, image_path),
@@ -34,7 +48,8 @@ class _TurnMixin:
             logger.warning(
                 "Turn timed out after %.1fs — sending fallback response. "
                 "If Ollama is slow, increase BRAIN_TURN_TIMEOUT_SECONDS (currently %.1fs).",
-                TURN_TIMEOUT, TURN_TIMEOUT,
+                TURN_TIMEOUT,
+                TURN_TIMEOUT,
             )
             timeout_msg = "I'm taking too long to think. Let me try again."
             with contextlib.suppress(Exception):
@@ -46,7 +61,9 @@ class _TurnMixin:
                 self.dmn.resume()
             return timeout_msg, {}
 
-    async def _process_turn_body(self, user_input: str, image_path: str | None = None) -> tuple[str, dict]:
+    async def _process_turn_body(
+        self, user_input: str, image_path: str | None = None
+    ) -> tuple[str, dict]:
         from brain.observability.firing_path import reset_current_trace, set_current_trace
         from brain.observability.timeline import TurnTrace
 
@@ -166,12 +183,16 @@ class _TurnMixin:
                     features["speaker_name"] = latest_speaker["speaker_name"]
                 elif not latest_speaker.get("identified"):
                     from brain.settings import settings as _settings_ref
+
                     _soft_threshold = float(_settings_ref.get("speaker_primary_soft_threshold"))
                     _match_score = latest_speaker.get("match_score", 0.0)
                     _closest = latest_speaker.get("closest_match") or ""
                     _primary = self.hippocampus._schema.primary_user_name()
-                    if (_primary and _closest.lower() == _primary.lower()
-                            and _match_score >= _soft_threshold):
+                    if (
+                        _primary
+                        and _closest.lower() == _primary.lower()
+                        and _match_score >= _soft_threshold
+                    ):
                         pass
                     else:
                         _session_key = latest_speaker.get("session_key", "unknown")
@@ -293,8 +314,10 @@ class _TurnMixin:
                         if tool_result:
                             output = tool_result.get("output", "")
                             memory["tool_result"] = f"[cloud_action — confirmed]\n{output}"
-                            logger.info("[CloudExecutor] Confirmed write executed (success=%s)",
-                                        tool_result.get("success"))
+                            logger.info(
+                                "[CloudExecutor] Confirmed write executed (success=%s)",
+                                tool_result.get("success"),
+                            )
                     except Exception as _ce:
                         logger.error("Cloud executor failed on confirmed write: %s", _ce)
                     await self._emit_end("motor_cortex", turn_id)
@@ -324,15 +347,21 @@ class _TurnMixin:
                                 )
                             else:
                                 memory["tool_result"] = f"[{tool_name}]\n{output}"
-                            logger.info("[MotorCortex] %s → %d chars (success=%s)",
-                                        tool_name, len(output), tool_result.get("success"))
+                            logger.info(
+                                "[MotorCortex] %s → %d chars (success=%s)",
+                                tool_name,
+                                len(output),
+                                tool_result.get("success"),
+                            )
                     except Exception as _mc_err:
                         logger.error("Motor cortex failed this turn: %s", _mc_err)
                         # Unexpected tool failure is frustrating — GABA + NE spike.
                         self.bus.neuromod.add("GABA", 0.10)
                         self.bus.neuromod.add("NE", 0.08)
                         _snap = self.bus.neuromod.snapshot()
-                        trace.neuromod_midturn.append({"trigger": "tool_exception", "snapshot": _snap})
+                        trace.neuromod_midturn.append(
+                            {"trigger": "tool_exception", "snapshot": _snap}
+                        )
                         if self._emitter:
                             await self._emitter.emit_neuromod(_snap)
                 await self._emit_end("motor_cortex", turn_id)
@@ -344,7 +373,9 @@ class _TurnMixin:
                         self.bus.neuromod.add("NE", 0.06)
                         self.bus.neuromod.add("DA", -0.05)
                         _snap = self.bus.neuromod.snapshot()
-                        trace.neuromod_midturn.append({"trigger": "tool_failure", "snapshot": _snap})
+                        trace.neuromod_midturn.append(
+                            {"trigger": "tool_failure", "snapshot": _snap}
+                        )
                         if self._emitter:
                             await self._emitter.emit_neuromod(_snap)
                     elif tool_result.get("success"):
@@ -352,7 +383,9 @@ class _TurnMixin:
                         self.bus.neuromod.add("DA", 0.07)
                         self.bus.neuromod.add("Glu", 0.04)
                         _snap = self.bus.neuromod.snapshot()
-                        trace.neuromod_midturn.append({"trigger": "tool_success", "snapshot": _snap})
+                        trace.neuromod_midturn.append(
+                            {"trigger": "tool_success", "snapshot": _snap}
+                        )
                         if self._emitter:
                             await self._emitter.emit_neuromod(_snap)
 
@@ -360,16 +393,22 @@ class _TurnMixin:
 
         if self.dmn:
             from brain.metacognition import read_affection_score, read_familiarity
-            _speaker_name_for_dmn = features.get("speaker_name") if isinstance(features, dict) else None
+
+            _speaker_name_for_dmn = (
+                features.get("speaker_name") if isinstance(features, dict) else None
+            )
             _schema_for_dmn = getattr(self.hippocampus, "_schema", None)
             _relationship = {
                 "score": read_affection_score(_schema_for_dmn, _speaker_name_for_dmn or ""),
                 "familiarity": read_familiarity(_schema_for_dmn, _speaker_name_for_dmn or ""),
             }
-            self.dmn.update_context(parietal_context, affect.get("emotion", "neutral"),
-                                    self._core_context.get("self", ""),
-                                    speaker_name=_speaker_name_for_dmn,
-                                    relationship=_relationship)
+            self.dmn.update_context(
+                parietal_context,
+                affect.get("emotion", "neutral"),
+                self._core_context.get("self", ""),
+                speaker_name=_speaker_name_for_dmn,
+                relationship=_relationship,
+            )
 
             ABSENCE_THRESHOLD_S = 300.0
             absence_s = time.time() - self._last_turn_ts
@@ -385,16 +424,16 @@ class _TurnMixin:
                     awaiting = [p for p in proposals if "awaiting_review" in p.get("status", "")]
                     if awaiting:
                         prop_lines = "\n".join(
-                            f"- {p['title']} ({p['proposed']}) — {p['path']}"
-                            for p in awaiting
+                            f"- {p['title']} ({p['proposed']}) — {p['path']}" for p in awaiting
                         )
                         returning_context_parts.append(
                             f"Work proposals ready for your review:\n{prop_lines}"
                         )
                 if returning_context_parts:
                     memory["returning_content"] = "\n\n".join(returning_context_parts)
-                    logger.info("[DMN] Surfacing deferred content on user return (absent %.0fs)",
-                                absence_s)
+                    logger.info(
+                        "[DMN] Surfacing deferred content on user return (absent %.0fs)", absence_s
+                    )
 
             thoughts = self.dmn.recent_thoughts_tagged(n=4)
             if thoughts:
@@ -402,14 +441,18 @@ class _TurnMixin:
             anticipations = self.dmn.take_anticipations()
             if anticipations:
                 memory["anticipations"] = anticipations
-                logger.info("[Anticipator] Surfacing %d pre-prepared scenarios to drafters",
-                            len(anticipations))
+                logger.info(
+                    "[Anticipator] Surfacing %d pre-prepared scenarios to drafters",
+                    len(anticipations),
+                )
             prefetched = self.dmn.take_prefetched()
             if prefetched:
                 memory["prefetched_context"] = prefetched
-                logger.info("[Prefetcher] Surfacing %d pre-fetched topics to drafters",
-                            len(prefetched))
+                logger.info(
+                    "[Prefetcher] Surfacing %d pre-fetched topics to drafters", len(prefetched)
+                )
                 from brain.voice_bridge import bleed_overlap as _word_overlap
+
                 useful: list[tuple[str, float]] = []
                 for entry in thoughts:
                     t = entry["thought"] if isinstance(entry, dict) else entry
@@ -418,13 +461,15 @@ class _TurnMixin:
                         useful.append((t, o))
                 if useful:
                     for thought_text, overlap in useful:
-                        asyncio.create_task(self.hippocampus.encode_idle_thought(
-                            session_id=self.session_id,
-                            thought=thought_text,
-                            overlap_with_user_input=overlap,
-                            user_input=user_input,
-                            embedding_fn=self.router.embed,
-                        ))
+                        asyncio.create_task(
+                            self.hippocampus.encode_idle_thought(
+                                session_id=self.session_id,
+                                thought=thought_text,
+                                overlap_with_user_input=overlap,
+                                user_input=user_input,
+                                embedding_fn=self.router.embed,
+                            )
+                        )
 
         # ── Per-turn speaker context injection ────────────────────────────────
         _speaker = features.get("speaker_name", "")
@@ -496,7 +541,11 @@ class _TurnMixin:
                     ps_affect = dict(affect)
                     ps_affect["appraisal"] = ps_appraisal
             response = await self.frontal.process(
-                ps_features, ps_affect, ps_memory, ps_parietal_context, turn_id,
+                ps_features,
+                ps_affect,
+                ps_memory,
+                ps_parietal_context,
+                turn_id,
                 image_path=image_path,
             )
             draft_scores = list(self.frontal.last_turn_draft_scores)
@@ -556,12 +605,15 @@ class _TurnMixin:
             cluster_tokens[_cl]["calls"] += 1
 
         memory_recalled = bool(memory.get("episodes") or memory.get("schema"))
-        memory_hit_count = len([ln for ln in (memory.get("episodes") or "").splitlines() if ln.strip()])
+        memory_hit_count = len(
+            [ln for ln in (memory.get("episodes") or "").splitlines() if ln.strip()]
+        )
 
         selected_draft = next((d for d in draft_scores if d.get("selected")), {})
         selected_coherence = selected_draft.get("coherence", 0.5)
-        selected_emotional_fit = (selected_draft.get("empathy_score")
-                                  or selected_draft.get("tone_fit", 0.5))
+        selected_emotional_fit = selected_draft.get("empathy_score") or selected_draft.get(
+            "tone_fit", 0.5
+        )
         selected_draft_id = selected_draft.get("draft_id", "")
 
         if self._emitter:
@@ -572,15 +624,17 @@ class _TurnMixin:
 
         if self._emitter and draft_scores:
             try:
-                await self._emitter.emit_event({
-                    "type": "quality_score",
-                    "turn_id": turn_id,
-                    "score": round(selected_draft.get("overall", 0.5), 3),
-                    "coherence": round(selected_coherence, 3),
-                    "emotional_fit": round(selected_emotional_fit, 3),
-                    "drafter_count": len(draft_scores),
-                    "memory_used": memory_recalled,
-                })
+                await self._emitter.emit_event(
+                    {
+                        "type": "quality_score",
+                        "turn_id": turn_id,
+                        "score": round(selected_draft.get("overall", 0.5), 3),
+                        "coherence": round(selected_coherence, 3),
+                        "emotional_fit": round(selected_emotional_fit, 3),
+                        "drafter_count": len(draft_scores),
+                        "memory_used": memory_recalled,
+                    }
+                )
             except Exception as _qe:
                 logger.debug("quality_score emit failed: %s", _qe)
 
@@ -589,18 +643,24 @@ class _TurnMixin:
         mood_inbox = getattr(self, "_mood_expression_inbox", None)
         if mood_inbox is not None:
             import asyncio as _asyncio
+
             # Give any call_soon-scheduled publishes a chance to land first.
             await _asyncio.sleep(0)
             while True:
                 try:
                     mx = mood_inbox.get_nowait()
                     if not mx.expired:
-                        trace.deliberate_emotions.append({
-                            "emotion": mx.payload.get("emotion", ""),
-                            "source":  mx.payload.get("source", ""),
-                            **({"preview": mx.payload["preview"]}
-                               if mx.payload.get("preview") else {}),
-                        })
+                        trace.deliberate_emotions.append(
+                            {
+                                "emotion": mx.payload.get("emotion", ""),
+                                "source": mx.payload.get("source", ""),
+                                **(
+                                    {"preview": mx.payload["preview"]}
+                                    if mx.payload.get("preview")
+                                    else {}
+                                ),
+                            }
+                        )
                 except Exception:
                     break
 
@@ -629,19 +689,23 @@ class _TurnMixin:
         self._session_traces_full.append(trace)
 
         if self._follow_through:
+
             async def _follow_through_check() -> None:
                 deferred_goal = self._pending_task.take() if self._pending_task else None
                 if deferred_goal:
                     try:
                         extracted, asking_user = await self._follow_through.extract(
-                            user_input, final, turn_id)
+                            user_input, final, turn_id
+                        )
                     except Exception:
                         extracted, asking_user = None, False
                     if asking_user:
                         # The AI asked the user "Should I…?" — do NOT start the task.
                         # The user hasn't said yes yet. Discard the deferred goal;
                         # it will be re-deposited if the user confirms on the next turn.
-                        logger.info("[FollowThrough] AI asked permission — deferred goal discarded, waiting for user answer")
+                        logger.info(
+                            "[FollowThrough] AI asked permission — deferred goal discarded, waiting for user answer"
+                        )
                         return
                     if extracted:
                         goal = extracted
@@ -650,18 +714,22 @@ class _TurnMixin:
                         # ack was too brief to anchor a commitment. Fall back to the
                         # topic_summary-based goal set by FrontalTaskSubsystem.
                         goal = deferred_goal
-                        logger.debug("[FollowThrough] No commitment found — using topic goal: %s", goal[:80])
+                        logger.debug(
+                            "[FollowThrough] No commitment found — using topic goal: %s", goal[:80]
+                        )
                     self._task_queue.enqueue(goal, source="user", priority=1)
                     logger.info("[FollowThrough] Task enqueued (task-mode): %s", goal[:120])
                     return
                 try:
                     goal, asking_user = await self._follow_through.extract(
-                        user_input, final, turn_id)
+                        user_input, final, turn_id
+                    )
                     if goal and not asking_user:
                         self._task_queue.enqueue(goal, source="user", priority=1)
                         logger.info("[FollowThrough] Task enqueued (reactive): %s", goal[:120])
                 except Exception as _e:
                     logger.warning("[FollowThrough] failed: %s", _e)
+
             asyncio.create_task(_follow_through_check())
 
         if self._emotion_judge:
@@ -669,10 +737,14 @@ class _TurnMixin:
         if self._learning_monitor:
             self._learning_monitor.record_turn(trace)
         if self._baseline_runner:
-            memory_ctx = ((memory.get("episodes") or "") + "\n" + (memory.get("schema") or ""))
+            memory_ctx = (memory.get("episodes") or "") + "\n" + (memory.get("schema") or "")
             self._baseline_runner.fire(
-                turn_id, user_input, final,
-                memory_ctx[:1000], selected_coherence, selected_emotional_fit,
+                turn_id,
+                user_input,
+                final,
+                memory_ctx[:1000],
+                selected_coherence,
+                selected_emotional_fit,
                 trace=trace,
             )
         if self.meta:
@@ -687,37 +759,41 @@ class _TurnMixin:
                 draft_scores=draft_scores,
             )
 
-        self._session_traces.append({
-            "user_input": user_input,
-            "entity_response": final,
-            "emotion": affect.get("emotion", "neutral"),
-            "topic_tags": features.get("entities", []),
-            "speaker_name": features.get("speaker_name", ""),
-            # Personality-observation signals (rolled up at sleep time).
-            "user_emotion": features.get("user_emotion", ""),
-            "user_tone_toward_ai": features.get("user_tone_toward_ai", ""),
-            "msg_length": features.get("msg_length", ""),
-            "intent": features.get("intent", ""),
-            "requires_action": bool(features.get("requires_action")),
-            "register": features.get("register", ""),
-            "prosody_tone": affect.get("vocal_tone") or "",
-            "pace_label": affect.get("pace_label") or "",
-            "hesitant_speech": bool(affect.get("hesitant_speech")),
-            "response_chars": len(final or ""),
-        })
+        self._session_traces.append(
+            {
+                "user_input": user_input,
+                "entity_response": final,
+                "emotion": affect.get("emotion", "neutral"),
+                "topic_tags": features.get("entities", []),
+                "speaker_name": features.get("speaker_name", ""),
+                # Personality-observation signals (rolled up at sleep time).
+                "user_emotion": features.get("user_emotion", ""),
+                "user_tone_toward_ai": features.get("user_tone_toward_ai", ""),
+                "msg_length": features.get("msg_length", ""),
+                "intent": features.get("intent", ""),
+                "requires_action": bool(features.get("requires_action")),
+                "register": features.get("register", ""),
+                "prosody_tone": affect.get("vocal_tone") or "",
+                "pace_label": affect.get("pace_label") or "",
+                "hesitant_speech": bool(affect.get("hesitant_speech")),
+                "response_chars": len(final or ""),
+            }
+        )
 
         await self._emit("hippocampus", 0.45, "encoding episode", turn_id)
-        encode_task = asyncio.create_task(self.hippocampus.encode(
-            session_id=self.session_id,
-            turn_id=turn_id,
-            user_input=user_input,
-            entity_response=final,
-            features=features,
-            affect=affect,
-            neuromod_snap=nm_snap,
-            surprise_score=features.get("surprise_score", 0.5),
-            embedding_fn=self.router.embed,
-        ))
+        encode_task = asyncio.create_task(
+            self.hippocampus.encode(
+                session_id=self.session_id,
+                turn_id=turn_id,
+                user_input=user_input,
+                entity_response=final,
+                features=features,
+                affect=affect,
+                neuromod_snap=nm_snap,
+                surprise_score=features.get("surprise_score", 0.5),
+                embedding_fn=self.router.embed,
+            )
+        )
         self._track_encode(encode_task)
 
         if self.dmn:
@@ -726,8 +802,13 @@ class _TurnMixin:
 
         self._last_turn_ts = time.time()
 
-        logger.info("Turn %s: %d LLM calls | %.2fs | emotion=%s",
-                    turn_id, llm_calls, turn_result.elapsed(), affect.get("emotion"))
+        logger.info(
+            "Turn %s: %d LLM calls | %.2fs | emotion=%s",
+            turn_id,
+            llm_calls,
+            turn_result.elapsed(),
+            affect.get("emotion"),
+        )
 
         with contextlib.suppress(Exception):
             reset_current_trace(_ctx_token)
@@ -753,8 +834,27 @@ class _TurnMixin:
         if not task_words or not convo_words:
             return True
         # Strip ultra-common stop words so "the", "a", "I" don't inflate overlap
-        _STOPS = {"the", "a", "an", "i", "to", "and", "or", "of", "in", "it",
-                  "is", "was", "for", "on", "with", "that", "this", "be", "are"}
+        _STOPS = {
+            "the",
+            "a",
+            "an",
+            "i",
+            "to",
+            "and",
+            "or",
+            "of",
+            "in",
+            "it",
+            "is",
+            "was",
+            "for",
+            "on",
+            "with",
+            "that",
+            "this",
+            "be",
+            "are",
+        }
         task_words -= _STOPS
         convo_words -= _STOPS
         if not task_words:
@@ -789,15 +889,19 @@ class _TurnMixin:
         if summary.get("clarification"):
             question = summary["clarification"]
             self._task_queue.mark_blocked(task.id, reason=question)
-            logger.info("[TaskWorker] Task [%s] blocked on clarification: %s",
-                        task.id, question[:120])
+            logger.info(
+                "[TaskWorker] Task [%s] blocked on clarification: %s", task.id, question[:120]
+            )
             if on_topic:
                 if self._emitter:
                     await self._emitter.emit_proactive_speech(question)
                 await self.pns.emit(question, {"emotion": "curious"})
             else:
-                logger.info("[TaskWorker] Task [%s] clarification held — off-topic (will surface "
-                            "in context when relevant)", task.id)
+                logger.info(
+                    "[TaskWorker] Task [%s] clarification held — off-topic (will surface "
+                    "in context when relevant)",
+                    task.id,
+                )
             return
 
         self._task_queue.mark_done(task.id, success=bool(summary.get("success")))
@@ -818,35 +922,45 @@ class _TurnMixin:
                 else "I couldn't finish that — something went wrong."
             )
         # Always store in ring buffer — LLM context gets the result regardless of topic.
-        self._recent_task_results.append({
-            "goal": task.goal,
-            "summary": spoken_summary,
-            "success": bool(summary.get("success")),
-            "ts": time.time(),
-        })
+        self._recent_task_results.append(
+            {
+                "goal": task.goal,
+                "summary": spoken_summary,
+                "success": bool(summary.get("success")),
+                "ts": time.time(),
+            }
+        )
         if len(self._recent_task_results) > 3:
             self._recent_task_results.pop(0)
         logger.info("[TaskWorker] Reporting result [%s]: %s", task.id, spoken_summary[:160])
         if self._emitter:
-            await self._emitter.emit_event({
-                "type": "task_summary",
-                "job_id": summary.get("job_id"),
-                "summary": spoken_summary,
-            })
+            await self._emitter.emit_event(
+                {
+                    "type": "task_summary",
+                    "job_id": summary.get("job_id"),
+                    "summary": spoken_summary,
+                }
+            )
             if on_topic:
                 await self._emitter.emit_proactive_speech(spoken_summary)
             else:
-                logger.info("[TaskWorker] Task [%s] result held from speech — off-topic "
-                            "(will surface in LLM context on next turn)", task.id)
+                logger.info(
+                    "[TaskWorker] Task [%s] result held from speech — off-topic "
+                    "(will surface in LLM context on next turn)",
+                    task.id,
+                )
         if on_topic:
-            await self.pns.emit(spoken_summary,
-                                {"emotion": "lively" if summary.get("success") else "concerned"})
+            await self.pns.emit(
+                spoken_summary, {"emotion": "lively" if summary.get("success") else "concerned"}
+            )
 
 
 # ── Module-level helpers (used inside _process_turn_body) ─────────────────────
 
+
 def _extract_identity_name(text: str, features: dict) -> str | None:
     from brain.clusters.audio_dsp import extract_identity_name
+
     name = extract_identity_name(text)
     if name:
         return name

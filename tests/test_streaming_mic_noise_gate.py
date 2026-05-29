@@ -3,6 +3,7 @@ Tests for the streaming-mic noise gate. The gate replaces low-energy
 chunks with silence so background noise (HVAC, distant chatter, keyboard
 clicks) doesn't reach Deepgram's VAD and trigger spurious utterances.
 """
+
 from __future__ import annotations
 
 import struct
@@ -14,9 +15,11 @@ def _make_mic(monkeypatch, threshold: float = 120.0):
     monkeypatch.setattr(StreamingMicSession, "NOISE_GATE_RMS", threshold)
 
     class _StubBus:
-        def subscribe(self, *a, **kw): pass
+        def subscribe(self, *a, **kw):
+            pass
 
-        async def publish_dict(self, *a, **kw): pass
+        async def publish_dict(self, *a, **kw):
+            pass
 
     mic = StreamingMicSession(_StubBus(), is_speaking_fn=lambda: False)
     # Sessions start muted (push-to-talk default); the gate tests below operate
@@ -83,7 +86,7 @@ def test_gate_applies_when_unmuted_not_when_muted(monkeypatch):
 def test_borderline_chunk_just_above_threshold_passes(monkeypatch):
     # A chunk whose RMS is comfortably above the gate should not be gated
     mic = _make_mic(monkeypatch, threshold=120.0)
-    chunk = _chunk(amplitude=200)   # RMS = 200
+    chunk = _chunk(amplitude=200)  # RMS = 200
     mic._enqueue_chunk(chunk)
     sent = mic._pcm_in.get_nowait()
     assert sent == chunk
@@ -91,7 +94,7 @@ def test_borderline_chunk_just_above_threshold_passes(monkeypatch):
 
 def test_borderline_chunk_just_below_threshold_gated(monkeypatch):
     mic = _make_mic(monkeypatch, threshold=120.0)
-    chunk = _chunk(amplitude=100)   # RMS = 100, below 120 gate
+    chunk = _chunk(amplitude=100)  # RMS = 100, below 120 gate
     mic._enqueue_chunk(chunk)
     sent = mic._pcm_in.get_nowait()
     assert sent == b"\x00" * len(chunk)

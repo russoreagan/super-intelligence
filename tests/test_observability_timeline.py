@@ -5,10 +5,10 @@ These tests exercise the tracing interface directly, without Langfuse credential
 they confirm the no-Langfuse code path is safe and that the signature / field contract
 introduced by the planning-quality changes (total_attempts, retries) is enforced.
 """
+
 from __future__ import annotations
 
-import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 
 class TestBeginEndJobNoLangfuse:
@@ -16,6 +16,7 @@ class TestBeginEndJobNoLangfuse:
 
     def _obs(self):
         from brain.observability.timeline import ObservabilityLayer
+
         return ObservabilityLayer(session_id="test-session")
 
     def test_begin_job_no_crash_without_langfuse(self):
@@ -29,13 +30,11 @@ class TestBeginEndJobNoLangfuse:
 
     def test_end_job_no_crash_without_langfuse(self):
         obs = self._obs()
-        obs.end_job("job_1", success=True, steps_completed=3,
-                    steps_planned=3, total_attempts=3)
+        obs.end_job("job_1", success=True, steps_completed=3, steps_planned=3, total_attempts=3)
 
     def test_end_job_with_retries_no_crash(self):
         obs = self._obs()
-        obs.end_job("job_2", success=True, steps_completed=2,
-                    steps_planned=2, total_attempts=5)
+        obs.end_job("job_2", success=True, steps_completed=2, steps_planned=2, total_attempts=5)
 
     def test_end_job_without_total_attempts_uses_default(self):
         """total_attempts defaults to 0 — backward-compatible with callers that omit it."""
@@ -47,8 +46,7 @@ class TestBeginEndJobNoLangfuse:
         """end_job without Langfuse never pollutes _active_spans."""
         obs = self._obs()
         obs.begin_job("job_x", goal="x")
-        obs.end_job("job_x", success=True, steps_completed=1,
-                    steps_planned=1, total_attempts=1)
+        obs.end_job("job_x", success=True, steps_completed=1, steps_planned=1, total_attempts=1)
         assert "job_x" not in obs._active_spans
 
 
@@ -57,6 +55,7 @@ class TestEndJobLangfuseSpanUpdate:
 
     def _obs_with_langfuse(self):
         from brain.observability.timeline import ObservabilityLayer
+
         obs = ObservabilityLayer.__new__(ObservabilityLayer)
         obs._session_id = "s1"
         obs._langfuse = MagicMock()
@@ -73,8 +72,7 @@ class TestEndJobLangfuseSpanUpdate:
         mock_span = MagicMock()
         obs._active_spans["job_a"] = mock_span
 
-        obs.end_job("job_a", success=True, steps_completed=3,
-                    steps_planned=4, total_attempts=5)
+        obs.end_job("job_a", success=True, steps_completed=3, steps_planned=4, total_attempts=5)
 
         mock_span.update.assert_called_once()
         call_kwargs = mock_span.update.call_args[1]
@@ -92,8 +90,7 @@ class TestEndJobLangfuseSpanUpdate:
         mock_span = MagicMock()
         obs._active_spans["job_b"] = mock_span
 
-        obs.end_job("job_b", success=True, steps_completed=3,
-                    steps_planned=3, total_attempts=3)
+        obs.end_job("job_b", success=True, steps_completed=3, steps_planned=3, total_attempts=3)
 
         metadata = mock_span.update.call_args[1]["metadata"]
         assert metadata["retries"] == 0
@@ -105,8 +102,7 @@ class TestEndJobLangfuseSpanUpdate:
         obs._active_spans["job_c"] = mock_span
 
         # Pathological: total_attempts=0 (default), steps_completed=2
-        obs.end_job("job_c", success=True, steps_completed=2,
-                    steps_planned=2, total_attempts=0)
+        obs.end_job("job_c", success=True, steps_completed=2, steps_planned=2, total_attempts=0)
 
         metadata = mock_span.update.call_args[1]["metadata"]
         assert metadata["retries"] == 0  # max(0, 0-2) = 0
@@ -115,16 +111,16 @@ class TestEndJobLangfuseSpanUpdate:
         obs = self._obs_with_langfuse()
         obs._active_spans["job_d"] = MagicMock()
 
-        obs.end_job("job_d", success=True, steps_completed=1,
-                    steps_planned=1, total_attempts=1)
+        obs.end_job("job_d", success=True, steps_completed=1, steps_planned=1, total_attempts=1)
 
         assert "job_d" not in obs._active_spans
 
     def test_end_job_missing_span_no_crash(self):
         """end_job is a no-op when the span was never opened."""
         obs = self._obs_with_langfuse()
-        obs.end_job("never_started", success=False, steps_completed=0,
-                    steps_planned=1, total_attempts=0)
+        obs.end_job(
+            "never_started", success=False, steps_completed=0, steps_planned=1, total_attempts=0
+        )
 
     def test_end_job_span_exception_does_not_propagate(self):
         obs = self._obs_with_langfuse()
@@ -133,16 +129,14 @@ class TestEndJobLangfuseSpanUpdate:
         obs._active_spans["job_e"] = mock_span
 
         # Must not raise — logged as debug
-        obs.end_job("job_e", success=True, steps_completed=1,
-                    steps_planned=1, total_attempts=1)
+        obs.end_job("job_e", success=True, steps_completed=1, steps_planned=1, total_attempts=1)
 
     def test_output_dict_reflects_success_and_steps_completed(self):
         obs = self._obs_with_langfuse()
         mock_span = MagicMock()
         obs._active_spans["job_f"] = mock_span
 
-        obs.end_job("job_f", success=False, steps_completed=2,
-                    steps_planned=5, total_attempts=4)
+        obs.end_job("job_f", success=False, steps_completed=2, steps_planned=5, total_attempts=4)
 
         output = mock_span.update.call_args[1]["output"]
         assert output["success"] is False

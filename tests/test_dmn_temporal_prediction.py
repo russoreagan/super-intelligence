@@ -5,6 +5,7 @@ predictor confidence is boosted (surprise dropped) so the LLM is more
 likely to be skipped — closing the predict-and-surprise loop with
 top-down anticipation.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -42,7 +43,9 @@ def test_consume_dmn_prediction_returns_latest():
         return m
 
     for i in range(3):
-        t._dmn_prediction_inbox.put_nowait(_msg({"predicted_input": f"guess {i}", "confidence": 0.5}))
+        t._dmn_prediction_inbox.put_nowait(
+            _msg({"predicted_input": f"guess {i}", "confidence": 0.5})
+        )
 
     result = t._consume_dmn_prediction()
     assert result == {"predicted_input": "guess 2", "confidence": 0.5}
@@ -71,6 +74,7 @@ def test_consume_dmn_prediction_skips_expired_messages():
 
 
 # ── Word-overlap-driven confidence boost (integration-ish test) ───────────
+
 
 def test_dmn_hit_reduces_surprise():
     """Verify the surprise-reduction math: hit_overlap=0.8 drops surprise

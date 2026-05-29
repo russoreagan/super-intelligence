@@ -8,6 +8,7 @@ Stored in a 'procedures' table in the same LanceDB database as episodic memory
 Procedural and episodic memory are distinct memory types (neuroscientifically
 justified) but share underlying storage and retrieval machinery.
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -23,15 +24,20 @@ from brain.model_router import ModelRouter
 
 logger = logging.getLogger(__name__)
 
-_EPISODES_DIR = Path(os.environ.get(
-    "SECOND_BRAIN_PATH",
-    str(Path(__file__).parent.parent.parent / "second_brain"),
-)) / "episodes"
+_EPISODES_DIR = (
+    Path(
+        os.environ.get(
+            "SECOND_BRAIN_PATH",
+            str(Path(__file__).parent.parent.parent / "second_brain"),
+        )
+    )
+    / "episodes"
+)
 
 _EMBEDDING_DIM = 768
 _SIMILARITY_THRESHOLD = 0.75
 _OPEN_LOOP_THRESHOLD = 0.90  # similarity required to run a procedure without LLM planning
-_OPEN_LOOP_MIN_USES = 2      # must have succeeded this many times before going open-loop
+_OPEN_LOOP_MIN_USES = 2  # must have succeeded this many times before going open-loop
 _MAX_RECALL = 3
 
 
@@ -49,18 +55,21 @@ class ProcedureStore:
         try:
             import lancedb
             import pyarrow as pa
+
             _EPISODES_DIR.mkdir(parents=True, exist_ok=True)
             self._db = lancedb.connect(str(_EPISODES_DIR))
-            schema = pa.schema([
-                pa.field("id", pa.string()),
-                pa.field("goal", pa.string()),
-                pa.field("steps", pa.string()),       # JSON
-                pa.field("results", pa.string()),     # JSON
-                pa.field("success", pa.bool_()),
-                pa.field("recorded_at", pa.string()),
-                pa.field("use_count", pa.int32()),
-                pa.field("vector", pa.list_(pa.float32(), _EMBEDDING_DIM)),
-            ])
+            schema = pa.schema(
+                [
+                    pa.field("id", pa.string()),
+                    pa.field("goal", pa.string()),
+                    pa.field("steps", pa.string()),  # JSON
+                    pa.field("results", pa.string()),  # JSON
+                    pa.field("success", pa.bool_()),
+                    pa.field("recorded_at", pa.string()),
+                    pa.field("use_count", pa.int32()),
+                    pa.field("vector", pa.list_(pa.float32(), _EMBEDDING_DIM)),
+                ]
+            )
             if "procedures" in self._db.table_names():
                 self._table = self._db.open_table("procedures")
             else:
@@ -68,7 +77,9 @@ class ProcedureStore:
             self._ready = True
             return True
         except Exception as e:
-            logger.warning("[MuscleMemory] LanceDB unavailable — procedures will not persist: %s", e)
+            logger.warning(
+                "[MuscleMemory] LanceDB unavailable — procedures will not persist: %s", e
+            )
             return False
 
     @staticmethod
@@ -84,8 +95,14 @@ class ProcedureStore:
             "is_empty": len(result.strip()) == 0,
         }
 
-    def save(self, goal: str, steps: list[dict], results: list[str],
-             success: bool, embedding: list[float]) -> None:
+    def save(
+        self,
+        goal: str,
+        steps: list[dict],
+        results: list[str],
+        success: bool,
+        embedding: list[float],
+    ) -> None:
         if not self._ensure_ready():
             return
         try:
@@ -108,8 +125,9 @@ class ProcedureStore:
                 "vector": embedding or ([0.0] * _EMBEDDING_DIM),
             }
             self._table.add([row])
-            logger.info("[MuscleMemory] Recorded: %s (%d steps, success=%s)",
-                        goal, len(steps), success)
+            logger.info(
+                "[MuscleMemory] Recorded: %s (%d steps, success=%s)", goal, len(steps), success
+            )
         except Exception as e:
             logger.error("[MuscleMemory] Failed to save procedure: %s", e)
 
@@ -117,12 +135,7 @@ class ProcedureStore:
         if not self._ensure_ready():
             return []
         try:
-            results = (
-                self._table.search(query_vector)
-                .metric("cosine")
-                .limit(limit)
-                .to_list()
-            )
+            results = self._table.search(query_vector).metric("cosine").limit(limit).to_list()
             matches = []
             for r in results:
                 similarity = 1.0 - float(r.get("_distance", 1.0))
@@ -143,9 +156,14 @@ class ProcedureStore:
         with contextlib.suppress(Exception):
             self._table.update(
                 where=f"id = '{proc_id}'",
-                values={"use_count": self._table.search()
-                        .where(f"id = '{proc_id}'")
-                        .limit(1).to_list()[0].get("use_count", 0) + 1}
+                values={
+                    "use_count": self._table.search()
+                    .where(f"id = '{proc_id}'")
+                    .limit(1)
+                    .to_list()[0]
+                    .get("use_count", 0)
+                    + 1
+                },
             )
 
     def reset_use_count(self, proc_id: str) -> None:
@@ -169,7 +187,6 @@ class ProcedureStore:
 
 
 class MuscleMemorySubsystem(MotorSubsystem):
-
     def __init__(self) -> None:
         self._store = ProcedureStore()
 
@@ -193,7 +210,7 @@ class MuscleMemorySubsystem(MotorSubsystem):
             outcome = "success" if p.get("success") else "partial/failed"
             step_names = " → ".join(s.get("tool", "?") for s in p.get("steps", []))
             lines.append(
-                f"{i}. \"{p['goal']}\" "
+                f'{i}. "{p["goal"]}" '
                 f"(similarity: {p['similarity']}, used {p.get('use_count', 0)}×, {outcome})\n"
                 f"   Steps: {step_names}"
             )
@@ -240,22 +257,25 @@ class MuscleMemorySubsystem(MotorSubsystem):
             expected_success = success_votes > len(matching_sigs) / 2
             length_mins = [s.get("length_min", 0) for s in matching_sigs]
             length_maxes = [s.get("length_max", 1000) for s in matching_sigs]
-            logger.debug("[MuscleMemory] predict_outcome: %s — %d examples, success=%.0f%%",
-                         tool, len(matching_sigs), 100 * success_votes / len(matching_sigs))
+            logger.debug(
+                "[MuscleMemory] predict_outcome: %s — %d examples, success=%.0f%%",
+                tool,
+                len(matching_sigs),
+                100 * success_votes / len(matching_sigs),
+            )
             return {
                 "expected_success": expected_success,
                 "length_min": int(sum(length_mins) / len(length_mins)),
                 "length_max": int(sum(length_maxes) / len(length_maxes)),
-                "is_empty": sum(1 for s in matching_sigs if s.get("is_empty")) > len(matching_sigs) / 2,
+                "is_empty": sum(1 for s in matching_sigs if s.get("is_empty"))
+                > len(matching_sigs) / 2,
                 "sample_count": len(matching_sigs),
             }
         except Exception as e:
             logger.debug("[MuscleMemory] predict_outcome failed: %s", e)
             return None
 
-    async def recall_procedure(
-        self, task: str, router: ModelRouter
-    ) -> tuple[dict | None, float]:
+    async def recall_procedure(self, task: str, router: ModelRouter) -> tuple[dict | None, float]:
         """Return the best matching procedure if it meets the open-loop threshold."""
         if not task:
             return None, 0.0
@@ -269,8 +289,12 @@ class MuscleMemorySubsystem(MotorSubsystem):
         similarity = best.get("similarity", 0.0)
         use_count = best.get("use_count", 0)
         if similarity >= _OPEN_LOOP_THRESHOLD and use_count >= _OPEN_LOOP_MIN_USES:
-            logger.info("[MuscleMemory] Open-loop candidate: %s (sim=%.3f, uses=%d)",
-                        best.get("goal", "")[:60], similarity, use_count)
+            logger.info(
+                "[MuscleMemory] Open-loop candidate: %s (sim=%.3f, uses=%d)",
+                best.get("goal", "")[:60],
+                similarity,
+                use_count,
+            )
             return best, similarity
         return None, similarity
 

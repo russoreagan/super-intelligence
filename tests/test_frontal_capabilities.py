@@ -3,6 +3,7 @@ Tests for FrontalCluster.set_capabilities() — ensures that the entity's
 actual tool capabilities are surfaced into the drafter prompt so drafters
 can answer "what tools do you have?" accurately instead of confabulating.
 """
+
 from __future__ import annotations
 
 from brain.clusters.frontal import FrontalCluster
@@ -48,8 +49,13 @@ def test_drafter_prompt_includes_capabilities_when_set():
         memory={},
         parietal="",
         affect={"emotion": "neutral", "appraisal": ""},
-        instruction={"response_type": "chitchat", "target_length": "brief",
-                     "tone": "warm", "key_points": [], "drafter_count": 1},
+        instruction={
+            "response_type": "chitchat",
+            "target_length": "brief",
+            "tone": "warm",
+            "key_points": [],
+            "drafter_count": 1,
+        },
     )
     assert "Your capabilities this session" in prompt
     assert "Tool use ENABLED" in prompt
@@ -64,8 +70,13 @@ def test_drafter_prompt_omits_capabilities_section_when_empty():
         memory={},
         parietal="",
         affect={"emotion": "neutral", "appraisal": ""},
-        instruction={"response_type": "chitchat", "target_length": "brief",
-                     "tone": "warm", "key_points": [], "drafter_count": 1},
+        instruction={
+            "response_type": "chitchat",
+            "target_length": "brief",
+            "tone": "warm",
+            "key_points": [],
+            "drafter_count": 1,
+        },
     )
     assert "Your capabilities this session" not in prompt
 
@@ -80,8 +91,13 @@ def test_drafter_prompt_capabilities_appears_before_other_context():
         memory={},
         parietal="prior turn 1\nprior turn 2",
         affect={"emotion": "neutral", "appraisal": ""},
-        instruction={"response_type": "chitchat", "target_length": "brief",
-                     "tone": "warm", "key_points": [], "drafter_count": 1},
+        instruction={
+            "response_type": "chitchat",
+            "target_length": "brief",
+            "tone": "warm",
+            "key_points": [],
+            "drafter_count": 1,
+        },
     )
     cap_pos = prompt.find("Your capabilities this session")
     parietal_pos = prompt.find("Recent conversation")

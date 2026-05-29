@@ -9,18 +9,17 @@ Three injection sites, each verified for:
 
 No full session startup — each test builds the minimum scaffold needed.
 """
+
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
+from unittest.mock import AsyncMock, MagicMock
 
 from brain.bus import Bus
 from brain.observability.timeline import TurnTrace
 
-
 # ── shared helpers ────────────────────────────────────────────────────────────
+
 
 def _run(coro):
     """Run a coroutine on a usable event loop. These tests aren't pytest-asyncio,
@@ -52,11 +51,11 @@ def _make_emitter():
 
 # ── 1. Hippocampus recall injection ──────────────────────────────────────────
 
+
 class TestHippocampusRecallInjection:
     """ACh/GABA spike only for emotionally significant recalled memories."""
 
-    def _apply(self, bus: Bus, trace: TurnTrace, emitter,
-               recall_affect: dict) -> None:
+    def _apply(self, bus: Bus, trace: TurnTrace, emitter, recall_affect: dict) -> None:
         """Replicates the hippocampus-recall block from session_turn._run_turn."""
         if recall_affect:
             for channel, delta in recall_affect.items():
@@ -70,6 +69,7 @@ class TestHippocampusRecallInjection:
     def _compute_affect(self, emotion_states: list[str]) -> dict:
         """Mirrors hippocampus._compute_recall_affect logic."""
         from brain.emotion_hierarchy import valence_of
+
         THRESHOLD = 0.4
         episodes = [{"emotion_state": e} for e in emotion_states]
         pos_peak = max((valence_of(ep.get("emotion_state")) for ep in episodes), default=0.0)
@@ -98,6 +98,7 @@ class TestHippocampusRecallInjection:
     def test_mild_emotion_below_threshold_no_signal(self):
         # "content" maps to happy core, valence ~0.3 — below 0.4 threshold
         from brain.emotion_hierarchy import valence_of
+
         affect = self._compute_affect(["content"])
         val = valence_of("content")
         if abs(val) <= 0.4:
@@ -164,6 +165,7 @@ class TestHippocampusRecallInjection:
 
 
 # ── 2. Tool outcome injection ─────────────────────────────────────────────────
+
 
 class TestToolOutcomeInjection:
     """Failed tools raise GABA+NE and drop DA; successful tools raise DA+Glu."""
@@ -262,7 +264,9 @@ class TestToolOutcomeInjection:
         gaba_b_fail = bus_fail.neuromod.get("GABA")
         self._apply_exception(bus_exc, _make_trace(), _make_emitter())
         self._apply_failure(bus_fail, _make_trace(), _make_emitter())
-        assert (bus_exc.neuromod.get("GABA") - gaba_b_exc) > (bus_fail.neuromod.get("GABA") - gaba_b_fail)
+        assert (bus_exc.neuromod.get("GABA") - gaba_b_exc) > (
+            bus_fail.neuromod.get("GABA") - gaba_b_fail
+        )
 
     def test_exception_trace_trigger(self):
         bus = _make_bus()
@@ -283,6 +287,7 @@ class TestToolOutcomeInjection:
 
 
 # ── 3. Draft quality injection ────────────────────────────────────────────────
+
 
 class TestDraftQualityInjection:
     """Low overall draft score → GABA/NE; high → DA. Mid range → no update."""
@@ -381,6 +386,7 @@ class TestDraftQualityInjection:
 
 
 # ── 4. TurnTrace field ────────────────────────────────────────────────────────
+
 
 class TestTurnTraceField:
     def test_neuromod_midturn_defaults_empty(self):

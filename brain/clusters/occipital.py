@@ -8,6 +8,7 @@ Handles two input modes:
 Video frames are sampled at BRAIN_VIDEO_SAMPLE_INTERVAL seconds (default 3.0),
 change-detected, then batched into a single Gemini multimodal call.
 """
+
 from __future__ import annotations
 
 import logging
@@ -25,7 +26,11 @@ logger = logging.getLogger(__name__)
 
 CLUSTER = "occipital"
 
-IMAGE_ROOT = Path(os.environ.get("BRAIN_IMAGE_DIR", str(Path.home() / "brain_images"))).expanduser().resolve()
+IMAGE_ROOT = (
+    Path(os.environ.get("BRAIN_IMAGE_DIR", str(Path.home() / "brain_images")))
+    .expanduser()
+    .resolve()
+)
 IMAGE_ROOT.mkdir(parents=True, exist_ok=True)
 
 _ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
@@ -52,6 +57,7 @@ def _rms_diff(a: bytes, b: bytes) -> float:
 
         import numpy as np
         from PIL import Image
+
         ia = np.array(Image.open(io.BytesIO(a)).convert("L"), dtype=float)
         ib = np.array(Image.open(io.BytesIO(b)).convert("L"), dtype=float)
         if ia.shape != ib.shape:
@@ -86,7 +92,9 @@ class OccipitalCluster:
         # visual attention by lowering the threshold — high alertness means
         # even a marginal trigger engages vision.
         self._vision_needed = SwitchNeuron(
-            "vision_needed", CLUSTER, threshold=0.5,
+            "vision_needed",
+            CLUSTER,
+            threshold=0.5,
             modulators={"NE": -0.10},
         )
 
@@ -105,8 +113,7 @@ class OccipitalCluster:
             return None
 
         chem = self._chem_snapshot()
-        self._image_present.fire(1.0, "static_image",
-                                  {"path": str(image_path)[:80]}, snapshot=chem)
+        self._image_present.fire(1.0, "static_image", {"path": str(image_path)[:80]}, snapshot=chem)
 
         # Vision-needed gate: even with a valid image, chemistry can suppress
         # engaging the (expensive) VLM. Under low NE the threshold rises.
@@ -123,6 +130,7 @@ class OccipitalCluster:
             return None
 
         import tempfile
+
         _tmp = Path(tempfile.gettempdir()).resolve()
         if not resolved.is_relative_to(IMAGE_ROOT) and not resolved.is_relative_to(_tmp):
             logger.warning("[Vision] Blocked image path — outside allowed folder (%s).", IMAGE_ROOT)
@@ -139,39 +147,52 @@ class OccipitalCluster:
 
         # Size router records which model variant fires for this image.
         size_tag = "large" if size > 1 * 1024 * 1024 else "small"
-        self._image_size_router.fire(min(1.0, size / MAX_IMAGE_SIZE_BYTES),
-                                      size_tag, {"bytes": size}, snapshot=chem)
+        self._image_size_router.fire(
+            min(1.0, size / MAX_IMAGE_SIZE_BYTES), size_tag, {"bytes": size}, snapshot=chem
+        )
 
         self._vision_integrator.model = "flash" if size > 1 * 1024 * 1024 else "flash-lite"
         self._vision_integrator.reset_turn(turn_id)
 
         import base64
+
         image_data = base64.standard_b64encode(resolved.read_bytes()).decode("utf-8")
         suffix = resolved.suffix.lower().lstrip(".")
-        mime_map = {"jpg": "image/jpeg", "jpeg": "image/jpeg",
-                    "png": "image/png", "gif": "image/gif", "webp": "image/webp"}
+        mime_map = {
+            "jpg": "image/jpeg",
+            "jpeg": "image/jpeg",
+            "png": "image/png",
+            "gif": "image/gif",
+            "webp": "image/webp",
+        }
         mime = mime_map.get(suffix, "image/jpeg")
 
         if self._vision_integrator.model in ("haiku", "sonnet"):
             # Anthropic format
-            messages = [{
-                "role": "user",
-                "content": [
-                    {"type": "image", "source": {"type": "base64",
-                                                  "media_type": mime, "data": image_data}},
-                    {"type": "text", "text": f"User question: {user_text}"}
-                ]
-            }]
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image",
+                            "source": {"type": "base64", "media_type": mime, "data": image_data},
+                        },
+                        {"type": "text", "text": f"User question: {user_text}"},
+                    ],
+                }
+            ]
         else:
             # Gemini multimodal format
             raw_bytes = resolved.read_bytes()
-            messages = [{
-                "role": "user",
-                "content": [
-                    {"type": "image", "data": raw_bytes, "mime": mime},
-                    {"type": "text", "text": f"User question: {user_text}"},
-                ]
-            }]
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "data": raw_bytes, "mime": mime},
+                        {"type": "text", "text": f"User question: {user_text}"},
+                    ],
+                }
+            ]
 
         return await self._run_vision(messages, turn_id)
 
@@ -223,10 +244,12 @@ class OccipitalCluster:
         parts: list[dict] = []
         for frame_bytes, mime in frames:
             parts.append({"type": "image", "data": frame_bytes, "mime": mime})
-        parts.append({
-            "type": "text",
-            "text": f"These are {len(frames)} frames sampled from a live video stream. {context}"
-        })
+        parts.append(
+            {
+                "type": "text",
+                "text": f"These are {len(frames)} frames sampled from a live video stream. {context}",
+            }
+        )
 
         messages = [{"role": "user", "content": parts}]
         logger.debug("[Vision] Analysing %d video frames.", len(frames))
@@ -251,6 +274,7 @@ class OccipitalCluster:
     async def _run_vision(self, messages: list[dict], turn_id: str) -> dict | None:
         try:
             import json
+
             raw = await self._vision_integrator.call(messages)
             vision_features = json.loads(raw)
         except Exception as e:

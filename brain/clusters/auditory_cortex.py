@@ -23,6 +23,7 @@ Single-mic multi-speaker support:
 Activated by --ears flag or BRAIN_EARS=true env var.
 No LLM calls — pure DSP + local model inference.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -74,18 +75,21 @@ def _session_threshold() -> float:
 
 # ── Session speaker tracking ───────────────────────────────────────────────────
 
+
 @dataclasses.dataclass
 class SessionSpeaker:
-    session_key: str            # stable within-session label: "spk_0", "spk_1", ...
-    store_id: str | None        # speaker store profile ID, if matched
-    store_name: str | None      # display name
+    session_key: str  # stable within-session label: "spk_0", "spk_1", ...
+    store_id: str | None  # speaker store profile ID, if matched
+    store_name: str | None  # display name
     embedding_mean: np.ndarray  # running L2-normalised mean
     sample_count: int
-    enrollment_pending: bool    # True = waiting for the user to say their name
+    enrollment_pending: bool  # True = waiting for the user to say their name
     first_seen_ts: float
     last_seen_ts: float
     closest_match: str | None = None  # nearest store profile that fell below threshold
-    enrollment_prompted: bool = False  # True once we've asked this voice for a name (ask once, don't spam)
+    enrollment_prompted: bool = (
+        False  # True once we've asked this voice for a name (ask once, don't spam)
+    )
 
 
 class SessionSpeakerRegistry:
@@ -153,8 +157,12 @@ class SessionSpeakerRegistry:
             return {"action": "not_found", "session_key": session_key, "name": name}
         if not spk.enrollment_pending:
             # Already enrolled this turn (e.g. both auto-detect and run.py fired) — no-op
-            return {"action": "already_done", "session_key": session_key,
-                    "name": spk.store_name, "speaker_id": spk.store_id}
+            return {
+                "action": "already_done",
+                "session_key": session_key,
+                "name": spk.store_name,
+                "speaker_id": spk.store_id,
+            }
 
         existing_id = self._store.find_by_name(name)
         if existing_id:
@@ -249,6 +257,7 @@ class SessionSpeakerRegistry:
 
 # ── Main cluster ───────────────────────────────────────────────────────────────
 
+
 class AuditoryCluster:
     def __init__(self, bus: Bus) -> None:
         self._bus = bus
@@ -260,7 +269,7 @@ class AuditoryCluster:
         # Cross-loop state for per-speaker prosody calibration.
         # The raw loop extracts prosody; the diarized loop identifies the speaker.
         # We share the last known values so each loop can update the other's work.
-        self._last_speaker_id: str | None = None      # set by diarized loop
+        self._last_speaker_id: str | None = None  # set by diarized loop
         self._last_prosody_features: dict | None = None  # set by raw loop
 
         # Fingerprint DB (hash_val → [(song_id, ref_time_frame), ...])
@@ -281,7 +290,8 @@ class AuditoryCluster:
             }
             logger.info(
                 "Auditory: fingerprint DB — %d songs, %d hash buckets",
-                len(self._songs), len(self._fp_db),
+                len(self._songs),
+                len(self._fp_db),
             )
         except Exception as e:
             logger.warning("Auditory: fingerprint DB load failed: %s", e)
@@ -321,7 +331,7 @@ class AuditoryCluster:
             logger.debug("Auditory: decode error: %s", e)
             return
 
-        rms = float(np.sqrt(np.mean(audio ** 2)))
+        rms = float(np.sqrt(np.mean(audio**2)))
         if rms < SILENCE_RMS:
             return
 
@@ -341,8 +351,11 @@ class AuditoryCluster:
                 fp_result["song_id"] = best_id
                 fp_result["song_title"] = meta.get("title")
                 fp_result["song_artist"] = meta.get("artist")
-            logger.debug("Auditory: song match=%s conf=%.3f",
-                         fp_result.get("matched"), fp_result.get("confidence", 0))
+            logger.debug(
+                "Auditory: song match=%s conf=%.3f",
+                fp_result.get("matched"),
+                fp_result.get("confidence", 0),
+            )
             await self._bus.publish_dict("auditory.song_match", fp_result, source=CLUSTER)
 
         if not isinstance(pros_result, BaseException):
@@ -356,9 +369,13 @@ class AuditoryCluster:
             if baseline is not None:
                 pros_result["tone_label"] = label_prosody_tone(pros_result, baseline)
 
-            logger.debug("Auditory: prosody tone=%s f0=%.0f energy=%.3f voiced=%.2f",
-                         pros_result.get("tone_label"), pros_result.get("f0_mean_hz", 0),
-                         pros_result.get("energy_mean", 0), pros_result.get("voiced_fraction", 0))
+            logger.debug(
+                "Auditory: prosody tone=%s f0=%.0f energy=%.3f voiced=%.2f",
+                pros_result.get("tone_label"),
+                pros_result.get("f0_mean_hz", 0),
+                pros_result.get("energy_mean", 0),
+                pros_result.get("voiced_fraction", 0),
+            )
             await self._bus.publish_dict("auditory.prosody", pros_result, source=CLUSTER)
 
     # ── Diarized audio loop: per-speaker ID + enrollment ──────────────────
@@ -400,8 +417,13 @@ class AuditoryCluster:
         # pace_switch + pause_distribution_switch: derive timing-based features
         # from the diarized words and publish them for the rest of the brain.
         dyn = compute_speech_dynamics(diarized_words)
-        logger.debug("Auditory: dynamics wpm=%.0f pace=%s pauses=%d burst=%.2f",
-                     dyn["wpm"], dyn["pace_label"], dyn["long_pause_count"], dyn["burst_score"])
+        logger.debug(
+            "Auditory: dynamics wpm=%.0f pace=%s pauses=%d burst=%.2f",
+            dyn["wpm"],
+            dyn["pace_label"],
+            dyn["long_pause_count"],
+            dyn["burst_score"],
+        )
         await self._bus.publish_dict("auditory.speech_dynamics", dyn, source=CLUSTER)
 
         # Group word dicts by Deepgram speaker label
@@ -413,11 +435,9 @@ class AuditoryCluster:
         for deepgram_label, words in sorted(by_speaker.items()):
             await self._process_one_speaker(audio, sr, words, deepgram_label, loop)
 
-    async def _process_single_speaker_audio(
-        self, audio: np.ndarray, sr: int, loop
-    ) -> None:
+    async def _process_single_speaker_audio(self, audio: np.ndarray, sr: int, loop) -> None:
         """Fallback when no diarization data is available."""
-        rms = float(np.sqrt(np.mean(audio ** 2)))
+        rms = float(np.sqrt(np.mean(audio**2)))
         if rms < SILENCE_RMS:
             return
         embedding = await loop.run_in_executor(None, extract_speaker_embedding, audio, sr)
@@ -475,8 +495,10 @@ class AuditoryCluster:
         }
         logger.debug(
             "Auditory: session=%s name=%s enrolled=%s new=%s",
-            session_spk.session_key, session_spk.store_name,
-            not session_spk.enrollment_pending, is_new,
+            session_spk.session_key,
+            session_spk.store_name,
+            not session_spk.enrollment_pending,
+            is_new,
         )
         await self._bus.publish_dict("auditory.speaker_id", spk_payload, source=CLUSTER)
 
@@ -494,7 +516,8 @@ class AuditoryCluster:
             )
             logger.info(
                 "Auditory: new voice %s (closest=%s) — enrollment started",
-                session_spk.session_key, closest,
+                session_spk.session_key,
+                closest,
             )
 
         # Auto-detect "I'm Alice" when this speaker has pending enrollment
@@ -509,7 +532,9 @@ class AuditoryCluster:
                 )
                 logger.info(
                     "Auditory: auto-enrolled %s as '%s' (action=%s)",
-                    session_spk.session_key, name, result["action"],
+                    session_spk.session_key,
+                    name,
+                    result["action"],
                 )
 
     # ── Public API for run.py ──────────────────────────────────────────────

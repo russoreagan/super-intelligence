@@ -4,11 +4,13 @@ Lookup table + appraisal templates. No LLM.
 Hormonal color overlay (apply_hormonal_color) modifies base emotion
 based on slow-timescale 5HT/CORT/OXT state.
 """
+
 from __future__ import annotations
 
 # Maps neuromod vector buckets to named emotion + action tendency
 # Format: (DA_range, GABA_range, ACh_range, Glu_range) -> (emotion, tendency)
 # Ranges are "low" (<0.3), "mid" (0.3-0.6), "high" (>0.6)
+
 
 def _bucket(v: float) -> str:
     if v < 0.3:
@@ -21,111 +23,192 @@ def _bucket(v: float) -> str:
 
 EMOTION_TABLE: dict[tuple[str, str, str, str], tuple[str, str]] = {
     # (DA, GABA, ACh, Glu)
-    ("high", "low",  "low",  "mid"): ("joy",              "approach, share, expand"),
-    ("high", "low",  "high", "mid"): ("excitement",       "engage, act, explore"),
-    ("high", "low",  "high", "high"):("enthusiasm",       "commit, create, lead"),
-    ("mid",  "low",  "high", "mid"): ("curious",          "question, investigate, open"),
-    ("mid",  "low",  "low",  "low"): ("content",          "maintain, reflect, observe"),
-    ("mid",  "mid",  "mid",  "mid"): ("composed",         "steady, deliberate — mild inhibitory tone, nothing urgent"),
-    ("low",  "mid",  "high", "mid"): ("curious-uncertain","question, hedge, qualify"),
-    ("low",  "high", "mid",  "low"): ("anxious",          "caution, double-check, withdraw"),
-    ("low",  "high", "low",  "low"): ("inhibited",        "defer, minimal response, comply"),
-    ("low",  "low",  "low",  "low"): ("flat",             "minimal activation, terse"),
-    ("low",  "mid",  "low",  "high"):("restless",         "redirect, change subject"),
-    ("mid",  "high", "low",  "high"):("cautious-agitated","careful, brief, avoid escalation"),
-    ("low",  "low",  "low",  "high"):("agitated",         "assert, clarify boundaries"),
-    ("high", "mid",  "low",  "low"): ("warm",             "affirm, empathize, include"),
-    ("mid",  "low",  "mid",  "low"): ("thoughtful",       "deliberate, qualify, depth"),
-    ("high", "low",  "mid",  "low"): ("confident",        "direct, decisive, clear"),
+    ("high", "low", "low", "mid"): ("joy", "approach, share, expand"),
+    ("high", "low", "high", "mid"): ("excitement", "engage, act, explore"),
+    ("high", "low", "high", "high"): ("enthusiasm", "commit, create, lead"),
+    ("mid", "low", "high", "mid"): ("curious", "question, investigate, open"),
+    ("mid", "low", "low", "low"): ("content", "maintain, reflect, observe"),
+    ("mid", "mid", "mid", "mid"): (
+        "composed",
+        "steady, deliberate — mild inhibitory tone, nothing urgent",
+    ),
+    ("low", "mid", "high", "mid"): ("curious-uncertain", "question, hedge, qualify"),
+    ("low", "high", "mid", "low"): ("anxious", "caution, double-check, withdraw"),
+    ("low", "high", "low", "low"): ("inhibited", "defer, minimal response, comply"),
+    ("low", "low", "low", "low"): ("flat", "minimal activation, terse"),
+    ("low", "mid", "low", "high"): ("restless", "redirect, change subject"),
+    ("mid", "high", "low", "high"): ("cautious-agitated", "careful, brief, avoid escalation"),
+    ("low", "low", "low", "high"): ("agitated", "assert, clarify boundaries"),
+    ("high", "mid", "low", "low"): ("warm", "affirm, empathize, include"),
+    ("mid", "low", "mid", "low"): ("thoughtful", "deliberate, qualify, depth"),
+    ("high", "low", "mid", "low"): ("confident", "direct, decisive, clear"),
     # ── richer spectrum ──
-    ("low",  "high", "low",  "high"):("angry",            "confront, push back, heat"),
-    ("high", "low",  "low",  "high"):("proud",            "claim accomplishment, expand"),
-    ("mid",  "low",  "high", "high"):("surprised",        "recalibrate, re-orient, ask"),
-    ("low",  "high", "mid",  "mid"): ("defensive",        "protect position, push back, qualify"),
-    ("low",  "low",  "high", "low"): ("wistful",          "reminisce, soften, look back"),
-    ("low",  "low",  "high", "high"):("confused",         "stall, ask for clarification, qualify"),
+    ("low", "high", "low", "high"): ("angry", "confront, push back, heat"),
+    ("high", "low", "low", "high"): ("proud", "claim accomplishment, expand"),
+    ("mid", "low", "high", "high"): ("surprised", "recalibrate, re-orient, ask"),
+    ("low", "high", "mid", "mid"): ("defensive", "protect position, push back, qualify"),
+    ("low", "low", "high", "low"): ("wistful", "reminisce, soften, look back"),
+    ("low", "low", "high", "high"): ("confused", "stall, ask for clarification, qualify"),
     # ── steady-state gap fills (common in simulation; all defaulted to 'neutral') ──
     # Hostile sustained: aroused + threatened but not fully inhibited
-    ("mid",  "high", "mid",  "high"):("stressed",         "stay grounded, keep brief, don't spiral"),
-    ("low",  "high", "mid",  "high"):("overwhelmed",      "one thing at a time, slow down, protect"),
-    ("mid",  "mid",  "mid",  "high"):("stirred",          "attentive, cautious — something is activating"),
-    ("mid",  "mid",  "low",  "high"):("uneasy",           "careful, brief, read the room"),
+    ("mid", "high", "mid", "high"): ("stressed", "stay grounded, keep brief, don't spiral"),
+    ("low", "high", "mid", "high"): ("overwhelmed", "one thing at a time, slow down, protect"),
+    ("mid", "mid", "mid", "high"): ("stirred", "attentive, cautious — something is activating"),
+    ("mid", "mid", "low", "high"): ("uneasy", "careful, brief, read the room"),
     # Warm sustained: DA high but ACh/Glu have decayed to floors
-    ("high", "low",  "low",  "low"): ("serene",           "rest in it, present, no need to reach"),
-    ("high", "low",  "mid",  "mid"): ("lively",           "engaged and warm, let the energy show"),
+    ("high", "low", "low", "low"): ("serene", "rest in it, present, no need to reach"),
+    ("high", "low", "mid", "mid"): ("lively", "engaged and warm, let the energy show"),
     # Moderate positive: engaged but not strongly valenced
-    ("mid",  "low",  "mid",  "mid"): ("engaged",          "lean in, follow what's interesting"),
-    ("mid",  "low",  "low",  "mid"): ("settled",          "grounded, steady, no strong pull"),
-
+    ("mid", "low", "mid", "mid"): ("engaged", "lean in, follow what's interesting"),
+    ("mid", "low", "low", "mid"): ("settled", "grounded, steady, no strong pull"),
     # ── full gap-fill: every remaining (DA, GABA, ACh, Glu) combination ─────
     # Low DA, low GABA — depleted reward, uninhibited but flat
-    ("low",  "low",  "low",  "mid"): ("melancholy",       "low reward, mild activation — quiet despondency"),
-    ("low",  "low",  "mid",  "low"): ("somber",           "turning inward, reflective without joy"),
-    ("low",  "low",  "mid",  "mid"): ("disappointed",     "attended absence of reward — something fell short"),
-    ("low",  "low",  "mid",  "high"):("frustrated",       "activation without reward — unresolved drive"),
-    ("low",  "low",  "high", "mid"): ("somber",           "attention turns inward, low reward — quiet sadness"),
-
+    ("low", "low", "low", "mid"): ("melancholy", "low reward, mild activation — quiet despondency"),
+    ("low", "low", "mid", "low"): ("somber", "turning inward, reflective without joy"),
+    ("low", "low", "mid", "mid"): (
+        "disappointed",
+        "attended absence of reward — something fell short",
+    ),
+    ("low", "low", "mid", "high"): ("frustrated", "activation without reward — unresolved drive"),
+    ("low", "low", "high", "mid"): ("somber", "attention turns inward, low reward — quiet sadness"),
     # Low DA, mid GABA — depleted reward + rising inhibition
-    ("low",  "mid",  "low",  "low"): ("sad",              "reward and drive absent, inhibition settles in"),
-    ("low",  "mid",  "low",  "mid"): ("melancholy",       "low reward, activation held back by GABA"),
-    ("low",  "mid",  "mid",  "low"): ("somber",           "moderate attention, suppressed, quietly flat"),
-    ("low",  "mid",  "mid",  "mid"): ("disappointed",     "moderate suppression meets absent reward"),
-    ("low",  "mid",  "mid",  "high"):("frustrated",       "suppressed activation without reward — stuck"),
-    ("low",  "mid",  "high", "low"): ("melancholy",       "attention without reward, GABA dims the signal"),
-    ("low",  "mid",  "high", "high"):("overwhelmed",      "high demand with low reward and rising inhibition"),
-
+    ("low", "mid", "low", "low"): ("sad", "reward and drive absent, inhibition settles in"),
+    ("low", "mid", "low", "mid"): ("melancholy", "low reward, activation held back by GABA"),
+    ("low", "mid", "mid", "low"): ("somber", "moderate attention, suppressed, quietly flat"),
+    ("low", "mid", "mid", "mid"): ("disappointed", "moderate suppression meets absent reward"),
+    ("low", "mid", "mid", "high"): ("frustrated", "suppressed activation without reward — stuck"),
+    ("low", "mid", "high", "low"): ("melancholy", "attention without reward, GABA dims the signal"),
+    ("low", "mid", "high", "high"): (
+        "overwhelmed",
+        "high demand with low reward and rising inhibition",
+    ),
     # Low DA, high GABA — depleted reward + strong suppression
-    ("low",  "high", "low",  "mid"): ("anxious",          "strong suppression, low reward, activation building"),
-    ("low",  "high", "high", "low"): ("anxious",          "high attention under strong inhibition — watching carefully"),
-    ("low",  "high", "high", "mid"): ("anxious",          "alert and suppressed — threat awareness, no exit"),
-    ("low",  "high", "high", "high"):("overwhelmed",      "maximum inhibition + full attentional load — system taxed"),
-
+    ("low", "high", "low", "mid"): (
+        "anxious",
+        "strong suppression, low reward, activation building",
+    ),
+    ("low", "high", "high", "low"): (
+        "anxious",
+        "high attention under strong inhibition — watching carefully",
+    ),
+    ("low", "high", "high", "mid"): ("anxious", "alert and suppressed — threat awareness, no exit"),
+    ("low", "high", "high", "high"): (
+        "overwhelmed",
+        "maximum inhibition + full attentional load — system taxed",
+    ),
     # Mid DA, low GABA — moderate reward, uninhibited
-    ("mid",  "low",  "low",  "high"):("restless",         "activation without focus — drive seeking outlet"),
-    ("mid",  "low",  "mid",  "high"):("excitement",       "reward + drive + attention — energised engagement"),
-    ("mid",  "low",  "high", "low"): ("thoughtful",       "high attention, moderate reward, no urgency — deep focus"),
-
+    ("mid", "low", "low", "high"): ("restless", "activation without focus — drive seeking outlet"),
+    ("mid", "low", "mid", "high"): (
+        "excitement",
+        "reward + drive + attention — energised engagement",
+    ),
+    ("mid", "low", "high", "low"): (
+        "thoughtful",
+        "high attention, moderate reward, no urgency — deep focus",
+    ),
     # Mid DA, mid GABA — balanced zone (most common idle range)
-    ("mid",  "mid",  "low",  "low"): ("composed",         "balanced, low stimulation — quiet baseline"),
-    ("mid",  "mid",  "low",  "mid"): ("settled",          "balanced with mild activation, nothing pressing"),
-    ("mid",  "mid",  "mid",  "low"): ("composed",         "deliberate and balanced, nothing urgent"),
-    ("mid",  "mid",  "high", "low"): ("thoughtful",       "high attention, moderate balance — deliberate consideration"),
-    ("mid",  "mid",  "high", "mid"): ("engaged",          "attentive and present, moderate activation"),
-    ("mid",  "mid",  "high", "high"):("stirred",          "high attention + urgency, balanced inhibition — something activating"),
-
+    ("mid", "mid", "low", "low"): ("composed", "balanced, low stimulation — quiet baseline"),
+    ("mid", "mid", "low", "mid"): ("settled", "balanced with mild activation, nothing pressing"),
+    ("mid", "mid", "mid", "low"): ("composed", "deliberate and balanced, nothing urgent"),
+    ("mid", "mid", "high", "low"): (
+        "thoughtful",
+        "high attention, moderate balance — deliberate consideration",
+    ),
+    ("mid", "mid", "high", "mid"): ("engaged", "attentive and present, moderate activation"),
+    ("mid", "mid", "high", "high"): (
+        "stirred",
+        "high attention + urgency, balanced inhibition — something activating",
+    ),
     # Mid DA, high GABA — moderate reward fighting strong suppression
-    ("mid",  "high", "low",  "low"): ("inhibited",        "strong GABA suppression dominates — holding back"),
-    ("mid",  "high", "low",  "mid"): ("guarded",          "suppression + activation — watchful, closed off"),
-    ("mid",  "high", "mid",  "low"): ("guarded",          "suppressed attentiveness — careful, unexpressive"),
-    ("mid",  "high", "mid",  "mid"): ("guarded",          "strong inhibition meets moderate activation — contained"),
-    ("mid",  "high", "high", "low"): ("guarded",          "high attention under strong GABA — watchful silence"),
-    ("mid",  "high", "high", "mid"): ("stressed",         "suppression + full attention + activation — holding it together"),
-    ("mid",  "high", "high", "high"):("overwhelmed",      "all signals elevated — carrying too much"),
-
+    ("mid", "high", "low", "low"): (
+        "inhibited",
+        "strong GABA suppression dominates — holding back",
+    ),
+    ("mid", "high", "low", "mid"): ("guarded", "suppression + activation — watchful, closed off"),
+    ("mid", "high", "mid", "low"): ("guarded", "suppressed attentiveness — careful, unexpressive"),
+    ("mid", "high", "mid", "mid"): (
+        "guarded",
+        "strong inhibition meets moderate activation — contained",
+    ),
+    ("mid", "high", "high", "low"): (
+        "guarded",
+        "high attention under strong GABA — watchful silence",
+    ),
+    ("mid", "high", "high", "mid"): (
+        "stressed",
+        "suppression + full attention + activation — holding it together",
+    ),
+    ("mid", "high", "high", "high"): ("overwhelmed", "all signals elevated — carrying too much"),
     # High DA, low GABA — high reward, uninhibited
-    ("high", "low",  "mid",  "high"):("excitement",       "high reward + drive + attention — active enthusiasm"),
-    ("high", "low",  "high", "low"): ("confident",        "high reward and attention, no urgency — assured presence"),
-
+    ("high", "low", "mid", "high"): (
+        "excitement",
+        "high reward + drive + attention — active enthusiasm",
+    ),
+    ("high", "low", "high", "low"): (
+        "confident",
+        "high reward and attention, no urgency — assured presence",
+    ),
     # High DA, mid GABA — high reward modulated by inhibition
-    ("high", "mid",  "low",  "mid"): ("warm",             "positive, some activation — steady warmth, grounded"),
-    ("high", "mid",  "low",  "high"):("proud",            "high reward + drive, GABA moderates — earned confidence"),
-    ("high", "mid",  "mid",  "low"): ("warm",             "high reward, attentive, no urgency — expansive calm"),
-    ("high", "mid",  "mid",  "mid"): ("warm",             "positive and present, balanced — comfortable engagement"),
-    ("high", "mid",  "mid",  "high"):("excitement",       "high reward + drive, GABA grounds — contained enthusiasm"),
-    ("high", "mid",  "high", "low"): ("confident",        "high reward + attention, GABA moderates — assured clarity"),
-    ("high", "mid",  "high", "mid"): ("enthusiasm",       "high reward + attention + activation, GABA grounds"),
-    ("high", "mid",  "high", "high"):("enthusiasm",       "near-maximum positive activation — fully committed"),
-
+    ("high", "mid", "low", "mid"): ("warm", "positive, some activation — steady warmth, grounded"),
+    ("high", "mid", "low", "high"): (
+        "proud",
+        "high reward + drive, GABA moderates — earned confidence",
+    ),
+    ("high", "mid", "mid", "low"): ("warm", "high reward, attentive, no urgency — expansive calm"),
+    ("high", "mid", "mid", "mid"): (
+        "warm",
+        "positive and present, balanced — comfortable engagement",
+    ),
+    ("high", "mid", "mid", "high"): (
+        "excitement",
+        "high reward + drive, GABA grounds — contained enthusiasm",
+    ),
+    ("high", "mid", "high", "low"): (
+        "confident",
+        "high reward + attention, GABA moderates — assured clarity",
+    ),
+    ("high", "mid", "high", "mid"): (
+        "enthusiasm",
+        "high reward + attention + activation, GABA grounds",
+    ),
+    ("high", "mid", "high", "high"): (
+        "enthusiasm",
+        "near-maximum positive activation — fully committed",
+    ),
     # High DA, high GABA — reward vs. suppression conflict states
-    ("high", "high", "low",  "low"): ("composed",         "DA-GABA balance, low stimulation — positive but contained"),
-    ("high", "high", "low",  "mid"): ("cautious-warm",    "high reward, strong suppression — warmth tempered by guard"),
-    ("high", "high", "low",  "high"):("cautious-agitated","reward + urgency fighting strong inhibition — tense push"),
-    ("high", "high", "mid",  "low"): ("cautious-warm",    "positive and attentive, GABA holds impulses — careful warmth"),
-    ("high", "high", "mid",  "mid"): ("cautious-warm",    "full DA-GABA conflict, moderate activation — warmth under tension"),
-    ("high", "high", "mid",  "high"):("stressed",         "GABA + Glu pressure — stressed despite high DA"),
-    ("high", "high", "high", "low"): ("cautious-warm",    "DA + ACh + GABA — warmth with attentive suppression"),
-    ("high", "high", "high", "mid"): ("stressed",         "GABA suppresses full engagement despite high DA + ACh"),
-    ("high", "high", "high", "high"):("overwhelmed",      "maximum arousal across all channels — system at limit"),
+    ("high", "high", "low", "low"): (
+        "composed",
+        "DA-GABA balance, low stimulation — positive but contained",
+    ),
+    ("high", "high", "low", "mid"): (
+        "cautious-warm",
+        "high reward, strong suppression — warmth tempered by guard",
+    ),
+    ("high", "high", "low", "high"): (
+        "cautious-agitated",
+        "reward + urgency fighting strong inhibition — tense push",
+    ),
+    ("high", "high", "mid", "low"): (
+        "cautious-warm",
+        "positive and attentive, GABA holds impulses — careful warmth",
+    ),
+    ("high", "high", "mid", "mid"): (
+        "cautious-warm",
+        "full DA-GABA conflict, moderate activation — warmth under tension",
+    ),
+    ("high", "high", "mid", "high"): ("stressed", "GABA + Glu pressure — stressed despite high DA"),
+    ("high", "high", "high", "low"): (
+        "cautious-warm",
+        "DA + ACh + GABA — warmth with attentive suppression",
+    ),
+    ("high", "high", "high", "mid"): (
+        "stressed",
+        "GABA suppresses full engagement despite high DA + ACh",
+    ),
+    ("high", "high", "high", "high"): (
+        "overwhelmed",
+        "maximum arousal across all channels — system at limit",
+    ),
 }
 
 DEFAULT_EMOTION = ("neutral", "balanced, no strong tendency")
@@ -136,9 +219,9 @@ def name_emotion(DA: float, GABA: float, ACh: float, Glu: float) -> tuple[str, s
     return EMOTION_TABLE.get(key, DEFAULT_EMOTION)
 
 
-def apply_ne_color(emotion: str, tendency: str, ne: float,
-                   ne_high: float = 0.55,
-                   ne_scatter: float = 0.75) -> tuple[str, str]:
+def apply_ne_color(
+    emotion: str, tendency: str, ne: float, ne_high: float = 0.55, ne_scatter: float = 0.75
+) -> tuple[str, str]:
     """
     NE (norepinephrine) modifier — fires outside the optimal range (0.20–0.55).
     Most turns are unaffected; only high or very-high NE changes the output.
@@ -150,33 +233,43 @@ def apply_ne_color(emotion: str, tendency: str, ne: float,
     Low NE has no explicit label change — it shows through affect_dims (low arousal).
     """
     if ne > ne_scatter:
-        return ("scattered",
-                "over-activated — one thing at a time, slow down, don't chase every signal")
+        return (
+            "scattered",
+            "over-activated — one thing at a time, slow down, don't chase every signal",
+        )
     if ne > ne_high:
         if emotion in ("anxious", "cautious-agitated", "stressed", "uneasy", "restless"):
-            return ("vigilant",
-                    "heightened and tight — track the key signals, stay precise, don't spiral")
+            return (
+                "vigilant",
+                "heightened and tight — track the key signals, stay precise, don't spiral",
+            )
         if emotion in ("curious", "engaged", "stirred", "alert-curious"):
-            return ("alert-curious",
-                    "sharp attention on this — follow fast, precise questions, quick pivots")
+            return (
+                "alert-curious",
+                "sharp attention on this — follow fast, precise questions, quick pivots",
+            )
     return emotion, tendency
 
 
-def apply_hormonal_color(emotion: str, tendency: str, h: dict,
-                          oxt_connected: float = 0.65,
-                          cort_withdrawn: float = 0.55,
-                          oxt_guarded: float = 0.35,
-                          sht_dysphoric: float = 0.25,
-                          aea_eased: float = 0.58) -> tuple[str, str]:
+def apply_hormonal_color(
+    emotion: str,
+    tendency: str,
+    h: dict,
+    oxt_connected: float = 0.65,
+    cort_withdrawn: float = 0.55,
+    oxt_guarded: float = 0.35,
+    sht_dysphoric: float = 0.25,
+    aea_eased: float = 0.58,
+) -> tuple[str, str]:
     """
     Overlay slow-timescale hormonal state onto the base emotion.
     Only fires when a hormone is outside its normal operating range,
     so routine interactions are unaffected.
     """
-    oxt  = h.get("OXT",  0.30)
+    oxt = h.get("OXT", 0.30)
     cort = h.get("CORT", 0.05)
-    sht  = h.get("5HT",  0.50)
-    aea  = h.get("AEA",  0.30)
+    sht = h.get("5HT", 0.50)
+    aea = h.get("AEA", 0.30)
 
     # High trust + positive base → connected (warmest relational state)
     if oxt > oxt_connected and emotion in ("warm", "joy", "content", "confident", "thoughtful"):
@@ -206,31 +299,31 @@ def apply_hormonal_color(emotion: str, tendency: str, h: dict,
 
 def appraisal(emotion: str, situation: str) -> str:
     templates = {
-        "joy":           f"experiencing elevated DA — positive engagement with: {situation}",
-        "curious":       f"ACh elevated — investigating novel aspects of: {situation}",
-        "anxious":       f"GABA elevated — proceeding with caution on: {situation}",
-        "agitated":      f"Glu elevated, DA low — high activation without reward on: {situation}",
-        "content":       f"stable baselines — sustained engagement with: {situation}",
-        "excited":       f"DA + ACh elevated — heightened engagement with: {situation}",
-        "neutral":       f"baseline state, processing: {situation}",
-        "composed":      f"balanced signals with mild inhibitory tone — deliberate engagement with: {situation}",
-        "connected":     f"OXT elevated — deep trust shaping engagement with: {situation}",
-        "withdrawn":     f"CORT elevated, OXT low — stress memory suppressing openness on: {situation}",
-        "guarded":       f"CORT elevated — protective mode while engaging with: {situation}",
-        "dysphoric":     f"5HT depleted — affective baseline depressed on: {situation}",
+        "joy": f"experiencing elevated DA — positive engagement with: {situation}",
+        "curious": f"ACh elevated — investigating novel aspects of: {situation}",
+        "anxious": f"GABA elevated — proceeding with caution on: {situation}",
+        "agitated": f"Glu elevated, DA low — high activation without reward on: {situation}",
+        "content": f"stable baselines — sustained engagement with: {situation}",
+        "excited": f"DA + ACh elevated — heightened engagement with: {situation}",
+        "neutral": f"baseline state, processing: {situation}",
+        "composed": f"balanced signals with mild inhibitory tone — deliberate engagement with: {situation}",
+        "connected": f"OXT elevated — deep trust shaping engagement with: {situation}",
+        "withdrawn": f"CORT elevated, OXT low — stress memory suppressing openness on: {situation}",
+        "guarded": f"CORT elevated — protective mode while engaging with: {situation}",
+        "dysphoric": f"5HT depleted — affective baseline depressed on: {situation}",
         "cautious-warm": f"CORT elevated — warmth present but guarded on: {situation}",
-        "stressed":      f"GABA + Glu both elevated — held under pressure on: {situation}",
-        "overwhelmed":   f"DA suppressed, GABA + Glu high — system taxed on: {situation}",
-        "serene":        f"DA elevated, everything else settled — calm fullness on: {situation}",
-        "lively":        f"DA + ACh elevated — warm energy engaging with: {situation}",
-        "engaged":       f"moderate activation — following the thread on: {situation}",
-        "settled":       f"stable, low arousal — grounded engagement with: {situation}",
-        "stirred":       f"Glu elevated — something activating, watching: {situation}",
-        "uneasy":        f"Glu + GABA rising — tension present on: {situation}",
-        "vigilant":      f"NE elevated, attention sharp — tracking threat on: {situation}",
+        "stressed": f"GABA + Glu both elevated — held under pressure on: {situation}",
+        "overwhelmed": f"DA suppressed, GABA + Glu high — system taxed on: {situation}",
+        "serene": f"DA elevated, everything else settled — calm fullness on: {situation}",
+        "lively": f"DA + ACh elevated — warm energy engaging with: {situation}",
+        "engaged": f"moderate activation — following the thread on: {situation}",
+        "settled": f"stable, low arousal — grounded engagement with: {situation}",
+        "stirred": f"Glu elevated — something activating, watching: {situation}",
+        "uneasy": f"Glu + GABA rising — tension present on: {situation}",
+        "vigilant": f"NE elevated, attention sharp — tracking threat on: {situation}",
         "alert-curious": f"NE + ACh elevated — crisp focused engagement with: {situation}",
-        "scattered":     f"NE excessive — over-activated, attention fragmented on: {situation}",
-        "eased":         f"AEA buffering arousal — stress present but held on: {situation}",
+        "scattered": f"NE excessive — over-activated, attention fragmented on: {situation}",
+        "eased": f"AEA buffering arousal — stress present but held on: {situation}",
     }
     for key, template in templates.items():
         if key in emotion:
@@ -239,37 +332,38 @@ def appraisal(emotion: str, situation: str) -> str:
 
 
 PROSODY_MARKERS: dict[str, list[str]] = {
-    "joy":            ["Oh!", "That's great —", "Yes,"],
-    "curious":        ["Hmm,", "Interesting —", "I wonder..."],
-    "anxious":        ["...okay.", "I'd want to be careful here —"],
-    "agitated":       ["Look —", "To be direct:"],
-    "content":        ["Sure.", "Happy to."],
-    "thoughtful":     ["Let me think about this.", "To be precise:"],
-    "neutral":        [],
-    "confident":      ["Clearly,", "The answer is"],
-    "warm":           ["I appreciate that.", "Of course —"],
-    "connected":      ["Yeah —", "I hear you.", "Of course —"],
-    "withdrawn":      [],
-    "guarded":        ["...alright.", "I'll be honest —"],
-    "dysphoric":      [],
-    "cautious-warm":  ["Of course.", "Sure —"],
-    "stressed":       ["Okay —", "Right."],
-    "overwhelmed":    [],
-    "serene":         ["Sure.", "Of course."],
-    "lively":         ["Oh —", "Yes —"],
-    "engaged":        ["Interesting —", "Right —"],
-    "settled":        ["Sure.", "Of course."],
-    "stirred":        ["Hm.", "Wait —"],
-    "uneasy":         ["...okay.", "I'd want to be careful here —"],
-    "vigilant":       ["Wait —", "Hold on —", "To be precise:"],
-    "alert-curious":  ["Oh —", "Wait, actually —", "Interesting —"],
-    "scattered":      ["...okay.", "Right —"],
-    "eased":          ["Okay.", "Right."],
+    "joy": ["Oh!", "That's great —", "Yes,"],
+    "curious": ["Hmm,", "Interesting —", "I wonder..."],
+    "anxious": ["...okay.", "I'd want to be careful here —"],
+    "agitated": ["Look —", "To be direct:"],
+    "content": ["Sure.", "Happy to."],
+    "thoughtful": ["Let me think about this.", "To be precise:"],
+    "neutral": [],
+    "confident": ["Clearly,", "The answer is"],
+    "warm": ["I appreciate that.", "Of course —"],
+    "connected": ["Yeah —", "I hear you.", "Of course —"],
+    "withdrawn": [],
+    "guarded": ["...alright.", "I'll be honest —"],
+    "dysphoric": [],
+    "cautious-warm": ["Of course.", "Sure —"],
+    "stressed": ["Okay —", "Right."],
+    "overwhelmed": [],
+    "serene": ["Sure.", "Of course."],
+    "lively": ["Oh —", "Yes —"],
+    "engaged": ["Interesting —", "Right —"],
+    "settled": ["Sure.", "Of course."],
+    "stirred": ["Hm.", "Wait —"],
+    "uneasy": ["...okay.", "I'd want to be careful here —"],
+    "vigilant": ["Wait —", "Hold on —", "To be precise:"],
+    "alert-curious": ["Oh —", "Wait, actually —", "Interesting —"],
+    "scattered": ["...okay.", "Right —"],
+    "eased": ["Okay.", "Right."],
 }
 
 
 def prosody_prefix(emotion: str) -> str:
     import random
+
     markers = PROSODY_MARKERS.get(emotion, [])
     return random.choice(markers) + " " if markers else ""
 
@@ -290,33 +384,36 @@ def compute_affect_dims(nm: dict, hormones: dict) -> dict:
     NE raises arousal (focused activation) and dominance (sharpens agency).
     AEA lifts valence slightly (afterglow) and dampens arousal (homeostasis).
     """
-    DA   = float(nm.get("DA",   0.50))
+    DA = float(nm.get("DA", 0.50))
     GABA = float(nm.get("GABA", 0.05))
-    ACh  = float(nm.get("ACh",  0.20))
-    Glu  = float(nm.get("Glu",  0.30))
-    NE   = float(nm.get("NE",   0.25))
-    sht  = float(hormones.get("5HT",  0.50))
+    ACh = float(nm.get("ACh", 0.20))
+    Glu = float(nm.get("Glu", 0.30))
+    NE = float(nm.get("NE", 0.25))
+    sht = float(hormones.get("5HT", 0.50))
     cort = float(hormones.get("CORT", 0.05))
-    oxt  = float(hormones.get("OXT",  0.30))
-    aea  = float(hormones.get("AEA",  0.30))
+    oxt = float(hormones.get("OXT", 0.30))
+    aea = float(hormones.get("AEA", 0.30))
 
     # Valence: pleasant ← DA, 5HT, OXT, AEA; unpleasant ← GABA, CORT
-    valence = max(0.0, min(1.0,
-        0.38 * DA + 0.23 * sht + 0.13 * oxt + 0.05 * aea
-        - 0.20 * GABA - 0.10 * cort + 0.18))
+    valence = max(
+        0.0,
+        min(
+            1.0, 0.38 * DA + 0.23 * sht + 0.13 * oxt + 0.05 * aea - 0.20 * GABA - 0.10 * cort + 0.18
+        ),
+    )
 
     # Arousal: activated ← NE (focused), Glu (general), ACh; dampened ← GABA, AEA
-    arousal = max(0.0, min(1.0,
-        0.30 * NE + 0.30 * Glu + 0.25 * ACh + 0.08 * DA
-        - 0.05 * GABA - 0.03 * aea))
+    arousal = max(
+        0.0, min(1.0, 0.30 * NE + 0.30 * Glu + 0.25 * ACh + 0.08 * DA - 0.05 * GABA - 0.03 * aea)
+    )
 
     # Dominance: in-control ← DA, OXT, NE (sharpened agency); threatened ← GABA, CORT
-    dominance = max(0.0, min(1.0,
-        0.35 * DA + 0.15 * oxt + 0.15 * NE
-        - 0.28 * GABA - 0.18 * cort + 0.28))
+    dominance = max(
+        0.0, min(1.0, 0.35 * DA + 0.15 * oxt + 0.15 * NE - 0.28 * GABA - 0.18 * cort + 0.28)
+    )
 
     return {
-        "valence":   round(valence, 3),
-        "arousal":   round(arousal, 3),
+        "valence": round(valence, 3),
+        "arousal": round(arousal, 3),
         "dominance": round(dominance, 3),
     }

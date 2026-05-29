@@ -11,6 +11,7 @@ Covers:
   - serves_pro_voices=True allows non-premade voices through
   - set_voice WS message routes to pns.set_voice_id via server callback
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -21,9 +22,11 @@ from unittest.mock import MagicMock, patch
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_pns():
     from brain.bus import Bus
     from brain.pns import PNS
+
     bus = Bus()
     return PNS(bus)
 
@@ -46,6 +49,7 @@ def _fake_models(model_id="eleven_v3", serves_pro=False):
 # ---------------------------------------------------------------------------
 # pns.set_voice_id / _speak uses the stored voice
 # ---------------------------------------------------------------------------
+
 
 class TestVoiceIdStorage:
     def test_set_voice_id_stores_value(self):
@@ -78,9 +82,11 @@ class TestVoiceIdStorage:
             mock_tts.convert = fake_convert
             mock_client.text_to_speech = mock_tts
 
-            with patch.dict(os.environ, {"ELEVENLABS_API_KEY": "test_key"}), \
-                 patch("brain.pns.AsyncElevenLabs", return_value=mock_client, create=True), \
-                 patch("elevenlabs.AsyncElevenLabs", return_value=mock_client, create=True):
+            with (
+                patch.dict(os.environ, {"ELEVENLABS_API_KEY": "test_key"}),
+                patch("brain.pns.AsyncElevenLabs", return_value=mock_client, create=True),
+                patch("elevenlabs.AsyncElevenLabs", return_value=mock_client, create=True),
+            ):
                 called_with = {}
 
                 async def spy_speak(text, affect=None):
@@ -128,6 +134,7 @@ class TestVoiceIdStorage:
 # /voices endpoint filtering
 # ---------------------------------------------------------------------------
 
+
 def _run_filter(voices_raw, models_raw, model_id="eleven_v3"):
     """
     Replicate the /voices filtering logic from server.py so we can unit-test
@@ -136,7 +143,7 @@ def _run_filter(voices_raw, models_raw, model_id="eleven_v3"):
     model_caps = next((m for m in models_raw if m.get("model_id") == model_id), {})
     serves_pro = bool(model_caps.get("serves_pro_voices", False))
 
-    pro_voices    = [v for v in voices_raw if v.get("category") == "professional"]
+    pro_voices = [v for v in voices_raw if v.get("category") == "professional"]
     custom_voices = [v for v in voices_raw if v.get("category") not in ("premade", "professional")]
     premade_voices = [v for v in voices_raw if v.get("category") == "premade"]
 
@@ -169,8 +176,9 @@ class TestVoicesEndpointFiltering:
         models = _fake_models("eleven_v3", serves_pro=False)
         result = _run_filter(voices, models, "eleven_v3")
         ids = {v["voice_id"] for v in result["voices"]}
-        assert not any(vid.startswith("pro_") for vid in ids), \
+        assert not any(vid.startswith("pro_") for vid in ids), (
             "Professional voice clones must be excluded when serves_pro_voices=False"
+        )
         assert ids == {"custom_0"}
 
     def test_pro_voices_excluded_when_model_not_found(self):
@@ -184,8 +192,9 @@ class TestVoicesEndpointFiltering:
         models = []  # empty — model lookup will fail, model_caps = {}
         result = _run_filter(voices, models, "eleven_v3")
         ids = {v["voice_id"] for v in result["voices"]}
-        assert not any(vid.startswith("pro_") for vid in ids), \
+        assert not any(vid.startswith("pro_") for vid in ids), (
             "Safe default must exclude pro voices when model is not found in API response"
+        )
 
     def test_pro_voices_excluded_when_serves_pro_field_missing(self):
         """If the serves_pro_voices field is absent from model caps, treat as False."""
@@ -239,8 +248,10 @@ class TestVoicesEndpointFiltering:
 # WS set_voice → callback signal chain
 # ---------------------------------------------------------------------------
 
+
 def _make_server(**kwargs):
     from brain.ui.server import UIServer
+
     q = asyncio.Queue()
     return UIServer(emitter_queue=q, **kwargs)
 

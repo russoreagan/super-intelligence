@@ -3,6 +3,7 @@ Topic-tagged pub/sub blackboard with TTL, activation decay, hop limits.
 Neuromodulator channels (ACh, DA, GABA, Glu) are persistent levels, not message queues.
 Hormonal channels (5HT, CORT, OXT) are a slower endocrine layer that modulates neuromod dynamics.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -55,11 +56,15 @@ class Neuromodulators:
 
     DECAY = 0.85  # per-turn decay multiplier
     CHANNELS = ("ACh", "DA", "GABA", "Glu", "NE")
-    _FLOORS  = {"ACh": 0.10, "DA": 0.30, "GABA": 0.02, "Glu": 0.15, "NE": 0.15}
+    _FLOORS = {"ACh": 0.10, "DA": 0.30, "GABA": 0.02, "Glu": 0.15, "NE": 0.15}
 
     def __init__(self) -> None:
         self._levels: dict[str, float] = {
-            "ACh": 0.20, "DA": 0.50, "GABA": 0.05, "Glu": 0.30, "NE": 0.25,
+            "ACh": 0.20,
+            "DA": 0.50,
+            "GABA": 0.05,
+            "Glu": 0.30,
+            "NE": 0.25,
         }
 
     def add(self, channel: str, delta: float) -> None:
@@ -74,7 +79,7 @@ class Neuromodulators:
         turns > 1.0 means more time passed than the reference interval (slow
         conversation); turns < 1.0 means less (rapid back-and-forth).
         """
-        rate = self.DECAY ** turns
+        rate = self.DECAY**turns
         for ch in self.CHANNELS:
             self._levels[ch] = max(self._FLOORS[ch], self._levels[ch] * rate)
 
@@ -99,12 +104,15 @@ class HormonalState:
     """
 
     CHANNELS = ("5HT", "CORT", "OXT", "AEA")
-    _DECAY  = {"5HT": 0.995, "CORT": 0.970, "OXT": 0.998, "AEA": 0.930}
-    _FLOORS = {"5HT": 0.20,  "CORT": 0.02,  "OXT": 0.15,  "AEA": 0.10}
+    _DECAY = {"5HT": 0.995, "CORT": 0.970, "OXT": 0.998, "AEA": 0.930}
+    _FLOORS = {"5HT": 0.20, "CORT": 0.02, "OXT": 0.15, "AEA": 0.10}
 
     def __init__(self) -> None:
         self._levels: dict[str, float] = {
-            "5HT": 0.50, "CORT": 0.05, "OXT": 0.30, "AEA": 0.30,
+            "5HT": 0.50,
+            "CORT": 0.05,
+            "OXT": 0.30,
+            "AEA": 0.30,
         }
 
     def add(self, channel: str, delta: float) -> None:
@@ -116,8 +124,7 @@ class HormonalState:
     def decay(self, turns: float = 1.0) -> None:
         """Decay all channels by their individual rates ** turns toward their floors."""
         for ch in self.CHANNELS:
-            self._levels[ch] = max(self._FLOORS[ch],
-                                   self._levels[ch] * (self._DECAY[ch] ** turns))
+            self._levels[ch] = max(self._FLOORS[ch], self._levels[ch] * (self._DECAY[ch] ** turns))
 
     def snapshot(self) -> dict[str, float]:
         return dict(self._levels)
@@ -126,25 +133,28 @@ class HormonalState:
 
     def da_offset(self, sht_lift: float, oxt_lift: float, cort_suppress: float) -> float:
         """Net DA floor shift from hormonal state."""
-        return (self._levels["5HT"] * sht_lift
-                + self._levels["OXT"] * oxt_lift
-                - self._levels["CORT"] * cort_suppress)
+        return (
+            self._levels["5HT"] * sht_lift
+            + self._levels["OXT"] * oxt_lift
+            - self._levels["CORT"] * cort_suppress
+        )
 
     def gaba_scale(self, cort_amplify: float, oxt_buffer: float) -> float:
         """GABA sensitivity multiplier. 1.0 = no change."""
-        return max(0.5, 1.0
-                   + self._levels["CORT"] * cort_amplify
-                   - self._levels["OXT"] * oxt_buffer)
+        return max(
+            0.5, 1.0 + self._levels["CORT"] * cort_amplify - self._levels["OXT"] * oxt_buffer
+        )
 
-    def aea_suppress(self, ne_rate: float, glu_rate: float,
-                     base: float = 0.30) -> tuple[float, float]:
+    def aea_suppress(
+        self, ne_rate: float, glu_rate: float, base: float = 0.30
+    ) -> tuple[float, float]:
         """
         Compute NE and Glu scale factors from AEA homeostatic suppression.
         Only activates above the resting AEA baseline (default 0.30) so that
         normal-level AEA has no effect. Returns (ne_scale, glu_scale), both ≥ 0.5.
         """
         excess = max(0.0, self._levels["AEA"] - base)
-        ne_scale  = max(0.5, 1.0 - excess * ne_rate)
+        ne_scale = max(0.5, 1.0 - excess * ne_rate)
         glu_scale = max(0.5, 1.0 - excess * glu_rate)
         return ne_scale, glu_scale
 
@@ -184,7 +194,7 @@ class Bus:
         # prefix subscribers
         for key, qs in self._subscribers.items():
             if key.startswith("__prefix__"):
-                prefix = key[len("__prefix__"):]
+                prefix = key[len("__prefix__") :]
                 if msg.topic.startswith(prefix):
                     for q in qs:
                         with contextlib.suppress(asyncio.QueueFull):

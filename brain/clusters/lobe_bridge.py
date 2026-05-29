@@ -13,6 +13,7 @@ Register handlers in run.py after the lobes are created:
     bridge.register("analyze_image", lambda *, path, question, turn_id: ...)
     motor.set_lobe_bridge(bridge)
 """
+
 from __future__ import annotations
 
 import logging

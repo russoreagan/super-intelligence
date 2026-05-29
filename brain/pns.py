@@ -2,6 +2,7 @@
 Peripheral Nervous System — input/output adapters.
 Text stdin/stdout for v0.1. Voice (Deepgram + ElevenLabs) enabled via env flag.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -46,8 +47,11 @@ def _resolve_output_device():
         try:
             idx = int(raw)
             if 0 <= idx < len(devices) and devices[idx]["max_output_channels"] > 0:
-                logger.info("[I/O] Audio output: [%d] %s (BRAIN_AUDIO_OUTPUT_DEVICE)",
-                            idx, devices[idx]["name"])
+                logger.info(
+                    "[I/O] Audio output: [%d] %s (BRAIN_AUDIO_OUTPUT_DEVICE)",
+                    idx,
+                    devices[idx]["name"],
+                )
                 return idx
         except ValueError:
             pass
@@ -55,8 +59,7 @@ def _resolve_output_device():
         needle = raw.lower()
         for i, d in enumerate(devices):
             if d["max_output_channels"] > 0 and needle in d["name"].lower():
-                logger.info("[I/O] Audio output: [%d] %s (matched %r)",
-                            i, d["name"], raw)
+                logger.info("[I/O] Audio output: [%d] %s (matched %r)", i, d["name"], raw)
                 return i
         logger.warning("[I/O] BRAIN_AUDIO_OUTPUT_DEVICE=%r not found — using system default", raw)
         return None
@@ -64,10 +67,17 @@ def _resolve_output_device():
     # Use system default — most user setups have it pointed at the right
     # device (headphones, monitors, etc.). Log it so the user can see.
     try:
-        default_out = sd.default.device[1] if isinstance(sd.default.device, (list, tuple)) else sd.default.device
+        default_out = (
+            sd.default.device[1]
+            if isinstance(sd.default.device, (list, tuple))
+            else sd.default.device
+        )
         if isinstance(default_out, int) and 0 <= default_out < len(devices):
-            logger.info("[I/O] Audio output: [%d] %s (system default)",
-                        default_out, devices[default_out]["name"])
+            logger.info(
+                "[I/O] Audio output: [%d] %s (system default)",
+                default_out,
+                devices[default_out]["name"],
+            )
     except Exception:
         pass
     return None
@@ -90,7 +100,7 @@ class PNS:
         # Trigger side (continuous mic VAD during playback) is a TODO — the
         # current mic_listen() is press-to-talk, not streaming.
         self._speaking: bool = False
-        self._speaking_text: str = ""   # what TTS is currently saying
+        self._speaking_text: str = ""  # what TTS is currently saying
         self._speak_started_at: float = 0.0
         self._interrupt_event: asyncio.Event = asyncio.Event()
         self._speak_lock: asyncio.Lock = asyncio.Lock()  # serializes TTS calls
@@ -105,7 +115,10 @@ class PNS:
             payload["image_path"] = image_path
         result = screen_input(text)
         if result.flagged:
-            logger.warning("[I/O] [Security] Possible injection attempt in user input — message still processed but flagged (reason=%s)", result.reason)
+            logger.warning(
+                "[I/O] [Security] Possible injection attempt in user input — message still processed but flagged (reason=%s)",
+                result.reason,
+            )
             payload["risk"] = result.risk
             payload["screen_reason"] = result.reason
         await self._bus.publish_dict("sensory.text", payload, source="pns")
@@ -157,20 +170,31 @@ class PNS:
         ACh = float(nm.get("ACh", 0.3))
         Glu = float(nm.get("Glu", 0.3))
         # Order matters: stressed-arousal before plain de-escalation.
-        if Glu > settings.get("glu_urgently_threshold") and settings.get("gaba_urgently_threshold") < GABA:
+        if (
+            Glu > settings.get("glu_urgently_threshold")
+            and settings.get("gaba_urgently_threshold") < GABA
+        ):
             return "[urgently]"
         if settings.get("gaba_gently_threshold") < GABA:
             return "[gently]"
         # Pacing extremes recover the intent of the old `speed` slider the
         # v3-native way: v3 doesn't honour a speed param, so rate is conveyed by
         # tags. High positive arousal → rushed; very low arousal → drawn out.
-        if DA > settings.get("da_excited_threshold") and Glu > settings.get("glu_excited_threshold") + 0.15:
+        if (
+            settings.get("da_excited_threshold") < DA
+            and Glu > settings.get("glu_excited_threshold") + 0.15
+        ):
             return "[rushed]"
-        if settings.get("da_excited_threshold") < DA and Glu > settings.get("glu_excited_threshold"):
+        if settings.get("da_excited_threshold") < DA and Glu > settings.get(
+            "glu_excited_threshold"
+        ):
             return "[excited]"
-        if ACh > settings.get("ach_curious_threshold") and settings.get("gaba_curious_threshold") > GABA:
+        if (
+            ACh > settings.get("ach_curious_threshold")
+            and settings.get("gaba_curious_threshold") > GABA
+        ):
             return "[curious]"
-        if DA < settings.get("da_softly_threshold") - 0.10:
+        if settings.get("da_softly_threshold") - 0.10 > DA:
             return "[drawn out]"
         if settings.get("da_softly_threshold") > DA:
             return "[softly]"
@@ -200,7 +224,7 @@ class PNS:
             # Smaller threshold until the first chunk is emitted, then larger.
             return first_min_len if not chunks else min_len
 
-        for para in re.split(r'\n\n+', text.strip()):
+        for para in re.split(r"\n\n+", text.strip()):
             para = para.strip()
             if not para:
                 continue
@@ -211,7 +235,7 @@ class PNS:
                 buf = ""
 
             # Accumulate sentences within the paragraph until we hit the target.
-            for part in re.split(r'(?<=[.!?…])\s+', para):
+            for part in re.split(r"(?<=[.!?…])\s+", para):
                 buf = (buf + " " + part).strip() if buf else part
                 if len(buf) >= _target():
                     chunks.append(buf)
@@ -240,7 +264,7 @@ class PNS:
         result_parts: list[str] = []
         i = 0
         while i < len(text):
-            if replaced < count and text[i:i + 2] == ", " and i > 12:
+            if replaced < count and text[i : i + 2] == ", " and i > 12:
                 result_parts.append(" — ")
                 replaced += 1
                 i += 2
@@ -272,7 +296,9 @@ class PNS:
         if settings.get("gaba_single_pause_threshold") < GABA:
             shaped = PNS._add_breath_pauses(shaped, count=1)
         elif settings.get("da_double_pause_threshold") > DA:
-            shaped = PNS._add_breath_pauses(shaped, count=int(settings.get("breath_pause_count_max")))
+            shaped = PNS._add_breath_pauses(
+                shaped, count=int(settings.get("breath_pause_count_max"))
+            )
 
         # Tag pass: prepend an inflection cue (if warranted).
         tag = PNS._v3_audio_tag_from_affect(affect)
@@ -299,9 +325,10 @@ class PNS:
           tts v3: "Sure. [angrily] This is unacceptable! [base_tag] Anyway, let's fix it."
         """
         import re
+
         from brain.emotion_presets import get_tag
 
-        pattern = re.compile(r'\[mood:([^\]]+)\](.*?)\[/mood\]', re.DOTALL | re.IGNORECASE)
+        pattern = re.compile(r"\[mood:([^\]]+)\](.*?)\[/mood\]", re.DOTALL | re.IGNORECASE)
 
         def replace_for_display(m: re.Match) -> str:
             return m.group(2).strip()
@@ -349,7 +376,10 @@ class PNS:
             stability = settings.get("voice_stability_threat")
             style = settings.get("voice_style_threat")
             speed = settings.get("voice_speed_threat")
-        elif Glu > settings.get("glu_excited_threshold") and settings.get("da_excited_threshold") < DA:
+        elif (
+            Glu > settings.get("glu_excited_threshold")
+            and settings.get("da_excited_threshold") < DA
+        ):
             stability = settings.get("voice_stability_bright")
             style = settings.get("voice_style_bright")
             speed = settings.get("voice_speed_bright")
@@ -371,19 +401,18 @@ class PNS:
           threat (0.65) → Robust."""
         v = float(value)
         if v <= 0.40:
-            return 0.0   # Creative — most expressive (bright/animated states)
+            return 0.0  # Creative — most expressive (bright/animated states)
         if v >= 0.60:
-            return 1.0   # Robust — most stable (threat / de-escalation)
-        return 0.5       # Natural
+            return 1.0  # Robust — most stable (threat / de-escalation)
+        return 0.5  # Natural
 
     def _emit_tts_error(self, detail: str) -> None:
         """Surface a TTS failure to the UI so it isn't silently disguised as a
         normal text reply. Best-effort — never raises."""
         try:
             from brain.ui.emitter import emitter
-            asyncio.ensure_future(
-                emitter.emit_event({"type": "tts_error", "detail": detail[:200]})
-            )
+
+            asyncio.ensure_future(emitter.emit_event({"type": "tts_error", "detail": detail[:200]}))
         except Exception:
             pass
 
@@ -402,10 +431,14 @@ class PNS:
         if not self._speaking:
             return
         import time
+
         elapsed = time.time() - self._speak_started_at
         if elapsed < self.BARGE_IN_GRACE_SECONDS:
-            logger.debug("[I/O] Ignoring barge-in (%.2fs < %.2fs grace period)",
-                         elapsed, self.BARGE_IN_GRACE_SECONDS)
+            logger.debug(
+                "[I/O] Ignoring barge-in (%.2fs < %.2fs grace period)",
+                elapsed,
+                self.BARGE_IN_GRACE_SECONDS,
+            )
             return
         logger.info("[I/O] Interruption requested — cutting off TTS")
         self._interrupt_event.set()
@@ -428,8 +461,11 @@ class PNS:
         try:
             from elevenlabs import AsyncElevenLabs
             from elevenlabs.types import VoiceSettings
+
             client = AsyncElevenLabs(api_key=api_key)
-            voice_id = getattr(self, "_voice_id", None) or os.environ.get("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")
+            voice_id = getattr(self, "_voice_id", None) or os.environ.get(
+                "ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM"
+            )
 
             params = self._voice_params_from_affect(affect or {})
             model_id = os.environ.get("ELEVENLABS_MODEL_ID", "eleven_v3").strip() or "eleven_v3"
@@ -473,19 +509,22 @@ class PNS:
                 # Step 2: parse [mood:X]...[/mood] inline markup.
                 # display_text has markup stripped; tts_text has ElevenLabs tags inline.
                 display_text, tts_text = self._parse_mood_markup(text, base_tag)
-                has_inline_mood = (tts_text != display_text)
+                has_inline_mood = tts_text != display_text
 
                 # Publish a meta.mood_expression event for each inline segment
                 # so session_turn can collect them for the Langfuse trace.
                 if has_inline_mood:
                     import re as _re
+
                     for _m in _re.finditer(
-                        r'\[mood:([^\]]+)\](.*?)\[/mood\]', text,
+                        r"\[mood:([^\]]+)\](.*?)\[/mood\]",
+                        text,
                         _re.DOTALL | _re.IGNORECASE,
                     ):
                         _emotion = _m.group(1).strip().lower()
                         _preview = _m.group(2).strip()[:80]
                         import asyncio as _asyncio
+
                         _asyncio.get_event_loop().call_soon(
                             lambda e=_emotion, p=_preview: _asyncio.ensure_future(
                                 self._bus.publish_dict(
@@ -500,6 +539,7 @@ class PNS:
                 # (only when there's no inline markup — inline markup takes precedence).
                 if deliberate_emotion and not has_inline_mood:
                     from brain.emotion_presets import get_tag as _get_tag
+
                     override_tag = _get_tag(deliberate_emotion)
                     if override_tag:
                         tts_text = f"{override_tag} {tts_text}"
@@ -508,7 +548,9 @@ class PNS:
                     tts_text = self._shape_for_v3(tts_text, affect or {})
 
                 shaped_text = tts_text
-                tag_preview = shaped_text[: shaped_text.find("]") + 1] if shaped_text.startswith("[") else "—"
+                tag_preview = (
+                    shaped_text[: shaped_text.find("]") + 1] if shaped_text.startswith("[") else "—"
+                )
             else:
                 # Non-v3: strip [mood:X] markup AND bare reaction tags so none of
                 # them get read aloud literally (those tags are v3-only).
@@ -520,16 +562,24 @@ class PNS:
                 logger.info(
                     "[I/O] TTS: voice=%s model=%s stability=%.2f (snapped, style/speed dropped) "
                     "emotion=%s tag=%s deliberate=%s inline_mood=%s",
-                    voice_id, model_id, sent_stability,
-                    (affect or {}).get("emotion"), tag_preview,
-                    deliberate_emotion or "—", has_inline_mood,
+                    voice_id,
+                    model_id,
+                    sent_stability,
+                    (affect or {}).get("emotion"),
+                    tag_preview,
+                    deliberate_emotion or "—",
+                    has_inline_mood,
                 )
             else:
                 logger.info(
                     "[I/O] TTS: voice=%s model=%s stability=%.2f style=%.2f speed=%.2f emotion=%s tag=%s",
-                    voice_id, model_id,
-                    params["stability"], params["style"], params["speed"],
-                    (affect or {}).get("emotion"), tag_preview,
+                    voice_id,
+                    model_id,
+                    params["stability"],
+                    params["style"],
+                    params["speed"],
+                    (affect or {}).get("emotion"),
+                    tag_preview,
                 )
 
             # Split into sentence-sized chunks so ElevenLabs starts generating
@@ -540,6 +590,7 @@ class PNS:
 
             self._interrupt_event.clear()
             import time as _time
+
             self._speak_started_at = _time.time()
             self._speaking = True
             self._speaking_text = text
@@ -549,12 +600,15 @@ class PNS:
             try:
                 try:
                     import sounddevice as sd
+
                     SAMPLE_RATE = 22050
                     output_device = _resolve_output_device()
 
                     def _open_stream(device):
                         s = sd.RawOutputStream(
-                            samplerate=SAMPLE_RATE, channels=1, dtype="int16",
+                            samplerate=SAMPLE_RATE,
+                            channels=1,
+                            dtype="int16",
                             device=device,
                         )
                         s.start()
@@ -571,7 +625,8 @@ class PNS:
                             logger.warning(
                                 "[I/O] Output device %r failed to open (%s) — "
                                 "falling back to system default output",
-                                output_device, dev_err,
+                                output_device,
+                                dev_err,
                             )
                             self._emit_tts_error(
                                 f"Audio device {output_device!r} unavailable — using default"
@@ -595,13 +650,13 @@ class PNS:
                                 # Request stitching: tell v3 what came right before
                                 # and after this chunk so prosody/emotion carries
                                 # across the chunk boundaries instead of resetting.
-                                convert_kwargs = dict(
-                                    text=sentence,
-                                    voice_id=voice_id,
-                                    model_id=model_id,
-                                    output_format="pcm_22050",
-                                    voice_settings=voice_settings,
-                                )
+                                convert_kwargs = {
+                                    "text": sentence,
+                                    "voice_id": voice_id,
+                                    "model_id": model_id,
+                                    "output_format": "pcm_22050",
+                                    "voice_settings": voice_settings,
+                                }
                                 if i > 0:
                                     convert_kwargs["previous_text"] = sentences[i - 1]
                                 if i + 1 < len(sentences):
@@ -628,7 +683,7 @@ class PNS:
                                 chunk = await asyncio.wait_for(
                                     audio_queue.get(), timeout=_TTS_CHUNK_TIMEOUT_S
                                 )
-                            except asyncio.TimeoutError:
+                            except TimeoutError:
                                 logger.warning(
                                     "[I/O] TTS watchdog: no audio chunk in %.0fs — aborting "
                                     "(ElevenLabs slow/unreachable?)",
@@ -649,7 +704,8 @@ class PNS:
                                 logger.info(
                                     "[I/O] TTS first audio chunk in %.2fs (model=%s, chunks=%d)",
                                     first_chunk_ts - self._speak_started_at,
-                                    model_id, len(sentences),
+                                    model_id,
+                                    len(sentences),
                                 )
                             await asyncio.get_event_loop().run_in_executor(
                                 None, stream.write, chunk
@@ -666,8 +722,11 @@ class PNS:
                         stream.close()
                 except ImportError:
                     # sounddevice not installed — fall back to buffered play()
-                    logger.debug("[I/O] sounddevice unavailable — falling back to buffered TTS playback")
+                    logger.debug(
+                        "[I/O] sounddevice unavailable — falling back to buffered TTS playback"
+                    )
                     from elevenlabs.play import play
+
                     audio_bytes = b""
                     for sentence in sentences:
                         if self._interrupt_event.is_set():
@@ -693,7 +752,10 @@ class PNS:
             # reply as text, which is indistinguishable from "no audio out".
             logger.error(
                 "[I/O] Text-to-speech FAILED (%s: %s) — voice will not play this "
-                "turn; falling back to text.", type(e).__name__, e, exc_info=True,
+                "turn; falling back to text.",
+                type(e).__name__,
+                e,
+                exc_info=True,
             )
             self._emit_tts_error(f"{type(e).__name__}: {e}")
             print(f"\nBrain: {text}\n", flush=True)
@@ -708,24 +770,27 @@ class PNS:
             DURATION = 5  # seconds, adjust as needed
 
             print("Listening... (5s)", flush=True)
-            audio = sd.rec(int(DURATION * SAMPLE_RATE), samplerate=SAMPLE_RATE,
-                           channels=1, dtype="int16")
+            audio = sd.rec(
+                int(DURATION * SAMPLE_RATE), samplerate=SAMPLE_RATE, channels=1, dtype="int16"
+            )
             sd.wait()
 
             audio_bytes = audio.tobytes()
 
             # Publish raw audio for auditory cortex (fire-and-forget; dropped if cortex inactive)
-            asyncio.ensure_future(self._bus.publish_dict(
-                "auditory.raw_audio",
-                {
-                    "audio_bytes": audio_bytes,
-                    "sample_rate": SAMPLE_RATE,
-                    "duration_s": float(DURATION),
-                    "channels": 1,
-                    "dtype": "int16",
-                },
-                source="pns",
-            ))
+            asyncio.ensure_future(
+                self._bus.publish_dict(
+                    "auditory.raw_audio",
+                    {
+                        "audio_bytes": audio_bytes,
+                        "sample_rate": SAMPLE_RATE,
+                        "duration_s": float(DURATION),
+                        "channels": 1,
+                        "dtype": "int16",
+                    },
+                    source="pns",
+                )
+            )
 
             client = DeepgramClient(os.environ["DEEPGRAM_API_KEY"])
             response = await client.listen.asyncprerecorded.v("1").transcribe_file(
@@ -746,30 +811,37 @@ class PNS:
             try:
                 if hasattr(alt, "words") and alt.words:
                     for w in alt.words:
-                        diarized_words.append({
-                            "word": getattr(w, "word", ""),
-                            "start": float(getattr(w, "start", 0)),
-                            "end": float(getattr(w, "end", 0)),
-                            "speaker": int(getattr(w, "speaker", 0)),
-                            "speaker_confidence": float(getattr(w, "speaker_confidence", 1.0)),
-                        })
+                        diarized_words.append(
+                            {
+                                "word": getattr(w, "word", ""),
+                                "start": float(getattr(w, "start", 0)),
+                                "end": float(getattr(w, "end", 0)),
+                                "speaker": int(getattr(w, "speaker", 0)),
+                                "speaker_confidence": float(getattr(w, "speaker_confidence", 1.0)),
+                            }
+                        )
             except Exception as _e:
                 logger.debug("PNS: diarized word extraction failed: %s", _e)
 
             # Publish diarized audio for speaker ID pipeline
-            asyncio.ensure_future(self._bus.publish_dict(
-                "auditory.diarized_audio",
-                {
-                    "audio_bytes": audio_bytes,
-                    "sample_rate": SAMPLE_RATE,
-                    "duration_s": float(DURATION),
-                    "dtype": "int16",
-                    "diarized_words": diarized_words,
-                    "transcript": transcript,
-                },
-                source="pns",
-            ))
+            asyncio.ensure_future(
+                self._bus.publish_dict(
+                    "auditory.diarized_audio",
+                    {
+                        "audio_bytes": audio_bytes,
+                        "sample_rate": SAMPLE_RATE,
+                        "duration_s": float(DURATION),
+                        "dtype": "int16",
+                        "diarized_words": diarized_words,
+                        "transcript": transcript,
+                    },
+                    source="pns",
+                )
+            )
             return transcript
         except Exception as e:
-            logger.error("[I/O] Microphone capture failed. Check DEEPGRAM_API_KEY in .env and that 'sounddevice' is installed: %s", e)
+            logger.error(
+                "[I/O] Microphone capture failed. Check DEEPGRAM_API_KEY in .env and that 'sounddevice' is installed: %s",
+                e,
+            )
             return ""

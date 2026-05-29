@@ -3,6 +3,7 @@ Unit tests for brain/clusters/audio_dsp.py.
 
 All tests use synthetic numpy arrays — no microphone, no API keys, no model downloads.
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -33,6 +34,7 @@ def _silence(duration: float = 3.0) -> np.ndarray:
 
 # ── decode_audio ──────────────────────────────────────────────────────────────
 
+
 def test_decode_audio_int16_range():
     # int16 max → 1.0 after normalisation
     arr = np.array([32767, -32768, 0], dtype=np.int16)
@@ -52,6 +54,7 @@ def test_decode_audio_round_trip():
 
 # ── compute_spectrogram ───────────────────────────────────────────────────────
 
+
 def test_spectrogram_shape():
     audio = _sine(440.0)
     spec = compute_spectrogram(audio, SR)
@@ -69,6 +72,7 @@ def test_spectrogram_non_negative():
 
 
 # ── extract_peaks ─────────────────────────────────────────────────────────────
+
 
 def test_peaks_on_pure_tone():
     """A pure 440Hz sine should produce peaks near the 440Hz bin."""
@@ -96,6 +100,7 @@ def test_peaks_on_silence():
 
 
 # ── generate_hashes ───────────────────────────────────────────────────────────
+
 
 def test_generate_hashes_deterministic():
     audio = _sine(440.0)
@@ -125,6 +130,7 @@ def test_hash_values_are_ints():
 
 
 # ── match_fingerprint ─────────────────────────────────────────────────────────
+
 
 def test_fingerprint_no_match_empty_db():
     audio = _sine(440.0)
@@ -169,6 +175,7 @@ def test_fingerprint_no_match_different_tone():
 
 # ── extract_prosody ───────────────────────────────────────────────────────────
 
+
 def test_prosody_silence():
     audio = _silence()
     result = extract_prosody(audio, SR)
@@ -180,8 +187,15 @@ def test_prosody_returns_expected_keys():
     audio = _sine(220.0)
     result = extract_prosody(audio, SR)
     expected = {
-        "f0_mean_hz", "f0_std_hz", "energy_mean", "energy_std",
-        "speech_rate_hz", "jitter", "shimmer", "voiced_fraction", "tone_label",
+        "f0_mean_hz",
+        "f0_std_hz",
+        "energy_mean",
+        "energy_std",
+        "speech_rate_hz",
+        "jitter",
+        "shimmer",
+        "voiced_fraction",
+        "tone_label",
     }
     assert expected.issubset(result.keys())
 
@@ -197,7 +211,7 @@ def test_prosody_energetic_loud_fast():
     # Modulate amplitude to create many onsets
     burst_len = SR // 10
     for i in range(0, len(audio), burst_len):
-        audio[i:i + burst_len // 2] *= 2.0
+        audio[i : i + burst_len // 2] *= 2.0
     audio = np.clip(audio, -1.0, 1.0).astype(np.float32)
     result = extract_prosody(audio, SR)
     assert result["tone_label"] in {"energetic", "calm", "stressed"}  # librosa-dependent

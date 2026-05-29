@@ -9,6 +9,7 @@ Covers:
   * should_fire() decision under shifted thresholds
   * near-miss decision emission when chemistry suppresses a would-be fire
 """
+
 from __future__ import annotations
 
 import pytest
@@ -47,33 +48,29 @@ def test_negative_coefficient_lowers_threshold_under_high_channel():
 
 
 def test_multiple_modulators_sum():
-    s = SwitchNeuron("p", "test", threshold=0.5,
-                     modulators={"DA": +0.10, "NE": -0.20})
+    s = SwitchNeuron("p", "test", threshold=0.5, modulators={"DA": +0.10, "NE": -0.20})
     # DA shift +0.10*(0.8-0.5) = +0.03; NE shift -0.20*(0.7-0.5) = -0.04 → net -0.01
     assert s.effective_threshold({"DA": 0.8, "NE": 0.7}) == pytest.approx(0.49, abs=1e-9)
 
 
 def test_missing_channel_in_snapshot_ignored():
-    s = SwitchNeuron("p", "test", threshold=0.5,
-                     modulators={"DA": +0.20, "NE": +0.20})
+    s = SwitchNeuron("p", "test", threshold=0.5, modulators={"DA": +0.20, "NE": +0.20})
     # NE absent → only DA contributes
     assert s.effective_threshold({"DA": 1.0}) == pytest.approx(0.60, abs=1e-9)
 
 
 def test_min_threshold_floor_clamps():
     # safety-critical switch: even with maximum suppressive chemistry, threshold cannot fall below 0.40.
-    s = SwitchNeuron("safety", "motor", threshold=0.50,
-                     modulators={"NE": -0.5, "CORT": -0.5},
-                     min_threshold=0.40)
+    s = SwitchNeuron(
+        "safety", "motor", threshold=0.50, modulators={"NE": -0.5, "CORT": -0.5}, min_threshold=0.40
+    )
     eff = s.effective_threshold({"NE": 1.0, "CORT": 1.0})
     assert eff >= 0.40
     assert eff == 0.40  # clamp engaged
 
 
 def test_max_threshold_ceiling_clamps():
-    s = SwitchNeuron("p", "test", threshold=0.50,
-                     modulators={"ACh": +1.0},
-                     max_threshold=0.80)
+    s = SwitchNeuron("p", "test", threshold=0.50, modulators={"ACh": +1.0}, max_threshold=0.80)
     eff = s.effective_threshold({"ACh": 1.0})
     assert eff <= 0.80
     assert eff == 0.80
@@ -112,8 +109,7 @@ def test_inhibitory_polarity_signs_level():
 
 
 def test_stateful_switch_inherits_modulation():
-    s = StatefulSwitch("recall_fanout", "hippocampus", decay=0.95,
-                       modulators={"ACh": -0.10})
+    s = StatefulSwitch("recall_fanout", "hippocampus", decay=0.95, modulators={"ACh": -0.10})
     # Inherits effective_threshold from SwitchNeuron.
     assert s.effective_threshold({"ACh": 1.0}) == pytest.approx(0.45, abs=1e-9)
     # State machinery still works.
@@ -132,8 +128,7 @@ def test_near_miss_emits_suppression_decision(monkeypatch):
 
     monkeypatch.setattr(decisions, "log", fake_log)
 
-    s = SwitchNeuron("template_match", "temporal", threshold=0.5,
-                     modulators={"ACh": +0.20})
+    s = SwitchNeuron("template_match", "temporal", threshold=0.5, modulators={"ACh": +0.20})
     # Under high ACh, effective threshold = 0.60. Input 0.55 would fire at base
     # threshold but is suppressed by modulation → should emit a decision.
     assert s.should_fire(0.55, {"ACh": 1.0}) is False
@@ -149,8 +144,7 @@ def test_near_miss_emits_suppression_decision(monkeypatch):
 
 def test_near_miss_does_not_emit_when_below_base_threshold(monkeypatch):
     captured: list[dict] = []
-    monkeypatch.setattr(decisions, "log",
-                         lambda d, **f: captured.append({"d": d, **f}))
+    monkeypatch.setattr(decisions, "log", lambda d, **f: captured.append({"d": d, **f}))
     s = SwitchNeuron("p", "test", threshold=0.5, modulators={"ACh": +0.20})
     # Input 0.30 wouldn't fire even at base threshold — not a chemistry suppression.
     assert s.should_fire(0.30, {"ACh": 1.0}) is False
@@ -159,8 +153,7 @@ def test_near_miss_does_not_emit_when_below_base_threshold(monkeypatch):
 
 def test_near_miss_does_not_emit_when_no_modulators(monkeypatch):
     captured: list[dict] = []
-    monkeypatch.setattr(decisions, "log",
-                         lambda d, **f: captured.append({"d": d, **f}))
+    monkeypatch.setattr(decisions, "log", lambda d, **f: captured.append({"d": d, **f}))
     s = SwitchNeuron("p", "test", threshold=0.5)
     assert s.should_fire(0.4, {"ACh": 1.0}) is False
     assert captured == []
@@ -170,14 +163,19 @@ def test_near_miss_does_not_emit_when_no_modulators(monkeypatch):
 # Modulation gain knob
 # ---------------------------------------------------------------------------
 
+
 def test_modulation_gain_zero_disables_all_chemistry(monkeypatch):
     """gain=0 → switches behave as if modulators were empty everywhere."""
     from brain.settings import settings as _settings
-    monkeypatch.setattr(_settings, "get",
-                         lambda k, d=None: 0.0 if k == "modulation_gain"
-                         else _settings._data.get(k, d if d is not None else 0))
-    s = SwitchNeuron("p", "test", threshold=0.5,
-                     modulators={"ACh": +0.20, "GABA": -0.20})
+
+    monkeypatch.setattr(
+        _settings,
+        "get",
+        lambda k, d=None: (
+            0.0 if k == "modulation_gain" else _settings._data.get(k, d if d is not None else 0)
+        ),
+    )
+    s = SwitchNeuron("p", "test", threshold=0.5, modulators={"ACh": +0.20, "GABA": -0.20})
     # Even at chemistry extremes, gain=0 means threshold stays at 0.5.
     assert s.effective_threshold({"ACh": 1.0, "GABA": 1.0}) == 0.5
     assert s.effective_threshold({"ACh": 0.0, "GABA": 0.0}) == 0.5
@@ -186,9 +184,14 @@ def test_modulation_gain_zero_disables_all_chemistry(monkeypatch):
 def test_modulation_gain_two_doubles_shift(monkeypatch):
     """gain=2 → modulation shift is twice as strong."""
     from brain.settings import settings as _settings
-    monkeypatch.setattr(_settings, "get",
-                         lambda k, d=None: 2.0 if k == "modulation_gain"
-                         else _settings._data.get(k, d if d is not None else 0))
+
+    monkeypatch.setattr(
+        _settings,
+        "get",
+        lambda k, d=None: (
+            2.0 if k == "modulation_gain" else _settings._data.get(k, d if d is not None else 0)
+        ),
+    )
     s = SwitchNeuron("p", "test", threshold=0.5, modulators={"ACh": +0.10})
     # ACh=1.0 with coeff 0.10 → shift = 0.10*0.5 = 0.05; doubled = 0.10
     assert s.effective_threshold({"ACh": 1.0}) == pytest.approx(0.60, abs=1e-9)

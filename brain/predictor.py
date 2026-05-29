@@ -8,6 +8,7 @@ user is in a non-routine emotional state, force the integrator to wake — the
 prediction is statistically valid but morally wrong (the moment deserves
 fresh attention, not a cached response).
 """
+
 from __future__ import annotations
 
 from collections import Counter, deque
@@ -19,18 +20,38 @@ from brain.settings import settings as _settings
 # Emotional states where the entity should NOT lean on prediction. These are
 # either reactive (responding to something fresh) or relational (where stale
 # behavior reads as cold).
-_FRESH_ATTENTION_EMOTIONS = frozenset({
-    "angry", "defensive", "frustrated", "irritated", "sympathetic",
-    "embarrassed", "apologetic", "flirty", "surprised", "sad", "melancholy",
-    "tender", "shy",
-})
+_FRESH_ATTENTION_EMOTIONS = frozenset(
+    {
+        "angry",
+        "defensive",
+        "frustrated",
+        "irritated",
+        "sympathetic",
+        "embarrassed",
+        "apologetic",
+        "flirty",
+        "surprised",
+        "sad",
+        "melancholy",
+        "tender",
+        "shy",
+    }
+)
 
 # User emotional states that deserve the full Multiple Drafts engine — no
 # shortcuts.
-_USER_EMOTIONS_NEEDING_CARE = frozenset({
-    "distressed", "sad", "frustrated", "hostile", "overwhelmed",
-    "anxious", "angry", "upset",
-})
+_USER_EMOTIONS_NEEDING_CARE = frozenset(
+    {
+        "distressed",
+        "sad",
+        "frustrated",
+        "hostile",
+        "overwhelmed",
+        "anxious",
+        "angry",
+        "upset",
+    }
+)
 
 
 @dataclass
@@ -39,6 +60,7 @@ class PredictorSwitch:
     Maintains a short history of (input_features → output_tag) pairs.
     Predicts the likely output tag for the next input using last-N frequency.
     """
+
     name: str
     cluster: str
     window: int = field(default=8)
@@ -67,8 +89,9 @@ class PredictorSwitch:
         best, n = counts.most_common(1)[0]
         return best, n / len(matching)
 
-    def surprise(self, predicted_tag: str | None, actual_tag: str,
-                 predicted_confidence: float) -> float:
+    def surprise(
+        self, predicted_tag: str | None, actual_tag: str, predicted_confidence: float
+    ) -> float:
         """Surprise ∈ [0, 1]. High surprise = prediction wrong or low confidence."""
         if predicted_tag is None:
             return 1.0
@@ -89,6 +112,7 @@ class CompositePredictor:
     Example: signature = (intent, register, has_memory, DA_bucket, GABA_bucket)
              label     = (response_type, target_length, tone)
     """
+
     name: str
     cluster: str
     window: int = field(default=12)
@@ -128,14 +152,15 @@ class CompositePredictor:
         best, n = counts.most_common(1)[0]
         return best, n / len(matching)
 
-    def surprise(self, predicted: tuple | None, actual: tuple,
-                 confidence: float) -> float:
+    def surprise(self, predicted: tuple | None, actual: tuple, confidence: float) -> float:
         if predicted is None:
             return 1.0
         if predicted == actual:
             return 1.0 - confidence
         # Partial credit: count fraction of matching positions
-        match_frac = sum(1 for a, b in zip(predicted, actual, strict=False) if a == b) / max(len(predicted), 1)
+        match_frac = sum(1 for a, b in zip(predicted, actual, strict=False) if a == b) / max(
+            len(predicted), 1
+        )
         miss = 1.0 - match_frac
         return min(1.0, 0.4 + miss * 0.5 + (1.0 - confidence) * 0.1)
 
@@ -166,7 +191,9 @@ def prediction_match_frac(predicted, actual) -> float:
         return 1.0 if predicted == actual else 0.0
     if not isinstance(actual, tuple):
         return 0.0
-    return sum(1 for a, b in zip(predicted, actual, strict=False) if a == b) / max(len(predicted), 1)
+    return sum(1 for a, b in zip(predicted, actual, strict=False) if a == b) / max(
+        len(predicted), 1
+    )
 
 
 def input_signature(text: str) -> str:
@@ -174,7 +201,9 @@ def input_signature(text: str) -> str:
     words = text.strip().split()
     length_bucket = "tiny" if len(words) <= 3 else "short" if len(words) <= 15 else "long"
     has_question = "?" in text
-    has_memory_ref = any(w in text.lower() for w in ("remember", "told you", "last", "before", "that", "what was"))
+    has_memory_ref = any(
+        w in text.lower() for w in ("remember", "told you", "last", "before", "that", "what was")
+    )
     return f"{length_bucket}|q={has_question}|mem={has_memory_ref}"
 
 

@@ -8,6 +8,7 @@ The logic is split across three focused mixin modules:
 
 This file contains only __init__, run(), the three run-mode coroutines, and shutdown.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -116,7 +117,7 @@ class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
         # Periodic in-process consolidation (sleep) — runs while the app keeps
         # running, so long-lived sessions don't lose learning. See
         # _periodic_sleep_loop and consolidate_now in session_loops.
-        self._sleep: "SleepConsolidation | None" = None  # type: ignore[name-defined]
+        self._sleep: SleepConsolidation | None = None  # type: ignore[name-defined]  # noqa: F821
         self._consolidation_lock: asyncio.Lock | None = None
         self._last_consolidation_ts: float = time.time()
 
@@ -139,7 +140,9 @@ class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
 
         # Emit a module summary so it's immediately obvious after restart
         # (or any startup) which subsystems came up and which didn't.
-        _on  = lambda flag: "✓" if flag else "✗"
+        def _on(flag):
+            return "✓" if flag else "✗"
+
         logger.info(
             "Session %s online — UI:%s  Motor:%s  DMN:%s  Meta:%s  Voice:%s  Ears:%s",
             self.session_id,
@@ -151,14 +154,16 @@ class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
             _on(self.ears is not None),
         )
         if self._ui_server is not None:
-            self._ui_server.set_subsystem_status({
-                "ui":    self._ui_enabled,
-                "motor": self.motor is not None,
-                "dmn":   self.dmn is not None,
-                "meta":  self.meta is not None,
-                "voice": self._streaming_mic is not None,
-                "ears":  self.ears is not None,
-            })
+            self._ui_server.set_subsystem_status(
+                {
+                    "ui": self._ui_enabled,
+                    "motor": self.motor is not None,
+                    "dmn": self.dmn is not None,
+                    "meta": self.meta is not None,
+                    "voice": self._streaming_mic is not None,
+                    "ears": self.ears is not None,
+                }
+            )
 
         if self.args.message:
             await self._run_single_message()
@@ -182,21 +187,31 @@ class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
                 user_input = await asyncio.wait_for(self._ui_message_queue.get(), timeout=1.0)
             except TimeoutError:
                 since_last_spoke = time.time() - self._last_brain_spoke_ts
-                if (self.dmn is not None
-                        and not self.pns.is_speaking
-                        and self._ui_message_queue.empty()
-                        and since_last_spoke >= self._proactive_response_window):
+                if (
+                    self.dmn is not None
+                    and not self.pns.is_speaking
+                    and self._ui_message_queue.empty()
+                    and since_last_spoke >= self._proactive_response_window
+                ):
                     spoken = self.dmn.take_proactive()
                     if spoken:
                         idle = get_idle_seconds()
-                        if self._proactive_idle_threshold > 0 and idle >= self._proactive_idle_threshold:
+                        if (
+                            self._proactive_idle_threshold > 0
+                            and idle >= self._proactive_idle_threshold
+                        ):
                             logger.debug(
                                 "[Proactive] Suppressed — user idle %.0fs (threshold %.0fs)",
-                                idle, self._proactive_idle_threshold,
+                                idle,
+                                self._proactive_idle_threshold,
                             )
                         else:
-                            logger.info("[Proactive] Speaking (idle=%.0fs, since_spoke=%.0fs): %r",
-                                        idle, since_last_spoke, spoken[:80])
+                            logger.info(
+                                "[Proactive] Speaking (idle=%.0fs, since_spoke=%.0fs): %r",
+                                idle,
+                                since_last_spoke,
+                                spoken[:80],
+                            )
                             if self._emitter:
                                 await self._emitter.emit_proactive_speech(spoken)
                             await self.pns.emit(spoken, {"emotion": "curious"})
@@ -212,10 +227,12 @@ class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
             # forces an in-process sleep pass on whatever has buffered so far.
             if user_input.strip().lower().startswith("/consolidate"):
                 status = await self.consolidate_now(reason="manual_ui")
-                msg = (f"Consolidation: ran on {status.get('turns', 0)} turns "
-                       f"in {status.get('elapsed_s', 0)}s ✓"
-                       if status.get("ran") else
-                       f"Consolidation skipped: {status.get('reason', 'unknown')}")
+                msg = (
+                    f"Consolidation: ran on {status.get('turns', 0)} turns "
+                    f"in {status.get('elapsed_s', 0)}s ✓"
+                    if status.get("ran")
+                    else f"Consolidation skipped: {status.get('reason', 'unknown')}"
+                )
                 if self._emitter:
                     await self.pns.emit(msg, {})
                 self._last_brain_spoke_ts = time.time()
@@ -223,7 +240,7 @@ class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
 
             image_path = None
             if "[image:" in user_input:
-                m = re.search(r'\[image:([^\]]+)\]', user_input)
+                m = re.search(r"\[image:([^\]]+)\]", user_input)
                 if m:
                     image_path = m.group(1).strip()
                     user_input = user_input.replace(m.group(0), "").strip()
@@ -270,15 +287,17 @@ class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
             if user_input.strip().lower().startswith("/consolidate"):
                 status = await self.consolidate_now(reason="manual_cli")
                 if status.get("ran"):
-                    print(f"Brain: Consolidation ran on {status.get('turns', 0)} "
-                          f"turns in {status.get('elapsed_s', 0)}s.")
+                    print(
+                        f"Brain: Consolidation ran on {status.get('turns', 0)} "
+                        f"turns in {status.get('elapsed_s', 0)}s."
+                    )
                 else:
                     print(f"Brain: Consolidation skipped — {status.get('reason')}.")
                 continue
 
             image_path = None
             if "[image:" in user_input:
-                m = re.search(r'\[image:([^\]]+)\]', user_input)
+                m = re.search(r"\[image:([^\]]+)\]", user_input)
                 if m:
                     image_path = m.group(1).strip()
                     user_input = user_input.replace(m.group(0), "").strip()
@@ -303,8 +322,10 @@ class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
                 logger.debug("streaming mic shutdown error: %s", _e)
 
         if self._pending_encodes:
-            logger.info("Waiting for %d in-progress memory writes to finish before exit...",
-                        len(self._pending_encodes))
+            logger.info(
+                "Waiting for %d in-progress memory writes to finish before exit...",
+                len(self._pending_encodes),
+            )
             await asyncio.gather(*self._pending_encodes, return_exceptions=True)
 
         if self._session_traces:
@@ -314,8 +335,11 @@ class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
                 sleep = self._sleep
                 if sleep is None:
                     from brain.sleep import SleepConsolidation
+
                     sleep = SleepConsolidation(
-                        self.router, self.hippocampus._schema, self.hippocampus._episodic,
+                        self.router,
+                        self.hippocampus._schema,
+                        self.hippocampus._episodic,
                         wiring=self.wiring,
                     )
                 logger.info(
@@ -323,7 +347,8 @@ class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
                     "(summarising facts, updating self-model, applying Hebbian updates)..."
                 )
                 await sleep.consolidate(
-                    self.session_id, self._session_traces,
+                    self.session_id,
+                    self._session_traces,
                     full_traces=self._session_traces_full,
                     session_thoughts=self.dmn.session_thoughts() if self.dmn else [],
                 )
@@ -350,12 +375,17 @@ class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
                 logger.warning("Learning judge failed: %s", e)
 
         self.obs.flush()
-        logger.info("Session %s complete. Total LLM calls: %d",
-                    self.session_id, self.brainstem._session_cost_calls)
+        logger.info(
+            "Session %s complete. Total LLM calls: %d",
+            self.session_id,
+            self.brainstem._session_cost_calls,
+        )
 
         if self.meta:
             summary = self.meta.summary()
             if summary:
-                print(f"\nSession stats: {summary.get('turn_count')} turns | "
-                      f"avg {summary.get('avg_llm_calls')} LLM calls | "
-                      f"dominant emotion: {summary.get('dominant_emotion')}")
+                print(
+                    f"\nSession stats: {summary.get('turn_count')} turns | "
+                    f"avg {summary.get('avg_llm_calls')} LLM calls | "
+                    f"dominant emotion: {summary.get('dominant_emotion')}"
+                )

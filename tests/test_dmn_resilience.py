@@ -9,6 +9,7 @@ Tests for the hardened DMN internal-thoughts pipeline:
   - rumination depth cap + seed-exempt emission
   - instrumentation of skill picks / rumination chains via the decision log
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -70,14 +71,20 @@ def _make_dmn():
 
 def _meta(angle=None, spoken=None):
     return {
-        "angle": angle, "spoken_form": spoken, "task_goal": None,
-        "is_propose": False, "is_plan": False,
-        "defer_text": None, "defer_urgency": "high", "defer_tags": [],
+        "angle": angle,
+        "spoken_form": spoken,
+        "task_goal": None,
+        "is_propose": False,
+        "is_plan": False,
+        "defer_text": None,
+        "defer_urgency": "high",
+        "defer_tags": [],
         "chem_delta": {},
     }
 
 
 # ── Skip-and-backoff resilience ─────────────────────────────────────────────
+
 
 def test_note_tick_outcome_backs_off_then_resets():
     dmn = _make_dmn()
@@ -116,7 +123,7 @@ def test_tick_survives_model_failure_and_counts_it():
     failure must register so backoff can kick in."""
     dmn = _make_dmn()
     dmn._monologue_cell.call = AsyncMock(side_effect=RuntimeError("model down"))
-    asyncio.run(dmn._tick())   # must not raise
+    asyncio.run(dmn._tick())  # must not raise
     assert dmn._consec_errors == 1
     assert dmn._last_tick_failed is True
     # Recovery on next good tick.
@@ -136,18 +143,26 @@ def test_empty_model_output_counts_as_failure():
 def test_health_snapshot_shape():
     dmn = _make_dmn()
     h = dmn.health()
-    for k in ("consecutive_errors", "backoff_multiplier", "suppressed_count",
-              "candidate_queue_depth", "ruminations_in_progress"):
+    for k in (
+        "consecutive_errors",
+        "backoff_multiplier",
+        "suppressed_count",
+        "candidate_queue_depth",
+        "ruminations_in_progress",
+    ):
         assert k in h
 
 
 # ── Semantic dedup ──────────────────────────────────────────────────────────
 
+
 def _vec_router(mapping):
     """Router whose embed returns a fixed vector per exact input string."""
     r = MagicMock()
+
     async def _embed(text):
         return mapping.get(text)
+
     r.embed = _embed
     return r
 
@@ -196,6 +211,7 @@ def test_distinct_thought_passes_semantic_gate():
 
 # ── Rumination seed-exemption ───────────────────────────────────────────────
 
+
 def test_rumination_output_is_seed_exempt_but_normal_repeat_is_not():
     seed = "Maybe the recurring tension is about trust, not competence."
     deepened = "The recurring tension is really about trust rather than competence."
@@ -211,8 +227,9 @@ def test_rumination_output_is_seed_exempt_but_normal_repeat_is_not():
     dmn2 = _make_dmn()
     dmn2._recent_thoughts.append(seed)
     dmn2._recent_embeddings.append(None)
-    asyncio.run(dmn2._process_thought(
-        deepened, _meta(), "dmn_1", exempt_seed=seed, source_tag="rumination"))
+    asyncio.run(
+        dmn2._process_thought(deepened, _meta(), "dmn_1", exempt_seed=seed, source_tag="rumination")
+    )
     assert dmn2._suppressed_count == 0
     assert dmn2._bus.publish_dict.await_count == 1
     payload = dmn2._bus.publish_dict.await_args.args[1]
@@ -220,6 +237,7 @@ def test_rumination_output_is_seed_exempt_but_normal_repeat_is_not():
 
 
 # ── Novelty persistence across restart ──────────────────────────────────────
+
 
 def test_novelty_persists_across_restart(tmp_path, monkeypatch):
     monkeypatch.setattr(D, "NOVELTY_STATE_PATH", tmp_path / "dmn_novelty.json")
@@ -240,6 +258,7 @@ def test_novelty_persists_across_restart(tmp_path, monkeypatch):
 
 # ── Idle-gated dual-driver rumination router ────────────────────────────────
 
+
 def test_rumination_drive_flavors():
     dmn = _make_dmn()
     anx, flavor_a = dmn._rumination_drive({"CORT": 0.8, "NE": 0.7, "5HT": 0.05})
@@ -255,8 +274,7 @@ def test_rumination_never_fires_during_live_conversation(monkeypatch):
     monkeypatch.setattr(D, "get_idle_seconds", lambda: 0.0)
     dmn = _make_dmn()
     for _ in range(40):
-        mode, _flavor, drive = dmn._rumination_decision(
-            {"CORT": 0.9, "NE": 0.8, "5HT": 0.0})
+        mode, _flavor, drive = dmn._rumination_decision({"CORT": 0.9, "NE": 0.8, "5HT": 0.0})
         assert mode == "normal"
     assert drive > float(settings.get("dmn_rumination_drive_threshold"))
 
@@ -265,8 +283,7 @@ def test_rumination_eligible_when_idle_with_high_drive(monkeypatch):
     monkeypatch.setattr(D, "get_idle_seconds", lambda: 999.0)
     monkeypatch.setattr(D.random, "random", lambda: 0.0)  # force the probabilistic fire
     dmn = _make_dmn()
-    mode, flavor, _drive = dmn._rumination_decision(
-        {"CORT": 0.9, "NE": 0.8, "5HT": 0.0})
+    mode, flavor, _drive = dmn._rumination_decision({"CORT": 0.9, "NE": 0.8, "5HT": 0.0})
     assert mode == "ruminate"
     assert flavor == "anxious"
 
@@ -276,8 +293,7 @@ def test_rumination_depth_cap(monkeypatch):
     monkeypatch.setattr(D.random, "random", lambda: 0.0)
     dmn = _make_dmn()
     dmn._consecutive_ruminations = int(settings.get("dmn_rumination_max_consecutive"))
-    mode, _flavor, _drive = dmn._rumination_decision(
-        {"CORT": 0.9, "NE": 0.8, "5HT": 0.0})
+    mode, _flavor, _drive = dmn._rumination_decision({"CORT": 0.9, "NE": 0.8, "5HT": 0.0})
     assert mode == "normal"  # capped — stop deepening the same seed
 
 
@@ -289,6 +305,7 @@ def test_low_drive_idle_stays_normal(monkeypatch):
 
 
 # ── Rumination run + instrumentation ────────────────────────────────────────
+
 
 def test_run_rumination_emits_and_logs(monkeypatch):
     logged = []
@@ -303,8 +320,12 @@ def test_run_rumination_emits_and_logs(monkeypatch):
     selector = MagicMock()
     chain = [
         {"thought": "seed", "skill": None, "parent": None, "mode": "seed"},
-        {"thought": "a deeper take via systems lens", "skill": "systems-feedback-mapping",
-         "parent": 0, "mode": "branch"},
+        {
+            "thought": "a deeper take via systems lens",
+            "skill": "systems-feedback-mapping",
+            "parent": 0,
+            "mode": "branch",
+        },
     ]
     selector.ruminate = AsyncMock(return_value=("A synthesized deeper take.", chain))
     dmn._skill_selector = selector
@@ -332,10 +353,13 @@ def test_apply_monologue_skills_logs_pick(monkeypatch):
     dmn._recent_thoughts.append("A thought worth analyzing from a fresh angle.")
 
     from brain.clusters.skill_selector import SkillBundle
+
     selector = MagicMock()
     selector.select_autonomous = AsyncMock(
-        return_value=SkillBundle(tier1=["logic-check"], chosen=["systems-feedback-mapping"],
-                                 pick_source="autonomous"))
+        return_value=SkillBundle(
+            tier1=["logic-check"], chosen=["systems-feedback-mapping"], pick_source="autonomous"
+        )
+    )
     dmn._skill_selector = selector
 
     asyncio.run(dmn._apply_monologue_skills("dmn_3", {}, drive=0.9))

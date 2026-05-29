@@ -7,6 +7,7 @@ Three independent pipelines:
   2. Speaker ID (SpeechBrain ECAPA-TDNN): embedding → cosine similarity
   3. Prosody: pitch, energy, speech rate, jitter, shimmer → tone label
 """
+
 from __future__ import annotations
 
 import logging
@@ -27,7 +28,10 @@ _LOGGED_NO_LIBROSA = False
 # ── Identity name patterns (for enrollment auto-detection) ────────────────────
 
 _IDENTITY_PATTERNS = [
-    _re.compile(r"(?:I'?m|my name(?:'?s| is)|I am|it'?s me[,\s]+|call me|I'?m called)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)", _re.I),
+    _re.compile(
+        r"(?:I'?m|my name(?:'?s| is)|I am|it'?s me[,\s]+|call me|I'?m called)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)",
+        _re.I,
+    ),
     _re.compile(r"(?:it'?s|this is)\s+([A-Z][a-z]+)", _re.I),
     _re.compile(r"^([A-Z][a-z]{1,19})\.?\s*$"),  # bare name like "Russ"
 ]
@@ -47,10 +51,10 @@ def extract_identity_name(text: str) -> str | None:
 # ── Constants (override via env vars) ─────────────────────────────────────────
 STFT_NPERSEG = 1024
 STFT_NOVERLAP = 512
-PEAK_THRESHOLD = 1.5       # × per-frame mean to qualify as a peak
-FAN_OUT_T_MIN = 2          # frames minimum offset for hash target
-FAN_OUT_T_MAX = 80         # frames maximum offset for hash target
-SILENCE_RMS = 0.01         # below this → treat as silence
+PEAK_THRESHOLD = 1.5  # × per-frame mean to qualify as a peak
+FAN_OUT_T_MIN = 2  # frames minimum offset for hash target
+FAN_OUT_T_MAX = 80  # frames maximum offset for hash target
+SILENCE_RMS = 0.01  # below this → treat as silence
 
 # ── SpeechBrain model singleton ────────────────────────────────────────────────
 _encoder = None
@@ -66,6 +70,7 @@ def _get_encoder():
             return _encoder
         try:
             from speechbrain.inference.speaker import EncoderClassifier
+
             logger.info("Auditory DSP: loading SpeechBrain ECAPA-TDNN speaker model…")
             _encoder = EncoderClassifier.from_hparams(
                 source="speechbrain/spkrec-ecapa-voxceleb",
@@ -79,6 +84,7 @@ def _get_encoder():
 
 
 # ── Audio decoding ─────────────────────────────────────────────────────────────
+
 
 def extract_speaker_audio_segments(
     audio: np.ndarray,
@@ -110,9 +116,11 @@ def decode_audio(audio_bytes: bytes, dtype: str = "int16") -> np.ndarray:
 
 # ── Pipeline 1: Fingerprinting ─────────────────────────────────────────────────
 
+
 def compute_spectrogram(audio: np.ndarray, sr: int) -> np.ndarray:
     """STFT magnitude spectrogram, shape (freq_bins, time_frames)."""
     from scipy.signal import stft
+
     _, _, Zxx = stft(audio, fs=sr, nperseg=STFT_NPERSEG, noverlap=STFT_NOVERLAP)
     return np.abs(Zxx)
 
@@ -123,6 +131,7 @@ def extract_peaks(spec: np.ndarray) -> list[tuple[int, int]]:
     Returns list of (freq_bin, time_frame) pairs — the constellation map.
     """
     from scipy.signal import find_peaks
+
     peaks: list[tuple[int, int]] = []
     n_freqs, n_frames = spec.shape
     for t in range(n_frames):
@@ -167,19 +176,37 @@ def match_fingerprint(
     Returns auditory.song_match payload.
     """
     if len(fingerprint_db) == 0:
-        return {"matched": False, "song_id": None, "song_title": None,
-                "confidence": 0.0, "match_count": 0, "query_hash_count": 0}
+        return {
+            "matched": False,
+            "song_id": None,
+            "song_title": None,
+            "confidence": 0.0,
+            "match_count": 0,
+            "query_hash_count": 0,
+        }
 
     spec = compute_spectrogram(audio, sr)
     peaks = extract_peaks(spec)
     if not peaks:
-        return {"matched": False, "song_id": None, "song_title": None,
-                "confidence": 0.0, "match_count": 0, "query_hash_count": 0}
+        return {
+            "matched": False,
+            "song_id": None,
+            "song_title": None,
+            "confidence": 0.0,
+            "match_count": 0,
+            "query_hash_count": 0,
+        }
 
     hashes = generate_hashes(peaks)
     if not hashes:
-        return {"matched": False, "song_id": None, "song_title": None,
-                "confidence": 0.0, "match_count": 0, "query_hash_count": 0}
+        return {
+            "matched": False,
+            "song_id": None,
+            "song_title": None,
+            "confidence": 0.0,
+            "match_count": 0,
+            "query_hash_count": 0,
+        }
 
     # Time-coherent voting: true matches cluster at the same delta
     votes: dict[str, dict[int, int]] = {}
@@ -192,8 +219,14 @@ def match_fingerprint(
             votes[song_id][delta] += 1
 
     if not votes:
-        return {"matched": False, "song_id": None, "song_title": None,
-                "confidence": 0.0, "match_count": 0, "query_hash_count": len(hashes)}
+        return {
+            "matched": False,
+            "song_id": None,
+            "song_title": None,
+            "confidence": 0.0,
+            "match_count": 0,
+            "query_hash_count": len(hashes),
+        }
 
     best_song = max(votes, key=lambda s: max(votes[s].values()))
     best_count = max(votes[best_song].values())
@@ -212,6 +245,7 @@ def match_fingerprint(
 
 # ── Pipeline 2: Speaker identification ────────────────────────────────────────
 
+
 def extract_speaker_embedding(audio: np.ndarray, sr: int) -> np.ndarray | None:
     """
     Extract 192-dim speaker embedding using SpeechBrain ECAPA-TDNN.
@@ -223,6 +257,7 @@ def extract_speaker_embedding(audio: np.ndarray, sr: int) -> np.ndarray | None:
 
     try:
         import torch
+
         # SpeechBrain expects (batch, time) tensor at 16kHz
         tensor = torch.tensor(audio, dtype=torch.float32).unsqueeze(0)
         with torch.no_grad():
@@ -254,6 +289,7 @@ def _get_smile():
             return _smile
         try:
             import opensmile
+
             _smile = opensmile.Smile(
                 feature_set=opensmile.FeatureSet.eGeMAPSv02,
                 feature_level=opensmile.FeatureLevel.Functionals,
@@ -286,7 +322,7 @@ def extract_prosody(audio: np.ndarray, sr: int) -> dict:
     }
 
     # Quick energy check
-    rms_global = float(np.sqrt(np.mean(audio ** 2)))
+    rms_global = float(np.sqrt(np.mean(audio**2)))
     base["energy_mean"] = rms_global
 
     if rms_global < SILENCE_RMS:
@@ -307,8 +343,9 @@ def extract_prosody(audio: np.ndarray, sr: int) -> dict:
             base["voiced_fraction"] = 0.0
 
         # ── Energy / loudness ──
-        rms = librosa.feature.rms(y=audio, frame_length=STFT_NPERSEG,
-                                   hop_length=STFT_NPERSEG - STFT_NOVERLAP)[0]
+        rms = librosa.feature.rms(
+            y=audio, frame_length=STFT_NPERSEG, hop_length=STFT_NPERSEG - STFT_NOVERLAP
+        )[0]
         base["energy_mean"] = float(np.mean(rms))
         base["energy_std"] = float(np.std(rms))
 
@@ -319,19 +356,16 @@ def extract_prosody(audio: np.ndarray, sr: int) -> dict:
         # ── Jitter (pitch period perturbation) ──
         if len(voiced) > 2:
             periods = 1.0 / voiced
-            base["jitter"] = float(
-                np.mean(np.abs(np.diff(periods))) / np.mean(periods)
-            )
+            base["jitter"] = float(np.mean(np.abs(np.diff(periods))) / np.mean(periods))
 
         # ── Shimmer (amplitude perturbation) — librosa fallback ──
         if len(audio) > 10:
             from scipy.signal import find_peaks as _find_peaks
+
             peaks_idx, _ = _find_peaks(np.abs(audio), distance=max(1, sr // 500))
             if len(peaks_idx) > 2:
                 amps = np.abs(audio[peaks_idx])
-                base["shimmer"] = float(
-                    np.mean(np.abs(np.diff(amps))) / max(np.mean(amps), 1e-9)
-                )
+                base["shimmer"] = float(np.mean(np.abs(np.diff(amps))) / max(np.mean(amps), 1e-9))
 
     except ImportError:
         # Visible (once) so a missing dep degrades obviously to text-only affect
@@ -339,8 +373,10 @@ def extract_prosody(audio: np.ndarray, sr: int) -> dict:
         # prosody/vocal-tone signal at all — worth surfacing.
         global _LOGGED_NO_LIBROSA
         if not _LOGGED_NO_LIBROSA:
-            logger.warning("Auditory DSP: librosa not installed — vocal-tone/prosody "
-                           "features disabled (emotion sensing falls back to text only)")
+            logger.warning(
+                "Auditory DSP: librosa not installed — vocal-tone/prosody "
+                "features disabled (emotion sensing falls back to text only)"
+            )
             _LOGGED_NO_LIBROSA = True
     except Exception as e:
         logger.debug("Auditory DSP: prosody extraction error: %s", e)
@@ -387,12 +423,12 @@ def label_prosody_tone(features: dict, baseline: dict | None = None) -> str:
     baseline dict shape: {"jitter": float, "shimmer": float,
                           "energy_mean": float, "f0_std": float, "count": int}
     """
-    vf      = features.get("voiced_fraction", 0.0)
-    f0_std  = features.get("f0_std_hz", 0.0)
-    e_mean  = features.get("energy_mean", 0.0)
-    e_std   = features.get("energy_std", 0.0)
-    rate    = features.get("speech_rate_hz", 0.0)
-    jitter  = features.get("jitter", 0.0)
+    vf = features.get("voiced_fraction", 0.0)
+    f0_std = features.get("f0_std_hz", 0.0)
+    e_mean = features.get("energy_mean", 0.0)
+    e_std = features.get("energy_std", 0.0)
+    rate = features.get("speech_rate_hz", 0.0)
+    jitter = features.get("jitter", 0.0)
     shimmer = features.get("shimmer", 0.0)
 
     calibrated = baseline is not None and baseline.get("count", 0) >= 10
@@ -400,13 +436,13 @@ def label_prosody_tone(features: dict, baseline: dict | None = None) -> str:
     # Thresholds — fall back to universal values; baseline raises them
     # proportionally to the speaker's own normal range.
     if calibrated:
-        jitter_thresh  = max(0.03, baseline["jitter"]  * 1.8)
+        jitter_thresh = max(0.03, baseline["jitter"] * 1.8)
         shimmer_thresh = max(0.10, baseline["shimmer"] * 1.8)
-        energy_thresh  = max(0.12, baseline["energy_mean"] * 1.5)
+        energy_thresh = max(0.12, baseline["energy_mean"] * 1.5)
     else:
-        jitter_thresh  = 0.03
+        jitter_thresh = 0.03
         shimmer_thresh = 0.10
-        energy_thresh  = 0.12
+        energy_thresh = 0.12
 
     if vf < 0.25:
         return "whisper"
@@ -464,7 +500,7 @@ def compute_speech_dynamics(diarized_words: list[dict]) -> dict:
         base["long_pause_count"] = int(sum(1 for g in gaps if g > _LONG_PAUSE_S))
         mean = sum(gaps) / len(gaps)
         var = sum((g - mean) ** 2 for g in gaps) / len(gaps)
-        base["burst_score"] = float(var ** 0.5)
+        base["burst_score"] = float(var**0.5)
 
     wpm = base["wpm"]
     if wpm < 90:
@@ -480,8 +516,7 @@ def compute_speech_dynamics(diarized_words: list[dict]) -> dict:
 
     # "hesitant" — long pauses dominate the utterance shape
     base["hesitant"] = bool(
-        base["long_pause_count"] >= 2
-        and base["long_pause_count"] / max(len(gaps), 1) >= 0.3
+        base["long_pause_count"] >= 2 and base["long_pause_count"] / max(len(gaps), 1) >= 0.3
     )
 
     return base
