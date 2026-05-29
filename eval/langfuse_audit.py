@@ -191,14 +191,126 @@ def _run(since_days: float, name_filter: str | None, hard_cap: int, json_out: st
         print(f"\nWrote raw aggregates to {json_out}")
 
 
+# ── Offline mode: audit a Langfuse observations export (.jsonl / .json) ─────────
+
+_SCORE_PREFIXES = (
+    "voice.", "grounding.", "self_model.", "critic.", "thought.", "emotion.",
+    "judge.", "pipeline.", "novelty.", "faithfulness.", "safety.",
+)
+
+
+def _load_export(path: str) -> list[dict]:
+    if path.endswith(".jsonl"):
+        out = []
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    try:
+                        out.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        pass
+        return out
+    with open(path) as f:
+        data = json.load(f)
+    return data if isinstance(data, list) else data.get("data", [])
+
+
+def _audit_file(path: str, json_out: str | None) -> None:
+    """Audit a Langfuse observations export where scores are flattened as dotted
+    columns whose values are lists (a trace may carry >1 score under one name)."""
+    recs = _load_export(path)
+    print(f"Loaded {len(recs)} records from {path}.")
+    cols = set()
+    for r in recs:
+        for k in r:
+            if any(k.startswith(p) for p in _SCORE_PREFIXES):
+                cols.add(k)
+
+    report, empty = [], []
+    for name in sorted(cols):
+        vals, recs_with, multi, maxlen = [], 0, 0, 0
+        for r in recs:
+            v = r.get(name)
+            if v in (None, ""):
+                continue
+            if not isinstance(v, list):
+                v = [v]
+            nums = [float(x) for x in v if isinstance(x, (int, float))]
+            if nums:
+                recs_with += 1
+                maxlen = max(maxlen, len(nums))
+                if len(nums) > 1:
+                    multi += 1
+                vals.extend(nums)
+        if not vals:
+            empty.append(name)
+            continue
+        n = len(vals)
+        std = statistics.pstdev(vals) if n > 1 else 0.0
+        mean = statistics.mean(vals)
+        distinct = len(set(round(v, 3) for v in vals))
+        half = sum(1 for v in vals if abs(v - 0.5) < 1e-6) / n
+        flags = []
+        if std < 1e-6:
+            flags.append(f"CONSTANT={vals[0]:.2f}")
+        if half > 0.4:
+            flags.append(f"STUCK-AT-0.5={100 * half:.0f}%")
+        if mean < 0.35:
+            flags.append("LOW-MEAN")
+        if distinct <= 3 and n > 20:
+            flags.append(f"LOW-VARIANCE({distinct} distinct)")
+        if any(v < 0 or v > 1 for v in vals):
+            flags.append("OUT-OF-RANGE")
+        if multi:
+            flags.append(f"MULTI-SCORED({multi} traces — local+native overlap?)")
+        report.append({
+            "name": name, "recs": recs_with, "n_values": n, "mean": round(mean, 3),
+            "std": round(std, 3), "min": round(min(vals), 2), "max": round(max(vals), 2),
+            "distinct": distinct, "pct_half": round(100 * half, 1), "flaws": flags,
+        })
+
+    report.sort(key=lambda r: (not r["flaws"], r["name"]))
+    print("=" * 86)
+    print(f"{'EVALUATOR':<26}{'recs':>5}{'mean':>7}{'std':>7}{'min':>6}{'max':>6}{'dist':>5}{'%0.5':>6}")
+    print("=" * 86)
+    for r in report:
+        print(f"{r['name']:<26}{r['recs']:>5}{r['mean']:>7.3f}{r['std']:>7.3f}"
+              f"{r['min']:>6.2f}{r['max']:>6.2f}{r['distinct']:>5}{r['pct_half']:>5.0f}%")
+        for fl in r["flaws"]:
+            print(f"    ⚠  {fl}")
+    print("=" * 86)
+    flagged = [r for r in report if r["flaws"]]
+    print(f"\n{len(flagged)} of {len(report)} populated evaluators flagged.")
+    if empty:
+        print(f"\nEvaluators present in the schema but PRODUCED NO SCORES (didn't run / "
+              f"not submitting): {', '.join(empty)}")
+    print(
+        "\nNote: this export flattens scores as columns and does not carry the score "
+        "`source`, so local-vs-native can't be read directly. MULTI-SCORED traces (>1 "
+        "value under one name) indicate the same trace was scored more than once — the "
+        "local CLI/SDK and a native UI evaluator overlapping. Use the live `--since-days` "
+        "mode for an authoritative source split."
+    )
+    if json_out:
+        with open(json_out, "w") as f:
+            json.dump(report, f, indent=2)
+        print(f"\nWrote raw aggregates to {json_out}")
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description="Audit Langfuse evaluator scores for flaws.")
+    p.add_argument("--from-file", dest="from_file", default=None,
+                   help="Audit a Langfuse observations export (.jsonl/.json) instead of the live API")
     p.add_argument("--since-days", type=float, default=4.0, help="Look back N days (default 4)")
     p.add_argument("--name", default=None, help="Only audit this score name")
     p.add_argument("--cap", type=int, default=5000, help="Max score records to pull")
     p.add_argument("--json", dest="json_out", default=None, help="Dump raw aggregates to this path")
     args = p.parse_args()
-    _run(args.since_days, args.name, args.cap, args.json_out)
+    if args.from_file:
+        _audit_file(args.from_file, args.json_out)
+    else:
+        _run(args.since_days, args.name, args.cap, args.json_out)
 
 
 if __name__ == "__main__":
