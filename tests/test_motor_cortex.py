@@ -1288,8 +1288,13 @@ class TestExecuteInternalJob:
 
         assert result["success"] is False
 
-    async def test_budget_exhausted_marks_failure(self, tmp_path):
-        """Job stops and marks success=False when budget runs out before plan completes."""
+    async def test_budget_exhausted_after_productive_work_is_success(self, tmp_path):
+        """Budget runs out mid-plan, but a productive step already ran → success=True.
+
+        New semantics: a job that did real work is NOT a fail-out just because a
+        safety net (budget) stopped it before every story completed. stopped_early
+        records the reason as a caveat.
+        """
         strategic = {
             "steps": [
                 {"description": "step A", "expected_tool": "read_file"},
@@ -1299,7 +1304,6 @@ class TestExecuteInternalJob:
             "success_criteria": "all done",
             "complexity": "medium",
         }
-        # Planner always returns a read_file call — budget of 1 will exhaust
         f = tmp_path / "x.txt"
         f.write_text("x")
         tactical = [{"tool": "read_file", "args": {"path": str(f)}, "reason": "r"}] * 10
@@ -1311,8 +1315,94 @@ class TestExecuteInternalJob:
         with patch("brain.ui.emitter.emitter", mock_emitter):
             result = await motor.execute_internal_job("do many things", "t1", budget=1)
 
-        assert result["success"] is False
-        assert result["steps_taken_count"] == 1  # stopped after 1
+        assert result["success"] is True            # did real work before stopping
+        assert result["productive_steps"] >= 1
+        assert result["stopped_early"] == "budget exhausted"
+        assert result["steps_taken_count"] == 1     # stopped after 1
+
+    async def test_unverifiable_story_does_not_fail_job(self, tmp_path):
+        """A story whose criteria can't be met (e.g. an unsatisfiable 'summarize'
+        criterion) is recorded as a caveat but does NOT fail a job that did work."""
+        f = tmp_path / "mod.py"
+        f.write_text("class Thing:\n    def method(self): pass\n")
+        strategic = {
+            "stories": [
+                {"id": "US-001", "description": "read the module",
+                 "expected_tool": "read_file", "acceptance_criteria": ["file content returned"]},
+                {"id": "US-002", "description": "summarize the module",
+                 "expected_tool": "read_file",
+                 "acceptance_criteria": ["lists every method and attribute"]},  # unsatisfiable
+            ],
+            "success_criteria": "module summarized", "complexity": "low",
+        }
+        # story 1: read (criteria met). story 2: read again, but criteria never met → 2 attempts
+        tactical = [
+            {"tool": "read_file", "args": {"path": str(f)}, "reason": "read"},
+            {"verified": True, "unmet": []},                      # story1 criteria check
+            {"tool": "read_file", "args": {"path": str(f)}, "reason": "read"},
+            {"verified": False, "unmet": ["no method list"]},     # story2 attempt1 check
+            {"tool": "read_file", "args": {"path": str(f)}, "reason": "read again"},
+            {"verified": False, "unmet": ["no method list"]},     # story2 attempt2 check
+        ]
+        router = self._make_job_router(strategic, tactical)
+        motor, _ = self._make_motor_for_job(tmp_path, router)
+
+        mock_emitter = MagicMock()
+        mock_emitter.emit_event = AsyncMock()
+        with patch("brain.ui.emitter.emitter", mock_emitter):
+            result = await motor.execute_internal_job("read and summarize mod.py", "t1")
+
+        assert result["success"] is True               # real work happened
+        assert result["productive_steps"] >= 1
+        assert len(result["unverified_stories"]) == 1  # the summarize story is a caveat
+        assert "summarize" in result["unverified_stories"][0].lower()
+
+    async def test_zero_productive_work_fails(self, tmp_path):
+        """A job where every step is blocked/errored (no real output) → success=False."""
+        strategic = {
+            "stories": [{"id": "US-001", "description": "read a forbidden file",
+                         "expected_tool": "read_file", "acceptance_criteria": []}],
+            "success_criteria": "done", "complexity": "low",
+        }
+        # path outside allowed roots → [blocked] every time → no productive step
+        tactical = [{"tool": "read_file", "args": {"path": "/etc/shadow"}, "reason": "r"}] * 5
+        router = self._make_job_router(strategic, tactical)
+        motor, _ = self._make_motor_for_job(tmp_path, router)
+
+        mock_emitter = MagicMock()
+        mock_emitter.emit_event = AsyncMock()
+        with patch("brain.ui.emitter.emitter", mock_emitter):
+            result = await motor.execute_internal_job("read forbidden", "t1")
+
+        assert result["success"] is False              # nothing productive happened
+        assert result["productive_steps"] == 0
+
+    async def test_verifier_rejection_is_advisory_not_failure(self, tmp_path):
+        """A medium-complexity job whose final verifier rejects still succeeds if it
+        did productive work — the rejection is recorded as verification_issues."""
+        f = tmp_path / "x.txt"
+        f.write_text("data")
+        strategic = {
+            "stories": [{"id": "US-001", "description": "read the file",
+                         "expected_tool": "read_file",
+                         "acceptance_criteria": ["content returned"]}],
+            "success_criteria": "thoroughly analyzed", "complexity": "medium",
+        }
+        tactical = [
+            {"tool": "read_file", "args": {"path": str(f)}, "reason": "read"},
+            {"verified": True, "unmet": []},                    # story criteria check
+            {"approved": False, "issues": "analysis not deep enough"},  # final verifier
+        ]
+        router = self._make_job_router(strategic, tactical)
+        motor, _ = self._make_motor_for_job(tmp_path, router)
+
+        mock_emitter = MagicMock()
+        mock_emitter.emit_event = AsyncMock()
+        with patch("brain.ui.emitter.emitter", mock_emitter):
+            result = await motor.execute_internal_job("analyze x.txt", "t1")
+
+        assert result["success"] is True                       # work was done
+        assert result["verification_issues"] == "analysis not deep enough"  # surfaced as caveat
 
     async def test_clarification_pauses_job(self, tmp_path):
         """ask_user response sets clarification and stops the loop."""
@@ -1717,13 +1807,14 @@ class TestDispatchTimeout:
         motor._dispatch_once = hang_once  # type: ignore
         import brain.clusters.motor_cortex as mc_mod
         original = mc_mod._TOOL_TIMEOUT_S
+        original_retries = mc_mod._TOOL_RETRIES
         mc_mod._TOOL_TIMEOUT_S = 0.05   # 50ms ceiling
         mc_mod._TOOL_RETRIES = 0        # no retries so the test stays fast
         try:
             result = await motor._dispatch("read_file", {"path": str(tmp_path / "x.txt")})
         finally:
             mc_mod._TOOL_TIMEOUT_S = original
-            mc_mod._TOOL_RETRIES = 1
+            mc_mod._TOOL_RETRIES = original_retries
 
         assert result.startswith("[error]")
         assert "timed out" in result

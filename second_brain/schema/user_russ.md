@@ -7,13 +7,13 @@
 ## Emotional profile
 
 ## Relationship
-- Familiarity: close (interactions: 37) (interactions: 36) (interactions: 35) (interactions: 34) (interactions: 33) (interactions: 32) (interactions: 31) (interactions: 30) (interactions: 29) (interactions: 28) (interactions: 27) (interactions: 26) (interactions: 25) (interactions: 24) (interactions: 23) (interactions: 22) (interactions: 21) (interactions: 20) (interactions: 19) (interactions: 18) (interactions: 17) (interactions: 16) (interactions: 15) (interactions: 14) (interactions: 13) (interactions: 12) (interactions: 11) (interactions: 10) (interactions: 9) (interactions: 8) (interactions: 7) (interactions: 6) (interactions: 5) (interactions: 4) (interactions: 3) (interactions: 2) (interactions: 1)
+- Familiarity: close (interactions: 38) (interactions: 37) (interactions: 36) (interactions: 35) (interactions: 34) (interactions: 33) (interactions: 32) (interactions: 31) (interactions: 30) (interactions: 29) (interactions: 28) (interactions: 27) (interactions: 26) (interactions: 25) (interactions: 24) (interactions: 23) (interactions: 22) (interactions: 21) (interactions: 20) (interactions: 19) (interactions: 18) (interactions: 17) (interactions: 16) (interactions: 15) (interactions: 14) (interactions: 13) (interactions: 12) (interactions: 11) (interactions: 10) (interactions: 9) (interactions: 8) (interactions: 7) (interactions: 6) (interactions: 5) (interactions: 4) (interactions: 3) (interactions: 2) (interactions: 1)
 
 ## Affection score
-- Score: 12
+- Score: 9
 
-- History: friendly — warm and engaged, hold the teasing (last tone: testing, delta: -1)
-- Interactions: 37
+- History: friendly — warm and engaged, hold the teasing (last tone: dismissive, delta: -3)
+- Interactions: 38
 - User prefers using Scite for exploring ideas and generating hypotheses rather than verifying them.
 
 ## Communication style

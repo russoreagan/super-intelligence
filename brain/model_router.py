@@ -18,7 +18,7 @@ MODEL_MAP = {
     "flash-lite": "gemini-2.5-flash-lite",
     "local": "local",
     "local-free": "local-free",       # same model as local, plain-text output (no JSON grammar)
-    "local-code": "local-code",       # routes to OLLAMA_CODE_MODEL (qwen2.5-coder:14b)
+    "local-code": "local-code",       # routes to OLLAMA_CODE_MODEL (defaults to qwen2.5:14b — the hot model)
     "local-general": "local-general", # routes to OLLAMA_GENERAL_MODEL (qwen2.5:32b)
 }
 
@@ -28,8 +28,27 @@ EMBEDDING_DIM = 768
 OLLAMA_EMBED_MODEL = os.environ.get("OLLAMA_EMBED_MODEL", "nomic-embed-text")
 GOOGLE_EMBED_MODEL = os.environ.get("GOOGLE_EMBED_MODEL", "gemini-embedding-001")
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
-OLLAMA_CODE_MODEL = os.environ.get("OLLAMA_CODE_MODEL", "qwen2.5-coder:14b")
+# The motor planner ("local-code") defaults to the SAME model as the rest of the
+# brain (local → qwen2.5:14b). Reason: every other cell (DMN, hippocampus,
+# skill_selector, sleep) keeps qwen2.5:14b hot. If the planner used a distinct
+# model (e.g. qwen2.5-coder:14b), every tool attempt would force Ollama to
+# cold-load a second ~9GB model under memory contention — which exceeds the
+# call timeout and makes EVERY tool use fail with "[planner failed]". Sharing the
+# hot model eliminates the cold-load entirely. Override via OLLAMA_CODE_MODEL only
+# if you have the VRAM headroom to keep a second model resident.
+OLLAMA_CODE_MODEL = os.environ.get("OLLAMA_CODE_MODEL", "qwen2.5:14b")
 OLLAMA_GENERAL_MODEL = os.environ.get("OLLAMA_GENERAL_MODEL", "qwen2.5:32b")
+# A cold model load from disk takes ~50s on a 14B model. The per-request HTTP
+# timeout must comfortably exceed that, or the FIRST call after the model is
+# evicted always fails. Override via OLLAMA_HTTP_TIMEOUT_SECONDS.
+OLLAMA_HTTP_TIMEOUT = float(os.environ.get("OLLAMA_HTTP_TIMEOUT_SECONDS", "120"))
+# How long Ollama keeps a model resident after a call. Longer = fewer cold loads
+# (the dominant cause of tool-call timeouts). Override via OLLAMA_KEEP_ALIVE.
+OLLAMA_KEEP_ALIVE = os.environ.get("OLLAMA_KEEP_ALIVE", "30m")
+# Timeout for an explicit model-preload (warmup) request. A cold 14B load can take
+# up to ~3 min under memory pressure; this is deliberately generous because warmup
+# is a one-time cost that makes every subsequent planner call fast.
+OLLAMA_MODEL_LOAD_TIMEOUT = float(os.environ.get("OLLAMA_MODEL_LOAD_TIMEOUT_SECONDS", "240"))
 
 
 class ModelRouter:
@@ -112,6 +131,49 @@ class ModelRouter:
             import httpx
             self._http_client = httpx.AsyncClient()
         return self._http_client
+
+    @staticmethod
+    def _resolve_local_model(model_key: str) -> str | None:
+        """Map a local model_key to the concrete Ollama model name, or None if not local."""
+        if model_key == "local-code":
+            return OLLAMA_CODE_MODEL
+        if model_key == "local-general":
+            return OLLAMA_GENERAL_MODEL
+        if model_key in ("local", "local-free"):
+            return os.environ.get("OLLAMA_MODEL", "qwen2.5:14b")
+        return None
+
+    async def warmup_local(self, model_key: str = "local-code",
+                           timeout: float | None = None) -> bool:
+        """Preload a local Ollama model into memory as an explicit, separately-timed
+        step so the cold-load latency (~50s, up to ~3min under memory pressure) is
+        NOT charged against — and does not trip — the planner's per-call timeout.
+
+        Best-effort: returns True if the model is resident afterward, False otherwise.
+        A failed warmup is non-fatal — the caller proceeds and the normal call path
+        (with retries) still runs; warmup just makes the common case fast.
+        """
+        model_name = self._resolve_local_model(model_key)
+        if model_name is None:
+            return False  # cloud models don't need warming
+        import asyncio
+        to = timeout if timeout is not None else OLLAMA_MODEL_LOAD_TIMEOUT
+        try:
+            # POST /api/generate with no prompt loads the model and returns immediately
+            # once it's resident (Ollama's documented preload mechanism).
+            async with self._get_local_semaphore():
+                r = await self._get_http().post(
+                    f"{OLLAMA_HOST}/api/generate",
+                    json={"model": model_name, "keep_alive": OLLAMA_KEEP_ALIVE},
+                    timeout=to,
+                )
+            r.raise_for_status()
+            logger.info("[ModelRouter] Warmed up local model %s", model_name)
+            return True
+        except Exception as e:
+            logger.warning("[ModelRouter] Warmup of %s failed (continuing anyway): %s",
+                           model_name, e)
+            return False
 
     async def call(self, model_key: str, system_prompt: str, messages: list[dict],
                    *, cluster: str = "", cell: str = "", turn_id: str = "",
@@ -340,12 +402,13 @@ class ModelRouter:
             "messages": [{"role": "system", "content": system_prompt}] + flat_messages,
             "stream": False,
             "options": options,
-            "keep_alive": "10m",  # keep model hot between DMN ticks
+            "keep_alive": OLLAMA_KEEP_ALIVE,  # keep model hot; fewer cold loads
         }
         if use_json_format:
             payload["format"] = "json"
         async with self._get_local_semaphore():
-            r = await self._get_http().post(f"{OLLAMA_HOST}/api/chat", json=payload, timeout=60)
+            r = await self._get_http().post(f"{OLLAMA_HOST}/api/chat", json=payload,
+                                            timeout=OLLAMA_HTTP_TIMEOUT)
         r.raise_for_status()
         data = r.json()
         in_tok = int(data.get("prompt_eval_count", 0))
