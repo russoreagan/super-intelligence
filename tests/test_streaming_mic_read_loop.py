@@ -84,6 +84,9 @@ def _make_session(messages: list[Any]) -> tuple:
         on_user_interrupt=None,
     )
     session._socket = _FakeSocket(messages)
+    # Sessions now start muted (push-to-talk default); these tests exercise the
+    # read-loop's utterance assembly, which only runs while unmuted.
+    session._muted = False
     return session, bus
 
 

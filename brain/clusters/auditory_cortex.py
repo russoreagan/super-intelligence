@@ -85,6 +85,7 @@ class SessionSpeaker:
     first_seen_ts: float
     last_seen_ts: float
     closest_match: str | None = None  # nearest store profile that fell below threshold
+    enrollment_prompted: bool = False  # True once we've asked this voice for a name (ask once, don't spam)
 
 
 class SessionSpeakerRegistry:
@@ -186,6 +187,13 @@ class SessionSpeakerRegistry:
 
     def pending_enrollments(self) -> list[SessionSpeaker]:
         return [s for s in self._speakers.values() if s.enrollment_pending]
+
+    def mark_prompted(self, session_key: str) -> None:
+        """Record that we've already asked this voice for a name, so the
+        'who are you?' prompt fires once rather than every turn."""
+        spk = self._speakers.get(session_key)
+        if spk is not None:
+            spk.enrollment_prompted = True
 
     def all_speakers(self) -> list[SessionSpeaker]:
         return list(self._speakers.values())
@@ -516,3 +524,7 @@ class AuditoryCluster:
 
     def cancel_enrollment(self, session_key: str) -> None:
         self._registry.cancel_enrollment(session_key)
+
+    def mark_enrollment_prompted(self, session_key: str) -> None:
+        """Mark that we've asked this voice for a name (ask-once guard)."""
+        self._registry.mark_prompted(session_key)

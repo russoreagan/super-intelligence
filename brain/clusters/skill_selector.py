@@ -464,12 +464,17 @@ class SkillSelector:
         max_iters: int = 6,
         time_budget_s: int = 30,
         turn_id: str = "",
+        flavor: str = "engaged",
     ) -> tuple[str, list[dict]]:
         """Open-ended reflection loop.
 
         Returns (final_take, chain).
         chain[i] = {"thought", "skill", "parent", "mode"} where parent is the index
         of the thought operated on, or None for the seed.
+
+        flavor biases skill/mode selection: "anxious" leans on resolution/closure
+        frameworks + reframe (brooding that tries to settle a worry); "engaged"
+        leans on generative frameworks + branch/transform (curious deepening).
         """
         chain: list[dict] = [{
             "thought": seed_thought, "skill": None, "parent": None, "mode": "seed",
@@ -479,15 +484,14 @@ class SkillSelector:
         for step in range(max_iters):
             if time.time() - started > time_budget_s:
                 break
-            decision = await self._meta_decide(chain, turn_id=turn_id)
+            decision = await self._meta_decide(chain, turn_id=turn_id, flavor=flavor)
             if decision.get("mode") == "stop":
                 break
             skill = decision.get("skill")
             base_idx = max(0, min(int(decision.get("base_idx", len(chain) - 1)), len(chain) - 1))
             if not skill or skill not in self._index._by_name:
-                # Fall back: pick a random Tier 2 skill so the loop progresses
-                tier2 = [s for s in self._index.skills if s["tier"] == 2 and not s["is_router"]]
-                skill = random.choice(tier2)["name"] if tier2 else None
+                # Fall back: pick a flavor-appropriate skill so the loop progresses
+                skill = self._fallback_skill(flavor)
             if not skill:
                 break
 
@@ -505,7 +509,30 @@ class SkillSelector:
 
     # ----- internals --------------------------------------------------
 
-    async def _meta_decide(self, chain: list[dict], *, turn_id: str = "") -> dict:
+    # Flavor → preferred skill pools / modes for rumination.
+    _ANXIOUS_SKILLS = (
+        "decision-premortem-analysis", "constraint-scope-reduction",
+        "logic-consistency-check", "emotional-resistance-diagnosis",
+        "decision-reversibility-analysis", "logic-check",
+    )
+    _ENGAGED_SKILLS = (
+        "creativity-lateral-thinking", "analogy-domain-transfer",
+        "systems-feedback-mapping", "creativity-concept-fan",
+        "analogy-perspective-shifting", "systems-leverage-analysis",
+    )
+
+    def _fallback_skill(self, flavor: str) -> str | None:
+        """Pick a flavor-appropriate skill when the meta-cell names none, so the
+        rumination loop still progresses in the right register."""
+        pool = self._ANXIOUS_SKILLS if flavor == "anxious" else self._ENGAGED_SKILLS
+        available = [n for n in pool if n in self._index._by_name]
+        if available:
+            return random.choice(available)
+        tier2 = [s for s in self._index.skills if s["tier"] == 2 and not s["is_router"]]
+        return random.choice(tier2)["name"] if tier2 else None
+
+    async def _meta_decide(self, chain: list[dict], *, turn_id: str = "",
+                           flavor: str = "engaged") -> dict:
         """Ask the meta-cell for the next move."""
         recent = chain[-5:]
         chain_summary = "\n".join(
@@ -517,9 +544,19 @@ class SkillSelector:
             f"- {s['name']}: {s['description'][:120]}"
             for s in self._index.skills if not s["is_router"]
         )[:8000]  # rough token cap
+        flavor_hint = (
+            "This reflection is ANXIOUS (worried/brooding): lean toward 'reframe' and "
+            "resolution/closure frameworks (decision, constraint, logic-consistency, "
+            "emotional-resistance) that help SETTLE the worry."
+            if flavor == "anxious" else
+            "This reflection is ENGAGED (curious/interested): lean toward 'branch' and "
+            "'transform' with generative frameworks (creativity, analogy, systems) that "
+            "DEEPEN and expand the idea."
+        )
         user = (
             f"Chain so far (most recent {len(recent)} entries):\n{chain_summary}\n\n"
             f"Available skills:\n{skill_catalog}\n\n"
+            f"{flavor_hint}\n\n"
             f"Decide next move."
         )
         self._meta_cell.reset_turn(turn_id)
@@ -561,12 +598,37 @@ class SkillSelector:
         return await worker.call([{"role": "user", "content": thought}])
 
     async def _synthesize_chain(self, chain: list[dict], *, turn_id: str = "") -> str:
-        """Pick or merge the strongest endpoint of the rumination chain."""
+        """Pick the strongest skill-refined take from the rumination chain.
+
+        Rather than blindly returning the last entry, score each skill-produced
+        take by a cheap blend of novelty-vs-seed (it should have moved the thought
+        somewhere) and adequate substance (length). This makes the multi-skill
+        comparison actually influence the output — the point of trying a thought
+        against several analytical processes.
+        """
         if len(chain) <= 1:
             return chain[0]["thought"]
-        # Use the deepest descendant of the last branch by default.
-        # The meta-cell could also do a final synthesis — keep this cheap for now.
-        return chain[-1]["thought"]
+        seed = chain[0]["thought"]
+        best = chain[-1]
+        best_score = -1.0
+        for c in chain[1:]:
+            t = (c.get("thought") or "").strip()
+            if not t:
+                continue
+            novelty = 1.0 - self._token_overlap(t, seed)
+            substance = min(len(t) / 240.0, 1.0)
+            score = 0.7 * novelty + 0.3 * substance
+            if score > best_score:
+                best_score, best = score, c
+        return best["thought"]
+
+    @staticmethod
+    def _token_overlap(a: str, b: str) -> float:
+        wa = {w for w in a.lower().split() if len(w) >= 3}
+        wb = {w for w in b.lower().split() if len(w) >= 3}
+        if not wa or not wb:
+            return 0.0
+        return len(wa & wb) / len(wa | wb)
 
     @staticmethod
     def _strip_to_json(text: str) -> str:

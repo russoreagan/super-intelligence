@@ -19,6 +19,9 @@ def _make_mic(monkeypatch, threshold: float = 120.0):
         async def publish_dict(self, *a, **kw): pass
 
     mic = StreamingMicSession(_StubBus(), is_speaking_fn=lambda: False)
+    # Sessions start muted (push-to-talk default); the gate tests below operate
+    # on the unmuted path (the dedicated mute test flips _muted itself).
+    mic._muted = False
     return mic
 
 

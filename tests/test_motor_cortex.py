@@ -1220,6 +1220,74 @@ class TestExecuteInternalJob:
         assert len(result["steps"]) == 1
         assert "important content" in result["last_output"]
 
+    async def test_multi_story_job_runs_all_stories(self, tmp_path):
+        """Regression: a job with >2 stories must run every story.
+
+        The tactical planner cell has max_calls_per_turn=2 and is reused for the
+        whole job. Before the per-story reset fix, stories 3+ silently got "" →
+        tool="none" and were recorded as skipped, so the planner never completed
+        the plan. All four stories should now dispatch a real tool.
+        """
+        f = tmp_path / "data.txt"
+        f.write_text("important content")
+
+        strategic = {
+            "steps": [
+                {"description": f"read pass {i}", "expected_tool": "read_file"}
+                for i in range(4)
+            ],
+            "success_criteria": "all reads done",
+            "complexity": "low",
+        }
+        tactical = [{"tool": "read_file", "args": {"path": str(f)}, "reason": "read"}] * 4
+        router = self._make_job_router(strategic, tactical)
+        motor, _ = self._make_motor_for_job(tmp_path, router)
+
+        mock_emitter = MagicMock()
+        mock_emitter.emit_event = AsyncMock()
+        with patch("brain.ui.emitter.emitter", mock_emitter):
+            result = await motor.execute_internal_job("read it four times", "t1")
+
+        assert result["success"] is True
+        assert len(result["steps"]) == 4
+        # Every step must be a real tool dispatch — no silent "none" skips.
+        assert all(s["tool"] == "read_file" for s in result["steps"])
+
+    async def test_empty_planner_output_fails_not_skips(self, tmp_path):
+        """Regression: an empty planner response is a failure, not a successful skip.
+
+        Previously raw="" parsed to {} → tool defaulted to "none" → the story was
+        marked passed with zero work done, so jobs reported success having done
+        nothing. The job must now report failure.
+        """
+        strategic_plan = {
+            "steps": [{"description": "do the thing", "expected_tool": "read_file"}],
+            "success_criteria": "thing done",
+            "complexity": "low",
+        }
+
+        class EmptyTacticalRouter:
+            def __init__(self):
+                self._n = 0
+
+            async def call(self, model_key, system_prompt, messages, **kwargs):
+                self._n += 1
+                if self._n == 1:
+                    return json.dumps(strategic_plan)  # strategic plan
+                return ""  # tactical planner always fails
+
+            async def embed(self, text: str):
+                return [0.0] * 768
+
+        motor, _ = self._make_motor_for_job(tmp_path, EmptyTacticalRouter())
+
+        mock_emitter = MagicMock()
+        mock_emitter.emit_event = AsyncMock()
+        with patch("brain.ui.emitter.emitter", mock_emitter):
+            result = await motor.execute_internal_job("do the thing", "t1")
+
+        assert result["success"] is False
+
     async def test_budget_exhausted_marks_failure(self, tmp_path):
         """Job stops and marks success=False when budget runs out before plan completes."""
         strategic = {
@@ -1302,7 +1370,7 @@ class TestExecuteInternalJob:
         assert "memories about" in result["last_output"]
 
     async def test_observability_begin_end_called(self, tmp_path):
-        """begin_job / end_job are called on the obs layer when set."""
+        """begin_job / end_job are called on the obs layer with all expected kwargs."""
         strategic = {
             "steps": [{"description": "done", "expected_tool": "none"}],
             "success_criteria": "done",
@@ -1329,6 +1397,111 @@ class TestExecuteInternalJob:
         assert "success" in end_kwargs
         assert "steps_completed" in end_kwargs
         assert "steps_planned" in end_kwargs
+        # total_attempts is now passed so the trace captures retry overhead
+        assert "total_attempts" in end_kwargs
+
+    async def test_observability_total_attempts_includes_retries(self, tmp_path):
+        """end_job receives total_attempts > steps_completed when retries fired."""
+        f = tmp_path / "x.txt"
+        f.write_text("content")
+        strategic = {
+            "stories": [{
+                "id": "US-001", "description": "read x",
+                "expected_tool": "read_file",
+                "acceptance_criteria": ["content returned"],
+            }],
+            "success_criteria": "read", "complexity": "medium",
+        }
+        # attempt 0 fails criteria, attempt 1 passes — two dispatches for one story
+        tactical = [
+            {"tool": "read_file", "args": {"path": str(f)}, "reason": "r"},
+            {"verified": False, "unmet": ["not done"]},
+            {"tool": "read_file", "args": {"path": str(f)}, "reason": "r2"},
+            {"verified": True, "unmet": []},
+            # final verifier
+            {"approved": True, "issues": ""},
+        ]
+        router = self._make_job_router(strategic, tactical)
+        motor, _ = self._make_motor_for_job(tmp_path, router)
+
+        mock_obs = MagicMock()
+        motor.set_observability(mock_obs)
+
+        mock_emitter = MagicMock()
+        mock_emitter.emit_event = AsyncMock()
+        with patch("brain.ui.emitter.emitter", mock_emitter):
+            result = await motor.execute_internal_job("read with retry", "t1")
+
+        assert result["success"] is True
+        end_kwargs = mock_obs.end_job.call_args[1]
+        # steps_completed reflects unique stories completed (1 story)
+        # total_attempts captures the two actual dispatches
+        assert end_kwargs["steps_completed"] == 2   # 2 tool dispatches recorded in steps_taken
+        assert end_kwargs["total_attempts"] == 2
+        assert end_kwargs["steps_planned"] == 1
+
+    async def test_observability_appropriateness_retry_in_total_attempts(self, tmp_path):
+        """total_attempts captures attempts consumed by the M3 appropriateness gate."""
+        (tmp_path / "a.txt").write_text("x")
+        strategic = {
+            "stories": [{
+                "id": "US-001", "description": "categorize files in project",
+                "expected_tool": "list_files",
+                "acceptance_criteria": [],
+            }],
+            "success_criteria": "done", "complexity": "low",
+        }
+        # attempt 0 → query_langfuse (rejected by gate), attempt 1 → list_files (passes)
+        tactical = [
+            {"tool": "query_langfuse", "args": {"operation": "recent_traces"}, "reason": "?"},
+            {"tool": "list_files", "args": {"path": str(tmp_path)}, "reason": "list"},
+        ]
+        router = self._make_job_router(strategic, tactical)
+        motor, _ = self._make_motor_for_job(tmp_path, router)
+        motor._dispatcher._query_langfuse = AsyncMock(return_value="[error] stub")
+
+        mock_obs = MagicMock()
+        motor.set_observability(mock_obs)
+
+        mock_emitter = MagicMock()
+        mock_emitter.emit_event = AsyncMock()
+        with patch("brain.ui.emitter.emitter", mock_emitter):
+            result = await motor.execute_internal_job(
+                "categorize files in project", "t1")
+
+        assert result["success"] is True
+        end_kwargs = mock_obs.end_job.call_args[1]
+        # Two dispatches happened (query_langfuse + list_files), both in total_attempts
+        assert end_kwargs["total_attempts"] == 2
+        assert end_kwargs["steps_planned"] == 1
+
+    async def test_observability_invalid_expected_tool_does_not_break_obs(self, tmp_path):
+        """Neutralizing an invalid expected_tool doesn't prevent obs from being called."""
+        f = tmp_path / "f.txt"
+        f.write_text("data")
+        strategic = {
+            "stories": [{
+                "id": "US-001", "description": "read the file",
+                "expected_tool": "no_such_tool",  # hallucinated
+                "acceptance_criteria": [],
+            }],
+            "success_criteria": "done", "complexity": "low",
+        }
+        tactical = [{"tool": "read_file", "args": {"path": str(f)}, "reason": "r"}]
+        router = self._make_job_router(strategic, tactical)
+        motor, _ = self._make_motor_for_job(tmp_path, router)
+
+        mock_obs = MagicMock()
+        motor.set_observability(mock_obs)
+
+        mock_emitter = MagicMock()
+        mock_emitter.emit_event = AsyncMock()
+        with patch("brain.ui.emitter.emitter", mock_emitter):
+            result = await motor.execute_internal_job("read the file", "t1")
+
+        mock_obs.begin_job.assert_called_once()
+        mock_obs.end_job.assert_called_once()
+        assert result["success"] is True
 
     async def test_chem_modulated_budget_applied(self, tmp_path):
         """High CORT reduces the job budget relative to neutral chemistry."""
@@ -1355,3 +1528,168 @@ class TestExecuteInternalJob:
             result = await motor.execute_internal_job("trivial task", "t1")
 
         assert "job_id" in result  # completed without crashing
+
+    # ── Planning-quality fixes (tool selection / self-correction) ──────────
+
+    async def test_low_complexity_runs_criteria_check(self, tmp_path):
+        """M2a/M2b: criteria are verified (and a retry can fire) on low-complexity jobs."""
+        f = tmp_path / "data.txt"
+        f.write_text("content")
+        strategic = {
+            "stories": [{
+                "id": "US-001", "description": "read the data file",
+                "expected_tool": "read_file",
+                "acceptance_criteria": ["file content retrieved"],
+            }],
+            "success_criteria": "read", "complexity": "low",
+        }
+        # attempt 0: read_file → criteria FALSE → retry; attempt 1: read_file → criteria TRUE
+        tactical = [
+            {"tool": "read_file", "args": {"path": str(f)}, "reason": "r"},
+            {"verified": False, "unmet": ["not yet"]},
+            {"tool": "read_file", "args": {"path": str(f)}, "reason": "r2"},
+            {"verified": True, "unmet": []},
+        ]
+        router = self._make_job_router(strategic, tactical)
+        motor, _ = self._make_motor_for_job(tmp_path, router)
+        mock_emitter = MagicMock()
+        mock_emitter.emit_event = AsyncMock()
+        with patch("brain.ui.emitter.emitter", mock_emitter):
+            result = await motor.execute_internal_job("read data", "t1")
+        # The criteria check ran and forced exactly one retry.
+        assert [s["tool"] for s in result["steps"]] == ["read_file", "read_file"]
+        assert result["success"] is True
+
+    async def test_appropriateness_gate_self_corrects(self, tmp_path):
+        """M3: query_langfuse on a file goal is rejected and retried as a file tool."""
+        (tmp_path / "a.txt").write_text("x")
+        strategic = {
+            "stories": [{
+                "id": "US-001", "description": "categorize the files in the project",
+                "expected_tool": "list_files",
+                "acceptance_criteria": ["a file listing is produced"],
+            }],
+            "success_criteria": "files categorized", "complexity": "low",
+        }
+        tactical = [
+            {"tool": "query_langfuse", "args": {"operation": "recent_traces"}, "reason": "?"},
+            {"tool": "list_files", "args": {"path": str(tmp_path)}, "reason": "list"},
+            {"verified": True, "unmet": []},
+        ]
+        router = self._make_job_router(strategic, tactical)
+        motor, _ = self._make_motor_for_job(tmp_path, router)
+        motor._dispatcher._query_langfuse = AsyncMock(return_value="[error] stub")
+        mock_emitter = MagicMock()
+        mock_emitter.emit_event = AsyncMock()
+        with patch("brain.ui.emitter.emitter", mock_emitter):
+            result = await motor.execute_internal_job(
+                "categorize the files in the project", "t1")
+        tools = [s["tool"] for s in result["steps"]]
+        assert tools == ["query_langfuse", "list_files"]  # mismatch → self-corrected
+        assert result["success"] is True
+
+    async def test_legitimate_langfuse_goal_no_false_positive(self, tmp_path):
+        """M3: query_langfuse on an observability goal is accepted — no retry."""
+        strategic = {
+            "stories": [{
+                "id": "US-001", "description": "summarize recent langfuse trace scores",
+                "expected_tool": "query_langfuse",
+                "acceptance_criteria": [],
+            }],
+            "success_criteria": "done", "complexity": "low",
+        }
+        tactical = [{"tool": "query_langfuse",
+                     "args": {"operation": "recent_scores"}, "reason": "obs"}]
+        router = self._make_job_router(strategic, tactical)
+        motor, _ = self._make_motor_for_job(tmp_path, router)
+        motor._dispatcher._query_langfuse = AsyncMock(return_value="[]")
+        mock_emitter = MagicMock()
+        mock_emitter.emit_event = AsyncMock()
+        with patch("brain.ui.emitter.emitter", mock_emitter):
+            result = await motor.execute_internal_job(
+                "review recent langfuse trace scores", "t1")
+        assert [s["tool"] for s in result["steps"]] == ["query_langfuse"]
+        assert result["success"] is True
+
+    async def test_invalid_expected_tool_neutralized(self, tmp_path):
+        """M1: a hallucinated expected_tool is scrubbed and never emitted to the UI."""
+        f = tmp_path / "x.txt"
+        f.write_text("x")
+        strategic = {
+            "stories": [{
+                "id": "US-001", "description": "do the thing",
+                "expected_tool": "summarize_text",  # not a real tool
+                "acceptance_criteria": [],
+            }],
+            "success_criteria": "done", "complexity": "low",
+        }
+        tactical = [{"tool": "read_file", "args": {"path": str(f)}, "reason": "r"}]
+        router = self._make_job_router(strategic, tactical)
+        motor, _ = self._make_motor_for_job(tmp_path, router)
+        mock_emitter = MagicMock()
+        mock_emitter.emit_event = AsyncMock()
+        with patch("brain.ui.emitter.emitter", mock_emitter):
+            await motor.execute_internal_job("do the thing", "t1")
+        emitted = [c.args[0] for c in mock_emitter.emit_event.call_args_list]
+        step_starts = [e for e in emitted if e.get("type") == "task_step_start"]
+        assert step_starts
+        assert all(e.get("expected_tool") != "summarize_text" for e in step_starts)
+
+
+class TestMotorPlanPromptExpectedTool:
+    """_build_plan_prompt injects expected_tool as a soft hint (Change 3)."""
+
+    def test_expected_tool_injected_as_hint(self, tmp_path):
+        m, _ = _make_motor(tmp_path)
+        prompt = m._build_plan_prompt(
+            "categorize files", {}, "", [], [], expected_tool="list_files")
+        assert "list_files" in prompt
+        assert "Strategic hint" in prompt
+
+    def test_no_hint_when_expected_tool_absent(self, tmp_path):
+        m, _ = _make_motor(tmp_path)
+        prompt = m._build_plan_prompt("do thing", {}, "", [], [])
+        assert "Strategic hint" not in prompt
+
+    def test_sentinel_question_mark_not_injected(self, tmp_path):
+        m, _ = _make_motor(tmp_path)
+        prompt = m._build_plan_prompt("do thing", {}, "", [], [], expected_tool="?")
+        assert "Strategic hint" not in prompt
+
+    def test_reactive_signature_back_compat(self, tmp_path):
+        # 5-arg call (reactive path) must still work without expected_tool.
+        m, _ = _make_motor(tmp_path)
+        prompt = m._build_plan_prompt("g", {}, "", [], [])
+        assert "Goal: g" in prompt
+
+
+class TestStrategicPromptGuidance:
+    """Prompt regression guards (Changes 1 & 2)."""
+
+    def test_strategic_prompt_forbids_langfuse_for_files(self):
+        from brain.clusters.motor_prompts import STRATEGIC_SYSTEM
+        assert "NEVER query_langfuse" in STRATEGIC_SYSTEM
+        assert "list_files" in STRATEGIC_SYSTEM
+
+    def test_planner_base_marks_langfuse_observability_only(self):
+        from brain.clusters.motor_prompts import PLANNER_SYSTEM_BASE
+        assert "observability data ONLY" in PLANNER_SYSTEM_BASE
+
+
+class TestToolAppropriatenessHelper:
+    """Deterministic appropriateness guard (Change 6)."""
+
+    def test_flags_langfuse_on_file_goal(self):
+        from brain.clusters.motor_cortex import _tool_appropriateness_warning
+        assert _tool_appropriateness_warning(
+            "query_langfuse", "categorize files", "list and group files") is not None
+
+    def test_allows_langfuse_on_observability_goal(self):
+        from brain.clusters.motor_cortex import _tool_appropriateness_warning
+        assert _tool_appropriateness_warning(
+            "query_langfuse", "summarize recent langfuse traces", "") is None
+
+    def test_ignores_non_langfuse_tools(self):
+        from brain.clusters.motor_cortex import _tool_appropriateness_warning
+        assert _tool_appropriateness_warning(
+            "list_files", "categorize files", "") is None

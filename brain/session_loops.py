@@ -34,16 +34,29 @@ class _LoopsMixin:
             else:
                 if self._tts_did_mute:
                     self._tts_did_mute = False
-                    asyncio.ensure_future(self._unmute_after_drain())
+                    asyncio.ensure_future(self._restore_mic_after_tts())
 
-    async def _unmute_after_drain(self) -> None:
+    async def _restore_mic_after_tts(self) -> None:
+        """After the entity finishes speaking, restore the mic to whatever the
+        user wants — live only if push-to-talk is still held, otherwise stay
+        muted. (Hold-to-talk: we must NOT auto-reopen the mic just because TTS
+        ended — that was the old always-on behaviour.)"""
         await asyncio.sleep(self._mic_unmute_delay_s)
-        if self._streaming_mic is not None:
-            self._streaming_mic.unmute()
-            if self._emitter:
-                await self._emitter.emit_event({
-                    "type": "mic_state", "status": "active",
-                })
+        mic = self._streaming_mic
+        if mic is None:
+            return
+        if self._ptt_held:
+            mic.unmute()
+        else:
+            mic.mute()
+        self._emit_mic_state()
+
+    def _emit_mic_state(self) -> None:
+        """Broadcast the settled mic status so the button reflects reality."""
+        if not self._emitter or self._streaming_mic is None:
+            return
+        status = "muted" if self._streaming_mic.is_muted else "active"
+        asyncio.ensure_future(self._emitter.emit_event({"type": "mic_state", "status": status}))
 
     async def _on_browser_message(self, text: str) -> None:
         await self._ui_message_queue.put(text)
@@ -52,10 +65,37 @@ class _LoopsMixin:
         if self._baseline_runner:
             self._baseline_runner.set_intensive(intensive)
 
+    def _set_mic_listening(self, want_live: bool) -> None:
+        """Single source of truth for whether the user wants the mic live
+        (push-to-talk held, or toggled on via the button). Honours half-duplex:
+        never opens the mic while the entity is speaking — the post-TTS restore
+        applies `want_live` then. On release, flush the held phrase and re-mute."""
+        self._ptt_held = want_live
+        mic = self._streaming_mic
+        if mic is None:
+            return
+        if want_live:
+            if not self.pns.is_speaking:
+                mic.unmute()
+            self._emit_mic_state()
+        else:
+            asyncio.ensure_future(self._release_mic())
+
+    async def _release_mic(self) -> None:
+        mic = self._streaming_mic
+        if mic is None:
+            return
+        await mic.flush()      # finalize the held utterance, then mute
+        self._emit_mic_state()
+
+    def _on_mic_ptt(self, down: bool) -> None:
+        """Push-to-talk hold: Space keydown -> live, keyup -> flush + mute."""
+        self._set_mic_listening(down)
+
     def _on_mic_toggle(self) -> bool:
-        if self._streaming_mic is not None:
-            return self._streaming_mic.toggle_mute()
-        return False
+        """Mic button / fallback: toggle the desired-live state."""
+        self._set_mic_listening(not self._ptt_held)
+        return self._is_mic_muted()
 
     def _is_mic_muted(self) -> bool:
         if self._streaming_mic is not None:
@@ -142,6 +182,7 @@ class _LoopsMixin:
     async def _speak_gate_loop(self) -> None:
         SPEAK_GATE_INTERVAL = float(_brain_settings.get("speak_gate_poll_interval") or 5.0)
         SPEAK_CAND_MAX_AGE = float(_brain_settings.get("speak_candidate_max_age_s") or 60.0)
+        SPEAK_CAND_MAX_ATTEMPTS = int(_brain_settings.get("speak_candidate_max_attempts") or 4)
         while True:
             try:
                 await asyncio.sleep(SPEAK_GATE_INTERVAL)
@@ -192,7 +233,16 @@ class _LoopsMixin:
                             logger.debug("[Speak gate] Bridge step failed: %s", _bridge_err)
                         self.dmn.commit_candidate_to_speech(c)
                     elif verdict == "wait":
-                        self.dmn.return_candidate(c)
+                        # Belt-and-suspenders: drop a perpetually-deferred
+                        # candidate so a stuck/erroring judge can't re-queue it
+                        # forever. (Age-drop above is the primary guard.)
+                        if int(c.get("attempts", 0)) >= SPEAK_CAND_MAX_ATTEMPTS:
+                            logger.info(
+                                "[Speak gate] Dropping candidate after %d attempts: %r",
+                                int(c.get("attempts", 0)), (c.get("spoken") or "")[:60],
+                            )
+                        else:
+                            self.dmn.return_candidate(c)
                     break
             except asyncio.CancelledError:
                 raise
