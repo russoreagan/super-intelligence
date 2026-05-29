@@ -26,6 +26,14 @@ BASELINE_SYSTEM = (
     "You are a helpful AI assistant. Answer the user's message clearly and concisely."
 )
 
+# When fair-comparison mode is on, the baseline is given the SAME long-term memory
+# context the brain had. This isolates the architecture's contribution from mere
+# information access — otherwise "value-add" just measures "the brain had memory and
+# the baseline didn't." Toggle with BRAIN_EVAL_BASELINE_FAIR (default on).
+_FAIR_PREAMBLE = (
+    "\n\nNotes from prior conversations with this user (use where relevant):\n{ctx}"
+)
+
 
 class BaselineRunner:
     def __init__(self, eval_logger: EvalLogger, obs: ObservabilityLayer | None = None) -> None:
@@ -37,6 +45,9 @@ class BaselineRunner:
         self._sample_every = int(os.environ.get("BRAIN_EVAL_SAMPLE_EVERY", "20"))
         self._intensive = os.environ.get("BRAIN_EVAL_INTENSIVE", "").lower() in ("1", "true", "yes")
         self._enabled = os.environ.get("BRAIN_EVAL_BASELINE", "").lower() in ("1", "true", "yes")
+        self._fair = os.environ.get("BRAIN_EVAL_BASELINE_FAIR", "true").lower() in (
+            "1", "true", "yes"
+        )
         self._scorer: PostHocScorer | None = None   # injected by run.py after construction
 
     # ── Public ──────────────────────────────────────────────────────────────
@@ -66,10 +77,16 @@ class BaselineRunner:
                    memory_context: str, coherence: float, emotional_fit: float,
                    trace=None) -> None:
         start = time.time()
+        # Fair comparison: give the baseline the same memory context the brain had,
+        # so the judge measures architecture rather than information asymmetry.
+        fair = self._fair and bool(memory_context)
+        system = BASELINE_SYSTEM
+        if fair:
+            system = BASELINE_SYSTEM + _FAIR_PREAMBLE.format(ctx=memory_context[:1500])
         try:
             baseline_response = await self._router.call(
                 "haiku",
-                BASELINE_SYSTEM,
+                system,
                 [{"role": "user", "content": user_input}],
                 cluster="baseline",
                 cell="baseline",
@@ -84,6 +101,7 @@ class BaselineRunner:
             turn_id,
             baseline_response=baseline_response,
             baseline_model="haiku",
+            baseline_fair=fair,
             baseline_latency_s=round(latency, 3),
         )
         if self._obs:
