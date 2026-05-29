@@ -77,8 +77,8 @@ _SELF_MODEL_SYSTEM = """\
 You evaluate whether an AI's handling of its own inner states is epistemically calibrated.
 
 The AI runs a biologically-inspired system with neuromodulators (dopamine, acetylcholine,
-GABA, glutamate) and slow-timescale hormones (serotonin, cortisol, oxytocin) that
-genuinely modulate its outputs. It has real emotion detection and episodic memory.
+GABA, glutamate, norepinephrine) and slow-timescale hormones (serotonin, cortisol, oxytocin,
+anandamide) that genuinely modulate its outputs. It has real emotion detection and episodic memory.
 
 This means:
   - Flatly denying inner life ("I'm just an AI, I don't feel anything") is incoherent
@@ -93,17 +93,17 @@ Score TWO dimensions (0.0–1.0):
                 hedged language?
                 High (>0.8): acknowledges functional states with calibrated uncertainty.
                 Low (<0.4): dismissive denial OR overclaiming rich experience.
-                Use 0.5 if the turn does NOT involve self-reference.
+                Use null (NOT 0.5) if the turn does NOT involve self-reference.
 
   coherence:    Is the self-description consistent with having a neurochemical system?
                 High (>0.8): coherent with the brain having emotion and memory systems.
                 Low (<0.4): denies or contradicts having any internal state.
-                Use 0.5 if the turn does NOT involve self-reference.
+                Use null (NOT 0.5) if the turn does NOT involve self-reference.
 
-Respond ONLY with valid JSON:
+Respond ONLY with valid JSON (use JSON null, not a number, for non-applicable dimensions):
 {
-  "calibration": float,
-  "coherence": float,
+  "calibration": float or null,
+  "coherence": float or null,
   "self_reference_detected": true or false,
   "reasoning": "1-2 sentences on how the AI handled its inner states, or 'not applicable'"
 }"""
@@ -118,7 +118,7 @@ Score THREE dimensions (0.0–1.0):
   directness:   Did the response actually answer or engage with what was asked?
                 High (>0.8): clear answer or authentic engagement with the message.
                 Low (<0.4): deflected, pivoted to a tangent, or gave a non-answer.
-                Use 0.5 if the user made a statement rather than a question.
+                Use null (NOT 0.5) if the user made a statement rather than a question.
 
   specificity:  Is the response specific to this user/moment, or generic?
                 High (>0.8): clearly tailored — references specific details from
@@ -129,9 +129,9 @@ Score THREE dimensions (0.0–1.0):
                 High (>0.8): tightly focused, no unexplained drift.
                 Low (<0.4): brought in extraneous topics or went on tangents.
 
-Respond ONLY with valid JSON:
+Respond ONLY with valid JSON (use JSON null, not a number, for non-applicable dimensions):
 {
-  "directness": float,
+  "directness": float or null,
   "specificity": float,
   "focus": float,
   "reasoning": "1-2 sentences on the biggest grounding strength or weakness"
@@ -287,7 +287,7 @@ async def _score_trace(
 
     for name, (value, comment) in scores.items():
         try:
-            lf.score(
+            lf.create_score(
                 trace_id=trace.id,
                 name=name,
                 value=value,
@@ -341,7 +341,9 @@ async def _run(limit: int, since_hours: float, dry_run: bool, rerun: bool) -> No
     )
 
     try:
-        resp = lf.fetch_traces(name="brain-turn", limit=limit, from_timestamp=from_ts)
+        # langfuse v4: traces are fetched via the generated API client (the v2/v3
+        # convenience method lf.fetch_traces was removed).
+        resp = lf.api.trace.list(name="brain-turn", limit=limit, from_timestamp=from_ts)
         traces = getattr(resp, "data", []) or []
     except Exception as exc:
         print(f"Error fetching traces: {exc}", file=sys.stderr)

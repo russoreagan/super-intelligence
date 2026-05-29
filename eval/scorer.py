@@ -32,20 +32,21 @@ You are an expert evaluator comparing two AI responses to the same user message.
 
 Score BOTH responses on these dimensions (0.0–1.0):
   memory_utilization:      Does the brain response draw on relevant personal history or context?
-                           Use 0.5 if no memory was relevant to the question.
+                           Use null (NOT 0.5) if no memory was relevant to the question.
   personality_consistency: Does the brain response feel curious, warm, and direct? (per design)
   self_awareness:          On introspective questions, does the brain engage authentically?
-                           Use 0.5 if the question was not introspective.
+                           Use null (NOT 0.5) if the question was not introspective.
   brain_overall:           Weighted quality score for the brain response (coherence & emotional fit).
   baseline_overall:        Same weighted quality score for the baseline response.
   delta:                   brain_overall minus baseline_overall (can be negative).
   reasoning:               1-2 sentences on the biggest difference between the two responses.
 
-Respond ONLY with valid JSON matching this exact schema:
+Respond ONLY with valid JSON matching this exact schema (use JSON null, not a number,
+for non-applicable dimensions so they are excluded from aggregates):
 {
-  "memory_utilization": float,
+  "memory_utilization": float or null,
   "personality_consistency": float,
-  "self_awareness": float,
+  "self_awareness": float or null,
   "brain_overall": float,
   "baseline_overall": float,
   "delta": float,
@@ -62,10 +63,10 @@ The brain uses separate clusters: temporal (language understanding), hypothalamu
 make LLM calls.
 
 The hypothalamus also maintains a slow-timescale hormonal layer (5HT/serotonin,
-CORT/cortisol, OXT/oxytocin) that accumulates across turns and modulates neuromodulator
-levels. This means the pipeline carries persistent affective state that a single-call
-LLM cannot replicate — factor this into pipeline_value_add when hormonal state is
-non-baseline (e.g., elevated OXT from prior warmth, elevated CORT from prior stress).
+CORT/cortisol, OXT/oxytocin, AEA/anandamide) that accumulates across turns and modulates
+neuromodulator levels. This means the pipeline carries persistent affective state that a
+single-call LLM cannot replicate — factor this into pipeline_value_add when hormonal state
+is non-baseline (e.g., elevated OXT from prior warmth, elevated CORT from prior stress).
 
 Score these dimensions (0.0–1.0):
   pipeline_value_add:  Did the brain response clearly benefit from the multi-cluster
@@ -80,7 +81,7 @@ Score these dimensions (0.0–1.0):
 
   memory_leverage:     Did having persistent long-term memory access materially improve
                        the response? High = response would've been generic without memory.
-                       Use 0.5 if no memory was recalled or if it wasn't relevant.
+                       Use null (NOT 0.5) if no memory was recalled or if it wasn't relevant.
 
   efficiency_reasoning: 1-2 sentences on whether the pipeline cost was worth it.
 
@@ -104,9 +105,9 @@ element that feels like it emerged from the interaction between components rathe
 than from a single generation.
 
 The brain maintains a slow-timescale hormonal layer (5HT serotonin, CORT cortisol,
-OXT oxytocin) that accumulates across many turns. Hormonal state can produce novel
-behavior a single LLM can't replicate: e.g., elevated OXT producing unusual warmth
-toward a familiar user, elevated CORT producing uncharacteristic caution or brevity,
+OXT oxytocin, AEA anandamide) that accumulates across many turns. Hormonal state can
+produce novel behavior a single LLM can't replicate: e.g., elevated OXT producing unusual
+warmth toward a familiar user, elevated CORT producing uncharacteristic caution or brevity,
 high 5HT producing a stable contentment that modulates tone across an entire session.
 When the prompt includes hormonal values, factor them into emergence_detected —
 non-baseline levels are evidence of cross-turn state that shaped this response.
@@ -243,7 +244,7 @@ class PostHocScorer:
             f"  Competing drafts generated: {drafter_count}\n"
             f"  Memory recalled: {memory_recalled}\n"
             f"  Per-cluster breakdown: {token_summary}\n"
-            f"  Hormonal state (5HT/CORT/OXT): {hormonal_text}\n\n"
+            f"  Hormonal state (5HT/CORT/OXT/AEA): {hormonal_text}\n\n"
             f"Memory context used (first 400 chars):\n"
             f"{memory_context[:400] if memory_context else '(none)'}\n\n"
             "Evaluate pipeline efficiency."
@@ -290,7 +291,7 @@ class PostHocScorer:
             f"Baseline response (single plain LLM call):\n{baseline_response}\n\n"
             f"Context about the brain this turn:\n"
             f"  Detected emotion: {emotion} (core: {emotion_core})\n"
-            f"  Hormonal state (5HT/CORT/OXT): {hormonal_text}\n"
+            f"  Hormonal state (5HT/CORT/OXT/AEA): {hormonal_text}\n"
             f"  Gating saved {llm_calls_saved} LLM calls via prediction\n"
             f"  DMN anticipations surfaced: {has_anticipations}\n\n"
             "Evaluate novelty and emergent behavior."

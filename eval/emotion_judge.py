@@ -30,21 +30,24 @@ logger = logging.getLogger(__name__)
 
 _NEUROMOD_GUIDE = """\
 Neuromodulator roles (reference only — use for plausibility scoring):
-  DA  (dopamine)      high → motivation, excitement, confidence, reward-seeking
-  ACh (acetylcholine) high → focused attention, curiosity, learning mode
-  GABA                high → calm, inhibited, low arousal
-  Glu (glutamate)     high → alertness, sensory engagement
+  DA  (dopamine)         high → motivation, excitement, confidence, reward-seeking
+  ACh (acetylcholine)    high → focused attention, curiosity, learning mode
+  GABA                   high → calm, inhibited, low arousal
+  Glu (glutamate)        high → alertness, sensory engagement
+  NE  (norepinephrine)   inverted-U: optimal (~0.2–0.55) → sharp, vigilant focus;
+                         excessive (>~0.8) → over-activated, fragmented "scattered" attention
 Hormonal:
-  5HT (serotonin)     high → contentment, stability, social warmth
-  CORT (cortisol)     high → stress, urgency, vigilance
-  OXT (oxytocin)      high → trust, warmth, social bonding"""
+  5HT (serotonin)        high → contentment, stability, social warmth
+  CORT (cortisol)        high → stress, urgency, vigilance
+  OXT (oxytocin)         high → trust, warmth, social bonding
+  AEA (anandamide)       high → eased, buffered; dampens excess NE/Glu arousal"""
 
 _JUDGE_SYSTEM = f"""\
 You evaluate whether an AI brain's emotion system is working as designed.
 
 The brain uses a biologically-inspired neuromodulator system (dopamine, acetylcholine,
-GABA, glutamate) and a hormonal layer (serotonin, cortisol, oxytocin) to derive an
-emotion label each turn. You assess four dimensions.
+GABA, glutamate, norepinephrine) and a hormonal layer (serotonin, cortisol, oxytocin,
+anandamide) to derive an emotion label each turn. You assess four dimensions.
 
 {_NEUROMOD_GUIDE}
 
@@ -60,12 +63,13 @@ Score EACH dimension 0.0–1.0:
                            Use 0.5 if the turn was factual/neutral and any calm emotion
                            would be equally appropriate.
 
-  neuromod_plausible:      Do both the neuromodulator levels (DA/ACh/GABA/Glu) AND the
-                           hormonal state (5HT/CORT/OXT) make neurochemical sense for
+  neuromod_plausible:      Do both the neuromodulator levels (DA/ACh/GABA/Glu/NE) AND the
+                           hormonal state (5HT/CORT/OXT/AEA) make neurochemical sense for
                            this emotion? High (>0.8) = all levels cohere with the label.
                            Low (<0.4) = there's a contradiction (e.g., very high GABA
-                           with "excitement", or elevated CORT with "warm/content").
-                           Use 0.5 if levels are mid-range and don't give strong signal.
+                           with "excitement", elevated CORT with "warm/content", or
+                           "scattered" without excessive NE). Use 0.5 if levels are
+                           mid-range and don't give strong signal.
 
   expressiveness:          Is the emotion actually visible in the response text, or only
                            labeled internally? High = reader can sense the mood without
