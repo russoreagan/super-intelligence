@@ -2,6 +2,7 @@
 Hypothalamus — drives and affect. 0 LLMs, pure switch logic.
 Consumes temporal features, updates neuromod levels, names emotional state.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -32,13 +33,25 @@ class HypothalamusCluster:
         self._current_turns: float = 1.0  # set by process(), consumed by decay_turn()
 
         # Stateful switches with decay
-        self._valence_switch = StatefulSwitch("valence_to_DA", CLUSTER, decay=settings.get("valence_to_DA_decay"))
-        self._threat_switch = StatefulSwitch("threat_to_GABA", CLUSTER, decay=settings.get("threat_to_GABA_decay"))
-        self._novelty_switch = StatefulSwitch("novelty_to_ACh", CLUSTER, decay=settings.get("novelty_to_ACh_decay"))
-        self._arousal_switch = StatefulSwitch("arousal_homeostat", CLUSTER, decay=settings.get("arousal_homeostat_decay"))
+        self._valence_switch = StatefulSwitch(
+            "valence_to_DA", CLUSTER, decay=settings.get("valence_to_DA_decay")
+        )
+        self._threat_switch = StatefulSwitch(
+            "threat_to_GABA", CLUSTER, decay=settings.get("threat_to_GABA_decay")
+        )
+        self._novelty_switch = StatefulSwitch(
+            "novelty_to_ACh", CLUSTER, decay=settings.get("novelty_to_ACh_decay")
+        )
+        self._arousal_switch = StatefulSwitch(
+            "arousal_homeostat", CLUSTER, decay=settings.get("arousal_homeostat_decay")
+        )
         # Inhibitory: receptor desensitization — suppresses novelty on repeated topics
-        self._satiation_inhibitor = StatefulSwitch("satiation_inhibitor", CLUSTER,
-                                                    decay=settings.get("satiation_inhibitor_decay"), polarity="inhibitory")
+        self._satiation_inhibitor = StatefulSwitch(
+            "satiation_inhibitor",
+            CLUSTER,
+            decay=settings.get("satiation_inhibitor_decay"),
+            polarity="inhibitory",
+        )
 
         # Auditory prosody input (published by auditory cortex when --ears active)
         self._prosody_inbox = bus.subscribe("auditory.prosody")
@@ -61,7 +74,9 @@ class HypothalamusCluster:
         elapsed = now - self._last_decay_time
         ref = settings.get("decay_reference_interval_s")
         raw_turns = elapsed / ref
-        turns = max(settings.get("decay_min_turns"), min(raw_turns, settings.get("decay_max_turns")))
+        turns = max(
+            settings.get("decay_min_turns"), min(raw_turns, settings.get("decay_max_turns"))
+        )
         self._current_turns = turns
 
         sentiment = features.get("sentiment", 0.0)
@@ -72,7 +87,9 @@ class HypothalamusCluster:
         er_scale = settings.get("emotional_reactivity_scale")
 
         # DA: valence signal (reward / positive engagement)
-        valence_delta = (sentiment * settings.get("sentiment_DA_weight") * er_scale) - (hostility * settings.get("hostility_DA_weight"))
+        valence_delta = (sentiment * settings.get("sentiment_DA_weight") * er_scale) - (
+            hostility * settings.get("hostility_DA_weight")
+        )
         nm.add("DA", valence_delta * turns)
 
         # GABA: threat / caution signal (inhibitory)
@@ -82,9 +99,14 @@ class HypothalamusCluster:
             nm.add("GABA", settings.get("hostility_GABA_increment_med") * turns)
 
         # ACh: novelty / attention signal
-        novelty_delta = (surprise * settings.get("surprise_ACh_weight") + salience * settings.get("salience_ACh_weight")) * er_scale
+        novelty_delta = (
+            surprise * settings.get("surprise_ACh_weight")
+            + salience * settings.get("salience_ACh_weight")
+        ) * er_scale
         if self._satiation_inhibitor.state > 0.5:
-            novelty_delta *= (1.0 - self._satiation_inhibitor.state * settings.get("satiation_inhibition_factor"))
+            novelty_delta *= 1.0 - self._satiation_inhibitor.state * settings.get(
+                "satiation_inhibition_factor"
+            )
         nm.add("ACh", novelty_delta * turns)
 
         # Glu: general arousal
@@ -101,9 +123,9 @@ class HypothalamusCluster:
         # amplified by the emotional reactivity dial (which controls valence/
         # arousal swings, not alertness overload).
         ne_delta = (
-            salience  * settings.get("ne_salience_weight") +
-            surprise  * settings.get("ne_surprise_weight") +
-            hostility * settings.get("ne_hostility_weight")
+            salience * settings.get("ne_salience_weight")
+            + surprise * settings.get("ne_surprise_weight")
+            + hostility * settings.get("ne_hostility_weight")
         )
         nm.add("NE", ne_delta * turns)
 
@@ -152,24 +174,28 @@ class HypothalamusCluster:
         if dynamics:
             pace = dynamics.get("pace_label")
             if pace == "rushed":
-                nm.add("Glu", 0.08)   # urgency
+                nm.add("Glu", 0.08)  # urgency
                 nm.add("ACh", 0.04)
                 nm.add("NE", settings.get("ne_rush_increment"))
             elif pace == "brisk":
                 nm.add("Glu", 0.04)
-                nm.add("DA", 0.02)    # mild positive valence — animated
+                nm.add("DA", 0.02)  # mild positive valence — animated
             elif pace == "halting":
-                nm.add("ACh", 0.06)   # uncertainty → pay attention
+                nm.add("ACh", 0.06)  # uncertainty → pay attention
             elif pace == "measured":
                 nm.add("ACh", 0.02)
             # "normal" → no correction
 
             if dynamics.get("hesitant"):
-                nm.add("ACh", 0.05)   # frequent long pauses → user is searching
+                nm.add("ACh", 0.05)  # frequent long pauses → user is searching
             if dynamics.get("burst_score", 0.0) > 0.35:
                 nm.add("GABA", 0.04)  # very bursty → mild caution flag (agitation)
-            logger.debug("Hypothalamus: pace=%s pauses=%d hesitant=%s",
-                         pace, dynamics.get("long_pause_count", 0), dynamics.get("hesitant"))
+            logger.debug(
+                "Hypothalamus: pace=%s pauses=%d hesitant=%s",
+                pace,
+                dynamics.get("long_pause_count", 0),
+                dynamics.get("hesitant"),
+            )
 
         snap = nm.snapshot()
 
@@ -211,7 +237,10 @@ class HypothalamusCluster:
         h_snap = hs.snapshot()
         logger.debug(
             "Hypothalamus hormonal: 5HT=%.3f CORT=%.3f OXT=%.3f AEA=%.3f",
-            h_snap["5HT"], h_snap["CORT"], h_snap["OXT"], h_snap["AEA"],
+            h_snap["5HT"],
+            h_snap["CORT"],
+            h_snap["OXT"],
+            h_snap["AEA"],
         )
 
         # Apply hormonal modulation to effective neuromod values for emotion naming.
@@ -224,7 +253,7 @@ class HypothalamusCluster:
             settings.get("aea_ne_suppression"),
             settings.get("aea_glu_suppression"),
         )
-        eff_NE  = max(0.0, min(1.0, snap["NE"]  * ne_scale))
+        eff_NE = max(0.0, min(1.0, snap["NE"] * ne_scale))
         eff_Glu = max(0.0, min(1.0, snap["Glu"] * glu_scale))
 
         # DA: hormonal offset + AEA afterglow lift
@@ -233,26 +262,38 @@ class HypothalamusCluster:
             settings.get("oxt_da_lift"),
             settings.get("cort_da_suppress"),
         )
-        eff_DA   = max(0.0, min(1.0, snap["DA"] + da_offset
-                                     + h_snap["AEA"] * settings.get("aea_da_lift")))
-        eff_GABA = max(0.0, min(1.0, snap["GABA"] * hs.gaba_scale(
-            settings.get("cort_gaba_amplify"),
-            settings.get("oxt_gaba_buffer"),
-        )))
+        eff_DA = max(
+            0.0, min(1.0, snap["DA"] + da_offset + h_snap["AEA"] * settings.get("aea_da_lift"))
+        )
+        eff_GABA = max(
+            0.0,
+            min(
+                1.0,
+                snap["GABA"]
+                * hs.gaba_scale(
+                    settings.get("cort_gaba_amplify"),
+                    settings.get("oxt_gaba_buffer"),
+                ),
+            ),
+        )
 
         # Name current emotion (using fully-adjusted effective values)
         emotion, tendency = name_emotion(eff_DA, eff_GABA, snap["ACh"], eff_Glu)
 
         # NE color: inverted-U modifier (vigilant / alert-curious / scattered)
         emotion, tendency = apply_ne_color(
-            emotion, tendency, eff_NE,
+            emotion,
+            tendency,
+            eff_NE,
             ne_high=settings.get("ne_high_threshold"),
             ne_scatter=settings.get("ne_scatter_threshold"),
         )
 
         # Hormonal color: connected / withdrawn / guarded / eased / dysphoric
         emotion, tendency = apply_hormonal_color(
-            emotion, tendency, h_snap,
+            emotion,
+            tendency,
+            h_snap,
             oxt_connected=settings.get("hormonal_oxt_connected_threshold"),
             cort_withdrawn=settings.get("hormonal_cort_withdrawn_threshold"),
             oxt_guarded=settings.get("hormonal_oxt_guarded_threshold"),
@@ -278,8 +319,9 @@ class HypothalamusCluster:
         if override_emotion:
             emotion = override_emotion
             tendency = f"metacognition appraisal: {override_reason}"
-            logger.debug("Hypothalamus: emotion override → %s (%s)",
-                         override_emotion, override_reason)
+            logger.debug(
+                "Hypothalamus: emotion override → %s (%s)", override_emotion, override_reason
+            )
 
         # ── Coarse text-affect fallback ───────────────────────────────────────
         # If the neuromod basin still names "neutral" but the text signal is
@@ -300,8 +342,7 @@ class HypothalamusCluster:
                 fallback = ("irritated", f"user_emotion={user_emo}")
             elif user_emo in ("sad", "anxious", "distressed", "struggling", "tired"):
                 fallback = ("concerned", f"user_emotion={user_emo}")
-            elif user_emo in ("happy", "playful", "amused", "warm",
-                              "affectionate", "excited"):
+            elif user_emo in ("happy", "playful", "amused", "warm", "affectionate", "excited"):
                 fallback = ("warm", f"user_emotion={user_emo}")
             elif user_emo in ("curious", "engaged"):
                 fallback = ("engaged", f"user_emotion={user_emo}")
@@ -336,8 +377,9 @@ class HypothalamusCluster:
         }
 
         await self._bus.publish_dict("affect.state", affect, source=CLUSTER)
-        logger.debug("Hypothalamus: emotion=%s DA=%.2f GABA=%.2f",
-                     emotion, snap["DA"], snap["GABA"])
+        logger.debug(
+            "Hypothalamus: emotion=%s DA=%.2f GABA=%.2f", emotion, snap["DA"], snap["GABA"]
+        )
         return affect
 
     def decay_turn(self) -> None:

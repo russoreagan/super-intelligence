@@ -25,6 +25,7 @@ Environment feature flags:
     BRAIN_MOTOR_PATHS         colon-separated allowed filesystem roots
     BRAIN_MOTOR_COMMANDS      colon-separated allowed shell commands (overrides defaults)
 """
+
 from __future__ import annotations
 
 import argparse
@@ -84,12 +85,19 @@ def main() -> None:
     parser.add_argument("--voice", action="store_true", help="Enable voice I/O")
     parser.add_argument("--ui", action="store_true", help="Enable browser UI at :8765")
     parser.add_argument("--dmn", action="store_true", help="v0.2: Enable Default Mode Network")
-    parser.add_argument("--metacognition", action="store_true",
-                        help="v0.3: Enable metacognition cell")
-    parser.add_argument("--ears", action="store_true",
-                        help="v0.4: Enable Auditory Cortex (fingerprinting, speaker ID, prosody)")
-    parser.add_argument("--motor", action="store_true",
-                        help="v0.5: Enable Motor Cortex (tool use: file I/O, shell commands)")
+    parser.add_argument(
+        "--metacognition", action="store_true", help="v0.3: Enable metacognition cell"
+    )
+    parser.add_argument(
+        "--ears",
+        action="store_true",
+        help="v0.4: Enable Auditory Cortex (fingerprinting, speaker ID, prosody)",
+    )
+    parser.add_argument(
+        "--motor",
+        action="store_true",
+        help="v0.5: Enable Motor Cortex (tool use: file I/O, shell commands)",
+    )
     args = parser.parse_args()
 
     if args.voice:

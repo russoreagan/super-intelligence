@@ -5,6 +5,7 @@ ONLY imported by brain/clusters/hippocampus.py. No other cluster touches this fi
 Design: encode every substantive turn. Storage is free; retrieval is the intelligence.
 The hippocampus indexes, not gatekeeps.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -18,10 +19,9 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-SECOND_BRAIN_ROOT = Path(os.environ.get(
-    "SECOND_BRAIN_PATH",
-    str(Path(__file__).parent.parent.parent / "second_brain")
-))
+SECOND_BRAIN_ROOT = Path(
+    os.environ.get("SECOND_BRAIN_PATH", str(Path(__file__).parent.parent.parent / "second_brain"))
+)
 EPISODES_DIR = SECOND_BRAIN_ROOT / "episodes"
 SCHEMA_DIR = SECOND_BRAIN_ROOT / "schema"
 
@@ -36,13 +36,13 @@ class Episode:
     turn_id: str
     ts: float
     user_input: str
-    entity_response: str          # final emitted response (cognitive artifact)
+    entity_response: str  # final emitted response (cognitive artifact)
     topic_tags: list[str]
-    emotion_state: str            # entity's emotion at time of episode
-    user_emotion: str             # estimated user emotion
+    emotion_state: str  # entity's emotion at time of episode
+    user_emotion: str  # estimated user emotion
     entities: list[str]
     neuromod_snapshot: dict[str, float]
-    surprise_score: float         # from predict-and-surprise gating
+    surprise_score: float  # from predict-and-surprise gating
     vector: list[float] | None = None  # embedding (populated by hippocampus)
 
 
@@ -60,22 +60,25 @@ class EpisodicStore:
         try:
             import lancedb
             import pyarrow as pa
+
             EPISODES_DIR.mkdir(parents=True, exist_ok=True)
             self._db = lancedb.connect(str(EPISODES_DIR))
-            schema = pa.schema([
-                pa.field("session_id", pa.string()),
-                pa.field("turn_id", pa.string()),
-                pa.field("ts", pa.float64()),
-                pa.field("user_input", pa.string()),
-                pa.field("entity_response", pa.string()),
-                pa.field("topic_tags", pa.string()),   # JSON array
-                pa.field("emotion_state", pa.string()),
-                pa.field("user_emotion", pa.string()),
-                pa.field("entities", pa.string()),      # JSON array
-                pa.field("neuromod_snapshot", pa.string()),  # JSON
-                pa.field("surprise_score", pa.float64()),
-                pa.field("vector", pa.list_(pa.float32(), EMBEDDING_DIM)),
-            ])
+            schema = pa.schema(
+                [
+                    pa.field("session_id", pa.string()),
+                    pa.field("turn_id", pa.string()),
+                    pa.field("ts", pa.float64()),
+                    pa.field("user_input", pa.string()),
+                    pa.field("entity_response", pa.string()),
+                    pa.field("topic_tags", pa.string()),  # JSON array
+                    pa.field("emotion_state", pa.string()),
+                    pa.field("user_emotion", pa.string()),
+                    pa.field("entities", pa.string()),  # JSON array
+                    pa.field("neuromod_snapshot", pa.string()),  # JSON
+                    pa.field("surprise_score", pa.float64()),
+                    pa.field("vector", pa.list_(pa.float32(), EMBEDDING_DIM)),
+                ]
+            )
             if "episodes" in self._db.table_names():
                 self._table = self._db.open_table("episodes")
             else:
@@ -83,7 +86,10 @@ class EpisodicStore:
             self._ready = True
             return True
         except Exception as e:
-            logger.warning("[Episode DB] Database unavailable — episodes will not be saved this session. Is lancedb installed? Run 'uv sync'. Error: %s", e)
+            logger.warning(
+                "[Episode DB] Database unavailable — episodes will not be saved this session. Is lancedb installed? Run 'uv sync'. Error: %s",
+                e,
+            )
             return False
 
     def encode(self, episode: Episode) -> None:
@@ -106,7 +112,9 @@ class EpisodicStore:
             }
             self._table.add([row])
         except Exception as e:
-            logger.error("[Episode DB] Failed to save episode — this turn's memory will be lost: %s", e)
+            logger.error(
+                "[Episode DB] Failed to save episode — this turn's memory will be lost: %s", e
+            )
 
     def recall_recent(self, limit: int = 6) -> list[dict]:
         """Return the most recent episodes by timestamp (for session bridging at boot)."""
@@ -114,6 +122,7 @@ class EpisodicStore:
             return []
         try:
             import pyarrow.compute as pc  # noqa: F401 (pyarrow already required by lancedb)
+
             tbl = self._table.to_arrow()
             sorted_tbl = tbl.sort_by([("ts", "descending")])
             rows = sorted_tbl.slice(0, limit).to_pylist()
@@ -137,6 +146,7 @@ class EpisodicStore:
         defaulting to generic meta-thoughts. Cheap: episode counts are modest and
         this runs at most once every few ticks."""
         import random
+
         if not self._ensure_ready():
             return []
         try:
@@ -149,8 +159,9 @@ class EpisodicStore:
             logger.error("[Episode DB] Random sample failed: %s", e)
             return []
 
-    def recall(self, query_vector: list[float], limit: int = 5,
-               exclude_tags: list[str] | None = None) -> list[dict]:
+    def recall(
+        self, query_vector: list[float], limit: int = 5, exclude_tags: list[str] | None = None
+    ) -> list[dict]:
         """Vector search over all episodes, optionally excluding those that
         contain any of the given tags. Used by the main recall path so that
         deferred questions (which have their own search path) don't compete
@@ -168,8 +179,7 @@ class EpisodicStore:
             logger.error("[Episode DB] Memory search failed: %s", e)
             return []
 
-    def recall_by_tag(self, query_vector: list[float], tag: str,
-                      limit: int = 3) -> list[dict]:
+    def recall_by_tag(self, query_vector: list[float], tag: str, limit: int = 3) -> list[dict]:
         """Vector search scoped to episodes that contain the given tag.
         Used to give deferred questions their own retrieval budget, separate
         from conversation memories."""
@@ -177,8 +187,7 @@ class EpisodicStore:
             return []
         try:
             results = (
-                self._table
-                .search(query_vector)
+                self._table.search(query_vector)
                 .where(f"topic_tags LIKE '%{tag}%'")
                 .limit(limit)
                 .to_list()
@@ -204,14 +213,14 @@ class EpisodicStore:
         if not self._ensure_ready():
             return []
         if not self._SESSION_ID_RE.match(session_id):
-            logger.warning("[Episode DB] [Security] Blocked unsafe session ID in memory query: %r", session_id)
+            logger.warning(
+                "[Episode DB] [Security] Blocked unsafe session ID in memory query: %r", session_id
+            )
             return []
         try:
             # Safety: session_id is validated by _SESSION_ID_RE above; that regex
             # must stay in place to prevent SQL injection through this f-string.
-            results = self._table.search().where(
-                f"session_id = '{session_id}'"
-            ).to_list()
+            results = self._table.search().where(f"session_id = '{session_id}'").to_list()
             return results
         except Exception as e:
             logger.error("[Episode DB] Session recall failed: %s", e)
@@ -237,11 +246,17 @@ class SchemaStore:
     def _validate_filename(self, filename: str) -> bool:
         """Return True if filename is safe; log a warning and return False otherwise."""
         if not self._FILENAME_RE.match(filename):
-            logger.warning("[Schema DB] [Security] Blocked unsafe filename (possible path traversal): %r", filename)
+            logger.warning(
+                "[Schema DB] [Security] Blocked unsafe filename (possible path traversal): %r",
+                filename,
+            )
             return False
         resolved = (SCHEMA_DIR / filename).resolve()
         if not resolved.is_relative_to(SCHEMA_DIR.resolve()):
-            logger.warning("[Schema DB] [Security] Blocked filename that tries to escape the schema directory: %r", filename)
+            logger.warning(
+                "[Schema DB] [Security] Blocked filename that tries to escape the schema directory: %r",
+                filename,
+            )
             return False
         return True
 
@@ -372,28 +387,34 @@ class SchemaStore:
 
     def ensure_self_schema(self) -> None:
         if not (SCHEMA_DIR / "self.md").exists():
-            self.write("self.md", "# Entity Self-Model\n\n"
-                       "## Identity\n- Instantiated: " + time.strftime("%Y-%m-%d") + "\n\n"
-                       "## Stable preferences\n\n"
-                       "## Relational identity\n\n"
-                       "## History summary\n\n"
-                       "## Current mood signature\n\n"
-                       "## Values\n")
+            self.write(
+                "self.md",
+                "# Entity Self-Model\n\n"
+                "## Identity\n- Instantiated: " + time.strftime("%Y-%m-%d") + "\n\n"
+                "## Stable preferences\n\n"
+                "## Relational identity\n\n"
+                "## History summary\n\n"
+                "## Current mood signature\n\n"
+                "## Values\n",
+            )
 
     def ensure_user_schema(self, user_name: str = "User") -> None:
         if not (SCHEMA_DIR / "user.md").exists():
-            self.write("user.md", f"# User: {user_name}\n\n"
-                       "## Known facts\n\n"
-                       "## Preferences\n\n"
-                       "## Communication style\n"
-                       "- (learning…)\n\n"
-                       "## Mood response patterns\n"
-                       "- (learning…)\n\n"
-                       "## Emotional profile\n\n"
-                       "## Relationship\n"
-                       "- Familiarity: new (conversations so far: ~0)\n\n"
-                       "## Affection score\n"
-                       "- Score: 0\n")
+            self.write(
+                "user.md",
+                f"# User: {user_name}\n\n"
+                "## Known facts\n\n"
+                "## Preferences\n\n"
+                "## Communication style\n"
+                "- (learning…)\n\n"
+                "## Mood response patterns\n"
+                "- (learning…)\n\n"
+                "## Emotional profile\n\n"
+                "## Relationship\n"
+                "- Familiarity: new (conversations so far: ~0)\n\n"
+                "## Affection score\n"
+                "- Score: 0\n",
+            )
         else:
             self.ensure_section("user.md", "Communication style", "- (learning…)")
             self.ensure_section("user.md", "Mood response patterns", "- (learning…)")
@@ -410,18 +431,21 @@ class SchemaStore:
         """Ensure a per-speaker schema file exists. Returns the filename."""
         filename = self.speaker_filename(name)
         if not (SCHEMA_DIR / filename).exists():
-            self.write(filename, f"# User: {name}\n\n"
-                       "## Known facts\n\n"
-                       "## Preferences\n\n"
-                       "## Communication style\n"
-                       "- (learning…)\n\n"
-                       "## Mood response patterns\n"
-                       "- (learning…)\n\n"
-                       "## Emotional profile\n\n"
-                       "## Relationship\n"
-                       "- Familiarity: new\n\n"
-                       "## Affection score\n"
-                       "- Score: 0\n")
+            self.write(
+                filename,
+                f"# User: {name}\n\n"
+                "## Known facts\n\n"
+                "## Preferences\n\n"
+                "## Communication style\n"
+                "- (learning…)\n\n"
+                "## Mood response patterns\n"
+                "- (learning…)\n\n"
+                "## Emotional profile\n\n"
+                "## Relationship\n"
+                "- Familiarity: new\n\n"
+                "## Affection score\n"
+                "- Score: 0\n",
+            )
         else:
             self.ensure_section(filename, "Communication style", "- (learning…)")
             self.ensure_section(filename, "Mood response patterns", "- (learning…)")
@@ -444,16 +468,26 @@ class SchemaStore:
             return
         async with self._lock:
             src = placeholder_path.read_text()
-            dst = (SCHEMA_DIR / target_filename).read_text() if (SCHEMA_DIR / target_filename).exists() else ""
+            dst = (
+                (SCHEMA_DIR / target_filename).read_text()
+                if (SCHEMA_DIR / target_filename).exists()
+                else ""
+            )
             # Extract bullet-point facts from the placeholder (skip header/section lines)
-            facts = [ln.strip() for ln in src.splitlines()
-                     if ln.strip().startswith("- ") and ln.strip() not in dst]
+            facts = [
+                ln.strip()
+                for ln in src.splitlines()
+                if ln.strip().startswith("- ") and ln.strip() not in dst
+            ]
             if facts:
-                self._atomic_write(SCHEMA_DIR / target_filename,
-                                   dst + "\n" + "\n".join(facts))
+                self._atomic_write(SCHEMA_DIR / target_filename, dst + "\n" + "\n".join(facts))
             placeholder_path.unlink(missing_ok=True)
-            logger.info("[Schema] Migrated placeholder %s → %s (%d facts)",
-                        placeholder_filename, target_filename, len(facts))
+            logger.info(
+                "[Schema] Migrated placeholder %s → %s (%d facts)",
+                placeholder_filename,
+                target_filename,
+                len(facts),
+            )
 
     def primary_user_name(self) -> str:
         """Extract the primary user's name from user.md Known facts, or from the header."""

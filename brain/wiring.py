@@ -3,6 +3,7 @@ Declarative edge graph with Hebbian learning.
 Edges between named nodes carry weights + polarity.
 Weights are nudged after turns and persisted to wiring.json.
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -15,11 +16,18 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-WIRING_PATH = Path(os.environ.get("BRAIN_WIRING_PATH",
-    str(Path(__file__).parent.parent / "second_brain" / "wiring.json")))
+WIRING_PATH = Path(
+    os.environ.get(
+        "BRAIN_WIRING_PATH", str(Path(__file__).parent.parent / "second_brain" / "wiring.json")
+    )
+)
 
-WIRING_HISTORY_DIR = Path(os.environ.get("BRAIN_WIRING_HISTORY_DIR",
-    str(Path(__file__).parent.parent / "second_brain" / "wiring_history")))
+WIRING_HISTORY_DIR = Path(
+    os.environ.get(
+        "BRAIN_WIRING_HISTORY_DIR",
+        str(Path(__file__).parent.parent / "second_brain" / "wiring_history"),
+    )
+)
 
 WEIGHT_MIN = 0.1
 WEIGHT_MAX = 3.0
@@ -46,8 +54,9 @@ class Wiring:
         self._session_baseline: dict[tuple[str, str], float] = {}
         self._load()
 
-    def add(self, source: str, target: str, weight: float = 1.0,
-            polarity: str = "excitatory") -> None:
+    def add(
+        self, source: str, target: str, weight: float = 1.0, polarity: str = "excitatory"
+    ) -> None:
         key = (source, target)
         if key not in self._edges:
             self._edges[key] = Edge(source, target, weight, polarity)
@@ -103,13 +112,16 @@ class Wiring:
             delta = edge.weight - base
             if abs(delta) < 1e-4:
                 continue
-            out.append({
-                "src": edge.source, "tgt": edge.target,
-                "weight": round(edge.weight, 4),
-                "baseline": round(base, 4),
-                "delta": round(delta, 4),
-                "polarity": edge.polarity,
-            })
+            out.append(
+                {
+                    "src": edge.source,
+                    "tgt": edge.target,
+                    "weight": round(edge.weight, 4),
+                    "baseline": round(base, 4),
+                    "delta": round(delta, 4),
+                    "polarity": edge.polarity,
+                }
+            )
         out.sort(key=lambda r: abs(r["delta"]), reverse=True)
         return out
 
@@ -118,12 +130,15 @@ class Wiring:
         rows = []
         for key, edge in self._edges.items():
             base = self._session_baseline.get(key, edge.weight)
-            rows.append({
-                "src": edge.source, "tgt": edge.target,
-                "weight": round(edge.weight, 4),
-                "session_delta": round(edge.weight - base, 4),
-                "polarity": edge.polarity,
-            })
+            rows.append(
+                {
+                    "src": edge.source,
+                    "tgt": edge.target,
+                    "weight": round(edge.weight, 4),
+                    "session_delta": round(edge.weight - base, 4),
+                    "polarity": edge.polarity,
+                }
+            )
         rows.sort(key=lambda r: r["weight"], reverse=True)
         return rows[:n]
 
@@ -159,7 +174,7 @@ class Wiring:
 
             # Keep history bounded: remove oldest files if over limit
             snapshots = sorted(WIRING_HISTORY_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime)
-            for old in snapshots[:-self._MAX_HISTORY_SNAPSHOTS]:
+            for old in snapshots[: -self._MAX_HISTORY_SNAPSHOTS]:
                 with contextlib.suppress(Exception):
                     old.unlink()
 
@@ -175,6 +190,7 @@ class Wiring:
             data = json.loads(WIRING_PATH.read_text())
             for item in data:
                 self._edges[(item["src"], item["tgt"])] = Edge(
-                    item["src"], item["tgt"], item["w"], item["pol"])
+                    item["src"], item["tgt"], item["w"], item["pol"]
+                )
         except Exception as e:
             logger.warning("Could not load wiring.json: %s", e)

@@ -3,6 +3,7 @@ Tests for the voice bridge routing logic — the rules that decide what
 happens to each utterance from streaming_mic depending on whether the
 brain is currently speaking and whether the transcript is empty.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -17,6 +18,7 @@ from brain.voice_bridge import (
 )
 
 # ── parse_barge_words ────────────────────────────────────────────────────────
+
 
 def test_parse_barge_words_default():
     out = parse_barge_words(None)
@@ -36,6 +38,7 @@ def test_parse_barge_words_custom():
 
 
 # ── is_barge_in ──────────────────────────────────────────────────────────────
+
 
 def test_is_barge_in_matches_keyword_in_substring():
     assert is_barge_in("Stop please", ["stop"]) is True
@@ -57,6 +60,7 @@ def test_is_barge_in_empty_inputs():
 
 
 # ── bleed_overlap ────────────────────────────────────────────────────────────
+
 
 def test_bleed_overlap_zero_for_empty():
     assert bleed_overlap("", "anything") == 0.0
@@ -128,7 +132,8 @@ def test_classify_speech_immediately_after_tts_is_dispatched():
     # Brain just said something; user replies immediately with overlapping words
     d, _ = classify_utterance(
         "tell me more about that",
-        brain_is_speaking=False, barge_words=WORDS,
+        brain_is_speaking=False,
+        barge_words=WORDS,
     )
     assert d == "dispatch"
 
@@ -141,7 +146,8 @@ def test_classify_barge_in_during_tts():
 def test_classify_genuine_speech_during_tts_is_queued():
     d, _ = classify_utterance(
         "this list of voices does not look correct",
-        brain_is_speaking=True, barge_words=WORDS,
+        brain_is_speaking=True,
+        barge_words=WORDS,
     )
     assert d == "queue"
 
@@ -149,12 +155,14 @@ def test_classify_genuine_speech_during_tts_is_queued():
 def test_classify_any_non_empty_speech_during_tts_queued_not_dropped():
     d, _ = classify_utterance(
         "audio bleed will kill a conversation every single",
-        brain_is_speaking=True, barge_words=WORDS,
+        brain_is_speaking=True,
+        barge_words=WORDS,
     )
     assert d == "queue"
 
 
 # ── pick_dispatch_from_queue ─────────────────────────────────────────────────
+
 
 def test_pick_dispatch_empty_queue():
     text, n = pick_dispatch_from_queue([])
@@ -169,11 +177,13 @@ def test_pick_dispatch_single():
 
 
 def test_pick_dispatch_joins_all_as_one_block():
-    text, n = pick_dispatch_from_queue([
-        "i was thinking",
-        "we should probably",
-        "go ahead and try the calendar",
-    ])
+    text, n = pick_dispatch_from_queue(
+        [
+            "i was thinking",
+            "we should probably",
+            "go ahead and try the calendar",
+        ]
+    )
     assert text == "i was thinking we should probably go ahead and try the calendar"
     assert n == 3
 

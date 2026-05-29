@@ -2,6 +2,7 @@
 Tests for Hebbian learning: Wiring graph, sleep consolidation Hebbian pass,
 weight clamping, plasticity modulator, decay, and skip rules.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -11,6 +12,7 @@ from brain.wiring_bootstrap import bootstrap
 
 # ── Wiring core ─────────────────────────────────────────────────────────────
 
+
 def _isolated_wiring(monkeypatch, tmp_path) -> Wiring:
     """Wiring instance whose JSON persistence is isolated to tmp_path."""
     monkeypatch.setenv("BRAIN_WIRING_PATH", str(tmp_path / "wiring.json"))
@@ -18,6 +20,7 @@ def _isolated_wiring(monkeypatch, tmp_path) -> Wiring:
     import importlib
 
     import brain.wiring as w_mod
+
     importlib.reload(w_mod)
     return w_mod.Wiring()
 
@@ -106,33 +109,62 @@ def test_bootstrap_adds_expected_edges(monkeypatch, tmp_path):
 
 # ── Sleep consolidation Hebbian pass ────────────────────────────────────────
 
+
 class _StubSchema:
-    async def aappend_fact(self, *a, **kw): pass
-    def read(self, name): return ""
-    async def awrite(self, name, content): pass
+    async def aappend_fact(self, *a, **kw):
+        pass
+
+    def read(self, name):
+        return ""
+
+    async def awrite(self, name, content):
+        pass
 
 
 class _StubEpisodic:
-    def encode(self, ep): pass
-    def recall(self, vec, limit=4): return []
-    def recall_recent(self, limit=6): return []
+    def encode(self, ep):
+        pass
+
+    def recall(self, vec, limit=4):
+        return []
+
+    def recall_recent(self, limit=6):
+        return []
 
 
 class _StubRouter:
-    async def call(self, *a, **kw): return "{}"
-    async def embed(self, text): return [0.0] * 16
-    def __init__(self): self._call_log = []
+    async def call(self, *a, **kw):
+        return "{}"
+
+    async def embed(self, text):
+        return [0.0] * 16
+
+    def __init__(self):
+        self._call_log = []
 
 
-def _make_trace(turn_id="t", *, fired_path=None, DA=0.5, prior_DA=0.5, GABA=0.0, ACh=0.3,
-                critic_overall=0.7, critic_ran=True, emotion="content", user_emotion=""):
+def _make_trace(
+    turn_id="t",
+    *,
+    fired_path=None,
+    DA=0.5,
+    prior_DA=0.5,
+    GABA=0.0,
+    ACh=0.3,
+    critic_overall=0.7,
+    critic_ran=True,
+    emotion="content",
+    user_emotion="",
+):
     from brain.observability.timeline import TurnTrace
+
     t = TurnTrace(turn_id=turn_id, session_id="s", user_input="x")
     t.fired_path = fired_path or []
     t.neuromod = {"DA": DA, "GABA": GABA, "ACh": ACh, "Glu": 0.3}
     t.prior_neuromod = {"DA": prior_DA, "GABA": GABA, "ACh": ACh, "Glu": 0.3}
-    t.draft_scores = [{"draft_id": "d", "overall": critic_overall,
-                       "selected": True, "critic_ran": critic_ran}]
+    t.draft_scores = [
+        {"draft_id": "d", "overall": critic_overall, "selected": True, "critic_ran": critic_ran}
+    ]
     t.emotion = emotion
     t.user_emotion = user_emotion
     return t
@@ -140,6 +172,7 @@ def _make_trace(turn_id="t", *, fired_path=None, DA=0.5, prior_DA=0.5, GABA=0.0,
 
 def test_composite_outcome_positive_with_good_signals(monkeypatch, tmp_path):
     from brain.sleep import SleepConsolidation
+
     w = _isolated_wiring(monkeypatch, tmp_path)
     sc = SleepConsolidation(_StubRouter(), _StubSchema(), _StubEpisodic(), wiring=w)
     # prior_DA=0.5 → DA delta = (0.8-0.5)*4 = 1.2 (clamped to 1.0); critic good
@@ -150,6 +183,7 @@ def test_composite_outcome_positive_with_good_signals(monkeypatch, tmp_path):
 
 def test_composite_outcome_negative_with_bad_signals(monkeypatch, tmp_path):
     from brain.sleep import SleepConsolidation
+
     w = _isolated_wiring(monkeypatch, tmp_path)
     sc = SleepConsolidation(_StubRouter(), _StubSchema(), _StubEpisodic(), wiring=w)
     # prior_DA=0.5 → DA delta = (0.1-0.5)*4 = -1.6 (clamped to -1.0); critic bad
@@ -160,6 +194,7 @@ def test_composite_outcome_negative_with_bad_signals(monkeypatch, tmp_path):
 
 def test_plasticity_modulator_scales_with_DA(monkeypatch, tmp_path):
     from brain.sleep import SleepConsolidation
+
     w = _isolated_wiring(monkeypatch, tmp_path)
     sc = SleepConsolidation(_StubRouter(), _StubSchema(), _StubEpisodic(), wiring=w)
     happy = [_make_trace(DA=0.9, ACh=0.6) for _ in range(3)]
@@ -171,6 +206,7 @@ def test_plasticity_modulator_scales_with_DA(monkeypatch, tmp_path):
 
 def test_should_skip_hebbian_near_zero_outcome(monkeypatch, tmp_path):
     from brain.sleep import SleepConsolidation
+
     w = _isolated_wiring(monkeypatch, tmp_path)
     sc = SleepConsolidation(_StubRouter(), _StubSchema(), _StubEpisodic(), wiring=w)
     trace = _make_trace()
@@ -181,6 +217,7 @@ def test_should_skip_hebbian_near_zero_outcome(monkeypatch, tmp_path):
 
 def test_should_skip_hebbian_defuse_path(monkeypatch, tmp_path):
     from brain.sleep import SleepConsolidation
+
     w = _isolated_wiring(monkeypatch, tmp_path)
     sc = SleepConsolidation(_StubRouter(), _StubSchema(), _StubEpisodic(), wiring=w)
     trace = _make_trace(GABA=0.7)
@@ -192,6 +229,7 @@ def test_should_skip_hebbian_defuse_path(monkeypatch, tmp_path):
 
 def test_hebbian_pass_applies_updates_along_path(monkeypatch, tmp_path):
     from brain.sleep import SleepConsolidation
+
     w = _isolated_wiring(monkeypatch, tmp_path)
     w.add("frontal.executive", "frontal.drafter_A", weight=1.0)
     w.snapshot_baseline()
@@ -210,6 +248,7 @@ def test_hebbian_pass_applies_updates_along_path(monkeypatch, tmp_path):
 
 def test_hebbian_pass_decreases_on_negative_outcome(monkeypatch, tmp_path):
     from brain.sleep import SleepConsolidation
+
     w = _isolated_wiring(monkeypatch, tmp_path)
     w.add("frontal.executive", "frontal.drafter_C", weight=1.5)
     sc = SleepConsolidation(_StubRouter(), _StubSchema(), _StubEpisodic(), wiring=w)
@@ -227,9 +266,11 @@ def test_hebbian_pass_decreases_on_negative_outcome(monkeypatch, tmp_path):
 
 # ── New field coverage ───────────────────────────────────────────────────────
 
+
 def test_critic_ran_false_zeroes_critic_term(monkeypatch, tmp_path):
     """When critic_ran=False, the critic term must be exactly 0 regardless of overall."""
     from brain.sleep import SleepConsolidation
+
     w = _isolated_wiring(monkeypatch, tmp_path)
     sc = SleepConsolidation(_StubRouter(), _StubSchema(), _StubEpisodic(), wiring=w)
     # overall=0.9 but critic_ran=False — critic_term should be 0
@@ -241,6 +282,7 @@ def test_critic_ran_false_zeroes_critic_term(monkeypatch, tmp_path):
 def test_critic_ran_true_contributes_critic_term(monkeypatch, tmp_path):
     """When critic_ran=True, the critic term must be non-zero for a non-0.5 score."""
     from brain.sleep import SleepConsolidation
+
     w = _isolated_wiring(monkeypatch, tmp_path)
     sc = SleepConsolidation(_StubRouter(), _StubSchema(), _StubEpisodic(), wiring=w)
     trace = _make_trace(DA=0.5, prior_DA=0.5, critic_overall=0.9, critic_ran=True)
@@ -251,6 +293,7 @@ def test_critic_ran_true_contributes_critic_term(monkeypatch, tmp_path):
 def test_user_emotion_read_from_trace_field(monkeypatch, tmp_path):
     """user_emotion is read from trace.user_emotion, not from draft_scores."""
     from brain.sleep import SleepConsolidation
+
     w = _isolated_wiring(monkeypatch, tmp_path)
     sc = SleepConsolidation(_StubRouter(), _StubSchema(), _StubEpisodic(), wiring=w)
     # Positive user emotion should push outcome up
@@ -264,6 +307,7 @@ def test_user_emotion_read_from_trace_field(monkeypatch, tmp_path):
 def test_prior_neuromod_missing_produces_zero_da_delta(monkeypatch, tmp_path):
     """When prior_neuromod is absent (old traces), da_delta should be ~0 (fallback da_prior=da)."""
     from brain.sleep import SleepConsolidation
+
     w = _isolated_wiring(monkeypatch, tmp_path)
     sc = SleepConsolidation(_StubRouter(), _StubSchema(), _StubEpisodic(), wiring=w)
     trace = _make_trace(DA=0.8, prior_DA=0.8)  # same = no delta
@@ -274,6 +318,7 @@ def test_prior_neuromod_missing_produces_zero_da_delta(monkeypatch, tmp_path):
 def test_outcome_breakdown_includes_da_prior_and_current(monkeypatch, tmp_path):
     """Breakdown dict must carry da_prior and da_current for observability."""
     from brain.sleep import SleepConsolidation
+
     w = _isolated_wiring(monkeypatch, tmp_path)
     sc = SleepConsolidation(_StubRouter(), _StubSchema(), _StubEpisodic(), wiring=w)
     trace = _make_trace(DA=0.7, prior_DA=0.4)
@@ -286,10 +331,11 @@ def test_outcome_breakdown_includes_da_prior_and_current(monkeypatch, tmp_path):
 
 # ── Drafter competition ───────────────────────────────────────────────────────
 
-def _make_multi_draft_trace(winner_idx=0, winner_score=0.9, loser_score=0.4,
-                             prior_DA=0.5, DA=0.7):
+
+def _make_multi_draft_trace(winner_idx=0, winner_score=0.9, loser_score=0.4, prior_DA=0.5, DA=0.7):
     """Two-drafter trace where winner_idx won and the other lost."""
     from brain.observability.timeline import TurnTrace
+
     t = TurnTrace(turn_id="comp_turn", session_id="s", user_input="x")
     t.neuromod = {"DA": DA, "GABA": 0.0, "ACh": 0.3, "Glu": 0.3}
     t.prior_neuromod = {"DA": prior_DA, "ACh": 0.3, "Glu": 0.3}
@@ -318,6 +364,7 @@ def _make_multi_draft_trace(winner_idx=0, winner_score=0.9, loser_score=0.4,
 
 def test_drafter_competition_strengthens_winner(monkeypatch, tmp_path):
     from brain.sleep import SleepConsolidation
+
     w = _isolated_wiring(monkeypatch, tmp_path)
     w.add("frontal.executive", "frontal.drafter_A", weight=1.0)
     w.add("frontal.executive", "frontal.drafter_B", weight=1.0)
@@ -326,8 +373,9 @@ def test_drafter_competition_strengthens_winner(monkeypatch, tmp_path):
     trace = _make_multi_draft_trace(winner_idx=0, winner_score=0.9, loser_score=0.4)
     gainers, losers = [], []
     # plasticity=1.0 for simplicity
-    sc._apply_drafter_competition(trace, outcome=0.5, plasticity=1.0,
-                                   gainers=gainers, losers=losers)
+    sc._apply_drafter_competition(
+        trace, outcome=0.5, plasticity=1.0, gainers=gainers, losers=losers
+    )
 
     winner_w = w.get_edge_weight("frontal.executive", "frontal.drafter_A")
     loser_w = w.get_edge_weight("frontal.executive", "frontal.drafter_B")
@@ -338,6 +386,7 @@ def test_drafter_competition_strengthens_winner(monkeypatch, tmp_path):
 
 def test_drafter_competition_skips_when_fewer_than_two_real_scored(monkeypatch, tmp_path):
     from brain.sleep import SleepConsolidation
+
     w = _isolated_wiring(monkeypatch, tmp_path)
     w.add("frontal.executive", "frontal.drafter_A", weight=1.0)
     sc = SleepConsolidation(_StubRouter(), _StubSchema(), _StubEpisodic(), wiring=w)
@@ -345,16 +394,18 @@ def test_drafter_competition_skips_when_fewer_than_two_real_scored(monkeypatch, 
     # Single draft with critic_ran=False — no competition should run
     trace = _make_trace(DA=0.7, prior_DA=0.5, critic_overall=0.8, critic_ran=False)
     gainers, losers = [], []
-    sc._apply_drafter_competition(trace, outcome=0.5, plasticity=1.0,
-                                   gainers=gainers, losers=losers)
+    sc._apply_drafter_competition(
+        trace, outcome=0.5, plasticity=1.0, gainers=gainers, losers=losers
+    )
     assert w.get_edge_weight("frontal.executive", "frontal.drafter_A") == pytest.approx(1.0)
     assert gainers == [] and losers == []
 
 
 def test_drafter_competition_skips_when_only_one_critic_ran(monkeypatch, tmp_path):
     """Two draft_scores but only one has critic_ran=True — no competition."""
-    from brain.sleep import SleepConsolidation
     from brain.observability.timeline import TurnTrace
+    from brain.sleep import SleepConsolidation
+
     w = _isolated_wiring(monkeypatch, tmp_path)
     w.add("frontal.executive", "frontal.drafter_A", weight=1.0)
     w.add("frontal.executive", "frontal.drafter_B", weight=1.0)
@@ -368,26 +419,35 @@ def test_drafter_competition_skips_when_only_one_critic_ran(monkeypatch, tmp_pat
         {"draft_id": "draft_1_t", "overall": 0.5, "selected": False, "critic_ran": False},
     ]
     gainers, losers = [], []
-    sc._apply_drafter_competition(t, outcome=0.5, plasticity=1.0,
-                                   gainers=gainers, losers=losers)
+    sc._apply_drafter_competition(t, outcome=0.5, plasticity=1.0, gainers=gainers, losers=losers)
     assert w.get_edge_weight("frontal.executive", "frontal.drafter_A") == pytest.approx(1.0)
     assert w.get_edge_weight("frontal.executive", "frontal.drafter_B") == pytest.approx(1.0)
 
 
 # ── frontal.py critic_ran flag ───────────────────────────────────────────────
 
+
 def test_frontal_single_draft_has_critic_ran_false():
     """Single-draft code path must set critic_ran=False."""
     from brain.clusters.frontal import FrontalCluster
+
     fc = FrontalCluster.__new__(FrontalCluster)
     fc.last_turn_draft_scores = []
     # Simulate the single-draft assignment at the bottom of process()
     draft_id = "draft_0_xyz"
-    fc.last_turn_draft_scores = [{
-        "draft_id": draft_id,
-        "coherence": 0.8, "relevance": 0.8, "tone_fit": 0.8, "empathy_score": 0.5,
-        "overall": 0.8, "selected": True, "vetoed": False, "critic_ran": False,
-    }]
+    fc.last_turn_draft_scores = [
+        {
+            "draft_id": draft_id,
+            "coherence": 0.8,
+            "relevance": 0.8,
+            "tone_fit": 0.8,
+            "empathy_score": 0.5,
+            "overall": 0.8,
+            "selected": True,
+            "vetoed": False,
+            "critic_ran": False,
+        }
+    ]
     selected = next(d for d in fc.last_turn_draft_scores if d["selected"])
     assert selected["critic_ran"] is False
 
@@ -395,6 +455,7 @@ def test_frontal_single_draft_has_critic_ran_false():
 def test_skip_threshold_lowered_to_002(monkeypatch, tmp_path):
     """Outcome of 0.03 should now pass through (old threshold was 0.05)."""
     from brain.sleep import SleepConsolidation
+
     w = _isolated_wiring(monkeypatch, tmp_path)
     sc = SleepConsolidation(_StubRouter(), _StubSchema(), _StubEpisodic(), wiring=w)
     trace = _make_trace()

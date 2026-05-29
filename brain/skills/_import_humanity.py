@@ -13,6 +13,7 @@ One-shot but kept in repo so re-runs are easy after `npx` updates.
 
 Run:  python -m brain.skills._import_humanity
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -122,7 +123,9 @@ def tier_of(name: str, category: str) -> int:
 
 async def main() -> None:
     if not SOURCE_DIR.exists():
-        print(f"[!] {SOURCE_DIR} does not exist — run `npx @human-avatar/skills-for-humanity --scope project` first.")
+        print(
+            f"[!] {SOURCE_DIR} does not exist — run `npx @human-avatar/skills-for-humanity --scope project` first."
+        )
         return
 
     DEST_DIR.mkdir(parents=True, exist_ok=True)
@@ -153,13 +156,16 @@ async def main() -> None:
         tier = tier_of(name, cat)
 
         # Reassemble file with cleaned body
-        out = f"---\nname: {name}\ndescription: \"{description}\"\ncategory: {cat}\nis_router: {str(router_flag).lower()}\ntier: {tier}\n---\n\n{body_clean.strip()}\n"
+        out = f'---\nname: {name}\ndescription: "{description}"\ncategory: {cat}\nis_router: {str(router_flag).lower()}\ntier: {tier}\n---\n\n{body_clean.strip()}\n'
         out_path = DEST_DIR / f"{name}.md"
 
         # Don't clobber an existing brain skill that isn't a humanity import.
         if out_path.exists():
             existing = out_path.read_text(encoding="utf-8")
-            if "# imported from skills-for-humanity" not in existing and "category:" not in existing[:200]:
+            if (
+                "# imported from skills-for-humanity" not in existing
+                and "category:" not in existing[:200]
+            ):
                 skipped.append(f"{name} (collision with existing brain skill)")
                 continue
 
@@ -173,24 +179,32 @@ async def main() -> None:
             print(f"  [warn] embedding failed for {name}")
             vec = [0.0] * 768
 
-        index.append({
-            "name": name,
-            "category": cat,
-            "is_router": router_flag,
-            "tier": tier,
-            "description": description,
-            "embedding": vec,
-        })
+        index.append(
+            {
+                "name": name,
+                "category": cat,
+                "is_router": router_flag,
+                "tier": tier,
+                "description": description,
+                "embedding": vec,
+            }
+        )
 
         if len(written) % 25 == 0:
             print(f"  …{len(written)} written")
 
     INDEX_PATH.write_text(json.dumps({"skills": index}, indent=2), encoding="utf-8")
-    TIERS_PATH.write_text(json.dumps({
-        "tier_1": TIER_1_NAMES,
-        "tier_3_categories": TIER_3_CATEGORIES,
-        "tier_3_skills": TIER_3_INDIVIDUAL,
-    }, indent=2), encoding="utf-8")
+    TIERS_PATH.write_text(
+        json.dumps(
+            {
+                "tier_1": TIER_1_NAMES,
+                "tier_3_categories": TIER_3_CATEGORIES,
+                "tier_3_skills": TIER_3_INDIVIDUAL,
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
 
     by_tier = {1: 0, 2: 0, 3: 0}
     routers_n = 0

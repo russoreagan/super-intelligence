@@ -4,12 +4,10 @@ Unit tests for SkillSelector — the conversational/autonomous skill router.
 These tests stub out LLM calls but use the real embedding index produced by
 brain/skills/_import_humanity.py. The index must exist for tests to run.
 """
+
 from __future__ import annotations
 
-import asyncio
-import json
-from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -18,7 +16,6 @@ from brain.clusters.skill_selector import (
     ActiveSkillContext,
     SkillSelector,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -34,6 +31,7 @@ pytestmark = pytest.mark.skipif(
 def _stub_router():
     """Minimal router stub — no HTTP, no Ollama. Embed returns canned vectors."""
     from types import SimpleNamespace
+
     router = SimpleNamespace()
     router.embed = AsyncMock(return_value=None)
     return router
@@ -61,6 +59,7 @@ def _embedding_for(selector: SkillSelector, name: str) -> list[float]:
 # Gate
 # ---------------------------------------------------------------------------
 
+
 def test_gate_chitchat_off():
     s = _selector_with_stubbed_cells()
     assert s.gate_conversational(response_type="chitchat", user_emotion="") is False
@@ -80,6 +79,7 @@ def test_gate_user_emotion_on_even_for_chitchat():
 # Gated-out path
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_simple_hi_gates_out():
     s = _selector_with_stubbed_cells()
@@ -98,16 +98,21 @@ async def test_simple_hi_gates_out():
 # Tier 1 baseline
 # ---------------------------------------------------------------------------
 
+
 def test_tier1_contains_expected_names():
     s = _selector_with_stubbed_cells()
     assert set(s.tier1_names) == {
-        "logic-check", "communication-clarity-audit", "ethics-bias-check", "emotional",
+        "logic-check",
+        "communication-clarity-audit",
+        "ethics-bias-check",
+        "emotional",
     }
 
 
 # ---------------------------------------------------------------------------
 # Index ranking (embedding-only, no LLM)
 # ---------------------------------------------------------------------------
+
 
 def test_index_ranks_skill_against_itself_highest():
     """The skill that matches the query exactly (by reusing its own embedding)
@@ -136,6 +141,7 @@ def test_tier3_filter_kicks_in_below_threshold():
 # ---------------------------------------------------------------------------
 # Sticky-context drift
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_active_context_drift_clears_when_topic_changes():
@@ -194,6 +200,7 @@ async def test_active_context_reused_when_topic_persists():
 # Leaf lock-in after a guided question
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_lock_leaf_from_reply_picks_leaf_in_active_category():
     s = _selector_with_stubbed_cells()
@@ -216,6 +223,7 @@ async def test_lock_leaf_from_reply_picks_leaf_in_active_category():
 # Background-explore writes candidate list
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_background_explore_writes_candidates():
     s = _selector_with_stubbed_cells()
@@ -234,6 +242,7 @@ async def test_background_explore_writes_candidates():
 # ---------------------------------------------------------------------------
 # Rumination flavor + chain synthesis
 # ---------------------------------------------------------------------------
+
 
 def test_fallback_skill_respects_flavor():
     s = _selector_with_stubbed_cells()
@@ -258,9 +267,11 @@ def test_fallback_skill_respects_flavor():
 async def test_meta_decide_includes_flavor_hint():
     s = _selector_with_stubbed_cells()
     captured = {}
+
     async def _capture(msgs):
         captured["content"] = msgs[0]["content"]
         return '{"mode": "stop", "skill": null, "base_idx": 0}'
+
     s._meta_cell.call = _capture
     chain = [{"thought": "seed", "skill": None, "parent": None, "mode": "seed"}]
     await s._meta_decide(chain, flavor="anxious")
@@ -276,12 +287,20 @@ async def test_synthesize_chain_picks_strongest_take():
     chain = [
         {"thought": seed, "skill": None, "parent": None, "mode": "seed"},
         # Near-verbatim restatement of the seed → low novelty.
-        {"thought": "the cadence of our check ins feels off lately",
-         "skill": "logic-check", "parent": 0, "mode": "transform"},
+        {
+            "thought": "the cadence of our check ins feels off lately",
+            "skill": "logic-check",
+            "parent": 0,
+            "mode": "transform",
+        },
         # A genuinely different, substantive take → should win.
-        {"thought": "Perhaps establishing a predictable weekly ritual would remove "
-                    "the ambiguity entirely and rebuild a sense of dependable rhythm.",
-         "skill": "systems-feedback-mapping", "parent": 0, "mode": "branch"},
+        {
+            "thought": "Perhaps establishing a predictable weekly ritual would remove "
+            "the ambiguity entirely and rebuild a sense of dependable rhythm.",
+            "skill": "systems-feedback-mapping",
+            "parent": 0,
+            "mode": "branch",
+        },
     ]
     final = await s._synthesize_chain(chain)
     assert "predictable weekly ritual" in final
@@ -293,7 +312,8 @@ async def test_ruminate_returns_chain_and_respects_iter_cap():
     # Meta-cell always asks to transform with a valid skill, so the loop runs to
     # the iter cap; _apply_skill is stubbed to a deterministic string.
     s._meta_cell.call = AsyncMock(
-        return_value='{"mode": "transform", "skill": "logic-check", "base_idx": 0}')
+        return_value='{"mode": "transform", "skill": "logic-check", "base_idx": 0}'
+    )
     s._apply_skill = AsyncMock(return_value="a refined take")
     final, chain = await s.ruminate("seed thought", max_iters=3, time_budget_s=30)
     assert isinstance(final, str) and final

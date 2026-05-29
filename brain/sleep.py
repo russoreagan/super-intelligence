@@ -6,6 +6,7 @@ Uses batch-friendly API calls (no real-time constraint).
 
 v0.2 feature.
 """
+
 from __future__ import annotations
 
 import logging
@@ -19,7 +20,6 @@ from brain.model_router import ModelRouter
 from brain.observability.decisions import decisions
 from brain.second_brain.store import EpisodicStore, SchemaStore
 from brain.security import sanitize_fact
-from brain.settings import settings
 from brain.sleep_prompts import (
     EPISODE_SYNTHESIS_SYSTEM,
     PERSONALITY_OBSERVATION_SYSTEM,
@@ -33,8 +33,13 @@ logger = logging.getLogger(__name__)
 
 
 class SleepConsolidation:
-    def __init__(self, router: ModelRouter, schema: SchemaStore,
-                 episodic: EpisodicStore, wiring: Wiring | None = None) -> None:
+    def __init__(
+        self,
+        router: ModelRouter,
+        schema: SchemaStore,
+        episodic: EpisodicStore,
+        wiring: Wiring | None = None,
+    ) -> None:
         self._router = router
         self._schema = schema
         self._episodic = episodic
@@ -88,9 +93,13 @@ class SleepConsolidation:
         )
         self._personality_observer.set_router(router)
 
-    async def consolidate(self, session_id: str, session_traces: list[dict],
-                          full_traces: list | None = None,
-                          session_thoughts: list[dict] | None = None) -> None:
+    async def consolidate(
+        self,
+        session_id: str,
+        session_traces: list[dict],
+        full_traces: list | None = None,
+        session_thoughts: list[dict] | None = None,
+    ) -> None:
         """
         Run full consolidation after a session ends.
         session_traces: list of {user_input, entity_response, emotion, topic_tags} dicts.
@@ -103,8 +112,11 @@ class SleepConsolidation:
         if not session_traces:
             return
 
-        logger.info("[Memory consolidation] Processing %d turns from session %s",
-                    len(session_traces), session_id)
+        logger.info(
+            "[Memory consolidation] Processing %d turns from session %s",
+            len(session_traces),
+            session_id,
+        )
         start = time.time()
 
         # ── Hebbian pass (independent of LLM consolidation; runs synchronously) ──
@@ -127,7 +139,7 @@ class SleepConsolidation:
             turn_id = f"sleep_{session_id}_{speaker or 'primary'}"
             self._synthesizer.reset_turn(turn_id)
             batch_text = "\n".join(
-                f"Turn {i+1}: User: {t.get('user_input', '')[:200]} | "
+                f"Turn {i + 1}: User: {t.get('user_input', '')[:200]} | "
                 f"Brain: {t.get('entity_response', '')[:200]}"
                 for i, t in enumerate(turns)
             )
@@ -139,8 +151,9 @@ class SleepConsolidation:
                 fact = sanitize_fact(raw_fact)
                 if fact:
                     await self._schema.aappend_fact(schema_file, fact)
-                    logger.debug("[Memory consolidation] Writing fact to %s: %s",
-                                 schema_file, fact[:80])
+                    logger.debug(
+                        "[Memory consolidation] Writing fact to %s: %s", schema_file, fact[:80]
+                    )
 
             all_topic_clusters.extend(s.get("topic_clusters", []))
             all_response_patterns.extend(s.get("response_patterns", []))
@@ -155,7 +168,7 @@ class SleepConsolidation:
 
         # Reconstruct batch_text for the self-model update (uses all turns)
         batch_text = "\n".join(
-            f"Turn {i+1}: User: {t.get('user_input', '')[:200]} | "
+            f"Turn {i + 1}: User: {t.get('user_input', '')[:200]} | "
             f"Brain: {t.get('entity_response', '')[:200]}"
             for i, t in enumerate(session_traces[-20:])
         )
@@ -190,30 +203,59 @@ class SleepConsolidation:
     # ── Personality observation ───────────────────────────────────────────────
 
     _JOKE_MARKERS = ("haha", "lol", "lmao", "rofl", "😂", "🤣", "😆", "😄")
-    _FRUSTRATION_EMOTIONS = frozenset({
-        "frustrated", "annoyed", "angry", "disappointed", "irritated",
-    })
+    _FRUSTRATION_EMOTIONS = frozenset(
+        {
+            "frustrated",
+            "annoyed",
+            "angry",
+            "disappointed",
+            "irritated",
+        }
+    )
     _APPROVAL_PATTERNS = (
-        "want me to", "should i", "shall i", "would you like me to",
-        "do you want me to", "let me know if",
+        "want me to",
+        "should i",
+        "shall i",
+        "would you like me to",
+        "do you want me to",
+        "let me know if",
     )
     _CANCEL_PATTERNS = (
-        "no thanks", "not now", "never mind", "nevermind", "skip", "cancel",
-        "stop", "don't", "do not",
+        "no thanks",
+        "not now",
+        "never mind",
+        "nevermind",
+        "skip",
+        "cancel",
+        "stop",
+        "don't",
+        "do not",
     )
 
     # Coarse valence for the user_emotion vocabulary the temporal lobe emits.
     # Used to detect mood SHIFTS turn-to-turn — we don't need fine precision,
     # only sign + magnitude. Unknown labels treated as 0.0.
     _USER_EMOTION_VALENCE: dict[str, float] = {
-        "happy": 0.7, "playful": 0.6, "amused": 0.6, "warm": 0.6,
-        "affectionate": 0.8, "excited": 0.7,
-        "curious": 0.4, "engaged": 0.4, "surprised": 0.1,
+        "happy": 0.7,
+        "playful": 0.6,
+        "amused": 0.6,
+        "warm": 0.6,
+        "affectionate": 0.8,
+        "excited": 0.7,
+        "curious": 0.4,
+        "engaged": 0.4,
+        "surprised": 0.1,
         "neutral": 0.0,
-        "tired": -0.3, "confused": -0.3,
-        "disappointed": -0.5, "annoyed": -0.5, "frustrated": -0.6,
+        "tired": -0.3,
+        "confused": -0.3,
+        "disappointed": -0.5,
+        "annoyed": -0.5,
+        "frustrated": -0.6,
         "angry": -0.8,
-        "sad": -0.6, "anxious": -0.6, "distressed": -0.7, "struggling": -0.5,
+        "sad": -0.6,
+        "anxious": -0.6,
+        "distressed": -0.7,
+        "struggling": -0.5,
     }
 
     @classmethod
@@ -241,8 +283,10 @@ class SleepConsolidation:
             tags.append("asked_for_approval")
         if any(w in r for w in ("sorry", "apologies", "my mistake", "i was wrong")):
             tags.append("apology")
-        if any(w in r for w in ("i did", "i ran", "i checked", "i pulled",
-                                 "i wrote", "i added", "i removed")):
+        if any(
+            w in r
+            for w in ("i did", "i ran", "i checked", "i pulled", "i wrote", "i added", "i removed")
+        ):
             tags.append("reported_action")
         return tags
 
@@ -262,16 +306,16 @@ class SleepConsolidation:
             tags = self._response_tags(cur.get("entity_response") or "")
             for tag in tags:
                 shifts_by_tag[tag].append(delta)
-            episodes.append({
-                "delta": round(delta, 2),
-                "from": cur.get("user_emotion") or "neutral",
-                "to": nxt.get("user_emotion") or "neutral",
-                "brain_response": (cur.get("entity_response") or "")[:180]
-                                  .replace("\n", " "),
-                "next_user_input": (nxt.get("user_input") or "")[:140]
-                                   .replace("\n", " "),
-                "response_tags": tags,
-            })
+            episodes.append(
+                {
+                    "delta": round(delta, 2),
+                    "from": cur.get("user_emotion") or "neutral",
+                    "to": nxt.get("user_emotion") or "neutral",
+                    "brain_response": (cur.get("entity_response") or "")[:180].replace("\n", " "),
+                    "next_user_input": (nxt.get("user_input") or "")[:140].replace("\n", " "),
+                    "response_tags": tags,
+                }
+            )
         # Aggregate: per-tag mean delta + sample count.
         tag_summary: dict[str, dict] = {}
         for tag, deltas in shifts_by_tag.items():
@@ -334,7 +378,7 @@ class SleepConsolidation:
                 hesitant_turns += 1
             if any(p in br for p in self._APPROVAL_PATTERNS):
                 approval_asked_turns += 1
-            user_lens.append(len((t.get("user_input") or "")))
+            user_lens.append(len(t.get("user_input") or ""))
             resp_lens.append(t.get("response_chars") or len(t.get("entity_response") or ""))
 
         def _avg(xs: list[int]) -> int:
@@ -367,10 +411,9 @@ class SleepConsolidation:
             r"(?ms)^##[ \t]+" + re.escape(section) + r"[ \t]*\r?\n(.*?)(?=^##[ \t]|\Z)",
             content,
         )
-        return (m.group(1).strip() if m else "")
+        return m.group(1).strip() if m else ""
 
-    async def _observe_personality(self, session_id: str,
-                                   session_traces: list[dict]) -> None:
+    async def _observe_personality(self, session_id: str, session_traces: list[dict]) -> None:
         """Aggregate session signals per speaker and upsert the Communication
         style section of that speaker's schema file. Quietly skips on small
         sessions or LLM failures — the section just won't change."""
@@ -388,13 +431,14 @@ class SleepConsolidation:
             # us anything new about a person's style.
             if len(turns) < 3:
                 continue
-            schema_file = (self._schema.ensure_speaker_schema(speaker)
-                           if speaker else "user.md")
+            schema_file = self._schema.ensure_speaker_schema(speaker) if speaker else "user.md"
             current_content = self._schema.read(schema_file)
-            current_style = self._read_section(current_content,
-                                               "Communication style") or "(learning…)"
-            current_mood_response = self._read_section(
-                current_content, "Mood response patterns") or "(learning…)"
+            current_style = (
+                self._read_section(current_content, "Communication style") or "(learning…)"
+            )
+            current_mood_response = (
+                self._read_section(current_content, "Mood response patterns") or "(learning…)"
+            )
             stats = self._personality_stats(turns)
             mood = self._mood_shift_episodes(turns)
             sample_lines = [
@@ -414,12 +458,11 @@ class SleepConsolidation:
             turn_id = f"sleep_{session_id}_personality_{speaker or 'primary'}"
             self._personality_observer.reset_turn(turn_id)
             try:
-                raw = await self._personality_observer.call(
-                    [{"role": "user", "content": payload}]
-                )
+                raw = await self._personality_observer.call([{"role": "user", "content": payload}])
             except Exception as exc:
-                logger.warning("[Personality observer] LLM call failed for %s: %s",
-                               speaker or "primary", exc)
+                logger.warning(
+                    "[Personality observer] LLM call failed for %s: %s", speaker or "primary", exc
+                )
                 continue
             result = safe_json_parse(raw) or {}
 
@@ -429,31 +472,38 @@ class SleepConsolidation:
                     return ""
                 text = re.sub(
                     r"(?im)^##[ \t]+" + re.escape(section_heading) + r"[ \t]*\r?\n",
-                    "", text,
+                    "",
+                    text,
                 ).strip()
                 if not text.startswith("-"):
                     text = "- " + text.replace("\n", "\n- ")
                 return text
 
-            new_style = _clean_bullets(result.get("communication_style"),
-                                       "Communication style")
-            new_mood = _clean_bullets(result.get("mood_response_patterns"),
-                                      "Mood response patterns")
+            new_style = _clean_bullets(result.get("communication_style"), "Communication style")
+            new_mood = _clean_bullets(
+                result.get("mood_response_patterns"), "Mood response patterns"
+            )
 
             if new_style:
-                await self._schema.upsert_section(schema_file,
-                                                  "Communication style", new_style)
-                logger.info("[Personality observer] Updated %s ## Communication style "
-                            "(%d turns observed)", schema_file, len(turns))
+                await self._schema.upsert_section(schema_file, "Communication style", new_style)
+                logger.info(
+                    "[Personality observer] Updated %s ## Communication style (%d turns observed)",
+                    schema_file,
+                    len(turns),
+                )
             if new_mood:
-                await self._schema.upsert_section(schema_file,
-                                                  "Mood response patterns", new_mood)
-                logger.info("[Personality observer] Updated %s ## Mood response "
-                            "patterns (%d shifts observed)",
-                            schema_file, len(mood["top_moments"]))
+                await self._schema.upsert_section(schema_file, "Mood response patterns", new_mood)
+                logger.info(
+                    "[Personality observer] Updated %s ## Mood response "
+                    "patterns (%d shifts observed)",
+                    schema_file,
+                    len(mood["top_moments"]),
+                )
             if not new_style and not new_mood:
-                logger.debug("[Personality observer] No usable output for %s — skipping",
-                             speaker or "primary")
+                logger.debug(
+                    "[Personality observer] No usable output for %s — skipping",
+                    speaker or "primary",
+                )
 
     # ── Hebbian delegation (preserve public API for callers and tests) ────────
 
@@ -469,8 +519,9 @@ class SleepConsolidation:
         assert self._hebbian is not None, "Wiring required for Hebbian methods"
         return self._hebbian._should_skip_hebbian(trace, outcome)
 
-    def _apply_drafter_competition(self, trace, outcome: float, plasticity: float,
-                                   gainers: list, losers: list) -> None:
+    def _apply_drafter_competition(
+        self, trace, outcome: float, plasticity: float, gainers: list, losers: list
+    ) -> None:
         assert self._hebbian is not None, "Wiring required for Hebbian methods"
         self._hebbian._apply_drafter_competition(trace, outcome, plasticity, gainers, losers)
 
@@ -501,9 +552,9 @@ class SleepConsolidation:
 
     # ── REM-style thought consolidation ──────────────────────────────────────
 
-    async def consolidate_thoughts(self, session_id: str,
-                                   session_thoughts: list[dict],
-                                   topic_clusters: list[str] | None = None) -> None:
+    async def consolidate_thoughts(
+        self, session_id: str, session_thoughts: list[dict], topic_clusters: list[str] | None = None
+    ) -> None:
         """REM-style pass: find recurring preoccupations in the session's inner
         monologue, cross-connect them to episodic topics, and write insights +
         open questions into self.md.
@@ -517,15 +568,12 @@ class SleepConsolidation:
             return
 
         # Identify recurring angles (recurrence ≥ 2 occurrences)
-        angle_counts: Counter = Counter(
-            t["angle"] for t in session_thoughts if t.get("angle")
-        )
+        angle_counts: Counter = Counter(t["angle"] for t in session_thoughts if t.get("angle"))
         recurring_angles: set[str] = {a for a, c in angle_counts.items() if c >= 2}
 
         # Filter: salient OR recurring-angle thoughts only
         notable = [
-            t for t in session_thoughts
-            if t.get("salient") or t.get("angle") in recurring_angles
+            t for t in session_thoughts if t.get("salient") or t.get("angle") in recurring_angles
         ]
 
         if not notable:
@@ -534,7 +582,8 @@ class SleepConsolidation:
 
         logger.info(
             "[Memory consolidation] Thought pass: %d notable / %d total thoughts",
-            len(notable), len(session_thoughts),
+            len(notable),
+            len(session_thoughts),
         )
 
         # Build prompt
@@ -600,9 +649,12 @@ class SleepConsolidation:
             if match:
                 existing_content = match.group(2).rstrip()
                 new_content = f"{existing_content}\n{oq_block}" if existing_content else oq_block
-                updated = re.sub(oq_pattern,
-                                 lambda m: m.group(1) + new_content + "\n" + m.group(3),
-                                 updated, flags=re.DOTALL)
+                updated = re.sub(
+                    oq_pattern,
+                    lambda m: m.group(1) + new_content + "\n" + m.group(3),
+                    updated,
+                    flags=re.DOTALL,
+                )
             else:
                 # Append a new section at the end
                 updated = updated.rstrip() + f"\n\n## Open Questions\n{oq_block}\n"
@@ -626,11 +678,9 @@ class SleepConsolidation:
         )
 
         if preoccupations:
-            logger.info("[Memory consolidation] Preoccupations: %s",
-                        "; ".join(preoccupations[:3]))
+            logger.info("[Memory consolidation] Preoccupations: %s", "; ".join(preoccupations[:3]))
         if insights:
-            logger.info("[Memory consolidation] Insights: %s",
-                        "; ".join(insights[:2]))
+            logger.info("[Memory consolidation] Insights: %s", "; ".join(insights[:2]))
 
         # Write open-questions changes only if the content was restructured
         if open_questions and updated != existing:

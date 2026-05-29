@@ -21,16 +21,17 @@ Tests for features added in the startup + consolidation work:
   - consolidate_now() returns {ran: False} while a lock is already held
   - consolidate_now() returns {ran: False} when trace buffer is empty
 """
+
 from __future__ import annotations
 
 import asyncio
 from collections import deque
-from unittest.mock import AsyncMock, MagicMock, patch
-
+from unittest.mock import AsyncMock, MagicMock
 
 # ---------------------------------------------------------------------------
 # Shared DMN skeleton
 # ---------------------------------------------------------------------------
+
 
 def _make_dmn(monologue_response: str = ""):
     from brain.dmn import DefaultModeNetwork
@@ -39,8 +40,15 @@ def _make_dmn(monologue_response: str = ""):
     dmn._bus = MagicMock()
     dmn._bus.publish_dict = AsyncMock()
     dmn._bus.neuromod.snapshot.return_value = {
-        "DA": 0.5, "GABA": 0.1, "ACh": 0.3, "Glu": 0.3,
-        "NE": 0.2, "5HT": 0.5, "CORT": 0.1, "OXT": 0.3, "AEA": 0.2,
+        "DA": 0.5,
+        "GABA": 0.1,
+        "ACh": 0.3,
+        "Glu": 0.3,
+        "NE": 0.2,
+        "5HT": 0.5,
+        "CORT": 0.1,
+        "OXT": 0.3,
+        "AEA": 0.2,
     }
     dmn._router = MagicMock()
     dmn._hippocampus = None
@@ -93,6 +101,7 @@ def _make_dmn(monologue_response: str = ""):
 # prime_startup()
 # ---------------------------------------------------------------------------
 
+
 class TestPrimeStartup:
     def test_prime_startup_fires_tick_and_queues_candidate(self):
         """When the monologue returns a spoken form, prime_startup queues a candidate."""
@@ -128,11 +137,14 @@ class TestPrimeStartup:
 # Memory seeding via update_context
 # ---------------------------------------------------------------------------
 
+
 class TestDMNMemorySeed:
     def test_seeded_context_appears_in_monologue_prompt(self):
         """After update_context with last-session text, the prompt includes it."""
         dmn = _make_dmn(monologue_response="")
-        last_session = "Last session:\n\n[code review]\n  User: check run.py\n  Me: found three issues"
+        last_session = (
+            "Last session:\n\n[code review]\n  User: check run.py\n  Me: found three issues"
+        )
         dmn.update_context(last_session)
         asyncio.run(dmn._tick())
         call_args = dmn._monologue_cell.call.call_args
@@ -159,9 +171,11 @@ class TestDMNMemorySeed:
 # Temporal affect lexicon (_heuristic_affect)
 # ---------------------------------------------------------------------------
 
+
 class TestHeuristicAffect:
     def _affect(self, text):
         from brain.clusters.temporal import _heuristic_affect
+
         return _heuristic_affect(text)
 
     def test_love_is_positive_and_affectionate(self):
@@ -209,6 +223,7 @@ class TestHeuristicAffect:
 # ---------------------------------------------------------------------------
 # Sleep consolidation single-flight guard
 # ---------------------------------------------------------------------------
+
 
 class TestConsolidationGuard:
     def _make_session_stub(self, n_traces: int = 3):

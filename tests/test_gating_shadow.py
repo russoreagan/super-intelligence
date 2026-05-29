@@ -7,6 +7,7 @@ measurement — but the gated prediction still drives behavior (zero behavior
 change), a shadow outcome is recorded, and the true label is fed back into
 predictor history (self-correction).
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -20,6 +21,7 @@ from brain.settings import settings
 class _StubExecutive:
     """Stands in for the executive IntegratorCell. Records call count and
     returns a fixed instruction JSON differing from the gated prediction."""
+
     def __init__(self, response_json: str):
         self._json = response_json
         self.calls = 0
@@ -38,7 +40,7 @@ def _frontal_with_gate(stub, trace):
     f._executive = stub
     # Avoid the full context-builder plumbing.
     f._build_exec_context = lambda *a, **k: ""  # type: ignore[method-assign]
-    f._record_trace_bypass = lambda: trace      # type: ignore[method-assign]
+    f._record_trace_bypass = lambda: trace  # type: ignore[method-assign]
     return f
 
 
@@ -57,7 +59,8 @@ def test_gated_skip_with_shadow_validation():
         # Stubbed executive returns a DIFFERENT tuple than the gated prediction,
         # so we can assert behavior used the prediction (not the shadow result).
         stub = _StubExecutive(
-            '{"response_type": "explainer", "target_length": "long", "tone": "formal"}')
+            '{"response_type": "explainer", "target_length": "long", "tone": "formal"}'
+        )
         f = _frontal_with_gate(stub, trace)
 
         features = {"intent": "chitchat", "register": "casual", "requires_memory": False}
@@ -69,8 +72,9 @@ def test_gated_skip_with_shadow_validation():
         for _ in range(3):
             f._exec_predictor.record(exec_sig, gated_label)
 
-        instruction = _run(f._run_executive(
-            {"DA": 0.5, "GABA": 0.0}, {}, exec_sig, features, affect, {}, "", "t1"))
+        instruction = _run(
+            f._run_executive({"DA": 0.5, "GABA": 0.0}, {}, exec_sig, features, affect, {}, "", "t1")
+        )
 
         # 1. Behavior used the GATED prediction, not the shadow LLM output.
         assert instruction["response_type"] == "chitchat"
@@ -86,7 +90,7 @@ def test_gated_skip_with_shadow_validation():
         row = shadow_rows[0]
         assert row["integrator_woken"] is False
         assert row["actual"] == ["explainer", "long", "formal"]
-        assert row["correct"] is False            # prediction != shadow actual
+        assert row["correct"] is False  # prediction != shadow actual
         assert row["match_frac"] == 0.0
 
         # 4. Self-correction: the true label was fed back into predictor history.
@@ -108,11 +112,12 @@ def test_gated_skip_without_shadow_does_not_run_llm():
         for _ in range(3):
             f._exec_predictor.record(exec_sig, ("chitchat", "brief", "warm"))
 
-        instruction = _run(f._run_executive(
-            {"DA": 0.5, "GABA": 0.0}, {}, exec_sig, features, affect, {}, "", "t2"))
+        instruction = _run(
+            f._run_executive({"DA": 0.5, "GABA": 0.0}, {}, exec_sig, features, affect, {}, "", "t2")
+        )
 
-        assert instruction["target_length"] == "brief"   # gated prediction used
-        assert stub.calls == 0                            # no LLM call at all
+        assert instruction["target_length"] == "brief"  # gated prediction used
+        assert stub.calls == 0  # no LLM call at all
         assert trace.llm_calls_saved == 1
         assert not [o for o in trace.predictor_outcomes if o.get("shadow")]
     finally:

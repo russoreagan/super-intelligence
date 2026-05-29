@@ -3,6 +3,7 @@ Temporal Lobe — language understanding + prosody.
 1 LLM understanding integrator + gating switches + predictor.
 Publishes structured features to the bus for all downstream clusters.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -64,7 +65,7 @@ TRIVIAL_PATTERNS = [
 CANNED_RESPONSES = {
     "greeting": ["Hey — what's on your mind?", "Hi. What are we working on?", "Hello."],
     "farewell": ["Later.", "Take care.", "Goodbye."],
-    "ack":      ["Got it.", "Sure.", "Okay."],
+    "ack": ["Got it.", "Sure.", "Okay."],
 }
 
 
@@ -81,17 +82,32 @@ def _is_trivial(text: str) -> tuple[bool, str]:
 
 
 def _detect_self_reference(text: str) -> bool:
-    patterns = ["what are you", "who are you", "do you remember", "how are you",
-                "what do you think of yourself", "your name", "you feel"]
+    patterns = [
+        "what are you",
+        "who are you",
+        "do you remember",
+        "how are you",
+        "what do you think of yourself",
+        "your name",
+        "you feel",
+    ]
     t = text.lower()
     return any(p in t for p in patterns)
 
 
 def _detect_epistemic_action(text: str) -> bool:
     """Is user using the brain as a cognitive tool — thinking out loud, recalling?"""
-    patterns = ["what was that", "i told you", "remind me", "help me think",
-                "what do you know about", "i was thinking", "so to recap",
-                "what were we", "we discussed"]
+    patterns = [
+        "what was that",
+        "i told you",
+        "remind me",
+        "help me think",
+        "what do you know about",
+        "i was thinking",
+        "so to recap",
+        "what were we",
+        "we discussed",
+    ]
     t = text.lower()
     return any(p in t for p in patterns)
 
@@ -101,19 +117,60 @@ def _detect_epistemic_action(text: str) -> bool:
 # to actually do something (not just reply conversationally).
 _TOOL_REQUEST_PATTERNS = [
     # Service / connector names
-    "claude", "claude code", "github", "ableton", "imessage", "messages",
-    "chrome", "browser", "adobe", "react aria",
+    "claude",
+    "claude code",
+    "github",
+    "ableton",
+    "imessage",
+    "messages",
+    "chrome",
+    "browser",
+    "adobe",
+    "react aria",
     # Imperative tool verbs
-    "ask claude", "use claude", "tell claude", "have claude",
-    "send a message", "send an imessage", "send a text",
-    "open ", "close ", "play ", "pause ", "search for", "look up",
-    "run ", "execute ", "create ", "make a ", "write a ", "save a ",
-    "read the", "read my", "list ", "find ", "delete ", "move ",
-    "look into", "look at", "look in", "check ", "check the", "check my",
-    "investigate", "browse", "explore", "directory", "folder",
+    "ask claude",
+    "use claude",
+    "tell claude",
+    "have claude",
+    "send a message",
+    "send an imessage",
+    "send a text",
+    "open ",
+    "close ",
+    "play ",
+    "pause ",
+    "search for",
+    "look up",
+    "run ",
+    "execute ",
+    "create ",
+    "make a ",
+    "write a ",
+    "save a ",
+    "read the",
+    "read my",
+    "list ",
+    "find ",
+    "delete ",
+    "move ",
+    "look into",
+    "look at",
+    "look in",
+    "check ",
+    "check the",
+    "check my",
+    "investigate",
+    "browse",
+    "explore",
+    "directory",
+    "folder",
     # Generic "do X" patterns
-    "can you do", "could you do", "go ahead and", "for me",
-    "try to use", "try using",
+    "can you do",
+    "could you do",
+    "go ahead and",
+    "for me",
+    "try to use",
+    "try using",
 ]
 
 
@@ -198,8 +255,12 @@ def _heuristic_affect(text: str) -> dict:
     paths used."""
     t = (text or "").lower()
     if not t.strip():
-        return {"sentiment": 0.0, "hostility": 0.0,
-                "user_emotion": "neutral", "user_tone_toward_ai": "neutral"}
+        return {
+            "sentiment": 0.0,
+            "hostility": 0.0,
+            "user_emotion": "neutral",
+            "user_tone_toward_ai": "neutral",
+        }
     sentiment = 0.0
     hostility = 0.0
     best_emotion: str | None = None
@@ -258,29 +319,49 @@ class TemporalCluster:
         # Switches (6 + predictor = 7; 1 inhibitory → ~14% inhibitory, acceptable for small cluster)
         # Modulator profiles encode each switch's biological identity — see plan
         # /Users/russ/.claude/plans/and-what-affects-these-memoized-parnas.md.
-        self._template_switch = SwitchNeuron("template_match", CLUSTER, polarity="excitatory",
-                                             threshold=0.5,
-                                             modulators={"ACh": +0.15})
+        self._template_switch = SwitchNeuron(
+            "template_match",
+            CLUSTER,
+            polarity="excitatory",
+            threshold=0.5,
+            modulators={"ACh": +0.15},
+        )
         self._length_switch = SwitchNeuron("length_bucket", CLUSTER, polarity="excitatory")
-        self._salience_prefilter = SwitchNeuron("salience_prefilter", CLUSTER, polarity="excitatory",
-                                                threshold=0.4,
-                                                # NE lowers floor (alert state = more things tripped),
-                                                # CORT raises it (stress narrows attention to true threats).
-                                                modulators={"DA": +0.10, "NE": -0.15, "CORT": +0.10})
-        self._self_ref_switch = SwitchNeuron("self_reference", CLUSTER, polarity="excitatory",
-                                             threshold=0.5,
-                                             modulators={"OXT": -0.10, "5HT": -0.10})
-        self._epistemic_switch = SwitchNeuron("epistemic_action", CLUSTER, polarity="excitatory",
-                                              threshold=0.5,
-                                              modulators={"ACh": -0.15})
+        self._salience_prefilter = SwitchNeuron(
+            "salience_prefilter",
+            CLUSTER,
+            polarity="excitatory",
+            threshold=0.4,
+            # NE lowers floor (alert state = more things tripped),
+            # CORT raises it (stress narrows attention to true threats).
+            modulators={"DA": +0.10, "NE": -0.15, "CORT": +0.10},
+        )
+        self._self_ref_switch = SwitchNeuron(
+            "self_reference",
+            CLUSTER,
+            polarity="excitatory",
+            threshold=0.5,
+            modulators={"OXT": -0.10, "5HT": -0.10},
+        )
+        self._epistemic_switch = SwitchNeuron(
+            "epistemic_action",
+            CLUSTER,
+            polarity="excitatory",
+            threshold=0.5,
+            modulators={"ACh": -0.15},
+        )
         # Note: GABA modulator was removed — the should_bypass_gating() helper
         # already forces the integrator awake at high GABA (emotional states
         # engage understanding, not less of it). The old {"GABA": -0.15}
         # contradicted that bypass and effectively cancelled out. ACh keeps the
         # integrator engaged on simple inputs when the brain is curious.
-        self._integrator_inhibitor = SwitchNeuron("integrator_inhibitor", CLUSTER, polarity="inhibitory",
-                                                  threshold=0.5,
-                                                  modulators={"ACh": +0.10})
+        self._integrator_inhibitor = SwitchNeuron(
+            "integrator_inhibitor",
+            CLUSTER,
+            polarity="inhibitory",
+            threshold=0.5,
+            modulators={"ACh": +0.10},
+        )
 
         self._inbox = bus.subscribe("sensory.text")
         # DMN's top-down prediction of the user's next message. Drained each
@@ -304,7 +385,9 @@ class TemporalCluster:
         try:
             msg: Message = await asyncio.wait_for(self._inbox.get(), timeout=25.0)
         except TimeoutError:
-            logger.warning("[Input parser] Timed out waiting for user message — no input arrived within 25s")
+            logger.warning(
+                "[Input parser] Timed out waiting for user message — no input arrived within 25s"
+            )
             return None
 
         if msg.expired:
@@ -325,12 +408,15 @@ class TemporalCluster:
         dmn_hit_overlap = 0.0
         if dmn_prediction and dmn_prediction.get("predicted_input"):
             from brain.voice_bridge import bleed_overlap as _word_overlap
+
             dmn_hit_overlap = _word_overlap(text, dmn_prediction["predicted_input"])
             if dmn_hit_overlap >= 0.5:
                 decisions.log(
-                    "dmn_prediction_hit", turn_id=turn_id, cluster=CLUSTER,
+                    "dmn_prediction_hit",
+                    turn_id=turn_id,
+                    cluster=CLUSTER,
                     reason=f"DMN guessed {dmn_prediction.get('predicted_input', '')[:60]!r}, "
-                           f"user said {text[:60]!r}, overlap {dmn_hit_overlap:.2f}",
+                    f"user said {text[:60]!r}, overlap {dmn_hit_overlap:.2f}",
                     predicted=dmn_prediction.get("predicted_input", "")[:120],
                     actual=text[:120],
                     overlap=round(dmn_hit_overlap, 3),
@@ -351,6 +437,7 @@ class TemporalCluster:
             # even on a trivial-pattern hit — engaging the LLM instead.
             self._template_switch.fire(0.7, trivial_type, {"text": text[:40]}, chem)
             import random
+
             canned = random.choice(CANNED_RESPONSES.get(trivial_type, ["..."]))
             _words = text.split()
             _aff = _heuristic_affect(text)
@@ -373,10 +460,17 @@ class TemporalCluster:
                 "raw_text": text,
                 "canned_response": canned,
                 "switch_only": True,
-                "msg_length": "tiny" if len(_words) <= 3 else "short" if len(_words) <= 15 else "long",
+                "msg_length": "tiny"
+                if len(_words) <= 3
+                else "short"
+                if len(_words) <= 15
+                else "long",
             }
             await self._bus.publish_dict("temporal.features", features, source=CLUSTER)
-            logger.debug("[Input parser] Trivial input detected (%s) — using canned response, skipping LLM", trivial_type)
+            logger.debug(
+                "[Input parser] Trivial input detected (%s) — using canned response, skipping LLM",
+                trivial_type,
+            )
             return features
 
         words = text.split()
@@ -394,8 +488,9 @@ class TemporalCluster:
 
         self_ref = _detect_self_reference(text)
         epistemic = _detect_epistemic_action(text)
-        memory_hint = epistemic or any(w in text.lower() for w in
-                                       ("remember", "last", "before", "told", "what was"))
+        memory_hint = epistemic or any(
+            w in text.lower() for w in ("remember", "last", "before", "told", "what was")
+        )
 
         if self_ref and self._self_ref_switch.should_fire(0.6, chem, turn_id):
             self._self_ref_switch.fire(0.6, "self_reference", snapshot=chem)
@@ -436,7 +531,13 @@ class TemporalCluster:
             bypass_reason = "tool_request_pattern"
 
         # If predictor is confident AND input is routine → skip integrator
-        if not bypass and not should_wake and not self_ref and not image_present and confidence > confidence_floor:
+        if (
+            not bypass
+            and not should_wake
+            and not self_ref
+            and not image_present
+            and confidence > confidence_floor
+        ):
             # Build a lightweight feature dict from switches only
             _aff = _heuristic_affect(text)
             features = {
@@ -464,9 +565,12 @@ class TemporalCluster:
             await self._bus.publish_dict("temporal.features", features, source=CLUSTER)
             self._integrator_inhibitor.fire(confidence, "integrator_skipped", snapshot=chem)
             decisions.log(
-                "skip_temporal_integrator", turn_id=turn_id, cluster=CLUSTER,
+                "skip_temporal_integrator",
+                turn_id=turn_id,
+                cluster=CLUSTER,
                 reason=f"predictor confidence {confidence:.2f} > {confidence_floor:.2f}; surprise {surprise:.2f}",
-                predicted=predicted_tag, confidence=round(confidence, 3),
+                predicted=predicted_tag,
+                confidence=round(confidence, 3),
                 surprise=round(surprise, 3),
                 inhibitor_weight=round(inhibitor_weight, 3),
                 cost_saved_est=0.0005,
@@ -474,47 +578,66 @@ class TemporalCluster:
             trace = self._record_trace()
             if trace is not None:
                 trace.llm_calls_saved += 1
-                trace.predictor_outcomes.append({
-                    "cluster": CLUSTER, "stage": "understanding",
-                    "predicted": predicted_tag, "actual": None,
-                    "confidence": round(confidence, 3),
-                    "surprise": round(surprise, 3),
-                    "integrator_woken": False,
-                    "bypass_reason": None, "correct": None,
-                })
+                trace.predictor_outcomes.append(
+                    {
+                        "cluster": CLUSTER,
+                        "stage": "understanding",
+                        "predicted": predicted_tag,
+                        "actual": None,
+                        "confidence": round(confidence, 3),
+                        "surprise": round(surprise, 3),
+                        "integrator_woken": False,
+                        "bypass_reason": None,
+                        "correct": None,
+                    }
+                )
 
             # Shadow-validation: occasionally run the understanding LLM anyway purely
             # for measurement. The fast-path features already drive behavior (we discard
             # the shadow parse → zero behavior change); we record whether the gated
             # intent matched the LLM's intent, and feed the true intent back into the
             # predictor history so a bad gate self-corrects.
+            from brain.settings import settings
+
             shadow_rate = float(settings.get("gating_shadow_sample_rate", 0.0))
             if shadow_rate > 0 and _random.random() < shadow_rate:
                 gated_intent = features["intent"]
                 self._understanding.reset_turn(turn_id)
-                shadow_raw = await self._understanding.call(
-                    [{"role": "user", "content": text}])
+                shadow_raw = await self._understanding.call([{"role": "user", "content": text}])
                 shadow_features = safe_json_parse(shadow_raw) or {}
                 actual_intent = shadow_features.get("intent", "other")
                 self._predictor.record(sig, actual_intent)
                 if trace is not None:
-                    trace.predictor_outcomes.append({
-                        "cluster": CLUSTER, "stage": "understanding",
-                        "predicted": gated_intent, "actual": actual_intent,
-                        "confidence": round(confidence, 3),
-                        "surprise": round(surprise, 3),
-                        "match_frac": round(prediction_match_frac(gated_intent, actual_intent), 3),
-                        "integrator_woken": False, "shadow": True,
-                        "bypass_reason": None,
-                        "correct": (gated_intent == actual_intent),
-                    })
+                    trace.predictor_outcomes.append(
+                        {
+                            "cluster": CLUSTER,
+                            "stage": "understanding",
+                            "predicted": gated_intent,
+                            "actual": actual_intent,
+                            "confidence": round(confidence, 3),
+                            "surprise": round(surprise, 3),
+                            "match_frac": round(
+                                prediction_match_frac(gated_intent, actual_intent), 3
+                            ),
+                            "integrator_woken": False,
+                            "shadow": True,
+                            "bypass_reason": None,
+                            "correct": (gated_intent == actual_intent),
+                        }
+                    )
                 decisions.log(
-                    "shadow_validate_understanding", turn_id=turn_id, cluster=CLUSTER,
-                    predicted=gated_intent, actual=actual_intent,
+                    "shadow_validate_understanding",
+                    turn_id=turn_id,
+                    cluster=CLUSTER,
+                    predicted=gated_intent,
+                    actual=actual_intent,
                     correct=(gated_intent == actual_intent),
                 )
 
-            logger.debug("[Input parser] Skipping LLM parse — predictor confident (%.2f), using fast-path features", confidence)
+            logger.debug(
+                "[Input parser] Skipping LLM parse — predictor confident (%.2f), using fast-path features",
+                confidence,
+            )
             return features
 
         # --- Integrator (LLM) ---
@@ -524,16 +647,28 @@ class TemporalCluster:
 
         features: dict = safe_json_parse(raw) or {}
         if not features:
-            logger.warning("[Input parser] LLM returned invalid JSON — using fallback feature defaults. Raw output: %s", raw[:200])
+            logger.warning(
+                "[Input parser] LLM returned invalid JSON — using fallback feature defaults. Raw output: %s",
+                raw[:200],
+            )
             _aff = _heuristic_affect(text)
-            features = {"intent": "other", "salience": 0.5, "requires_memory": False,
-                        "requires_vision": False, "requires_action": False,
-                        "epistemic_action": False,
-                        "hostility": _aff["hostility"], "sentiment": _aff["sentiment"],
-                        "user_emotion": _aff["user_emotion"],
-                        "user_tone_toward_ai": _aff["user_tone_toward_ai"],
-                        "topic_summary": "unknown", "entities": [], "register": "casual",
-                        "tense": "present", "time_reference": "none"}
+            features = {
+                "intent": "other",
+                "salience": 0.5,
+                "requires_memory": False,
+                "requires_vision": False,
+                "requires_action": False,
+                "epistemic_action": False,
+                "hostility": _aff["hostility"],
+                "sentiment": _aff["sentiment"],
+                "user_emotion": _aff["user_emotion"],
+                "user_tone_toward_ai": _aff["user_tone_toward_ai"],
+                "topic_summary": "unknown",
+                "entities": [],
+                "register": "casual",
+                "tense": "present",
+                "time_reference": "none",
+            }
         else:
             # LLM path: if the model omitted user_emotion (older prompts, partial JSON),
             # backfill from the cheap heuristic rather than letting downstream code
@@ -557,22 +692,30 @@ class TemporalCluster:
         # "tool: none") so this is a safe override.
         if _looks_like_tool_request(text) and not features.get("requires_action"):
             features["requires_action"] = True
-            logger.info("[Input parser] Tool-request pattern detected — forcing requires_action=true")
+            logger.info(
+                "[Input parser] Tool-request pattern detected — forcing requires_action=true"
+            )
 
         # Record actual for predictor learning + post-hoc accuracy
         actual_tag = features.get("intent", "other")
         trace = self._record_trace()
         if trace is not None:
-            trace.predictor_outcomes.append({
-                "cluster": CLUSTER, "stage": "understanding",
-                "predicted": predicted_tag, "actual": actual_tag,
-                "confidence": round(confidence, 3),
-                "surprise": round(surprise, 3),
-                "match_frac": round(prediction_match_frac(predicted_tag, actual_tag), 3) if predicted_tag else None,
-                "integrator_woken": True,
-                "bypass_reason": bypass_reason if bypass else None,
-                "correct": (predicted_tag == actual_tag) if predicted_tag else None,
-            })
+            trace.predictor_outcomes.append(
+                {
+                    "cluster": CLUSTER,
+                    "stage": "understanding",
+                    "predicted": predicted_tag,
+                    "actual": actual_tag,
+                    "confidence": round(confidence, 3),
+                    "surprise": round(surprise, 3),
+                    "match_frac": round(prediction_match_frac(predicted_tag, actual_tag), 3)
+                    if predicted_tag
+                    else None,
+                    "integrator_woken": True,
+                    "bypass_reason": bypass_reason if bypass else None,
+                    "correct": (predicted_tag == actual_tag) if predicted_tag else None,
+                }
+            )
         self._predictor.record(sig, features.get("intent", "other"))
 
         await self._bus.publish_dict("temporal.features", features, source=CLUSTER)
@@ -581,13 +724,19 @@ class TemporalCluster:
         if features.get("requires_memory"):
             await self._bus.publish_dict(
                 "mem.recall",
-                {"query": text, "entities": features.get("entities", []),
-                 "time_ref": features.get("time_reference", "none")},
+                {
+                    "query": text,
+                    "entities": features.get("entities", []),
+                    "time_ref": features.get("time_reference", "none"),
+                },
                 source=CLUSTER,
             )
 
-        logger.debug("[Input parser] Features: intent=%s salience=%.2f",
-                     features.get("intent"), features.get("salience", 0))
+        logger.debug(
+            "[Input parser] Features: intent=%s salience=%.2f",
+            features.get("intent"),
+            features.get("salience", 0),
+        )
         return features
 
     # ── Wiring-weight helpers ────────────────────────────────────────────────
@@ -618,7 +767,9 @@ class TemporalCluster:
             roll = "exploit"
 
         decisions.log(
-            "weighted_switch_order", turn_id=turn_id, cluster=CLUSTER,
+            "weighted_switch_order",
+            turn_id=turn_id,
+            cluster=CLUSTER,
             top3=[s.name for s in switches[:3]],
             weights={k: round(v, 3) for k, v in weights.items()},
             epsilon_roll=roll,
@@ -639,6 +790,7 @@ class TemporalCluster:
     def _record_trace(self):
         try:
             from brain.observability.firing_path import current_turn_trace
+
             return current_turn_trace.get()
         except Exception:
             return None

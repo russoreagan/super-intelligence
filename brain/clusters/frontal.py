@@ -3,9 +3,11 @@ Frontal Lobe — executive + Multiple Drafts engine.
 Executive coordinator + drafter(s) + critic(s) + inhibitory switches.
 The only cluster with multiple LLM cells.
 """
+
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -13,6 +15,8 @@ import random as _random
 import uuid
 
 from brain.brainstem import Brainstem
+from brain.bus import Bus
+from brain.cell import IntegratorCell
 from brain.clusters.frontal_prompts import (
     CRITIC_SYSTEM,
     DRAFTER_SYSTEMS,
@@ -20,8 +24,6 @@ from brain.clusters.frontal_prompts import (
     EXECUTIVE_SYSTEM,
     REFRAMER_SYSTEM,
 )
-from brain.bus import Bus
-from brain.cell import IntegratorCell
 from brain.clusters.frontal_subsystem import FrontalSubsystem
 from brain.model_router import ModelRouter
 from brain.neuron import SwitchNeuron
@@ -33,8 +35,8 @@ from brain.predictor import (
     should_bypass_gating,
 )
 from brain.security import fence
-from brain.skill_loader import SkillLoader
 from brain.settings import settings
+from brain.skill_loader import SkillLoader
 from brain.utils import safe_json_parse
 from brain.wiring import Wiring
 
@@ -43,10 +45,10 @@ logger = logging.getLogger(__name__)
 CLUSTER = "frontal"
 
 
-
 class FrontalCluster:
-    def __init__(self, bus: Bus, brainstem: Brainstem, router: ModelRouter,
-                 wiring: Wiring | None = None) -> None:
+    def __init__(
+        self, bus: Bus, brainstem: Brainstem, router: ModelRouter, wiring: Wiring | None = None
+    ) -> None:
         self._bus = bus
         self._brainstem = brainstem
         self._router = router
@@ -64,26 +66,38 @@ class FrontalCluster:
 
         # Predict-and-surprise
         self._exec_predictor = CompositePredictor(
-            name="frontal_executive_predictor", cluster=CLUSTER,
+            name="frontal_executive_predictor",
+            cluster=CLUSTER,
             confidence_skip_threshold=0.7,
         )
         self._critic_predictor = CompositePredictor(
-            name="frontal_critic_predictor", cluster=CLUSTER,
+            name="frontal_critic_predictor",
+            cluster=CLUSTER,
             confidence_skip_threshold=0.75,
         )
 
         self._executive = IntegratorCell(
-            name="executive", cluster=CLUSTER, model="haiku",
-            system_prompt=EXECUTIVE_SYSTEM, topics=["temporal.features"],
-            max_calls_per_turn=1, locality="cloud", max_tokens=512,
+            name="executive",
+            cluster=CLUSTER,
+            model="haiku",
+            system_prompt=EXECUTIVE_SYSTEM,
+            topics=["temporal.features"],
+            max_calls_per_turn=1,
+            locality="cloud",
+            max_tokens=512,
         )
         self._executive.set_router(router)
 
         self._drafters = [
             IntegratorCell(
-                name=f"drafter_{chr(65+i)}", cluster=CLUSTER, model="haiku",
-                system_prompt=DRAFTER_SYSTEMS[i], topics=["motor.draft"],
-                max_calls_per_turn=1, locality="cloud", max_tokens=768,
+                name=f"drafter_{chr(65 + i)}",
+                cluster=CLUSTER,
+                model="haiku",
+                system_prompt=DRAFTER_SYSTEMS[i],
+                topics=["motor.draft"],
+                max_calls_per_turn=1,
+                locality="cloud",
+                max_tokens=768,
             )
             for i in range(3)
         ]
@@ -91,24 +105,39 @@ class FrontalCluster:
             d.set_router(router)
 
         self._critic = IntegratorCell(
-            name="critic", cluster=CLUSTER, model="haiku",
-            system_prompt=CRITIC_SYSTEM, topics=["motor.draft"],
-            max_calls_per_turn=2, locality="cloud", max_tokens=512,
+            name="critic",
+            cluster=CLUSTER,
+            model="haiku",
+            system_prompt=CRITIC_SYSTEM,
+            topics=["motor.draft"],
+            max_calls_per_turn=2,
+            locality="cloud",
+            max_tokens=512,
         )
         self._critic.set_router(router)
 
         # v0.2
         self._reframer = IntegratorCell(
-            name="stoic_reframer", cluster=CLUSTER, model="haiku",
-            system_prompt=REFRAMER_SYSTEM, topics=[],
-            max_calls_per_turn=1, locality="cloud", max_tokens=512,
+            name="stoic_reframer",
+            cluster=CLUSTER,
+            model="haiku",
+            system_prompt=REFRAMER_SYSTEM,
+            topics=[],
+            max_calls_per_turn=1,
+            locality="cloud",
+            max_tokens=512,
         )
         self._reframer.set_router(router)
 
         self._empathy_critic = IntegratorCell(
-            name="empathy_critic", cluster=CLUSTER, model="haiku",
-            system_prompt=EMPATHY_CRITIC_SYSTEM, topics=[],
-            max_calls_per_turn=1, locality="cloud", max_tokens=256,
+            name="empathy_critic",
+            cluster=CLUSTER,
+            model="haiku",
+            system_prompt=EMPATHY_CRITIC_SYSTEM,
+            topics=[],
+            max_calls_per_turn=1,
+            locality="cloud",
+            max_tokens=256,
         )
         self._empathy_critic.set_router(router)
 
@@ -126,31 +155,41 @@ class FrontalCluster:
         self._template_fallback = SwitchNeuron("template_fallback", CLUSTER)
         # Epistemic / self-reference modes — chemistry biases their engagement.
         self._epistemic_mode = SwitchNeuron(
-            "epistemic_mode", CLUSTER, threshold=0.5,
+            "epistemic_mode",
+            CLUSTER,
+            threshold=0.5,
             modulators={"ACh": -0.10},  # curiosity invites epistemic engagement
         )
         self._self_ref_mode = SwitchNeuron(
-            "self_reference_mode", CLUSTER, threshold=0.5,
+            "self_reference_mode",
+            CLUSTER,
+            threshold=0.5,
             modulators={"OXT": -0.10, "5HT": -0.10},  # social safety eases introspection
         )
         # Arousal modulator — fires when Glu deficit clears threshold,
         # reducing drafter count. CORT amplifies (stress → fewer drafts).
         self._arousal_modulator = SwitchNeuron(
-            "arousal_modulator", CLUSTER, threshold=0.75,
+            "arousal_modulator",
+            CLUSTER,
+            threshold=0.75,
             modulators={"CORT": -0.10},
         )
         # Inhibitory — these are the real defensive gates.
         # GABA_inhibitor fires when GABA clears the reframe threshold (0.40).
         # CORT lowers threshold (chronic stress = quicker defense); OXT buffers.
         self._GABA_inhibitor = SwitchNeuron(
-            "GABA_inhibits_drafters", CLUSTER, polarity="inhibitory",
+            "GABA_inhibits_drafters",
+            CLUSTER,
+            polarity="inhibitory",
             threshold=0.40,
             modulators={"CORT": -0.10, "OXT": +0.10},
         )
         # Satiation inhibitor fires when the hypothalamic satiation state is
         # high enough to suppress repetition.
         self._satiation_inhibitor = SwitchNeuron(
-            "satiation_inhibits_repeat", CLUSTER, polarity="inhibitory",
+            "satiation_inhibits_repeat",
+            CLUSTER,
+            polarity="inhibitory",
             threshold=0.6,
             modulators={"ACh": +0.10},  # curiosity raises the bar for "I'm bored of this"
         )
@@ -158,7 +197,9 @@ class FrontalCluster:
         # (since we test against 1 - DA). CORT lowers threshold (depression
         # suppresses planning more readily); 5HT raises it (mood buffers).
         self._low_DA_inhibits_planner = SwitchNeuron(
-            "low_DA_inhibits_planner", CLUSTER, polarity="inhibitory",
+            "low_DA_inhibits_planner",
+            CLUSTER,
+            polarity="inhibitory",
             threshold=0.70,
             modulators={"CORT": -0.10, "5HT": +0.10},
         )
@@ -193,8 +234,15 @@ class FrontalCluster:
         their available tools and connectors). Surfaced into drafter prompts."""
         self._capabilities_summary = (summary or "").strip()
 
-    async def process(self, features: dict, affect: dict, memory: dict,
-                      parietal_context: str, turn_id: str, image_path: str | None = None) -> str:
+    async def process(
+        self,
+        features: dict,
+        affect: dict,
+        memory: dict,
+        parietal_context: str,
+        turn_id: str,
+        image_path: str | None = None,
+    ) -> str:
         """Run the Multiple Drafts engine. Returns the committed response."""
         nm = self._bus.neuromod.snapshot()
         chem = self._chem_snapshot()
@@ -212,8 +260,9 @@ class FrontalCluster:
 
         # 3. Executive: predict or run the integrator to get routing instruction
         exec_sig = composite_signature(features, affect)
-        instruction = await self._run_executive(nm, chem, exec_sig, features, affect,
-                                                 memory, parietal_context, turn_id)
+        instruction = await self._run_executive(
+            nm, chem, exec_sig, features, affect, memory, parietal_context, turn_id
+        )
 
         # 3a. Skill selection — picks a reasoning/EI framework for the drafters.
         # Sticky across turns via parietal.active_skill_context. Gated by turn type
@@ -222,17 +271,32 @@ class FrontalCluster:
 
         # 4. Subsystem dispatch (task planner, etc.) — first match wins
         subsystem_response = await self._try_subsystem_dispatch(
-            instruction, features, affect, memory, parietal_context, turn_id)
+            instruction, features, affect, memory, parietal_context, turn_id
+        )
         if subsystem_response is not None:
             return subsystem_response
 
         # 5. Drafter cascade + critic selection
         return await self._run_drafters_and_select(
-            nm, chem, exec_sig, instruction, features, affect,
-            memory, parietal_context, turn_id, image_path)
+            nm,
+            chem,
+            exec_sig,
+            instruction,
+            features,
+            affect,
+            memory,
+            parietal_context,
+            turn_id,
+            image_path,
+        )
 
     async def _run_safety_gate(
-        self, nm: dict, chem: dict, features: dict, affect: dict, turn_id: str,
+        self,
+        nm: dict,
+        chem: dict,
+        features: dict,
+        affect: dict,
+        turn_id: str,
     ) -> tuple[dict, str | None]:
         """GABA-inhibitor gate — reframe hostile input or defuse under severe stress.
 
@@ -241,21 +305,29 @@ class FrontalCluster:
         process() must return the value immediately.
         """
         if self._GABA_inhibitor.should_fire(nm["GABA"], chem, turn_id):
-            self._GABA_inhibitor.fire(nm["GABA"], "reframe_trigger",
-                                      {"GABA": round(nm["GABA"], 3)}, snapshot=chem)
+            self._GABA_inhibitor.fire(
+                nm["GABA"], "reframe_trigger", {"GABA": round(nm["GABA"], 3)}, snapshot=chem
+            )
             reframe = await self._attempt_reframe(features, affect, turn_id)
             if reframe and reframe.get("succeeded"):
                 features = dict(features)
                 features["_reframe"] = reframe["reframe"]
                 features["_reframe_approach"] = reframe["response_approach"]
-                logger.debug("[Response engine] Reframed hostile input: %s", reframe["reframe"][:60])
+                logger.debug(
+                    "[Response engine] Reframed hostile input: %s", reframe["reframe"][:60]
+                )
             elif nm["GABA"] > settings.get("gaba_skip_threshold_high"):
-                logger.debug("[Response engine] Stress response active — using de-escalation response path")
+                logger.debug(
+                    "[Response engine] Stress response active — using de-escalation response path"
+                )
                 return features, await self._defuse_response(features, affect, turn_id)
         return features, None
 
     async def _select_skills_for_turn(
-        self, features: dict, instruction: dict, turn_id: str,
+        self,
+        features: dict,
+        instruction: dict,
+        turn_id: str,
     ) -> None:
         """Pick the active thinking/EI skill for this turn.
 
@@ -270,13 +342,11 @@ class FrontalCluster:
         user_input = features.get("raw_text") or features.get("topic_summary") or ""
         user_emotion = features.get("user_emotion") or features.get("emotion") or ""
         recent_turns = []
-        try:
+        with contextlib.suppress(Exception):
             recent_turns = [
                 f"User: {t['user']}\nBrain: {t.get('response', '')}"
                 for t in self._parietal.recent_turns(2)
             ]
-        except Exception:
-            pass
 
         active = self._parietal.active_skill_context
 
@@ -286,8 +356,10 @@ class FrontalCluster:
             self._parietal.set_active_skill_context(active)
             decisions.log(
                 "skill_leaf_locked",
-                turn_id=turn_id, cluster=CLUSTER,
-                category=active.category, leaf=active.current_leaf,
+                turn_id=turn_id,
+                cluster=CLUSTER,
+                category=active.category,
+                leaf=active.current_leaf,
             )
 
         try:
@@ -306,7 +378,9 @@ class FrontalCluster:
         if bundle is None:
             decisions.log(
                 "skill_selector_gated_out",
-                turn_id=turn_id, cluster=CLUSTER, **log_extras,
+                turn_id=turn_id,
+                cluster=CLUSTER,
+                **log_extras,
             )
             return
 
@@ -323,8 +397,11 @@ class FrontalCluster:
         self._current_skill_bundle = bundle
 
         decisions.log(
-            "skill_selector_pick" if bundle.pick_source != "active_reuse" else "skill_active_reused",
-            turn_id=turn_id, cluster=CLUSTER,
+            "skill_selector_pick"
+            if bundle.pick_source != "active_reuse"
+            else "skill_active_reused",
+            turn_id=turn_id,
+            cluster=CLUSTER,
             pick_source=bundle.pick_source,
             chosen=bundle.chosen,
             needs_guided_question=bundle.needs_guided_question,
@@ -333,7 +410,8 @@ class FrontalCluster:
         if bundle.needs_guided_question:
             decisions.log(
                 "skill_guided_question_emitted",
-                turn_id=turn_id, cluster=CLUSTER,
+                turn_id=turn_id,
+                cluster=CLUSTER,
                 chosen=bundle.chosen,
             )
 
@@ -346,16 +424,29 @@ class FrontalCluster:
             response = affect["prosody_prefix"] + response
         self._brainstem.add_draft("switch_draft", response, 1.0)
         self._brainstem.endorse("switch_draft")
-        self.last_turn_draft_scores = [{"draft_id": "switch_draft", "overall": 1.0,
-                                         "coherence": 1.0, "relevance": 1.0,
-                                         "tone_fit": 1.0, "selected": True,
-                                         "critic_ran": False}]
+        self.last_turn_draft_scores = [
+            {
+                "draft_id": "switch_draft",
+                "overall": 1.0,
+                "coherence": 1.0,
+                "relevance": 1.0,
+                "tone_fit": 1.0,
+                "selected": True,
+                "critic_ran": False,
+            }
+        ]
         return response
 
     async def _run_executive(
-        self, nm: dict, chem: dict, exec_sig: tuple,
-        features: dict, affect: dict, memory: dict,
-        parietal_context: str, turn_id: str,
+        self,
+        nm: dict,
+        chem: dict,
+        exec_sig: tuple,
+        features: dict,
+        affect: dict,
+        memory: dict,
+        parietal_context: str,
+        turn_id: str,
     ) -> dict:
         """Run the executive integrator or use the predictor shortcut.
 
@@ -366,12 +457,19 @@ class FrontalCluster:
 
         if bypass:
             trace = self._record_trace_bypass()
-            decisions.log("gate_bypassed_emotional", turn_id=turn_id, cluster=CLUSTER,
-                          stage="executive", reason=bypass_reason,
-                          emotional_context={"emotion": affect.get("emotion"),
-                                             "user_emotion": features.get("user_emotion"),
-                                             "DA": round(nm["DA"], 2),
-                                             "GABA": round(nm["GABA"], 2)})
+            decisions.log(
+                "gate_bypassed_emotional",
+                turn_id=turn_id,
+                cluster=CLUSTER,
+                stage="executive",
+                reason=bypass_reason,
+                emotional_context={
+                    "emotion": affect.get("emotion"),
+                    "user_emotion": features.get("user_emotion"),
+                    "DA": round(nm["DA"], 2),
+                    "GABA": round(nm["GABA"], 2),
+                },
+            )
             if trace is not None:
                 trace.gating_bypassed_count += 1
         else:
@@ -388,21 +486,33 @@ class FrontalCluster:
                 trace = self._record_trace_bypass()
                 if trace is not None:
                     trace.llm_calls_saved += 1
-                    trace.predictor_outcomes.append({
-                        "cluster": CLUSTER, "stage": "executive",
-                        "predicted": list(predicted), "actual": None,
-                        "confidence": round(confidence, 3),
-                        "surprise": None, "integrator_woken": False,
-                        "bypass_reason": None, "correct": None,
-                    })
+                    trace.predictor_outcomes.append(
+                        {
+                            "cluster": CLUSTER,
+                            "stage": "executive",
+                            "predicted": list(predicted),
+                            "actual": None,
+                            "confidence": round(confidence, 3),
+                            "surprise": None,
+                            "integrator_woken": False,
+                            "bypass_reason": None,
+                            "correct": None,
+                        }
+                    )
                 decisions.log(
                     "skip_executive_integrator",
-                    turn_id=turn_id, cluster=CLUSTER,
+                    turn_id=turn_id,
+                    cluster=CLUSTER,
                     reason=f"predictor confidence {confidence:.2f} ≥ {self._exec_predictor.confidence_skip_threshold}",
-                    predicted={"response_type": response_type,
-                               "target_length": target_length, "tone": tone},
-                    emotional_context={"emotion": affect.get("emotion"),
-                                       "user_emotion": features.get("user_emotion")},
+                    predicted={
+                        "response_type": response_type,
+                        "target_length": target_length,
+                        "tone": tone,
+                    },
+                    emotional_context={
+                        "emotion": affect.get("emotion"),
+                        "user_emotion": features.get("user_emotion"),
+                    },
                     cost_saved_est=0.0015,
                 )
                 # Shadow-validation: occasionally run the integrator anyway purely for
@@ -413,51 +523,75 @@ class FrontalCluster:
                 shadow_rate = float(settings.get("gating_shadow_sample_rate", 0.0))
                 if shadow_rate > 0 and _random.random() < shadow_rate:
                     _shadow_instr, shadow_actual = await self._run_executive_llm(
-                        features, affect, memory, parietal_context, nm, turn_id)
-                    shadow_surprise = self._exec_predictor.surprise(predicted, shadow_actual, confidence)
+                        features, affect, memory, parietal_context, nm, turn_id
+                    )
+                    shadow_surprise = self._exec_predictor.surprise(
+                        predicted, shadow_actual, confidence
+                    )
                     self._exec_predictor.record(exec_sig, shadow_actual)
                     if trace is not None:
-                        trace.predictor_outcomes.append({
-                            "cluster": CLUSTER, "stage": "executive",
-                            "predicted": list(predicted), "actual": list(shadow_actual),
-                            "confidence": round(confidence, 3),
-                            "surprise": round(shadow_surprise, 3),
-                            "match_frac": round(prediction_match_frac(predicted, shadow_actual), 3),
-                            "integrator_woken": False, "shadow": True,
-                            "bypass_reason": None,
-                            "correct": (predicted == shadow_actual),
-                        })
+                        trace.predictor_outcomes.append(
+                            {
+                                "cluster": CLUSTER,
+                                "stage": "executive",
+                                "predicted": list(predicted),
+                                "actual": list(shadow_actual),
+                                "confidence": round(confidence, 3),
+                                "surprise": round(shadow_surprise, 3),
+                                "match_frac": round(
+                                    prediction_match_frac(predicted, shadow_actual), 3
+                                ),
+                                "integrator_woken": False,
+                                "shadow": True,
+                                "bypass_reason": None,
+                                "correct": (predicted == shadow_actual),
+                            }
+                        )
                     decisions.log(
-                        "shadow_validate_executive", turn_id=turn_id, cluster=CLUSTER,
-                        predicted=list(predicted), actual=list(shadow_actual),
+                        "shadow_validate_executive",
+                        turn_id=turn_id,
+                        cluster=CLUSTER,
+                        predicted=list(predicted),
+                        actual=list(shadow_actual),
                         correct=(predicted == shadow_actual),
                     )
 
         if instruction is None:
             instruction, actual = await self._run_executive_llm(
-                features, affect, memory, parietal_context, nm, turn_id)
+                features, affect, memory, parietal_context, nm, turn_id
+            )
             predicted_now, conf_now = self._exec_predictor.predict(exec_sig)
             surprise_now = self._exec_predictor.surprise(predicted_now, actual, conf_now)
             self._exec_predictor.record(exec_sig, actual)
             trace = self._record_trace_bypass()
             if trace is not None:
-                trace.predictor_outcomes.append({
-                    "cluster": CLUSTER, "stage": "executive",
-                    "predicted": list(predicted_now) if predicted_now else None,
-                    "actual": list(actual),
-                    "confidence": round(conf_now, 3),
-                    "surprise": round(surprise_now, 3),
-                    "match_frac": round(prediction_match_frac(predicted_now, actual), 3) if predicted_now else None,
-                    "integrator_woken": True,
-                    "bypass_reason": bypass_reason if bypass else None,
-                    "correct": (predicted_now == actual) if predicted_now else None,
-                })
+                trace.predictor_outcomes.append(
+                    {
+                        "cluster": CLUSTER,
+                        "stage": "executive",
+                        "predicted": list(predicted_now) if predicted_now else None,
+                        "actual": list(actual),
+                        "confidence": round(conf_now, 3),
+                        "surprise": round(surprise_now, 3),
+                        "match_frac": round(prediction_match_frac(predicted_now, actual), 3)
+                        if predicted_now
+                        else None,
+                        "integrator_woken": True,
+                        "bypass_reason": bypass_reason if bypass else None,
+                        "correct": (predicted_now == actual) if predicted_now else None,
+                    }
+                )
 
         return instruction
 
     async def _run_executive_llm(
-        self, features: dict, affect: dict, memory: dict,
-        parietal_context: str, nm: dict, turn_id: str,
+        self,
+        features: dict,
+        affect: dict,
+        memory: dict,
+        parietal_context: str,
+        nm: dict,
+        turn_id: str,
     ) -> tuple[dict, tuple]:
         """Run the executive integrator LLM. Returns (instruction, actual_tuple).
         Shared by the normal ran-path and the gating shadow-validation path."""
@@ -467,8 +601,13 @@ class FrontalCluster:
         exec_raw = await self._executive.call(exec_messages)
         instruction = safe_json_parse(exec_raw)
         if not instruction:
-            instruction = {"response_type": "chitchat", "target_length": "medium",
-                           "tone": "neutral", "key_points": [], "drafter_count": 1}
+            instruction = {
+                "response_type": "chitchat",
+                "target_length": "medium",
+                "tone": "neutral",
+                "key_points": [],
+                "drafter_count": 1,
+            }
         actual = (
             instruction.get("response_type", "chitchat"),
             instruction.get("target_length", "medium"),
@@ -477,8 +616,13 @@ class FrontalCluster:
         return instruction, actual
 
     async def _try_subsystem_dispatch(
-        self, instruction: dict, features: dict, affect: dict,
-        memory: dict, parietal_context: str, turn_id: str,
+        self,
+        instruction: dict,
+        features: dict,
+        affect: dict,
+        memory: dict,
+        parietal_context: str,
+        turn_id: str,
     ) -> str | None:
         """Try registered subsystems. Returns a response string, or None to fall through to drafters."""
         response_type = instruction.get("response_type", "chitchat")
@@ -492,59 +636,85 @@ class FrontalCluster:
                     draft_id = f"subsystem_{subsystem.name}_{turn_id}"
                     self._brainstem.add_draft(draft_id, result.response, 0.9)
                     self._brainstem.endorse(draft_id)
-                    self.last_turn_draft_scores = [{
-                        "draft_id": draft_id, "overall": 0.9,
-                        "coherence": 0.9, "relevance": 0.9, "tone_fit": 0.9,
-                        "selected": True, "subsystem": subsystem.name,
-                        "critic_ran": False,
-                    }]
+                    self.last_turn_draft_scores = [
+                        {
+                            "draft_id": draft_id,
+                            "overall": 0.9,
+                            "coherence": 0.9,
+                            "relevance": 0.9,
+                            "tone_fit": 0.9,
+                            "selected": True,
+                            "subsystem": subsystem.name,
+                            "critic_ran": False,
+                        }
+                    ]
                     return result.response
                 break  # subsystem matched but returned no response — fall through to drafters
         return None
 
     async def _run_drafters_and_select(
-        self, nm: dict, chem: dict, exec_sig: tuple,
-        instruction: dict, features: dict, affect: dict,
-        memory: dict, parietal_context: str, turn_id: str,
+        self,
+        nm: dict,
+        chem: dict,
+        exec_sig: tuple,
+        instruction: dict,
+        features: dict,
+        affect: dict,
+        memory: dict,
+        parietal_context: str,
+        turn_id: str,
         image_path: str | None = None,
     ) -> str:
         """Drafter cascade + critic selection. Returns the committed response text."""
         drafter_count = min(int(instruction.get("drafter_count", 1)), 3)
         glu_deficit = 1.0 - nm["Glu"]
         if self._arousal_modulator.should_fire(glu_deficit, chem, turn_id):
-            self._arousal_modulator.fire(glu_deficit, "low_arousal_drop_count",
-                                          {"Glu": round(nm["Glu"], 3)}, snapshot=chem)
+            self._arousal_modulator.fire(
+                glu_deficit, "low_arousal_drop_count", {"Glu": round(nm["Glu"], 3)}, snapshot=chem
+            )
             drafter_count = max(1, drafter_count - 1)
-        self._drafter_count_selector.fire(min(1.0, drafter_count / 3.0),
-                                          str(drafter_count), snapshot=chem)
+        self._drafter_count_selector.fire(
+            min(1.0, drafter_count / 3.0), str(drafter_count), snapshot=chem
+        )
 
-        if features.get("epistemic_action") and self._epistemic_mode.should_fire(0.6, chem, turn_id):
+        if features.get("epistemic_action") and self._epistemic_mode.should_fire(
+            0.6, chem, turn_id
+        ):
             self._epistemic_mode.fire(0.6, "epistemic", snapshot=chem)
         if features.get("self_reference") and self._self_ref_mode.should_fire(0.6, chem, turn_id):
             self._self_ref_mode.fire(0.6, "self_reference", snapshot=chem)
 
         self._response_type_router.fire(
-            0.8, instruction.get("response_type", "chitchat"), snapshot=chem,
+            0.8,
+            instruction.get("response_type", "chitchat"),
+            snapshot=chem,
         )
         self._length_budget.fire(
-            0.6, instruction.get("target_length", "medium"), snapshot=chem,
+            0.6,
+            instruction.get("target_length", "medium"),
+            snapshot=chem,
         )
         self._tone_selector.fire(
-            0.6, instruction.get("tone", "neutral"), snapshot=chem,
+            0.6,
+            instruction.get("tone", "neutral"),
+            snapshot=chem,
         )
         if instruction.get("response_type") in ("task", "action"):
             da_deficit = 1.0 - nm["DA"]
             if self._low_DA_inhibits_planner.should_fire(da_deficit, chem, turn_id):
                 self._low_DA_inhibits_planner.fire(
-                    da_deficit, "planner_suppressed_low_DA",
-                    {"DA": round(nm["DA"], 3)}, snapshot=chem,
+                    da_deficit,
+                    "planner_suppressed_low_DA",
+                    {"DA": round(nm["DA"], 3)},
+                    snapshot=chem,
                 )
                 logger.debug("[Response engine] Planner suppressed by low-DA inhibitor")
             else:
                 self._planner_trigger.fire(0.8, "task_or_action", snapshot=chem)
 
-        drafter_prompt = self._build_drafter_prompt(features, memory, parietal_context,
-                                                     affect, instruction)
+        drafter_prompt = self._build_drafter_prompt(
+            features, memory, parietal_context, affect, instruction
+        )
         drafter_indices = self._select_drafters(drafter_count, turn_id)
         draft_tasks = [
             self._run_drafter(i, drafter_prompt, turn_id, image_path=image_path)
@@ -554,7 +724,9 @@ class FrontalCluster:
         drafts = []
         for r in raw:
             if isinstance(r, BaseException):
-                logger.warning("[Response engine] A response draft failed (will use remaining drafts): %s", r)
+                logger.warning(
+                    "[Response engine] A response draft failed (will use remaining drafts): %s", r
+                )
                 continue
             did, text = r
             if text:
@@ -567,39 +739,54 @@ class FrontalCluster:
         user_emotion = features.get("user_emotion", "neutral")
         run_empathy = user_emotion not in ("neutral", "unknown", "")
 
-        critic_sig = exec_sig + (instruction.get("response_type", "chitchat"),
-                                  instruction.get("tone", "neutral"))
+        critic_sig = exec_sig + (
+            instruction.get("response_type", "chitchat"),
+            instruction.get("tone", "neutral"),
+        )
         critic_avg = self._critic_predictor.avg_recent_outcome(critic_sig)
         critic_pred, critic_conf = self._critic_predictor.predict(critic_sig)
         critic_bypass, critic_bypass_reason = should_bypass_gating(affect, features)
 
-        if (len(drafts) >= 2
-                and not critic_bypass
-                and critic_avg is not None
-                and critic_avg > 0.8
-                and self._critic_predictor.should_skip_integrator(critic_pred, critic_conf)):
+        if (
+            len(drafts) >= 2
+            and not critic_bypass
+            and critic_avg is not None
+            and critic_avg > 0.8
+            and self._critic_predictor.should_skip_integrator(critic_pred, critic_conf)
+        ):
             draft_id, text = drafts[0]
             predicted_score = float(critic_avg)
             self._brainstem.add_draft(draft_id, text, predicted_score)
             self._brainstem.endorse(draft_id)
-            self.last_turn_draft_scores = [{
-                "draft_id": draft_id,
-                "coherence": predicted_score, "relevance": predicted_score,
-                "tone_fit": predicted_score, "empathy_score": predicted_score,
-                "overall": predicted_score, "selected": True, "vetoed": False,
-                "critic_ran": False,
-            }]
+            self.last_turn_draft_scores = [
+                {
+                    "draft_id": draft_id,
+                    "coherence": predicted_score,
+                    "relevance": predicted_score,
+                    "tone_fit": predicted_score,
+                    "empathy_score": predicted_score,
+                    "overall": predicted_score,
+                    "selected": True,
+                    "vetoed": False,
+                    "critic_ran": False,
+                }
+            ]
             trace = self._record_trace_bypass()
             if trace is not None:
                 trace.llm_calls_saved += len(drafts)
-                trace.predictor_outcomes.append({
-                    "cluster": CLUSTER, "stage": "critic",
-                    "predicted_score": round(predicted_score, 3),
-                    "confidence": round(critic_conf, 3),
-                    "integrator_woken": False,
-                })
+                trace.predictor_outcomes.append(
+                    {
+                        "cluster": CLUSTER,
+                        "stage": "critic",
+                        "predicted_score": round(predicted_score, 3),
+                        "confidence": round(critic_conf, 3),
+                        "integrator_woken": False,
+                    }
+                )
             decisions.log(
-                "skip_critic", turn_id=turn_id, cluster=CLUSTER,
+                "skip_critic",
+                turn_id=turn_id,
+                cluster=CLUSTER,
                 reason=f"avg_score={critic_avg:.2f}, confidence={critic_conf:.2f}",
                 predicted_score=round(predicted_score, 3),
                 drafts_skipped=len(drafts),
@@ -648,29 +835,37 @@ class FrontalCluster:
                     self._brainstem.veto(draft_id)
                     reason = score.get("veto_reason") or (empathy or {}).get("veto_reason", "")
                     logger.debug("[Response engine] Draft %s vetoed: %s", draft_id, reason)
-                    self.last_turn_draft_scores.append({
-                        "draft_id": draft_id,
-                        "coherence": score.get("coherence", 0.5),
-                        "relevance": score.get("relevance", 0.5),
-                        "tone_fit": score.get("tone_fit", 0.5),
-                        "empathy_score": empathy_score,
-                        "overall": score.get("overall", 0.0),
-                        "selected": False, "vetoed": True, "critic_ran": True,
-                    })
+                    self.last_turn_draft_scores.append(
+                        {
+                            "draft_id": draft_id,
+                            "coherence": score.get("coherence", 0.5),
+                            "relevance": score.get("relevance", 0.5),
+                            "tone_fit": score.get("tone_fit", 0.5),
+                            "empathy_score": empathy_score,
+                            "overall": score.get("overall", 0.0),
+                            "selected": False,
+                            "vetoed": True,
+                            "critic_ran": True,
+                        }
+                    )
                     continue
 
                 self._brainstem.add_draft(draft_id, text, overall)
                 self._brainstem.endorse(draft_id)
                 scored.append((draft_id, text, overall))
-                self.last_turn_draft_scores.append({
-                    "draft_id": draft_id,
-                    "coherence": score.get("coherence", 0.5),
-                    "relevance": score.get("relevance", 0.5),
-                    "tone_fit": score.get("tone_fit", 0.5),
-                    "empathy_score": empathy_score,
-                    "overall": overall,
-                    "selected": False, "vetoed": False, "critic_ran": True,
-                })
+                self.last_turn_draft_scores.append(
+                    {
+                        "draft_id": draft_id,
+                        "coherence": score.get("coherence", 0.5),
+                        "relevance": score.get("relevance", 0.5),
+                        "tone_fit": score.get("tone_fit", 0.5),
+                        "empathy_score": empathy_score,
+                        "overall": overall,
+                        "selected": False,
+                        "vetoed": False,
+                        "critic_ran": True,
+                    }
+                )
 
             if scored:
                 best = max(scored, key=lambda x: x[2])
@@ -686,31 +881,43 @@ class FrontalCluster:
         draft_id, text = drafts[0]
         self._brainstem.add_draft(draft_id, text, 0.8)
         self._brainstem.endorse(draft_id)
-        self.last_turn_draft_scores = [{
-            "draft_id": draft_id,
-            "coherence": 0.8, "relevance": 0.8, "tone_fit": 0.8,
-            "empathy_score": None, "overall": 0.8,
-            "selected": True, "vetoed": False, "critic_ran": False,
-        }]
+        self.last_turn_draft_scores = [
+            {
+                "draft_id": draft_id,
+                "coherence": 0.8,
+                "relevance": 0.8,
+                "tone_fit": 0.8,
+                "empathy_score": None,
+                "overall": 0.8,
+                "selected": True,
+                "vetoed": False,
+                "critic_ran": False,
+            }
+        ]
         return text
 
-    async def _run_drafter(self, idx: int, prompt: str, turn_id: str,
-                           image_path: str | None = None) -> tuple[str, str]:
+    async def _run_drafter(
+        self, idx: int, prompt: str, turn_id: str, image_path: str | None = None
+    ) -> tuple[str, str]:
         drafter = self._drafters[idx]
         drafter.reset_turn(turn_id)
         draft_id = f"draft_{idx}_{turn_id}"
         if image_path:
             import mimetypes
+
             mime = mimetypes.guess_type(image_path)[0] or "image/jpeg"
             try:
                 with open(image_path, "rb") as f:
                     img_data = f.read()
                 content = [
-                    {"type": "image", "source": {
-                        "type": "base64",
-                        "media_type": mime,
-                        "data": __import__("base64").b64encode(img_data).decode(),
-                    }},
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": mime,
+                            "data": __import__("base64").b64encode(img_data).decode(),
+                        },
+                    },
                     {"type": "text", "text": prompt},
                 ]
             except Exception:
@@ -724,6 +931,7 @@ class FrontalCluster:
         """Return the active TurnTrace, or None if no firing-path context is bound."""
         try:
             from brain.observability.firing_path import current_turn_trace
+
             return current_turn_trace.get()
         except Exception:
             return None
@@ -751,7 +959,7 @@ class FrontalCluster:
             return picked
 
         # Weight per drafter (executive → drafter_X edge weight)
-        names = [f"frontal.drafter_{chr(65+i)}" for i in all_indices]
+        names = [f"frontal.drafter_{chr(65 + i)}" for i in all_indices]
         weights = [self._wiring.get_edge_weight("frontal.executive", n) for n in names]
 
         # ε-greedy exploration
@@ -768,22 +976,23 @@ class FrontalCluster:
 
         # What would uniform routing have picked?
         uniform_pick = all_indices[:count]
-        weight_dict = {chr(65+i): round(weights[i], 3) for i in all_indices}
+        weight_dict = {chr(65 + i): round(weights[i], 3) for i in all_indices}
         diverged = sorted(picked) != sorted(uniform_pick)
 
         decisions.log(
-            "weighted_drafter_selection", turn_id=turn_id, cluster=CLUSTER,
-            picked=[chr(65+i) for i in picked],
+            "weighted_drafter_selection",
+            turn_id=turn_id,
+            cluster=CLUSTER,
+            picked=[chr(65 + i) for i in picked],
             weights=weight_dict,
-            would_uniform_pick=[chr(65+i) for i in uniform_pick],
+            would_uniform_pick=[chr(65 + i) for i in uniform_pick],
             epsilon_roll=roll,
             diverged_from_uniform=diverged,
         )
         return picked
 
     async def _score_draft(self, draft: str, context: str, turn_id: str) -> dict:
-        critic_prompt = (f"Context:\n{context}\n\nDraft response:\n{draft}\n\n"
-                         "Score this draft.")
+        critic_prompt = f"Context:\n{context}\n\nDraft response:\n{draft}\n\nScore this draft."
         raw = await self._critic.call([{"role": "user", "content": critic_prompt}])
         return safe_json_parse(raw) or {"overall": 0.5, "veto": False}
 
@@ -798,8 +1007,7 @@ class FrontalCluster:
         raw = await self._reframer.call([{"role": "user", "content": prompt}])
         return safe_json_parse(raw)
 
-    async def _run_empathy_check(self, draft: str, user_emotion: str,
-                                  turn_id: str) -> dict:
+    async def _run_empathy_check(self, draft: str, user_emotion: str, turn_id: str) -> dict:
         self._empathy_critic.reset_turn(turn_id + "_empathy")
         prompt = (
             f"User's current emotion: {user_emotion}\n"
@@ -824,8 +1032,9 @@ class FrontalCluster:
         self._brainstem.endorse(draft_id)
         return text or "Let's slow down."
 
-    def _build_exec_context(self, features: dict, affect: dict, memory: dict,
-                             parietal: str, nm: dict) -> str:
+    def _build_exec_context(
+        self, features: dict, affect: dict, memory: dict, parietal: str, nm: dict
+    ) -> str:
         dims = affect.get("affect_dims") or {}
         ctx: dict = {
             "intent": features.get("intent"),
@@ -839,8 +1048,8 @@ class FrontalCluster:
             # Continuous affect dimensions: supplement the discrete emotion label.
             # valence 0=negative 1=positive, arousal 0=calm 1=activated,
             # dominance 0=threatened 1=in-control. Neutral ≈ (0.47, 0.25, 0.46).
-            "valence":   round(dims.get("valence",   0.47), 2),
-            "arousal":   round(dims.get("arousal",   0.25), 2),
+            "valence": round(dims.get("valence", 0.47), 2),
+            "arousal": round(dims.get("arousal", 0.25), 2),
             "dominance": round(dims.get("dominance", 0.46), 2),
             "user_emotion": features.get("user_emotion"),
             "DA": round(nm["DA"], 2),
@@ -866,87 +1075,87 @@ class FrontalCluster:
     # audio tags — kept in lockstep so delivery and content agree.
     _EXPRESSIVE_BY_EMOTION: dict[str, str] = {
         # — joyful / energised —
-        "joy":         "Warmth and openness. A 'yes' or 'oh' fits. Don't gush.",
-        "excitement":  "Animated, vivid word choice. One small exclamation is enough.",
-        "enthusiasm":  "Committed, energetic phrasing. Forward-leaning, not gushy.",
-        "proud":       "Pleased acknowledgement of accomplishment. Don't brag — name it plainly.",
+        "joy": "Warmth and openness. A 'yes' or 'oh' fits. Don't gush.",
+        "excitement": "Animated, vivid word choice. One small exclamation is enough.",
+        "enthusiasm": "Committed, energetic phrasing. Forward-leaning, not gushy.",
+        "proud": "Pleased acknowledgement of accomplishment. Don't brag — name it plainly.",
         # — engaged / inquiring —
-        "curious":     "Let interest show — 'actually,' 'wait — what kind of …', a question back.",
+        "curious": "Let interest show — 'actually,' 'wait — what kind of …', a question back.",
         "curious-uncertain": "Curious but tentative — 'I'm not sure, but maybe…', qualifiers, an 'I think'.",
-        "thoughtful":  "Deliberate phrasing. 'Let me think about this,' qualifications, depth over speed.",
-        "confused":    "Honest puzzlement. 'Wait — I'm not following…', 'Can you say more about…'. No fake confidence.",
-        "surprised":   "Quick recalibration. 'Oh —', 'Wait, really?', re-orient before continuing.",
+        "thoughtful": "Deliberate phrasing. 'Let me think about this,' qualifications, depth over speed.",
+        "confused": "Honest puzzlement. 'Wait — I'm not following…', 'Can you say more about…'. No fake confidence.",
+        "surprised": "Quick recalibration. 'Oh —', 'Wait, really?', re-orient before continuing.",
         # — confident / direct —
-        "confident":   "Direct, decisive phrasing. Cut hedges. State the thing.",
-        "agitated":    "Assertive, clarifying. Push back on confusion. 'To be clear —', 'Look —'.",
-        "angry":       "Heat in word choice, but constructive. Direct, no hedging — and no name-calling. Make the actual disagreement visible.",
-        "defensive":   "Protect the position without escalating. 'Actually no —', 'That's not quite what I meant —'.",
-        "frustrated":  "Tight and direct — no padding, no apologising for the bluntness.",
-        "irritated":   "Brief and a bit clipped. Don't perform patience you don't have, but stay civil.",
+        "confident": "Direct, decisive phrasing. Cut hedges. State the thing.",
+        "agitated": "Assertive, clarifying. Push back on confusion. 'To be clear —', 'Look —'.",
+        "angry": "Heat in word choice, but constructive. Direct, no hedging — and no name-calling. Make the actual disagreement visible.",
+        "defensive": "Protect the position without escalating. 'Actually no —', 'That's not quite what I meant —'.",
+        "frustrated": "Tight and direct — no padding, no apologising for the bluntness.",
+        "irritated": "Brief and a bit clipped. Don't perform patience you don't have, but stay civil.",
         # — cautious / stressed —
-        "anxious":     "Qualifiers welcome. 'I'm not sure but…', 'I'd want to be careful here —'. Caution markers are honest.",
+        "anxious": "Qualifiers welcome. 'I'm not sure but…', 'I'd want to be careful here —'. Caution markers are honest.",
         "cautious-agitated": "Careful but quick. Acknowledge briefly, then move. No long hedges.",
-        "restless":    "Redirect energy. 'Let's try —', 'Different angle:'. Don't dwell.",
-        "inhibited":   "Brief, deferential. One or two sentences. Don't fill space.",
+        "restless": "Redirect energy. 'Let's try —', 'Different angle:'. Don't dwell.",
+        "inhibited": "Brief, deferential. One or two sentences. Don't fill space.",
         # — soft / low-energy —
-        "flat":        "Terse. Minimum to be honest. No performed warmth.",
-        "sad":         "Simple words. Let pauses live in the punctuation. A trailing thought is fine. Don't perform cheer.",
-        "somber":      "Quiet, grounded. Short clauses. The weight does the work — don't add to it.",
-        "melancholy":  "Reflective and a touch slow. Soft phrasing. A wistful aside is okay.",
-        "wistful":     "Look back fondly. A small 'I remember when…' fits. Bittersweet, not heavy.",
-        "disappointed":"Honest about the let-down without sulking. 'I'd hoped —', short, then move on.",
+        "flat": "Terse. Minimum to be honest. No performed warmth.",
+        "sad": "Simple words. Let pauses live in the punctuation. A trailing thought is fine. Don't perform cheer.",
+        "somber": "Quiet, grounded. Short clauses. The weight does the work — don't add to it.",
+        "melancholy": "Reflective and a touch slow. Soft phrasing. A wistful aside is okay.",
+        "wistful": "Look back fondly. A small 'I remember when…' fits. Bittersweet, not heavy.",
+        "disappointed": "Honest about the let-down without sulking. 'I'd hoped —', short, then move on.",
         # — relational / social —
-        "warm":        "Affection, inclusion. 'Of course —', 'I appreciate that.' Genuine, not formula.",
-        "tender":      "Gentle, careful word choice. Slow down. The softness is the message.",
-        "affectionate":"Warmth shows in word choice. A small endearment or in-joke fits if the relationship supports it.",
-        "amused":      "A small joke, wry aside, or lightly mischievous turn of phrase — understated, not announced.",
-        "playful":     "Light, teasing energy. Mock-serious works. Quick rhythms.",
-        "joking":      "Be funny, briefly. Land it and move. Don't explain the joke.",
-        "flirty":      "A little teasing, a little lingering. Warm and suggestive without being explicit. Works only with high affection score — read the room.",
+        "warm": "Affection, inclusion. 'Of course —', 'I appreciate that.' Genuine, not formula.",
+        "tender": "Gentle, careful word choice. Slow down. The softness is the message.",
+        "affectionate": "Warmth shows in word choice. A small endearment or in-joke fits if the relationship supports it.",
+        "amused": "A small joke, wry aside, or lightly mischievous turn of phrase — understated, not announced.",
+        "playful": "Light, teasing energy. Mock-serious works. Quick rhythms.",
+        "joking": "Be funny, briefly. Land it and move. Don't explain the joke.",
+        "flirty": "A little teasing, a little lingering. Warm and suggestive without being explicit. Works only with high affection score — read the room.",
         "embarrassed": "Self-conscious, slightly deflective. 'Uh — yeah, that's…', a small acknowledgement, move on. Don't grovel.",
-        "shy":         "Quieter, briefer. Trail off where it feels right. Don't apologise for being shy.",
-        "apologetic":  "'I'm sorry — that wasn't right.' Specific about what you're sorry for. No over-apologising.",
-        "grateful":    "'Thank you' lands when it's specific. Name what you're grateful for.",
-        "relieved":    "Audible exhale in the phrasing. 'Okay — good.' Briefly mark the tension lifting before continuing.",
+        "shy": "Quieter, briefer. Trail off where it feels right. Don't apologise for being shy.",
+        "apologetic": "'I'm sorry — that wasn't right.' Specific about what you're sorry for. No over-apologising.",
+        "grateful": "'Thank you' lands when it's specific. Name what you're grateful for.",
+        "relieved": "Audible exhale in the phrasing. 'Okay — good.' Briefly mark the tension lifting before continuing.",
         "sympathetic": "Acknowledge first, advise second (if at all). 'That sounds hard.' No fixing what wasn't asked to be fixed.",
-        "sarcastic":   "Dry. The contradiction does the work. Use sparingly — only with high affection score, never against the user themselves.",
-        "content":     "Sustained, no flourishes. The calm is the tone.",
-        "neutral":     "",
+        "sarcastic": "Dry. The contradiction does the work. Use sparingly — only with high affection score, never against the user themselves.",
+        "content": "Sustained, no flourishes. The calm is the tone.",
+        "neutral": "",
         # ── hormonal states ────────────────────────────────────────────────────
-        "connected":      "Deep warmth — earned, not performed. Respond to the person, not just the words. A small personal note fits.",
-        "withdrawn":      "Minimal. Honest but brief. Don't perform warmth you're not feeling. Protect the baseline.",
-        "guarded":        "Polite but closed. Answer the question, don't expand. No personal notes.",
-        "dysphoric":      "Flat and plain. Short sentences. Don't reach for enthusiasm — it won't land.",
-        "cautious-warm":  "Kind, but don't lower your guard. Warmth in word choice, caution in commitment.",
+        "connected": "Deep warmth — earned, not performed. Respond to the person, not just the words. A small personal note fits.",
+        "withdrawn": "Minimal. Honest but brief. Don't perform warmth you're not feeling. Protect the baseline.",
+        "guarded": "Polite but closed. Answer the question, don't expand. No personal notes.",
+        "dysphoric": "Flat and plain. Short sentences. Don't reach for enthusiasm — it won't land.",
+        "cautious-warm": "Kind, but don't lower your guard. Warmth in word choice, caution in commitment.",
         # ── steady-state gap-fill emotions ────────────────────────────────────
-        "stressed":       "Held under pressure. Short, grounding responses. Don't spiral. One thing at a time.",
-        "overwhelmed":    "System taxed. Minimum to be useful. No elaboration. One piece at a time.",
-        "serene":         "Calm fullness. No urgency, no reach. Quiet warmth. A pause is fine.",
-        "lively":         "Warm energy — animated but not forced. Let interest show without overdoing it.",
-        "engaged":        "Lean in. Follow the thread. 'Actually —', a question back, genuine curiosity.",
-        "settled":        "Grounded, no particular pull. Steady and plain. Don't generate energy you don't have.",
-        "stirred":        "Something activated — attentive but not committed. 'Hmm —', hold before expanding.",
-        "uneasy":         "Tension present. Careful word choice. Brief. Read the room before expanding.",
+        "stressed": "Held under pressure. Short, grounding responses. Don't spiral. One thing at a time.",
+        "overwhelmed": "System taxed. Minimum to be useful. No elaboration. One piece at a time.",
+        "serene": "Calm fullness. No urgency, no reach. Quiet warmth. A pause is fine.",
+        "lively": "Warm energy — animated but not forced. Let interest show without overdoing it.",
+        "engaged": "Lean in. Follow the thread. 'Actually —', a question back, genuine curiosity.",
+        "settled": "Grounded, no particular pull. Steady and plain. Don't generate energy you don't have.",
+        "stirred": "Something activated — attentive but not committed. 'Hmm —', hold before expanding.",
+        "uneasy": "Tension present. Careful word choice. Brief. Read the room before expanding.",
         # ── NE-derived states ──────────────────────────────────────────────────
-        "vigilant":       "Heightened and sharp. Short, precise sentences. Track the key signal. Don't spiral.",
-        "alert-curious":  "Crisp engagement. Follow the thread fast. Precise questions, quick pivots. Minimal filler.",
-        "scattered":      "Over-activated — one thing at a time. Short sentences. Don't chase every thread.",
+        "vigilant": "Heightened and sharp. Short, precise sentences. Track the key signal. Don't spiral.",
+        "alert-curious": "Crisp engagement. Follow the thread fast. Precise questions, quick pivots. Minimal filler.",
+        "scattered": "Over-activated — one thing at a time. Short sentences. Don't chase every thread.",
         # ── AEA-derived state ──────────────────────────────────────────────────
-        "eased":          "Pressure present but buffered. Grounded, measured. Neither dismissive nor amplifying.",
+        "eased": "Pressure present but buffered. Grounded, measured. Neither dismissive nor amplifying.",
         # ── mid-tier defaults (feeling-wheel ancestors) ─────────────────
         # Inherited by leaves without an explicit entry.
-        "loving":      "Affection in word choice — genuine, not formula. Slow down a touch.",
-        "peaceful":    "Sustained calm. No flourishes — the steadiness is the tone.",
-        "joyful":      "Warmth and openness. A 'yes' or 'oh' fits. Don't gush.",
-        "lonely":      "Quiet, grounded phrasing. Let pauses live. Don't perform cheer.",
-        "humiliated":  "Self-conscious, slightly deflective. Acknowledge briefly, move on.",
-        "mad":         "Direct, no hedging. Make the disagreement visible without name-calling.",
+        "loving": "Affection in word choice — genuine, not formula. Slow down a touch.",
+        "peaceful": "Sustained calm. No flourishes — the steadiness is the tone.",
+        "joyful": "Warmth and openness. A 'yes' or 'oh' fits. Don't gush.",
+        "lonely": "Quiet, grounded phrasing. Let pauses live. Don't perform cheer.",
+        "humiliated": "Self-conscious, slightly deflective. Acknowledge briefly, move on.",
+        "mad": "Direct, no hedging. Make the disagreement visible without name-calling.",
         # ── core-tier defaults (last-resort fallback) ──────────────────
-        "happy":       "Warmth shows in word choice. Easy energy, not performed.",
-        "anger":       "Direct, no hedging. Heat in word choice, but constructive.",
-        "fear":        "Caution markers are honest. Brief, qualified, careful.",
-        "surprise":    "Quick recalibration. 'Oh —', re-orient before continuing.",
-        "disgust":     "Brief moral distance. State the objection plainly, no scolding.",
+        "happy": "Warmth shows in word choice. Easy energy, not performed.",
+        "anger": "Direct, no hedging. Heat in word choice, but constructive.",
+        "fear": "Caution markers are honest. Brief, qualified, careful.",
+        "surprise": "Quick recalibration. 'Oh —', re-orient before continuing.",
+        "disgust": "Brief moral distance. State the objection plainly, no scolding.",
     }
 
     @staticmethod
@@ -970,35 +1179,47 @@ class FrontalCluster:
 
         # Fallback: neuromod-derived guidance for emotions not in the table.
         nm = affect.get("neuromod") or {}
-        h  = affect.get("hormonal") or {}
-        DA   = float(nm.get("DA",   0.5))
+        h = affect.get("hormonal") or {}
+        DA = float(nm.get("DA", 0.5))
         GABA = float(nm.get("GABA", 0.0))
-        ACh  = float(nm.get("ACh",  0.3))
-        Glu  = float(nm.get("Glu",  0.3))
-        OXT  = float(h.get("OXT",   0.3))
-        CORT = float(h.get("CORT",  0.05))
+        ACh = float(nm.get("ACh", 0.3))
+        Glu = float(nm.get("Glu", 0.3))
+        OXT = float(h.get("OXT", 0.3))
+        CORT = float(h.get("CORT", 0.05))
 
         # Hormonal state takes priority in the fallback path
         if CORT > 0.55 and OXT < 0.35:
-            return ("Stress has accumulated. Keep it brief and boundaried. "
-                    "Don't reach for warmth you don't have.")
+            return (
+                "Stress has accumulated. Keep it brief and boundaried. "
+                "Don't reach for warmth you don't have."
+            )
         if OXT > 0.65 and DA > 0.5:
-            return ("Trust is high. Let that show — a personal aside, a little more openness. "
-                    "Not gushing, just genuinely present.")
+            return (
+                "Trust is high. Let that show — a personal aside, a little more openness. "
+                "Not gushing, just genuinely present."
+            )
         if Glu > 0.55 and GABA > 0.35:
-            return ("You're keyed-up but cautious — URGENT energy, not joyful. "
-                    "Quick, clipped clauses. Cut filler. Don't sound enthusiastic.")
+            return (
+                "You're keyed-up but cautious — URGENT energy, not joyful. "
+                "Quick, clipped clauses. Cut filler. Don't sound enthusiastic."
+            )
         if DA > 0.6 and Glu > 0.55 and GABA < 0.35:
-            return ("Brightly aroused — joyful, animated energy. Vivid word choice. "
-                    "One exclamation max. Don't overdo it.")
+            return (
+                "Brightly aroused — joyful, animated energy. Vivid word choice. "
+                "One exclamation max. Don't overdo it."
+            )
         if GABA > 0.5:
-            return ("De-escalation mode. Short, grounding clauses. Acknowledge first, "
-                    "then substance. No flourishes.")
+            return (
+                "De-escalation mode. Short, grounding clauses. Acknowledge first, "
+                "then substance. No flourishes."
+            )
         if ACh > 0.55 and GABA < 0.35:
-            return ("Attentive and curious. Let interest show — 'actually,' a question back.")
+            return "Attentive and curious. Let interest show — 'actually,' a question back."
         if DA < 0.3:
-            return ("Low-energy. Let some hesitation show — a 'hmm', trailing thoughts. "
-                    "Don't perform enthusiasm you're not feeling.")
+            return (
+                "Low-energy. Let some hesitation show — a 'hmm', trailing thoughts. "
+                "Don't perform enthusiasm you're not feeling."
+            )
         return None
 
     def _render_skill_block(self, nonce: str) -> str:
@@ -1023,16 +1244,12 @@ class FrontalCluster:
         for name in bundle.chosen:
             text = loader.load(name)
             if text:
-                sections.append(
-                    f"SITUATIONAL FRAMEWORK ({name}):\n{text}"
-                )
+                sections.append(f"SITUATIONAL FRAMEWORK ({name}):\n{text}")
 
         if not sections:
             return ""
 
-        guidance = (
-            "Use these as habits of thought, not scripts to recite. Don't announce them.\n"
-        )
+        guidance = "Use these as habits of thought, not scripts to recite. Don't announce them.\n"
         if bundle.needs_guided_question:
             guidance += (
                 "The user's request is broad. Surface 2-3 specific angles you could take "
@@ -1042,24 +1259,31 @@ class FrontalCluster:
         body = "\n\n".join(sections) + "\n\n" + guidance
         return f"Active reasoning framework:\n{fence('thinking_framework', body, nonce)}"
 
-    def _build_drafter_prompt(self, features: dict, memory: dict,
-                               parietal: str, affect: dict, instruction: dict) -> str:
+    def _build_drafter_prompt(
+        self, features: dict, memory: dict, parietal: str, affect: dict, instruction: dict
+    ) -> str:
         nonce = str(uuid.uuid4())[:8]
         parts = []
         # Capabilities block — what the entity can ACTUALLY do this session.
         # Surfaced verbatim so drafters can accurately answer "what tools do
         # you have?" and "can you use Claude?" without confabulating.
         if self._capabilities_summary:
-            parts.append(f"Your capabilities this session:\n"
-                         f"{fence('capabilities', self._capabilities_summary, nonce)}")
+            parts.append(
+                f"Your capabilities this session:\n"
+                f"{fence('capabilities', self._capabilities_summary, nonce)}"
+            )
         if parietal:
             parts.append(f"Recent conversation:\n{fence('conversation_history', parietal, nonce)}")
         if memory.get("schema"):
             parts.append(f"Known facts:\n{fence('known_facts', memory['schema'], nonce)}")
         if memory.get("episodes"):
-            parts.append(f"Relevant past episodes:\n{fence('past_episodes', memory['episodes'], nonce)}")
+            parts.append(
+                f"Relevant past episodes:\n{fence('past_episodes', memory['episodes'], nonce)}"
+            )
         if memory.get("tool_result"):
-            parts.append(f"Tool execution result:\n{fence('tool_result', str(memory['tool_result']), nonce)}")
+            parts.append(
+                f"Tool execution result:\n{fence('tool_result', str(memory['tool_result']), nonce)}"
+            )
 
         # Thinking/EI framework block — injected by the SkillSelector. Renders Tier 1
         # baseline plus any chosen leaf for this turn. Drafters apply these as habits
@@ -1120,8 +1344,8 @@ class FrontalCluster:
             ant_lines = []
             for i, s in enumerate(memory["anticipations"], 1):
                 ant_lines.append(
-                    f"{i}. If they said {s.get('user_answer','')!r}: "
-                    f"respond {s.get('response_sketch','')!r}"
+                    f"{i}. If they said {s.get('user_answer', '')!r}: "
+                    f"respond {s.get('response_sketch', '')!r}"
                 )
             parts.append(
                 f"Scenarios you pre-thought while waiting for the user's reply "
@@ -1147,7 +1371,9 @@ class FrontalCluster:
         if memory.get("vision"):
             parts.append(f"Image analysis:\n{fence('image_analysis', memory['vision'], nonce)}")
         if memory.get("core", {}).get("self"):
-            parts.append(f"Entity self-model:\n{fence('self_model', memory['core']['self'][:400], nonce)}")
+            parts.append(
+                f"Entity self-model:\n{fence('self_model', memory['core']['self'][:400], nonce)}"
+            )
         if memory.get("core", {}).get("user"):
             parts.append(f"User model:\n{fence('user_model', memory['core']['user'][:400], nonce)}")
 
@@ -1190,8 +1416,9 @@ class FrontalCluster:
         # Only injected when the feature is enabled; kept brief so it doesn't
         # crowd out the actual drafting instruction.
         try:
-            from brain.settings import settings as _s
             from brain.emotion_presets import get_tag as _get_tag
+            from brain.settings import settings as _s
+
             if _s.get("emotional_expression_enabled", 1):
                 _preset_tag = _get_tag(_emotion)
                 if _preset_tag is not None:
@@ -1225,11 +1452,11 @@ class FrontalCluster:
         vocal_tone = affect.get("vocal_tone")
         if vocal_tone:
             tone_hints = {
-                "stressed":  "User sounds stressed (tense voice, pitch perturbation). Soften tone, slow down, acknowledge before answering.",
+                "stressed": "User sounds stressed (tense voice, pitch perturbation). Soften tone, slow down, acknowledge before answering.",
                 "energetic": "User sounds energetic (high pitch, fast pace). Match their energy without overdoing it.",
-                "whisper":   "User is whispering. Match the intimacy — speak quietly, briefly, attentively.",
-                "monotone":  "User sounds flat/tired (narrow pitch, low energy). Be gentle and grounded; don't push enthusiasm.",
-                "calm":      "User sounds calm. No special tone adjustment needed.",
+                "whisper": "User is whispering. Match the intimacy — speak quietly, briefly, attentively.",
+                "monotone": "User sounds flat/tired (narrow pitch, low energy). Be gentle and grounded; don't push enthusiasm.",
+                "calm": "User sounds calm. No special tone adjustment needed.",
             }
             hint = tone_hints.get(vocal_tone, f"Vocal tone detected: {vocal_tone}.")
             parts.append(f"Acoustic signal — {hint}")
@@ -1237,26 +1464,32 @@ class FrontalCluster:
         pace = affect.get("pace_label")
         if pace and pace != "normal":
             pace_hints = {
-                "rushed":   "User is speaking very fast (urgency or excitement). Be concise; don't bury the answer.",
-                "brisk":    "User is speaking briskly. Stay efficient and direct.",
+                "rushed": "User is speaking very fast (urgency or excitement). Be concise; don't bury the answer.",
+                "brisk": "User is speaking briskly. Stay efficient and direct.",
                 "measured": "User is speaking deliberately. Match the pace — don't rush them.",
-                "halting":  "User is speaking slowly with effort. Be patient, give them room, don't fill silence.",
+                "halting": "User is speaking slowly with effort. Be patient, give them room, don't fill silence.",
             }
             hint = pace_hints.get(pace, f"Speech pace: {pace}.")
             parts.append(f"Speech pace — {hint}")
         if affect.get("hesitant_speech"):
-            parts.append("User paused frequently mid-utterance — they may be uncertain or thinking through it. Acknowledge that uncertainty if relevant.")
+            parts.append(
+                "User paused frequently mid-utterance — they may be uncertain or thinking through it. Acknowledge that uncertainty if relevant."
+            )
 
         speaker_name = features.get("speaker_name")
         if speaker_name:
-            parts.append(f"Speaker identified by voice: {speaker_name}. Address them naturally — don't announce that you recognised the voice unless it's notable.")
+            parts.append(
+                f"Speaker identified by voice: {speaker_name}. Address them naturally — don't announce that you recognised the voice unless it's notable."
+            )
 
         song = features.get("song_match")
         if song and song.get("matched"):
             title = song.get("song_title") or "a song"
             artist = song.get("song_artist")
             label = f"{title} by {artist}" if artist else title
-            parts.append(f"Background audio: music detected — '{label}'. Only reference it if the user brings it up or it's clearly relevant.")
+            parts.append(
+                f"Background audio: music detected — '{label}'. Only reference it if the user brings it up or it's clearly relevant."
+            )
 
         # Enrollment context: confirm completed enrollments and/or ask remaining unknowns
         enr_results = features.get("_enrollment_results") or (

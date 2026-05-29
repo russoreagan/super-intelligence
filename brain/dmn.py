@@ -10,6 +10,7 @@ Three sub-processes:
 
 v0.2 feature — only active when BRAIN_DMN=true in env.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -21,8 +22,6 @@ import random
 import re
 import time
 from collections import deque
-
-from pathlib import Path
 
 from brain.bus import Bus
 from brain.cell import IntegratorCell
@@ -52,26 +51,146 @@ NOVELTY_STATE_PATH = SECOND_BRAIN_ROOT / "dmn_novelty.json"
 # common scaffolding ("the user has been...") doesn't make every thought look
 # like a duplicate. This is DIFFERENT from voice_bridge.bleed_overlap, which
 # is tuned for TTS-bleed detection (needs to catch articles).
-_STOP_WORDS: frozenset[str] = frozenset({
-    "the", "a", "an", "and", "or", "but", "is", "are", "was", "were", "be", "been",
-    "being", "am", "have", "has", "had", "do", "does", "did", "will", "would",
-    "could", "should", "may", "might", "can", "must", "shall",
-    "to", "of", "in", "on", "at", "by", "for", "with", "from", "up", "out", "as",
-    "into", "through", "after", "before", "between", "during", "under", "over",
-    "about", "against", "without",
-    "this", "that", "these", "those", "it", "its", "itself",
-    "he", "she", "they", "them", "their", "theirs", "him", "her", "his", "hers",
-    "i", "me", "my", "mine", "myself", "we", "us", "our", "ours", "ourselves",
-    "you", "your", "yours", "yourself",
-    "what", "which", "who", "whom", "whose", "if", "then", "than", "because",
-    "so", "not", "no", "yes", "very", "just", "only", "some", "any", "all", "each",
-    "much", "many", "more", "most", "other", "another", "such", "same", "too",
-    "again", "here", "there", "when", "where", "why", "how", "now", "still",
-    "even", "also", "like", "feel", "feels", "feeling",
-    # Domain-saturated tokens — these appear in nearly every thought and
-    # would otherwise dominate the Jaccard score
-    "user", "thought", "thinking", "wonder", "wondering", "notice", "noticing",
-})
+_STOP_WORDS: frozenset[str] = frozenset(
+    {
+        "the",
+        "a",
+        "an",
+        "and",
+        "or",
+        "but",
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "been",
+        "being",
+        "am",
+        "have",
+        "has",
+        "had",
+        "do",
+        "does",
+        "did",
+        "will",
+        "would",
+        "could",
+        "should",
+        "may",
+        "might",
+        "can",
+        "must",
+        "shall",
+        "to",
+        "of",
+        "in",
+        "on",
+        "at",
+        "by",
+        "for",
+        "with",
+        "from",
+        "up",
+        "out",
+        "as",
+        "into",
+        "through",
+        "after",
+        "before",
+        "between",
+        "during",
+        "under",
+        "over",
+        "about",
+        "against",
+        "without",
+        "this",
+        "that",
+        "these",
+        "those",
+        "it",
+        "its",
+        "itself",
+        "he",
+        "she",
+        "they",
+        "them",
+        "their",
+        "theirs",
+        "him",
+        "her",
+        "his",
+        "hers",
+        "i",
+        "me",
+        "my",
+        "mine",
+        "myself",
+        "we",
+        "us",
+        "our",
+        "ours",
+        "ourselves",
+        "you",
+        "your",
+        "yours",
+        "yourself",
+        "what",
+        "which",
+        "who",
+        "whom",
+        "whose",
+        "if",
+        "then",
+        "than",
+        "because",
+        "so",
+        "not",
+        "no",
+        "yes",
+        "very",
+        "just",
+        "only",
+        "some",
+        "any",
+        "all",
+        "each",
+        "much",
+        "many",
+        "more",
+        "most",
+        "other",
+        "another",
+        "such",
+        "same",
+        "too",
+        "again",
+        "here",
+        "there",
+        "when",
+        "where",
+        "why",
+        "how",
+        "now",
+        "still",
+        "even",
+        "also",
+        "like",
+        "feel",
+        "feels",
+        "feeling",
+        # Domain-saturated tokens — these appear in nearly every thought and
+        # would otherwise dominate the Jaccard score
+        "user",
+        "thought",
+        "thinking",
+        "wonder",
+        "wondering",
+        "notice",
+        "noticing",
+    }
+)
 
 
 def _content_word_overlap(a: str, b: str) -> float:
@@ -82,9 +201,12 @@ def _content_word_overlap(a: str, b: str) -> float:
     """
     if not a or not b:
         return 0.0
+
     def content_tokens(s: str) -> set[str]:
-        return {w for w in re.findall(r"[a-z']+", s.lower())
-                if len(w) >= 3 and w not in _STOP_WORDS}
+        return {
+            w for w in re.findall(r"[a-z']+", s.lower()) if len(w) >= 3 and w not in _STOP_WORDS
+        }
+
     ta = content_tokens(a)
     tb = content_tokens(b)
     if not ta or not tb:
@@ -98,9 +220,26 @@ def _content_word_overlap(a: str, b: str) -> float:
 # us detect that the *shape* of the thought is repeating even when the words differ.
 _FRAME_VERB_CLASSES: dict[str, str] = {}
 for _cls, _verbs in {
-    "INQUIRE": ("investigate", "explore", "consider", "look", "examine", "study",
-                "research", "analyze", "analyse", "review", "dig", "delve", "probe",
-                "survey", "assess", "evaluate", "understand", "learn"),
+    "INQUIRE": (
+        "investigate",
+        "explore",
+        "consider",
+        "look",
+        "examine",
+        "study",
+        "research",
+        "analyze",
+        "analyse",
+        "review",
+        "dig",
+        "delve",
+        "probe",
+        "survey",
+        "assess",
+        "evaluate",
+        "understand",
+        "learn",
+    ),
     "WONDER": ("wonder", "question", "ask", "muse", "ponder", "speculate"),
     "NOTICE": ("notice", "observe", "see", "realize", "realise", "note", "catch", "spot"),
     "RECALL": ("remember", "recall", "recollect", "reflect"),
@@ -140,12 +279,14 @@ def _cosine(a: list[float] | None, b: list[float] | None) -> float:
     if not a or not b or len(a) != len(b):
         return 0.0
     import math as _math
+
     num = sum(x * y for x, y in zip(a, b, strict=True))
     na = _math.sqrt(sum(x * x for x in a))
     nb = _math.sqrt(sum(x * x for x in b))
     if na == 0 or nb == 0:
         return 0.0
     return num / (na * nb)
+
 
 logger = logging.getLogger(__name__)
 
@@ -187,12 +328,32 @@ DMN_MEMORY_SEED_EVERY = int(os.environ.get("BRAIN_DMN_MEMORY_SEED_EVERY", "5"))
 # Inward thoughts apply a small GABA bump — self-monitoring has a cost, which
 # makes extended self-reflection naturally self-limiting via neuromod decay.
 # Outward thoughts apply a small DA + ACh bump (engagement / novelty reward).
-_INWARD_MARKERS: frozenset[str] = frozenset({
-    "existence", "nature", "conscious", "consciousness", "awareness", "aware",
-    "experience", "purpose", "meaning", "identity", "what i am", "who i am",
-    "my own", "myself", "introspect", "do i feel", "am i", "whether i",
-    "what it means", "my nature", "my existence", "my purpose",
-})
+_INWARD_MARKERS: frozenset[str] = frozenset(
+    {
+        "existence",
+        "nature",
+        "conscious",
+        "consciousness",
+        "awareness",
+        "aware",
+        "experience",
+        "purpose",
+        "meaning",
+        "identity",
+        "what i am",
+        "who i am",
+        "my own",
+        "myself",
+        "introspect",
+        "do i feel",
+        "am i",
+        "whether i",
+        "what it means",
+        "my nature",
+        "my existence",
+        "my purpose",
+    }
+)
 
 # Fallback neuromod deltas when the model doesn't emit chem_delta.
 _INWARD_DELTA: dict[str, float] = {"GABA": 0.04}
@@ -210,11 +371,21 @@ _CHEM_MAX_DELTA: float = 0.06
 # strongly than raw negative valence: when feeling embarrassed or apologetic
 # a person often reaches for a tangent to escape the moment, not just stays
 # quiet. Membership is the override signal alongside the numeric valence.
-_DEFLECTION_OVERRIDES: frozenset[str] = frozenset({
-    "embarrassed", "apologetic", "ashamed", "shy",
-    "frustrated", "irritated", "defensive", "sarcastic",
-    "disappointed", "somber", "melancholy",
-})
+_DEFLECTION_OVERRIDES: frozenset[str] = frozenset(
+    {
+        "embarrassed",
+        "apologetic",
+        "ashamed",
+        "shy",
+        "frustrated",
+        "irritated",
+        "defensive",
+        "sarcastic",
+        "disappointed",
+        "somber",
+        "melancholy",
+    }
+)
 
 
 def _classify_thought(thought: str) -> str:
@@ -224,8 +395,9 @@ def _classify_thought(thought: str) -> str:
 
 
 class DefaultModeNetwork:
-    def __init__(self, bus: Bus, router: ModelRouter,
-                 hippocampus=None, parietal=None, obs=None) -> None:
+    def __init__(
+        self, bus: Bus, router: ModelRouter, hippocampus=None, parietal=None, obs=None
+    ) -> None:
         self._bus = bus
         self._router = router
         self._hippocampus = hippocampus
@@ -364,7 +536,7 @@ class DefaultModeNetwork:
             system_prompt=BRIDGE_SYSTEM,
             topics=[],
             max_calls_per_turn=1,
-            locality="local",    # locked to local — must never escape to a cloud API
+            locality="local",  # locked to local — must never escape to a cloud API
             timeout_seconds=12.0,  # Ollama can be slow on cold load
         )
         self._bridge_cell.set_router(router)
@@ -416,7 +588,9 @@ class DefaultModeNetwork:
         # the existing _tick_skip_probability heuristic; it provides a hard
         # chemistry-driven block, while the probability adds stochastic flow.
         self._idle_gate = SwitchNeuron(
-            "idle_gate", "dmn", polarity="excitatory",
+            "idle_gate",
+            "dmn",
+            polarity="excitatory",
             threshold=0.5,
             modulators={"5HT": -0.10, "OXT": -0.05, "NE": +0.10, "GABA": +0.10},
         )
@@ -443,7 +617,8 @@ class DefaultModeNetwork:
         logger.info(
             "[Background reflection] Active (continuous) — inner monologue every "
             "%.0fs active / %.0fs when user is OS-idle",
-            active, idle,
+            active,
+            idle,
         )
         self._loop_task = asyncio.create_task(self._loop())
 
@@ -522,6 +697,7 @@ class DefaultModeNetwork:
             return None
         try:
             import inspect
+
             result = self._router.embed(text)
             if inspect.isawaitable(result):
                 result = await result
@@ -564,8 +740,11 @@ class DefaultModeNetwork:
             for a in (data.get("recent_angles") or [])[-DMN_RECENT_ANGLES:]:
                 self._recent_angles.append(a)
             self._last_rumination_seed = data.get("last_rumination_seed") or ""
-            logger.info("[DMN] Restored novelty memory: %d thought(s), %d angle(s)",
-                        len(self._recent_thoughts), len(self._recent_angles))
+            logger.info(
+                "[DMN] Restored novelty memory: %d thought(s), %d angle(s)",
+                len(self._recent_thoughts),
+                len(self._recent_angles),
+            )
         except Exception as e:
             logger.warning("[DMN] Could not load novelty state: %s", e)
 
@@ -608,11 +787,14 @@ class DefaultModeNetwork:
         if not buf:
             # Fallback: if the buffer is empty (DMN not running), derive from
             # the deque of plain strings with no speak flag.
-            return [{"thought": t, "speak_flagged": False}
-                    for t in list(self._recent_thoughts)[-n:]]
+            return [
+                {"thought": t, "speak_flagged": False} for t in list(self._recent_thoughts)[-n:]
+            ]
         entries = buf[-n:]
-        return [{"thought": e["thought"], "speak_flagged": bool(e.get("speak_flagged"))}
-                for e in entries]
+        return [
+            {"thought": e["thought"], "speak_flagged": bool(e.get("speak_flagged"))}
+            for e in entries
+        ]
 
     def note_last_response(self, response: str) -> None:
         """Called by run.py after each turn end. Records whether the entity's
@@ -621,10 +803,8 @@ class DefaultModeNetwork:
         self.last_assistant_message = (response or "").strip()
         # Simple heuristic: ends with '?' OR final clause looks like a Q
         text = self.last_assistant_message
-        self.last_was_question = (
-            text.endswith("?")
-            or any(text.lower().endswith(p) for p in
-                   ("right?", "yeah?", "huh?", "ok?", "okay?", "yes?"))
+        self.last_was_question = text.endswith("?") or any(
+            text.lower().endswith(p) for p in ("right?", "yeah?", "huh?", "ok?", "okay?", "yes?")
         )
         # New turn arriving = stale anticipations go away (the user already replied)
         self.anticipations = []
@@ -674,10 +854,12 @@ class DefaultModeNetwork:
         spoken = (candidate.get("spoken") or "").strip()
         if spoken:
             self._proactive_q.append(spoken)
-            logger.info("[Speak gate] Committing candidate (age=%.0fs, attempts=%d): %r",
-                        time.time() - float(candidate.get("created_ts", time.time())),
-                        int(candidate.get("attempts", 0)),
-                        spoken[:80])
+            logger.info(
+                "[Speak gate] Committing candidate (age=%.0fs, attempts=%d): %r",
+                time.time() - float(candidate.get("created_ts", time.time())),
+                int(candidate.get("attempts", 0)),
+                spoken[:80],
+            )
 
     async def bridge_if_needed(self, candidate: dict) -> str:
         """Decide whether to run a local Ollama rewrite over a candidate's
@@ -711,7 +893,9 @@ class DefaultModeNetwork:
             # mangling something that already flows fine.
             logger.debug(
                 "[Speak gate] Bridge skipped (on-topic, overlap=%.2f ≥ %.2f): %r",
-                overlap, threshold, original[:60],
+                overlap,
+                threshold,
+                original[:60],
             )
             return original
 
@@ -727,12 +911,12 @@ class DefaultModeNetwork:
             "",
             "Return ONLY the rewritten utterance (one or two short sentences).",
         ]
-        bridge_turn_id = f"bridge_{int(time.time()*1000)}"
+        bridge_turn_id = f"bridge_{int(time.time() * 1000)}"
         self._bridge_cell.reset_turn(bridge_turn_id)
         try:
-            raw = await self._bridge_cell.call([
-                {"role": "user", "content": "\n".join(prompt_lines)}
-            ])
+            raw = await self._bridge_cell.call(
+                [{"role": "user", "content": "\n".join(prompt_lines)}]
+            )
         except Exception as e:
             logger.debug("[Speak gate] Bridge call raised, falling back: %s", e)
             return original
@@ -751,7 +935,8 @@ class DefaultModeNetwork:
         if len(rewritten) < 5 or len(rewritten) > 300:
             logger.info(
                 "[Speak gate] Bridge output rejected (length=%d): %r",
-                len(rewritten), rewritten[:80],
+                len(rewritten),
+                rewritten[:80],
             )
             return original
         if rewritten.lstrip().startswith("{") or rewritten.lstrip().startswith("["):
@@ -760,7 +945,9 @@ class DefaultModeNetwork:
 
         logger.info(
             "[Speak gate] Bridged (overlap=%.2f): %r → %r",
-            overlap, original[:60], rewritten[:80],
+            overlap,
+            original[:60],
+            rewritten[:80],
         )
         return rewritten
 
@@ -799,16 +986,16 @@ class DefaultModeNetwork:
             f"- angle: {angle or '(unset)'}",
             f"- is_action_proposal: {is_propose}",
             "",
-            "Return JSON: {\"verdict\": \"yes\"|\"wait\"|\"drop\", \"reason\": \"...\"}",
+            'Return JSON: {"verdict": "yes"|"wait"|"drop", "reason": "..."}',
         ]
 
         # Each judge call is its own logical "turn" for the cell's per-turn cap.
-        judge_turn_id = f"judge_{int(time.time()*1000)}"
+        judge_turn_id = f"judge_{int(time.time() * 1000)}"
         self._judge_cell.reset_turn(judge_turn_id)
         try:
-            raw = await self._judge_cell.call([
-                {"role": "user", "content": "\n".join(prompt_lines)}
-            ])
+            raw = await self._judge_cell.call(
+                [{"role": "user", "content": "\n".join(prompt_lines)}]
+            )
         except Exception as e:
             logger.debug("[Speak gate] Judge call raised: %s", e)
             return ("wait", "judge error")
@@ -836,11 +1023,14 @@ class DefaultModeNetwork:
                 return ("yes", "raw=yes")
             return ("wait", "unparsed")
 
-    def update_context(self, parietal_text: str,
-                       emotion: str | None = None,
-                       self_schema: str | None = None,
-                       speaker_name: str | None = None,
-                       relationship: dict | None = None) -> None:
+    def update_context(
+        self,
+        parietal_text: str,
+        emotion: str | None = None,
+        self_schema: str | None = None,
+        speaker_name: str | None = None,
+        relationship: dict | None = None,
+    ) -> None:
         """Refresh what the DMN sees about the world. Called at turn start
         (with the in-progress user input — only parietal_text supplied) and
         at turn end (with the full exchange + emotion + relationship).
@@ -889,6 +1079,7 @@ class DefaultModeNetwork:
         has full file-read access via its `task` field when it needs details.
         """
         import re
+
         projects_m = re.search(
             r"## Projects assigned by Russ(.*?)(?=\n## |\Z)",
             open_questions_text,
@@ -902,9 +1093,7 @@ class DefaultModeNetwork:
         lines: list[str] = []
 
         # Extract each ### project block and summarise to 2-3 lines
-        for block_m in re.finditer(
-            r"### (.+?)\n(.*?)(?=\n### |\Z)", section, re.DOTALL
-        ):
+        for block_m in re.finditer(r"### (.+?)\n(.*?)(?=\n### |\Z)", section, re.DOTALL):
             name = block_m.group(1).strip()
             body = block_m.group(2)
 
@@ -931,18 +1120,20 @@ class DefaultModeNetwork:
 
     # ── Deferred thoughts ────────────────────────────────────────────────────
 
-    def _append_deferred_thought(self, text: str,
-                                   urgency: str = "high",
-                                   tags: list[str] | None = None) -> None:
+    def _append_deferred_thought(
+        self, text: str, urgency: str = "high", tags: list[str] | None = None
+    ) -> None:
         """Write immediate/high urgency thoughts to deferred_thoughts.md for
         explicit surfacing on user return. Normal/low urgency thoughts are stored
         only in episodic memory (handled by the hippocampus encode call) and
         surface naturally when a matching topic comes up in conversation."""
         if urgency not in ("immediate", "high"):
-            logger.info("[DMN] Deferred thought (urgency=%s) — episodic memory only: %r",
-                        urgency, text[:80])
+            logger.info(
+                "[DMN] Deferred thought (urgency=%s) — episodic memory only: %r", urgency, text[:80]
+            )
             return
         from datetime import datetime
+
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
         tag_str = f" [{', '.join(tags)}]" if tags else ""
         entry = f"\n---\n[{timestamp}] [{urgency.upper()}]{tag_str} {text.strip()}\n"
@@ -951,8 +1142,9 @@ class DefaultModeNetwork:
                 DEFERRED_THOUGHTS_PATH.write_text("# Deferred Thoughts\n")
             with DEFERRED_THOUGHTS_PATH.open("a", encoding="utf-8") as f:
                 f.write(entry)
-            logger.info("[DMN] Deferred thought saved (urgency=%s, tags=%s): %r",
-                        urgency, tags, text[:80])
+            logger.info(
+                "[DMN] Deferred thought saved (urgency=%s, tags=%s): %r", urgency, tags, text[:80]
+            )
         except Exception as e:
             logger.warning("[DMN] Could not save deferred thought: %s", e)
 
@@ -964,7 +1156,7 @@ class DefaultModeNetwork:
             content = DEFERRED_THOUGHTS_PATH.read_text(encoding="utf-8").strip()
             # Strip the header line to get only the entries
             lines = content.split("\n")
-            entries = "\n".join(l for l in lines if not l.startswith("# Deferred"))
+            entries = "\n".join(ln for ln in lines if not ln.startswith("# Deferred"))
             entries = entries.strip(" \n-")
             if not entries:
                 return ""
@@ -979,13 +1171,15 @@ class DefaultModeNetwork:
         """True if there are deferred thoughts or unreviewed proposals."""
         has_thoughts = (
             DEFERRED_THOUGHTS_PATH.exists()
-            and len(DEFERRED_THOUGHTS_PATH.read_text(encoding="utf-8").strip()
-                     .replace("# Deferred Thoughts", "").strip()) > 0
+            and len(
+                DEFERRED_THOUGHTS_PATH.read_text(encoding="utf-8")
+                .strip()
+                .replace("# Deferred Thoughts", "")
+                .strip()
+            )
+            > 0
         )
-        has_proposals = (
-            PROPOSALS_DIR.exists()
-            and any(PROPOSALS_DIR.glob("*.md"))
-        )
+        has_proposals = PROPOSALS_DIR.exists() and any(PROPOSALS_DIR.glob("*.md"))
         return has_thoughts or has_proposals
 
     # ── Proposal planning ─────────────────────────────────────────────────────
@@ -994,6 +1188,7 @@ class DefaultModeNetwork:
         """Elaborate a seed thought into a structured proposal doc using the
         local-general model. Saves to proposals/ directory. Never executes work."""
         from datetime import datetime
+
         plan_id = f"{datetime.now().strftime('%Y%m%d-%H%M%S')}"
         self._planner_cell.reset_turn(f"{turn_id}_plan")
 
@@ -1003,15 +1198,19 @@ class DefaultModeNetwork:
         if self._skill_selector is not None:
             try:
                 bundle = await self._skill_selector.select_autonomous(
-                    prompt=seed_thought, turn_id=f"{turn_id}_plan",
+                    prompt=seed_thought,
+                    turn_id=f"{turn_id}_plan",
                 )
                 if bundle:
                     picked_skills = list(bundle.tier1) + list(bundle.chosen)
                     from brain.observability.decisions import decisions as _decisions
+
                     _decisions.log(
                         "dmn_skill_pick",
-                        turn_id=turn_id, cluster="dmn",
-                        cell="planner", chosen=bundle.chosen,
+                        turn_id=turn_id,
+                        cluster="dmn",
+                        cell="planner",
+                        chosen=bundle.chosen,
                         pick_source=bundle.pick_source,
                     )
             except Exception as e:
@@ -1020,12 +1219,16 @@ class DefaultModeNetwork:
 
         self._router.enter_background_mode()
         try:
-            raw = await self._planner_cell.call([
-                {"role": "user", "content":
-                 f"Seed idea:\n{seed_thought}\n\n"
-                 f"Current date: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n"
-                 f"Write a proposal document based on this idea."}
-            ])
+            raw = await self._planner_cell.call(
+                [
+                    {
+                        "role": "user",
+                        "content": f"Seed idea:\n{seed_thought}\n\n"
+                        f"Current date: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n"
+                        f"Write a proposal document based on this idea.",
+                    }
+                ]
+            )
         except Exception as e:
             logger.warning("[DMN] Planning pass failed: %s", e)
             return
@@ -1051,7 +1254,9 @@ class DefaultModeNetwork:
         PROPOSALS_DIR.mkdir(parents=True, exist_ok=True)
         # Derive a slug from the first heading, fallback to timestamp
         slug_match = re.search(r"^# (.+)", content, re.MULTILINE)
-        slug = re.sub(r"[^a-z0-9]+", "-", slug_match.group(1).lower())[:40] if slug_match else "idea"
+        slug = (
+            re.sub(r"[^a-z0-9]+", "-", slug_match.group(1).lower())[:40] if slug_match else "idea"
+        )
         filename = f"{plan_id}-{slug}.md"
         path = PROPOSALS_DIR / filename
         path.write_text(content, encoding="utf-8")
@@ -1068,13 +1273,15 @@ class DefaultModeNetwork:
                 title_m = re.search(r"^# (.+)", text, re.MULTILINE)
                 status_m = re.search(r"\*\*Status\*\*:\s*(.+)", text)
                 proposed_m = re.search(r"\*\*Proposed\*\*:\s*(.+)", text)
-                results.append({
-                    "filename": p.name,
-                    "path": str(p),
-                    "title": title_m.group(1).strip() if title_m else p.stem,
-                    "status": status_m.group(1).strip() if status_m else "unknown",
-                    "proposed": proposed_m.group(1).strip() if proposed_m else "",
-                })
+                results.append(
+                    {
+                        "filename": p.name,
+                        "path": str(p),
+                        "title": title_m.group(1).strip() if title_m else p.stem,
+                        "status": status_m.group(1).strip() if status_m else "unknown",
+                        "proposed": proposed_m.group(1).strip() if proposed_m else "",
+                    }
+                )
             except Exception:
                 pass
         return results
@@ -1089,7 +1296,7 @@ class DefaultModeNetwork:
         except (json.JSONDecodeError, ValueError):
             pass
         try:
-            fixed = re.sub(r':\s*\+(\d)', r': \1', raw.strip())
+            fixed = re.sub(r":\s*\+(\d)", r": \1", raw.strip())
             fixed = re.sub(r"^```(?:json)?\s*", "", fixed)
             fixed = re.sub(r"\s*```$", "", fixed).strip()
             return json.loads(fixed)
@@ -1107,11 +1314,13 @@ class DefaultModeNetwork:
         Very high GABA (inhibited/frozen) suppresses everything including DMN.
         """
         snap = self._bus.neuromod.snapshot()
-        ach  = snap.get("ACh",  0.0)
-        glu  = snap.get("Glu",  0.0)
+        ach = snap.get("ACh", 0.0)
+        glu = snap.get("Glu", 0.0)
         gaba = snap.get("GABA", 0.0)
 
-        suppression = ach * settings.get("ach_suppression_weight") + glu * settings.get("glu_suppression_weight")
+        suppression = ach * settings.get("ach_suppression_weight") + glu * settings.get(
+            "glu_suppression_weight"
+        )
 
         # Moderate GABA (anxious but not frozen) → more rumination, not less
         if 0.2 <= gaba < 0.6:
@@ -1167,14 +1376,20 @@ class DefaultModeNetwork:
                     logger.debug(
                         "[Background reflection] Tick suppressed by idle_gate "
                         "(NE=%.2f GABA=%.2f 5HT=%.2f OXT=%.2f)",
-                        chem.get("NE", 0), chem.get("GABA", 0),
-                        chem.get("5HT", 0), chem.get("OXT", 0),
+                        chem.get("NE", 0),
+                        chem.get("GABA", 0),
+                        chem.get("5HT", 0),
+                        chem.get("OXT", 0),
                     )
                     if self._obs:
                         eff = self._idle_gate.effective_threshold(chem)
                         self._obs.record_modulation_event(
-                            "idle_gate", "dmn", suppressed=True,
-                            chem=chem, level=0.6, effective_threshold=eff,
+                            "idle_gate",
+                            "dmn",
+                            suppressed=True,
+                            chem=chem,
+                            level=0.6,
+                            effective_threshold=eff,
                         )
                     continue
                 self._idle_gate.fire(0.6, "tick_allowed", snapshot=chem)
@@ -1184,7 +1399,10 @@ class DefaultModeNetwork:
                     logger.debug(
                         "[Background reflection] Tick suppressed "
                         "(skip_prob=%.2f ACh=%.2f Glu=%.2f GABA=%.2f)",
-                        skip_prob, snap["ACh"], snap["Glu"], snap["GABA"],
+                        skip_prob,
+                        snap["ACh"],
+                        snap["Glu"],
+                        snap["GABA"],
                     )
                     continue
                 try:
@@ -1221,14 +1439,14 @@ class DefaultModeNetwork:
         if h_parts:
             lines.append(f"Hormones: {' '.join(h_parts)}")
         if self._last_speaker_name:
-            lines.append(
-                f"Speaker: {self._last_speaker_name} ({self._last_familiarity})"
-            )
+            lines.append(f"Speaker: {self._last_speaker_name} ({self._last_familiarity})")
         else:
             lines.append("Speaker: unknown (new)")
         try:
             idle_s = int(get_idle_seconds())
-            lines.append(f"OS-idle seconds: {idle_s}  ({'user away' if idle_s > 60 else 'user present'})")
+            lines.append(
+                f"OS-idle seconds: {idle_s}  ({'user away' if idle_s > 60 else 'user present'})"
+            )
         except Exception:
             pass
         return "\n".join(lines)
@@ -1245,9 +1463,12 @@ class DefaultModeNetwork:
             self._recent_frames = deque(maxlen=DMN_RECENT_FRAMES)
         for attr, default in (
             ("_memory_seed", ""),
-            ("_consec_errors", 0), ("_backoff_mult", 1.0),
-            ("_last_tick_latency", 0.0), ("_last_tick_failed", False),
-            ("_last_rumination_seed", ""), ("_consecutive_ruminations", 0),
+            ("_consec_errors", 0),
+            ("_backoff_mult", 1.0),
+            ("_last_tick_latency", 0.0),
+            ("_last_tick_failed", False),
+            ("_last_rumination_seed", ""),
+            ("_consecutive_ruminations", 0),
             ("_ruminations_in_progress", 0),
         ):
             if not hasattr(self, attr):
@@ -1280,8 +1501,10 @@ class DefaultModeNetwork:
         max_mult = float(settings.get("dmn_backoff_max_multiplier") or 8.0)
         if model_ok:
             if self._consec_errors or self._backoff_mult != 1.0:
-                logger.info("[Background reflection] Recovered after %d failure(s) — "
-                            "backoff reset", self._consec_errors)
+                logger.info(
+                    "[Background reflection] Recovered after %d failure(s) — backoff reset",
+                    self._consec_errors,
+                )
             self._consec_errors = 0
             self._backoff_mult = 1.0
             self._last_tick_failed = False
@@ -1290,14 +1513,19 @@ class DefaultModeNetwork:
             self._last_tick_failed = True
             if self._consec_errors >= after:
                 self._backoff_mult = min(max_mult, factor ** (self._consec_errors - after + 1))
-            logger.warning("[Background reflection] Model-failure tick #%d — backoff x%.1f "
-                           "(freeing the local model for other subsystems)",
-                           self._consec_errors, self._backoff_mult)
+            logger.warning(
+                "[Background reflection] Model-failure tick #%d — backoff x%.1f "
+                "(freeing the local model for other subsystems)",
+                self._consec_errors,
+                self._backoff_mult,
+            )
             if self._obs is not None:
                 with contextlib.suppress(Exception):
                     self._obs.record_dmn_failure(
-                        step="tick", error="model unavailable",
-                        consecutive=self._consec_errors, backoff=self._backoff_mult,
+                        step="tick",
+                        error="model unavailable",
+                        consecutive=self._consec_errors,
+                        backoff=self._backoff_mult,
                     )
 
     async def _tick(self) -> None:
@@ -1350,9 +1578,7 @@ class DefaultModeNetwork:
         if self.last_was_question and not self.anticipations:
             await self._run_step("anticipator", self._run_anticipator(turn_id))
 
-        if (self._thought_count % 4 == 0
-                and self._hippocampus is not None
-                and not self.prefetched):
+        if self._thought_count % 4 == 0 and self._hippocampus is not None and not self.prefetched:
             await self._run_step("prefetcher", self._run_prefetcher(turn_id))
 
         self._last_tick_latency = time.time() - t_start
@@ -1373,8 +1599,8 @@ class DefaultModeNetwork:
         da_raw = float(chem.get("DA", 0.5))
         ach_raw = float(chem.get("ACh", 0.0))
         sht = float(chem.get("5HT", 0.0))
-        ne = max(0.0, ne_raw - 0.30)   # over alert-baseline
-        da = max(0.0, da_raw - 0.50)   # over neutral
+        ne = max(0.0, ne_raw - 0.30)  # over alert-baseline
+        da = max(0.0, da_raw - 0.50)  # over neutral
         ach = max(0.0, ach_raw - 0.50)
         drive = (
             settings.get("rum_w_cort") * cort
@@ -1407,7 +1633,9 @@ class DefaultModeNetwork:
         if drive < threshold:
             return "normal", flavor, drive
         # Depth cap — don't deepen the same seed forever.
-        if self._consecutive_ruminations >= int(settings.get("dmn_rumination_max_consecutive") or 2):
+        if self._consecutive_ruminations >= int(
+            settings.get("dmn_rumination_max_consecutive") or 2
+        ):
             return "normal", flavor, drive
         p = float(settings.get("dmn_rumination_prob_at_threshold") or 0.5)
         if random.random() < min(1.0, p * (drive / max(0.01, threshold))):
@@ -1420,8 +1648,7 @@ class DefaultModeNetwork:
             return str(self._recent_thoughts[-1]).strip()
         return (self._last_context or "").strip()
 
-    async def _run_rumination(self, turn_id: str, chem: dict,
-                              flavor: str, drive: float) -> bool:
+    async def _run_rumination(self, turn_id: str, chem: dict, flavor: str, drive: float) -> bool:
         """Run one bounded rumination episode and emit the synthesized take.
         Returns True if a thought was produced (model_ok), False otherwise."""
         selector = getattr(self, "_skill_selector", None)
@@ -1468,14 +1695,22 @@ class DefaultModeNetwork:
         # against OTHER recent thoughts, and tagged so the UI/consolidation can
         # tell ruminations apart from fresh thoughts.
         metadata = {
-            "angle": f"rumination:{flavor}", "spoken_form": None, "task_goal": None,
-            "is_propose": False, "is_plan": False,
-            "defer_text": None, "defer_urgency": "high", "defer_tags": [],
+            "angle": f"rumination:{flavor}",
+            "spoken_form": None,
+            "task_goal": None,
+            "is_propose": False,
+            "is_plan": False,
+            "defer_text": None,
+            "defer_urgency": "high",
+            "defer_tags": [],
             "chem_delta": {},
         }
         await self._process_thought(
-            final.strip(), metadata, turn_id,
-            exempt_seed=seed, source_tag="rumination",
+            final.strip(),
+            metadata,
+            turn_id,
+            exempt_seed=seed,
+            source_tag="rumination",
         )
         return True
 
@@ -1512,23 +1747,30 @@ class DefaultModeNetwork:
     def _log_skill_pick(self, turn_id: str, cell: str, bundle, drive: float) -> None:
         with contextlib.suppress(Exception):
             from brain.observability.decisions import decisions as _decisions
+
             _decisions.log(
-                "dmn_skill_pick", turn_id=turn_id, cluster="dmn",
-                cell=cell, chosen=list(bundle.chosen),
+                "dmn_skill_pick",
+                turn_id=turn_id,
+                cluster="dmn",
+                cell=cell,
+                chosen=list(bundle.chosen),
                 pick_source=getattr(bundle, "pick_source", ""),
                 drive=round(drive, 3),
             )
 
-    def _log_rumination(self, turn_id: str, flavor: str, drive: float,
-                        chain: list[dict]) -> None:
+    def _log_rumination(self, turn_id: str, flavor: str, drive: float, chain: list[dict]) -> None:
         with contextlib.suppress(Exception):
             from brain.observability.decisions import decisions as _decisions
+
             _decisions.log(
-                "dmn_rumination", turn_id=turn_id, cluster="dmn",
-                flavor=flavor, drive=round(drive, 3), steps=max(0, len(chain) - 1),
+                "dmn_rumination",
+                turn_id=turn_id,
+                cluster="dmn",
+                flavor=flavor,
+                drive=round(drive, 3),
+                steps=max(0, len(chain) - 1),
                 skills=[c.get("skill") for c in chain if c.get("skill")],
-                modes=[c.get("mode") for c in chain
-                       if c.get("mode") and c.get("mode") != "seed"],
+                modes=[c.get("mode") for c in chain if c.get("mode") and c.get("mode") != "seed"],
                 consecutive=self._consecutive_ruminations,
             )
 
@@ -1564,13 +1806,15 @@ class DefaultModeNetwork:
         tag_str = f" [{', '.join(tags[:3])}]" if tags else ""
         parts = []
         if user:
-            parts.append(f"they said \"{user}\"")
+            parts.append(f'they said "{user}"')
         if resp:
-            parts.append(f"I replied \"{resp}\"")
+            parts.append(f'I replied "{resp}"')
         self._memory_seed = f"From an earlier conversation{tag_str}: " + "; ".join(parts)
         logger.debug("[Background reflection] Memory seed surfaced: %r", self._memory_seed[:80])
 
-    async def _run_monologue(self, turn_id: str, chem: dict, startup: bool = False) -> tuple[str, dict]:
+    async def _run_monologue(
+        self, turn_id: str, chem: dict, startup: bool = False
+    ) -> tuple[str, dict]:
         """Build prompt, call the monologue cell, parse response.
 
         Returns (thought_clean, metadata) where metadata keys are:
@@ -1580,7 +1824,11 @@ class DefaultModeNetwork:
         """
         self._monologue_cell.reset_turn(turn_id)
 
-        context_label = f"Recent context:\n{self._last_context}" if self._last_context else "Recent context: none"
+        context_label = (
+            f"Recent context:\n{self._last_context}"
+            if self._last_context
+            else "Recent context: none"
+        )
         prompt_parts = [context_label, self._build_situation_block(chem)]
         if self._last_projects:
             prompt_parts.append(
@@ -1622,17 +1870,24 @@ class DefaultModeNetwork:
                 "into tasks — greet first."
             )
 
-        raw = await self._monologue_cell.call([
-            {"role": "user", "content": "\n".join(prompt_parts)}
-        ])
+        raw = await self._monologue_cell.call(
+            [{"role": "user", "content": "\n".join(prompt_parts)}]
+        )
         if not raw:
-            logger.warning("[Background reflection] Monologue cell returned empty — model may be unavailable")
+            logger.warning(
+                "[Background reflection] Monologue cell returned empty — model may be unavailable"
+            )
             return "", {}
 
         metadata: dict = {
-            "angle": None, "spoken_form": None, "task_goal": None,
-            "is_propose": False, "is_plan": False,
-            "defer_text": None, "defer_urgency": "high", "defer_tags": [],
+            "angle": None,
+            "spoken_form": None,
+            "task_goal": None,
+            "is_propose": False,
+            "is_plan": False,
+            "defer_text": None,
+            "defer_urgency": "high",
+            "defer_tags": [],
             "chem_delta": {},
         }
 
@@ -1654,7 +1909,11 @@ class DefaultModeNetwork:
                 metadata["defer_tags"] = [str(t) for t in (raw_defer.get("topic_tags") or [])][:5]
             if parsed.get("speak") and parsed.get("spoken"):
                 metadata["spoken_form"] = parsed["spoken"].strip()
-            if not metadata["is_propose"] and not metadata["is_plan"] and not metadata["defer_text"]:
+            if (
+                not metadata["is_propose"]
+                and not metadata["is_plan"]
+                and not metadata["defer_text"]
+            ):
                 raw_task = (parsed.get("task") or "").strip()
                 if raw_task:
                     metadata["task_goal"] = raw_task
@@ -1663,17 +1922,21 @@ class DefaultModeNetwork:
                 chem_delta: dict[str, float] = {}
                 for ch, v in raw_delta.items():
                     if ch in _CHEM_ALLOWED:
-                        try:
+                        with contextlib.suppress(TypeError, ValueError):
                             chem_delta[ch] = max(-_CHEM_MAX_DELTA, min(_CHEM_MAX_DELTA, float(v)))
-                        except (TypeError, ValueError):
-                            pass
                 metadata["chem_delta"] = chem_delta
 
         return thought_clean, metadata
 
-    async def _process_thought(self, thought_clean: str, metadata: dict, turn_id: str,
-                               *, exempt_seed: str | None = None,
-                               source_tag: str | None = None) -> None:
+    async def _process_thought(
+        self,
+        thought_clean: str,
+        metadata: dict,
+        turn_id: str,
+        *,
+        exempt_seed: str | None = None,
+        source_tag: str | None = None,
+    ) -> None:
         """Dedup-check and, if novel, record, publish, and dispatch side-effects for one thought.
 
         exempt_seed: a prior thought to NOT dedup against (used by rumination,
@@ -1714,8 +1977,9 @@ class DefaultModeNetwork:
         max_cos = 0.0
         if not is_dup and new_emb is not None:
             sem_thr = float(settings.get("dmn_semantic_dup_threshold") or 0.88)
-            for prior, prior_emb in zip(self._recent_thoughts, self._recent_embeddings,
-                                        strict=False):
+            for prior, prior_emb in zip(
+                self._recent_thoughts, self._recent_embeddings, strict=False
+            ):
                 if exempt_seed is not None and prior == exempt_seed:
                     continue
                 if not prior_emb:
@@ -1731,8 +1995,10 @@ class DefaultModeNetwork:
         # to reuse an angle label still passes).
         if not is_dup and angle and angle in self._recent_angles:
             sem_thr = float(settings.get("dmn_semantic_dup_threshold") or 0.88)
-            if (max_overlap > float(settings.get("dmn_overlap_threshold")) * 0.6
-                    or max_cos >= sem_thr * 0.92):
+            if (
+                max_overlap > float(settings.get("dmn_overlap_threshold")) * 0.6
+                or max_cos >= sem_thr * 0.92
+            ):
                 is_dup, dup_reason = True, f"repeat angle '{angle}'"
 
         # Frame-repetition gate: catches template collapse — same opening shape
@@ -1750,7 +2016,9 @@ class DefaultModeNetwork:
             logger.info(
                 "[Background reflection] Suppressed redundant thought "
                 "(%s, total suppressed=%d): %r",
-                dup_reason, self._suppressed_count, thought_clean[:60],
+                dup_reason,
+                self._suppressed_count,
+                thought_clean[:60],
             )
             return
 
@@ -1768,23 +2036,25 @@ class DefaultModeNetwork:
 
         if self._obs:
             self._obs.record_thought(
-                thought=thought_clean, direction=direction, angle=angle,
-                count=self._thought_count, neuromod=neuromod_snapshot,
+                thought=thought_clean,
+                direction=direction,
+                angle=angle,
+                count=self._thought_count,
+                neuromod=neuromod_snapshot,
             )
 
         da_level = float(neuromod_snapshot.get("DA", 0.5))
         em_valence = valence_of(self._last_emotion)
-        salient = (
-            da_level > 0.62
-            or spoken_form is not None
-            or abs(em_valence) > 0.45
-        )
+        salient = da_level > 0.62 or spoken_form is not None or abs(em_valence) > 0.45
         buf_entry: dict = {
-            "thought": thought_clean, "angle": angle or "",
-            "direction": direction, "speak_flagged": spoken_form is not None,
+            "thought": thought_clean,
+            "angle": angle or "",
+            "direction": direction,
+            "speak_flagged": spoken_form is not None,
             "emotion": self._last_emotion,
             "neuromod": {k: round(v, 3) for k, v in neuromod_snapshot.items()},
-            "salient": salient, "ts": time.time(),
+            "salient": salient,
+            "ts": time.time(),
         }
         self._session_thought_buf.append(buf_entry)
         if len(self._session_thought_buf) > self._session_thought_limit:
@@ -1808,23 +2078,40 @@ class DefaultModeNetwork:
 
         await self._bus.publish_dict(
             "stream.thought",
-            {"thought": thought_clean, "ts": time.time(),
-             "count": self._thought_count, "direction": direction,
-             "proactive": spoken_form is not None, "chem_delta": chem_delta,
-             **({"rumination": True} if source_tag == "rumination" else {})},
+            {
+                "thought": thought_clean,
+                "ts": time.time(),
+                "count": self._thought_count,
+                "direction": direction,
+                "proactive": spoken_form is not None,
+                "chem_delta": chem_delta,
+                **({"rumination": True} if source_tag == "rumination" else {}),
+            },
             source="dmn",
         )
-        logger.debug("[Background reflection] Thought #%d (%s): %s",
-                     self._thought_count, direction, thought_clean[:80])
+        logger.debug(
+            "[Background reflection] Thought #%d (%s): %s",
+            self._thought_count,
+            direction,
+            thought_clean[:80],
+        )
 
         if spoken_form:
-            self._candidate_q.append({
-                "thought": thought_clean, "spoken": spoken_form,
-                "angle": angle, "propose": is_propose,
-                "created_ts": time.time(), "attempts": 0,
-            })
-            logger.info("[Background reflection] Speak candidate queued (queue=%d): %r",
-                        len(self._candidate_q), spoken_form[:80])
+            self._candidate_q.append(
+                {
+                    "thought": thought_clean,
+                    "spoken": spoken_form,
+                    "angle": angle,
+                    "propose": is_propose,
+                    "created_ts": time.time(),
+                    "attempts": 0,
+                }
+            )
+            logger.info(
+                "[Background reflection] Speak candidate queued (queue=%d): %r",
+                len(self._candidate_q),
+                spoken_form[:80],
+            )
 
         if task_goal:
             self._self_task_q.append(task_goal)
@@ -1836,7 +2123,9 @@ class DefaultModeNetwork:
                 asyncio.create_task(
                     self._hippocampus.encode_deferred_question(
                         session_id=getattr(self, "_session_id", "unknown"),
-                        text=defer_text, urgency=defer_urgency, tags=defer_tags,
+                        text=defer_text,
+                        urgency=defer_urgency,
+                        tags=defer_tags,
                         embedding_fn=self._router.embed,
                     )
                 )
@@ -1848,15 +2137,17 @@ class DefaultModeNetwork:
         """Run the user-simulation cell and publish the predicted next input."""
         self._simulation_cell.reset_turn(turn_id + "_sim")
         self._simulation_cell.skills = self._inherited_skill_names()
-        raw = await self._simulation_cell.call([
-            {"role": "user", "content": self._last_context or "No context yet."}
-        ])
+        raw = await self._simulation_cell.call(
+            [{"role": "user", "content": self._last_context or "No context yet."}]
+        )
         try:
             self.predicted_next = json.loads(raw)
             await self._bus.publish_dict("stream.prediction", self.predicted_next, source="dmn")
-            logger.debug("[Background reflection] Anticipating: %s (confidence=%.2f)",
-                         self.predicted_next.get("predicted_input", "")[:60],
-                         self.predicted_next.get("confidence", 0))
+            logger.debug(
+                "[Background reflection] Anticipating: %s (confidence=%.2f)",
+                self.predicted_next.get("predicted_input", "")[:60],
+                self.predicted_next.get("confidence", 0),
+            )
         except Exception:
             pass
 
@@ -1916,8 +2207,9 @@ class DefaultModeNetwork:
                     return None
                 return {"topic": topic, "reason": reason, "snippets": joined}
             except Exception as e:
-                logger.debug("[Background reflection] Prefetcher recall failed for %r: %s",
-                             topic, e)
+                logger.debug(
+                    "[Background reflection] Prefetcher recall failed for %r: %s", topic, e
+                )
                 return None
 
         results = await asyncio.gather(
@@ -1931,9 +2223,11 @@ class DefaultModeNetwork:
                 {"items": self.prefetched, "ts": time.time()},
                 source="dmn",
             )
-            logger.info("[Background reflection] Prefetched context for %d topics: %s",
-                        len(self.prefetched),
-                        ", ".join(p["topic"][:30] for p in self.prefetched))
+            logger.info(
+                "[Background reflection] Prefetched context for %d topics: %s",
+                len(self.prefetched),
+                ", ".join(p["topic"][:30] for p in self.prefetched),
+            )
 
     async def _run_anticipator(self, turn_id: str) -> None:
         self._anticipator_cell.reset_turn(turn_id + "_ant")
@@ -1964,7 +2258,9 @@ class DefaultModeNetwork:
                     {"scenarios": self.anticipations, "ts": time.time()},
                     source="dmn",
                 )
-                logger.info("[Background reflection] Anticipated %d follow-up scenarios",
-                            len(self.anticipations))
+                logger.info(
+                    "[Background reflection] Anticipated %d follow-up scenarios",
+                    len(self.anticipations),
+                )
         except Exception as e:
             logger.debug("[Background reflection] Anticipator parse failed: %s", e)

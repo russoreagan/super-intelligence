@@ -31,6 +31,7 @@ Coverage:
   End-to-end — mood_expression inbox drain
     - deliberate_emotions populated on TurnTrace from bus messages
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -39,13 +40,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_bus():
     from brain.bus import Bus
+
     return Bus()
 
 
@@ -56,14 +58,19 @@ def _make_motor(tmp_path, settings_override: dict | None = None):
 
     class _FakeRouter:
         _call_log: list = []
-        async def call(self, *a, **kw): return json.dumps({"tool": "none", "args": {}, "reason": "test"})
-        async def embed(self, text): return [0.0] * 768
+
+        async def call(self, *a, **kw):
+            return json.dumps({"tool": "none", "args": {}, "reason": "test"})
+
+        async def embed(self, text):
+            return [0.0] * 768
 
     bus = Bus()
     motor = MotorCortexCluster(bus, _FakeRouter(), allowed_paths=[str(tmp_path)])
 
     if settings_override is not None:
         from brain.settings import settings as _s
+
         for k, v in settings_override.items():
             _s._data[k] = v
 
@@ -74,24 +81,29 @@ def _make_motor(tmp_path, settings_override: dict | None = None):
 # emotion_presets.get_tag
 # ---------------------------------------------------------------------------
 
+
 class TestGetTag:
     def test_known_emotion_returns_tag(self):
         from brain.emotion_presets import get_tag
+
         assert get_tag("angry") == "[angrily]"
         assert get_tag("happy") == "[happy]"
         assert get_tag("laughing") == "[laughs softly]"
 
     def test_unknown_emotion_returns_none(self):
         from brain.emotion_presets import get_tag
+
         assert get_tag("nonexistent_emotion_xyz") is None
 
     def test_natural_voice_emotion_returns_none(self):
         """'calm' maps to empty tag string → natural voice → get_tag returns None."""
         from brain.emotion_presets import get_tag
+
         assert get_tag("calm") is None
 
     def test_case_insensitive(self):
         from brain.emotion_presets import get_tag
+
         assert get_tag("ANGRY") == "[angrily]"
         assert get_tag("Happy") == "[happy]"
 
@@ -100,9 +112,11 @@ class TestGetTag:
 # PNS._parse_mood_markup
 # ---------------------------------------------------------------------------
 
+
 class TestParseMoodMarkup:
     def _parse(self, text, base_tag=None):
         from brain.pns import PNS
+
         return PNS._parse_mood_markup(text, base_tag)
 
     def test_strips_display_text(self):
@@ -163,10 +177,12 @@ class TestParseMoodMarkup:
 # MotorCortexCluster._set_mood
 # ---------------------------------------------------------------------------
 
+
 class TestSetMood:
     @pytest.mark.asyncio
     async def test_disabled_by_settings(self, tmp_path):
         from brain.settings import settings as _s
+
         original = _s._data.get("emotional_expression_enabled", 1)
         try:
             _s._data["emotional_expression_enabled"] = 0
@@ -215,8 +231,11 @@ class TestSetMood:
     async def test_valid_emotion_emits_deliberate_ui_event(self, tmp_path):
         motor, _ = _make_motor(tmp_path)
         events = []
-        with patch("brain.ui.emitter.emitter.emit_event",
-                   new_callable=AsyncMock, side_effect=lambda e: events.append(e)):
+        with patch(
+            "brain.ui.emitter.emitter.emit_event",
+            new_callable=AsyncMock,
+            side_effect=lambda e: events.append(e),
+        ):
             await motor._set_mood("sad")
         emotion_events = [e for e in events if e.get("type") == "emotion"]
         assert len(emotion_events) == 1
@@ -231,9 +250,7 @@ class TestSetMood:
         motor._current_turn_id = "turn-abc"
         with patch("brain.ui.emitter.emitter.emit_event", new_callable=AsyncMock):
             await motor._set_mood("excited")
-        mock_obs.record_deliberate_emotion.assert_called_once_with(
-            "turn-abc", "excited", "tool"
-        )
+        mock_obs.record_deliberate_emotion.assert_called_once_with("turn-abc", "excited", "tool")
 
     @pytest.mark.asyncio
     async def test_returns_success_string(self, tmp_path):
@@ -249,9 +266,11 @@ class TestSetMood:
 # ObservabilityLayer.record_deliberate_emotion
 # ---------------------------------------------------------------------------
 
+
 class TestObservabilityRecordDEliberateEmotion:
     def _make_obs(self):
         from brain.observability.timeline import ObservabilityLayer
+
         # No Langfuse keys set — tracing disabled but layer still usable
         return ObservabilityLayer(session_id="test-session")
 
@@ -287,6 +306,7 @@ class TestObservabilityRecordDEliberateEmotion:
 # Mood expression inbox drain → TurnTrace
 # ---------------------------------------------------------------------------
 
+
 class TestMoodExpressionDrain:
     @pytest.mark.asyncio
     async def test_deliberate_emotions_populated_from_bus(self):
@@ -318,12 +338,17 @@ class TestMoodExpressionDrain:
             try:
                 mx = inbox.get_nowait()
                 if not mx.expired:
-                    trace.deliberate_emotions.append({
-                        "emotion": mx.payload.get("emotion", ""),
-                        "source":  mx.payload.get("source", ""),
-                        **({"preview": mx.payload["preview"]}
-                           if mx.payload.get("preview") else {}),
-                    })
+                    trace.deliberate_emotions.append(
+                        {
+                            "emotion": mx.payload.get("emotion", ""),
+                            "source": mx.payload.get("source", ""),
+                            **(
+                                {"preview": mx.payload["preview"]}
+                                if mx.payload.get("preview")
+                                else {}
+                            ),
+                        }
+                    )
             except Exception:
                 break
 
@@ -338,5 +363,6 @@ class TestMoodExpressionDrain:
     @pytest.mark.asyncio
     async def test_no_expressions_gives_empty_list(self):
         from brain.observability.timeline import TurnTrace
+
         trace = TurnTrace(turn_id="t2", session_id="s1", user_input="test")
         assert trace.deliberate_emotions == []

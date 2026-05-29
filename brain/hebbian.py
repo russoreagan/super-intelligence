@@ -1,4 +1,5 @@
 """Hebbian learning pass — runs at session end as part of sleep consolidation."""
+
 from __future__ import annotations
 
 import logging
@@ -40,7 +41,7 @@ class HebbianUpdater:
         da_delta = max(-1.0, min(1.0, da_delta))
 
         critic_term = 0.0
-        for d in (trace.draft_scores or []):
+        for d in trace.draft_scores or []:
             if d.get("selected") and d.get("critic_ran"):
                 critic_term = (float(d.get("overall", 0.5)) - 0.5) * 2.0
                 break
@@ -79,8 +80,9 @@ class HebbianUpdater:
             return True, f"dissociated_emotion={emotion}"
         return False, ""
 
-    def _apply_drafter_competition(self, trace, outcome: float, plasticity: float,
-                                   gainers: list, losers: list) -> None:
+    def _apply_drafter_competition(
+        self, trace, outcome: float, plasticity: float, gainers: list, losers: list
+    ) -> None:
         """Extra reinforcement for multi-draft turns: winning drafter edges gain a bonus;
         non-winning drafters get a small penalty. Applies only when critic_ran=True."""
         draft_scores = trace.draft_scores or []
@@ -112,9 +114,14 @@ class HebbianUpdater:
 
             prev = self._wiring.get_edge_weight(*edge)
             if did == winner_id:
-                loser_scores = [float(x.get("overall", 0.5))
-                                for x in real_scored if x.get("draft_id") != winner_id]
-                margin = winner_overall - (sum(loser_scores) / len(loser_scores) if loser_scores else 0.5)
+                loser_scores = [
+                    float(x.get("overall", 0.5))
+                    for x in real_scored
+                    if x.get("draft_id") != winner_id
+                ]
+                margin = winner_overall - (
+                    sum(loser_scores) / len(loser_scores) if loser_scores else 0.5
+                )
                 bonus = margin * bonus_scale * 0.5
                 self._wiring.hebbian_update([edge[0], edge[1]], bonus)
             else:
@@ -131,9 +138,12 @@ class HebbianUpdater:
                 else:
                     losers.append((label, edge_delta))
                 decisions.log(
-                    "drafter_competition_applied", turn_id=trace.turn_id,
-                    drafter=drafter_name, won=(did == winner_id),
-                    from_weight=round(prev, 4), to_weight=round(now, 4),
+                    "drafter_competition_applied",
+                    turn_id=trace.turn_id,
+                    drafter=drafter_name,
+                    won=(did == winner_id),
+                    from_weight=round(prev, 4),
+                    to_weight=round(now, 4),
                     delta=round(edge_delta, 4),
                     winner_score=round(winner_overall, 3),
                 )
@@ -171,17 +181,24 @@ class HebbianUpdater:
             outcome, breakdown = self._composite_outcome(trace)
             skip, reason = self._should_skip_hebbian(trace, outcome)
             if skip:
-                decisions.log("hebbian_update_skipped", turn_id=trace.turn_id,
-                              reason=reason, outcome=round(outcome, 3))
+                decisions.log(
+                    "hebbian_update_skipped",
+                    turn_id=trace.turn_id,
+                    reason=reason,
+                    outcome=round(outcome, 3),
+                )
                 skipped += 1
                 continue
 
             delta = outcome * settings.get("hebbian_outcome_delta") * plasticity
             path_names = [n["name"] for n in trace.fired_path]
-            before = {(path_names[i], path_names[i+1]):
-                       self._wiring.get_edge_weight(path_names[i], path_names[i+1])
-                      for i in range(len(path_names) - 1)
-                      if self._wiring.has(path_names[i], path_names[i+1])}
+            before = {
+                (path_names[i], path_names[i + 1]): self._wiring.get_edge_weight(
+                    path_names[i], path_names[i + 1]
+                )
+                for i in range(len(path_names) - 1)
+                if self._wiring.has(path_names[i], path_names[i + 1])
+            }
             updated = self._wiring.hebbian_update(path_names, delta)
             total_updated += updated
             for (src, tgt), prev in before.items():
@@ -193,9 +210,12 @@ class HebbianUpdater:
                     else:
                         losers.append((f"{src}→{tgt}", edge_delta))
                     decisions.log(
-                        "hebbian_update_applied", turn_id=trace.turn_id,
-                        src=src, tgt=tgt,
-                        from_weight=round(prev, 4), to_weight=round(now, 4),
+                        "hebbian_update_applied",
+                        turn_id=trace.turn_id,
+                        src=src,
+                        tgt=tgt,
+                        from_weight=round(prev, 4),
+                        to_weight=round(now, 4),
                         delta=round(edge_delta, 4),
                         outcome=round(outcome, 3),
                         breakdown=breakdown,
@@ -214,22 +234,29 @@ class HebbianUpdater:
             logger.debug("[Memory consolidation] Wiring snapshot failed: %s", e)
 
         turns_with_critic = sum(
-            1 for t in full_traces
+            1
+            for t in full_traces
             if any(d.get("critic_ran") and d.get("selected") for d in (t.draft_scores or []))
         )
-        turns_with_user_emotion = sum(
-            1 for t in full_traces if getattr(t, "user_emotion", "")
-        )
+        turns_with_user_emotion = sum(1 for t in full_traces if getattr(t, "user_emotion", ""))
         turns_with_da_delta = sum(
-            1 for t in full_traces
-            if abs(float((getattr(t, "prior_neuromod", None) or {}).get("DA",
-                   float((t.neuromod or {}).get("DA", 0.5)))
-                   ) - float((t.neuromod or {}).get("DA", 0.5))) > 0.01
+            1
+            for t in full_traces
+            if abs(
+                float(
+                    (getattr(t, "prior_neuromod", None) or {}).get(
+                        "DA", float((t.neuromod or {}).get("DA", 0.5))
+                    )
+                )
+                - float((t.neuromod or {}).get("DA", 0.5))
+            )
+            > 0.01
         )
         top_gainers = sorted(gainers, key=lambda x: x[1], reverse=True)[:5]
         top_losers = sorted(losers, key=lambda x: x[1])[:5]
         decisions.log(
-            "session_plasticity_summary", session_id=session_id,
+            "session_plasticity_summary",
+            session_id=session_id,
             plasticity_modulator=round(plasticity, 3),
             edges_updated=total_updated,
             turns_skipped=skipped,
@@ -242,7 +269,12 @@ class HebbianUpdater:
             top_gainers=[{"edge": e, "delta": round(d, 4)} for e, d in top_gainers],
             top_losers=[{"edge": e, "delta": round(d, 4)} for e, d in top_losers],
         )
-        logger.info("[Memory consolidation] Hebbian: plasticity=%.2f edges_updated=%d "
-                    "turns_skipped=%d critic_turns=%d/%d",
-                    plasticity, total_updated, skipped,
-                    turns_with_critic, len(full_traces))
+        logger.info(
+            "[Memory consolidation] Hebbian: plasticity=%.2f edges_updated=%d "
+            "turns_skipped=%d critic_turns=%d/%d",
+            plasticity,
+            total_updated,
+            skipped,
+            turns_with_critic,
+            len(full_traces),
+        )

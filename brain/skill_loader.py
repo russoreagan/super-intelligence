@@ -7,6 +7,7 @@ for local (Ollama) model calls only. Cloud calls ignore skills entirely.
 To add a skill: drop a .md file in brain/skills/.
 To clone from Claude Code: run `python brain/skill_loader.py clone <name>`.
 """
+
 from __future__ import annotations
 
 import logging
@@ -75,7 +76,9 @@ def _clone_skill(skill_name: str) -> None:
     SKILLS_DIR.mkdir(exist_ok=True)
     shutil.copy(source, dest)
     print(f"Cloned {source.parent.name} → {dest}")
-    print(f"Edit {dest} to adapt it for local models (trim length, remove Claude-specific instructions).")
+    print(
+        f"Edit {dest} to adapt it for local models (trim length, remove Claude-specific instructions)."
+    )
 
 
 if __name__ == "__main__":

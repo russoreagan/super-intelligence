@@ -11,6 +11,7 @@ Biologically: the SMA monitors your own utterances and converts spoken
 intentions into motor plans. Without this loop, the brain can say "I'll go
 check that" and never actually check.
 """
+
 from __future__ import annotations
 
 import json
@@ -101,8 +102,9 @@ class FollowThrough:
         )
         self._cell.set_router(router)
 
-    async def extract(self, user_input: str, response: str,
-                       turn_id: str) -> tuple[str | None, bool]:
+    async def extract(
+        self, user_input: str, response: str, turn_id: str
+    ) -> tuple[str | None, bool]:
         """Classify the AI's response and return (goal, asking_user).
 
         Returns:
@@ -119,15 +121,17 @@ class FollowThrough:
             return None, False
 
         self._cell.reset_turn(turn_id)
-        messages = [{
-            "role": "user",
-            "content": (
-                f"User said: {user_input!r}\n\n"
-                f"Assistant just spoke: {response!r}\n\n"
-                "Did the assistant commit to an immediate action, "
-                "or ask the user for permission?"
-            ),
-        }]
+        messages = [
+            {
+                "role": "user",
+                "content": (
+                    f"User said: {user_input!r}\n\n"
+                    f"Assistant just spoke: {response!r}\n\n"
+                    "Did the assistant commit to an immediate action, "
+                    "or ask the user for permission?"
+                ),
+            }
+        ]
         try:
             raw = await self._cell.call(messages)
         except Exception as e:
@@ -213,20 +217,24 @@ class ResultReporter:
             tool = step.get("tool", "?")
             reason = (step.get("reason") or "")[:140]
             out = (results[i] if i < len(results) else "")[:400]
-            lines.append(f"Step {i+1} [{tool}] {reason}\n  → {out}")
+            lines.append(f"Step {i + 1} [{tool}] {reason}\n  → {out}")
         transcript = "\n".join(lines) if lines else "(no steps executed)"
 
         self._cell.reset_turn(turn_id)
         try:
-            text = await self._cell.call([{
-                "role": "user",
-                "content": (
-                    f"Goal: {goal}\n"
-                    f"Success: {success}\n\n"
-                    f"What I did:\n{transcript}\n\n"
-                    "Now write the spoken summary."
-                ),
-            }])
+            text = await self._cell.call(
+                [
+                    {
+                        "role": "user",
+                        "content": (
+                            f"Goal: {goal}\n"
+                            f"Success: {success}\n\n"
+                            f"What I did:\n{transcript}\n\n"
+                            "Now write the spoken summary."
+                        ),
+                    }
+                ]
+            )
         except Exception as e:
             logger.debug("[ResultReporter] failed: %s", e)
             return ""

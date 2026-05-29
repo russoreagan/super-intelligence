@@ -5,25 +5,30 @@ All tests are deterministic — the LLM is not invoked. _parse() is a pure
 static method, and the session-turn integration is tested by injecting a
 fake extract() that returns the exact signals we want to assert against.
 """
+
 from __future__ import annotations
 
 import json
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 
 from brain.clusters.follow_through import FollowThrough
 
-
 # ── _parse unit tests ──────────────────────────────────────────────────────────
+
 
 class TestFollowThroughParse:
     """FollowThrough._parse: pure JSON → (goal, asking_user) mapping."""
 
     def test_commitment_returns_goal_and_not_asking(self):
-        raw = json.dumps({
-            "commitment": True, "asking_user": False,
-            "goal": "List files in /Users/russ/Documents/Karaoke Hero"
-        })
+        raw = json.dumps(
+            {
+                "commitment": True,
+                "asking_user": False,
+                "goal": "List files in /Users/russ/Documents/Karaoke Hero",
+            }
+        )
         goal, asking = FollowThrough._parse(raw)
         assert goal == "List files in /Users/russ/Documents/Karaoke Hero"
         assert asking is False
@@ -49,10 +54,7 @@ class TestFollowThroughParse:
 
     def test_commitment_true_asking_user_ignored(self):
         """If commitment=true, asking_user is irrelevant — goal wins."""
-        raw = json.dumps({
-            "commitment": True, "asking_user": True,
-            "goal": "Read the file"
-        })
+        raw = json.dumps({"commitment": True, "asking_user": True, "goal": "Read the file"})
         goal, asking = FollowThrough._parse(raw)
         assert goal == "Read the file"
         assert asking is False  # commitment wins
@@ -87,6 +89,7 @@ class TestFollowThroughParse:
 
 # ── extract() return-value contract tests ──────────────────────────────────────
 
+
 class TestFollowThroughExtract:
     """extract() returns (goal, asking_user) in all cases."""
 
@@ -98,10 +101,7 @@ class TestFollowThroughExtract:
 
     @pytest.mark.asyncio
     async def test_commitment_returns_goal_tuple(self):
-        raw = json.dumps({
-            "commitment": True, "asking_user": False,
-            "goal": "List codebase files"
-        })
+        raw = json.dumps({"commitment": True, "asking_user": False, "goal": "List codebase files"})
         ft = self._make_ft(raw)
         goal, asking = await ft.extract("look at the code", "Let me grab those now.", "t1")
         assert goal == "List codebase files"
@@ -150,6 +150,7 @@ class TestFollowThroughExtract:
 
 # ── Session-turn integration: asking_user blocks enqueueing ───────────────────
 
+
 class TestFollowThroughSessionIntegration:
     """The session-turn _follow_through_check must not enqueue when asking_user=True."""
 
@@ -169,11 +170,13 @@ class TestFollowThroughSessionIntegration:
         """task-mode: AI asked permission → deferred goal must NOT be enqueued."""
         task_queue = self._make_task_queue()
         ft = MagicMock()
-        ft.extract = AsyncMock(return_value=(None, True))   # asking_user=True
+        ft.extract = AsyncMock(return_value=(None, True))  # asking_user=True
 
         # Simulate the _follow_through_check logic from session_turn.py
         deferred_goal = "Analyze codebase"  # set by FrontalTaskSubsystem
-        extracted, asking_user = await ft.extract("look at the code", "Should I pull that up?", "t1")
+        extracted, asking_user = await ft.extract(
+            "look at the code", "Should I pull that up?", "t1"
+        )
         if asking_user:
             pass  # do not enqueue
         elif extracted:
@@ -199,8 +202,7 @@ class TestFollowThroughSessionIntegration:
         else:
             task_queue.enqueue(deferred_goal, source="user", priority=1)
 
-        task_queue.enqueue.assert_called_once_with(
-            "List codebase files", source="user", priority=1)
+        task_queue.enqueue.assert_called_once_with("List codebase files", source="user", priority=1)
 
     @pytest.mark.asyncio
     async def test_no_commitment_uses_deferred_fallback(self):
@@ -218,8 +220,7 @@ class TestFollowThroughSessionIntegration:
         else:
             task_queue.enqueue(deferred_goal, source="user", priority=1)
 
-        task_queue.enqueue.assert_called_once_with(
-            "Analyze codebase", source="user", priority=1)
+        task_queue.enqueue.assert_called_once_with("Analyze codebase", source="user", priority=1)
 
     @pytest.mark.asyncio
     async def test_asking_user_blocks_reactive_enqueue(self):

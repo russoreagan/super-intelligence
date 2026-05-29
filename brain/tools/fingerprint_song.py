@@ -10,6 +10,7 @@ The audio file is fingerprinted and its hashes appended to:
 
 Supports any format readable by librosa (mp3, wav, flac, ogg, m4a, ...).
 """
+
 from __future__ import annotations
 
 import argparse
@@ -32,7 +33,7 @@ def fingerprint_file(audio_path: str, title: str, artist: str) -> None:
 
     print(f"Loading audio: {audio_path}")
     audio, sr = librosa.load(audio_path, sr=16000, mono=True)
-    print(f"  Duration: {len(audio)/sr:.1f}s | Sample rate: {sr}Hz")
+    print(f"  Duration: {len(audio) / sr:.1f}s | Sample rate: {sr}Hz")
 
     print("Computing spectrogram...")
     spec = compute_spectrogram(audio, sr)

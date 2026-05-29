@@ -4,16 +4,32 @@ Extracted from run.py so the routing decisions can be unit-tested without
 spinning up the whole brain. The async glue in run.py imports these and
 wires them to pns + ui_message_queue.
 """
+
 from __future__ import annotations
 
 import re
 
 DEFAULT_BARGE_IN_WORDS = [
-    "stop", "wait", "shut up", "hold on", "pause", "enough",
-    "never mind", "hey brain", "brain stop",
-    "cut it out", "knock it off", "quiet", "be quiet", "hush", "shush",
-    "okay enough", "that's enough", "thats enough",
+    "stop",
+    "wait",
+    "shut up",
+    "hold on",
+    "pause",
+    "enough",
+    "never mind",
+    "hey brain",
+    "brain stop",
+    "cut it out",
+    "knock it off",
+    "quiet",
+    "be quiet",
+    "hush",
+    "shush",
+    "okay enough",
+    "that's enough",
+    "thats enough",
 ]
+
 
 def parse_barge_words(raw: str | None) -> list[str]:
     """Parse a comma-separated env var into a normalised list of keywords."""
@@ -40,8 +56,10 @@ def bleed_overlap(transcript: str, speaking_text: str) -> float:
     """
     if not transcript or not speaking_text:
         return 0.0
+
     def tokenize(s: str) -> set[str]:
         return {w for w in re.findall(r"[a-z']+", s.lower()) if len(w) > 1}
+
     a = tokenize(transcript)
     b = tokenize(speaking_text)
     if not a or not b:
@@ -87,5 +105,3 @@ def pick_dispatch_from_queue(queued: list[str]) -> tuple[str | None, int]:
         return None, 0
     joined = " ".join(q.strip() for q in queued if q.strip())
     return joined or None, len(queued)
-
-

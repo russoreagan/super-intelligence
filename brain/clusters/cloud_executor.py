@@ -12,6 +12,7 @@ Three guardrails are always active:
 
 Writes an audit trail to second_brain/schema/tool_log.md after every call.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -33,24 +34,49 @@ CLUSTER = "cloud_executor"
 
 # Extension ID → human-readable connector name (for planner context string)
 _EXTENSION_NAMES: dict[str, str] = {
-    "ant.dir.ant.anthropic.imessage":        "iMessages",
-    "ant.dir.ant.anthropic.chrome-control":  "Chrome browser",
-    "ant.dir.gh.elevenlabs.agents-mcp-app":  "ElevenLabs",
-    "ant.dir.gh.ableton.ableton-knowledge":  "Ableton",
-    "ant.dir.gh.adobe.react-aria":           "Adobe/React Aria",
+    "ant.dir.ant.anthropic.imessage": "iMessages",
+    "ant.dir.ant.anthropic.chrome-control": "Chrome browser",
+    "ant.dir.gh.elevenlabs.agents-mcp-app": "ElevenLabs",
+    "ant.dir.gh.ableton.ableton-knowledge": "Ableton",
+    "ant.dir.gh.adobe.react-aria": "Adobe/React Aria",
     "ant.dir.gh.elevenlabs.elevenlabs-player": "ElevenLabs Player",
 }
 
 # Words that indicate user confirmation of a pending write action
-_CONFIRM_WORDS = frozenset([
-    "yes", "yeah", "yep", "yup", "sure", "ok", "okay", "go ahead",
-    "do it", "confirm", "proceed", "send it", "go for it", "affirmative",
-])
+_CONFIRM_WORDS = frozenset(
+    [
+        "yes",
+        "yeah",
+        "yep",
+        "yup",
+        "sure",
+        "ok",
+        "okay",
+        "go ahead",
+        "do it",
+        "confirm",
+        "proceed",
+        "send it",
+        "go for it",
+        "affirmative",
+    ]
+)
 
-_DENY_WORDS = frozenset([
-    "no", "nope", "cancel", "stop", "don't", "abort", "never mind",
-    "nevermind", "skip", "forget it", "hold on",
-])
+_DENY_WORDS = frozenset(
+    [
+        "no",
+        "nope",
+        "cancel",
+        "stop",
+        "don't",
+        "abort",
+        "never mind",
+        "nevermind",
+        "skip",
+        "forget it",
+        "hold on",
+    ]
+)
 
 SUBPROCESS_TIMEOUT = 120  # seconds — cloud ops can be slow
 
@@ -72,13 +98,17 @@ class CloudExecutor:
         if self._claude_bin:
             logger.info("[CloudExecutor] Claude binary: %s", self._claude_bin)
             if self._connectors:
-                logger.info("[CloudExecutor] Available connectors: %s",
-                            ", ".join(self._connectors.values()))
+                logger.info(
+                    "[CloudExecutor] Available connectors: %s", ", ".join(self._connectors.values())
+                )
             else:
-                logger.info("[CloudExecutor] No MCP extensions detected — Claude will use its base capabilities")
+                logger.info(
+                    "[CloudExecutor] No MCP extensions detected — Claude will use its base capabilities"
+                )
             if self._trusted_dirs:
-                logger.info("[CloudExecutor] Trusted project dirs: %s",
-                            ", ".join(self._trusted_dirs))
+                logger.info(
+                    "[CloudExecutor] Trusted project dirs: %s", ", ".join(self._trusted_dirs)
+                )
         else:
             logger.warning(
                 "[CloudExecutor] Could not find Claude CLI binary. "
@@ -137,9 +167,9 @@ class CloudExecutor:
         that's where the user configures which of their projects Claude Code
         can read and write.
         """
-        config_path = Path(os.path.expanduser(
-            "~/Library/Application Support/Claude/claude_desktop_config.json"
-        ))
+        config_path = Path(
+            os.path.expanduser("~/Library/Application Support/Claude/claude_desktop_config.json")
+        )
         try:
             data = json.loads(config_path.read_text())
             dirs = data.get("preferences", {}).get("localAgentModeTrustedFolders", [])
@@ -182,8 +212,7 @@ class CloudExecutor:
 
     # ── Main execution paths ───────────────────────────────────────────────────
 
-    async def execute_read(self, task: str, context_facts: list[str],
-                           turn_id: str = "") -> dict:
+    async def execute_read(self, task: str, context_facts: list[str], turn_id: str = "") -> dict:
         """Execute immediately — read-only, no confirmation needed."""
         return await self._run(task, context_facts, turn_id=turn_id)
 
@@ -193,16 +222,17 @@ class CloudExecutor:
             return None
         action = self._pending
         self._pending = None
-        return await self._run(action["task"], action.get("context_facts", []),
-                               turn_id=turn_id)
+        return await self._run(action["task"], action.get("context_facts", []), turn_id=turn_id)
 
     # ── Subprocess call ────────────────────────────────────────────────────────
 
-    async def _run(self, task: str, context_facts: list[str],
-                   turn_id: str = "") -> dict:
+    async def _run(self, task: str, context_facts: list[str], turn_id: str = "") -> dict:
         if not self._claude_bin:
-            return {"tool": "cloud_action", "output": "[error] Claude CLI not found.",
-                    "success": False}
+            return {
+                "tool": "cloud_action",
+                "output": "[error] Claude CLI not found.",
+                "success": False,
+            }
 
         prompt = self._build_prompt(task, context_facts)
         start = time.time()
@@ -216,26 +246,29 @@ class CloudExecutor:
         try:
             proc = await asyncio.create_subprocess_exec(
                 self._claude_bin,
-                "--print",          # non-interactive, single-turn
-                "--output-format", "text",
-                "--allowedTools", "WebSearch,WebFetch,Bash,Read,Write,Edit,LS",
+                "--print",  # non-interactive, single-turn
+                "--output-format",
+                "text",
+                "--allowedTools",
+                "WebSearch,WebFetch,Bash,Read,Write,Edit,LS",
                 *add_dir_args,
-                "--",               # separator so prompt isn't parsed as a flag
+                "--",  # separator so prompt isn't parsed as a flag
                 prompt,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=os.environ.copy(),
             )
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=SUBPROCESS_TIMEOUT
-            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=SUBPROCESS_TIMEOUT)
         except TimeoutError:
             with contextlib.suppress(Exception):
                 proc.kill()
             elapsed = time.time() - start
             logger.warning("[CloudExecutor] Subprocess timed out after %.1fs", elapsed)
-            return {"tool": "cloud_action", "output": "[error] Claude subprocess timed out.",
-                    "success": False}
+            return {
+                "tool": "cloud_action",
+                "output": "[error] Claude subprocess timed out.",
+                "success": False,
+            }
         except Exception as e:
             logger.error("[CloudExecutor] Subprocess failed: %s", e)
             return {"tool": "cloud_action", "output": f"[error] {e}", "success": False}
@@ -251,8 +284,12 @@ class CloudExecutor:
         output = self._screen_result(raw)
 
         success = not output.startswith("[error]") and proc.returncode == 0
-        logger.info("[CloudExecutor] Completed in %.1fs (success=%s, %d chars)",
-                    elapsed, success, len(output))
+        logger.info(
+            "[CloudExecutor] Completed in %.1fs (success=%s, %d chars)",
+            elapsed,
+            success,
+            len(output),
+        )
 
         await self._append_tool_log(task, output, success)
         return {"tool": "cloud_action", "output": output, "success": success}
