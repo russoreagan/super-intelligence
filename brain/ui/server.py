@@ -380,6 +380,10 @@ class UIServer:
 
             def __init__(self) -> None:
                 self._task: asyncio.Task | None = None
+                # Raw audio bytes for the in-progress utterance. _receive_loop
+                # appends incoming chunks here; _listen drains it on each final
+                # transcript to publish the full utterance to the auditory bus.
+                self.audio_chunks: list[bytes] = []
 
             async def send(self, data: bytes) -> None:
                 await audio_queue.put(data)
@@ -394,9 +398,9 @@ class UIServer:
 
         session = DGSession()
 
-        # Accumulate raw audio bytes and diarized words across chunks for one
-        # utterance so we can publish to the auditory bus on final.
-        _audio_chunks: list[bytes] = []
+        # Accumulate diarized words across chunks for one utterance so we can
+        # publish to the auditory bus on final. (Raw audio bytes are buffered on
+        # the DGSession handle as `.audio_chunks`, written by _receive_loop.)
         _diarized_words: list[dict] = []
         _utterance_start_s: float | None = None
 
@@ -441,7 +445,7 @@ class UIServer:
                 logger.debug("UI: auditory publish failed: %s", e)
 
         async def _run_session() -> None:
-            nonlocal _audio_chunks, _diarized_words, _utterance_start_s
+            nonlocal _diarized_words, _utterance_start_s
             try:
                 async with client.listen.v1.connect(
                     model="nova-3",
@@ -456,7 +460,7 @@ class UIServer:
                     logger.info("UI: Deepgram live session started for client")
 
                     async def _listen() -> None:
-                        nonlocal _audio_chunks, _diarized_words
+                        nonlocal _diarized_words
                         async for msg in conn:
                             if isinstance(msg, ListenV1Results):
                                 try:
@@ -484,8 +488,8 @@ class UIServer:
                                                     "speaker": getattr(w, "speaker", 0),
                                                 }
                                             )
-                                        audio_bytes = b"".join(_audio_chunks)
-                                        _audio_chunks = []
+                                        audio_bytes = b"".join(session.audio_chunks)
+                                        session.audio_chunks.clear()
                                         _diarized_words = []
                                         asyncio.create_task(
                                             _publish_utterance(alt.transcript, audio_bytes, words)
@@ -594,11 +598,10 @@ class UIServer:
                             dg_conn = None
 
                 elif "bytes" in msg and msg["bytes"] and dg_conn is not None:
-                    # FIXME(pre-existing): `_audio_chunks` lives in _run_session's
-                    # closure and is not in scope here in _receive_loop; this would
-                    # raise NameError if reached. Flagged for the author rather than
-                    # silently rewritten. See PR description.
-                    _audio_chunks.append(msg["bytes"])  # noqa: F821
+                    # Buffer the raw audio on the Deepgram session handle so the
+                    # final-transcript handler can publish the full utterance to
+                    # the auditory bus, then forward the chunk to Deepgram.
+                    dg_conn.audio_chunks.append(msg["bytes"])
                     await dg_conn.send(msg["bytes"])
 
             except Exception:
