@@ -29,6 +29,36 @@ logger = logging.getLogger(__name__)
 
 CLUSTER = "motor_cortex"
 
+# Single source of truth for every tool name the motor cortex can actually
+# dispatch (local _dispatch, cloud_action, lobe-bridge, ask_user, none). Used to
+# neutralize hallucinated/typo'd expected_tool values from the strategic planner.
+_DISPATCHABLE_TOOLS = frozenset({
+    "read_file", "write_file", "append_file", "list_files", "run_command",
+    "search_files", "fetch_url", "query_langfuse", "set_mood",
+    "cloud_action", "recall_memory", "analyze_image", "ask_user", "none",
+})
+
+# Deterministic tool-appropriateness guard (no LLM). Targets the one observed
+# failure class: the observability tool picked for a non-observability goal.
+_OBSERVABILITY_KEYWORDS = ("langfuse", "trace", "observability", "telemetry",
+                           "score", "session", "latency", "span", "monitor")
+
+
+def _tool_appropriateness_warning(tool: str, goal: str, story_desc: str) -> str | None:
+    """Conservative, deterministic mismatch detector. Returns a retry hint or None.
+
+    Only flags the highest-confidence mismatch we've actually seen fail —
+    query_langfuse used on a goal/story with nothing to do with observability.
+    Keep this narrow; broaden only if job_store shows new failure classes.
+    """
+    text = f"{goal} {story_desc}".lower()
+    if tool == "query_langfuse" and not any(k in text for k in _OBSERVABILITY_KEYWORDS):
+        return ("query_langfuse reads observability data, but this goal is not about "
+                "traces/scores/telemetry. Use a file/codebase tool instead "
+                "(list_files, read_file, search_files, run_command).")
+    return None
+
+
 from brain.clusters.job_store import JobStore
 from brain.clusters.motor_dispatcher import ToolDispatcher
 from brain.clusters.motor_prompts import (
@@ -264,6 +294,11 @@ class MotorCortexCluster:
             plan_prompt = self._build_plan_prompt(
                 work_goal, features, subsystem_context, steps_taken, results_log
             )
+            # Reset the planner cell each iteration: the motor's own budget
+            # ([1,5], checked by the while-guard) governs how many tools a turn
+            # may run, so the cell's max_calls_per_turn=2 cap must not silently
+            # truncate a multi-step task goal to 2 calls (returning "" → "none").
+            self._planner.reset_turn(turn_id)
             raw = await self._planner.call([{"role": "user", "content": plan_prompt}])
             plan: dict = safe_json_parse(raw) or {}
 
@@ -379,6 +414,16 @@ class MotorCortexCluster:
                 for i, s in enumerate(plan.get("steps") or [])]
             or [{"description": goal, "expected_tool": "?", "acceptance_criteria": [], "id": "US-001"}]
         )
+        # Neutralize hallucinated/typo'd expected_tool values so a bad strategic
+        # hint can't mislead the tactical planner (or the UI). The tactical
+        # planner can still pick a valid tool from the story description.
+        for story in stories_planned:
+            et = story.get("expected_tool", "?")
+            if et not in ("?", "") and et not in _DISPATCHABLE_TOOLS:
+                logger.warning("[InternalJob] Story %s: invalid expected_tool '%s' — neutralized",
+                               story.get("id"), et)
+                story["expected_tool"] = "?"
+
         success_criteria = plan.get("success_criteria", "")
         complexity = plan.get("complexity", "low")
         # Ralph loop activates for medium/high complexity: per-story retry + final verifier.
@@ -428,7 +473,10 @@ class MotorCortexCluster:
             story_desc = story.get("description", "")
             story_criteria = story.get("acceptance_criteria", [])
             story_passed = False
-            max_attempts = (_MAX_STORY_RETRIES + 1) if use_ralph else 1
+            # Low complexity still gets ONE retry so a failed criteria/appropriateness
+            # check can self-correct (the retry feeds the prior output back as a hint).
+            # Extra attempts only fire on an actual failure, so happy-path stays single-attempt.
+            max_attempts = (_MAX_STORY_RETRIES + 1) if use_ralph else 2
 
             for attempt in range(max_attempts):
                 if self._calls_this_turn >= effective_budget:
@@ -469,16 +517,35 @@ class MotorCortexCluster:
                     f"{criteria_hint}{retry_hint}"
                 )
                 plan_prompt = self._build_plan_prompt(
-                    story_desc, tactical_features, extra_context, steps_taken, results_log
+                    story_desc, tactical_features, extra_context, steps_taken, results_log,
+                    expected_tool=story.get("expected_tool", ""),
                 )
-                raw = await self._planner.call([{"role": "user", "content": plan_prompt}])
-                tactical = safe_json_parse(raw) or {}
+                tactical, planner_failed = await self._tactical_plan(plan_prompt, job_id)
                 tool = tactical.get("tool", "none")
                 args = tactical.get("args", {})
                 reason = tactical.get("reason", "")
 
                 self._calls_this_turn += 1
                 total_attempts += 1
+
+                if planner_failed:
+                    # Planner produced nothing usable (local-model timeout/error
+                    # or unparseable output) even after retries. This is NOT a
+                    # deliberate skip — do not mark the story passed. Record the
+                    # failed attempt and let the retry loop try again; if attempts
+                    # are exhausted the story stays unpassed → job fails honestly,
+                    # instead of silently reporting success with zero work done.
+                    logger.warning("[InternalJob] Story %d/%d attempt %d: planner produced "
+                                   "no action", idx + 1, len(stories_planned), attempt + 1)
+                    await emitter.emit_event({
+                        "type": "task_step_done",
+                        "job_id": job_id, "step_index": idx,
+                        "success": False, "criteria_verified": False,
+                        "output": "[planner produced no action]", "attempt": attempt,
+                    })
+                    steps_taken.append({"tool": "none", "args": {}, "reason": "[planner failed]"})
+                    results_log.append("")
+                    continue  # retry this story if attempts remain
 
                 if tool == "none":
                     logger.info("[InternalJob] Story %d skipped: %s", idx + 1, reason)
@@ -531,8 +598,19 @@ class MotorCortexCluster:
                 results_log.append(output[:500] if output else "")
                 self._fire_outcome_switches(output, tool, self._chem_snapshot())
 
-                # Ralph: check acceptance criteria before marking story done
-                if use_ralph and story_criteria:
+                # Deterministic tool-appropriateness guard (no LLM). If the chosen
+                # tool is an obvious mismatch, fail the story like an unmet criterion
+                # so the existing retry loop re-plans with a concrete hint. The hint
+                # is written into results_log[-1] because retry_hint reads it.
+                warning = _tool_appropriateness_warning(tool, goal, story_desc)
+                if warning:
+                    logger.warning("[InternalJob] Tool appropriateness: %s", warning)
+                    verified, unmet = False, [warning]
+                    results_log[-1] = f"[tool-mismatch] {warning}"
+                # Check acceptance criteria before marking story done. Runs on ALL
+                # complexity levels (not just Ralph) — it's the only thing that can
+                # detect "tool ran fine but produced the wrong kind of output."
+                elif story_criteria:
                     verified, unmet = await self._check_story_criteria(
                         story, output, f"{job_id}_{idx}_{attempt}"
                     )
@@ -604,7 +682,8 @@ class MotorCortexCluster:
         if self._obs:
             self._obs.end_job(job_id, success=success,
                               steps_completed=len(steps_taken),
-                              steps_planned=len(stories_planned))
+                              steps_planned=len(stories_planned),
+                              total_attempts=total_attempts)
         return {
             "job_id": job_id, "goal": goal, "success": success,
             "steps_taken_count": len(steps_taken),
@@ -619,6 +698,32 @@ class MotorCortexCluster:
             "total_attempts": total_attempts,
             "attempt_cap": _MAX_TOTAL_ATTEMPTS,
         }
+
+    async def _tactical_plan(self, plan_prompt: str, job_id: str,
+                              retries: int = 2) -> tuple[dict, bool]:
+        """Run the tactical (per-step) planner for an internal job.
+
+        The same _planner cell is reused for every story in a job, but the job
+        loop enforces its own budget (effective_budget + _MAX_TOTAL_ATTEMPTS).
+        The cell's max_calls_per_turn cap would otherwise silently shadow that
+        budget — after 2 calls _can_fire() returns False and call() returns ""
+        for every remaining story. So reset the cell before each attempt to keep
+        the cap from biting, and retry on empty/unparseable output to ride out a
+        transient local-model timeout or error.
+
+        Returns (tactical_dict, failed) where failed=True means the planner
+        produced no usable plan after all retries — a real failure, NOT a
+        deliberate tool="none" skip.
+        """
+        for attempt in range(retries + 1):
+            self._planner.reset_turn(job_id)
+            raw = await self._planner.call([{"role": "user", "content": plan_prompt}])
+            parsed = safe_json_parse(raw)
+            if raw and parsed is not None:
+                return parsed, False
+            logger.warning("[InternalJob] tactical planner returned no usable output "
+                           "(try %d/%d) — retrying", attempt + 1, retries + 1)
+        return {}, True
 
     async def _check_story_criteria(self, story: dict, output: str,
                                      check_id: str) -> tuple[bool, list[str]]:
@@ -774,7 +879,8 @@ class MotorCortexCluster:
         return self._dispatcher.build_path_hint()
 
     def _build_plan_prompt(self, goal: str, features: dict, subsystem_context: str,
-                           steps_done: list[dict], results: list[str]) -> str:
+                           steps_done: list[dict], results: list[str],
+                           expected_tool: str = "") -> str:
         parts = [
             f"Goal: {goal}",
             f"Intent: {features.get('intent', 'task')}",
@@ -803,6 +909,13 @@ class MotorCortexCluster:
             pass
         if subsystem_context.strip():
             parts.append(subsystem_context.strip())
+        # Soft hint from the strategic plan — nudge toward the planned tool but
+        # leave an explicit escape hatch (the strategic planner is itself fallible).
+        if expected_tool and expected_tool not in ("", "?", "none"):
+            parts.append(
+                f"Strategic hint: the plan expects tool `{expected_tool}` for this step. "
+                f"Use it unless the step clearly needs a different tool."
+            )
         if steps_done:
             history = ["Steps completed so far:"]
             for i, (step, result) in enumerate(zip(steps_done, results, strict=False), 1):

@@ -86,6 +86,9 @@ class StreamingMicSession:
         self._main_loop: asyncio.AbstractEventLoop | None = None
         self._running = False
         self._muted = True              # start muted; user must explicitly unmute
+        # Push-to-talk release grace: on key-up we keep the feed live briefly so
+        # Deepgram can deliver trailing final Results before we finalize + mute.
+        self._ptt_release_grace_s = float(os.environ.get("BRAIN_PTT_RELEASE_GRACE_MS", "350")) / 1000.0
         self._current_device_id = None  # track active device for change detection
         self._device_listener_active = False  # CoreAudio listener status
 
@@ -396,6 +399,81 @@ class StreamingMicSession:
         """Await the next completed utterance. Returns dict with transcript/audio/words."""
         return await self.utterances.get()
 
+    async def _finalize_pending(self, last_end: float | None = None) -> None:
+        """Build an utterance from the accumulated words + sliced PCM, publish it
+        to the auditory bus, and hand it to next_utterance(). Resets utterance
+        state. No-op when there's nothing pending. Shared by Deepgram's
+        UtteranceEnd and the push-to-talk flush() path."""
+        if not self._pending_words and self._utterance_start_s is None:
+            return
+        if last_end is None:
+            last_end = self._pending_words[-1]["end"] if self._pending_words else (
+                self._utterance_start_s or 0.0)
+        start = self._utterance_start_s if self._utterance_start_s is not None else (
+            self._pending_words[0]["start"] if self._pending_words else last_end
+        )
+        transcript = " ".join(w["word"] for w in self._pending_words if w["word"]).strip()
+        audio_bytes = self._pcm_buffer.slice(start, last_end)
+        diarized = list(self._pending_words)
+
+        # Reset for next utterance
+        self._utterance_start_s = None
+        self._pending_words = []
+
+        if not transcript and not audio_bytes:
+            return
+
+        logger.info("[StreamingMic] utterance: %r (%.2fs, %d words, %d bytes)",
+                    transcript[:60], last_end - start, len(diarized), len(audio_bytes))
+
+        # Feed the auditory cortex pipeline (prosody + speaker ID + dynamics)
+        if audio_bytes:
+            await self._bus.publish_dict(
+                "auditory.raw_audio",
+                {
+                    "audio_bytes": audio_bytes,
+                    "sample_rate": SAMPLE_RATE,
+                    "duration_s": float(last_end - start),
+                    "channels": CHANNELS,
+                    "dtype": "int16",
+                },
+                source="pns",
+            )
+            await self._bus.publish_dict(
+                "auditory.diarized_audio",
+                {
+                    "audio_bytes": audio_bytes,
+                    "sample_rate": SAMPLE_RATE,
+                    "duration_s": float(last_end - start),
+                    "dtype": "int16",
+                    "diarized_words": diarized,
+                    "transcript": transcript,
+                },
+                source="pns",
+            )
+
+        # Hand the utterance to whoever's awaiting next_utterance()
+        await self.utterances.put({
+            "transcript": transcript,
+            "audio_bytes": audio_bytes,
+            "sample_rate": SAMPLE_RATE,
+            "diarized_words": diarized,
+            "duration_s": float(last_end - start),
+        })
+
+    async def flush(self) -> None:
+        """Push-to-talk release: keep the feed live for a short grace so trailing
+        final Results arrive, finalize the held utterance immediately (don't wait
+        for Deepgram's ~1.2s UtteranceEnd), then mute. Safe to call when already
+        muted (no-op)."""
+        if self._muted:
+            return
+        if self._ptt_release_grace_s > 0:
+            await asyncio.sleep(self._ptt_release_grace_s)
+        with contextlib.suppress(Exception):
+            await self._finalize_pending()
+        self.mute()
+
     # ── internal: mic side ─────────────────────────────────────────────────
 
     # Noise gate — drop chunks whose RMS energy is below this threshold.
@@ -524,57 +602,7 @@ class StreamingMicSession:
                         self._pending_words = []
                         continue
                     last_end = float(getattr(message, "last_word_end", 0.0))
-                    start = self._utterance_start_s if self._utterance_start_s is not None else (
-                        self._pending_words[0]["start"] if self._pending_words else last_end
-                    )
-                    transcript = " ".join(w["word"] for w in self._pending_words if w["word"]).strip()
-                    audio_bytes = self._pcm_buffer.slice(start, last_end)
-                    diarized = list(self._pending_words)
-
-                    # Reset for next utterance
-                    self._utterance_start_s = None
-                    self._pending_words = []
-
-                    if not transcript and not audio_bytes:
-                        continue
-
-                    logger.info("[StreamingMic] utterance: %r (%.2fs, %d words, %d bytes)",
-                                transcript[:60], last_end - start, len(diarized), len(audio_bytes))
-
-                    # Feed the auditory cortex pipeline (prosody + speaker ID + dynamics)
-                    if audio_bytes:
-                        await self._bus.publish_dict(
-                            "auditory.raw_audio",
-                            {
-                                "audio_bytes": audio_bytes,
-                                "sample_rate": SAMPLE_RATE,
-                                "duration_s": float(last_end - start),
-                                "channels": CHANNELS,
-                                "dtype": "int16",
-                            },
-                            source="pns",
-                        )
-                        await self._bus.publish_dict(
-                            "auditory.diarized_audio",
-                            {
-                                "audio_bytes": audio_bytes,
-                                "sample_rate": SAMPLE_RATE,
-                                "duration_s": float(last_end - start),
-                                "dtype": "int16",
-                                "diarized_words": diarized,
-                                "transcript": transcript,
-                            },
-                            source="pns",
-                        )
-
-                    # Hand the utterance to whoever's awaiting next_utterance()
-                    await self.utterances.put({
-                        "transcript": transcript,
-                        "audio_bytes": audio_bytes,
-                        "sample_rate": SAMPLE_RATE,
-                        "diarized_words": diarized,
-                        "duration_s": float(last_end - start),
-                    })
+                    await self._finalize_pending(last_end)
 
                 elif mtype == "Metadata":
                     logger.debug("[StreamingMic] Metadata: %s",

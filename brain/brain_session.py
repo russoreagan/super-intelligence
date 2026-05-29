@@ -40,6 +40,10 @@ class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
         # TTS / mic mute control
         self._mic_unmute_delay_s = float(os.environ.get("BRAIN_MIC_UNMUTE_DELAY_S", "0.3"))
         self._tts_did_mute = False
+        # Push-to-talk: True while the user is holding Space (or toggled the mic
+        # on). The mic is live only when this is True and the entity isn't
+        # speaking; on release we flush the held phrase and re-mute.
+        self._ptt_held = False
 
         # Proactive / idle gates (overwritten during _setup_core from settings)
         self._proactive_idle_threshold: float = 180.0

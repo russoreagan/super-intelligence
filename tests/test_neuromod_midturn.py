@@ -22,6 +22,20 @@ from brain.observability.timeline import TurnTrace
 
 # ── shared helpers ────────────────────────────────────────────────────────────
 
+def _run(coro):
+    """Run a coroutine on a usable event loop. These tests aren't pytest-asyncio,
+    so a get-or-create guard keeps them robust when an earlier pytest-asyncio test
+    in the session has closed/cleared the ambient loop."""
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_closed():
+            raise RuntimeError
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    return loop.run_until_complete(coro)
+
+
 def _make_bus() -> Bus:
     return Bus()
 
@@ -49,7 +63,7 @@ class TestHippocampusRecallInjection:
                 bus.neuromod.add(channel, delta)
             snap = bus.neuromod.snapshot()
             trace.neuromod_midturn.append({"trigger": "hippocampus_recall", "snapshot": snap})
-            asyncio.get_event_loop().run_until_complete(emitter.emit_neuromod(snap))
+            _run(emitter.emit_neuromod(snap))
 
     # ── hippocampus.recall() emotional weight computation ─────────────────────
 
@@ -159,7 +173,7 @@ class TestToolOutcomeInjection:
         bus.neuromod.add("Glu", 0.04)
         snap = bus.neuromod.snapshot()
         trace.neuromod_midturn.append({"trigger": "tool_success", "snapshot": snap})
-        asyncio.get_event_loop().run_until_complete(emitter.emit_neuromod(snap))
+        _run(emitter.emit_neuromod(snap))
 
     def _apply_failure(self, bus: Bus, trace: TurnTrace, emitter) -> None:
         bus.neuromod.add("GABA", 0.08)
@@ -167,14 +181,14 @@ class TestToolOutcomeInjection:
         bus.neuromod.add("DA", -0.05)
         snap = bus.neuromod.snapshot()
         trace.neuromod_midturn.append({"trigger": "tool_failure", "snapshot": snap})
-        asyncio.get_event_loop().run_until_complete(emitter.emit_neuromod(snap))
+        _run(emitter.emit_neuromod(snap))
 
     def _apply_exception(self, bus: Bus, trace: TurnTrace, emitter) -> None:
         bus.neuromod.add("GABA", 0.10)
         bus.neuromod.add("NE", 0.08)
         snap = bus.neuromod.snapshot()
         trace.neuromod_midturn.append({"trigger": "tool_exception", "snapshot": snap})
-        asyncio.get_event_loop().run_until_complete(emitter.emit_neuromod(snap))
+        _run(emitter.emit_neuromod(snap))
 
     # success ─────────────────────────────────────────────────────────────────
 
@@ -289,7 +303,7 @@ class TestDraftQualityInjection:
         if trigger:
             snap = bus.neuromod.snapshot()
             trace.neuromod_midturn.append({"trigger": trigger, "snapshot": snap})
-            asyncio.get_event_loop().run_until_complete(emitter.emit_neuromod(snap))
+            _run(emitter.emit_neuromod(snap))
         return trigger
 
     def test_low_score_raises_gaba(self):

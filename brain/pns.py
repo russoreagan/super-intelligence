@@ -10,6 +10,7 @@ import logging
 import os
 
 from brain.bus import Bus
+from brain.emotion_presets import EMOTION_TAG_MAP, strip_reaction_tags
 from brain.security import screen_input
 from brain.settings import settings
 
@@ -121,69 +122,11 @@ class PNS:
         else:
             print(f"\nBrain: {response}\n", flush=True)
 
-    # Comprehensive emotion → v3 audio tag map. Covers every label that
-    # name_emotion() can produce, plus context-driven emotions (embarrassed,
-    # flirty, apologetic, grateful) that the metacognition cell or frontal
-    # lobe can set on affect.emotion when situational appraisal warrants it.
-    _V3_TAG_BY_EMOTION: dict[str, str] = {
-        # — neuromod-derivable (from emotion_vocabulary.EMOTION_TABLE) —
-        "joy":               "[happy]",
-        "excitement":        "[excited]",
-        "enthusiasm":        "[enthusiastic]",
-        "curious":           "[curious]",
-        "curious-uncertain": "[curious]",
-        "content":           "",                    # natural voice
-        "warm":              "[warmly]",
-        "thoughtful":        "[thoughtfully]",
-        "confident":         "[confidently]",
-        "anxious":           "[nervously]",
-        "inhibited":         "[softly]",
-        "flat":              "[softly]",
-        "restless":          "[urgently]",
-        "cautious-agitated": "[urgently]",
-        "agitated":          "[firmly]",
-        "angry":             "[angrily]",
-        "proud":             "[proudly]",
-        "surprised":         "[gasps]",
-        "defensive":         "[firmly]",
-        "wistful":           "[softly]",
-        "confused":          "[confused]",
-        "neutral":           "",
-        # — context-driven (no neuromod combo produces these on its own) —
-        "amused":            "[laughs softly]",
-        "playful":           "[playfully]",
-        "joking":            "[laughs softly]",
-        "sad":               "[sadly]",
-        "somber":            "[softly]",
-        "melancholy":        "[softly]",
-        "frustrated":        "[firmly]",
-        "irritated":         "[firmly]",
-        "embarrassed":       "[bashfully]",
-        "shy":               "[shyly]",
-        "flirty":            "[playfully]",
-        "tender":            "[gently]",
-        "affectionate":      "[warmly]",
-        "apologetic":        "[softly]",
-        "grateful":          "[warmly]",
-        "relieved":          "[sighs]",
-        "disappointed":      "[softly]",
-        "sympathetic":       "[gently]",
-        "sarcastic":         "[sarcastically]",
-        # — mid-tier defaults (feeling-wheel ancestors) for hierarchy fallback —
-        # When a leaf emotion has no explicit entry, lookup walks leaf → mid → core
-        # and lands on one of these. Lets new leaves inherit a sensible delivery
-        # without forcing an entry per label.
-        "loving":            "[warmly]",
-        "peaceful":          "",
-        "joyful":            "[happy]",
-        "lonely":            "[softly]",
-        "humiliated":        "[bashfully]",
-        "mad":               "[firmly]",
-        "happy":             "[happy]",
-        "anger":             "[firmly]",
-        "fear":              "[nervously]",
-        "surprise":          "[gasps]",
-    }
+    # Single source of truth for emotion → v3 audio tag lives in
+    # emotion_presets.EMOTION_TAG_MAP, so the reactive affect path here and the
+    # deliberate set_mood() / [mood:X] paths can never drift apart. Aliased for
+    # the existing PNS._V3_TAG_BY_EMOTION references below.
+    _V3_TAG_BY_EMOTION: dict[str, str] = EMOTION_TAG_MAP
 
     @staticmethod
     def _v3_audio_tag_from_affect(affect: dict) -> str | None:
@@ -218,28 +161,44 @@ class PNS:
             return "[urgently]"
         if settings.get("gaba_gently_threshold") < GABA:
             return "[gently]"
+        # Pacing extremes recover the intent of the old `speed` slider the
+        # v3-native way: v3 doesn't honour a speed param, so rate is conveyed by
+        # tags. High positive arousal → rushed; very low arousal → drawn out.
+        if DA > settings.get("da_excited_threshold") and Glu > settings.get("glu_excited_threshold") + 0.15:
+            return "[rushed]"
         if settings.get("da_excited_threshold") < DA and Glu > settings.get("glu_excited_threshold"):
             return "[excited]"
         if ACh > settings.get("ach_curious_threshold") and settings.get("gaba_curious_threshold") > GABA:
             return "[curious]"
+        if DA < settings.get("da_softly_threshold") - 0.10:
+            return "[drawn out]"
         if settings.get("da_softly_threshold") > DA:
             return "[softly]"
         return None
 
     @staticmethod
-    def _split_sentences(text: str, min_len: int = 200) -> list[str]:
+    def _split_sentences(text: str, min_len: int = 260, first_min_len: int = 120) -> list[str]:
         """Split text at natural boundaries for pipelined TTS generation.
 
-        Paragraph breaks (\\n\\n) are hard stops — a paragraph >= half min_len
-        is flushed as its own chunk rather than merged into the next. Within
-        long paragraphs, sentence endings (.!?…) are used to sub-split.
-        Short fragments are merged up to min_len to keep ElevenLabs from
-        resetting prosody on tiny standalone chunks.
+        Graduated sizing for v3: the FIRST chunk uses a smaller target
+        (`first_min_len`) so audio starts quickly (low time-to-first-sound),
+        while every chunk after that uses the larger `min_len` so v3 has enough
+        context to perform realistic, emotion-infused prosody. (v3 degrades on
+        tiny fragments; request stitching in _producer carries prosody across
+        the boundaries.)
+
+        Paragraph breaks (\\n\\n) are hard stops — a paragraph >= half the active
+        target is flushed as its own chunk rather than merged into the next.
+        Within long paragraphs, sentence endings (.!?…) are used to sub-split.
         """
         import re
 
         chunks: list[str] = []
         buf = ""
+
+        def _target() -> int:
+            # Smaller threshold until the first chunk is emitted, then larger.
+            return first_min_len if not chunks else min_len
 
         for para in re.split(r'\n\n+', text.strip()):
             para = para.strip()
@@ -247,14 +206,14 @@ class PNS:
                 continue
 
             # Paragraph break: flush buffer if it's substantial enough to stand alone.
-            if buf and len(buf) >= min_len // 2:
+            if buf and len(buf) >= _target() // 2:
                 chunks.append(buf)
                 buf = ""
 
-            # Accumulate sentences within the paragraph until we hit min_len.
+            # Accumulate sentences within the paragraph until we hit the target.
             for part in re.split(r'(?<=[.!?…])\s+', para):
                 buf = (buf + " " + part).strip() if buf else part
-                if len(buf) >= min_len:
+                if len(buf) >= _target():
                     chunks.append(buf)
                     buf = ""
 
@@ -401,6 +360,33 @@ class PNS:
 
         return {"stability": stability, "style": style, "speed": speed}
 
+    @staticmethod
+    def _snap_v3_stability(value: float) -> float:
+        """v3 exposes three discrete stability modes: 0.0 (Creative — most
+        expressive), 0.5 (Natural), 1.0 (Robust — most stable). Map the
+        continuous, neuromod-derived stability onto them with threshold BANDS
+        (not nearest-point) so the four voice buckets actually spread across all
+        three modes instead of all collapsing to Natural:
+          bright (0.35) → Creative · default/low-mood (0.45/0.55) → Natural ·
+          threat (0.65) → Robust."""
+        v = float(value)
+        if v <= 0.40:
+            return 0.0   # Creative — most expressive (bright/animated states)
+        if v >= 0.60:
+            return 1.0   # Robust — most stable (threat / de-escalation)
+        return 0.5       # Natural
+
+    def _emit_tts_error(self, detail: str) -> None:
+        """Surface a TTS failure to the UI so it isn't silently disguised as a
+        normal text reply. Best-effort — never raises."""
+        try:
+            from brain.ui.emitter import emitter
+            asyncio.ensure_future(
+                emitter.emit_event({"type": "tts_error", "detail": detail[:200]})
+            )
+        except Exception:
+            pass
+
     def set_voice_id(self, voice_id: str) -> None:
         self._voice_id = voice_id
         logger.info("[I/O] ElevenLabs voice changed to %s", voice_id)
@@ -446,18 +432,32 @@ class PNS:
             voice_id = getattr(self, "_voice_id", None) or os.environ.get("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")
 
             params = self._voice_params_from_affect(affect or {})
-            vs_kwargs = {
-                "stability": params["stability"],
-                "similarity_boost": 0.80,
-                "style": params["style"],
-                "use_speaker_boost": True,
-            }
-            try:
-                voice_settings = VoiceSettings(**vs_kwargs, speed=params["speed"])
-            except TypeError:
-                voice_settings = VoiceSettings(**vs_kwargs)
-
             model_id = os.environ.get("ELEVENLABS_MODEL_ID", "eleven_v3").strip() or "eleven_v3"
+
+            if model_id == "eleven_v3":
+                # v3 honours stability (snapped to its discrete Creative/Natural/
+                # Robust points) + similarity_boost + use_speaker_boost. It does NOT
+                # act on `style` or `speed` — expressiveness comes from audio tags +
+                # text, not the sliders — so sending them is at best ignored and at
+                # worst 422-rejected (a silent "no audio" cause). Drop them for v3.
+                sent_stability = self._snap_v3_stability(params["stability"])
+                voice_settings = VoiceSettings(
+                    stability=sent_stability,
+                    similarity_boost=0.80,
+                    use_speaker_boost=True,
+                )
+            else:
+                sent_stability = params["stability"]
+                vs_kwargs = {
+                    "stability": params["stability"],
+                    "similarity_boost": 0.80,
+                    "style": params["style"],
+                    "use_speaker_boost": True,
+                }
+                try:
+                    voice_settings = VoiceSettings(**vs_kwargs, speed=params["speed"])
+                except TypeError:
+                    voice_settings = VoiceSettings(**vs_kwargs)
 
             # Check for a deliberate whole-turn emotion set via set_mood() tool.
             # Consumed once here so it doesn't bleed into subsequent turns.
@@ -510,19 +510,27 @@ class PNS:
                 shaped_text = tts_text
                 tag_preview = shaped_text[: shaped_text.find("]") + 1] if shaped_text.startswith("[") else "—"
             else:
-                # Non-v3: strip any [mood:X] markup so it doesn't get read aloud.
+                # Non-v3: strip [mood:X] markup AND bare reaction tags so none of
+                # them get read aloud literally (those tags are v3-only).
                 display_text, _ = self._parse_mood_markup(text, None)
-                shaped_text = display_text
+                shaped_text = strip_reaction_tags(display_text)
                 tag_preview = "—"
 
-            logger.info(
-                "[I/O] TTS: voice=%s model=%s stability=%.2f style=%.2f speed=%.2f "
-                "emotion=%s tag=%s deliberate=%s inline_mood=%s",
-                voice_id, model_id,
-                params["stability"], params["style"], params["speed"],
-                (affect or {}).get("emotion"), tag_preview,
-                deliberate_emotion or "—", has_inline_mood if model_id == "eleven_v3" else False,
-            )
+            if model_id == "eleven_v3":
+                logger.info(
+                    "[I/O] TTS: voice=%s model=%s stability=%.2f (snapped, style/speed dropped) "
+                    "emotion=%s tag=%s deliberate=%s inline_mood=%s",
+                    voice_id, model_id, sent_stability,
+                    (affect or {}).get("emotion"), tag_preview,
+                    deliberate_emotion or "—", has_inline_mood,
+                )
+            else:
+                logger.info(
+                    "[I/O] TTS: voice=%s model=%s stability=%.2f style=%.2f speed=%.2f emotion=%s tag=%s",
+                    voice_id, model_id,
+                    params["stability"], params["style"], params["speed"],
+                    (affect or {}).get("emotion"), tag_preview,
+                )
 
             # Split into sentence-sized chunks so ElevenLabs starts generating
             # audio for the first sentence immediately, while subsequent
@@ -543,11 +551,34 @@ class PNS:
                     import sounddevice as sd
                     SAMPLE_RATE = 22050
                     output_device = _resolve_output_device()
-                    stream = sd.RawOutputStream(
-                        samplerate=SAMPLE_RATE, channels=1, dtype="int16",
-                        device=output_device,
-                    )
-                    stream.start()
+
+                    def _open_stream(device):
+                        s = sd.RawOutputStream(
+                            samplerate=SAMPLE_RATE, channels=1, dtype="int16",
+                            device=device,
+                        )
+                        s.start()
+                        return s
+
+                    try:
+                        stream = _open_stream(output_device)
+                    except Exception as dev_err:
+                        # The configured device (e.g. a Scarlett that's asleep,
+                        # unplugged, or a stale BRAIN_AUDIO_OUTPUT_DEVICE index)
+                        # failed to open. Fall back to the system default rather
+                        # than dropping the whole reply to silent text.
+                        if output_device is not None:
+                            logger.warning(
+                                "[I/O] Output device %r failed to open (%s) — "
+                                "falling back to system default output",
+                                output_device, dev_err,
+                            )
+                            self._emit_tts_error(
+                                f"Audio device {output_device!r} unavailable — using default"
+                            )
+                            stream = _open_stream(None)
+                        else:
+                            raise
 
                     # Producer: fetch sentences from ElevenLabs one at a time,
                     # streaming each sentence's audio chunks into the queue.
@@ -558,16 +589,30 @@ class PNS:
 
                     async def _producer() -> None:
                         try:
-                            for sentence in sentences:
+                            for i, sentence in enumerate(sentences):
                                 if self._interrupt_event.is_set():
                                     break
-                                audio_iter = client.text_to_speech.convert(
+                                # Request stitching: tell v3 what came right before
+                                # and after this chunk so prosody/emotion carries
+                                # across the chunk boundaries instead of resetting.
+                                convert_kwargs = dict(
                                     text=sentence,
                                     voice_id=voice_id,
                                     model_id=model_id,
                                     output_format="pcm_22050",
                                     voice_settings=voice_settings,
                                 )
+                                if i > 0:
+                                    convert_kwargs["previous_text"] = sentences[i - 1]
+                                if i + 1 < len(sentences):
+                                    convert_kwargs["next_text"] = sentences[i + 1]
+                                try:
+                                    audio_iter = client.text_to_speech.convert(**convert_kwargs)
+                                except TypeError:
+                                    # Older SDK without previous_text/next_text — retry plain.
+                                    convert_kwargs.pop("previous_text", None)
+                                    convert_kwargs.pop("next_text", None)
+                                    audio_iter = client.text_to_speech.convert(**convert_kwargs)
                                 async for chunk in audio_iter:
                                     if self._interrupt_event.is_set():
                                         break
@@ -585,8 +630,12 @@ class PNS:
                                 )
                             except asyncio.TimeoutError:
                                 logger.warning(
-                                    "[I/O] TTS watchdog: no audio chunk in %.0fs — aborting",
+                                    "[I/O] TTS watchdog: no audio chunk in %.0fs — aborting "
+                                    "(ElevenLabs slow/unreachable?)",
                                     _TTS_CHUNK_TIMEOUT_S,
+                                )
+                                self._emit_tts_error(
+                                    f"No audio from ElevenLabs in {_TTS_CHUNK_TIMEOUT_S:.0f}s"
                                 )
                                 self._interrupt_event.set()
                                 break
@@ -640,7 +689,13 @@ class PNS:
                     self._on_speaking_change(False)
 
         except Exception as e:
-            logger.warning("[I/O] Text-to-speech failed — printing response as text instead: %s", e)
+            # Make the failure LOUD. This handler used to silently print the
+            # reply as text, which is indistinguishable from "no audio out".
+            logger.error(
+                "[I/O] Text-to-speech FAILED (%s: %s) — voice will not play this "
+                "turn; falling back to text.", type(e).__name__, e, exc_info=True,
+            )
+            self._emit_tts_error(f"{type(e).__name__}: {e}")
             print(f"\nBrain: {text}\n", flush=True)
 
     async def mic_listen(self) -> str:

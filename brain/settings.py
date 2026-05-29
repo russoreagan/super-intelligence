@@ -63,6 +63,7 @@ DEFAULTS: dict[str, float | int] = {
     "suppression_skip_prob_max":   0.85,
     "speak_gate_poll_interval":    5.0,    # how often the speak gate evaluates candidates
     "speak_candidate_max_age_s":   60.0,   # drop unspoken candidates older than this
+    "speak_candidate_max_attempts": 4,     # drop a candidate after this many judge re-defers
     # Bridge rewriter (local Ollama only — no paid LLM calls). When a
     # candidate is approved AND its topic-overlap with the live conversation
     # is below `speak_bridge_overlap_threshold`, the brain rewrites the
@@ -71,6 +72,46 @@ DEFAULTS: dict[str, float | int] = {
     # approved candidate (most polish, most local-LLM latency).
     "speak_bridge_enabled":          1,    # 1 = on, 0 = off (kept int for settings UI sliders)
     "speak_bridge_overlap_threshold": 0.20,
+    # ── DMN resilience: skip-and-backoff ─────────────────────────────────────
+    # A missed idle thought is harmless, so the thoughts path never retries.
+    # After this many CONSECUTIVE failed ticks (model unavailable / step error),
+    # the loop lengthens its interval geometrically to stop hammering a saturated
+    # or down local model — freeing it for the subsystems that need it. The
+    # backoff resets to 1 on the first successful tick.
+    "dmn_backoff_after_failures":  2,      # consecutive failures before backoff kicks in
+    "dmn_backoff_factor":          2.0,    # interval multiplier per failure beyond the threshold
+    "dmn_backoff_max_multiplier":  8.0,    # cap so the loop never sleeps absurdly long
+    # ── DMN semantic dedup ───────────────────────────────────────────────────
+    # Cosine over thought embeddings is the real anti-repetition gate; the
+    # word-overlap check stays as a cheap pre-filter. Because cosine doesn't
+    # over-fire on shared function words, we compare against the FULL recent
+    # window (not just the last few) without the over-suppression that forced
+    # the narrow word-overlap window.
+    "dmn_semantic_dedup_enabled":  1,      # 1 = on, 0 = word-overlap only
+    "dmn_semantic_dup_threshold":  0.88,   # cosine ≥ this vs any recent thought → suppress
+    # ── DMN rumination (idle-only, chemistry-gated) ──────────────────────────
+    # Rumination = one bounded episode that deepens a single seed through several
+    # analytical skill packages. Eligible ONLY when the user is OS-idle (never
+    # mid-conversation). A dual-driver chemistry score fires it under worry
+    # (CORT/NE high, 5HT low) AND under high interest (DA/ACh high).
+    "dmn_rumination_enabled":         1,
+    "dmn_rumination_idle_threshold_s": 60.0,   # user must be OS-idle at least this long
+    "dmn_rumination_drive_threshold":  0.45,   # rumination_drive ≥ this makes a tick eligible
+    "dmn_rumination_prob_at_threshold": 0.5,   # P(ruminate) once eligible (×drive scaling)
+    "dmn_rumination_max_consecutive":  2,      # depth cap: max back-to-back ruminations on one seed
+    "dmn_rumination_max_iters":        4,      # chain length cap inside ruminate()
+    "dmn_rumination_time_budget_s":    25.0,   # wall-clock cap for one rumination episode
+    # rumination_drive weights (see _rumination_drive)
+    "rum_w_cort":  0.50,   # cortisol — anxious/brooding driver
+    "rum_w_ne":    0.40,   # norepinephrine over 0.30 baseline — anxious vigilance
+    "rum_w_da":    0.45,   # dopamine over 0.50 — engaged "can't stop chasing it"
+    "rum_w_ach":   0.35,   # acetylcholine over 0.50 — focused interest
+    "rum_w_5ht":   0.40,   # serotonin — high 5HT lets you DISENGAGE, so it subtracts
+    # Per-step costs that let anxious rumination self-limit (added each chain step)
+    "rum_step_gaba_cost":      0.02,
+    "rum_step_satiation_cost": 0.05,
+    # Interest threshold for varying skills on NORMAL idle ticks (non-rumination)
+    "dmn_skill_vary_drive_threshold": 0.30,
 
     # ── Section 5: Metacognition ──────────────────────────────────────────────
     "meta_interval":               30.0,

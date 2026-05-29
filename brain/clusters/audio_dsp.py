@@ -21,6 +21,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# One-time guard so the "prosody disabled" warning logs once, not per-utterance.
+_LOGGED_NO_LIBROSA = False
+
 # ── Identity name patterns (for enrollment auto-detection) ────────────────────
 
 _IDENTITY_PATTERNS = [
@@ -331,7 +334,14 @@ def extract_prosody(audio: np.ndarray, sr: int) -> dict:
                 )
 
     except ImportError:
-        logger.debug("Auditory DSP: librosa not installed — prosody features limited")
+        # Visible (once) so a missing dep degrades obviously to text-only affect
+        # rather than silently. When openSMILE is also unavailable this means no
+        # prosody/vocal-tone signal at all — worth surfacing.
+        global _LOGGED_NO_LIBROSA
+        if not _LOGGED_NO_LIBROSA:
+            logger.warning("Auditory DSP: librosa not installed — vocal-tone/prosody "
+                           "features disabled (emotion sensing falls back to text only)")
+            _LOGGED_NO_LIBROSA = True
     except Exception as e:
         logger.debug("Auditory DSP: prosody extraction error: %s", e)
 

@@ -229,3 +229,74 @@ async def test_background_explore_writes_candidates():
     assert isinstance(result, list)
     assert len(result) <= 5
     assert active.background_candidates == result
+
+
+# ---------------------------------------------------------------------------
+# Rumination flavor + chain synthesis
+# ---------------------------------------------------------------------------
+
+def test_fallback_skill_respects_flavor():
+    s = _selector_with_stubbed_cells()
+    # Anxious flavor should draw from the resolution/closure pool when available.
+    anx = s._fallback_skill("anxious")
+    eng = s._fallback_skill("engaged")
+    assert anx in s._index._by_name
+    assert eng in s._index._by_name
+    # If the curated pools are in the index, anxious/engaged should differ in pool.
+    anx_pool = [n for n in s._ANXIOUS_SKILLS if n in s._index._by_name]
+    eng_pool = [n for n in s._ENGAGED_SKILLS if n in s._index._by_name]
+    if anx_pool:
+        # Sample a few times; every pick must come from the anxious pool.
+        for _ in range(10):
+            assert s._fallback_skill("anxious") in anx_pool
+    if eng_pool:
+        for _ in range(10):
+            assert s._fallback_skill("engaged") in eng_pool
+
+
+@pytest.mark.asyncio
+async def test_meta_decide_includes_flavor_hint():
+    s = _selector_with_stubbed_cells()
+    captured = {}
+    async def _capture(msgs):
+        captured["content"] = msgs[0]["content"]
+        return '{"mode": "stop", "skill": null, "base_idx": 0}'
+    s._meta_cell.call = _capture
+    chain = [{"thought": "seed", "skill": None, "parent": None, "mode": "seed"}]
+    await s._meta_decide(chain, flavor="anxious")
+    assert "ANXIOUS" in captured["content"]
+    await s._meta_decide(chain, flavor="engaged")
+    assert "ENGAGED" in captured["content"]
+
+
+@pytest.mark.asyncio
+async def test_synthesize_chain_picks_strongest_take():
+    s = _selector_with_stubbed_cells()
+    seed = "the cadence of our check ins feels slightly off lately"
+    chain = [
+        {"thought": seed, "skill": None, "parent": None, "mode": "seed"},
+        # Near-verbatim restatement of the seed → low novelty.
+        {"thought": "the cadence of our check ins feels off lately",
+         "skill": "logic-check", "parent": 0, "mode": "transform"},
+        # A genuinely different, substantive take → should win.
+        {"thought": "Perhaps establishing a predictable weekly ritual would remove "
+                    "the ambiguity entirely and rebuild a sense of dependable rhythm.",
+         "skill": "systems-feedback-mapping", "parent": 0, "mode": "branch"},
+    ]
+    final = await s._synthesize_chain(chain)
+    assert "predictable weekly ritual" in final
+
+
+@pytest.mark.asyncio
+async def test_ruminate_returns_chain_and_respects_iter_cap():
+    s = _selector_with_stubbed_cells()
+    # Meta-cell always asks to transform with a valid skill, so the loop runs to
+    # the iter cap; _apply_skill is stubbed to a deterministic string.
+    s._meta_cell.call = AsyncMock(
+        return_value='{"mode": "transform", "skill": "logic-check", "base_idx": 0}')
+    s._apply_skill = AsyncMock(return_value="a refined take")
+    final, chain = await s.ruminate("seed thought", max_iters=3, time_budget_s=30)
+    assert isinstance(final, str) and final
+    # seed + up to 3 steps
+    assert 1 < len(chain) <= 4
+    assert chain[0]["mode"] == "seed"

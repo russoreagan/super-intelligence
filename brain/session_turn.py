@@ -11,6 +11,7 @@ import time
 _MOOD_MARKUP_RE = re.compile(r'\[mood:[^\]]+\](.*?)\[/mood\]', re.DOTALL | re.IGNORECASE)
 
 from brain.emotion_hierarchy import core_of
+from brain.emotion_presets import strip_reaction_tags
 from brain.security import EGRESS_MODE
 
 logger = logging.getLogger("brain.run")
@@ -212,9 +213,14 @@ class _TurnMixin:
 
         if self.ears is not None and isinstance(affect, dict):
             pending = self.ears.enrollment_pending_speakers
+            # Only prompt for voices we haven't already asked — the "who are you?"
+            # question fires once per voice, not every turn it stays unenrolled.
+            unprompted = [s for s in pending if not getattr(s, "enrollment_prompted", False)]
             affect["enrollment_pending"] = len(pending) > 0
-            affect["enrollment_pending_count"] = len(pending)
-            affect["enrollment_closest_match"] = pending[0].closest_match if pending else None
+            affect["enrollment_pending_count"] = len(unprompted)
+            affect["enrollment_closest_match"] = unprompted[0].closest_match if unprompted else None
+            for _s in unprompted:
+                self.ears.mark_enrollment_prompted(_s.session_key)
 
         if self._emitter and affect.get("emotion"):
             await self._emitter.emit_emotion(affect["emotion"])
@@ -524,9 +530,11 @@ class _TurnMixin:
             self.brainstem.add_draft(f"final_{turn_id}", response, 0.9)
             self.brainstem.endorse(f"final_{turn_id}")
         final = await self.brainstem.articulation_gate(turn)
-        # Split raw (for PNS TTS — needs [mood:X] tags) from display (for chat/memory/traces).
+        # Split raw (for PNS TTS — needs [mood:X] + bare reaction tags) from
+        # display (for chat/memory/traces — must have all audio tags removed).
         raw_final = final
         final = _MOOD_MARKUP_RE.sub(lambda m: m.group(1).strip(), raw_final)
+        final = strip_reaction_tags(final)
         await self._emit_end("brainstem", turn_id)
 
         await self._emit("parietal", 0.3, "updating context", turn_id)

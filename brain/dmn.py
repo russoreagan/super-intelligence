@@ -44,6 +44,9 @@ from brain.utils import get_idle_seconds
 
 DEFERRED_THOUGHTS_PATH = SECOND_BRAIN_ROOT / "deferred_thoughts.md"
 PROPOSALS_DIR = SECOND_BRAIN_ROOT / "proposals"
+# Novelty memory persisted across sessions so a restart doesn't resurface the
+# same idea verbatim. Holds the recent thoughts + their angles (the dedup state).
+NOVELTY_STATE_PATH = SECOND_BRAIN_ROOT / "dmn_novelty.json"
 
 # English function/stop words — filtered out before Jaccard overlap so that
 # common scaffolding ("the user has been...") doesn't make every thought look
@@ -87,6 +90,21 @@ def _content_word_overlap(a: str, b: str) -> float:
     if not ta or not tb:
         return 0.0
     return len(ta & tb) / len(ta | tb)
+
+
+def _cosine(a: list[float] | None, b: list[float] | None) -> float:
+    """Cosine similarity of two embedding vectors; 0.0 if either is missing or
+    mismatched. Used by the semantic dedup gate (same embedder as the skill
+    selector, so vectors are comparable)."""
+    if not a or not b or len(a) != len(b):
+        return 0.0
+    import math as _math
+    num = sum(x * y for x, y in zip(a, b))
+    na = _math.sqrt(sum(x * x for x in a))
+    nb = _math.sqrt(sum(x * x for x in b))
+    if na == 0 or nb == 0:
+        return 0.0
+    return num / (na * nb)
 
 logger = logging.getLogger(__name__)
 
@@ -168,7 +186,28 @@ class DefaultModeNetwork:
         # Semantic angle labels from recent thoughts — blocks same-territory
         # ideas even when they use completely different words.
         self._recent_angles: deque = deque(maxlen=DMN_RECENT_ANGLES)
+        # Embeddings parallel to _recent_thoughts (same maxlen) — the real
+        # semantic dedup gate. Entries may be None if embedding was unavailable.
+        self._recent_embeddings: deque = deque(maxlen=DMN_RECENT_THOUGHTS)
         self._suppressed_count = 0
+
+        # ── Resilience: skip-and-backoff state ──────────────────────────────
+        # A failed idle tick is harmless (the loop fires again in seconds), so
+        # we never retry. Instead we count consecutive failures and lengthen the
+        # interval geometrically, backing the DMN off a saturated/down local
+        # model so other subsystems can use it. Reset to healthy on first success.
+        self._consec_errors = 0
+        self._backoff_mult = 1.0
+        self._last_tick_latency = 0.0
+        self._last_tick_failed = False
+
+        # ── Rumination state (idle-only, chemistry-gated) ───────────────────
+        # When idle and chemistry favors it, a tick deepens a single seed through
+        # several skill packages instead of generating a fresh thought. Bounded
+        # by a depth cap on consecutive ruminations of the same seed.
+        self._last_rumination_seed: str = ""
+        self._consecutive_ruminations = 0
+        self._ruminations_in_progress = 0
 
         self._monologue_cell = IntegratorCell(
             name="monologue",
@@ -330,6 +369,8 @@ class DefaultModeNetwork:
     async def start(self, session_id: str) -> None:
         self._session_id = session_id
         self._running = True
+        # Restore novelty memory so a restart doesn't resurface yesterday's ideas.
+        self._load_novelty()
         active = float(settings.get("dmn_interval") or DMN_INTERVAL)
         idle = float(settings.get("dmn_idle_interval") or active * 3)
         logger.info(
@@ -346,6 +387,7 @@ class DefaultModeNetwork:
         idle thought."""
         logger.info("[DMN] Startup prime tick — seeding first thought from last session memory")
         try:
+            self._ensure_runtime_state()
             self._thought_count += 1
             turn_id = f"dmn_{self._thought_count}"
             chem = self._chem_snapshot()
@@ -366,6 +408,9 @@ class DefaultModeNetwork:
         # Judge evaluates spoken candidates, so it gets the full set.
         monologue_skills = [s for s in tier1 if s in ("logic-check", "emotional")]
         self._monologue_cell.skills = monologue_skills
+        # Remember the static baseline so per-tick skill variation can layer on
+        # top of it and reset back to it each tick.
+        self._monologue_baseline_skills = list(monologue_skills)
         self._judge_cell.skills = list(tier1)
 
     def _inherited_skill_names(self) -> list[str]:
@@ -397,9 +442,80 @@ class DefaultModeNetwork:
     async def shutdown(self) -> None:
         """Cancel the background loop. Called at session shutdown."""
         self._running = False
+        self._persist_novelty()
         if self._loop_task is not None and not self._loop_task.done():
             self._loop_task.cancel()
         self._loop_task = None
+
+    async def _safe_embed(self, text: str) -> list[float] | None:
+        """Embed text for semantic dedup, returning None on any failure or when
+        the gate is disabled. Tolerant of a non-async/mocked router (only awaits
+        an actual awaitable; only accepts a list result)."""
+        if not settings.get("dmn_semantic_dedup_enabled"):
+            return None
+        try:
+            import inspect
+            result = self._router.embed(text)
+            if inspect.isawaitable(result):
+                result = await result
+            return result if isinstance(result, list) else None
+        except Exception:
+            return None
+
+    # ── Novelty memory persistence ──────────────────────────────────────────
+
+    def _persist_novelty(self) -> None:
+        """Save the dedup state (recent thoughts + angles) to disk so it survives
+        a restart. Embeddings are NOT persisted (large, and recomputed lazily) —
+        on reload the word-overlap pre-filter still guards the restored thoughts,
+        and fresh embeddings accumulate as new thoughts arrive."""
+        try:
+            payload = {
+                "recent_thoughts": list(self._recent_thoughts),
+                "recent_angles": list(self._recent_angles),
+                "last_rumination_seed": self._last_rumination_seed,
+                "ts": time.time(),
+            }
+            NOVELTY_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+            tmp = NOVELTY_STATE_PATH.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            os.replace(tmp, NOVELTY_STATE_PATH)
+        except Exception as e:
+            logger.warning("[DMN] Could not persist novelty state: %s", e)
+
+    def _load_novelty(self) -> None:
+        """Restore recent-thought/angle dedup state from a previous session.
+        Embeddings start empty and refill as new thoughts are processed; the
+        restored thoughts are still guarded by the word-overlap pre-filter."""
+        try:
+            if not NOVELTY_STATE_PATH.exists():
+                return
+            data = json.loads(NOVELTY_STATE_PATH.read_text(encoding="utf-8"))
+            for t in (data.get("recent_thoughts") or [])[-DMN_RECENT_THOUGHTS:]:
+                self._recent_thoughts.append(t)
+                self._recent_embeddings.append(None)  # lazy — pre-filter still applies
+            for a in (data.get("recent_angles") or [])[-DMN_RECENT_ANGLES:]:
+                self._recent_angles.append(a)
+            self._last_rumination_seed = data.get("last_rumination_seed") or ""
+            logger.info("[DMN] Restored novelty memory: %d thought(s), %d angle(s)",
+                        len(self._recent_thoughts), len(self._recent_angles))
+        except Exception as e:
+            logger.warning("[DMN] Could not load novelty state: %s", e)
+
+    def health(self) -> dict:
+        """Lightweight health snapshot so dark degradation becomes visible.
+        Consumed by the observability layer / status UI."""
+        return {
+            "consecutive_errors": self._consec_errors,
+            "backoff_multiplier": round(self._backoff_mult, 2),
+            "last_tick_failed": self._last_tick_failed,
+            "last_tick_latency_s": round(self._last_tick_latency, 2),
+            "suppressed_count": self._suppressed_count,
+            "candidate_queue_depth": len(self._candidate_q),
+            "self_task_queue_depth": len(self._self_task_q),
+            "ruminations_in_progress": self._ruminations_in_progress,
+            "consecutive_ruminations": self._consecutive_ruminations,
+        }
 
     def recent_thoughts(self, n: int = 5) -> list[str]:
         """Return the last N internal thoughts the brain had between turns.
@@ -958,8 +1074,12 @@ class DefaultModeNetwork:
         try:
             idle = get_idle_seconds()
         except Exception:
-            return base
-        return idle_base if idle > 60.0 else base
+            idle = 0.0
+        interval = idle_base if idle > 60.0 else base
+        # Skip-and-backoff: while the local model is failing, lengthen the
+        # interval geometrically so we stop hammering it. _backoff_mult is 1.0
+        # when healthy and reset on the first successful tick.
+        return interval * self._backoff_mult
 
     async def _loop(self) -> None:
         try:
@@ -1046,34 +1166,297 @@ class DefaultModeNetwork:
             pass
         return "\n".join(lines)
 
+    def _ensure_runtime_state(self) -> None:
+        """Lazily initialize resilience / rumination state.
+
+        Production sets these in __init__; this guard keeps test skeletons that
+        build the DMN via __new__ (bypassing __init__) working without each one
+        having to know the full attribute set."""
+        if not hasattr(self, "_recent_embeddings"):
+            self._recent_embeddings = deque(maxlen=DMN_RECENT_THOUGHTS)
+        for attr, default in (
+            ("_consec_errors", 0), ("_backoff_mult", 1.0),
+            ("_last_tick_latency", 0.0), ("_last_tick_failed", False),
+            ("_last_rumination_seed", ""), ("_consecutive_ruminations", 0),
+            ("_ruminations_in_progress", 0),
+        ):
+            if not hasattr(self, attr):
+                setattr(self, attr, default)
+        if not hasattr(self, "_skill_selector"):
+            self._skill_selector = None
+        if not hasattr(self, "_monologue_baseline_skills"):
+            self._monologue_baseline_skills = []
+
+    async def _run_step(self, name: str, coro) -> None:
+        """Run a secondary tick step in isolation — a failure logs + skips that
+        step without aborting the tick. (Secondary steps don't drive backoff;
+        only the monologue/rumination model probe does.)"""
+        try:
+            await coro
+        except Exception as e:  # noqa: BLE001 — deliberate per-step isolation
+            self._record_step_failure(name, e)
+
+    def _record_step_failure(self, step: str, exc: Exception) -> None:
+        logger.warning("[Background reflection] Step %r failed: %s", step, exc)
+        if self._obs is not None:
+            with contextlib.suppress(Exception):
+                self._obs.record_dmn_failure(step=step, error=str(exc)[:200])
+
+    def _note_tick_outcome(self, model_ok: bool) -> None:
+        """Update skip-and-backoff state from whether the model produced a thought.
+        Healthy → reset; failing → count and lengthen the interval geometrically."""
+        after = int(settings.get("dmn_backoff_after_failures") or 2)
+        factor = float(settings.get("dmn_backoff_factor") or 2.0)
+        max_mult = float(settings.get("dmn_backoff_max_multiplier") or 8.0)
+        if model_ok:
+            if self._consec_errors or self._backoff_mult != 1.0:
+                logger.info("[Background reflection] Recovered after %d failure(s) — "
+                            "backoff reset", self._consec_errors)
+            self._consec_errors = 0
+            self._backoff_mult = 1.0
+            self._last_tick_failed = False
+        else:
+            self._consec_errors += 1
+            self._last_tick_failed = True
+            if self._consec_errors >= after:
+                self._backoff_mult = min(max_mult, factor ** (self._consec_errors - after + 1))
+            logger.warning("[Background reflection] Model-failure tick #%d — backoff x%.1f "
+                           "(freeing the local model for other subsystems)",
+                           self._consec_errors, self._backoff_mult)
+            if self._obs is not None:
+                with contextlib.suppress(Exception):
+                    self._obs.record_dmn_failure(
+                        step="tick", error="model unavailable",
+                        consecutive=self._consec_errors, backoff=self._backoff_mult,
+                    )
+
     async def _tick(self) -> None:
+        self._ensure_runtime_state()
         self._thought_count += 1
         turn_id = f"dmn_{self._thought_count}"
+        t_start = time.time()
 
         # Refresh parietal slice so the monologue always sees the live conversation
         if self._parietal is not None:
             with contextlib.suppress(Exception):
                 self.update_context(self._parietal.recent_turns_text())
 
-        # 1. Internal monologue
         chem = self._chem_snapshot()
-        thought_clean, metadata = await self._run_monologue(turn_id, chem)
-        if thought_clean:
-            await self._process_thought(thought_clean, metadata, turn_id)
 
-        # 2. User simulation / prediction (every 3rd tick)
+        # Decide this tick's mode. Rumination (deepen a single seed through skill
+        # packages) is eligible ONLY when idle + chemistry favors it; otherwise a
+        # normal fresh, dedup-gated thought. model_ok drives skip-and-backoff.
+        mode, flavor, drive = self._rumination_decision(chem)
+        model_ok = True
+
+        if mode == "ruminate":
+            try:
+                model_ok = await self._run_rumination(turn_id, chem, flavor, drive)
+            except Exception as e:  # noqa: BLE001
+                self._record_step_failure("rumination", e)
+                model_ok = False
+        else:
+            try:
+                # On idle, sufficiently-interested ticks, vary the analytical
+                # framework before generating (resets to baseline each tick).
+                await self._apply_monologue_skills(turn_id, chem, drive)
+                thought_clean, metadata = await self._run_monologue(turn_id, chem)
+                if thought_clean:
+                    await self._process_thought(thought_clean, metadata, turn_id)
+                else:
+                    model_ok = False  # empty output → model likely unavailable
+            except Exception as e:  # noqa: BLE001
+                self._record_step_failure("monologue", e)
+                model_ok = False
+
+        # Secondary steps — each isolated; they do not drive backoff.
         if self._thought_count % 3 == 0 and self._parietal:
-            await self._run_simulation(turn_id)
+            await self._run_step("simulation", self._run_simulation(turn_id))
 
-        # 3. Anticipator — pre-think likely responses to the entity's last question
         if self.last_was_question and not self.anticipations:
-            await self._run_anticipator(turn_id)
+            await self._run_step("anticipator", self._run_anticipator(turn_id))
 
-        # 4. Prefetcher — proactively pull memory for topics likely to resurface
         if (self._thought_count % 4 == 0
                 and self._hippocampus is not None
                 and not self.prefetched):
-            await self._run_prefetcher(turn_id)
+            await self._run_step("prefetcher", self._run_prefetcher(turn_id))
+
+        self._last_tick_latency = time.time() - t_start
+        self._note_tick_outcome(model_ok)
+
+    # ── Rumination router (idle-only, chemistry dual-driver) ─────────────────
+
+    def _rumination_drive(self, chem: dict) -> tuple[float, str]:
+        """Compute the rumination drive and its affective flavor from chemistry.
+
+        Maps to the neuroscience of rumination: it rises both under WORRY
+        (cortisol + norepinephrine high, serotonin low — the can't-disengage
+        signature) and under high INTEREST (dopamine "wanting" + acetylcholine
+        focus). Serotonin subtracts because it enables disengagement.
+        """
+        cort = float(chem.get("CORT", 0.0))
+        ne_raw = float(chem.get("NE", 0.0))
+        da_raw = float(chem.get("DA", 0.5))
+        ach_raw = float(chem.get("ACh", 0.0))
+        sht = float(chem.get("5HT", 0.0))
+        ne = max(0.0, ne_raw - 0.30)   # over alert-baseline
+        da = max(0.0, da_raw - 0.50)   # over neutral
+        ach = max(0.0, ach_raw - 0.50)
+        drive = (
+            settings.get("rum_w_cort") * cort
+            + settings.get("rum_w_ne") * ne
+            + settings.get("rum_w_da") * da
+            + settings.get("rum_w_ach") * ach
+            - settings.get("rum_w_5ht") * sht
+        )
+        flavor = "anxious" if (cort + ne_raw) > (da_raw + ach_raw) else "engaged"
+        return max(0.0, drive), flavor
+
+    def _rumination_decision(self, chem: dict) -> tuple[str, str, float]:
+        """Return (mode, flavor, drive). mode ∈ {"normal", "ruminate"}.
+
+        Idle is a hard precondition: rumination NEVER fires during live
+        conversation (attention is external; deepening a stale seed would make
+        the brain feel unresponsive). Only when idle does the chemistry drive
+        probabilistically route the tick to rumination.
+        """
+        drive, flavor = self._rumination_drive(chem)
+        if not settings.get("dmn_rumination_enabled"):
+            return "normal", flavor, drive
+        try:
+            idle = get_idle_seconds()
+        except Exception:
+            idle = 0.0
+        if idle < float(settings.get("dmn_rumination_idle_threshold_s") or 60.0):
+            return "normal", flavor, drive
+        threshold = float(settings.get("dmn_rumination_drive_threshold") or 0.45)
+        if drive < threshold:
+            return "normal", flavor, drive
+        # Depth cap — don't deepen the same seed forever.
+        if self._consecutive_ruminations >= int(settings.get("dmn_rumination_max_consecutive") or 2):
+            return "normal", flavor, drive
+        p = float(settings.get("dmn_rumination_prob_at_threshold") or 0.5)
+        if random.random() < min(1.0, p * (drive / max(0.01, threshold))):
+            return "ruminate", flavor, drive
+        return "normal", flavor, drive
+
+    def _current_seed(self) -> str:
+        """The current preoccupation to ruminate on / vary skills around."""
+        if self._recent_thoughts:
+            return str(self._recent_thoughts[-1]).strip()
+        return (self._last_context or "").strip()
+
+    async def _run_rumination(self, turn_id: str, chem: dict,
+                              flavor: str, drive: float) -> bool:
+        """Run one bounded rumination episode and emit the synthesized take.
+        Returns True if a thought was produced (model_ok), False otherwise."""
+        selector = getattr(self, "_skill_selector", None)
+        if selector is None:
+            return False
+        seed = self._current_seed()
+        if not seed:
+            return False
+
+        self._ruminations_in_progress += 1
+        try:
+            final, chain = await selector.ruminate(
+                seed,
+                max_iters=int(settings.get("dmn_rumination_max_iters") or 4),
+                time_budget_s=int(settings.get("dmn_rumination_time_budget_s") or 25),
+                turn_id=f"{turn_id}_rum",
+                flavor=flavor,
+            )
+        finally:
+            self._ruminations_in_progress -= 1
+
+        steps = max(0, len(chain) - 1)
+        # Per-step costs so anxious rumination self-limits: GABA accrues (a small
+        # cognitive cost), ACh wanes (engaged interest satiates). Bounded by the
+        # chem clamps elsewhere.
+        if steps:
+            self._bus.neuromod.add("GABA", float(settings.get("rum_step_gaba_cost")) * steps)
+            self._bus.neuromod.add("ACh", -float(settings.get("rum_step_satiation_cost")) * steps)
+
+        if not final or not final.strip():
+            return False
+
+        # Depth tracking for the consecutive-rumination cap.
+        if seed == self._last_rumination_seed:
+            self._consecutive_ruminations += 1
+        else:
+            self._consecutive_ruminations = 1
+            self._last_rumination_seed = seed
+
+        self._log_rumination(turn_id, flavor, drive, chain)
+
+        # Emit the synthesized take. It is EXEMPT from the "too similar to its own
+        # seed" check (deepening the seed is the whole point) but still deduped
+        # against OTHER recent thoughts, and tagged so the UI/consolidation can
+        # tell ruminations apart from fresh thoughts.
+        metadata = {
+            "angle": f"rumination:{flavor}", "spoken_form": None, "task_goal": None,
+            "is_propose": False, "is_plan": False,
+            "defer_text": None, "defer_urgency": "high", "defer_tags": [],
+            "chem_delta": {},
+        }
+        await self._process_thought(
+            final.strip(), metadata, turn_id,
+            exempt_seed=seed, source_tag="rumination",
+        )
+        return True
+
+    async def _apply_monologue_skills(self, turn_id: str, chem: dict, drive: float) -> None:
+        """Vary the monologue's analytical framework on idle, interested ticks.
+        Resets to the static baseline first so a low-drive tick uses the default."""
+        baseline = getattr(self, "_monologue_baseline_skills", [])
+        self._monologue_cell.skills = list(baseline)
+        selector = getattr(self, "_skill_selector", None)
+        if selector is None:
+            return
+        if drive < float(settings.get("dmn_skill_vary_drive_threshold") or 0.30):
+            return
+        try:
+            idle = get_idle_seconds()
+        except Exception:
+            idle = 0.0
+        if idle < float(settings.get("dmn_rumination_idle_threshold_s") or 60.0):
+            return
+        seed = self._current_seed()
+        if not seed:
+            return
+        try:
+            bundle = await selector.select_autonomous(prompt=seed, turn_id=f"{turn_id}_skill")
+        except Exception as e:  # noqa: BLE001
+            logger.debug("[Background reflection] Monologue skill selection failed: %s", e)
+            return
+        if bundle and bundle.chosen:
+            self._monologue_cell.skills = list(baseline) + [
+                s for s in bundle.chosen if s not in baseline
+            ]
+            self._log_skill_pick(turn_id, "monologue", bundle, drive)
+
+    def _log_skill_pick(self, turn_id: str, cell: str, bundle, drive: float) -> None:
+        with contextlib.suppress(Exception):
+            from brain.observability.decisions import decisions as _decisions
+            _decisions.log(
+                "dmn_skill_pick", turn_id=turn_id, cluster="dmn",
+                cell=cell, chosen=list(bundle.chosen),
+                pick_source=getattr(bundle, "pick_source", ""),
+                drive=round(drive, 3),
+            )
+
+    def _log_rumination(self, turn_id: str, flavor: str, drive: float,
+                        chain: list[dict]) -> None:
+        with contextlib.suppress(Exception):
+            from brain.observability.decisions import decisions as _decisions
+            _decisions.log(
+                "dmn_rumination", turn_id=turn_id, cluster="dmn",
+                flavor=flavor, drive=round(drive, 3), steps=max(0, len(chain) - 1),
+                skills=[c.get("skill") for c in chain if c.get("skill")],
+                modes=[c.get("mode") for c in chain
+                       if c.get("mode") and c.get("mode") != "seed"],
+                consecutive=self._consecutive_ruminations,
+            )
 
     async def _run_monologue(self, turn_id: str, chem: dict, startup: bool = False) -> tuple[str, dict]:
         """Build prompt, call the monologue cell, parse response.
@@ -1162,8 +1545,16 @@ class DefaultModeNetwork:
 
         return thought_clean, metadata
 
-    async def _process_thought(self, thought_clean: str, metadata: dict, turn_id: str) -> None:
-        """Dedup-check and, if novel, record, publish, and dispatch side-effects for one thought."""
+    async def _process_thought(self, thought_clean: str, metadata: dict, turn_id: str,
+                               *, exempt_seed: str | None = None,
+                               source_tag: str | None = None) -> None:
+        """Dedup-check and, if novel, record, publish, and dispatch side-effects for one thought.
+
+        exempt_seed: a prior thought to NOT dedup against (used by rumination,
+        whose output is intentionally a deepened version of its seed).
+        source_tag: e.g. "rumination" — flagged on the published event.
+        """
+        self._ensure_runtime_state()
         angle = metadata["angle"]
         spoken_form = metadata["spoken_form"]
         task_goal = metadata["task_goal"]
@@ -1174,29 +1565,64 @@ class DefaultModeNetwork:
         defer_tags = metadata["defer_tags"]
         chem_delta = metadata["chem_delta"]
 
+        # ── Dedup gate ────────────────────────────────────────────────────
+        # Word-overlap (cheap) is a pre-filter over the narrow window; semantic
+        # cosine (the real gate) runs over the FULL window — it doesn't over-fire
+        # on shared function words the way Jaccard did, so checking all recent
+        # thoughts no longer over-suppresses focused topics.
+        is_dup = False
+        dup_reason = ""
+
         max_overlap = 0.0
-        # Only compare against the last DMN_DEDUP_WINDOW thoughts, not all of them.
-        # The full deque is shown to the LLM as context (variety pressure), but
-        # hard-blocking on the entire window causes over-suppression on focused
-        # topics — thoughts stop flowing after 3-4 because nearly everything
-        # shares content words with at least one of 10 prior thoughts.
         for prior in list(self._recent_thoughts)[-DMN_DEDUP_WINDOW:]:
+            if exempt_seed is not None and prior == exempt_seed:
+                continue
             o = _content_word_overlap(thought_clean, prior)
             if o > max_overlap:
                 max_overlap = o
-
         if max_overlap > settings.get("dmn_overlap_threshold"):
+            is_dup, dup_reason = True, f"word-overlap {max_overlap:.2f}"
+
+        # Semantic gate (best-effort — falls back to word-overlap if embedder down).
+        new_emb = await self._safe_embed(thought_clean)
+        max_cos = 0.0
+        if not is_dup and new_emb is not None:
+            sem_thr = float(settings.get("dmn_semantic_dup_threshold") or 0.88)
+            for prior, prior_emb in zip(self._recent_thoughts, self._recent_embeddings):
+                if exempt_seed is not None and prior == exempt_seed:
+                    continue
+                if not prior_emb:
+                    continue
+                c = _cosine(new_emb, prior_emb)
+                if c > max_cos:
+                    max_cos = c
+            if max_cos >= sem_thr:
+                is_dup, dup_reason = True, f"semantic {max_cos:.2f}"
+
+        # Angle hard-gate: a recently-used angle is blocked when the content is
+        # also at least moderately similar (so a genuinely new take that happens
+        # to reuse an angle label still passes).
+        if not is_dup and angle and angle in self._recent_angles:
+            sem_thr = float(settings.get("dmn_semantic_dup_threshold") or 0.88)
+            if (max_overlap > float(settings.get("dmn_overlap_threshold")) * 0.6
+                    or max_cos >= sem_thr * 0.92):
+                is_dup, dup_reason = True, f"repeat angle '{angle}'"
+
+        if is_dup:
             self._suppressed_count += 1
             logger.info(
                 "[Background reflection] Suppressed redundant thought "
-                "(overlap %.2f, total suppressed=%d): %r",
-                max_overlap, self._suppressed_count, thought_clean[:60],
+                "(%s, total suppressed=%d): %r",
+                dup_reason, self._suppressed_count, thought_clean[:60],
             )
             return
 
         self._recent_thoughts.append(thought_clean)
+        self._recent_embeddings.append(new_emb)
         if angle:
             self._recent_angles.append(angle)
+        # Persist novelty memory so a restart doesn't resurface this idea.
+        self._persist_novelty()
 
         direction = _classify_thought(thought_clean)
         neuromod_snapshot = self._bus.neuromod.snapshot()
@@ -1245,7 +1671,8 @@ class DefaultModeNetwork:
             "stream.thought",
             {"thought": thought_clean, "ts": time.time(),
              "count": self._thought_count, "direction": direction,
-             "proactive": spoken_form is not None, "chem_delta": chem_delta},
+             "proactive": spoken_form is not None, "chem_delta": chem_delta,
+             **({"rumination": True} if source_tag == "rumination" else {})},
             source="dmn",
         )
         logger.debug("[Background reflection] Thought #%d (%s): %s",

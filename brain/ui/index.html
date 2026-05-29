@@ -4897,6 +4897,7 @@ function handle(msg) {
     }
     case 'transcript':       handleTranscriptEvent(msg); break;
     case 'transcript_error': handleTranscriptError(msg); break;
+    case 'tts_error':        handleTtsError(msg); break;
     case 'mic_state':        handleMicState(msg.status); break;
     case 'decision':         handleDecisionEvent(msg); break;
     case 'wiring_status': {
@@ -5445,15 +5446,15 @@ function handleMicState(status) {
   if (micState === 'active') {
     micBtn.classList.remove('muted');
     micBtn.classList.add('listening');
-    micBtn.title = 'Mic active — click to mute';
+    micBtn.title = 'Listening (Space held) — release to send';
     msgInput.classList.add('voice-listening');
-    msgInput.placeholder = '🎙  Listening — speak or type a message…';
+    msgInput.placeholder = '🎙  Listening — release Space to send…';
   } else if (micState === 'muted') {
     micBtn.classList.remove('listening');
     micBtn.classList.add('muted');
-    micBtn.title = 'Mic muted — click to unmute';
+    micBtn.title = 'Hold Space to talk';
     msgInput.classList.remove('voice-listening');
-    msgInput.placeholder = 'Type a message… (mic muted)';
+    msgInput.placeholder = 'Hold Space to talk… or type a message';
   }
   // 'off' — leave button in its default press-to-talk state (set at page load)
 }
@@ -5591,6 +5592,15 @@ function handleTranscriptEvent(msg) {
   }
 }
 
+function handleTtsError(msg) {
+  // Surface a voice-output failure so it's visible instead of looking like a
+  // normal text-only reply. Flash the transcript bar with the reason.
+  const detail = (msg && msg.detail) ? msg.detail : 'unknown error';
+  transcriptText.textContent = '🔇 Voice failed: ' + detail;
+  transcriptBar.classList.add('visible');
+  setTimeout(() => transcriptBar.classList.remove('visible'), 5000);
+}
+
 function handleTranscriptError(msg) {
   transcriptText.textContent = '⚠ Reconnecting mic…';
   transcriptBar.classList.add('visible');
@@ -5632,8 +5642,9 @@ document.addEventListener('keydown', (e) => {
   if (e.code === 'Space' && document.activeElement !== msgInput && !e.repeat) {
     e.preventDefault();
     if (micState !== 'off') {
+      // Python voice mode: hold-to-talk. Go live while Space is held.
       if (ws && ws.readyState === WebSocket.OPEN)
-        ws.send(JSON.stringify({ type: 'mic_toggle' }));
+        ws.send(JSON.stringify({ type: 'mic_ptt', down: true }));
       return;
     }
     if (!micActive) startListening();
@@ -5642,7 +5653,12 @@ document.addEventListener('keydown', (e) => {
 
 document.addEventListener('keyup', (e) => {
   if (e.code === 'Space' && document.activeElement !== msgInput) {
-    if (micState !== 'off') return;
+    if (micState !== 'off') {
+      // Release: flush the held phrase and re-mute.
+      if (ws && ws.readyState === WebSocket.OPEN)
+        ws.send(JSON.stringify({ type: 'mic_ptt', down: false }));
+      return;
+    }
     if (micActive) stopListening(true);
   }
 });

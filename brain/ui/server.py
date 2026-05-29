@@ -46,6 +46,7 @@ class UIServer:
                  on_voice_change: Callable[[str], None] | None = None,
                  on_eval_mode: Callable[[bool], None] | None = None,
                  on_mic_toggle: Callable[[], bool] | None = None,
+                 on_mic_ptt: Callable[[bool], None] | None = None,
                  is_muted_fn: Callable[[], bool] | None = None,
                  on_interrupt: Callable[[], None] | None = None,
                  wiring=None,
@@ -55,6 +56,7 @@ class UIServer:
         self._on_voice_change = on_voice_change
         self._on_eval_mode = on_eval_mode
         self._on_mic_toggle = on_mic_toggle      # () -> is_muted (bool) — toggles
+        self._on_mic_ptt = on_mic_ptt            # (down: bool) -> None — push-to-talk hold
         self._is_muted_fn = is_muted_fn          # () -> is_muted (bool) — read-only; None = no Python voice
         self._on_interrupt = on_interrupt
         self._clients: set = set()
@@ -501,12 +503,20 @@ class UIServer:
                             await self._on_user_message(text)
                     elif t == "mic_toggle" and self._on_mic_toggle:
                         self._on_mic_toggle()
-                        # Echo new state back so the button updates
+                        # Echo new state back so the button updates. (The session
+                        # also broadcasts the settled state once any async flush
+                        # completes — this echo just makes the click feel instant.)
                         with contextlib.suppress(Exception):
                             await websocket.send_text(json.dumps({
                                 "type": "mic_state",
                                 "status": self._mic_status(),
                             }))
+                    elif t == "mic_ptt" and self._on_mic_ptt:
+                        # Push-to-talk: {down:true} on Space keydown (go live),
+                        # {down:false} on keyup (flush held phrase + re-mute).
+                        # State is broadcast by the session once it settles, so
+                        # we don't echo here (release involves an async flush).
+                        self._on_mic_ptt(bool(data.get("down", False)))
                     elif t == "set_voice" and self._on_voice_change:
                         vid = data.get("voice_id", "").strip()
                         if vid:

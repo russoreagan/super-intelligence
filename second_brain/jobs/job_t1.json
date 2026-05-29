@@ -1,31 +1,33 @@
 {
   "job_id": "job_t1",
   "task_id": null,
-  "goal": "trivial task",
+  "goal": "do the thing",
   "success": true,
   "source": "user",
   "ralph_mode": false,
   "total_attempts": 1,
   "steps": [
     {
-      "tool": "none",
-      "args": {},
-      "reason": "trivial"
+      "tool": "read_file",
+      "args": {
+        "path": "/private/tmp/claude-501/pytest-of-russ/pytest-35/test_invalid_expected_tool_neu0/x.txt"
+      },
+      "reason": "r"
     }
   ],
   "results": [
-    ""
+    "x"
   ],
   "written_files": [],
   "plan_steps": [
     {
-      "description": "task",
-      "expected_tool": "none",
-      "acceptance_criteria": [],
-      "id": "US-001"
+      "id": "US-001",
+      "description": "do the thing",
+      "expected_tool": "?",
+      "acceptance_criteria": []
     }
   ],
   "spoken_summary": null,
-  "created_at": "2026-05-28T06:06:18.222387+00:00",
-  "completed_at": "2026-05-28T06:06:18.222390+00:00"
+  "created_at": "2026-05-29T05:50:38.460740+00:00",
+  "completed_at": "2026-05-29T05:50:38.460742+00:00"
 }

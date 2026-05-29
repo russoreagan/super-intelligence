@@ -470,6 +470,40 @@ class ObservabilityLayer:
         except Exception as e:
             logger.debug("Langfuse record_modulation_event failed: %s", e)
 
+    def record_dmn_failure(self, *, step: str, error: str = "",
+                           consecutive: int = 0, backoff: float = 1.0) -> None:
+        """Record a DMN step/tick failure so dark degradation is visible.
+
+        Always increments the in-process counters (cheap, queryable via
+        dmn_failure_counts()); also emits a Langfuse span when configured. The
+        DMN itself only skips-and-backs-off on failure — this is the signal that
+        makes that backoff observable rather than silent."""
+        self._dmn_failures[step] = self._dmn_failures.get(step, 0) + 1
+        self._dmn_failure_total += 1
+        if not self._langfuse:
+            return
+        try:
+            from langfuse import propagate_attributes
+            with propagate_attributes(session_id=self._session_id,
+                                      trace_name="dmn-failure"):
+                span = self._langfuse.start_observation(
+                    name=f"dmn.{step}.failure",
+                    as_type="span",
+                    input={"error": error},
+                    metadata={
+                        "step": step,
+                        "consecutive": consecutive,
+                        "backoff": backoff,
+                    },
+                )
+            span.end()
+        except Exception as e:
+            logger.debug("Langfuse record_dmn_failure failed: %s", e)
+
+    def dmn_failure_counts(self) -> dict:
+        """Session rollup of DMN failures by step + total."""
+        return {"by_step": dict(self._dmn_failures), "total": self._dmn_failure_total}
+
     def begin_job(self, job_id: str, goal: str, chem: dict | None = None) -> None:
         """Open a Langfuse trace for a background internal job.
 
@@ -499,8 +533,13 @@ class ObservabilityLayer:
             logger.debug("Langfuse begin_job(%s) failed: %s", job_id, e)
 
     def end_job(self, job_id: str, *, success: bool, steps_completed: int,
-                steps_planned: int) -> None:
-        """Close the Langfuse trace opened by begin_job."""
+                steps_planned: int, total_attempts: int = 0) -> None:
+        """Close the Langfuse trace opened by begin_job.
+
+        total_attempts counts every tool dispatch across all stories + retries
+        (including appropriateness-gate re-plans and criteria-check retries),
+        so it's always >= steps_completed. A gap > 0 means retries fired.
+        """
         if not self._langfuse:
             return
         span = self._active_spans.pop(job_id, None)
@@ -513,6 +552,8 @@ class ObservabilityLayer:
                         "success": success,
                         "steps_completed": steps_completed,
                         "steps_planned": steps_planned,
+                        "total_attempts": total_attempts,
+                        "retries": max(0, total_attempts - steps_completed),
                     },
                 )
                 span.end()
