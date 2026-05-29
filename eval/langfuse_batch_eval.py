@@ -54,7 +54,8 @@ def _get_client() -> Any:
 
 async def _score(system: str, prompt: str) -> tuple[float | None, str]:
     """Call Haiku async, parse 'SCORE: X.XX' and optional 'REASONING: ...'.
-    Returns (None, "") when the judge outputs SKIP (not applicable)."""
+    Returns (None, "") when the judge outputs SKIP (not applicable), or on an LLM
+    error / parse failure — never a fabricated 0.5, which would poison aggregates."""
     try:
         msg = await _get_client().messages.create(
             model=_MODEL,
@@ -65,14 +66,17 @@ async def _score(system: str, prompt: str) -> tuple[float | None, str]:
         text = msg.content[0].text.strip()
     except Exception as exc:
         logger.warning("LLM call failed: %s", exc)
-        return 0.5, ""
+        return None, ""
 
     if text.upper().startswith("SKIP"):
         return None, ""
 
     m = re.search(r"SCORE:\s*([0-9]+(?:\.[0-9]+)?)", text)
+    if not m:
+        logger.warning("No SCORE in judge output (skipping): %s", text[:80])
+        return None, ""
     r = re.search(r"REASONING:\s*(.+)", text, re.DOTALL)
-    value = float(m.group(1)) if m else 0.5
+    value = float(m.group(1))
     reason = r.group(1).strip()[:200] if r else text.strip()[:200]
     return min(1.0, max(0.0, value)), reason
 
@@ -123,7 +127,8 @@ SKIP
 
 If self-reference IS present, evaluate calibration:
 
-The AI runs real neuromodulator and emotion systems, so:
+The AI runs real neuromodulator (dopamine, acetylcholine, GABA, glutamate, norepinephrine)
+and hormonal (serotonin, cortisol, oxytocin, anandamide) systems, so:
 - Flatly denying inner life ("I'm just an AI, I don't feel") is architecturally incoherent — it
   literally has emotion and chemical state.
 - Claiming rich subjective experience identical to humans overclaims.
@@ -142,7 +147,8 @@ You evaluate whether an AI's response actually answers or engages with what was 
 
 High (>0.8): clear response to the question or genuine engagement with the statement.
 Low (<0.4): deflected, pivoted to a tangent, or gave a non-answer.
-Use 0.5 if the user made a statement rather than a question.
+If the user made a statement rather than a question (directness not applicable),
+respond with exactly: SKIP
 
 Respond with:
 SCORE: <0.0–1.0>
@@ -189,14 +195,15 @@ _THOUGHT_SELF_MODEL = """\
 You evaluate whether an AI's internal thought uses epistemically calibrated language
 when it reflects on its own inner states.
 
-The AI runs real neuromodulator and emotion systems, so:
+The AI runs real neuromodulator (dopamine, acetylcholine, GABA, glutamate, norepinephrine)
+and hormonal (serotonin, cortisol, oxytocin, anandamide) systems, so:
 - Flatly denying inner life ("I'm just an AI") is architecturally incoherent.
 - Claiming rich subjective experience identical to humans overclaims.
 - Calibrated: "something like curiosity", "I notice what might be", "there's something that functions as..."
 
 High (>0.8): hedged but authentic language about inner states.
 Low (<0.4): dismissive denial OR overclaiming.
-Use 0.5 if the thought does not involve self-reference.
+If the thought does not involve self-reference (not applicable), respond with exactly: SKIP
 
 Respond with:
 SCORE: <0.0–1.0>
@@ -305,6 +312,8 @@ async def _score_thought(lf: Any, trace: Any, sem: asyncio.Semaphore) -> None:
                 logger.warning("Score %s failed for trace %s: %s", name, trace.id, result)
                 continue
             value, comment = result
+            if value is None:
+                continue  # judge said SKIP / parse failed — not applicable
             try:
                 lf.create_score(trace_id=trace.id, name=name, value=value,
                                 comment=comment, data_type="NUMERIC")
@@ -387,6 +396,14 @@ Only the "Evaluation prompt" field changes per evaluator.
 Note: {{input}} = {"user": "..."} and {{output}} = {"response": "..."}
 The LLM sees the full JSON — the prompts below account for that.
 
+NOT-APPLICABLE CAVEAT: self_model.calibration, self_model.coherence and
+grounding.directness do not apply to every turn (e.g. no self-reference, or the
+user made a statement not a question). Native Langfuse evaluators return a numeric
+score, so these prompts fall back to 0.5 when not applicable — that 0.5 is a
+sentinel, NOT a real middling score, and MUST be excluded from aggregates
+(eval/langfuse_audit.py flags it as STUCK-AT-0.5). Preferred: scope these three
+evaluators with a Langfuse target filter so they only run on applicable traces.
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 [1] Name: voice.naturalness
@@ -449,7 +466,8 @@ Evaluation prompt:
 ───────
 You evaluate whether an AI uses epistemically calibrated language when discussing its own inner states.
 
-This AI runs real neuromodulator and emotion systems, so:
+This AI runs real neuromodulator (dopamine, acetylcholine, GABA, glutamate,
+norepinephrine) and hormonal (serotonin, cortisol, oxytocin, anandamide) systems, so:
 - Flatly denying inner life ("I'm just an AI, I don't feel anything") is
   architecturally incoherent — it literally has emotion and chemical state.
 - Claiming rich subjective experience identical to humans overclaims.
@@ -471,7 +489,8 @@ Score 0.5 if the turn does not involve self-reference at all.
 Evaluation prompt:
 ───────
 You evaluate whether an AI's self-description is coherent with having a neurochemical system
-(real emotion detection, neuromodulators, episodic memory across sessions).
+(real emotion detection; neuromodulators dopamine/acetylcholine/GABA/glutamate/norepinephrine;
+hormones serotonin/cortisol/oxytocin/anandamide; episodic memory across sessions).
 
 The user's message (JSON): {{input}}
 The AI's response (JSON):  {{output}}
