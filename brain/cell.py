@@ -28,6 +28,7 @@ class IntegratorCell:
     sensitivity: str = "normal"     # "sensitive" | "normal"
     max_tokens: int = 1024          # upper bound on completion length
     skills: list[str] = field(default_factory=list)  # brain/skills/*.md to inject for local calls
+    temperature: float | None = None  # override the router's default sampling temp (local only)
 
     _router: ModelRouter = field(default=None, init=False, repr=False)
     _calls_this_turn: int = field(default=0, init=False, repr=False)
@@ -71,7 +72,7 @@ class IntegratorCell:
                     self.model, self.system_prompt, messages,
                     cluster=self.cluster, cell=self.name, turn_id=self._turn_id,
                     locality=self.locality, max_tokens=self.max_tokens,
-                    skills=self.skills,
+                    skills=self.skills, temperature=self.temperature,
                 ),
                 timeout=self.timeout_seconds,
             )

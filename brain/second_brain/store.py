@@ -129,6 +129,26 @@ class EpisodicStore:
             logger.error("[Episode DB] Recent recall failed: %s", e)
             return []
 
+    def sample_random(self, n: int = 1) -> list[dict]:
+        """Return up to n episodes chosen uniformly at random from the whole store.
+
+        Used by the DMN to surface an old memory into the idle thought stream so
+        the monologue has something concrete to associate from, rather than
+        defaulting to generic meta-thoughts. Cheap: episode counts are modest and
+        this runs at most once every few ticks."""
+        import random
+        if not self._ensure_ready():
+            return []
+        try:
+            rows = self._table.to_arrow().to_pylist()
+            if not rows:
+                return []
+            picked = random.sample(rows, min(n, len(rows)))
+            return self._parse_rows(picked)
+        except Exception as e:
+            logger.error("[Episode DB] Random sample failed: %s", e)
+            return []
+
     def recall(self, query_vector: list[float], limit: int = 5,
                exclude_tags: list[str] | None = None) -> list[dict]:
         """Vector search over all episodes, optionally excluding those that

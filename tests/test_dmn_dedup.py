@@ -121,7 +121,7 @@ def test_recent_thoughts_shown_to_LLM_in_prompt():
     user_content = args[0][0][0]["content"]
     assert "First prior thought about voices." in user_content
     assert "Second prior thought about Hebbian wiring." in user_content
-    assert "do NOT repeat" in user_content.lower() or "already had" in user_content.lower()
+    assert "do not repeat" in user_content.lower() or "different move" in user_content.lower()
 
 
 def test_recent_thoughts_window_caps_at_configured_size():
@@ -167,3 +167,76 @@ def test_suppressed_thought_does_not_join_recent():
     asyncio.run(dmn._tick())
     assert len(dmn._recent_thoughts) == 1  # not added
     assert dmn._suppressed_count == 1
+
+
+def test_memory_seed_injected_when_idle_and_on_interval():
+    """Every Nth idle tick, a random episode is surfaced into _memory_seed."""
+    import brain.dmn as dmn_mod
+    dmn = _make_dmn()
+    dmn._memory_seed = ""
+    dmn._hippocampus = MagicMock()
+    dmn._hippocampus._episodic.sample_random = MagicMock(return_value=[{
+        "user_input": "can you reuse the pitch detection?",
+        "entity_response": "yes, the Karaoke module already does it.",
+        "topic_tags": ["karaoke-hero", "pitch-detection"],
+    }])
+    dmn._thought_count = dmn_mod.DMN_MEMORY_SEED_EVERY  # lands on the interval
+    # Force "idle" so the gate allows surfacing.
+    orig = dmn_mod.get_idle_seconds
+    dmn_mod.get_idle_seconds = lambda: 999.0
+    try:
+        dmn._maybe_inject_memory_seed()
+    finally:
+        dmn_mod.get_idle_seconds = orig
+    assert "pitch detection" in dmn._memory_seed
+    assert "karaoke-hero" in dmn._memory_seed
+
+
+def test_memory_seed_skipped_when_user_active():
+    import brain.dmn as dmn_mod
+    dmn = _make_dmn()
+    dmn._memory_seed = ""
+    dmn._hippocampus = MagicMock()
+    dmn._hippocampus._episodic.sample_random = MagicMock(return_value=[{
+        "user_input": "x", "entity_response": "y", "topic_tags": [],
+    }])
+    dmn._thought_count = dmn_mod.DMN_MEMORY_SEED_EVERY
+    orig = dmn_mod.get_idle_seconds
+    dmn_mod.get_idle_seconds = lambda: 5.0  # user present
+    try:
+        dmn._maybe_inject_memory_seed()
+    finally:
+        dmn_mod.get_idle_seconds = orig
+    assert dmn._memory_seed == ""
+    dmn._hippocampus._episodic.sample_random.assert_not_called()
+
+
+def test_frame_repetition_gate_catches_template_collapse():
+    """Template collapse — same opening frame, different topic noun — slips past
+    the word-overlap and cosine gates but must be caught by the frame gate."""
+    dmn = _make_dmn()
+    # Three thoughts that share the 'i should INQUIRE' frame with distinct nouns
+    # (so word-overlap stays low and the gates that catch wording don't fire).
+    templates = [
+        "I should investigate recent papers on voice diarization quality.",
+        "I should explore recent studies on Hebbian plasticity dynamics.",
+        "I should consider recent research on episodic memory consolidation.",
+    ]
+    suppressed_before = 0
+    for i, t in enumerate(templates):
+        dmn._monologue_cell.call = AsyncMock(return_value=t)
+        asyncio.run(dmn._tick())
+        if i < 2:
+            # First two share the frame but are under the repeat ceiling → pass
+            assert dmn._suppressed_count == 0, f"thought {i} wrongly suppressed"
+    # The third repetition of the same frame must be suppressed.
+    assert dmn._suppressed_count == 1
+    assert templates[2] not in dmn._recent_thoughts
+
+    # A genuinely different frame still passes right after.
+    dmn._monologue_cell.call = AsyncMock(
+        return_value="Why did Russ go quiet about the Karaoke project?"
+    )
+    asyncio.run(dmn._tick())
+    assert dmn._suppressed_count == 1  # unchanged — the new frame passed
+    assert any("Karaoke" in t for t in dmn._recent_thoughts)

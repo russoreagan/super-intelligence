@@ -92,6 +92,47 @@ def _content_word_overlap(a: str, b: str) -> float:
     return len(ta & tb) / len(ta | tb)
 
 
+# Verb families used by the frame-repetition gate. Template collapse swaps the
+# topic noun while keeping the opening frame ("I should investigate/explore/
+# consider research on X"). Collapsing near-synonym verbs to a single class lets
+# us detect that the *shape* of the thought is repeating even when the words differ.
+_FRAME_VERB_CLASSES: dict[str, str] = {}
+for _cls, _verbs in {
+    "INQUIRE": ("investigate", "explore", "consider", "look", "examine", "study",
+                "research", "analyze", "analyse", "review", "dig", "delve", "probe",
+                "survey", "assess", "evaluate", "understand", "learn"),
+    "WONDER": ("wonder", "question", "ask", "muse", "ponder", "speculate"),
+    "NOTICE": ("notice", "observe", "see", "realize", "realise", "note", "catch", "spot"),
+    "RECALL": ("remember", "recall", "recollect", "reflect"),
+    "FEEL": ("feel", "sense", "worry", "hope", "fear"),
+    "WANT": ("want", "need", "wish", "intend", "plan"),
+}.items():
+    for _v in _verbs:
+        _FRAME_VERB_CLASSES[_v] = _cls
+
+
+def _frame_signature(text: str) -> str:
+    """Return a coarse 'shape' signature of a thought's opening clause.
+
+    Walks the leading tokens, emitting them verbatim until it hits a verb it
+    recognizes, which it replaces with that verb's CLASS and stops. So
+    "I should investigate recent papers..." and "I should explore studies..."
+    both reduce to "i should INQUIRE" — letting the frame-repetition gate catch
+    template collapse that the word-overlap and cosine gates miss (they only see
+    the swapped topic nouns, never the shared frame). Empty string = no signature.
+    """
+    words = re.findall(r"[a-z']+", text.lower())[:6]
+    sig: list[str] = []
+    for w in words:
+        if w in _FRAME_VERB_CLASSES:
+            sig.append(_FRAME_VERB_CLASSES[w])
+            break
+        sig.append(w)
+        if len(sig) >= 3:  # cap leading function-word run so the sig stays coarse
+            break
+    return " ".join(sig)
+
+
 def _cosine(a: list[float] | None, b: list[float] | None) -> float:
     """Cosine similarity of two embedding vectors; 0.0 if either is missing or
     mismatched. Used by the semantic dedup gate (same embedder as the skill
@@ -119,6 +160,11 @@ DMN_OVERLAP_THRESHOLD = float(os.environ.get("BRAIN_DMN_OVERLAP_THRESHOLD", "0.3
 # How many recent thoughts/angles to show the LLM as context (variety pressure).
 # Larger window = model is told about more prior territory to avoid.
 DMN_RECENT_THOUGHTS = int(os.environ.get("BRAIN_DMN_RECENT_THOUGHTS", "10"))
+# How many recent thoughts to show the LLM VERBATIM in the prompt. Kept small:
+# dumping 10 near-identical priors few-shot-primes the model to continue the
+# pattern ("this is my voice") instead of breaking it. The angle list (below)
+# carries the broader "territory already covered" signal more cheaply.
+DMN_PROMPT_PRIORS = int(os.environ.get("BRAIN_DMN_PROMPT_PRIORS", "3"))
 # How many of those recent thoughts to actually COMPARE against for hard dedup.
 # Narrower than DMN_RECENT_THOUGHTS so thoughts can recur after a gap — the LLM
 # context pressure (above) already discourages literal repeats. Comparing against
@@ -126,6 +172,16 @@ DMN_RECENT_THOUGHTS = int(os.environ.get("BRAIN_DMN_RECENT_THOUGHTS", "10"))
 DMN_DEDUP_WINDOW = int(os.environ.get("BRAIN_DMN_DEDUP_WINDOW", "4"))
 # How many recent thought angles to block (separate from text-overlap window).
 DMN_RECENT_ANGLES = int(os.environ.get("BRAIN_DMN_RECENT_ANGLES", "8"))
+# Frame-repetition gate: how many recent frame-signatures to track, and how many
+# prior matches of the same signature trigger suppression. With max=2 a third
+# consecutive thought sharing the same opening shape ("i should INQUIRE") is
+# rejected — catching template collapse the semantic gates can't see.
+DMN_RECENT_FRAMES = int(os.environ.get("BRAIN_DMN_RECENT_FRAMES", "6"))
+DMN_FRAME_REPEAT_MAX = int(os.environ.get("BRAIN_DMN_FRAME_REPEAT_MAX", "2"))
+# Surface a random long-term memory into the monologue prompt every N ticks (only
+# when idle), giving idle thought concrete material to associate from instead of
+# collapsing into generic meta-thoughts. 0 disables.
+DMN_MEMORY_SEED_EVERY = int(os.environ.get("BRAIN_DMN_MEMORY_SEED_EVERY", "5"))
 
 # Words that signal a thought is turning inward (self-referential / introspective).
 # Inward thoughts apply a small GABA bump — self-monitoring has a cost, which
@@ -189,7 +245,15 @@ class DefaultModeNetwork:
         # Embeddings parallel to _recent_thoughts (same maxlen) — the real
         # semantic dedup gate. Entries may be None if embedding was unavailable.
         self._recent_embeddings: deque = deque(maxlen=DMN_RECENT_THOUGHTS)
+        # Frame signatures of recent thoughts — the frame-repetition gate that
+        # catches template collapse (same opening shape, swapped topic noun).
+        self._recent_frames: deque = deque(maxlen=DMN_RECENT_FRAMES)
         self._suppressed_count = 0
+
+        # A fragment pulled from long-term memory and surfaced into the monologue
+        # prompt every N idle ticks, to give the thought something concrete to bite
+        # on instead of defaulting to generic "understand the user" meta-thoughts.
+        self._memory_seed: str = ""
 
         # ── Resilience: skip-and-backoff state ──────────────────────────────
         # A failed idle tick is harmless (the loop fires again in seconds), so
@@ -218,6 +282,9 @@ class DefaultModeNetwork:
             max_calls_per_turn=1,
             locality="local",
             timeout_seconds=60.0,
+            # Run hot: idle thought is divergent ideation, not structured reasoning.
+            # Low temp (0.3) was collapsing the stream into one repeated template.
+            temperature=float(os.environ.get("BRAIN_DMN_MONOLOGUE_TEMP", "0.85")),
         )
         self._monologue_cell.set_router(router)
 
@@ -1174,7 +1241,10 @@ class DefaultModeNetwork:
         having to know the full attribute set."""
         if not hasattr(self, "_recent_embeddings"):
             self._recent_embeddings = deque(maxlen=DMN_RECENT_THOUGHTS)
+        if not hasattr(self, "_recent_frames"):
+            self._recent_frames = deque(maxlen=DMN_RECENT_FRAMES)
         for attr, default in (
+            ("_memory_seed", ""),
             ("_consec_errors", 0), ("_backoff_mult", 1.0),
             ("_last_tick_latency", 0.0), ("_last_tick_failed", False),
             ("_last_rumination_seed", ""), ("_consecutive_ruminations", 0),
@@ -1240,6 +1310,10 @@ class DefaultModeNetwork:
         if self._parietal is not None:
             with contextlib.suppress(Exception):
                 self.update_context(self._parietal.recent_turns_text())
+
+        # Periodically surface a random long-term memory as associative fuel (idle only).
+        with contextlib.suppress(Exception):
+            self._maybe_inject_memory_seed()
 
         chem = self._chem_snapshot()
 
@@ -1458,6 +1532,44 @@ class DefaultModeNetwork:
                 consecutive=self._consecutive_ruminations,
             )
 
+    def _maybe_inject_memory_seed(self) -> None:
+        """Every DMN_MEMORY_SEED_EVERY ticks, while idle, pull a random episode from
+        long-term memory and stash a compact form in self._memory_seed. The next
+        monologue prompt surfaces it as associative fuel. Skipped during active
+        conversation (a surfaced memory mid-exchange would derail coherence)."""
+        if DMN_MEMORY_SEED_EVERY <= 0 or self._hippocampus is None:
+            return
+        if self._thought_count % DMN_MEMORY_SEED_EVERY != 0:
+            return
+        # Only when the user is idle — keep live-conversation ticks grounded in the
+        # actual exchange, not a random old memory.
+        try:
+            if get_idle_seconds() < 120:
+                return
+        except Exception:
+            pass
+        try:
+            episodes = self._hippocampus._episodic.sample_random(1)
+        except Exception as e:  # noqa: BLE001
+            logger.debug("[Background reflection] Memory-seed sample failed: %s", e)
+            return
+        if not episodes:
+            return
+        ep = episodes[0]
+        user = (ep.get("user_input") or "").strip().replace("\n", " ")[:160]
+        resp = (ep.get("entity_response") or "").strip().replace("\n", " ")[:160]
+        tags = ep.get("topic_tags") or []
+        if not (user or resp):
+            return
+        tag_str = f" [{', '.join(tags[:3])}]" if tags else ""
+        parts = []
+        if user:
+            parts.append(f"they said \"{user}\"")
+        if resp:
+            parts.append(f"I replied \"{resp}\"")
+        self._memory_seed = f"From an earlier conversation{tag_str}: " + "; ".join(parts)
+        logger.debug("[Background reflection] Memory seed surfaced: %r", self._memory_seed[:80])
+
     async def _run_monologue(self, turn_id: str, chem: dict, startup: bool = False) -> tuple[str, dict]:
         """Build prompt, call the monologue cell, parse response.
 
@@ -1476,9 +1588,14 @@ class DefaultModeNetwork:
                 f"set `task` directly, no propose needed):\n{self._last_projects}"
             )
         if self._recent_thoughts:
-            recent_block = "\n".join(f"- {t}" for t in self._recent_thoughts)
+            # Show only the last few verbatim — dumping the whole window primes the
+            # model to continue its own pattern. The angle list below carries the
+            # wider "territory covered" signal without the priming cost.
+            recent_block = "\n".join(
+                f"- {t}" for t in list(self._recent_thoughts)[-DMN_PROMPT_PRIORS:]
+            )
             prompt_parts.append(
-                f"\nThoughts you ALREADY had recently (do NOT repeat or paraphrase):\n"
+                f"\nYour last few thoughts (do NOT repeat these — make a different move):\n"
                 f"{recent_block}"
             )
         if self._recent_angles:
@@ -1487,6 +1604,15 @@ class DefaultModeNetwork:
                 f"\nConceptual territory already covered (choose a DIFFERENT angle):\n"
                 f"{angles_block}"
             )
+        if self._memory_seed and not startup:
+            prompt_parts.append(
+                f"\nA memory surfaced: {self._memory_seed}\n"
+                "If it connects to anything, let it spark a concrete thought "
+                "(a RECALL, a CONNECT, a QUESTION). If not, ignore it and think "
+                "freely about something else. Don't narrate that a memory surfaced."
+            )
+            self._memory_seed = ""  # consume — surfaces once, not every tick until cleared
+
         if startup:
             prompt_parts.append(
                 "\nSESSION_START: A new session just began. Your first thought should "
@@ -1609,6 +1735,16 @@ class DefaultModeNetwork:
                     or max_cos >= sem_thr * 0.92):
                 is_dup, dup_reason = True, f"repeat angle '{angle}'"
 
+        # Frame-repetition gate: catches template collapse — same opening shape
+        # ("i should INQUIRE …") with a swapped topic noun, which slips past both
+        # the word-overlap gate (different nouns) and the cosine gate (just under
+        # threshold). Skipped for rumination output (intentionally deepens a seed).
+        frame_sig = "" if exempt_seed is not None else _frame_signature(thought_clean)
+        if not is_dup and frame_sig:
+            repeats = sum(1 for f in self._recent_frames if f == frame_sig)
+            if repeats >= DMN_FRAME_REPEAT_MAX:
+                is_dup, dup_reason = True, f"repeated frame '{frame_sig}'"
+
         if is_dup:
             self._suppressed_count += 1
             logger.info(
@@ -1620,6 +1756,8 @@ class DefaultModeNetwork:
 
         self._recent_thoughts.append(thought_clean)
         self._recent_embeddings.append(new_emb)
+        if frame_sig:
+            self._recent_frames.append(frame_sig)
         if angle:
             self._recent_angles.append(angle)
         # Persist novelty memory so a restart doesn't resurface this idea.

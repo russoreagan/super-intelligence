@@ -116,7 +116,8 @@ class ModelRouter:
     async def call(self, model_key: str, system_prompt: str, messages: list[dict],
                    *, cluster: str = "", cell: str = "", turn_id: str = "",
                    locality: str = "either", max_tokens: int = 1024,
-                   skills: list[str] | None = None) -> str:
+                   skills: list[str] | None = None,
+                   temperature: float | None = None) -> str:
         import asyncio
         from brain.settings import settings as _settings; _s = _settings.get
 
@@ -208,7 +209,8 @@ class ModelRouter:
                              int(_s("bg_cloud_token_budget") or 50_000), in_tok, out_tok)
         elif model_id in ("local", "local-free", "local-code", "local-general"):
             text, in_tok, out_tok = await self._call_local(
-                system_prompt, messages, max_tokens, local_variant=model_id
+                system_prompt, messages, max_tokens, local_variant=model_id,
+                temperature=temperature,
             )
         else:
             raise ValueError(f"Unknown model key: {model_key}")
@@ -293,7 +295,8 @@ class ModelRouter:
 
     async def _call_local(self, system_prompt: str,
                           messages: list[dict], max_tokens: int = 1024,
-                          local_variant: str = "local") -> tuple[str, int, int]:
+                          local_variant: str = "local",
+                          temperature: float | None = None) -> tuple[str, int, int]:
         flat_messages = [{"role": m["role"], "content": self._flatten_content(m["content"])} for m in messages]
         base_model = os.environ.get("OLLAMA_MODEL", "qwen2.5:14b")
         if local_variant == "local-code":
@@ -327,6 +330,10 @@ class ModelRouter:
             options["temperature"] = 0.3
             options["num_ctx"] = 16384
             use_json_format = True
+
+        # Per-cell override (e.g. the DMN monologue runs hot for divergent ideation).
+        if temperature is not None:
+            options["temperature"] = float(temperature)
 
         payload: dict = {
             "model": model_name,
