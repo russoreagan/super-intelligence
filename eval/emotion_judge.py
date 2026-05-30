@@ -13,6 +13,7 @@ Four scored dimensions:
 
 Scores go to Langfuse as `emotion.*` and to eval JSONL as an eval_patch.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -84,6 +85,7 @@ Respond ONLY with valid JSON matching this schema exactly:
 class EmotionJudge:
     def __init__(self, eval_logger: EvalLogger, obs=None) -> None:
         from brain.model_router import ModelRouter
+
         self._eval_logger = eval_logger
         self._obs = obs
         self._router = ModelRouter(obs=None)
@@ -102,7 +104,8 @@ class EmotionJudge:
         nm_text = ", ".join(f"{k}={v:.3f}" for k, v in nm.items()) if nm else "(not available)"
         hormonal_text = (
             ", ".join(f"{k}={v:.3f}" for k, v in hormonal.items())
-            if hormonal else "(not available)"
+            if hormonal
+            else "(not available)"
         )
 
         prompt = (

@@ -6,6 +6,7 @@ Usage:
 
 Merges eval_patch records into turn records by turn_id on read.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -18,8 +19,12 @@ from pathlib import Path
 DEFAULT_LOG = Path("eval/turns.jsonl")
 
 
-def load_turns(log_path: Path, session_id: str | None = None,
-               tail: int | None = None, since_ts: float | None = None) -> list[dict]:
+def load_turns(
+    log_path: Path,
+    session_id: str | None = None,
+    tail: int | None = None,
+    since_ts: float | None = None,
+) -> list[dict]:
     """Read JSONL, merge patches into turns, return list of merged turns."""
     if not log_path.exists():
         return []
@@ -48,8 +53,9 @@ def load_turns(log_path: Path, session_id: str | None = None,
             elif rec.get("type") == "eval_patch":
                 tid = rec.get("turn_id", "")
                 if tid in raw_turns:
-                    raw_turns[tid].update({k: v for k, v in rec.items()
-                                           if k not in ("type", "turn_id")})
+                    raw_turns[tid].update(
+                        {k: v for k, v in rec.items() if k not in ("type", "turn_id")}
+                    )
 
     turns = [raw_turns[tid] for tid in order if tid in raw_turns]
     if tail:
@@ -110,8 +116,11 @@ def report(turns: list[dict]) -> None:
         print()
 
         # Memory utilization
-        mem_scores = [t["judge_scores"].get("memory_utilization", 0.5)
-                      for t in scored if t.get("memory_recalled")]
+        mem_scores = [
+            t["judge_scores"].get("memory_utilization", 0.5)
+            for t in scored
+            if t.get("memory_recalled")
+        ]
         if mem_scores:
             mem_avg = sum(mem_scores) / len(mem_scores)
             print(f"  Memory utilization: {mem_avg:.3f} (avg on turns with recall)")
@@ -125,17 +134,26 @@ def report(turns: list[dict]) -> None:
     # ── Draft scores (internal critic — always available) ────────────────
     draft_turns = [t for t in turns if t.get("draft_scores")]
     if draft_turns:
-        coherences = [d.get("coherence", 0) for t in draft_turns
-                      for d in t["draft_scores"] if d.get("selected")]
-        tones = [d.get("tone_fit", 0) for t in draft_turns
-                 for d in t["draft_scores"] if d.get("selected")]
-        overalls = [d.get("overall", 0) for t in draft_turns
-                    for d in t["draft_scores"] if d.get("selected")]
+        coherences = [
+            d.get("coherence", 0)
+            for t in draft_turns
+            for d in t["draft_scores"]
+            if d.get("selected")
+        ]
+        tones = [
+            d.get("tone_fit", 0)
+            for t in draft_turns
+            for d in t["draft_scores"]
+            if d.get("selected")
+        ]
+        overalls = [
+            d.get("overall", 0) for t in draft_turns for d in t["draft_scores"] if d.get("selected")
+        ]
         if coherences:
             print("  INTERNAL CRITIC SCORES (selected drafts)")
-            print(f"  Coherence avg:      {sum(coherences)/len(coherences):.3f}")
-            print(f"  Tone fit avg:       {sum(tones)/len(tones):.3f}")
-            print(f"  Overall avg:        {sum(overalls)/len(overalls):.3f}")
+            print(f"  Coherence avg:      {sum(coherences) / len(coherences):.3f}")
+            print(f"  Tone fit avg:       {sum(tones) / len(tones):.3f}")
+            print(f"  Overall avg:        {sum(overalls) / len(overalls):.3f}")
             print()
 
     # ── Per-cluster token usage ──────────────────────────────────────────
@@ -152,7 +170,9 @@ def report(turns: list[dict]) -> None:
         for cluster in sorted(cluster_totals):
             u = cluster_totals[cluster]
             bar = fmt_bar(u["calls"] / max_calls, 15)
-            print(f"  {cluster:<14} calls={u['calls']:>4}  in={u['in']:>7}  out={u['out']:>6}  {bar}")
+            print(
+                f"  {cluster:<14} calls={u['calls']:>4}  in={u['in']:>7}  out={u['out']:>6}  {bar}"
+            )
         print()
 
     # ── Notable turns ────────────────────────────────────────────────────
@@ -181,19 +201,25 @@ def report(turns: list[dict]) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Brain eval report")
-    parser.add_argument("--tail", type=int, default=None, metavar="N",
-                        help="Only show the last N turns")
-    parser.add_argument("--session", type=str, default=None,
-                        help="Filter by session_id")
-    parser.add_argument("--since", type=float, default=None, metavar="DAYS",
-                        help="Only show turns from the last N days (e.g. --since 7)")
-    parser.add_argument("--log", type=str, default=None,
-                        help="Path to turns.jsonl (default: eval/turns.jsonl)")
+    parser.add_argument(
+        "--tail", type=int, default=None, metavar="N", help="Only show the last N turns"
+    )
+    parser.add_argument("--session", type=str, default=None, help="Filter by session_id")
+    parser.add_argument(
+        "--since",
+        type=float,
+        default=None,
+        metavar="DAYS",
+        help="Only show turns from the last N days (e.g. --since 7)",
+    )
+    parser.add_argument(
+        "--log", type=str, default=None, help="Path to turns.jsonl (default: eval/turns.jsonl)"
+    )
     args = parser.parse_args()
 
     since_ts = (time.time() - args.since * 86400) if args.since else None
-    log_path = Path(args.log) if args.log else Path(
-        os.environ.get("BRAIN_EVAL_LOG", str(DEFAULT_LOG))
+    log_path = (
+        Path(args.log) if args.log else Path(os.environ.get("BRAIN_EVAL_LOG", str(DEFAULT_LOG)))
     )
     turns = load_turns(log_path, session_id=args.session, tail=args.tail, since_ts=since_ts)
     report(turns)

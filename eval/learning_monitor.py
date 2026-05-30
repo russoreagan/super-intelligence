@@ -19,6 +19,7 @@ Session summary (returned as a dict at session end for use by LearningJudge):
   wiring_delta_magnitude         — sum |delta| across all moved edges
   cross_session_drift            — RMS weight change vs. oldest wiring history snapshot
 """
+
 from __future__ import annotations
 
 import json
@@ -134,8 +135,13 @@ class LearningMonitor:
             "total_llm_calls_saved": sum(m.get("llm_calls_saved", 0) for m in self._turn_metrics),
         }
 
-        for key in ("predictor_accuracy", "predictor_match_frac", "gate_hit_rate",
-                    "gating_efficiency", "avg_surprise"):
+        for key in (
+            "predictor_accuracy",
+            "predictor_match_frac",
+            "gate_hit_rate",
+            "gating_efficiency",
+            "avg_surprise",
+        ):
             e_val = _avg(early, key)
             l_val = _avg(late, key)
             summary[f"early_{key}"] = e_val
@@ -172,9 +178,9 @@ def _cross_session_drift(wiring: Wiring) -> float | None:
     Returns None if no history exists.
     """
     from brain.wiring import WIRING_HISTORY_DIR
+
     try:
-        snapshots = sorted(WIRING_HISTORY_DIR.glob("*.json"),
-                           key=lambda p: p.stat().st_mtime)
+        snapshots = sorted(WIRING_HISTORY_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime)
         if not snapshots:
             return None
         oldest = json.loads(snapshots[0].read_text())

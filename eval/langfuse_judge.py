@@ -17,6 +17,7 @@ Usage:
   python -m eval.langfuse_judge --dry-run       # print scores, don't submit
   python -m eval.langfuse_judge --rerun         # re-score even if scores exist
 """
+
 from __future__ import annotations
 
 import argparse
@@ -25,11 +26,12 @@ import json
 import logging
 import os
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 try:
     from dotenv import load_dotenv
+
     load_dotenv(override=True)
 except ImportError:
     pass
@@ -140,6 +142,7 @@ Respond ONLY with valid JSON:
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+
 def _parse_json(text: str) -> dict | None:
     try:
         return json.loads(text.strip())
@@ -185,6 +188,7 @@ def _already_scored(trace: Any, prefix: str) -> bool:
 
 
 # ── Per-trace runner ──────────────────────────────────────────────────────────
+
 
 async def _run_trace(
     ac: Any,
@@ -248,7 +252,7 @@ async def _score_trace(
 
     scores: dict[str, tuple[float, str]] = {}  # score_name → (value, comment)
 
-    for label, result in zip(labels, results):
+    for label, result in zip(labels, results, strict=False):
         if isinstance(result, Exception):
             logger.warning("Judge %s / trace %s raised: %s", label, trace.id, result)
             continue
@@ -306,6 +310,7 @@ async def _score_trace(
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
+
 async def _run(limit: int, since_hours: float, dry_run: bool, rerun: bool) -> None:
     try:
         import anthropic
@@ -334,7 +339,7 @@ async def _run(limit: int, since_hours: float, dry_run: bool, rerun: bool) -> No
     )
     ac = anthropic.AsyncAnthropic()
 
-    from_ts = datetime.now(timezone.utc) - timedelta(hours=since_hours)
+    from_ts = datetime.now(UTC) - timedelta(hours=since_hours)
     print(
         f"Fetching brain-turn traces since "
         f"{from_ts.strftime('%Y-%m-%d %H:%M UTC')} (limit {limit})..."
@@ -371,22 +376,28 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Run LLM-as-a-judge evaluators against Langfuse brain-turn traces.",
     )
-    parser.add_argument("--limit", type=int, default=100, metavar="N",
-                        help="Max traces to fetch (default 100)")
-    parser.add_argument("--since", type=float, default=2.0, metavar="HOURS",
-                        help="Look back N hours (default 2)")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="Print scores without submitting to Langfuse")
-    parser.add_argument("--rerun", action="store_true",
-                        help="Re-score traces even if scores already exist")
+    parser.add_argument(
+        "--limit", type=int, default=100, metavar="N", help="Max traces to fetch (default 100)"
+    )
+    parser.add_argument(
+        "--since", type=float, default=2.0, metavar="HOURS", help="Look back N hours (default 2)"
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Print scores without submitting to Langfuse"
+    )
+    parser.add_argument(
+        "--rerun", action="store_true", help="Re-score traces even if scores already exist"
+    )
     args = parser.parse_args()
 
-    asyncio.run(_run(
-        limit=args.limit,
-        since_hours=args.since,
-        dry_run=args.dry_run,
-        rerun=args.rerun,
-    ))
+    asyncio.run(
+        _run(
+            limit=args.limit,
+            since_hours=args.since,
+            dry_run=args.dry_run,
+            rerun=args.rerun,
+        )
+    )
 
 
 if __name__ == "__main__":
