@@ -22,7 +22,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 MAX_LLM_CALLS = int(os.environ.get("BRAIN_MAX_LLM_CALLS_PER_TURN", "60"))
-TURN_TIMEOUT = float(os.environ.get("BRAIN_TURN_TIMEOUT_SECONDS", "30"))
+TURN_TIMEOUT = float(os.environ.get("BRAIN_TURN_TIMEOUT_SECONDS", "60"))
 QUIESCENCE_WINDOW = 0.8  # seconds of no new drafts before articulating
 
 # Restart backoff: delay = min(MAX_BACKOFF, BASE ** crash_count) seconds

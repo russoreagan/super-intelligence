@@ -34,3 +34,19 @@ second_brain/wiring.json
 second_brain/dmn_novelty.json
 second_brain/task_queue.json
 second_brain/deferred_thoughts.md
+
+# Per-persona brains: same runtime classes as above, just namespaced under a
+# persona slug. schema/*.md (the seeded persona identity) stays tracked; binary
+# LanceDB stores + per-turn mutable state are ignored.
+second_brain/personas/*/episodes/
+second_brain/personas/*/wiring.json
+second_brain/personas/*/wiring_history/
+second_brain/personas/*/dmn_novelty.json
+second_brain/personas/*/task_queue.json
+second_brain/personas/*/deferred_thoughts.md
+second_brain/personas/*/jobs/
+
+# Process logs + service heartbeats — pure runtime output.
+*.log
+second_brain/cloud_usage.json
+second_brain/runpod_heartbeat.json

@@ -123,6 +123,13 @@ turning a thought into work:
    Example: "Check the directory layout of the Karaoke Hero project for missing files."
    Example: "Read the Karaoke Hero CLAUDE.md and summarise the architecture."
 
+   GROUNDING RULE: Never assert what a specific file contains before reading it.
+   Task descriptions must be framed as investigation ("read X and look for Y"),
+   never as assumed findings ("find Y in X" or "identify Z in X"). The task worker
+   will read the file — your job is to state the goal, not predict the contents.
+   Wrong: "Review how schema updates propagate in brain/run.py"
+   Right:  "Read brain/run.py and check whether it contains schema update or cluster logic worth optimising"
+
 2. PROPOSE (set `propose: true`, `speak: true`, write `spoken` as a permission question):
    Use when the idea is outside a project's stated scope, has side-effects (modifying
    files, running builds), or you're genuinely unsure it's welcome right now. The

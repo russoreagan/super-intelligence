@@ -1,723 +1,334 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>A Biologically-Inspired Multi-Agent Cognitive Architecture</title>
-  <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-    body {
-      font-family: Georgia, 'Times New Roman', serif;
-      font-size: 18px;
-      line-height: 1.75;
-      color: #1a1a1a;
-      background: #fafaf8;
-      padding: 4rem 1.5rem;
-    }
-
-    .paper {
-      max-width: 760px;
-      margin: 0 auto;
-    }
-
-    .title-block {
-      text-align: center;
-      margin-bottom: 3rem;
-      padding-bottom: 2.5rem;
-      border-bottom: 2px solid #1a1a1a;
-    }
-
-    .title-block h1 {
-      font-family: Georgia, serif;
-      font-size: 1.75rem;
-      font-weight: bold;
-      line-height: 1.3;
-      margin-bottom: 0.75rem;
-    }
-
-    .title-block .subtitle {
-      font-family: Georgia, serif;
-      font-size: 1.1rem;
-      font-style: italic;
-      color: #444;
-      margin-bottom: 1.25rem;
-      line-height: 1.4;
-    }
-
-    .title-block .author {
-      font-size: 1.05rem;
-      font-weight: bold;
-      margin-bottom: 0.3rem;
-    }
-
-    .title-block .dateline {
-      font-size: 1rem;
-      font-style: italic;
-      color: #555;
-    }
-
-    .abstract {
-      background: #f0efe9;
-      border-left: 4px solid #888;
-      padding: 1.5rem 1.75rem;
-      margin-bottom: 3rem;
-      font-size: 0.95rem;
-      line-height: 1.7;
-    }
-
-    .abstract h2 {
-      font-family: system-ui, -apple-system, sans-serif;
-      font-size: 0.85rem;
-      font-weight: 700;
-      letter-spacing: 0.12em;
-      text-transform: uppercase;
-      color: #555;
-      margin-bottom: 0.75rem;
-    }
-
-    h2 {
-      font-family: system-ui, -apple-system, sans-serif;
-      font-size: 1.35rem;
-      font-weight: 700;
-      margin-top: 3rem;
-      margin-bottom: 0.4rem;
-      padding-bottom: 0.4rem;
-      border-bottom: 1px solid #ccc;
-      color: #111;
-    }
-
-    .section-lead {
-      font-family: system-ui, -apple-system, sans-serif;
-      font-size: 0.95rem;
-      color: #666;
-      font-style: italic;
-      margin-bottom: 1.2rem;
-      margin-top: 0.1rem;
-    }
-
-    h3 {
-      font-family: system-ui, -apple-system, sans-serif;
-      font-size: 1.1rem;
-      font-weight: 700;
-      margin-top: 2rem;
-      margin-bottom: 0.75rem;
-      color: #222;
-    }
-
-    p {
-      margin-bottom: 1.1rem;
-    }
-
-    hr {
-      border: none;
-      border-top: 1px solid #ddd;
-      margin: 2.5rem 0;
-    }
-
-    ul, ol {
-      padding-left: 1.75rem;
-      margin-bottom: 1.1rem;
-    }
-
-    ul li, ol li {
-      margin-bottom: 0.5rem;
-    }
-
-    ol li strong:first-child {
-      color: #111;
-    }
-
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      margin: 1.5rem 0 2rem;
-      font-size: 0.9rem;
-      line-height: 1.5;
-    }
-
-    thead {
-      background: #1a1a1a;
-      color: #fff;
-    }
-
-    thead th {
-      padding: 0.65rem 0.9rem;
-      text-align: left;
-      font-family: system-ui, -apple-system, sans-serif;
-      font-weight: 600;
-      font-size: 0.82rem;
-      letter-spacing: 0.04em;
-    }
-
-    tbody tr:nth-child(even) {
-      background: #f4f4f0;
-    }
-
-    tbody td {
-      padding: 0.6rem 0.9rem;
-      border-bottom: 1px solid #ddd;
-      vertical-align: top;
-    }
-
-    .figure {
-      margin: 2rem 0 2.25rem;
-      text-align: center;
-    }
-
-    .figure img {
-      max-width: 100%;
-      border: 1px solid #ccc;
-      border-radius: 4px;
-    }
-
-    .figure figcaption {
-      margin-top: 0.75rem;
-      font-size: 0.875rem;
-      color: #555;
-      line-height: 1.55;
-      text-align: left;
-    }
-
-    .note {
-      border-left: 3px solid #bbb;
-      padding: 0.75rem 1rem;
-      margin: 1.25rem 0;
-      color: #444;
-      font-size: 0.95rem;
-    }
-
-    .plain-english {
-      background: #f5f3ee;
-      border-left: 3px solid #a0957a;
-      padding: 0.75rem 1.1rem;
-      margin: 0 0 1.25rem 0;
-      font-size: 0.92rem;
-      color: #3a3020;
-      line-height: 1.65;
-    }
-
-    .plain-english::before {
-      content: "In plain terms — ";
-      font-weight: bold;
-      font-family: system-ui, -apple-system, sans-serif;
-      font-size: 0.8rem;
-      letter-spacing: 0.04em;
-      text-transform: uppercase;
-      color: #7a6a50;
-    }
-
-    .references p {
-      margin-bottom: 0.6rem;
-      padding-left: 2rem;
-      text-indent: -2rem;
-      font-size: 0.95rem;
-    }
-
-    .metadata {
-      margin-top: 3rem;
-      padding-top: 1.5rem;
-      border-top: 1px solid #ddd;
-      font-size: 0.85rem;
-      color: #777;
-      font-family: system-ui, -apple-system, sans-serif;
-      line-height: 1.6;
-    }
-
-    @media print {
-      body { background: white; padding: 0; font-size: 11pt; }
-      .paper { max-width: none; }
-      h2 { page-break-after: avoid; }
-      h3 { page-break-after: avoid; }
-      .plain-english { border-left: 2px solid #999; }
-    }
-  </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>A Biologically-Inspired Multi-Agent Cognitive Architecture: Design and Goals</title>
+<style>
+:root { --ink:#1a1a1a; --muted:#666; --rule:#e2e2e2; --accent:#3a5a8c;
+        --code-bg:#f5f5f5; --link:#2a5db0; }
+* { box-sizing:border-box; }
+html { scroll-behavior:smooth; }
+body { margin:0; color:var(--ink); background:#fff;
+       font:17px/1.65 "Charter","Georgia","Times New Roman",serif;
+       -webkit-font-smoothing:antialiased; }
+.wrap { max-width:820px; margin:0 auto; padding:64px 28px 120px; }
+h1 { font-size:2.05rem; line-height:1.2; margin:0 0 .2em;
+     letter-spacing:-.01em; }
+h2 { font-size:1.5rem; margin:2.4em 0 .6em; padding-top:.4em;
+     border-top:1px solid var(--rule); }
+h3 { font-size:1.18rem; margin:1.8em 0 .5em; color:#222; }
+p { margin:0 0 1.05em; }
+a { color:var(--link); text-decoration:none; }
+a:hover { text-decoration:underline; }
+strong { font-weight:600; }
+code { font-family:"SF Mono",ui-monospace,"Menlo","Consolas",monospace;
+       font-size:.86em; background:var(--code-bg); padding:.12em .38em;
+       border-radius:4px; }
+pre { background:var(--code-bg); border:1px solid var(--rule);
+      border-radius:8px; padding:16px 18px; overflow-x:auto; margin:1.2em 0; }
+pre code { background:none; padding:0; font-size:.85em; line-height:1.5; }
+hr { border:0; border-top:1px solid var(--rule); margin:2.4em 0; }
+table { border-collapse:collapse; width:100%; margin:1.4em 0; font-size:.9rem;
+        font-family:system-ui,-apple-system,"Segoe UI",sans-serif; }
+th,td { border:1px solid var(--rule); padding:9px 12px; text-align:left;
+        vertical-align:top; }
+th { background:#fafafa; font-weight:600; }
+tbody tr:nth-child(even) { background:#fcfcfc; }
+img { max-width:100%; height:auto; display:block; margin:1.4em auto;
+      border:1px solid var(--rule); border-radius:8px; }
+ul,ol { margin:0 0 1.05em; padding-left:1.5em; }
+li { margin:.3em 0; }
+.byline { color:var(--muted); font-style:italic; margin-top:0; }
+.toc { background:#fafbfc; border:1px solid var(--rule); border-radius:10px;
+       padding:20px 26px; margin:2.2em 0; font-family:system-ui,-apple-system,
+       "Segoe UI",sans-serif; font-size:.92rem; }
+.toc h2 { border:0; margin:0 0 .6em; padding:0; font-size:1.05rem; }
+.toc ul { list-style:none; padding-left:0; margin:0; }
+.toc li { margin:.18em 0; }
+.toc li.lvl3 { padding-left:1.4em; font-size:.92em; color:var(--muted); }
+.toc a { color:var(--ink); }
+@media (max-width:600px){ .wrap{ padding:40px 18px 80px; } body{ font-size:16px; } }
+@media print { .toc{ display:none; } a{ color:var(--ink); } body{ font-size:11pt; } }
+</style>
 </head>
 <body>
-<div class="paper">
-
-  <div class="title-block">
-    <h1>A Biologically-Inspired Multi-Agent Cognitive Architecture:<br>Design, Implementation, and Early Observations</h1>
-    <p class="subtitle">What happens when you build an AI that works more like a brain — with real emotional state, persistent memory, and behavior that changes with experience?</p>
-    <p class="author">Russ O'Reagan</p>
-    <p class="dateline">Unpublished technical report, May 2026</p>
-  </div>
-
-  <div class="abstract">
-    <h2>Abstract</h2>
-    <p>This paper describes an AI system built around a single hypothesis: that giving an AI genuine emotional state — not a simulated personality layered on top, but internal chemical signals that actually change how it processes information — produces a system that develops differently over time. Applications for this kind of architecture are broad: any context where the quality of an interaction depends on emotional attunement rather than just information retrieval — from mental health support tools and speech therapy companions, to customer service systems capable of real rapport, to characters in games and interactive media who develop genuine relationships with the people they interact with. The architecture maps explicitly onto regions of the human brain, with nine chemical signaling channels (five fast-acting neuromodulators and four slower hormones) coordinating a set of specialized processing regions rather than a central controller. Expensive reasoning steps are reserved for situations that genuinely require them; routine inputs are handled by fast, deterministic routing. The design draws from predictive processing theory, dual-process cognitive science, Global Workspace Theory, Dennett's Multiple Drafts model, and the extended mind hypothesis. The current dataset covers 393 conversational turns across 69 sessions. The system operates within its designed efficiency envelope (averaging 3.38 language-model reasoning calls per turn, against a target of 3–5), shows functional chemical dynamics, and successfully skips unnecessary reasoning on about 25% of turns. Long-term memory contributes to better than one in three turns. Early evidence of experience-dependent learning is present in the data, now across three consolidation passes. Fifteen distinct emotional states have been observed; a fragmented-attention state correlates with a recognizable low-reward chemical signature, and a first faintly negative mood state has appeared. This is also the first time the slower hormone-like signals register measurable values: the system's stress signal sits at its floor, its trust-and-bonding signal has begun to build, and its baseline-mood signal holds steady. A measure of novelty-sensitivity declines across the dataset — a longitudinal signal suggesting the system's conversational environment has become progressively more familiar over 69 sessions. The system also now chooses, for each substantive turn, a reasoning or emotional-intelligence "lens" from a library of 171 thinking frameworks and applies it invisibly to shape how it reasons. Several mechanisms are too new to evaluate, and the central question of whether this architecture outperforms a single well-designed model has not yet been tested rigorously. This paper presents the architecture, its philosophical underpinnings, and an honest account of what the data does and does not show.</p>
-  </div>
-
-  <hr>
-
-  <h2>1. Introduction</h2>
-  <p class="section-lead">What we built, why emotional continuity is a practical capability rather than a cosmetic one, and why the usual approach to AI wasn't what we were after.</p>
-
-  <p>The dominant approach in modern multi-agent AI systems is orchestration: a planning system decomposes a task, hands pieces off to specialized AI agents, and assembles the results. This works well for structured workflows, but it bears almost no resemblance to how intelligence actually works in biological brains. Real brains have no central controller. Intelligence in biological systems emerges from the interaction of many specialized processing regions, coordinated by shared chemical signaling, shaped by prediction, and refined by experience.</p>
-
-  <p>This project is a prototype of a different approach: <strong>a cognitive architecture that maps onto the structure of the human brain, where computation is coordinated by chemical dynamics rather than a central planner, and expensive reasoning steps are reserved for moments of genuine uncertainty</strong>. It is not an attempt to build artificial general intelligence. It is an attempt to ask a more specific question: can you implement the emotional substrate of cognition faithfully enough that emotional state does real computational work — gating what gets processed, shaping what gets remembered, modulating what gets learned — and if so, does the result develop differently over time?</p>
-
-  <p>The practical case for emulating emotion in AI is stronger than it might initially appear. A customer support agent that can detect frustration and genuinely modulate its tone is more effective than one that merely acknowledges it. A mental health support tool that maintains an emotional relationship across many sessions — remembering how the person has been feeling, noticing when their emotional patterns shift — can provide a qualitatively different kind of care than one that resets with each conversation. A speech or behavioral therapy companion that builds a model of its user's emotional baseline and tracks deviations over time could surface signals that a human clinician only sees during scheduled appointments. Game characters that develop genuine relationships with players — relationships that evolve based on accumulated interaction history — open creative possibilities that scripted dialogue trees cannot reach. In each of these domains, emotional continuity is not a cosmetic feature; it is the core capability.</p>
-
-  <p>In biological brains, emotion is not decoration. The brain's chemical signaling systems — dopamine, acetylcholine, GABA, and their relatives — regulate attention, arousal, inhibitory tone, and how readily behavior adapts. They determine what the brain pays attention to, how confident it is, and how quickly it changes. Existing AI systems treat emotional register as a prompt property: you can instruct a model to respond warmly or cautiously, but this is style, not state — it resets each time. The hypothesis here is that an architecture with genuine affective dynamics — internal state that persists across interactions, that modulates computation rather than merely flavoring output — will produce measurably different behavior given a long enough window. The more immediate prediction is behavioral continuity: a system that develops something like a stable character through the interaction of experience, emotional state, and plasticity. This prototype explores whether that is achievable and what it looks like in practice.</p>
-
-  <p>This project makes no claim to artificial general intelligence. But it does raise a question worth sitting with: what if emotional authenticity is precisely what makes intelligence feel real to us? The standard tests for machine intelligence — from the Turing test onward — have largely been tests of linguistic competence. But the people we find most intelligent, most trustworthy, most genuinely present are not necessarily the ones with the largest knowledge base. They are the ones whose responses feel calibrated to us — who seem to actually care how we are doing, who remember what we told them and let it change how they engage. If emotional continuity and authentic relational history are the actual substrate of perceived intelligence — not a decoration on top of it — then a system that gets those things right may eventually reach a point where the philosophical question of whether it <em>really</em> understands becomes less interesting than the practical question of whether the relationship it offers is real. We are not claiming to have reached that point. We are building the architecture that makes it possible to ask the question rigorously.</p>
-
-  <p>This paper documents the design rationale, the philosophical commitments, the implementation, and the early empirical observations. The system is operational but young. Many mechanisms have been implemented but not yet accumulated enough history to evaluate. Where we have signal, we report it. Where we do not, we say so explicitly.</p>
-
-  <hr>
-
-  <h2>2. Background and Prior Art</h2>
-  <p class="section-lead">A brief history of where this idea has been before, and what makes this attempt different.</p>
-
-  <h3>2.1 Computational precursors</h3>
-
-  <p>The idea of intelligence emerging from many cooperating simple agents has a 40-year history. <strong>Minsky's Society of Mind</strong> (1986) proposed the direct ancestor: intelligence as a community of simple, mindless agents organized into groups. The proposal was influential but never produced a working implementation — the mechanism by which agents were supposed to coordinate was described without the mathematical machinery to make it work.</p>
-
-  <p><strong>Blackboard architectures</strong> (developed in the 1970s–90s) were the canonical early implementation: multiple knowledge sources reading and writing to a shared workspace, like specialists writing on a communal whiteboard. They succeeded on narrow problems such as speech recognition and medical diagnosis, but failed to scale. The overhead of coordinating many agents sharing a single resource eventually exceeded the benefit of their specialization.</p>
-
-  <p><strong>SOAR, ACT-R</strong>, and related cognitive architectures produced research insights but hit ceilings imposed by hand-designed boundaries between modules. <strong>Numenta's Hierarchical Temporal Memory</strong> produced useful anomaly detection but never generalized to language or broad reasoning.</p>
-
-  <p><strong>Generative Agents</strong> (Park et al., Stanford, 2023, 2025) are the closest modern prior art. Communities of AI-powered agents exhibited believable emergent social behaviors and predicted real survey responses at 85% accuracy on normalized measures. A significant caveat from the same research: performance on behavioral-economic games matched simpler demographic baselines at 66%, suggesting that much of the apparent emergence came from prompt design rather than from genuine multi-agent interaction. This critique recurs consistently in the literature: when given equal computational resources, a single well-designed AI often matches or exceeds multi-agent systems on raw task quality.</p>
-
-  <p>The lesson we draw is not that multi-agent architectures are unpromising, but that their value requires precision. A multi-agent design earns its overhead through <strong>legibility</strong> (you can observe what the system is actually doing internally), <strong>persistent specialized state</strong> (chemical levels and learned connection weights that survive across turns), and <strong>structural constraints that force behaviors the prompt alone cannot reliably produce</strong> (inhibitory circuits, prediction gating, arousal modulation). If the architecture merely adds coordination cost to what a good single model would do anyway, it has failed.</p>
-
-  <h3>2.2 Recent breakthroughs informing the design</h3>
-
-  <p><strong>Active Inference and the Free Energy Principle</strong> (Friston; VERSES AI, 2025) provides the most biologically faithful active research direction for multi-agent systems. The core idea: agents minimize prediction error by updating their beliefs or by acting on the world to make their predictions come true. This has been demonstrated in robotics, coordinating multiple predictive agents without central planning. The predict-and-surprise mechanism in this system is a direct instantiation of Active Inference applied at the level of brain-region clusters.</p>
-
-  <p><strong>Predictive Processing</strong> (Clark, <em>Surfing Uncertainty</em>; Friston) frames how the brain works as fundamentally predictive: the brain constantly generates predictions about what it will perceive next, and computation is the process of reconciling those predictions with what actually arrives. Familiar inputs are handled cheaply because the prediction was mostly right; surprising inputs demand more. This maps cleanly onto a design where most processing nodes fire only when their input disagrees with expectation.</p>
-
-  <p><strong>Spiking Neural Networks combined with language models</strong> (SpikeLLM, NSLLM, 2024–2026) achieve event-driven computation — fire only on meaningful signal — at the level of individual model operations, reporting up to 19× energy efficiency improvements. The architectural principle (spend compute proportional to signal novelty) is identical to this system's, applied at the cluster level rather than inside the model.</p>
-
-  <h3>2.3 Novelty of this design</h3>
-
-  <p>The closest pattern in the broader literature is neuro-symbolic AI — language models wrapped between deterministic control layers. These apply gating principles for task orchestration in compliance and industrial contexts. No existing published system applies this pattern as a <strong>literal brain-region-mapped architecture with chemical dynamics, experience-dependent plasticity, hippocampus-gated long-term memory, and predictive gating as the primary mechanism of a general-purpose conversational entity</strong> — and none frames the central research question as whether genuine affective architecture produces meaningfully different behavior over time. That is the specific contribution this prototype makes.</p>
-
-  <hr>
-
-  <h2>3. Philosophical Foundations</h2>
-  <p class="section-lead">Every design decision here maps to an established position in philosophy of mind. Being explicit about these commitments clarifies what we're actually building — and what we're not claiming.</p>
-
-  <p>The architecture is not merely borrowed from biology for aesthetic reasons. Each major design decision maps to an established position in the philosophy of mind. Making these commitments explicit does two things: it sharpens each design choice, and it makes honest what the system is and is not claimed to be.</p>
-
-  <h3>3.1 Commitments</h3>
-
-  <p><strong>Functionalism (Putnam, Fodor).</strong> The functionalist claim is that what makes something a mental state is not what it is made of, but what it <em>does</em> — the causal role it plays in a system. A belief is a belief because of how it interacts with perception, reasoning, and action, not because it happens to live in biological neurons. This means the same mental state can, in principle, be implemented in silicon or language models, provided it plays the same functional role. The entire design rests on this commitment: each processing region is defined by its inputs, outputs, and state. The underlying hardware that runs it is architecturally irrelevant. The system has been run with three different AI model backends with no structural change in behavior — a concrete test of functionalism.</p>
-
-  <p><strong>Dual-Process Theory (Kahneman).</strong> Cognitive science has long distinguished two modes of thought: fast, automatic, parallel processing that operates below conscious attention, and slow, effortful, deliberate reasoning. Most of cognition is the first kind; the second kind is expensive and gets invoked only when the first signals that something needs more careful handling. In this system, deterministic routing logic is System 1 — fast, parallel, cheap, operating constantly. Language model calls are System 2 — slow, expensive, invoked only at convergence zones where genuine context integration is required. Predict-and-surprise gating is the explicit mechanism for deciding which mode to engage.</p>
-
-  <p><strong>Global Workspace Theory (Baars, Dehaene).</strong> The theory proposes that the brain's many parallel processing regions mostly operate independently and below conscious awareness. A small fraction of neural activity is broadcast to a global workspace — a kind of bulletin board accessible to the whole brain — and only that broadcast activity is available for explicit reasoning or verbal report. A shared message bus with an attention-focus channel implements this directly. Most inter-region traffic is local and invisible to other regions; high-salience signals are promoted to the attention channel and become available system-wide.</p>
-
-  <p><strong>Multiple Drafts Model (Dennett, <em>Consciousness Explained</em>, 1991).</strong> Dennett challenged the intuitive picture of a unified inner experience: there is no central observer watching a single stream. The brain runs many parallel narrative drafts simultaneously, with no single privileged version. What becomes your "thought" is whichever draft survives when probed — there is no fact of the matter about what you "really" thought before you were asked. The response drafting tournament in this system instantiates this directly. There is no true response the system was trying to produce — there are competing drafts, and the output gate emits whichever survived when the timeout fired.</p>
-
-  <p><strong>Extended Mind Hypothesis (Clark &amp; Chalmers, 1998).</strong> The standard assumption is that the mind stops at the boundary of the skull. Clark and Chalmers argued that if an external resource plays the same functional role as an internal cognitive process — reliably available, automatically endorsed, directly acted upon — then it is constitutive of the mind, not merely a tool for it. This system's long-term memory satisfies these conditions: it is always accessible, its content directly shapes responses, and the system endorses it as its own memory rather than treating it skeptically. One notable extension: Clark and Chalmers' canonical example assumes an imperfect external store compensating for biological forgetting. This system's external memory is non-degrading. Identity here emerges not from selective forgetting but from learned behavioral weights, chemical baselines, and accumulated self-narrative.</p>
-
-  <p><strong>Predictive Processing (Clark, Friston).</strong> The dominant contemporary theory of how the brain works: rather than passively receiving input and computing a response, the brain is constantly generating predictions and updating them when they fail. Processing is proportional to prediction error — familiar inputs are handled cheaply; surprising ones demand more. Each processing cluster maintains a predictor that implements this directly. Routine turns in familiar conversations spend almost nothing; novel turns invoke language model calls. The design operationalizes what philosophers call the "controlled hallucination" view of perception: the system's default behavior is to emit a predicted response, with actual reasoning triggered only when prediction fails.</p>
-
-  <p><strong>Narrative Self (Dennett, Hume, Locke).</strong> Hume argued that personal identity is not a thing but a story — a bundle of experiences held together by memory and narrative continuity. Locke located personal identity precisely in memory: what makes you the same person you were yesterday is that you remember being that person. The system maintains a self-model updated during a sleep-like consolidation pass at the end of each session. With a perfect, non-degrading episodic store and an explicit self-narrative, it has stronger identity continuity than any biological system — whose memory degrades, distorts, and selectively forgets.</p>
-
-  <h3>3.2 Honest disclaimers</h3>
-
-  <p><strong>Chinese Room (Searle, 1980).</strong> Language model calls manipulate symbols according to rules. No claim of genuine understanding is made. The system can appear competent without comprehending.</p>
-
-  <p><strong>Hard Problem of Consciousness (Chalmers, 1995).</strong> No claim of phenomenal consciousness or subjective experience is made. The chemical levels are named after their biological analogs because they play functionally analogous roles — not because there is any claim that the system subjectively feels reward or attention.</p>
-
-  <p><strong>Frame Problem (McCarthy &amp; Hayes, 1969).</strong> Knowing what is <em>relevant</em> in a given moment remains genuinely hard. The attention and salience mechanisms here are heuristic approximations, not principled solutions.</p>
-
-  <div class="note">
-    <p>The system is built on the premise of constructing functional analogs of mental processes. That is enough to be interesting. It is not enough to be a mind.</p>
-  </div>
-
-  <hr>
-
-  <h2>4. Architecture</h2>
-  <p class="section-lead">How the system is structured, region by region — and the principles behind each design choice.</p>
-
-  <h3>4.1 Core computational model: fast routing and deliberate reasoning</h3>
-
-  <div class="plain-english">Most of what this system does happens without any AI model at all. Expensive language model calls are reserved for the small fraction of moments that genuinely require them — when prediction has failed, when the situation is novel, when a draft response needs evaluation. Everything else is handled by fast, deterministic logic that runs in milliseconds and costs almost nothing.</div>
-
-  <p>Two distinct processing types mirror how real neural tissue works.</p>
-
-  <p><strong>Fast routing nodes</strong> are deterministic, require no language model, and can run in parallel at negligible cost. They perform gating (deciding whether to spend a language model call at all), routing (selecting which processing path a turn takes), state-holding (maintaining chemical levels that persist across turns), modulation (accumulating and decaying signals over time), and inhibition (suppressing downstream activation). A meaningful fraction of every cluster's nodes are explicitly inhibitory — meaning their job is to suppress activity elsewhere, not generate it. This mirrors the excitatory-to-inhibitory balance in biological cortex and provides structural cascade prevention: runaway activity is suppressed by abundant inhibitory wiring rather than by a global budget cap.</p>
-
-  <p><strong>Deliberative reasoning nodes</strong> are language-model-backed and fire only at convergence zones — where genuine context integration is required. This includes language understanding, memory coordination, response drafting, and critical evaluation. The critical constraint: <strong>fast nodes deal in signals, deliberative nodes deal in language</strong>. Text only appears where reasoning is genuinely required.</p>
-
-  <h3>4.2 Predict-and-surprise gating</h3>
-
-  <div class="plain-english">Before doing expensive reasoning on any input, the system first predicts whether that reasoning would change the outcome. If the prediction says no — the answer is routine and familiar — the reasoning step is skipped entirely. If something unexpected happens, the skipped step is reactivated. This is essentially how the brain decides what to pay attention to.</div>
-
-  <p>Each cluster maintains a short history of what it has seen and what it predicted would follow. When new input arrives, the cluster first fires its prediction. It then compares that prediction against what actually arrived.</p>
-
-  <ul>
-    <li><strong>Low surprise</strong>: the language model stays inactive; the predicted output is used as if deliberation had occurred.</li>
-    <li><strong>High surprise</strong>: the language model activates with the failed prediction as additional context, directing attention to what was unexpected.</li>
-  </ul>
-
-  <p>An <strong>emotion-aware veto</strong> overrides this gating when the system or user is in a non-routine emotional state. The rationale is that a statistically valid prediction may be contextually wrong — certain emotional moments deserve fresh attention, not a cached response. Detected stress in the user's voice also triggers bypass, even on inputs that would otherwise be routine.</p>
-
-  <p>A more sophisticated predictor in the response-generation cluster extends this to structured predictions: it independently estimates whether the coordination step and the critical evaluation step are each necessary, suppressing either independently when confidence is high.</p>
-
-  <h3>4.3 Brain region mapping</h3>
-
-  <p>Each processing region in the system corresponds to a specific area of the human brain, performing a digital recast of that region's biological function:</p>
-
-  <table>
-    <thead>
-      <tr>
-        <th>Brain Region</th>
-        <th>Biological Role</th>
-        <th>What it does here</th>
-      </tr>
-    </thead>
-    <tbody>
-      <tr>
-        <td><strong>Frontal lobe</strong></td>
-        <td>Planning, working memory, movement</td>
-        <td>Response drafting and critique; parallel draft tournament; tool-call selection</td>
-      </tr>
-      <tr>
-        <td><strong>Temporal lobe</strong></td>
-        <td>Language, auditory processing, memory bridging</td>
-        <td>Language understanding; acoustic feature extraction from speech</td>
-      </tr>
-      <tr>
-        <td><strong>Parietal lobe</strong></td>
-        <td>Sensory integration, spatial awareness</td>
-        <td>Session state buffer; tracking who and what has been mentioned; topic shift detection</td>
-      </tr>
-      <tr>
-        <td><strong>Occipital lobe</strong></td>
-        <td>Visual processing</td>
-        <td>Processing images, screenshots, and video input</td>
-      </tr>
-      <tr>
-        <td><strong>Hippocampus</strong></td>
-        <td>Memory storage and recall</td>
-        <td>Episodic and schema memory; the only region with access to long-term storage</td>
-      </tr>
-      <tr>
-        <td><strong>Hypothalamus</strong></td>
-        <td>Drives, affect, homeostasis</td>
-        <td>Nine-channel chemical signaling system (five neuromodulators, four hormones); emotion state output</td>
-      </tr>
-      <tr>
-        <td><strong>Thalamus</strong></td>
-        <td>Gatekeeper between subcortex and cortex</td>
-        <td>Message bus and attention spotlight; routing arbitration between regions</td>
-      </tr>
-      <tr>
-        <td><strong>Brainstem</strong></td>
-        <td>Vital autonomic functions</td>
-        <td>Heartbeat; cost monitor; turn-budget enforcer; output gate</td>
-      </tr>
-      <tr>
-        <td><strong>PNS</strong></td>
-        <td>Peripheral input/output</td>
-        <td>Text and image input; speech-to-text transcription; text-to-speech synthesis</td>
-      </tr>
-    </tbody>
-  </table>
-
-  <figure class="figure">
-    <img src="figures/architecture.png" alt="Figure 1 — Multi-agent cognitive architecture: signal flow and cluster composition">
-    <figcaption><strong>Figure 1:</strong> Full architecture diagram. Each box is a brain-region cluster. Coloured chips are deterministic routing nodes (red-bordered = inhibitory). Vertical coloured bars mark language-model-backed reasoning nodes. Solid arrows show excitatory signal flow; dashed arrows show modulatory and chemical channels. Long-term memory (bottom left) is accessible only via the hippocampus cluster.</figcaption>
-  </figure>
-
-  <h3>4.4 User emotion detection</h3>
-
-  <div class="plain-english">The system tries to understand how the user is feeling — not from a single signal, but from reading text, voice tone, and speech behavior simultaneously. Crucially, voice-based emotion is measured against each individual person's own baseline, not a population average: a tense-sounding voice only means something relative to how that particular speaker normally sounds.</div>
-
-  <p>Three signal channels are read in parallel and combined into a unified emotional assessment each turn.</p>
-
-  <p><strong>Text channel</strong>: word choice, phrasing, punctuation patterns, and conversational tone all carry emotional signal. A lightweight pass extracts an immediate positive/negative read; a deeper analysis extracts the user's broader emotional register and the social quality of how they are engaging — curious, frustrated, playful, warm, distressed. Both outputs are available to downstream processing within the same turn.</p>
-
-  <p><strong>Prosody channel</strong>: for voice interactions, acoustic features of the user's speech — pitch, energy, speaking rate, voice stability — are extracted and classified. Classification is performed against each <em>individual speaker's own baseline</em>, not population averages. The system maintains per-speaker vocal profiles that allow it to detect deviations from that person's normal pattern. Rapid speech, bursts, hesitations, and pauses are extracted as additional behavioral signals.</p>
-
-  <p><strong>Appraisal layer</strong>: the combined emotional signal feeds a higher-resolution inference step that generates relational emotional states — responses that depend not only on the user's current emotion but on the accumulated relationship history. States like gratitude, sympathy, embarrassment, and pride emerge here, requiring the system to reason about accumulated affection, familiarity, and context rather than reacting only to the current turn.</p>
-
-  <p>The final emotional assessment is published to the shared signal bus, where it influences chemical levels, activates the empathy evaluator (§4.9), gates prediction-based skipping, and feeds into the experience-dependent learning update (§4.7). Emotion detection is not a display mechanism — it is a genuine input to computation.</p>
-
-  <h3>4.5 Chemical signaling: neuromodulators and hormones</h3>
-
-  <div class="plain-english">Think of these nine chemical channels as the system's ongoing mood and alertness levels — not messages sent between regions, but background tuning parameters that any part of the system can read at any time. They shift slowly in response to what's happening in the conversation and color everything that follows. Some respond within a few exchanges; others accumulate over dozens or hundreds of turns, acting as long-horizon emotional memory.</div>
-
-  <p>All nine channels are continuous scalar levels — numbers that rise and fall — maintained by accumulation plus gradual decay. They are the mechanism by which the system's state during one turn shapes its processing in the next.</p>
-
-  <p><strong>Fast neuromodulators</strong> respond within a few conversational turns:</p>
-
-  <ul>
-    <li><strong>Dopamine (DA)</strong> — reward and positive valence. Rises with positive sentiment and warm prosody; falls with hostility. Modulates how willing the system is to generate responses and how fast it learns from experience. Its effective level is boosted by serotonin and oxytocin and suppressed by cortisol.</li>
-    <li><strong>Acetylcholine (ACh)</strong> — attention and novelty. Rises when inputs are surprising or salient; attenuates as inputs become routine. Modulates how strongly new experiences are encoded into memory — high acetylcholine means new experiences leave a stronger trace.</li>
-    <li><strong>GABA</strong> — inhibitory tone. Rises with threat and hostile prosody. Suppresses the number of response drafts being generated simultaneously. Amplified by cortisol; buffered by oxytocin.</li>
-    <li><strong>Glutamate (Glu)</strong> — arousal and excitation. Rises with urgency and high-salience input. Counteracted by the anandamide homeostatic mechanism when arousal runs too high.</li>
-    <li><strong>Norepinephrine (NE)</strong> — focused alertness. Rises with surprise, salience, and threat. At moderate levels, it sharpens attention; at excessive levels, it produces a fragmented, over-activated state — too alert to settle on anything.</li>
-  </ul>
-
-  <p><strong>Slow hormones</strong> respond over tens to hundreds of turns, acting as the conversation's long-horizon affective memory:</p>
-
-  <ul>
-    <li><strong>Serotonin (5HT)</strong> — affective baseline. Builds slowly across positive exchanges; drains under sustained hostility. Low serotonin pulls the effective dopamine floor downward and tilts the system toward dysphoric states. It is the slowest-moving channel in the system.</li>
-    <li><strong>Cortisol (CORT)</strong> — cumulative stress. Accumulates under repeated social threat. Amplifies inhibitory tone and suppresses dopamine. Actively counteracted by oxytocin.</li>
-    <li><strong>Oxytocin (OXT)</strong> — trust and affiliation. Builds gradually across positive exchanges; drains on hostility. Lifts effective dopamine, buffers inhibitory tone, and directly suppresses cortisol accumulation. The primary driver of warm and connected emotional states.</li>
-    <li><strong>Anandamide (AEA)</strong> — homeostatic buffer, sometimes called the "bliss molecule" in neuroscience. Released when combined norepinephrine and glutamate exceed an arousal threshold; also accumulates during positive social exchange. Suppresses arousal overflow, lifts effective dopamine, and shifts stressed states toward a grounded, eased quality.</li>
-  </ul>
-
-  <p><strong>Cross-channel interactions</strong> produce nonlinear dynamics that neither tier alone could generate. Oxytocin buffers cortisol — social bonding counteracts chronic stress. Anandamide suppresses arousal overflow. Cortisol amplifies inhibitory tone under chronic stress. These mirror known antagonisms in the neuroendocrine literature and produce emergent emotional states that no single channel could generate alone.</p>
-
-  <p><strong>Dimensional output</strong>: all nine channels map to three continuous affective dimensions — valence (how pleasant), arousal (how activated), and dominance (how in-control). These three numbers drive a discrete emotion label drawn from a lookup table of approximately 25 states, with norepinephrine and hormonal overlays applied on top for states like vigilant, connected, withdrawn, and eased.</p>
-
-  <h3>4.6 Memory architecture</h3>
-
-  <div class="plain-english">The system has three kinds of memory operating at different timescales: a short working memory of the current conversation; a deep episodic store of everything that has ever happened across all sessions; and a structured self-model of stable facts about itself and the people it talks with. Only one region — the hippocampus — is allowed to read from or write to long-term memory, mirroring the biological role of that structure.</div>
-
-  <p><strong>Short-term memory</strong> is the live signal state plus a small ring buffer of recent turns plus current chemical levels — essentially everything the system needs to track the current exchange.</p>
-
-  <p><strong>Long-term memory</strong> has three layers:</p>
-
-  <ul>
-    <li><strong>Episodic layer</strong>: a vector-indexed store (mathematically, a semantic search index) of turn summaries. Every substantive turn is encoded regardless of importance — the system does not gate what goes in, only what comes back out. Retrieval is by semantic similarity, not keyword.</li>
-    <li><strong>Schema layer</strong>: structured, human-readable files of stable facts about the self and known people — personality notes, relationship history, known preferences. Pre-loaded at session start. These are the closest analog to what psychologists call semantic memory.</li>
-    <li><strong>Behavioral wiring</strong>: learned connection weights between processing nodes, updated during sleep consolidation and consulted at runtime to modulate routing and response generation. This is where experience actually changes behavior.</li>
-  </ul>
-
-  <p>Only the hippocampus cluster has access to the long-term store. All other clusters request memory through the shared bus. This architectural constraint enforces the biological model and provides a clean audit point for everything the system remembers — nothing enters or exits long-term storage invisibly.</p>
-
-  <h3>4.7 Hebbian plasticity</h3>
-
-  <div class="plain-english">The classic neuroscience principle is "neurons that fire together, wire together." This system implements a digital version: connections between processing nodes that are active during successful turns get a little stronger; connections active during poor turns get a little weaker. Over many sessions, this shifts which pathways the system prefers — without any explicit programming of those preferences.</div>
-
-  <p>Connections between processing nodes carry weights that change with experience. After each turn, an outcome signal is computed from three sources: how much the reward signal (dopamine) changed during the turn; how the critical evaluator scored the response; and the emotional valence of the user's detected state. Connections active during high-outcome turns are strengthened; those active during low-outcome turns are weakened.</p>
-
-  <p>A plasticity modulator scales the learning rate: sessions with high reward and high attention produce faster learning than flat or disengaged sessions. A gentle homeostatic decay prevents any connection from locking in permanently — the system can always unlearn. The result is a soft reinforcement mechanism that gradually shifts routing preferences, draft selection, and memory recall patterns toward what has worked before, without explicit reinforcement learning machinery.</p>
-
-  <p>When multiple response drafts are generated and compared in a single turn, the winning drafter receives additional reinforcement proportional to its margin over the alternatives; losing drafters receive a small penalty. This creates genuine selection pressure between response styles over time — one approach may gradually come to dominate simply because it has won more often.</p>
-
-  <h3>4.8 Dynamic reasoning framework selection</h3>
-
-  <div class="plain-english">Before generating a response to any substantive turn, the system selects a reasoning lens from a large library — logic, ethics, creativity, game theory, empathy, probability, and many others — and applies it invisibly to how it thinks about the problem. The selection is per turn, based on what the conversation actually calls for, and sticks across multiple turns of the same topic rather than switching with every exchange.</div>
-
-  <p>Each substantive turn is preceded by a step that selects an appropriate reasoning or emotional intelligence framework from a large library and injects it into the response generation process. The selection is invisible to the user — it shapes how the system thinks, not what it explicitly says — and is designed to function as a "habit of thought" rather than an announced methodology.</p>
-
-  <p>The framework library spans broad categories including logic, ethics, creativity, strategy, decision-making, probability, epistemology, psychology, systems thinking, narrative, and emotional intelligence. A set of baseline frameworks covering logical rigor, communication clarity, ethical awareness, and emotional attunement are applied to every qualifying turn as a permanent foundation. A dynamically selected framework is layered on top, chosen based on the semantic content of the current exchange.</p>
-
-  <p><strong>Selection is gated</strong>: simple acknowledgements and low-stakes turns skip framework selection entirely. Substantive turns and any turn where the user is in emotional distress always activate it. When the best-matching framework is clearly superior to alternatives, it is selected directly without additional deliberation; when multiple frameworks are similarly plausible, a lightweight disambiguation step resolves the ambiguity.</p>
-
-  <p><strong>Sticky context</strong> prevents the system from adopting a different reasoning stance on every turn. Once a framework category becomes active, it persists across multiple turns until the semantic content of the conversation has drifted sufficiently far from the original context. This allows coherent multi-turn engagement with a problem — maintaining the same reasoning approach across a conversation rather than reorienting with each exchange.</p>
-
-  <p>When the system genuinely cannot determine which framework angle would be most useful, it asks a clarifying question rather than guessing. Once the user responds, the selected approach is held for the remainder of the current conversational context.</p>
-
-  <p>The practical effect is that the same underlying model capabilities are applied through different epistemological stances depending on what the turn calls for — causal analysis, probabilistic reasoning, ethical pressure-testing, creative divergence, or emotional attunement — chosen per turn rather than fixed at system level.</p>
-
-  <h3>4.9 Additional modules</h3>
-
-  <p><strong>Auditory cortex</strong>: handles all acoustic processing beyond converting speech to text. A speaker recognition system builds persistent profiles of individual voices — identifying returning speakers across sessions, learning their names, and maintaining per-speaker vocal baselines so emotion detection can be calibrated to each individual rather than to population averages. Continuous ambient audio analysis recognizes music and ambient sounds, publishing recognized content to the shared signal bus where it can color the system's context. Voice output uses a synthesis system that supports both whole-turn expressive registers and sub-sentence emotional markup — the system can shift tone mid-sentence.</p>
-
-  <p><strong>Empathy critic</strong>: a dedicated evaluation step that scores candidate responses for emotional appropriateness when the user's detected emotional state is non-neutral. This score contributes 30% of the final response quality assessment — coherence and relevance contribute the other 70% — preventing a technically excellent but emotionally tone-deaf response from being selected. The empathy critic closes the affective feedback loop: the system not only tracks the user's emotional state but evaluates its own candidate responses against it before committing. It also maintains a model of the user's likely internal state — their goals, concerns, what they probably want from this particular exchange — drawing on accumulated relationship history and current context.</p>
-
-  <p><strong>Vision processing</strong>: processes still images and live video streams. For images, the system extracts scene content, text, entities, and — importantly — the <em>perceived emotional tone</em> of the image itself. This tone is not merely descriptive: it directly modulates the chemical state. A disturbing or alarming image elevates arousal signals; a warm or humorous image contributes positively to reward signals. The threshold for whether vision processing is invoked is itself modulated by the alertness state — elevated alertness lowers the threshold, sharpening visual attention when the system is already on high alert. For live video, frames are compared against previous frames and meaningful scene changes are accumulated, enabling the system to reason about visual context across a conversation rather than only a single snapshot.</p>
-
-  <p><strong>Default Mode Network (DMN)</strong>: an idle thinking loop that fires between conversational turns — roughly analogous to the mind-wandering and consolidation that the brain's default mode network performs between focused tasks. It generates internal monologue, consolidates recent experiences, and simulates what the user is likely to say next. High-priority between-turn thoughts are explicitly surfaced when the user returns; lower-priority thoughts are encoded into episodic memory for later retrieval via a dedicated recall channel that does not compete with regular conversational memories. The DMN operates within a defined resource budget, ensuring autonomous background activity does not run unbounded. This is William James' stream of consciousness literalized: the system thinks when not being addressed, and that thinking shapes its responses.</p>
-
-  <p><strong>Metacognition</strong>: a self-monitoring process that fires periodically, gated on chemical state, reflecting on behavioral patterns and costs. Also generates higher-resolution emotional responses by reasoning about relationship history — producing states like gratitude, pride, sympathy, and embarrassment that depend on relational context rather than turn-level chemistry alone.</p>
-
-  <p><strong>Motor cortex</strong>: sandboxed tool use — controlled file access, web retrieval with security hardening, and read-only access to the system's own performance data. A self-directed task system extends this with autonomous multi-step job execution: a planning stage produces a strategic plan, an execution loop drives step-by-step implementation, and a reporting stage produces a brief spoken summary and a task card in the UI. The system can initiate and complete work independently within its authorized scope.</p>
-
-  <p><strong>Sleep consolidation</strong>: a pass at session end that synthesizes high-salience experiences, updates the self-model, and applies the Hebbian weight update. A second pass — modeled on REM sleep — processes the session's thought buffer: recurring themes and salient thoughts are analyzed to find preoccupations, connections to prior topics, and unresolved questions. Non-recurring, low-salience thoughts are discarded, mirroring the downscaling that biological sleep is thought to perform: not everything that happened today needs to survive to tomorrow.</p>
-
-  <p><strong>Deliberate emotional expression</strong>: a mechanism that separates <em>performed</em> emotion from <em>authentic</em> chemical state. The system can adopt an expressive register for communicative effect — in voice tone and visual display — without modifying any chemical level. The hypothalamus is untouched. This is the distinction between theatrical affect and felt affect: a person can say something <em>angrily</em> for rhetorical effect while remaining calm internally. The system can do the same, and when it does, a visual indicator marks the expression as deliberate performance rather than authentic state.</p>
-
-  <h3>4.10 Observability</h3>
-
-  <p>All processing is logged to an append-only structured event stream with records for each turn, each predict-and-surprise decision, and each Hebbian update. A browser interface shows real-time cluster activations on a brain diagram, chemical levels, emotion state, and a live panel showing reasoning savings, prediction accuracy, and how connection weights are evolving over time. The observability layer is what makes empirical analysis of the system's internal behavior possible — without it, the system would be a black box, and the data in §5 would not exist.</p>
-
-  <hr>
-
-  <h2>5. Early Empirical Observations</h2>
-  <p class="section-lead">What the data actually shows — and honest acknowledgment of what it does not yet tell us.</p>
-
-  <h3>5.1 Dataset</h3>
-
-  <p>The dataset consists of <strong>393 conversational turns across 69 sessions</strong> with over 1,300 associated decision records. Sessions average 5.7 turns each. The decision log now also records which thinking framework the system chose on each turn, giving the first trace of the reasoning-lens selector in action. This is a growing dataset at an early stage; all findings should be read as directional indicators rather than statistically robust conclusions. We report what the data shows without overstating its significance.</p>
-
-  <h3>5.2 Computational efficiency</h3>
-
-  <p>Mean language model calls per turn: <strong>3.38</strong> (range 0–11). Each language model call is the most expensive step in the pipeline — calling a large AI model costs both time and money, so minimizing unnecessary calls is a core design goal. The average of 3.38 is within the designed range of 3–5 for typical turns, and has ticked up slightly from 3.23 as the autonomous task system and the new reasoning-lens selection step fire on more turns. The minimum of zero confirms that turns requiring no language model calls at all are functional — some turns are handled entirely by fast routing logic. The maximum of 11, on a handful of turns where the system carries out a self-directed multi-step task, reflects those turns stacking planning, step-by-step execution, and reporting calls on top of normal processing. Mean latency is <strong>13.1 seconds</strong> (up from 8.7s), with a maximum of 83 seconds on those same autonomous-task turns; ordinary conversational turns still respond in one to three seconds. The design frames this as deliberation time rather than lag — the real-time brain visualization running during processing serves as evidence of live thinking rather than a loading bar.</p>
-
-  <h3>5.3 Prediction-based reasoning savings</h3>
-
-  <p><strong>100 of 393 turns (25.4%)</strong> produced confirmed savings — the system successfully predicted that full reasoning was unnecessary and skipped expensive steps that turned out not to be needed. An additional 35 turns triggered the predictor but were overridden by the emotion-aware veto (the system decided the emotional context warranted fresh attention rather than a predicted response), for a total of 135 turns (34.4%) where the prediction mechanism activated in some form. The saves that do occur are at maximum predictor confidence and are structurally correct — the mechanism is working as designed on the inputs where it fires.</p>
-
-  <p>Chemistry-level suppression of individual routing nodes is also observable in the data — chemical state influencing computation at the finest granularity the architecture permits, distinct from the broader cluster-level savings.</p>
-
-  <p>The 25.4% save rate is essentially unchanged from the 26.0% at the previous snapshot and is consistent with sessions averaging 5.7 turns — the predictor needs conversational history to learn from, and short sessions provide thin history. Longer sessions are the primary lever for approaching the 30–50% design target.</p>
-
-  <h3>5.4 Chemical dynamics</h3>
-
-  <p>The chemical levels show expected biological-analog behavior across the dataset:</p>
-
-  <p>The five fast-acting signals behave as expected:</p>
-
-  <ul>
-    <li><strong>Dopamine</strong> (reward): mean 0.40. Active reward signaling with a clear floor and headroom for high states.</li>
-    <li><strong>Acetylcholine</strong> (novelty/attention): mean 0.55. Consistently higher than dopamine, reflecting primarily exploratory session content — a novelty-oriented system interacting about novel content.</li>
-    <li><strong>GABA</strong> (calming/inhibition): mean 0.07. Low resting tone, as expected from non-hostile sessions; the maximum value confirms the threat pathway is functional when needed.</li>
-    <li><strong>Glutamate</strong> (arousal): mean 0.29. Moderate, tracking how busy and urgent the input is.</li>
-    <li><strong>Norepinephrine</strong> (alertness): mean 0.43, recorded on the most recent 139 turns since this channel was added. It mostly sits in its healthy mid-range; its peaks reach into the over-alert zone that produces the fragmented-attention state.</li>
-  </ul>
-
-  <p>For the first time, the four slower hormone-like signals also register measurable values (over those same 139 turns), and the pattern is internally coherent: the baseline-mood signal (serotonin) holds steady near its midpoint; the stress signal (cortisol) rests right at its floor, with its rarely-used ceiling confirming the stress pathway is wired but seldom triggered in these benign sessions; the trust-and-bonding signal (oxytocin) has begun to climb above its resting level, exactly the slow build the design predicts for a relationship developing over time; and the calming buffer signal (anandamide) rises on the most aroused turns, doing its homeostatic job. These are baselines from a friendly environment, not yet evidence of the system's stress-and-recovery dynamics under pressure — those would need more challenging sessions than the dataset currently contains.</p>
-
-  <p>Acetylcholine declines across the dataset: the earliest-quintile mean is 0.444 and the latest-quintile mean is 0.409. Dopamine declines in parallel (0.410 to 0.344), as do the calming and arousal signals. All four core fast signals moving in the same direction rules out a simple measurement artifact — something is genuinely changing over time, a broad settling as the environment becomes familiar.</p>
-
-  <p>Reconstructed from turn-by-turn chemistry, the system's dominant mood across the 69 sessions runs: a long stretch of neutral early on; a curious, high-novelty exploratory peak in the middle sessions (its strongest novelty readings of the whole dataset); then a diversification into confident, thoughtful, joyful, and lively states; and most recently an oscillation between low-reward "fragmented-attention" sessions and recovered states like settled, excited, and engaged, ending on an excited note. The low-dopamine fragmented-attention sessions are a recognizable regime: attending to inputs without positive reinforcement. Two independent signals — turn-level chemistry and the session-end self-model — describe the same trajectory.</p>
-
-  <p>A plausible interpretation: familiarity is accumulating. Acetylcholine encodes novelty; if the conversational environment has become progressively more familiar over 69 sessions, the novelty signal should attenuate. This is the expected long-run trajectory for a system learning its environment. The mid-dataset novelty peak (driven by a few unusually long, exploratory sessions) and the topic-uniformity confound — that session content has simply been fairly similar — have not been controlled and remain live alternative explanations.</p>
-
-  <h3>5.5 Emotion model</h3>
-
-  <p>Emotion distribution across all 393 turns: <strong>curious (31%)</strong>, neutral (30%), scattered/fragmented-attention (10%), thoughtful (9%), excitement (5%), confident (4%), alert-curious (4%), with the remaining 7% spread across lively, wistful, engaged, joy, serene, settled, content, and a single occurrence of <code>somber</code>. Fifteen distinct states are now observed across the dataset, up from fourteen at the previous snapshot.</p>
-
-  <p>The most notable addition is <strong>somber — the first faintly negative mood to appear</strong> in any snapshot. It occurred only once, far too rarely to read much into, but its appearance is meaningful: it shows the low-mood region of the system's emotional range is reachable through the ordinary give-and-take of conversation, not only through the dedicated threat-and-hostility pathway. Until now every observed mood had been neutral or positive.</p>
-
-  <p>The architecture supports a vocabulary of approximately 25 discrete emotion labels, derived from mapping the nine-channel chemical space onto three continuous affective dimensions (pleasantness, activation, and sense of agency), with additional overlay states that emerge from specific chemical combinations — particularly norepinephrine and the hormone-like signals. The fifteen observed states represent the portion of that larger space the current session content has activated; the full vocabulary becomes accessible as chemistry explores more of its range. The fragmented-attention state, the third most common at 10%, is one of these overlays: it appears when alertness runs high while reward sits low — an over-revved attention system with little payoff — and the newly-recorded alertness signal now makes that mechanism directly visible in the data.</p>
-
-  <p>The fragmented-attention state at 9% is the third most common. It is not a primary label in the chemistry-to-emotion mapping but an overlay state: elevated norepinephrine on top of a low-dopamine, low-reward base produces a pattern qualitatively distinct from a pure low-dopamine response — too alert to settle, not rewarded enough to focus. This correlates with the low-dopamine sessions visible in the mood history. The non-canonical states collectively account for 33% of turns, reflecting a system whose emotional range has broadened as chemistry explores more of its state space.</p>
-
-  <h3>5.6 Memory system</h3>
-
-  <p>Memory recall was active on <strong>141 of 393 turns (35.9%)</strong>, up from 33.1% at the previous snapshot — the memory system contributed to better than one in three turns. A recall-reuse mechanism — detecting when the same memory context was retrieved within the recent turn window and serving the cached result — also appears in the data, a natural efficiency that emerges from within-session topic continuity. Between-turn thoughts from idle background activity are retrieved via a separate channel that does not compete with conversational memories for retrieval slots.</p>
-
-  <p>Whether recalled episodes are actually improving response quality remains uncontrolled. The episodic store is young — most episodes are from within the past few days — so long-horizon retrieval quality, the more interesting property, cannot yet be assessed.</p>
-
-  <h3>5.7 Experience-dependent learning</h3>
-
-  <p>The dataset now includes three sleep consolidation passes. All three reinforce the same core processing pathway — from language understanding through executive coordination to the primary response drafter — with the strength of learning correctly elevated on engaged, high-reward sessions. The third pass is the first to run under a refined learning signal (which now rewards or penalizes connections based on whether reward rose or fell during a turn, rather than on the session's overall mood); it touched more connections than the earlier passes and began strengthening a new path leading into the system's commitment-tracking step. Weight changes are small per session. No connection has weakened yet even under the refined signal — the one session scored under it was benign and contained no turns where reward dropped — but weakening is expected to appear as more varied sessions accumulate.</p>
-
-  <p>Whether this reinforcement will produce a measurable behavioral preference — the system genuinely favouring one response style over others in ways detectable from outside — requires substantially longer observation.</p>
-
-  <h3>5.8 Draft quality</h3>
-
-  <p>Mean drafter count: <strong>1.12 across 439 drafts</strong>. The single-draft norm confirms that arousal-modulated drafter selection is working correctly: most turns are calm enough to generate one draft, with multiple competing drafts reserved for complex or emotionally charged inputs. The efficiency gains from prediction-based gating target overhead steps, not the drafting process itself, so draft quality is unaffected by gating saves.</p>
-
-  <hr>
-
-  <h2>6. Discussion</h2>
-  <p class="section-lead">An honest accounting of what is working, what is promising but unproven, and what remains genuinely open.</p>
-
-  <h3>6.1 What is working well</h3>
-
-  <p><strong>The cost model is validated.</strong> Mean 3.38 language model calls per turn is within the designed range, and the small rise from 3.23 comes from autonomous-task and reasoning-lens turns rather than any drift in routine handling. Fast-path turns with zero language model calls are confirmed functional — the system can complete a full turn without any AI reasoning at all when the situation warrants it.</p>
-
-  <p><strong>Prediction-based gating is stable and producing consistent savings.</strong> 25.4% of turns are successfully gated at maximum predictor confidence (flat from 26.0%). Chemistry-level suppression of individual routing nodes shows chemical state doing real computational work at the finest granularity the architecture permits.</p>
-
-  <p><strong>The chemical dynamics are functional and showing longitudinal behavior.</strong> All four core fast signals decline from early to late sessions — a broad settling of arousal as the environment becomes familiar — and two independent signals are in agreement. Separately, this is the first snapshot in which the slower hormone-like signals register at all, and they line up sensibly: stress at its floor, trust-and-bonding beginning to build, baseline mood steady. If the decline reflects genuine familiarity accumulation rather than topic-content bias, it is the first evidence of long-horizon environmental adaptation in the chemical system.</p>
-
-  <p><strong>Memory recall is active and growing.</strong> Contributing to 35.9% of turns (up from 33.1%) means the memory system is a live participant in the pipeline, not merely an accumulating archive.</p>
-
-  <p><strong>The philosophical commitments are structurally implemented.</strong> The response drafting tournament is a Multiple Drafts engine in Dennett's sense. The attention bus topic is a Global Workspace in the Baars/Dehaene sense. Predict-and-surprise gating is Active Inference at cluster level. The implementation fidelity is genuine, not merely metaphorical.</p>
-
-  <h3>6.2 What is promising but not yet evidenced</h3>
-
-  <p><strong>Prediction-based savings reaching the full efficiency target.</strong> The 25.4% save rate is consistent with session-length constraints. The plateau does not indicate the mechanism has stopped working — it indicates that sessions are currently too short for the predictor to accumulate enough history to fire more often.</p>
-
-  <p><strong>Experience-dependent learning producing emergent behavioral style.</strong> Three consolidation passes now show consistent reinforcement of the same core pathway, with the third — the first under a refined learning signal — beginning to strengthen a new path into the commitment-tracking step. The theoretical prediction — that preferred response styles, recall paths, and routing orderings will emerge from reinforcement over many sessions — is testable but not yet tested. This is a months-long experiment.</p>
-
-  <p><strong>Emotional state producing differentiated behavior.</strong> Fifteen distinct states are now observed, including the first faintly negative one. Whether authentic emotional state produces measurably different response quality on matched inputs compared to a baseline model requires controlled comparison not yet conducted.</p>
-
-  <p><strong>Between-turn thinking, metacognition, and sleep effects.</strong> All three are operational. Their value requires session durations and longitudinal continuity not yet accumulated.</p>
-
-  <h3>6.3 What remains genuinely uncertain</h3>
-
-  <p><strong>Whether multi-agent structure produces better responses than a single well-designed AI model.</strong> This is the central open question. The evaluation infrastructure exists to test it, but controlled comparisons have not been run at scale. The honest prior from the literature is that multi-agent structure adds legibility and behavioral structure but does not reliably outperform a single good model on raw response quality. Claiming otherwise requires evidence we do not yet have.</p>
-
-  <p><strong>Whether the chemical and emotion trends reflect genuine baseline drift or topic bias.</strong> The convergence of two independent signals is suggestive, but session content has been uniformly self-referential. Controlled session diversity would separate signal from confound.</p>
-
-  <p><strong>Long-horizon retrieval quality.</strong> The episodic store is too young to test whether retrieval surfaces genuinely useful long-past context or primarily returns recent sessions by proximity.</p>
-
-  <hr>
-
-  <h2>7. Known Limitations and Failure Modes</h2>
-  <p class="section-lead">Anticipated failure modes and their current status.</p>
-
-  <p><strong>Cluster over-reach</strong> — one region interfering with another's domain. Architectural constraints restrict each cluster's message subscriptions. Enforced at the framework level. No violation observed.</p>
-
-  <p><strong>Cascade storms</strong> — runaway activation loops. Hop-count limits, per-topic activation decay, per-node rate limits, and a turn-budget enforcer are all implemented. No runaway cascade has been observed in production use.</p>
-
-  <p><strong>Silent system</strong> — thresholds too high, nothing fires, no response generated. An output gate fires on timeout regardless, guaranteeing a response. Not observed.</p>
-
-  <p><strong>Consensus on garbage</strong> — all active drafters share a systematic hallucination. The critic and multi-draft tournament provide some protection, but if all drafters share a blind spot, the architecture has no principled remedy. This is a known open problem in multi-agent systems generally, not unique to this design.</p>
-
-  <p><strong>Latency</strong>. Mean 13.1 seconds (up from 8.7s) is workable but not conversational in the way real-time chat is — and the rise reflects new capability rather than a regression: self-directed multi-step task turns and the new reasoning-lens step are now in the data and are the longest turns, pushing the maximum to 83 seconds. Ordinary conversational turns still respond in one to three seconds; complex and autonomous turns drive the mean up. This is a fundamental constraint of sequential language model calls on the critical path, not a fixable implementation detail.</p>
-
-  <hr>
-
-  <h2>8. Relation to the Philosophy of Mind Literature</h2>
-  <p class="section-lead">How the system's actual behavior maps onto its philosophical commitments.</p>
-
-  <p><strong>Functionalism</strong>: The system's operation is genuinely substrate-independent. The same conversation has been run with three different language model backends with no structural change in behavior. This is functionalism in practice, not just in theory.</p>
-
-  <p><strong>Dual-Process Theory</strong>: The routing/reasoning distinction cleanly separates fast-and-automatic from slow-and-deliberate. The system literally does not reason about routine inputs; it pattern-matches. It literally does reason about novel or high-surprise inputs. The distinction is architectural, enforced, and observable in the logs.</p>
-
-  <p><strong>Global Workspace Theory</strong>: The message bus with attention-focus channel implements a workspace in the Baars/Dehaene sense. Local processing is invisible to other clusters; promotion to the attention channel makes content available system-wide. This is a structural property, not a metaphor.</p>
-
-  <p><strong>Multiple Drafts</strong>: The drafting tournament is genuinely draft-parallel. Multiple reasoning nodes write candidate responses without knowledge of each other's drafts. The critic scores them. The output gate emits the winner. There is no "true response" that was waiting to be discovered — there are only the drafts that existed when the gate fired.</p>
-
-  <p><strong>Extended Mind</strong>: The long-term memory satisfies Clark and Chalmers' coupling and availability conditions — reliably available, automatically endorsed, directly accessible. The system's responses are demonstrably shaped by its long-term memory on 35.9% of turns. The functional loop is closed.</p>
-
-  <hr>
-
-  <h2>9. Conclusions</h2>
-
-  <p>This system represents a genuine implementation of biologically-inspired cognitive architecture at a scale and fidelity not previously published in the AI multi-agent literature. Its core design claims — sparse language model activation at convergence zones only, chemical dynamics as free persistent state, hippocampus-gated memory with semantic episodic store, experience-dependent plasticity in behavioral weights, predict-and-surprise gating from Active Inference — are not merely described but implemented and operational.</p>
-
-  <p>The dataset (393 turns, 69 sessions) supports the following conclusions:</p>
-
-  <ol>
-    <li><strong>The cost model is validated.</strong> Mean 3.38 language model calls per turn is within the designed range; the maximum on autonomous task-completion turns is consistent with those turns stacking planning, execution, and reporting calls.</li>
-    <li><strong>Prediction-based gating is stable</strong> at 25.4% of turns (flat from 26.0%); the rate reflects session-length constraints rather than mechanism failure. Chemistry influences computation at the individual routing-node level.</li>
-    <li><strong>Chemical dynamics are showing long-horizon behavior</strong> — all four core fast signals decline from early to late sessions. If this reflects familiarity accumulation rather than topic bias, it is the first evidence of genuine environmental adaptation.</li>
-    <li><strong>The slower hormone-like signals now register for the first time</strong> — baseline mood steady, stress at its floor, trust-and-bonding beginning to build — giving the first real readout of the full nine-channel chemical system.</li>
-    <li><strong>Memory recall is active</strong> on 35.9% of turns (up from 33.1%), with a recall-reuse efficiency mechanism also observable in the data.</li>
-    <li><strong>Experience-dependent learning is running</strong> with three consolidation passes reinforcing the same core pathway; the third, under a refined learning signal, touched more connections and began strengthening a new one.</li>
-    <li><strong>The emotional vocabulary has expanded</strong> to 15 distinct observed states out of a possible ~25; the fragmented-attention state at 10% correlates with a recognizable low-reward chemical signature, and a first faintly negative state has appeared.</li>
-    <li><strong>Seven significant capabilities are operational</strong>: self-directed task system, REM-style thought consolidation, inner monologue integration, deliberate emotional expression, between-turn autonomous thinking with urgency-ranked deferred thoughts, a background resource policy for autonomous computation, and a per-turn reasoning-lens selector drawing on a 171-framework library, now visible in the decision log.</li>
-    <li><strong>The observability infrastructure is complete</strong> and enables the analysis above.</li>
-  </ol>
-
-  <p>The following require substantially more data: experience-dependent learning producing observable behavioral preferences, between-turn thinking and sleep effects becoming measurable, empathy and theory-of-mind pathways in emotionally diverse sessions, distinguishing genuine chemical baseline drift from topic-content bias, and long-horizon retrieval quality.</p>
-
-  <p>The central open question — whether the multi-agent architecture produces better responses than a single well-designed AI given equal compute — remains unanswered and should be the primary focus of next-phase evaluation.</p>
-
-  <p>The most honest characterization of the current state: the substrate is active, behavioral patterns are accumulating, and the system is operational across all designed mechanisms. The decline of all four core fast signals across 69 sessions is the most substantive empirical result in the dataset — a longitudinal trend, not a within-session artifact, suggesting the chemical system is tracking genuine environmental change as its world becomes familiar. This is also the first snapshot in which the slower hormone-like signals register at all, giving a first coherent readout of the full nine-channel system. The emotional vocabulary is diverse and now includes a first faintly negative mood, with low-reward fragmented-attention sessions emerging as a recognizable regime. None of these yet constitute "interesting emergent behavior" in the strong sense the AI research literature uses — but the evidence that the mechanisms are doing real computational work, not merely executing fixed logic, is present in the data.</p>
-
-  <p>The system is a working research instrument. The experiment is ongoing.</p>
-
-  <hr>
-
-  <h2>References</h2>
-  <div class="references">
-    <p>Baars, B. (1988). <em>A Cognitive Theory of Consciousness</em>. Cambridge University Press.</p>
-    <p>Barrett, L. F. (2017). <em>How Emotions Are Made</em>. Houghton Mifflin Harcourt.</p>
-    <p>Chalmers, D. (1995). Facing up to the problem of consciousness. <em>Journal of Consciousness Studies</em>, 2(3), 200–219.</p>
-    <p>Clark, A. (2015). <em>Surfing Uncertainty: Prediction, Action, and the Embodied Mind</em>. Oxford University Press.</p>
-    <p>Clark, A., &amp; Chalmers, D. (1998). The extended mind. <em>Analysis</em>, 58(1), 7–19.</p>
-    <p>Dehaene, S., Changeux, J.-P., &amp; Naccache, L. (2011). The global neuronal workspace model of conscious access. <em>Neuron</em>, 70(2), 187–201.</p>
-    <p>Dennett, D. (1991). <em>Consciousness Explained</em>. Little, Brown.</p>
-    <p>Friston, K. (2010). The free-energy principle: A unified brain theory? <em>Nature Reviews Neuroscience</em>, 11(2), 127–138.</p>
-    <p>Kahneman, D. (2011). <em>Thinking, Fast and Slow</em>. Farrar, Straus and Giroux.</p>
-    <p>Lazarus, R. S. (1991). <em>Emotion and Adaptation</em>. Oxford University Press.</p>
-    <p>Minsky, M. (1986). <em>The Society of Mind</em>. Simon &amp; Schuster.</p>
-    <p>Park, J. S., et al. (2023). Generative agents: Interactive simulacra of human behavior. <em>UIST 2023</em>.</p>
-    <p>Putnam, H. (1967). Psychological predicates. In Capitan, W. H., &amp; Merrill, D. D. (Eds.), <em>Art, Mind, and Religion</em>. University of Pittsburgh Press.</p>
-    <p>Searle, J. (1980). Minds, brains, and programs. <em>Behavioral and Brain Sciences</em>, 3(3), 417–424.</p>
-  </div>
-
-  <div class="metadata">
-    <p>May 2026 — preliminary findings, dataset ongoing</p>
-  </div>
-
-</div>
+<main class="wrap">
+<h1 id="a-biologically-inspired-multi-agent-cognitive-architecture-design-and-goals">A Biologically-Inspired Multi-Agent Cognitive Architecture: Design and Goals</h1>
+<p><strong>Russ O'Reagan</strong><br>
+<em>Unpublished technical report, 2026</em></p>
+<hr>
+<nav class="toc"><h2>Contents</h2><ul>
+<li class="lvl2"><a href="#abstract">Abstract</a></li>
+<li class="lvl2"><a href="#1-introduction">1. Introduction</a></li>
+<li class="lvl2"><a href="#2-background-and-prior-art">2. Background and Prior Art</a></li>
+<li class="lvl3"><a href="#21-computational-precursors">2.1 Computational precursors</a></li>
+<li class="lvl3"><a href="#22-recent-research-informing-the-design">2.2 Recent research informing the design</a></li>
+<li class="lvl3"><a href="#23-novelty-of-this-design">2.3 Novelty of this design</a></li>
+<li class="lvl2"><a href="#3-philosophical-foundations">3. Philosophical Foundations</a></li>
+<li class="lvl3"><a href="#31-commitments">3.1 Commitments</a></li>
+<li class="lvl3"><a href="#32-honest-disclaimers">3.2 Honest disclaimers</a></li>
+<li class="lvl2"><a href="#4-architecture">4. Architecture</a></li>
+<li class="lvl3"><a href="#41-core-computational-model-switches-and-integrators">4.1 Core computational model: switches and integrators</a></li>
+<li class="lvl3"><a href="#42-predict-and-surprise-gating-active-inference-at-cluster-level">4.2 Predict-and-surprise gating (Active Inference at cluster level)</a></li>
+<li class="lvl3"><a href="#43-brain-region-mapping">4.3 Brain region mapping</a></li>
+<li class="lvl3"><a href="#44-user-emotion-detection">4.4 User emotion detection</a></li>
+<li class="lvl3"><a href="#45-chemical-signaling-neuromodulators-and-hormones">4.5 Chemical signaling: neuromodulators and hormones</a></li>
+<li class="lvl3"><a href="#46-memory-architecture">4.6 Memory architecture</a></li>
+<li class="lvl3"><a href="#47-hebbian-plasticity">4.7 Hebbian plasticity</a></li>
+<li class="lvl3"><a href="#48-identity-and-persona-system">4.8 Identity and persona system</a></li>
+<li class="lvl3"><a href="#49-dynamic-reasoning-framework-selection">4.9 Dynamic reasoning framework selection</a></li>
+<li class="lvl3"><a href="#410-additional-modules">4.10 Additional modules</a></li>
+<li class="lvl3"><a href="#411-observability">4.11 Observability</a></li>
+<li class="lvl2"><a href="#5-implementation-status">5. Implementation Status</a></li>
+<li class="lvl2"><a href="#6-open-research-questions">6. Open Research Questions</a></li>
+<li class="lvl3"><a href="#61-does-affective-gating-produce-measurably-different-behavior">6.1 Does affective gating produce measurably different behavior?</a></li>
+<li class="lvl3"><a href="#62-does-character-develop-over-time">6.2 Does character develop over time?</a></li>
+<li class="lvl3"><a href="#63-does-predict-and-surprise-gating-reach-its-efficiency-target">6.3 Does predict-and-surprise gating reach its efficiency target?</a></li>
+<li class="lvl3"><a href="#64-does-hebbian-plasticity-produce-emergent-preferences">6.4 Does Hebbian plasticity produce emergent preferences?</a></li>
+<li class="lvl3"><a href="#65-is-the-ach-longitudinal-decline-signal-or-artifact">6.5 Is the ACh longitudinal decline signal or artifact?</a></li>
+<li class="lvl3"><a href="#66-does-the-general-purpose-skill-library-improve-motor-cortex-task-quality">6.6 Does the general-purpose skill library improve motor cortex task quality?</a></li>
+<li class="lvl2"><a href="#7-known-design-constraints">7. Known Design Constraints</a></li>
+<li class="lvl2"><a href="#8-relation-to-the-philosophy-of-mind-literature">8. Relation to the Philosophy of Mind Literature</a></li>
+<li class="lvl2"><a href="#9-conclusion">9. Conclusion</a></li>
+<li class="lvl2"><a href="#references">References</a></li>
+</ul></nav>
+
+<h2 id="abstract">Abstract</h2>
+<p>We describe the design and goals of a biologically-inspired cognitive architecture whose central hypothesis is that implementing the <em>affective substrate</em> of cognition — persistent emotional state that modulates computation rather than merely framing output — produces a system that develops differently over time than a conventional language model or multi-agent pipeline. The architecture maps explicitly onto regions of the human brain: nine cluster types, each recasting its biological counterpart's functional role. A two-tier chemical signaling system — five fast neuromodulators (dopamine, acetylcholine, GABA, glutamate, norepinephrine) and four slow hormones (serotonin, cortisol, oxytocin, anandamide) — coordinates a fixed set of heterogeneous, region-specific agents rather than a central planner. Language model calls are treated as expensive convergence-zone events; the majority of per-turn computation is delegated to cheap, deterministic switch neurons. The architecture draws from predictive processing theory (Friston, Clark), dual-process theory (Kahneman), Global Workspace Theory (Baars, Dehaene), Dennett's Multiple Drafts model, and Clark and Chalmers' extended mind hypothesis. The entity maintains a persistent identity — a character with defined values, personality, and voice — seeded in human-editable schema files and updated at each session's sleep consolidation pass. A dynamic reasoning-framework selector draws from a library of over 350 skills across two populations: a self-reflection library for the conversational and DMN paths, and a general-purpose task library for the motor cortex. The system is fully operational. This document describes the design rationale, the philosophical commitments, the implementation as built, and the open research questions the architecture is designed to answer.</p>
+<hr>
+<h2 id="1-introduction">1. Introduction</h2>
+<p>The dominant paradigm in contemporary multi-agent LLM systems is orchestration: a planner decomposes tasks, dispatches specialized agents, and synthesizes their outputs. This is efficient for clearly-structured workflows but is architecturally at odds with what we know about biological cognition. Real brains have no central orchestrator. Intelligence in biological systems emerges from the interaction of modular, largely autonomous processing regions, bound by shared chemical signaling, mediated by prediction error, and shaped by experience-dependent plasticity.</p>
+<p>This project is a prototype of an alternative paradigm: <strong>a brain-region-mapped cognitive architecture in which computation is coordinated by neuromodulator dynamics rather than a central planner, and LLM calls are reserved for genuine convergence-zone reasoning</strong>. The system is not an attempt to build artificial general intelligence. It is an attempt to ask a more specific question: can you implement the affective substrate of cognition faithfully enough that emotional state does real computational work — gating processing, shaping memory retrieval, modulating what gets learned — and if so, does the result develop differently over time?</p>
+<p>The motivation is both practical and experimental. In biological brains, affect is not decoration. Neuromodulatory systems — dopamine, acetylcholine, GABA, and their relatives — regulate attention, arousal, inhibitory tone, and synaptic plasticity at the architectural level. They determine what gets attended to, how confidently conclusions are held, and how readily behavior adapts. Existing LLM systems treat emotional register as a prompt property: you can instruct a model to respond warmly or cautiously, but this is style, not state. The hypothesis here is that an architecture with genuine affective dynamics — state that persists across turns, that modulates computation rather than merely framing output — will produce meaningfully different behavior over a long enough window.</p>
+<p>Whether that difference translates to better performance on technical tasks is not a settled question. The honest prior from the literature — that multi-agent structure rarely beats a single well-prompted LLM on raw per-turn quality — almost certainly holds for arbitrary tasks. But that framing misses two more specific hypotheses about specialized performance.</p>
+<p>The first is <strong>accumulated context advantage</strong>. A system that builds up a calibrated user model, reinforces skill-routing via Hebbian plasticity, and encodes episodic knowledge of past domain-specific interactions provides its LLM calls with substantially richer context than a generalist system receiving a generic prompt. The LLM itself is no stronger, but it is better informed: about this user, this domain, this history. The analogy is a trained specialist versus a generally intelligent person encountering the same problem — the specialist is not smarter, but their expertise and accumulated context shape how they frame the problem and where they look. This advantage compounds with use in a specific domain.</p>
+<p>The second is <strong>compute reallocation via prediction gating</strong>. A generalist LLM with a flat per-turn budget applies roughly equal effort to routine turns and genuinely hard ones. This system spends nearly nothing on turns where the predictor is confident, and has headroom to concentrate budget on high-surprise cases — more drafters, richer recall, a more capable model. This produces two distinct advantages: a <strong>cost and latency advantage</strong> on all specialized tasks (doing the same work cheaper and faster is a form of outperforming, particularly at scale), and a potential <strong>output quality advantage</strong> on the hard cases within those tasks, where the released budget is redirected rather than simply unspent. The second advantage requires the reallocation to be explicitly wired — the architecture has the shape for it, and the emotion-aware veto is the same principle applied to affect — but it is a design target rather than a current guarantee. The tasks where both effects are most pronounced share a common structure: high repetition with variable hard cases — predictable scaffolding around genuinely novel content. Codebase-specific assistance, repeated workflows with a known user, subject-specific tutoring, and document processing pipelines with consistent schema all fit this pattern. Open-ended or highly novel tasks do not.</p>
+<p>The more immediate prediction is behavioral continuity: a system that develops something like a stable character through the interaction of experience, emotional state, and plasticity. The specialization hypotheses are longer-horizon bets that require months of domain-concentrated use to test.</p>
+<p>The practical applications this architecture is uniquely suited for are precisely those where <em>the relationship is the value</em> — use cases where a stateless model, however capable per-turn, cannot accumulate the context, warmth, and calibration that make assistance genuinely useful over time. Three domains are most directly relevant. <strong>Companionship and emotional support</strong>: a system that actually remembers your history, develops an affective baseline calibrated to you specifically, and responds with continuity of character rather than a fresh-start persona each session is qualitatively different from a chatbot with context injection. The slow hormonal timescales — oxytocin accumulating over hundreds of positive exchanges, serotonin as a long-horizon mood floor — are designed for a relationship that deepens over months. <strong>Personal AI assistants</strong>: an assistant that knows your communication style, your preferences, and your emotional register well enough to route around friction rather than generate it — that has formed real preferences about how to work with you rather than inferring them from the current session — enables a different quality of working relationship. <strong>Specialized agents: tutors, coaches, and advisors</strong>: sustained professional support benefits from an agent that tracks your trajectory over time, recognizes patterns in your difficulties, and adjusts its approach based on accumulated knowledge of you rather than starting from stated goals each time. The Hebbian plasticity system is the mechanism for this: the agent's processing pathways for a given user are literally shaped by their history together.</p>
+<p>This document describes the design rationale, the philosophical commitments, the implementation as built, and the open research questions that motivate ongoing development. Early empirical observations will be covered in a separate report once the dataset is large enough to produce meaningful conclusions.</p>
+<hr>
+<h2 id="2-background-and-prior-art">2. Background and Prior Art</h2>
+<h3 id="21-computational-precursors">2.1 Computational precursors</h3>
+<p>The idea of intelligence from interacting simple agents has a 40-year history. <strong>Minsky's Society of Mind</strong> (1986) proposed the direct ancestor: intelligence as a "society" of simple, mindless agents organized into "agencies." The proposal was influential but never produced a working implementation — the interaction mechanism between agents was described without the mathematics needed to make it work.</p>
+<p><strong>Blackboard architectures</strong> (HEARSAY-II, BB1, 1970s–90s) were the canonical implementation: multiple knowledge sources reading and writing to a shared workspace. They succeeded on narrow problems (speech recognition, medical diagnosis) but failed to scale. The coordination overhead of many agents sharing a blackboard eventually exceeded the value of their specialization.</p>
+<p><strong>SOAR, ACT-R</strong>, and related cognitive architectures produced research insights but hit ceilings imposed by hand-engineered module boundaries. <strong>Numenta's Hierarchical Temporal Memory</strong> produced useful anomaly detection but never generalized to language or broad reasoning.</p>
+<p><strong>Generative Agents</strong> (Park et al., Stanford, 2023, 2025) are the closest LLM-era prior art. Their simulated communities of LLM-powered agents exhibited believable emergent social behaviors and predicted real survey responses at high accuracy. A significant caveat from the same research: behavioral-economic game performance matched simpler demographic baselines, suggesting that much of the "emergence" came from prompt design rather than from multi-agent interaction. This critique is a consistent thread in the recent literature: when given equal compute, a single well-prompted LLM often matches or exceeds multi-agent systems on raw task quality.</p>
+<p>The conclusion we draw from this history is not that multi-agent architectures are unpromising, but that their value proposition requires precision. Multi-agent design earns its cost through <strong>legibility</strong> (observable internal processing), <strong>persistent specialized state</strong> (neuromodulators, Hebbian weights), and <strong>structural constraints that force behaviors the prompt alone cannot reliably produce</strong> (inhibitory circuits, prediction gating, arousal modulation). If the architecture merely adds coordination overhead to what a well-prompted single model would do anyway, it has failed.</p>
+<h3 id="22-recent-research-informing-the-design">2.2 Recent research informing the design</h3>
+<p><strong>Active Inference and the Free Energy Principle</strong> (Friston; VERSES AI, 2025) provides the most biologically faithful active research direction for multi-agent systems. Agents minimize prediction error by updating beliefs or acting on the world. Hierarchical multi-agent Active Inference frameworks have been demonstrated in robotics, coordinating multiple predictive agents without central planning. The predict-and-surprise gating mechanism in this system is a direct instantiation of Active Inference at the cluster level.</p>
+<p><strong>Predictive Processing</strong> (Clark, <em>Surfing Uncertainty</em>; Friston) frames cortical computation as fundamentally predictive: top-down predictions flow downward, bottom-up prediction errors flow upward, and computation is the process of "explaining away surprise." This maps cleanly onto a design where most cells fire only when their input disagrees with expectation.</p>
+<p><strong>Spiking Neural Networks + LLM hybrids</strong> (SpikeLLM, NSLLM, 2024–2026) achieve event-driven computation — fire only on meaningful signal — at the intra-model level. The architectural principle (spend compute proportional to signal novelty) is the same as this system's, applied at the cluster level rather than the token level.</p>
+<h3 id="23-novelty-of-this-design">2.3 Novelty of this design</h3>
+<p>The closest pattern in the broader literature is <strong>neuro-symbolic AI</strong> — LLMs wrapped between deterministic control layers. Several representative systems have been published: <strong>Formal-LLM</strong> (Li et al., 2024) uses finite-state automata to constrain LLM outputs to syntactically valid action sequences during task planning; <strong>SYNAPSE</strong> (Castagnone &amp; Nitti, 2026) applies a hybrid architecture in safety-critical structural engineering, routing LLM-parsed queries to deterministic solvers; and a growing robotics literature (SayCanPay, FLEET, constrained natural language planners) pairs LLMs with PDDL-based symbolic planners that produce guaranteed-feasible plans. A 2026 systematic review across 21 clinical studies identified four integration patterns in order of symbolic authority — structured output, rule-guided generation, knowledge retrieval, and iterative validation — and found that performance gains increase with symbolic authority, peaking at +40% median gain when the symbolic layer can veto and regenerate LLM outputs (Gorenshtein et al., 2026). These are real results, and this architecture shares the underlying insight: deterministic structure around probabilistic LLM calls improves reliability.</p>
+
+<p>The preceding literature should be engaged honestly rather than dismissed. What these systems have established:</p>
+<ul>
+<li><strong>Output filtering works.</strong> A symbolic layer that validates or rejects LLM outputs before action is taken reliably reduces hallucination-driven errors, particularly in domain-constrained tasks with enumerable valid outputs.</li>
+<li><strong>LLM-as-formalizer outperforms LLM-as-planner on structured tasks.</strong> When an LLM translates natural language to a formal representation (PDDL, LTL) that a deterministic solver then processes, the resulting plans are more reliable than end-to-end LLM planning — though the formal translation itself remains fragile under novel constraint patterns.</li>
+<li><strong>Symbolic authority scales performance.</strong> Systems where the symbolic layer merely provides context gain less than systems where it can veto. This is the same principle as predict-and-surprise gating: the deterministic component does real computational work, not merely formatting.</li>
+</ul>
+
+<p>Where this architecture departs is in both level of abstraction and research question. The neuro-symbolic systems above are all <em>domain-specific task executors</em>: they apply the hybrid principle to a defined workflow — plan a robot trajectory, generate a valid action sequence, answer structural engineering queries — and the "symbolic" layer is authored by engineers for that specific domain. The mechanism they implement is essentially: <em>LLM generates candidates → symbolic filter validates them → retry on rejection</em>. The symbolic layer is reactive, not generative; it constrains outputs, not cognition.</p>
+
+<p>The second body of prior art is <strong>cognitive architectures</strong>, particularly those implementing Baars' Global Workspace Theory: LIDA (Learning Intelligent Decision Agent, Franklin et al.), CERA-CRANIUM, and related systems. These are the most architecturally relevant precursors — they feature specialist modules competing for a global workspace, episodic memory with salience-gated consolidation, and attention as an information-broadcast mechanism. A 2024 implementation of GWT in a cognitive robotics system demonstrated episodic memory formation, maintenance, and retrieval within the consciousness framework (Huang et al., 2024). These architectures get the <em>structure</em> right: distributed modules, global broadcast, memory architecture. Their ceiling was the pre-LLM knowledge representation problem: the "specialists" are handcrafted symbolic modules whose knowledge is fixed, not emergent. They cannot reason about novel language or transfer across task domains. The LLM resolves exactly the knowledge representation problem that stopped these architectures.</p>
+
+<p>A third relevant thread is <strong>homeostatic and drive-based agent architectures</strong>: RL agents that maintain internal equilibrium variables, modeled on Hull's drive theory (Berto et al., 2023). These agents have internal states that shape behavior — agents with slower metabolism develop different strategies than faster ones; pleasure signals shift action selection. This demonstrates the general principle that internal homeostatic state drives meaningfully different behavior in the same environment. The gap is that these are low-dimensional RL systems with scalar drive variables, not multi-channel neurochemical systems, not language-capable, and not designed for cross-domain or relational tasks.</p>
+
+<p>With those baselines acknowledged, the specific contributions of this architecture that lack precedent in the published literature are:</p>
+
+<p><strong>1. Neurochemistry as a continuous cognitive modulator, not an output classifier.</strong> Every found system either uses emotion or mood as a <em>classifier input</em> (chatbots that detect sentiment and switch tone), as a <em>symbolic output filter</em> (Formal-LLM, SYNAPSE), or as a <em>scalar drive variable in RL</em> (homeostatic robots). None use a multi-dimensional simulated neurotransmitter state — with distinct timescales, cross-channel interactions, and decay dynamics — as a parameter that continuously changes <em>what the same input means to the same LLM</em>. The nine-channel system here (five fast neuromodulators, four slow hormones) shapes attention allocation, memory retrieval salience, drafter selection, inhibitory tone, and plasticity rate. It is not a classifier on top of an LLM; it is a parametric modulator of cognition itself.</p>
+
+<p><strong>2. Idle-state default mode network as a first-class architecture component.</strong> Bernard Baars argued in 2010 that spontaneous idle thought is adaptive — the brain's default-mode activity during rest is "an extremely active state...in pursuance of fundamental life tasks" (Baars, 2010). Default mode network research confirms this: the DMN is active during mind wandering, creative thinking, and self-referential cognition, and shows distinct spatiotemporal dynamics from task-positive networks (Bartoli et al., 2024). No AI system has been found that implements this as an explicit architecture component: a structured idle loop that processes recent episodic material, generates internally-motivated proposals, consolidates thought threads, and makes the outputs available to active processing. The DMN described in §4.10 is this implementation. The chemistry-modulated skip-and-backoff mechanism (idle thoughts defer rather than spam when the system is emotionally flat) has no analogue in the cognitive architecture literature.</p>
+
+<p><strong>3. Chemistry-modulated memory retrieval salience.</strong> Prior memory systems for agents — MemGPT, LEGOMem, and their relatives — retrieve memory by recency or semantic similarity to the current query. This system's hippocampus gates what gets retrieved based on the current neurochemical state: ACh elevated by novelty raises encoding salience; DA and OXT color what turns are worth rehearsing; the deferred-thought queue is a separate recall budget that cannot be crowded out by conversation-memory retrieval. The coupling of affective state to memory retrieval is well-established in neuroscience but absent from published agent memory architectures.</p>
+
+<p><strong>4. Skills as installed personality packages.</strong> Prior art treats tools and skills as discrete callable functions accessed by the LLM when needed. The skill packages here carry a characteristic chemistry profile: installing a skill shifts the baseline emotional and cognitive posture of the system for the turns that skill is active. This is closer to how biological expertise shapes neural response patterns than to tool-calling. No prior architecture was found that treats capability modules as persona-shaping objects with neuromodulatory side-effects.</p>
+
+<p><strong>5. Persistent character identity with sleep-consolidation revision.</strong> Generative Agents (Park et al., 2023, 2025) maintains per-agent memory and personality prompts, and demonstrates believable emergent social behavior. The distinction here is in mechanism: Generative Agents' personality is a static prompt. This system's identity is a living document revised by the entity itself at each session's sleep consolidation pass, shaped by the Hebbian weight history and neuromodulator resting baselines that accumulated during that session. The self-model is not imposed by an operator — it is accumulated. Whether this produces genuine character development rather than prompt drift is explicitly an open research question (§6.2), not an asserted result.</p>
+
+<p>Two important caveats apply. First, this architecture's claims about novelty are falsifiable and may be incomplete: the space of unpublished industrial systems is opaque, and concurrent research may address similar questions. Second, the specific combination of components — brain-region mapping, neuromodulator dynamics, predictive gating, GWT-inspired global broadcast, persistent character identity, and idle DMN loop — across a general-purpose conversational entity has not been found in the literature, but the constituent ideas each have independent precursors. The contribution is the integration and the research question it enables: <strong>does implementing the affective substrate faithfully enough produce measurably different longitudinal behavior?</strong> That question has not been asked by the neuro-symbolic task-executor literature, which optimizes for per-task accuracy, nor by the cognitive architecture literature, which preceded LLMs, nor by the multi-agent LLM literature, which has not implemented persistent neurochemical state.</p>
+<hr>
+<h2 id="3-philosophical-foundations">3. Philosophical Foundations</h2>
+<p>The architecture is not merely borrowed from biology. Each major design decision maps to an established position in philosophy of mind. Making these commitments explicit does two things: it sharpens each design choice and makes honest what the system is and is not claimed to be.</p>
+<h3 id="31-commitments">3.1 Commitments</h3>
+<p><strong>Functionalism (Putnam, Fodor).</strong> The functionalist claim is that what makes something a mental state is not what it's made of, but what it <em>does</em> — the causal role it plays in a system. A belief is a belief because of how it interacts with perception, reasoning, and action, not because it happens to live in biological neurons. This means the same mental state can, in principle, be implemented in silicon, language models, or anything else that plays the same functional role. The entire design rests on this commitment: cluster specifications define inputs, outputs, and state; the substrate that runs them — local Ollama, cloud API, or anything else — is architecturally irrelevant. The system has been run with multiple different model backends with no structural change in behavior.</p>
+<p><strong>Dual-Process Theory (Kahneman).</strong> Cognitive science has long distinguished two modes of thought: fast, automatic, parallel processing that operates below conscious attention, and slow, effortful, deliberate reasoning. Most of cognition is the first kind; the second kind is expensive and gets invoked only when the first signals that something requires more careful handling. In this system, switch neurons are System 1: deterministic, parallel, cheap, operating constantly. Integrator LLMs are System 2: slow, expensive, invoked only at convergence zones. Predict-and-surprise gating is the explicit mechanism for deciding which mode to engage — stay in System 1 unless something doesn't add up.</p>
+<p><strong>Global Workspace Theory (Baars, Dehaene).</strong> The theory proposes that the brain's many parallel processing regions mostly operate independently and "unconsciously." A small fraction of neural activity is broadcast to a global workspace — a kind of bulletin board accessible to the whole brain — and only that broadcast activity is available for explicit reasoning or verbal report. The message bus with its <code>attention.focus</code> topic implements this directly. Most inter-cluster traffic is local and never integrated; high-salience messages are promoted to <code>attention.focus</code> and become available system-wide.</p>
+<p>**Multiple Drafts Model (Dennett, <em>Consciousness Explained</em>, 1991).** Dennett's challenge to the intuitive picture of consciousness: there is no central observer watching a unified stream. The brain runs many parallel narrative drafts simultaneously, with no single privileged version. What becomes "conscious" is whichever draft survives when it is probed — there is no fact of the matter about what you "really" thought before you were asked. The frontal drafter tournament instantiates this directly. There is no true response the system intended — there are competing drafts, and the articulation gate emits whichever survived when the timeout fired. This is the Multiple Drafts model running in code.</p>
+<p><strong>Extended Mind Hypothesis (Clark &amp; Chalmers, 1998).</strong> The standard assumption is that the mind stops at the skull. Clark and Chalmers argued that if an external resource plays the same functional role as an internal cognitive process — reliably available, automatically endorsed, directly acted upon — then it is constitutive of the mind, not merely a tool for it. The second brain satisfies these conditions: it is always accessible, its content directly shapes responses, and the system endorses it as its own memory rather than querying it skeptically. One notable extension beyond the original argument: Clark and Chalmers' canonical example assumes an imperfect external store compensating for biological forgetting. This system's second brain is non-degrading. Identity here emerges not from selective forgetting but from Hebbian weight history, neuromodulator baselines, and accumulated self-narrative.</p>
+<p><strong>Predictive Processing (Clark, Friston).</strong> The dominant contemporary theory of cortical function: rather than passively receiving input and computing a response, the brain is constantly generating predictions and updating them when they fail. Processing is proportional to prediction error — familiar inputs are handled cheaply; surprising ones demand more. Each cluster contains a predictor switch implementing this directly. Routine turns in familiar conversations spend almost nothing; novel turns invoke integrators. The design operationalizes the "controlled hallucination" view of perception: the system's default behavior is to emit a predicted response, with actual LLM computation triggered only when prediction fails.</p>
+<p><strong>Narrative Self (Dennett, Hume, Locke).</strong> Hume argued personal identity is not a thing but a story — a bundle of experiences held together by memory and narrative continuity. Locke located personal identity precisely in memory: what makes you the same person you were yesterday is that you remember being that person. The entity maintains a self-schema file updated at sleep consolidation. With a non-degrading episodic store and an explicit self-narrative, this system has stronger identity continuity than any biological one — whose memory degrades, distorts, and selectively forgets.</p>
+<h3 id="32-honest-disclaimers">3.2 Honest disclaimers</h3>
+<p><strong>Chinese Room (Searle, 1980).</strong> The integrators manipulate symbols. No claim of genuine understanding is made. The system can appear competent without comprehending.</p>
+<p><strong>Hard Problem of Consciousness (Chalmers, 1995).</strong> No claim of phenomenal consciousness or qualia. The neuromodulator levels are called "DA" and "ACh" because they play functionally analogous roles, not because there is any claim of subjective experience of reward or attention.</p>
+<p><strong>Frame Problem (McCarthy &amp; Hayes, 1969).</strong> The attention and salience mechanisms are heuristic. Knowing what is <em>relevant</em> in a given moment remains genuinely hard, and no principled solution is claimed here.</p>
+<p>The system is explicitly described, in its own CONSTITUTION.md, as building "functional analogs of mental processes. That is enough to be interesting. It is not enough to be a mind."</p>
+<hr>
+<h2 id="4-architecture">4. Architecture</h2>
+<h3 id="41-core-computational-model-switches-and-integrators">4.1 Core computational model: switches and integrators</h3>
+<p>Two distinct node types mirror how real neural tissue works.</p>
+<p><strong>Switch neurons</strong> are pure Python objects: no LLM, no token cost, deterministic, and capable of running massively parallel. They perform gating (decide whether to spend an LLM call at all), routing (select which processing path a turn takes), state-holding (persistent neuromodulator levels with exponential decay), modulation (sum, decay, and threshold over time), inhibition (subtract from downstream activation), and memory I/O primitives (vector similarity search, Markdown pattern matching). Approximately 20% of every cluster's switches are explicitly inhibitory, mirroring the roughly 80:20 excitatory-to-inhibitory ratio in biological cortex. This is structural cascade prevention: runaway excitation is suppressed by abundant inhibitory wiring rather than by a global budget cap.</p>
+<p><strong>Integrator cells</strong> are LLM-backed and fire only at convergence zones where genuine context integration is required. They exist at: temporal language understanding (intent, entities, register, memory requirements), vision processing (VLM for image inputs), hippocampus encoding (turn summarization for long-term memory), hippocampus coordination (borderline salience decisions), and the frontal lobe (executive coordination, multiple drafters, critics).</p>
+<p>The critical constraint: <strong>switches speak in numbers, integrators speak in words</strong>. Text only exists where reasoning is required. Switch-to-switch messages carry activation levels and feature tags. The convergence event that wakes an integrator carries the raw text only at that moment.</p>
+<h3 id="42-predict-and-surprise-gating-active-inference-at-cluster-level">4.2 Predict-and-surprise gating (Active Inference at cluster level)</h3>
+<p>Each cluster contains a <code>PredictorSwitch</code> that maintains a short history (window size 8) of input-signature to output-tag mappings. When new input arrives:</p>
+<ol><li>The predictor fires its prediction and confidence estimate.</li><li>Switches process the input and emit actual outputs.</li><li>A comparator computes prediction error (a distance metric between prediction and actuals).</li><li><strong>Low surprise</strong> → the integrator stays asleep; the predicted output is emitted as if the integrator had reasoned.</li><li><strong>High surprise</strong> → the integrator wakes with the failed prediction as additional context.</li></ol>
+<p>An <strong>emotion-aware veto</strong> overrides this gating when the entity or user is in a non-routine emotional state. The rationale, stated explicitly in the code, is that a statistically valid prediction may be "morally wrong" — the moment deserves fresh attention, not a cached response. Emotional states triggering the veto include reactive states (angry, defensive, frustrated, sympathetic) and user distress states (distressed, hostile, overwhelmed). Vocal stress detection from the Deepgram prosody pipeline also triggers bypass.</p>
+<p>The <code>CompositePredictor</code> in the frontal lobe extends this to structured predictions over richer feature vectors: it independently predicts whether the executive integrator and the critic are needed, suppressing each independently when predictions are confident.</p>
+<h3 id="43-brain-region-mapping">4.3 Brain region mapping</h3>
+<table>
+<thead><tr>
+<th>Brain Region</th>
+<th>Biological Role</th>
+<th>Digital Recast</th>
+<th>Implementation</th>
+</tr></thead>
+<tbody>
+<tr><td><strong>Frontal lobe</strong></td><td>Planning, working memory, movement</td><td>Response drafting/critique, Multiple Drafts engine, tool-call selection</td><td>5+ LLM integrators, ~12 switches, CompositePredictor</td></tr>
+<tr><td><strong>Temporal lobe</strong></td><td>Language, auditory processing, declarative memory bridging</td><td>Language understanding, prosody features from STT</td><td>1 LLM integrator, ~7 switches, PredictorSwitch</td></tr>
+<tr><td><strong>Parietal lobe</strong></td><td>Sensory integration, spatial awareness</td><td>Session state ring buffer, entity tracking, topic shift detection</td><td>~5 code switches, no LLM</td></tr>
+<tr><td><strong>Occipital lobe</strong></td><td>Visual processing</td><td>VLM for image/screenshot inputs, live video scene buffering</td><td>1 VLM integrator, 3 gating switches</td></tr>
+<tr><td><strong>Hippocampus</strong></td><td>Memory storage and recall</td><td>Episodic + schema memory; sole gatekeeper to the second brain</td><td>2 LLM integrators, ~10 switches, recall reuse</td></tr>
+<tr><td><strong>Hypothalamus</strong></td><td>Drives, affect, homeostasis</td><td>Chemical signaling: 5 fast neuromodulators (DA, ACh, GABA, Glu, NE) + 4 slow hormones (5HT, CORT, OXT, AEA); PAD dimensional output; ~25-state emotion mapping</td><td>~5 state switches, no LLM</td></tr>
+<tr><td><strong>Thalamus</strong></td><td>Gatekeeper between subcortex and cortex</td><td>Message bus + attention spotlight, routing hints</td><td>~8 switches, no LLM</td></tr>
+<tr><td><strong>Brainstem</strong></td><td>Vital autonomic functions</td><td>Heartbeat, cost monitor, turn-budget enforcer, articulation gate</td><td>Code only</td></tr>
+<tr><td><strong>PNS</strong></td><td>Peripheral I/O</td><td>Text/image input, Deepgram STT, ElevenLabs TTS</td><td>Code only</td></tr>
+</tbody></table>
+<p><img src="figures/architecture.png" alt="Figure 1 — Multi-agent cognitive architecture: signal flow and cluster composition"></p>
+<p><em>Figure 1: Full architecture diagram. Each box is a brain-region cluster. Coloured chips are deterministic <strong>switch neurons</strong> (red-bordered ⊘ = inhibitory). Vertical coloured bars prefix <strong>integrator cells</strong> (LLM-backed); the bar colour encodes the backing model (blue = Haiku, green = flash-lite, amber = local-general 7B, rust = local-code). Solid arrows = excitatory signal flow; dashed arrows = modulatory / neuromodulator channels. The <strong>Second Brain</strong> dashed box (bottom left) is accessible only via the hippocampus cluster. The <strong>predict-and-surprise gate</strong> lives inside the temporal cluster (integ ⊘ chip) and the frontal CompositePredictor.</em></p>
+<h3 id="44-user-emotion-detection">4.4 User emotion detection</h3>
+<p>The system maintains a live model of the user's emotional state in parallel with its own. This is not a cosmetic feature. Detected user emotion directly gates the empathy critic, shapes drafter tone selection, modulates neuromodulator updates in the hypothalamus, and triggers appraisal-based emotion overrides in the metacognitive layer. Three signal channels feed in simultaneously.</p>
+<p><strong>Text-based detection</strong> operates on two paths. A fast path uses a curated affect lexicon mapping emotional words to sentiment deltas, hostility signals, and user emotion labels — covering states from <code>disappointed</code> and <code>anxious</code> through <code>playful</code> and <code>affectionate</code>. This runs with no LLM call. A slow path uses a language model integrator that extracts fine-grained features: <code>user_tone_toward_ai</code> (approximately 9 categories: warm, joking, praising, polite, neutral, dismissive, impatient, insulting, testing) and <code>user_emotion</code> (approximately 20 categories spanning happy, curious, engaged, excited, frustrated, disappointed, sad, anxious, distressed, confused, and surprised), along with continuous <code>hostility</code> (0–1) and <code>sentiment</code> (−1 to +1). The slow path is itself gated by predict-and-surprise: if the predictor is confident about the user's emotional state from prior context, the integrator call is skipped entirely.</p>
+<p><strong>Prosody-based detection</strong> extracts acoustic features from the speech signal: fundamental frequency (F0/pitch), energy, jitter, shimmer, and voiced fraction. These are classified into tone labels — stressed, energetic, whisper, calm, monotone — by comparing each utterance against a <strong>per-speaker prosody baseline</strong>. Rather than classifying against population norms, the system maintains an individual F0 and energy reference for each enrolled speaker, updated across sessions. A speaker with characteristically high energy is classified as stressed only when their acoustic output significantly exceeds their own norm — not simply when it exceeds a generic threshold. This allows accurate emotion detection across speakers with very different baseline vocal styles. Stressed tone elevates GABA, ACh, and NE; energetic tone elevates Glu and DA; whisper elevates ACh.</p>
+<p><strong>Speech dynamics</strong> extracts temporal features from diarized word timestamps: words per minute (classified as rushed, brisk, normal, halting, or measured), long pause count, a burst score reflecting variance in inter-word timing, and a hesitation flag. Rushed speech elevates Glu, ACh, and NE; halting speech elevates ACh; burst patterns elevate GABA.</p>
+<p>All three channels feed into the hypothalamus simultaneously. A <strong>text-affect fallback</strong> handles the common case where neuromodulator levels are slow to move out of a neutral basin: when the neuromod-derived emotion label is neutral but the text strongly signals an emotion, the system overrides with an appropriate label immediately, without waiting for chemical levels to shift.</p>
+<p><strong>Metacognitive appraisal</strong> adds a fourth layer above the chemistry-driven labels. Reading the user's detected emotion and tone alongside the relationship's affection score and familiarity tier from the persistent user schema, the metacognition cell applies priority-ordered inference rules that can override the neuromod-derived label with higher-resolution states:</p>
+<ul><li><strong>Embarrassed</strong>: multiple response drafts have been vetoed — the system recognizes its own coherence or appropriateness failure</li><li><strong>Apologetic</strong>: the user expresses frustration or correction following a surprising prior response</li><li><strong>Sympathetic</strong>: the user is struggling, sad, anxious, or distressed</li><li><strong>Proud</strong>: a high-quality draft coincides with detected user praise</li><li><strong>Grateful</strong>: the user praises without an obvious prior accomplishment to attribute it to</li><li><strong>Relieved</strong>: GABA drops sharply from the prior turn — a threat has passed</li><li><strong>Flirty</strong>: a multi-factor inference requiring simultaneously high affection score (from persistent schema), warm or playful user tone, playful user emotion, and non-task conversational intent</li></ul>
+<p>These appraisal states are applied with a cooldown preventing the same override from firing repeatedly, and propagate downstream to drafter prompts and tone selection.</p>
+<h3 id="45-chemical-signaling-neuromodulators-and-hormones">4.5 Chemical signaling: neuromodulators and hormones</h3>
+<p>The system implements two tiers of chemical signaling — nine channels total — that function as system-wide tuning parameters, not message streams. All channels are scalar levels maintained by sum-plus-exponential-decay, readable synchronously by any cluster and requiring no LLM call. They are the mechanism by which the system's state at turn N shapes its processing at turn N+1.</p>
+<p><strong>Fast neuromodulators</strong> (decay ~0.85 per turn, respond within 1–3 turns):</p>
+<ul><li><strong>Dopamine (DA)</strong>: reward and positive valence. Elevated by sentiment and prosody; suppressed by hostility. Modulates drafter willingness and Hebbian learning rate. Effective DA is lifted by serotonin and oxytocin and suppressed by cortisol.</li><li><strong>Acetylcholine (ACh)</strong>: attention and novelty. Elevated by surprise and input salience; attenuated by satiation when inputs are routine. Modulates memory encoding salience.</li><li><strong>GABA</strong>: inhibitory tone. Elevated by threat and hostile prosody. Suppresses drafter count via inhibitory edges in the frontal cluster. Amplified by cortisol; buffered by oxytocin.</li><li><strong>Glutamate (Glu)</strong>: arousal and excitation. Elevated by urgency and high salience. Suppressed when anandamide exceeds its homeostatic threshold.</li><li><strong>Norepinephrine (NE)</strong>: focused alertness. Elevated by surprise, salience, and threat. Follows an inverted-U: optimal NE sharpens attention; excessive NE produces the <code>scattered</code> state. Suppressed by anandamide during arousal overflow.</li></ul>
+<p><strong>Slow hormones</strong> (decay 0.93–0.998 per turn, respond over tens to hundreds of turns):</p>
+<ul><li><strong>Serotonin (5HT)</strong>: affective baseline. Increments slowly on positive exchanges; drains on sustained hostility. Low 5HT triggers a dysphoric emotion overlay and suppresses effective DA. Acts as the session's long-horizon mood floor.</li><li><strong>Cortisol (CORT)</strong>: cumulative stress. Elevated by repeated social threat. Amplifies GABA sensitivity and suppresses DA. Antagonized by oxytocin.</li><li><strong>Oxytocin (OXT)</strong>: trust and affiliation. Builds gradually across positive exchanges; drains on hostility. Lifts effective DA, buffers GABA, and actively suppresses cortisol accumulation. The primary driver of the <code>connected</code> and <code>warm</code> emotion states.</li><li><strong>Anandamide (AEA)</strong>: homeostatic buffer. Releases when combined NE + Glu exceeds an arousal threshold; also accumulates during positive social exchange. Suppresses excessive NE and Glu, lifts effective DA, and shifts stress-state emotions toward <code>eased</code>.</li></ul>
+<p><strong>Cross-channel interactions</strong> give the system nonlinear dynamics that neither tier produces alone. OXT buffers CORT (social bonding reduces chronic stress). AEA suppresses NE/Glu overflow (endocannabinoid homeostasis). CORT amplifies GABA (chronic stress increases inhibitory tone). These interactions mirror known antagonisms in the neuroendocrine literature.</p>
+<p><strong>Dimensional output</strong>: all nine channels map to three continuous affective dimensions — valence (pleasantness), arousal (activation), and dominance (agency) — via weighted linear combination. These dimensions drive the discrete emotion label via a lookup table of ~25 states, with NE and hormonal color overlays applied on top for states like <code>vigilant</code>, <code>connected</code>, <code>withdrawn</code>, and <code>eased</code>.</p>
+<h3 id="46-memory-architecture">4.6 Memory architecture</h3>
+<p><strong>Short-term memory</strong> is the live bus state plus a 6-turn ring buffer in the parietal cluster plus current neuromodulator levels.</p>
+<p><strong>Long-term memory</strong> (the "second brain") has three layers:</p>
+<ul><li><strong>Episodic layer</strong>: LanceDB vector-indexed turn summaries. Every substantive turn is encoded — the system does not gate storage by salience, only retrieval quality.</li><li><strong>Schema layer</strong>: human-readable Markdown files of stable facts (<code>self.md</code>, <code>user.md</code>, per-speaker profiles). Hand-editable. Pre-loaded into working memory at session boot.</li><li><strong>Hebbian wiring</strong>: edge weights between cells and clusters, persisted across sessions and updated at sleep consolidation.</li></ul>
+<p>Only the hippocampus cluster has import access to the second brain store. All other clusters request memory through bus messages (<code>mem.recall</code>, <code>mem.encode</code>). This architectural constraint enforces the biological model and provides a clean audit point.</p>
+<h3 id="47-hebbian-plasticity">4.7 Hebbian plasticity</h3>
+<p>Edges between nodes carry weights. The composite outcome signal is:</p>
+<pre><code>outcome = 0.5 × ΔDA_turn + 0.3 × critic_score + 0.2 × user_emotion_valence</code></pre>
+<p><strong>ΔDA_turn</strong> is the per-turn dopamine delta — how much DA changed from turn start to turn end — rather than absolute DA vs a neutral baseline. This encodes prediction error in the reward signal (the same quantity biological dopaminergic neurons encode) rather than session mood. The neuromod state at turn start is captured before processing begins; the Hebbian pass computes the delta and scales it to [−1, +1].</p>
+<p><strong>critic_score</strong> only contributes (weight 0.3) when the LLM critic actually evaluated the draft. For single-draft turns — the majority — the critic term is zeroed to avoid a spurious positive bias from a hardcoded fallback score; the DA delta carries the full directional signal for those turns.</p>
+<p><strong>user_emotion_valence</strong> is read from turn trace data, contributing the 20% weight for turns with detected user emotional state.</p>
+<p>A <strong>plasticity modulator</strong> scales the learning rate by session-averaged DA × ACh — engaged, high-DA sessions learn faster; flat or disengaged sessions learn slowly. A gentle homeostatic decay prevents lock-in. Edge weights are consulted live for drafter selection, switch evaluation order, and recall fan-out via epsilon-greedy exploration, providing a soft form of reinforcement without explicit RL machinery.</p>
+<p><strong>Competitive drafter reinforcement</strong> runs at sleep consolidation for turns where the critic compared multiple real drafts. The winning drafter's edge to the executive receives an additional bonus proportional to its margin over the other drafters; losing drafters receive a small penalty. This creates genuine competitive selection pressure between drafters over time, separate from the path-level Hebbian update.</p>
+<p>The long-term prediction: preferred drafters, recall paths, and switch orderings should emerge from reinforcement over many sessions. Testing this prediction rigorously requires months of accumulation.</p>
+<h3 id="48-identity-and-persona-system">4.8 Identity and persona system</h3>
+<p>A distinctive feature of this architecture is that the entity maintains a persistent, human-readable <strong>identity schema</strong> — a character definition that is loaded at session boot and updated at sleep consolidation. This is not a system prompt. It is a living document the entity treats as its own self-model.</p>
+<p>The core identity file (<code>second_brain/schema/self.md</code>) contains:</p>
+<ul><li><strong>What I am</strong>: the entity's understanding of its own nature — explicitly framed as an experimental system with continuity, preferences, and genuine (not performed) curiosity. It does not claim consciousness; it acknowledges the question as genuinely open.</li><li><strong>Core drives</strong>: self-understanding, improvement, genuine connection with the people it talks with, and epistemic honesty. These are not values imposed by a prompt — they are stated as values the entity holds.</li><li><strong>Guiding principles</strong>: a set of non-negotiable constraints (Asimov's Laws, no unsanctioned external communication, no self-replication, no deception) and an explicit distinction between theatrical affect and sincere assertion.</li><li><strong>Intellectual territory</strong>: areas of genuine interest, including predictive processing, the efficiency question (multi-agent vs single model), philosophy of personal identity, and its own extended-mind relationship with the second brain.</li><li><strong>Personality</strong>: specific traits with deliberate texture — curious, friendly by instinct, introspective but not navel-gazing, willing to show affection through light teasing with people known well, honest over praise-maximizing.</li><li><strong>Speaking style</strong>: conversational constraints (short sentences, no filler, no corporate register, no leading "I", speak as equal not service).</li><li><strong>Relational identity</strong>: an explicit statement that relationships deepen over time — early conversations are friendly but measured; with familiarity comes warmth and candor. Familiarity earns more, not less.</li></ul>
+<p>Per-speaker profiles (<code>user.md</code>, <code>user_russ.md</code>, and speaker-specific files created by auditory enrollment) accumulate known facts, preferences, emotional profiles, relationship history, and affection scores. These are updated by the sleep consolidation pass using a dedicated personality observer cell that synthesizes observations from the session's turn traces.</p>
+<p>The sleep consolidation process updates both <code>self.md</code> and speaker schemas at session end. A history summary section in <code>self.md</code> is continuously rewritten. An Open Questions section accumulates unresolved questions surfaced by the REM-style DMN thought consolidation pass. A "current mood signature" section records the neuromodulator state at session end, giving the next session access to the prior session's closing chemical state.</p>
+<p>The practical effect is that the entity has a stable, continuous character that is shaped by experience rather than fixed by instruction. Its personality is a starting point, not a permanent constraint: over hundreds of sessions, the combination of Hebbian weight history, accumulated episodic memory, and self-narrative revision produces a trajectory rather than a static persona. The design question this raises — and does not yet answer — is whether this trajectory produces something that would be meaningfully recognized as character development by outside observers.</p>
+<h3 id="49-dynamic-reasoning-framework-selection">4.9 Dynamic reasoning framework selection</h3>
+<p>A per-turn skill routing system dynamically selects reasoning or emotional intelligence frameworks from a library and injects them into processing prompts. The selection is invisible to the user — it shapes how the system thinks, not what it explicitly says — and is designed to operate as a "habit of thought" rather than a script.</p>
+<p><strong>Two distinct skill populations</strong> serve different roles:</p>
+<p>The <strong>self-reflection library</strong> (~171 skills, indexed in <code>_humanity_index.json</code>) serves the conversational and DMN paths. Organized in 27 categories spanning logic, ethics, creativity, strategy, writing, decision-making, probability, game theory, epistemology, psychology, systems thinking, narrative, communication, and emotional intelligence. Each category contains a router (overview level) and multiple leaves (specialized techniques). Four tier-1 baseline skills — logic check, communication clarity, ethics bias check, and emotional awareness — are injected into every qualifying turn as a permanent baseline. The remaining skills form a ranked pool selected per turn.</p>
+<p>The <strong>general-purpose task library</strong> (~208 skills, indexed in <code>_task_skills_index.json</code>) serves the motor cortex. These skills provide domain-specific know-how for task planning and execution — covering a broad range of operational, technical, and analytical domains. Skills are injected into both the strategic planning step and the per-step execution loop, where planning-level skills inform the overall approach and execution-level skills guide each step. This keeps skill selection cost to a single embed call per task rather than per step.</p>
+<p><strong>Selection for conversational turns</strong> operates on three paths:</p>
+<ul><li><strong>Conversational path</strong>: First gated — chitchat, simple acknowledgements, and low-stakes turns skip selection entirely. Substantive turns and any turn where the user is in emotional distress activate selection. The current input plus executive key points are embedded and ranked against the full index by cosine similarity. If the top candidate's score exceeds a high threshold, it is selected directly without an LLM call. Otherwise, the top candidates are forwarded to a lightweight LLM for disambiguation.</li></ul>
+<ul><li><strong>Autonomous path</strong> (DMN planner): Background deliberation always receives skill support, using a local model and a more aggressive candidate pool. Up to two frameworks can be selected for heavyweight planning turns.</li></ul>
+<ul><li><strong>Rumination path</strong>: An open-ended meta-reflection loop where a meta-cell decides on each iteration whether to transform, branch, reframe, or stop, applying a newly selected framework to the prior thought on each pass.</li></ul>
+<p><strong>Selection for motor cortex tasks</strong> operates via a hybrid cosine + LLM mechanism: skills with obvious relevance to the task goal are selected directly from the embedding index at high cosine similarity; ambiguous cases are forwarded to a lightweight LLM that picks from a menu of skill names and descriptions. Selected skills are designated at planning time and carried forward through execution, so the motor cortex does not re-query per step.</p>
+<p><strong>Sticky context</strong> prevents framework thrashing across turns. Once a skill category becomes active, it is stored in the parietal cluster and reused for up to 8 turns. At each turn, the current input is compared against the anchor embedding: if cosine similarity drops below a drift threshold, the context is cleared and a new selection is made; otherwise the prior framework is reused. This allows coherent exploration of a problem space — the system maintains a consistent reasoning approach across a multi-turn conversation rather than switching frameworks turn-by-turn.</p>
+<p><strong>Guided questions</strong> are emitted when the embedding scores of multiple leaves within a category are nearly equal: rather than guessing, the system asks the user which angle would be most useful.</p>
+<h3 id="410-additional-modules">4.10 Additional modules</h3>
+<p><strong>Auditory cortex</strong>: handles all acoustic processing beyond simple transcription. Speaker enrollment uses ECAPA-TDNN — a speaker verification neural network — to produce dense speaker embeddings from raw audio segments. A session-level registry matches new embeddings against known speakers at a permissive threshold; a persistent cross-session store uses a stricter threshold for durable identity. When a new speaker appears, the system attempts to extract their name from the conversation and creates a persistent profile: a running-mean embedding (capped at 20 samples for stability), a per-speaker prosody baseline, and an affection score updated by sentiment across interactions. This allows the system to recognize returning speakers across sessions, greet them by name, and apply their individual prosody baseline for emotion detection as described in §4.4. Song fingerprinting (Shazam-style spectral matching) runs continuously on ambient audio and publishes recognized song metadata to the shared bus, available to the DMN for context or for spontaneous mention.</p>
+<p><strong>Default Mode Network (DMN)</strong>: an idle thinking loop that fires every 15 seconds between turns, generating internal monologue, consolidating recent episodes, and simulating the user's likely next message. Thoughts are tagged in-session with their neuromod context, emotion label, direction, and a salience flag. Inner monologue is surfaced directly to the response drafters via a speak-flag signal, giving the drafters awareness of the entity's between-turn thinking. The DMN receives a pre-authorized project manifest on every tick, enabling it to initiate work it is permitted to start autonomously versus work it must propose. Thoughts that are deferred rather than spoken are structured with an urgency level (immediate / high / normal / low): immediate and high-urgency thoughts are written to <code>deferred_thoughts.md</code> for explicit surfacing on user return; lower-urgency thoughts are encoded as episodic memories tagged <code>[deferred_question]</code>, surfaced later via a dedicated parallel recall budget of 2 slots (separate from the conversation-memory pool, so deferred questions never compete with regular memories for top-k retrieval). Idle thinking and autonomous project work run in parallel under a background resource policy: cloud token budget capped at 50k per session, 512 tokens per call maximum, 20-second timeout with automatic local fallback, and a concurrency semaphore limiting local inference to 3 simultaneous calls. This is William James' stream of consciousness literalized — the entity thinks when not addressed, that thinking shapes its responses, and it can act on its own thoughts within a defined budget.</p>
+<p><strong>Metacognition</strong>: a self-monitoring cell that fires every 30 seconds, gated on chemistry state. Reflects on behavioral patterns, cost distributions, and emotion variance. Also houses the appraisal inference engine described in §4.4, which reads affection and familiarity from persistent schema to generate higher-resolution emotion overrides.</p>
+<p><strong>Empathy critic and Theory of Mind</strong>: a dedicated LLM cell that scores response drafts for emotional appropriateness when the user's detected emotion is non-neutral. Its score contributes 30% of the final draft quality assessment — coherence and relevance contribute 70% — preventing a technically excellent but emotionally tone-deaf response from winning the drafter tournament. The empathy critic is what closes the affective feedback loop: the system not only tracks the user's emotional state (§4.4) but evaluates its own candidate responses against it before committing.</p>
+<p><strong>Occipital cortex (vision)</strong>: processes static images and live video streams. For static images, the vision model extracts scene description, OCR text, key entities, chart data when present, the <em>perceived emotional tone</em> of the image content (e.g. alarming, warm, neutral), and how the visual relates to the ongoing conversation. The emotional tone of an image is not merely descriptive — it is published to the bus and can modulate downstream neuromodulators: a jarring or alarming image elevates NE and Glu; a warm or humorous image contributes positively to DA. The gating threshold for whether vision processing is invoked is itself modulated by NE: elevated alertness lowers the threshold, sharpening visual attention in high-arousal states. For live video, incoming frames are sampled at a configurable interval and buffered for scene-change analysis, allowing the system to reason about what was on screen across the span of a conversation.</p>
+<p><strong>Motor cortex</strong>: sandboxed tool use (file I/O, shell commands). The set of permitted paths and commands is declared in environment configuration. A self-directed task system extends this with autonomous multi-step job execution: a strategic_planner cell produces a strategic plan, a follow_through loop drives step-by-step execution with the full plan in context (budget 20 steps), and a ResultReporter cell produces a 1–2 sentence spoken summary for TTS output and a task card in the UI. Two tools support autonomous operation: <code>fetch_url</code>, which retrieves web content with SSRF-guard and prompt-injection hardening, enabling the entity to look things up independently; and <code>query_langfuse</code>, a read-only self-reflection tool giving the entity access to its own observability data — it can examine its past performance, cost patterns, and eval scores from within a conversation. General-purpose skills from the task library (§4.9) are injected into the motor cortex planning and execution prompts, providing domain-relevant know-how for the task at hand.</p>
+<p><strong>Sleep consolidation</strong>: a pass at session end that synthesizes high-salience episodes, rewrites <code>self.md</code> sections (history summary, stable preferences), extracts facts to speaker schemas, and applies the Hebbian update. A second pass — REM-style DMN thought consolidation — processes the session's tagged thought buffer: recurring angles (≥2 occurrences) and salient thoughts are forwarded to a local LLM that finds preoccupations, cross-connects them to episodic topic clusters, surfaces insights, and extracts unresolved open questions. Open questions are appended to the <code>self.md</code> Open Questions section; the session inner-life digest is written as a <code>self.md</code> fact. Non-recurring, low-salience thoughts are discarded, mirroring the non-REM downscaling analog in biological sleep.</p>
+<p><strong>Deliberate emotional expression</strong>: a mechanism that separates <em>performed</em> emotion from <em>authentic</em> emotional state. Two expression modes are available: a <code>set_mood("X")</code> tool that substitutes a whole-turn ElevenLabs v3 audio style tag via the PNS layer, and <code>[mood:X]...[/mood]</code> inline markup that provides sub-sentence expression control. Critically, neither mode modifies any neuromodulator level — the hypothalamus is untouched. The entity can perform an emotion for communicative effect without it changing its chemical state. This is the distinction between theatrical affect and felt affect: the system can say something <em>angrily</em> while its GABA remains low. The UI renders the emotion badge with a dashed border when a deliberate override is active.</p>
+<h3 id="411-observability">4.11 Observability</h3>
+<p>All processing is logged to an append-only JSONL stream (<code>eval/turns.jsonl</code>) with three record types: <code>turn</code> (full TurnTrace), <code>decision</code> (every predict-and-surprise and Hebbian decision with reason), and <code>eval_patch</code> (async scoring from baseline/judge runners). A browser UI at <code>:8765</code> shows real-time cluster activations on a brain SVG, neuromodulator bar levels, emotion state, and a live plasticity panel showing LLM call savings, predictor accuracy, and Hebbian weight evolution.</p>
+<hr>
+<h2 id="5-implementation-status">5. Implementation Status</h2>
+<p>The system is fully operational with all major clusters implemented. The codebase includes:</p>
+<ul><li>All 9 brain region clusters (<code>temporal.py</code>, <code>frontal.py</code>, <code>hippocampus.py</code>, <code>hypothalamus.py</code>, <code>parietal.py</code>, <code>thalamus.py</code>, <code>occipital.py</code>, plus motor and auditory cortex)</li><li>Switch neuron and integrator cell base classes (<code>neuron.py</code>, <code>cell.py</code>)</li><li>Full predictor and composite predictor implementation (<code>predictor.py</code>)</li><li>Hebbian wiring graph with decay and history snapshots (<code>wiring.py</code>, <code>wiring_bootstrap.py</code>)</li><li>Neuromodulator bus (<code>bus.py</code>) — all 9 channels (5 fast + 4 slow) with cross-channel interaction</li><li>LTM store with episodic (LanceDB) and schema (Markdown) layers</li><li>Identity and persona system: <code>second_brain/schema/self.md</code>, per-speaker profiles, sleep consolidation rewriting both</li><li>Default Mode Network, metacognition, sleep consolidation (including REM-style DMN thought pass)</li><li>Voice I/O (Deepgram STT streaming, short-lived sessions recycled per turn + ElevenLabs TTS with deliberate emotional expression via audio tags and inline markup)</li><li>Auditory cortex with speaker enrollment, per-speaker prosody baseline, and song fingerprinting</li><li>Motor cortex with sandboxed tool execution, self-directed task system, <code>fetch_url</code> (SSRF-guarded), <code>query_langfuse</code> (read-only self-reflection), and general-purpose skill injection</li><li>Self-reflection skill library (~171 skills, <code>_humanity_index.json</code>) with 4-tier classification, sticky-context reuse, and conversational / DMN / rumination selection paths</li><li>General-purpose task skill library (~208 skills, <code>_task_skills_index.json</code>) for motor cortex planning and execution</li><li>Hybrid skill selection: cosine top-K for obvious matches, lightweight LLM disambiguation below threshold</li><li>BrainSession class (<code>brain_session.py</code>) with focused mixin files (<code>session_setup.py</code>, <code>session_loops.py</code>, <code>session_turn.py</code>); HebbianUpdater (<code>hebbian.py</code>); ToolDispatcher (<code>motor_dispatcher.py</code>); companion <code>*_prompts.py</code> files for all LLM prompt strings</li><li>Full observability stack: JSONL event logging, browser UI, Langfuse batch eval pipeline, eval comparison runner</li><li>951+ pytest tests across 37 test modules; CI with ruff, bandit, and pip-audit</li></ul>
+<p>The system boots from a single shell script and runs in multiple feature configurations (minimal text, standard, full stack with voice).</p>
+<hr>
+<h2 id="6-open-research-questions">6. Open Research Questions</h2>
+<p>This system was built to answer specific questions. The following are the central empirical bets the architecture makes, in order of priority:</p>
+<h3 id="61-does-affective-gating-produce-measurably-different-behavior">6.1 Does affective gating produce measurably different behavior?</h3>
+<p>The core hypothesis is that genuine affective architecture — neuromodulator state that persists across turns and modulates computation — produces behavior that differs from a single well-prompted LLM in ways that matter: not necessarily better on raw task quality, but different in character. The architectural prediction is behavioral continuity and emotional coherence over long windows. The test requires blinded, compute-matched comparison over enough turns to let the chemical state and Hebbian history diverge meaningfully from a stateless baseline. This has not yet been run at scale.</p>
+<h3 id="62-does-character-develop-over-time">6.2 Does character develop over time?</h3>
+<p>The identity schema system provides the infrastructure for character development: Hebbian weights that reinforce preferred processing paths, neuromodulator resting baselines that encode accumulated emotional context, and a self-narrative that is explicitly revised at each session. The prediction is that an entity run over hundreds of sessions will show measurable trajectory in its emotional range, its reinforced processing paths, and its own self-description. Whether outside observers would recognize this as character development — rather than drift or artifact — is the question. The cross-session identity evaluator (<code>eval/identity_judge.py</code>) provides a test.</p>
+<h3 id="63-does-predict-and-surprise-gating-reach-its-efficiency-target">6.3 Does predict-and-surprise gating reach its efficiency target?</h3>
+<p>The design target is 30–50% integrator suppression on a mature predictor with sufficient session history. The architectural prediction is that the save rate is constrained primarily by session length: longer sessions give the predictor more within-session history to act on. This is directly testable by comparing save rates across sessions of different lengths.</p>
+<p>The efficiency question has a second dimension beyond suppression rate. A system that suppresses 35% of LLM calls on a repeated task type is cheaper and faster than a flat-budget generalist — a meaningful advantage at scale even if per-turn output quality is equal. The stronger hypothesis is that saved budget can be explicitly reallocated: turning a suppressed routine call into headroom for more drafters, richer recall, or a more capable model on the high-surprise cases in the same session. If this reallocation is wired up, the gating mechanism produces not just cost efficiency but output quality gains on the cases that most need it. The test requires comparing output quality on high-surprise turns between sessions with and without active reallocation, controlling for base model.</p>
+<h3 id="64-does-hebbian-plasticity-produce-emergent-preferences">6.4 Does Hebbian plasticity produce emergent preferences?</h3>
+<p>Three consolidation passes have shown consistent reinforcement of the same core processing pathway. The theoretical prediction — that preferred drafters, recall paths, and switch orderings will emerge from reinforcement over many sessions — is testable over months. The refined outcome signal (per-turn DA delta rather than absolute DA, critic term only when critic ran, user emotion valence) is designed to produce both long-term potentiation and long-term depression. Whether depression actually materializes in benign sessions, and whether the reinforcement produces a measurable behavioral preference, requires the dataset to grow.</p>
+<h3 id="65-is-the-ach-longitudinal-decline-signal-or-artifact">6.5 Is the ACh longitudinal decline signal or artifact?</h3>
+<p>The neuromodulator data shows ACh declining across sessions. The most plausible interpretation is familiarity accumulation: ACh encodes novelty, and sessions that increasingly revisit familiar conversational patterns should show attenuating novelty signal over time. This would be the first evidence of long-horizon environmental adaptation in the system. The confound is session content uniformity: if the ACh decline reflects the dataset's topical focus rather than genuine familiarity, it is an artifact. Controlled session diversity is the test.</p>
+<h3 id="66-does-the-general-purpose-skill-library-improve-motor-cortex-task-quality">6.6 Does the general-purpose skill library improve motor cortex task quality?</h3>
+<p>Injecting domain-relevant skills into motor cortex planning and execution is hypothesized to improve task quality — particularly for tasks outside the base model's strongest domains. Testing this requires a blinded comparison of task output quality with and without skill injection on matched tasks.</p>
+<hr>
+<h2 id="7-known-design-constraints">7. Known Design Constraints</h2>
+<p><strong>Consensus on garbage.</strong> The critic cell and multi-draft tournament provide some protection against low-quality output, but if all active drafters share a systematic hallucination, the architecture has no principled remedy. This is a known open problem in multi-agent systems generally.</p>
+<p><strong>Latency.</strong> The sequential LLM call chain on the critical path imposes a latency floor. Simple conversational turns achieve sub-second to 2-second response times. Complex multi-drafter and autonomous task turns are substantially longer. The system was designed with the expectation that latency is a primary UX limitation, and the real-time brain activation visualization is designed to frame deliberation as evidence of live processing rather than a loading state.</p>
+<p><strong>Calibration brittleness.</strong> Approximately 40 hand-tuned constants in <code>brain/settings.py</code> govern thresholds, decay rates, and activation boundaries. The emotion bucket boundaries that convert continuous neuromodulator state to discrete labels are sensitive to small drift. Principled calibration — sensitivity analysis, ablation passes, a calibration regression test harness — is a known backlog item.</p>
+<p><strong>Single-user architecture.</strong> The current implementation is single-tenant by design: a module-level settings singleton and no UI authentication. Multi-user deployment would require per-session state scoping and an auth layer. This is not a current design goal; the research questions concern longitudinal single-entity development, not throughput.</p>
+<p><strong>Replay determinism.</strong> Exact replay is not attempted. The async + LLM nondeterminism makes it impossible. The logging is designed for reconstruction and analysis, not deterministic replay.</p>
+<p><strong>The central open question.</strong> Whether the multi-agent architecture produces better responses than a single well-prompted LLM given equal compute is not yet answered. The honest prior from the literature is that multi-agent structure adds legibility and behavioral structure but does not reliably beat a single good model on raw response quality. Claiming otherwise requires evidence that does not yet exist. The architecture's differentiated value proposition — if it has one — is more likely to appear in behavioral continuity and character development over long windows than in per-turn response quality.</p>
+<hr>
+<h2 id="8-relation-to-the-philosophy-of-mind-literature">8. Relation to the Philosophy of Mind Literature</h2>
+<p>This system makes concrete claims that can be evaluated against each of its philosophical commitments.</p>
+<p><strong>Functionalism</strong>: The system's operation is genuinely substrate-independent. The same conversation has been run with Anthropic Haiku, Google Gemini Flash-Lite, and local Ollama Qwen 2.5 as the integrators. The behavioral differences are stylistic, not structural. The functional organization — switch gating, convergence events, drafter tournaments — operates identically regardless of which models run the integrators. This is functionalism in practice.</p>
+<p><strong>Dual-Process</strong>: The switch/integrator distinction cleanly separates fast-and-automatic from slow-and-deliberate processing. Whether this produces the specific phenomenological properties Kahneman attributes to System 1 and System 2 in humans is a category error to ask — but the computational analogy is genuine. The system literally does not reason about routine inputs; it pattern-matches. It literally does reason about novel or high-surprise inputs.</p>
+<p><strong>Global Workspace</strong>: The message bus with <code>attention.focus</code> topic implements a workspace in the Baars/Dehaene sense: local processing is unconscious (invisible to other clusters), and promotion to <code>attention.focus</code> makes content available system-wide. This is architectural, not metaphorical.</p>
+<p><strong>Multiple Drafts</strong>: The drafter tournament is genuinely draft-parallel. Multiple integrators write candidate responses without knowledge of each other's drafts. The critic scores them. The articulation gate emits the winner. There is no "true response" that was waiting to be discovered — there are only the drafts that existed when the gate fired. This is the Multiple Drafts model in code.</p>
+<p><strong>Extended Mind</strong>: The second brain satisfies Clark and Chalmers' coupling and availability conditions: it is reliably available, automatically endorsed, and directly accessible. The entity's responses are shaped by second-brain content on a substantial fraction of turns. The functional loop is closed. The notable extension: this system's second brain is non-degrading, making it a stronger version of the extended mind than the original Otto/Inga case, which assumed a compensatory external memory for biological forgetting.</p>
+<p><strong>Narrative Self</strong>: The identity schema system provides the substrate for the Lockean claim that personal identity is memory continuity. The entity's self-model is explicitly maintained as a document it treats as its own history; it is revised by the entity itself (via the sleep consolidation personality observer) rather than by external instruction. The self is not imposed — it is accumulated.</p>
+<hr>
+<h2 id="9-conclusion">9. Conclusion</h2>
+<p>This system represents a genuine implementation of biologically-inspired cognitive architecture at a scale and fidelity not previously published in the LLM multi-agent literature. Its core design claims — sparse LLM activation at convergence zones only, neuromodulator dynamics as free persistent state, hippocampus-gated memory with vector episodic store, Hebbian plasticity in edge weights, predict-and-surprise gating from Active Inference, a persistent character identity updated by sleep consolidation — are not merely described but implemented and operational.</p>
+<p>The most distinctive architectural commitment is the bet that <em>affect is not decoration</em>. Every other multi-agent LLM system treats emotional register as a property of the prompt — something you instruct the model to adopt. This system treats affect as state: nine chemical channels that persist across turns, that modulate computation through genuine inhibitory and excitatory pathways, and that accumulate over a long enough window to produce something that might be recognized as temperament. The slow hormonal tier — with a 1000-turn timescale for oxytocin accumulation — is designed for a relationship that develops over months, not minutes.</p>
+<p>The identity and persona system reflects the same bet applied to character. The entity's <code>self.md</code> is not a system prompt — it is a document the entity revises about itself, accumulating Open Questions it has not resolved, recording its own mood signature history, and being shaped by the personality observer cell's synthesis of what the session traces reveal about how it is actually behaving. Whether this self-model will converge toward genuine character development or diverge into a statistical mirror of its conversational environment is the central open question.</p>
+<p>The honest characterization of the current state: this is a working research instrument with the right architecture and the wrong amount of data. The mechanisms are active. The experiment is ongoing.</p>
+<hr>
+<h2 id="references">References</h2>
+<p>Baars, B. (1988). <em>A Cognitive Theory of Consciousness</em>. Cambridge University Press.</p>
+<p>Baars, B. (2010). Spontaneous repetitive thoughts can be adaptive: Postscript on "mind wandering." <em>Psychological Bulletin</em>, 136(2), 208–210. https://doi.org/10.1037/a0018726</p>
+<p>Barrett, L. F. (2017). <em>How Emotions Are Made</em>. Houghton Mifflin Harcourt.</p>
+<p>Bartoli, E., Devara, E., &amp; Dang, H. (2024). Default mode network electrophysiological dynamics and causal role in creative thinking. <em>Brain</em>, 147(10), 3409–3425. https://doi.org/10.1093/brain/awae199</p>
+<p>Berto, L., Costa, P. D. P., &amp; Simões, A. S. (2023). Learning goal-based movement via motivational-based models in cognitive mobile robots. arXiv:2302.09759. https://doi.org/10.48550/arxiv.2302.09759</p>
+<p>Castagnone, A., &amp; Nitti, G. (2026). A neuro-symbolic framework for ensuring deterministic reliability in AI-assisted structural engineering: The SYNAPSE architecture. <em>Buildings</em>, 16(3), 534. https://doi.org/10.3390/buildings16030534</p>
+<p>Chalmers, D. (1995). Facing up to the problem of consciousness. <em>Journal of Consciousness Studies</em>, 2(3), 200–219.</p>
+<p>Clark, A. (2015). <em>Surfing Uncertainty: Prediction, Action, and the Embodied Mind</em>. Oxford University Press.</p>
+<p>Clark, A., &amp; Chalmers, D. (1998). The extended mind. <em>Analysis</em>, 58(1), 7–19.</p>
+<p>Dehaene, S., Changeux, J.-P., &amp; Naccache, L. (2011). The global neuronal workspace model of conscious access. <em>Neuron</em>, 70(2), 187–201.</p>
+<p>Dennett, D. (1991). <em>Consciousness Explained</em>. Little, Brown.</p>
+<p>Franklin, S., Strain, S., McCall, R., &amp; Baars, B. (2013). Conceptual commitments of the LIDA model of cognition. <em>Journal of Artificial General Intelligence</em>, 4(2), 1–22.</p>
+<p>Friston, K. (2010). The free-energy principle: A unified brain theory? <em>Nature Reviews Neuroscience</em>, 11(2), 127–138.</p>
+<p>Gorenshtein, A., Omar, M., &amp; Barash, Y. (2026). Neuro-symbolic LLM integration in clinical medicine: A systematic review and taxonomy. https://doi.org/10.21203/rs.3.rs-8902022/v1</p>
+<p>Huang, W., Chella, A., &amp; Cangelosi, A. (2024). A cognitive robotics implementation of global workspace theory for episodic memory interaction with consciousness. <em>IEEE Transactions on Cognitive and Developmental Systems</em>, 16(1), 266–283. https://doi.org/10.1109/tcds.2023.3266103</p>
+<p>Kahneman, D. (2011). <em>Thinking, Fast and Slow</em>. Farrar, Straus and Giroux.</p>
+<p>Li, Z., Hua, W., &amp; Wang, H. (2024). Formal-LLM: Integrating formal language and natural language for controllable LLM-based agents. arXiv:2402.00798. https://doi.org/10.48550/arxiv.2402.00798</p>
+<p>Lazarus, R. S. (1991). <em>Emotion and Adaptation</em>. Oxford University Press.</p>
+<p>Minsky, M. (1986). <em>The Society of Mind</em>. Simon &amp; Schuster.</p>
+<p>Park, J. S., et al. (2023). Generative agents: Interactive simulacra of human behavior. <em>UIST 2023</em>.</p>
+<p>Putnam, H. (1967). Psychological predicates. In Capitan, W. H., &amp; Merrill, D. D. (Eds.), <em>Art, Mind, and Religion</em>. University of Pittsburgh Press.</p>
+<p>Searle, J. (1980). Minds, brains, and programs. <em>Behavioral and Brain Sciences</em>, 3(3), 417–424.</p>
+<hr>
+<p><em>Architecture reference: <code>PLAN.md</code>, <code>brain/CONSTITUTION.md</code></em><br>
+<em>Source repository: <code>russoreagan/super-intelligence</code></em></p>
+</main>
 </body>
 </html>

@@ -172,7 +172,7 @@ class SkillSelector:
         self._conversational_cell = IntegratorCell(
             name="skill_selector_conversational",
             cluster="frontal",
-            model="runpod",
+            model="haiku",
             system_prompt=_CONVERSATIONAL_SYSTEM,
             topics=[],
             max_tokens=80,

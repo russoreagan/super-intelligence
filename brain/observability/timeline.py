@@ -348,6 +348,8 @@ class ObservabilityLayer:
                                 else {}
                             ),
                             **({"fired_path": trace.fired_path} if trace.fired_path else {}),
+                            # ── persona ───────────────────────────────────
+                            "persona_name": trace.persona_name,
                             # ── voice / prosody (non-empty when --ears active)
                             **({"speaker_name": trace.speaker_name} if trace.speaker_name else {}),
                             **(
@@ -391,6 +393,7 @@ class ObservabilityLayer:
                             input={"user": trace.user_input},
                             output={"response": trace.response},
                             metadata={
+                                "persona_name": trace.persona_name,
                                 "llm_calls": trace.llm_calls,
                                 "elapsed_s": round(trace.elapsed_s, 3),
                                 "emotion": trace.emotion,
