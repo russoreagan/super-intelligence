@@ -22,6 +22,25 @@ SKILLS_DIR = Path(__file__).parent / "skills"
 class SkillLoader:
     _cache: dict[str, str] = {}
 
+    # ~800 tokens ≈ 3200 chars at ~4 chars/token — keeps Qwen attention focused
+    _MAX_CHARS = 3200
+
+    @classmethod
+    def _clean(cls, raw: str) -> str:
+        """Strip YAML frontmatter and trim to token budget for Qwen compatibility."""
+        text = raw.strip()
+        # Strip YAML frontmatter (--- ... ---)
+        if text.startswith("---"):
+            end = text.find("\n---", 3)
+            if end != -1:
+                text = text[end + 4:].strip()
+        # Trim to char budget
+        if len(text) > cls._MAX_CHARS:
+            # Cut at last paragraph boundary within budget
+            cut = text.rfind("\n\n", 0, cls._MAX_CHARS)
+            text = text[: cut if cut > 0 else cls._MAX_CHARS].strip()
+        return text
+
     @classmethod
     def load(cls, name: str) -> str:
         """Return skill content by name, or empty string if not found."""
@@ -33,7 +52,7 @@ class SkillLoader:
             logger.warning("Skill '%s' not found at %s", name, path)
             return ""
 
-        content = path.read_text(encoding="utf-8").strip()
+        content = cls._clean(path.read_text(encoding="utf-8"))
         cls._cache[name] = content
         return content
 
