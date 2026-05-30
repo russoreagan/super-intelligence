@@ -79,6 +79,47 @@ async def session(args) -> None:
     await BrainSession(args).run()
 
 
+def _route_persona_state() -> None:
+    """Route per-persona learned state into second_brain/personas/<slug>/.
+
+    Reads persona_name straight from settings.json (the source of truth, so this
+    survives the /restart re-exec) and points the env vars that the wiring and
+    second-brain stores resolve at import time. Must run BEFORE any brain.* module
+    that reads those vars is imported. settings.json itself stays global; only the
+    learned state (wiring, schema, episodes, tasks, dmn) is namespaced. The eval
+    log stays shared and is tagged by persona_name instead.
+    """
+    import json
+    import re
+    from pathlib import Path
+
+    persona = ""
+    settings_path = Path(__file__).parent / "settings.json"
+    if settings_path.exists():
+        try:
+            persona = str(json.loads(settings_path.read_text(encoding="utf-8")).get("persona_name", ""))
+        except Exception:
+            persona = ""
+
+    keys = ("SECOND_BRAIN_PATH", "BRAIN_WIRING_PATH", "BRAIN_WIRING_HISTORY_DIR")
+    if persona:
+        slug = re.sub(r"[^a-z0-9]+", "_", persona.lower()).strip("_") or "unnamed"
+        root = Path(__file__).parent.parent / "second_brain" / "personas" / slug
+        root.mkdir(parents=True, exist_ok=True)
+        os.environ["SECOND_BRAIN_PATH"] = str(root)
+        os.environ["BRAIN_WIRING_PATH"] = str(root / "wiring.json")
+        os.environ["BRAIN_WIRING_HISTORY_DIR"] = str(root / "wiring_history")
+        logging.getLogger("brain.run").info("[Persona] Active: %s → %s", persona, root)
+    else:
+        # No persona: clear only env we set ourselves (paths inside personas/),
+        # so a prior persona doesn't leak across /restart — but leave any explicit
+        # external override (e.g. SECOND_BRAIN_PATH=/custom) untouched.
+        marker = f"second_brain{os.sep}personas{os.sep}"
+        for k in keys:
+            if marker in os.environ.get(k, ""):
+                os.environ.pop(k, None)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Biologically-inspired AI brain")
     parser.add_argument("--message", "-m", help="Single-turn message (non-interactive)")
@@ -99,6 +140,8 @@ def main() -> None:
         help="v0.5: Enable Motor Cortex (tool use: file I/O, shell commands)",
     )
     args = parser.parse_args()
+
+    _route_persona_state()
 
     if args.voice:
         os.environ["BRAIN_VOICE_MODE"] = "true"

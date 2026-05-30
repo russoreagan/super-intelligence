@@ -47,6 +47,7 @@ class TurnTrace:
     turn_id: str
     session_id: str
     user_input: str
+    persona_name: str = ""  # active persona (empty = neutral); tags every eval row
     response: str = ""
     llm_calls: int = 0
     elapsed_s: float = 0.0
