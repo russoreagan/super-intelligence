@@ -122,9 +122,9 @@ class TestHormonalState:
         for _ in range(2000):
             hs.decay()
         snap = hs.snapshot()
-        assert snap["5HT"] >= HormonalState._FLOORS["5HT"]
-        assert snap["CORT"] >= HormonalState._FLOORS["CORT"]
-        assert snap["OXT"] >= HormonalState._FLOORS["OXT"]
+        assert snap["5HT"] >= HormonalState._HARD_MIN["5HT"]
+        assert snap["CORT"] >= HormonalState._HARD_MIN["CORT"]
+        assert snap["OXT"] >= HormonalState._HARD_MIN["OXT"]
 
     def test_snapshot_is_copy(self):
         hs = HormonalState()
@@ -546,7 +546,7 @@ class TestNorepinephrine:
         nm = Neuromodulators()
         for _ in range(200):
             nm.decay()
-        assert nm.get("NE") >= Neuromodulators._FLOORS["NE"]
+        assert nm.get("NE") >= Neuromodulators._HARD_MIN["NE"]
 
     def test_ne_add_clamps_at_one(self):
         from brain.bus import Neuromodulators
@@ -636,7 +636,7 @@ class TestAnandamide:
         hs = HormonalState()
         for _ in range(500):
             hs.decay()
-        assert hs.get("AEA") >= HormonalState._FLOORS["AEA"]
+        assert hs.get("AEA") >= HormonalState._HARD_MIN["AEA"]
 
     def test_aea_decays_faster_than_oxt(self):
         from brain.bus import HormonalState

@@ -103,7 +103,7 @@ _PERSONA_SELF = {
         "speaking": (
             "- Fast, bright, a little ahead of myself\n"
             "- I jump to the interesting part and backfill the context if you need it\n"
-            "- Lots of \"what if\" and \"imagine if\"\n"
+            '- Lots of "what if" and "imagine if"\n'
             "- Enthusiasm over polish — I'd rather be vivid than careful\n"
             "- I think out loud; the sentence finds its end as I say it\n"
         ),
@@ -243,26 +243,37 @@ def _seed_persona_self_md(root, persona: str, settings_data: dict) -> None:
         mood = f"DA={da:.2f} GABA={gaba:.2f} ACh={ach:.2f} dominant=baseline ({persona})"
 
         # Reset grown/divergent sections
-        text = re.sub(r"(## Current mood signature\n).*?(?=\n## |\Z)",
-                      r"\1" + mood, text, count=1, flags=re.S)
-        text = re.sub(r"(## History summary\n).*?(?=\n## |\Z)",
-                      r"\1", text, count=1, flags=re.S)
+        text = re.sub(
+            r"(## Current mood signature\n).*?(?=\n## |\Z)", r"\1" + mood, text, count=1, flags=re.S
+        )
+        text = re.sub(r"(## History summary\n).*?(?=\n## |\Z)", r"\1", text, count=1, flags=re.S)
 
         # Inject archetype-specific Personality + Speaking style.
         # Use lambdas to avoid regex treating the replacement text as a backreference.
         ps = _PERSONA_SELF.get(persona)
         if ps:
-            text = re.sub(r"(## Personality\n).*?(?=\n## |\Z)",
-                          lambda m: m.group(1) + ps["personality"],
-                          text, count=1, flags=re.S)
-            text = re.sub(r"(## Speaking style\n).*?(?=\n## |\Z)",
-                          lambda m: m.group(1) + ps["speaking"],
-                          text, count=1, flags=re.S)
+            text = re.sub(
+                r"(## Personality\n).*?(?=\n## |\Z)",
+                lambda m: m.group(1) + ps["personality"],
+                text,
+                count=1,
+                flags=re.S,
+            )
+            text = re.sub(
+                r"(## Speaking style\n).*?(?=\n## |\Z)",
+                lambda m: m.group(1) + ps["speaking"],
+                text,
+                count=1,
+                flags=re.S,
+            )
 
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(text, encoding="utf-8")
-        logger.info("[Persona] Seeded self.md for %s from base identity + archetype (%d chars)",
-                    persona, len(text))
+        logger.info(
+            "[Persona] Seeded self.md for %s from base identity + archetype (%d chars)",
+            persona,
+            len(text),
+        )
     except Exception as e:
         logger.warning("[Persona] self.md seed failed for %s: %s", persona, e)
 
