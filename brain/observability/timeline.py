@@ -9,6 +9,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import os
+import re
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -18,6 +19,27 @@ if TYPE_CHECKING:
     from eval.turn_logger import EvalLogger
 
 logger = logging.getLogger(__name__)
+
+# Detects first-person inner-state language in a response. Used to tag traces
+# with self_referential=true so native Langfuse self_model.* evaluators can
+# filter to only the turns where self-reference actually occurs.
+_SELF_REF_RE = re.compile(
+    r"\b("
+    r"I feel|I felt|I'?m feeling|I notice|I noticed|I experience|I sense|"
+    r"my emotion|my state|my inner|my feelings|my sense of|"
+    r"something like (curiosity|excitement|satisfaction|discomfort|unease|"
+    r"calm|focus|enthusiasm|hesitation|interest|warmth)|"
+    r"what might be|functions? as|there'?s something|"
+    r"I'?m curious|I'?m (a bit |somewhat )?(excited|uncertain|hesitant|"
+    r"interested|drawn|engaged|aware)|"
+    r"I find (myself|this)|my (attention|curiosity|focus|awareness)"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def _has_self_reference(text: str) -> bool:
+    return bool(_SELF_REF_RE.search(text))
 
 
 @dataclass
@@ -264,6 +286,7 @@ class ObservabilityLayer:
                         metadata={
                             # ── core turn stats ───────────────────────────
                             "llm_calls": trace.llm_calls,
+                            "self_referential": _has_self_reference(trace.response or ""),
                             "elapsed_s": round(trace.elapsed_s, 3),
                             "llm_calls_saved": trace.llm_calls_saved,
                             "gating_bypassed_count": trace.gating_bypassed_count,
