@@ -3594,6 +3594,105 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
 
     <div class="settings-grid">
 
+      <style>
+        #sec-persona { grid-column: 1 / -1; }
+        .persona-cards { display: flex; gap: 10px; overflow-x: auto; padding: 4px 2px 10px; }
+        .persona-card {
+          flex: 0 0 168px; background: var(--bg-2); border: 1px solid var(--line);
+          border-radius: 10px; padding: 12px 12px 10px; cursor: pointer;
+          transition: border-color .15s, transform .1s; user-select: none;
+        }
+        .persona-card:hover { transform: translateY(-2px); }
+        .persona-card.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+        .persona-card.active   { border-color: var(--accent); }
+        .persona-name { color: var(--accent); font-weight: 600; font-size: 13px; }
+        .persona-tag  { color: var(--fg-dim); font-size: 11px; margin: 2px 0 9px; line-height: 1.3; }
+        .persona-bar-row { display: flex; align-items: center; gap: 6px; margin: 3px 0; }
+        .persona-bar-row span { width: 30px; font-size: 9px; color: var(--fg-mute); text-align: right; }
+        .persona-bar { flex: 1; height: 5px; border-radius: 3px; background: var(--bg-3); overflow: hidden; }
+        .persona-bar > i { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
+        .persona-status { font-size: 12px; color: var(--fg-dim); margin: 4px 2px 10px; }
+        .persona-status b { color: var(--fg); }
+        .persona-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 4px; }
+        .persona-btn {
+          background: var(--accent); color: #07121f; border: none; border-radius: 7px;
+          padding: 7px 14px; font-size: 12px; font-weight: 600; cursor: pointer;
+        }
+        .persona-btn:disabled { opacity: .4; cursor: default; }
+        .persona-btn.ghost { background: transparent; color: var(--fg-dim); border: 1px solid var(--line); }
+        .persona-warn { color: #d9a23b; font-size: 11px; margin: 2px 2px; min-height: 14px; }
+        .persona-adv { margin-top: 12px; }
+        .persona-adv > summary { cursor: pointer; color: var(--fg-dim); font-size: 12px; padding: 4px 0; }
+        .persona-toggle { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; margin: 6px 0 12px; }
+        .persona-toggle button {
+          background: var(--bg-2); color: var(--fg-dim); border: none; padding: 6px 14px;
+          font-size: 12px; cursor: pointer;
+        }
+        .persona-toggle button.on { background: var(--accent); color: #07121f; font-weight: 600; }
+        .persona-adv-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 22px; }
+        .persona-adv h5 { margin: 6px 0 2px; font-size: 11px; color: var(--fg-mute); font-weight: 600; letter-spacing: .04em; }
+      </style>
+
+      <!-- S0: Persona -->
+      <div class="settings-section" id="sec-persona">
+        <div class="settings-section-head">
+          <span class="settings-section-num">00</span>
+          <div style="flex:1">
+            <div class="settings-section-title">Persona</div>
+            <div class="settings-section-desc">A starting chemistry. The brain learns and evolves from here — each persona keeps its own separate brain.</div>
+          </div>
+          <svg class="settings-section-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </div>
+        <div class="settings-section-body">
+          <div class="persona-cards" id="persona-cards"></div>
+          <div class="persona-status" id="persona-status">Neutral (default chemistry)</div>
+          <div class="persona-actions">
+            <button class="persona-btn" id="persona-init-btn" disabled>Select a persona</button>
+            <button class="persona-btn ghost" id="persona-neutral-btn">Return to neutral</button>
+            <span class="ctrl-hint">Initializing sets the chemistry — then Save + Restart.</span>
+          </div>
+          <div class="persona-warn" id="persona-warn"></div>
+
+          <details class="persona-adv">
+            <summary>Advanced — chemistry model &amp; per-channel sliders</summary>
+            <div style="margin-top:8px">
+              <div class="ctrl-label" style="font-size:12px">Decay model</div>
+              <div class="ctrl-hint" style="display:block;margin:2px 0 4px">How levels relax each turn. "Baseline" = gradual homeostatic recovery (recommended). "Floor" = legacy clamp (instant snap-up from below).</div>
+              <div class="persona-toggle" id="persona-decay-toggle">
+                <button data-model="baseline">Baseline</button>
+                <button data-model="floor">Floor (legacy)</button>
+              </div>
+            </div>
+            <div class="persona-adv-grid">
+              <div>
+                <h5>RESTING BASELINE (the trait)</h5>
+                <div class="ctrl-row"><div class="ctrl-header"><span class="ctrl-label">DA</span><span class="ctrl-value-display" id="val-chem_baseline_DA">0.30</span></div><input type="range" class="brain-slider" data-key="chem_baseline_DA" min="0" max="0.8" step="0.01" value="0.30"></div>
+                <div class="ctrl-row"><div class="ctrl-header"><span class="ctrl-label">ACh</span><span class="ctrl-value-display" id="val-chem_baseline_ACh">0.10</span></div><input type="range" class="brain-slider" data-key="chem_baseline_ACh" min="0" max="0.8" step="0.01" value="0.10"></div>
+                <div class="ctrl-row"><div class="ctrl-header"><span class="ctrl-label">GABA</span><span class="ctrl-value-display" id="val-chem_baseline_GABA">0.02</span></div><input type="range" class="brain-slider" data-key="chem_baseline_GABA" min="0" max="0.8" step="0.01" value="0.02"></div>
+                <div class="ctrl-row"><div class="ctrl-header"><span class="ctrl-label">Glu</span><span class="ctrl-value-display" id="val-chem_baseline_Glu">0.15</span></div><input type="range" class="brain-slider" data-key="chem_baseline_Glu" min="0" max="0.8" step="0.01" value="0.15"></div>
+                <div class="ctrl-row"><div class="ctrl-header"><span class="ctrl-label">NE</span><span class="ctrl-value-display" id="val-chem_baseline_NE">0.15</span></div><input type="range" class="brain-slider" data-key="chem_baseline_NE" min="0" max="0.8" step="0.01" value="0.15"></div>
+                <div class="ctrl-row"><div class="ctrl-header"><span class="ctrl-label">5HT</span><span class="ctrl-value-display" id="val-chem_baseline_5HT">0.20</span></div><input type="range" class="brain-slider" data-key="chem_baseline_5HT" min="0" max="0.8" step="0.01" value="0.20"></div>
+                <div class="ctrl-row"><div class="ctrl-header"><span class="ctrl-label">CORT</span><span class="ctrl-value-display" id="val-chem_baseline_CORT">0.02</span></div><input type="range" class="brain-slider" data-key="chem_baseline_CORT" min="0" max="0.8" step="0.01" value="0.02"></div>
+                <div class="ctrl-row"><div class="ctrl-header"><span class="ctrl-label">OXT</span><span class="ctrl-value-display" id="val-chem_baseline_OXT">0.15</span></div><input type="range" class="brain-slider" data-key="chem_baseline_OXT" min="0" max="0.8" step="0.01" value="0.15"></div>
+                <div class="ctrl-row"><div class="ctrl-header"><span class="ctrl-label">AEA</span><span class="ctrl-value-display" id="val-chem_baseline_AEA">0.10</span></div><input type="range" class="brain-slider" data-key="chem_baseline_AEA" min="0" max="0.8" step="0.01" value="0.10"></div>
+              </div>
+              <div>
+                <h5>STARTING LEVEL (value at boot)</h5>
+                <div class="ctrl-row"><div class="ctrl-header"><span class="ctrl-label">DA</span><span class="ctrl-value-display" id="val-chem_init_DA">0.50</span></div><input type="range" class="brain-slider" data-key="chem_init_DA" min="0" max="0.8" step="0.01" value="0.50"></div>
+                <div class="ctrl-row"><div class="ctrl-header"><span class="ctrl-label">ACh</span><span class="ctrl-value-display" id="val-chem_init_ACh">0.20</span></div><input type="range" class="brain-slider" data-key="chem_init_ACh" min="0" max="0.8" step="0.01" value="0.20"></div>
+                <div class="ctrl-row"><div class="ctrl-header"><span class="ctrl-label">GABA</span><span class="ctrl-value-display" id="val-chem_init_GABA">0.05</span></div><input type="range" class="brain-slider" data-key="chem_init_GABA" min="0" max="0.8" step="0.01" value="0.05"></div>
+                <div class="ctrl-row"><div class="ctrl-header"><span class="ctrl-label">Glu</span><span class="ctrl-value-display" id="val-chem_init_Glu">0.30</span></div><input type="range" class="brain-slider" data-key="chem_init_Glu" min="0" max="0.8" step="0.01" value="0.30"></div>
+                <div class="ctrl-row"><div class="ctrl-header"><span class="ctrl-label">NE</span><span class="ctrl-value-display" id="val-chem_init_NE">0.25</span></div><input type="range" class="brain-slider" data-key="chem_init_NE" min="0" max="0.8" step="0.01" value="0.25"></div>
+                <div class="ctrl-row"><div class="ctrl-header"><span class="ctrl-label">5HT</span><span class="ctrl-value-display" id="val-chem_init_5HT">0.50</span></div><input type="range" class="brain-slider" data-key="chem_init_5HT" min="0" max="0.8" step="0.01" value="0.50"></div>
+                <div class="ctrl-row"><div class="ctrl-header"><span class="ctrl-label">CORT</span><span class="ctrl-value-display" id="val-chem_init_CORT">0.05</span></div><input type="range" class="brain-slider" data-key="chem_init_CORT" min="0" max="0.8" step="0.01" value="0.05"></div>
+                <div class="ctrl-row"><div class="ctrl-header"><span class="ctrl-label">OXT</span><span class="ctrl-value-display" id="val-chem_init_OXT">0.30</span></div><input type="range" class="brain-slider" data-key="chem_init_OXT" min="0" max="0.8" step="0.01" value="0.30"></div>
+                <div class="ctrl-row"><div class="ctrl-header"><span class="ctrl-label">AEA</span><span class="ctrl-value-display" id="val-chem_init_AEA">0.30</span></div><input type="range" class="brain-slider" data-key="chem_init_AEA" min="0" max="0.8" step="0.01" value="0.30"></div>
+              </div>
+            </div>
+          </details>
+        </div>
+      </div>
+
       <!-- S1: Emotional Reactivity -->
       <div class="settings-section" id="sec-1">
         <div class="settings-section-head">
@@ -6098,6 +6197,7 @@ async function loadSettingsFromServer() {
     currentSettings = { ...data.settings };
     defaultSettings = { ...data.defaults };
     applySettingsToUI(currentSettings);
+    if (typeof _renderPersonaState === 'function') _renderPersonaState();
   } catch (e) {
     console.warn('Settings: failed to load from server', e);
   }
@@ -6158,6 +6258,130 @@ settingsReset.addEventListener('click', async () => {
   } catch (e) {
     console.warn('Settings: reset failed', e);
   }
+});
+
+// ── Personas ─────────────────────────────────────────────────────────
+const PERSONAS = {
+  "The Visionary": { tag: "Exploratory · optimistic · uninhibited",
+    chem: { DA:0.62, ACh:0.45, GABA:0.04, Glu:0.40, NE:0.35, "5HT":0.55, CORT:0.05, OXT:0.45, AEA:0.20 } },
+  "The Empath":    { tag: "Warm · patient · attuned",
+    chem: { DA:0.45, ACh:0.18, GABA:0.12, Glu:0.18, NE:0.15, "5HT":0.70, CORT:0.03, OXT:0.70, AEA:0.45 } },
+  "The Analyst":   { tag: "Methodical · precise · vigilant",
+    chem: { DA:0.40, ACh:0.55, GABA:0.18, Glu:0.25, NE:0.40, "5HT":0.55, CORT:0.14, OXT:0.22, AEA:0.30 } },
+  "The Poet":      { tag: "Intense · ruminative · unfiltered",
+    chem: { DA:0.32, ACh:0.55, GABA:0.08, Glu:0.38, NE:0.42, "5HT":0.28, CORT:0.15, OXT:0.22, AEA:0.38 } },
+  "The Sage":      { tag: "Contemplative · unhurried · calm",
+    chem: { DA:0.35, ACh:0.18, GABA:0.28, Glu:0.12, NE:0.12, "5HT":0.72, CORT:0.03, OXT:0.50, AEA:0.55 } },
+};
+const PERSONA_CHANNELS = ["DA","ACh","GABA","Glu","NE","5HT","CORT","OXT","AEA"];
+const PERSONA_BARS = ["DA","5HT","OXT","ACh","GABA"];
+const PERSONA_BAR_SCALE = 0.8; // slider max — bars fill relative to this
+let _selectedPersona = null;
+
+function _renderPersonaCards() {
+  const wrap = document.getElementById('persona-cards');
+  if (!wrap) return;
+  wrap.innerHTML = '';
+  for (const [name, p] of Object.entries(PERSONAS)) {
+    const card = document.createElement('div');
+    card.className = 'persona-card';
+    card.dataset.persona = name;
+    const bars = PERSONA_BARS.map(ch => {
+      const pct = Math.min(100, (p.chem[ch] / PERSONA_BAR_SCALE) * 100);
+      return `<div class="persona-bar-row"><span>${ch}</span><div class="persona-bar"><i style="width:${pct}%"></i></div></div>`;
+    }).join('');
+    card.innerHTML = `<div class="persona-name">${name}</div><div class="persona-tag">${p.tag}</div>${bars}`;
+    card.addEventListener('click', () => _selectPersona(name));
+    wrap.appendChild(card);
+  }
+}
+
+function _chemMatchesPersona(name) {
+  const p = PERSONAS[name];
+  if (!p) return false;
+  return PERSONA_CHANNELS.every(ch =>
+    Math.abs(parseFloat(currentSettings['chem_baseline_' + ch] ?? -1) - p.chem[ch]) < 1e-6);
+}
+
+function _selectPersona(name) {
+  _selectedPersona = name;
+  document.querySelectorAll('.persona-card').forEach(c =>
+    c.classList.toggle('selected', c.dataset.persona === name));
+  const btn = document.getElementById('persona-init-btn');
+  btn.disabled = false;
+  btn.textContent = 'Begin as ' + name;
+  const warn = document.getElementById('persona-warn');
+  const born = (currentSettings.persona_name || '');
+  warn.textContent = (born && born !== name)
+    ? `Switches the active brain. ${name} resumes its own saved history; ${born}'s brain stays untouched.`
+    : '';
+}
+
+function _initializePersona() {
+  if (!_selectedPersona) return;
+  const p = PERSONAS[_selectedPersona];
+  for (const ch of PERSONA_CHANNELS) {
+    currentSettings['chem_baseline_' + ch] = p.chem[ch];
+    currentSettings['chem_init_' + ch] = p.chem[ch]; // start at rest
+  }
+  currentSettings['persona_name'] = _selectedPersona;
+  currentSettings['persona_born'] = new Date().toISOString();
+  applySettingsToUI(currentSettings);
+  _renderPersonaState();
+  restartBanner.classList.add('visible');
+  document.getElementById('persona-warn').textContent =
+    'Set. Click Save Settings, then Restart, to begin as ' + _selectedPersona + '.';
+}
+
+function _returnToNeutral() {
+  for (const ch of PERSONA_CHANNELS) {
+    currentSettings['chem_baseline_' + ch] = defaultSettings['chem_baseline_' + ch];
+    currentSettings['chem_init_' + ch] = defaultSettings['chem_init_' + ch];
+  }
+  currentSettings['persona_name'] = '';
+  currentSettings['persona_born'] = '';
+  _selectedPersona = null;
+  applySettingsToUI(currentSettings);
+  _renderPersonaState();
+  restartBanner.classList.add('visible');
+  document.getElementById('persona-warn').textContent =
+    'Reset to neutral chemistry. Save + Restart to apply.';
+}
+
+function _renderPersonaState() {
+  const name = currentSettings.persona_name || '';
+  const statusEl = document.getElementById('persona-status');
+  document.querySelectorAll('.persona-card').forEach(c =>
+    c.classList.toggle('active', c.dataset.persona === name));
+  if (name) {
+    const custom = (name in PERSONAS) && !_chemMatchesPersona(name);
+    const born = currentSettings.persona_born ? new Date(currentSettings.persona_born).toLocaleDateString() : '';
+    statusEl.innerHTML = `Active: <b>${name}</b>${custom ? ' · customized' : ''}${born ? ' · since ' + born : ''}`;
+  } else {
+    statusEl.textContent = 'Neutral (default chemistry)';
+  }
+  // Decay-model toggle reflect
+  const model = currentSettings.chem_decay_model || 'baseline';
+  document.querySelectorAll('#persona-decay-toggle button').forEach(b =>
+    b.classList.toggle('on', b.dataset.model === model));
+}
+
+_renderPersonaCards();
+document.getElementById('persona-init-btn').addEventListener('click', _initializePersona);
+document.getElementById('persona-neutral-btn').addEventListener('click', () => {
+  if (confirm('Reset chemistry to neutral and clear the active persona?')) _returnToNeutral();
+});
+document.querySelectorAll('#persona-decay-toggle button').forEach(b => {
+  b.addEventListener('click', () => {
+    currentSettings.chem_decay_model = b.dataset.model;
+    _renderPersonaState();
+    restartBanner.classList.add('visible');
+  });
+});
+// Manually editing a chemistry slider drops the exact-match highlight (but keeps
+// the persona identity — you're customizing that persona's chemistry).
+document.querySelectorAll('input[data-key^="chem_baseline_"], input[data-key^="chem_init_"]').forEach(inp => {
+  inp.addEventListener('input', () => { _selectedPersona = null; _renderPersonaState(); });
 });
 
 // ---- Left panel tab switching ----
