@@ -192,7 +192,99 @@ input, select, textarea { font: inherit; color: inherit; background: none; borde
   color: var(--accent);
   border: 1px solid oklch(0.55 0.18 220 / 0.35);
   white-space: nowrap;
-  pointer-events: none;
+  pointer-events: auto;
+  cursor: pointer;
+  position: relative;
+  transition: background 0.15s, border-color 0.15s;
+}
+#persona-header-badge:hover {
+  background: oklch(0.24 0.04 220 / 0.7);
+  border-color: oklch(0.65 0.20 220 / 0.5);
+}
+#persona-header-badge.neutral {
+  color: var(--fg-faint);
+  border-color: var(--line-faint);
+  background: oklch(0.20 0.01 250 / 0.4);
+}
+/* Persona picker popup */
+#persona-picker {
+  display: none;
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--bg-1);
+  border: 1px solid var(--line-soft);
+  border-radius: 12px;
+  padding: 6px;
+  z-index: 9999;
+  min-width: 200px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  pointer-events: auto;
+}
+#persona-picker.open { display: block; }
+.persona-pick-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.persona-pick-item:hover { background: var(--bg-2); }
+.persona-pick-item.current { background: oklch(0.22 0.03 220 / 0.5); }
+.persona-pick-name {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg);
+  flex: 1;
+}
+.persona-pick-item.current .persona-pick-name { color: var(--accent); }
+.persona-pick-tag {
+  font-size: 10px;
+  color: var(--fg-mute);
+}
+.persona-pick-check {
+  width: 14px;
+  text-align: center;
+  color: var(--accent);
+  font-size: 12px;
+}
+.persona-pick-divider {
+  height: 1px;
+  background: var(--line-faint);
+  margin: 4px 2px;
+}
+.persona-pick-neutral {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.persona-pick-neutral:hover { background: var(--bg-2); }
+.persona-pick-neutral-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+  flex: 1;
+}
+#persona-pick-restarting {
+  display: none;
+  padding: 10px 12px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.10em;
+  color: var(--fg-dim);
+  text-align: center;
 }
 #emotion-badge {
   padding: 5px 16px;
@@ -3243,7 +3335,11 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
     </div>
 
     <div class="header-center">
-      <span id="persona-header-badge" style="display:none"></span>
+      <span id="persona-header-badge" class="neutral">·</span>
+      <div id="persona-picker">
+        <div id="persona-pick-list"></div>
+        <div id="persona-pick-restarting">switching persona…</div>
+      </div>
       <span id="emotion-badge">neutral</span>
       <div id="active-label">awaiting input</div>
     </div>
@@ -6367,16 +6463,16 @@ function _renderPersonaState() {
   const name = currentSettings.persona_name || '';
   const statusEl = document.getElementById('persona-status');
 
-  // Header badge — shows next to mood when a persona is active
+  // Header badge — always visible; accent when active, faint when neutral
   const headerBadge = document.getElementById('persona-header-badge');
   if (headerBadge) {
     if (name) {
-      // Strip "The " prefix to save space: "The Sage" → "Sage"
       const short = name.replace(/^The\s+/i, '');
       headerBadge.textContent = short;
-      headerBadge.style.display = '';
+      headerBadge.classList.remove('neutral');
     } else {
-      headerBadge.style.display = 'none';
+      headerBadge.textContent = '·';
+      headerBadge.classList.add('neutral');
     }
   }
 
@@ -6395,6 +6491,96 @@ function _renderPersonaState() {
   document.querySelectorAll('#persona-decay-toggle button').forEach(b =>
     b.classList.toggle('on', b.dataset.model === model));
 }
+
+// ── Persona header picker ─────────────────────────────────────────────
+function _buildPersonaPicker() {
+  const list = document.getElementById('persona-pick-list');
+  if (!list) return;
+  list.innerHTML = '';
+  const current = currentSettings.persona_name || '';
+
+  // Five persona rows
+  for (const [name, p] of Object.entries(PERSONAS)) {
+    const row = document.createElement('div');
+    row.className = 'persona-pick-item' + (name === current ? ' current' : '');
+    const short = name.replace(/^The\s+/i, '');
+    row.innerHTML =
+      `<span class="persona-pick-check">${name === current ? '✓' : ''}</span>` +
+      `<span class="persona-pick-name">${short}</span>` +
+      `<span class="persona-pick-tag">${p.tag.split(' · ')[0]}</span>`;
+    row.addEventListener('click', () => _switchPersona(name, p));
+    list.appendChild(row);
+  }
+
+  // Divider + Neutral option
+  const div = document.createElement('div');
+  div.className = 'persona-pick-divider';
+  list.appendChild(div);
+  const neutral = document.createElement('div');
+  neutral.className = 'persona-pick-neutral' + (!current ? ' current' : '');
+  neutral.innerHTML =
+    `<span class="persona-pick-check">${!current ? '✓' : ''}</span>` +
+    `<span class="persona-pick-neutral-label">Neutral (default)</span>`;
+  neutral.addEventListener('click', () => _switchPersona('', null));
+  list.appendChild(neutral);
+}
+
+async function _switchPersona(name, p) {
+  // Show "switching…" state
+  document.getElementById('persona-pick-list').style.display = 'none';
+  document.getElementById('persona-pick-restarting').style.display = 'block';
+  document.getElementById('persona-pick-restarting').textContent =
+    name ? `switching to ${name.replace(/^The\s+/i, '').toLowerCase()}…` : 'returning to neutral…';
+
+  // Build the settings patch
+  const patch = { persona_name: name, persona_born: name ? new Date().toISOString() : '' };
+  const channels = ['DA','ACh','GABA','Glu','NE','5HT','CORT','OXT','AEA'];
+  if (name && p) {
+    for (const ch of channels) {
+      patch['chem_baseline_' + ch] = p.chem[ch];
+      patch['chem_init_' + ch] = p.chem[ch];
+    }
+  } else {
+    // Neutral: restore defaults
+    for (const ch of channels) {
+      patch['chem_baseline_' + ch] = defaultSettings['chem_baseline_' + ch] ?? 0;
+      patch['chem_init_' + ch] = defaultSettings['chem_init_' + ch] ?? 0;
+    }
+  }
+
+  try {
+    // Write settings then restart — restart re-execs so settings are picked up
+    await fetch('/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...currentSettings, ...patch }),
+    });
+    await fetch('/restart', { method: 'POST' });
+  } catch (e) {
+    // If the brain is offline (static preview etc.) just update local state
+    Object.assign(currentSettings, patch);
+    applySettingsToUI(currentSettings);
+    _renderPersonaState();
+    document.getElementById('persona-picker').classList.remove('open');
+    document.getElementById('persona-pick-list').style.display = '';
+    document.getElementById('persona-pick-restarting').style.display = 'none';
+  }
+}
+
+// Open/close the picker on badge click
+const _personaBadgeEl = document.getElementById('persona-header-badge');
+const _personaPickerEl = document.getElementById('persona-picker');
+_personaBadgeEl.addEventListener('click', (e) => {
+  e.stopPropagation();
+  const isOpen = _personaPickerEl.classList.contains('open');
+  if (!isOpen) _buildPersonaPicker();
+  _personaPickerEl.classList.toggle('open', !isOpen);
+});
+document.addEventListener('click', (e) => {
+  if (!_personaPickerEl.contains(e.target) && e.target !== _personaBadgeEl) {
+    _personaPickerEl.classList.remove('open');
+  }
+});
 
 _renderPersonaCards();
 document.getElementById('persona-init-btn').addEventListener('click', _initializePersona);
