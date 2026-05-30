@@ -51,6 +51,10 @@ DEFAULTS: dict[str, float | int | str] = {
     "weight_min": 0.10,
     "weight_max": 3.00,
     "gaba_skip_threshold_high": 0.55,
+    # Hard cap on drafters per turn. 3 is the architectural max; default 2 avoids
+    # 3×(8k-token frontal call) on slow hardware blowing through the turn timeout.
+    # Raise to 3 if the model is fast enough or you want maximum response variety.
+    "max_drafter_count": 2,
     # ── Section 4: Default Mode Network ──────────────────────────────────────
     "dmn_interval": 8.0,  # active baseline — fires when any mouse/keyboard activity detected
     "dmn_idle_interval": 45.0,  # when fully away from computer (OS idle > 60s)

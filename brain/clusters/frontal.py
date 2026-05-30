@@ -666,7 +666,8 @@ class FrontalCluster:
         image_path: str | None = None,
     ) -> str:
         """Drafter cascade + critic selection. Returns the committed response text."""
-        drafter_count = min(int(instruction.get("drafter_count", 1)), 3)
+        _max_drafters = int(settings.get("max_drafter_count", 2))
+        drafter_count = min(int(instruction.get("drafter_count", 1)), max(1, _max_drafters))
         glu_deficit = 1.0 - nm["Glu"]
         if self._arousal_modulator.should_fire(glu_deficit, chem, turn_id):
             self._arousal_modulator.fire(
