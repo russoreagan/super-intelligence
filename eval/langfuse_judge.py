@@ -53,10 +53,13 @@ Score THREE dimensions (0.0–1.0):
                 brackets, backticks, numbered lists, or other visual formatting.
                 Low (<0.4): contains markdown that would sound jarring when spoken.
 
-  speakability: Does the text flow naturally as spoken language?
-                High (>0.8): conversational rhythm, contractions, natural sentence
-                lengths — feels written to be heard, not read.
-                Low (<0.4): overly formal, stilted, or reads like written text.
+  speakability: How well does the text work as SPOKEN audio (read aloud by TTS)?
+                High (>0.8): natural spoken rhythm — contractions, conversational openers,
+                fragments and em-dash asides, sentence lengths a person would actually say.
+                These casual features are GOOD for speech, not flaws.
+                Low (<0.3): winding multi-clause sentences, essay-like or bureaucratic
+                phrasing, or constructions nobody would say aloud. Do NOT penalize a
+                response merely for being short, casual, or elliptical.
 
   length_fit:   Is the response an appropriate length for voice?
                 High (>0.8): concise enough to not tire the listener, yet complete.

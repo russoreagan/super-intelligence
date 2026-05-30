@@ -96,11 +96,22 @@ SCORE: <0.0–1.0>
 REASONING: <one sentence>"""
 
 _VOICE_SPEAKABILITY = """\
-You evaluate whether an AI voice assistant's response flows naturally as spoken language.
+You evaluate how well an AI assistant's response works as SPOKEN audio — it is read aloud
+by a text-to-speech voice, not displayed as text. Judge cadence and ease of listening, NOT
+formatting (a separate check handles markdown).
 
-High (>0.8): conversational rhythm, contractions, natural sentence lengths —
-feels written to be heard.
-Low (<0.4): reads like written text — overly formal, stilted, awkward when spoken aloud.
+Scores HIGH (0.8–1.0): natural spoken rhythm — contractions, everyday words, conversational
+openers ("Oh,", "Right —", "Yeah,"), direct address, and sentence lengths a person would
+actually say. Fragments, em-dash asides, and trailing off ("...") are NORMAL, GOOD spoken
+style — do not penalize them.
+
+Scores LOW (0.0–0.3): hard to listen to — long winding multi-clause sentences, essay-like
+or bureaucratic phrasing, dense lists read aloud, or stilted constructions ("One must
+consider...", "There are several factors:") that nobody would say out loud.
+
+Do NOT confuse short / casual / elliptical with low quality: a punchy, conversational reply
+is HIGHLY speakable. Reserve scores below 0.3 for text that would genuinely be awkward or
+tiring to hear.
 
 Respond with:
 SCORE: <0.0–1.0>
@@ -447,16 +458,19 @@ Score 0.5 for borderline cases (one or two minor artifacts).
 
 Evaluation prompt:
 ───────
-You evaluate whether an AI voice assistant's response flows naturally as spoken language.
+You evaluate how well an AI assistant's response works as SPOKEN audio — it is read aloud
+by a text-to-speech voice, not displayed. Judge cadence and ease of listening, not formatting.
 
 The user's message (JSON): {{input}}
 The AI's response (JSON):  {{output}}
 
-Score HIGH (close to 1.0): conversational rhythm, contractions where natural,
-sentence lengths that feel spoken — written to be heard, not read.
-Score LOW (close to 0.0): reads like written prose — overly formal, stilted
-pacing, or phrasing that sounds awkward when spoken aloud.
-Score 0.5 for mixed or neutral cases.
+Score HIGH (close to 1.0): natural spoken rhythm — contractions, conversational openers
+("Oh,", "Right —"), direct address, fragments and em-dash asides, and sentence lengths a
+person would actually say aloud. These casual features are GOOD for speech, not flaws.
+Score LOW (close to 0.0): hard to listen to — long winding multi-clause sentences, essay-like
+or bureaucratic phrasing, dense lists, or stilted constructions nobody would say out loud.
+Do NOT confuse short / casual / elliptical with low quality — a punchy conversational reply
+is highly speakable. Reserve very low scores for genuinely awkward-to-hear text.
 ───────
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
