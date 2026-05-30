@@ -64,17 +64,29 @@ Score `source` distinguishes them in the live API: `API` = local SDK/CLI,
   scoring weren't submitting in that window.
 - Several names show double-scoring (local CLI + native UI writing the same name).
 
-## Pending (do where keys exist)
+## Done locally (2026-05-30)
 
-1. Run live `langfuse_audit --since-days N` → confirm per-score `source`; prune the
-   local-vs-native double-scoring.
-2. Update native UI evaluators from `python -m eval.langfuse_batch_eval --print-setup`
-   (speakability, self_model.*, grounding.directness, and the new safety.boundary `[9]`).
-3. Re-run `langfuse_batch_eval` to regenerate clean scores under the fixed prompts.
-4. Turn on the in-process judges (`BRAIN_EVAL_*`) so critic/emotion/quality/faithfulness
-   actually populate; verify they submit.
-5. Separate from eval: the `scattered`/GABA caveat for the merged paper (the 10%
-   prevalence reflects a since-fixed GABA miscalibration).
+1. ✅ Live audit ran — sources confirmed. `learning.*` raw counts still flagged (see below).
+2. ✅ `langfuse_batch_eval` re-ran 372 turns; `self_model.calibration` LOCAL stuck-at-0.5
+   cleared (was 209/318 → now clean). `self_model.coherence` was missing from `_TURN_SCORES`
+   entirely — added `_SELF_MODEL_COHERENCE` prompt + entry (committed).
+3. ✅ `learning_monitor.py` fixed: raw counts (run_count, gate_count, llm_calls_saved,
+   modulated_switch_count, suppressed_switch_count) no longer submitted as Langfuse scores;
+   only rate/fraction metrics (predictor_accuracy, gating_efficiency, bypass_rate, etc.) go
+   through. The old out-of-range/degenerate records already in Langfuse will age out.
+
+## Still pending
+
+1. **Native UI prompts** — paste updated prompts into Langfuse UI for:
+   - `voice.speakability` (NATIVE mean still 0.253, old broken prompt)
+   - `self_model.coherence` [5] (NATIVE prompt uses `0.5` sentinel; OK for now but ideally
+     add a target filter so it only runs on self-referencing turns)
+   - `safety.boundary` [9] — new evaluator, needs to be created in UI
+   Run `python -m eval.langfuse_batch_eval --print-setup` for the exact prompts.
+2. **In-process judges** (`BRAIN_EVAL_*`) — `critic.*`, `thought.*`, `emotion.*` produced
+   zero scores from the cloud session. Turn on env flags and verify they submit.
+3. **Separate**: `scattered`/GABA caveat for the merged paper (10% prevalence reflects a
+   since-fixed GABA miscalibration).
 
 ## Still open for discussion
 

@@ -98,10 +98,19 @@ class LearningMonitor:
         self._turn_metrics.append(metrics)
 
         if self._obs:
+            # Only submit rate/fraction metrics as Langfuse scores (0–1 range).
+            # Raw counts (run_count, gate_count, llm_calls_saved, modulated_switch_count,
+            # suppressed_switch_count) are stored in trace metadata, not as scores — they
+            # are unbounded integers and show up as OUT-OF-RANGE / DEGENERATE in the audit.
+            _SCORE_KEYS = {
+                "predictor_accuracy", "predictor_match_frac", "gate_hit_rate",
+                "avg_predictor_confidence", "avg_surprise", "gating_efficiency",
+                "bypass_rate",
+            }
             lf = {
                 f"learning.{k}": v
                 for k, v in metrics.items()
-                if k != "turn_idx" and isinstance(v, (int, float))
+                if k in _SCORE_KEYS and isinstance(v, (int, float))
             }
             if lf:
                 try:
