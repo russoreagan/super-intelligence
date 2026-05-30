@@ -127,33 +127,43 @@ async def test_full_utterance_ends_up_in_queue():
 
 
 @pytest.mark.asyncio
-async def test_ptt_hold_suppresses_mid_phrase_utterance_end():
-    """Push-to-talk: a mid-sentence pause makes Deepgram fire UtteranceEnd, but
-    while the hold is active that must NOT dispatch a partial. Words keep
-    accumulating; flush() on release dispatches the whole phrase as one utterance.
-    Regression for the 'clipped before I let go of Space' bug."""
+async def test_ptt_hold_chunks_mid_phrase_and_assembles_on_release():
+    """Push-to-talk incremental capture: a mid-sentence pause makes Deepgram fire
+    UtteranceEnd. While held, each pause-delimited segment is dispatched as a CHUNK
+    (ptt_chunk=True) — never as a standalone utterance — and the voice bridge
+    buffers chunks without responding. On release, flush() finalizes the last chunk
+    and emits a terminal marker so the bridge assembles the whole phrase into one
+    turn. Regression for the 'clipped before I let go of Space' bug — the brain must
+    not respond to half the phrase."""
     msgs = [
         _speech_started(0.0),
         _results([_word("the", 0.0, 0.2), _word("hold", 0.2, 0.5)]),
-        _utterance_end(0.5),  # mid-pause — must be suppressed
+        _utterance_end(0.5),  # mid-pause — emitted as a chunk, not a full utterance
         _results([_word("to", 1.0, 1.2), _word("talk", 1.2, 1.6)]),
-        _utterance_end(1.6),  # still held — suppressed
+        _utterance_end(1.6),  # still held — another chunk
     ]
     session, bus = _make_session(msgs)
     session._ptt_hold_active = True  # simulate Space held
     session._ptt_release_grace_s = 0.0  # no real wait in test
 
     await session._read_loop()
-    # Nothing dispatched while held, despite two UtteranceEnd events
-    assert session.utterances.empty()
+    # Two chunks emitted while held; both tagged ptt_chunk and NONE is a terminal,
+    # so the bridge buffers them and the brain stays silent mid-phrase.
+    held = [session.utterances.get_nowait() for _ in range(session.utterances.qsize())]
+    assert [u["transcript"] for u in held] == ["the hold", "to talk"]
+    assert all(u.get("ptt_chunk") for u in held)
+    assert not any(u.get("ptt_terminal") for u in held)
 
-    # Release → flush dispatches the full accumulated phrase as one utterance
+    # Release → flush emits the terminal marker so the bridge responds once.
     await session.flush()
-    assert session.utterances.qsize() == 1
-    utt = session.utterances.get_nowait()
-    assert utt["transcript"] == "the hold to talk"
-    assert utt["from_ptt_flush"] is True
+    rest = [session.utterances.get_nowait() for _ in range(session.utterances.qsize())]
+    assert rest[-1].get("ptt_terminal") is True
     assert session.is_muted is True  # flush re-mutes
+
+    # The bridge assembles all chunks (the read-loop chunks + the flush) into one
+    # combined turn — the WHOLE held phrase, nothing clipped.
+    chunks = [u["transcript"] for u in (held + rest) if u.get("ptt_chunk") and u["transcript"]]
+    assert " ".join(chunks) == "the hold to talk"
 
 
 @pytest.mark.asyncio

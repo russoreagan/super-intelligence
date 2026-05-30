@@ -50,6 +50,11 @@ class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
         # on). The mic is live only when this is True and the entity isn't
         # speaking; on release we flush the held phrase and re-mute.
         self._ptt_held = False
+        # Buffer of transcribed segments captured while Space is held. The mic
+        # dispatches each pause-delimited chunk as it completes; we accumulate
+        # them here and only dispatch one combined turn when the terminal marker
+        # arrives on release — so the brain never responds mid-phrase.
+        self._ptt_chunks: list[str] = []
 
         # Proactive / idle gates (overwritten during _setup_core from settings)
         self._proactive_idle_threshold: float = 180.0

@@ -444,7 +444,7 @@ class StreamingMicSession:
         return await self.utterances.get()
 
     async def _finalize_pending(
-        self, last_end: float | None = None, from_flush: bool = False
+        self, last_end: float | None = None, from_flush: bool = False, ptt_chunk: bool = False
     ) -> None:
         """Build an utterance from the accumulated words + sliced PCM, publish it
         to the auditory bus, and hand it to next_utterance(). Resets utterance
@@ -522,20 +522,31 @@ class StreamingMicSession:
                 # PTT flush: mic will be muted by the time the voice bridge reads this,
                 # so bypass the is_muted discard check.
                 "from_ptt_flush": from_flush,
+                # PTT incremental capture: a mid-hold segment. The voice bridge
+                # buffers these and only responds when the terminal marker arrives
+                # (on Space release), so the whole held phrase is one turn.
+                "ptt_chunk": ptt_chunk,
             }
         )
 
     async def flush(self) -> None:
         """Push-to-talk release: keep the feed live for a short grace so trailing
-        final Results arrive, finalize the held utterance immediately (don't wait
-        for Deepgram's ~1.2s UtteranceEnd), then mute. Safe to call when already
-        muted (no-op)."""
+        final Results arrive, finalize the last held segment as a chunk, then emit a
+        terminal marker that tells the voice bridge to assemble all buffered chunks
+        into one turn and respond. Finally mute. Safe to call when already muted
+        (no-op)."""
         if self._muted:
             return
         if self._ptt_release_grace_s > 0:
             await asyncio.sleep(self._ptt_release_grace_s)
         with contextlib.suppress(Exception):
-            await self._finalize_pending(from_flush=True)
+            # Final segment of the held phrase — tagged as a chunk like the rest.
+            await self._finalize_pending(from_flush=True, ptt_chunk=True)
+        # Always emit the terminal marker, even when the final segment was empty
+        # (e.g. released during a pause), so the bridge flushes its chunk buffer
+        # and responds. from_ptt_flush bypasses the muted-discard check.
+        with contextlib.suppress(Exception):
+            await self.utterances.put({"ptt_terminal": True, "from_ptt_flush": True})
         self.mute()
 
     # ── internal: mic side ─────────────────────────────────────────────────
@@ -674,15 +685,18 @@ class StreamingMicSession:
                         self._utterance_start_s = None
                         self._pending_words = []
                         continue
-                    if self._ptt_hold_active:
-                        # PTT hold in progress — DON'T finalize yet. Words keep
-                        # accumulating in _pending_words across mid-sentence pauses.
-                        # SpeechStarted only sets _utterance_start_s when it's None
-                        # (preserving the original hold-start timestamp), so the
-                        # full phrase will slice correctly when flush() fires on release.
-                        logger.debug("[StreamingMic] UtteranceEnd suppressed (PTT hold active)")
-                        continue
                     last_end = float(getattr(message, "last_word_end", 0.0))
+                    if self._ptt_hold_active:
+                        # PTT hold in progress — finalize this pause-delimited segment
+                        # as a CHUNK (tagged ptt_chunk) rather than a full utterance.
+                        # The voice bridge buffers chunks and withholds the response
+                        # until the terminal marker (emitted on Space release), so the
+                        # whole held phrase becomes one turn. Chunking incrementally
+                        # keeps each PCM slice short (never overflows the rolling
+                        # buffer on long holds) and lets the auditory pipeline run as
+                        # you speak instead of in one spike at release.
+                        await self._finalize_pending(last_end, ptt_chunk=True)
+                        continue
                     await self._finalize_pending(last_end)
 
                 elif mtype == "Metadata":

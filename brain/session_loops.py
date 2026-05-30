@@ -94,6 +94,9 @@ class _LoopsMixin:
         if mic is None:
             return
         if want_live:
+            # Fresh hold — drop any chunks left over from a hold that never got a
+            # clean release (e.g. window blur), so they don't prepend this phrase.
+            self._ptt_chunks.clear()
             if not self.pns.is_speaking:
                 mic.unmute(ptt_hold=True)
             self._emit_mic_state()
@@ -338,6 +341,29 @@ class _LoopsMixin:
                 logger.warning("[I/O] voice bridge read failed: %s", e)
                 await asyncio.sleep(0.5)
                 continue
+
+            # ── Push-to-talk incremental capture ──────────────────────────────
+            # While Space is held, the mic dispatches each pause-delimited segment
+            # as a chunk. Buffer them and withhold the response until the terminal
+            # marker (Space release) so the brain reads the WHOLE held phrase as one
+            # turn. Handled before the muted-discard check so release-time muting
+            # can't drop the terminal.
+            if utt.get("ptt_chunk"):
+                seg = (utt.get("transcript") or "").strip()
+                if seg:
+                    self._ptt_chunks.append(seg)
+                    logger.debug("[I/O] voice → PTT chunk buffered: %r", seg[:60])
+                continue
+            if utt.get("ptt_terminal"):
+                n_chunks = len(self._ptt_chunks)
+                combined = " ".join(self._ptt_chunks).strip()
+                self._ptt_chunks.clear()
+                if combined:
+                    logger.info("[I/O] voice → PTT phrase complete (%d chunk(s)): %r",
+                                n_chunks, combined[:80])
+                    await self._dispatch_text(combined)
+                continue
+
             if self._streaming_mic.is_muted and not utt.get("from_ptt_flush"):
                 # Discard utterances that arrived while muted (e.g. TTS bleed-through
                 # in always-on mode). But PTT flush utterances are intentional — the
