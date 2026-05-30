@@ -92,7 +92,7 @@ class FollowThrough:
         self._cell = IntegratorCell(
             name="commitment_extractor",
             cluster="frontal",
-            model="haiku",
+            model="runpod",
             system_prompt=SYSTEM,
             topics=[],
             max_calls_per_turn=1,
@@ -194,7 +194,7 @@ class ResultReporter:
         self._cell = IntegratorCell(
             name="result_reporter",
             cluster="frontal",
-            model="haiku",
+            model="runpod",
             system_prompt=_REPORTER_SYSTEM,
             topics=[],
             max_calls_per_turn=1,

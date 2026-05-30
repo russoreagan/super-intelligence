@@ -22,6 +22,10 @@ MODEL_MAP = {
     "local-free": "local-free",  # same model as local, plain-text output (no JSON grammar)
     "local-code": "local-code",  # routes to OLLAMA_CODE_MODEL (defaults to qwen2.5:14b — the hot model)
     "local-general": "local-general",  # routes to OLLAMA_GENERAL_MODEL (qwen2.5:14b)
+    "runpod": "runpod",               # RunPod remote Ollama — same options as local
+    "runpod-free": "runpod-free",     # RunPod plain-text output (no JSON grammar)
+    "runpod-code": "runpod-code",     # RunPod code/JSON settings (temp=0.1, ctx=8192)
+    "runpod-general": "runpod-general", # RunPod general settings (temp=0.3, ctx=8192)
 }
 
 # Embedding dim must match EpisodicStore table schema (see brain/second_brain/store.py).
@@ -30,6 +34,10 @@ EMBEDDING_DIM = 768
 OLLAMA_EMBED_MODEL = os.environ.get("OLLAMA_EMBED_MODEL", "nomic-embed-text")
 GOOGLE_EMBED_MODEL = os.environ.get("GOOGLE_EMBED_MODEL", "gemini-embedding-001")
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+RUNPOD_HOST = os.environ.get("RUNPOD_HOST", OLLAMA_HOST)
+RUNPOD_MODEL = os.environ.get("RUNPOD_MODEL", "qwen2.5:32b")
+RUNPOD_HTTP_TIMEOUT = float(os.environ.get("RUNPOD_HTTP_TIMEOUT_SECONDS", "180"))
+RUNPOD_KEEP_ALIVE = os.environ.get("RUNPOD_KEEP_ALIVE", "30m")
 # The motor planner ("local-code") defaults to the SAME model as the rest of the
 # brain (local → qwen2.5:14b). Reason: every other cell (DMN, hippocampus,
 # skill_selector, sleep) keeps qwen2.5:14b hot. If the planner used a distinct
@@ -223,7 +231,9 @@ class ModelRouter:
 
     @staticmethod
     def _resolve_local_model(model_key: str) -> str | None:
-        """Map a local model_key to the concrete Ollama model name, or None if not local."""
+        """Map a local/runpod model_key to the concrete Ollama model name, or None if not local."""
+        if model_key in ("runpod", "runpod-free", "runpod-code", "runpod-general"):
+            return RUNPOD_MODEL
         if model_key == "local-code":
             return OLLAMA_CODE_MODEL
         if model_key == "local-general":
@@ -247,13 +257,21 @@ class ModelRouter:
         if model_name is None:
             return False  # cloud models don't need warming
         to = timeout if timeout is not None else OLLAMA_MODEL_LOAD_TIMEOUT
+        is_runpod = model_key.startswith("runpod")
+        if is_runpod:
+            from brain.settings import settings as _s
+            host = str(_s.get("runpod_host") or "") or RUNPOD_HOST
+            keep_alive = RUNPOD_KEEP_ALIVE
+        else:
+            host = OLLAMA_HOST
+            keep_alive = OLLAMA_KEEP_ALIVE
         try:
             # POST /api/generate with no prompt loads the model and returns immediately
             # once it's resident (Ollama's documented preload mechanism).
             async with self._get_local_semaphore():
                 r = await self._get_http().post(
-                    f"{OLLAMA_HOST}/api/generate",
-                    json={"model": model_name, "keep_alive": OLLAMA_KEEP_ALIVE},
+                    f"{host}/api/generate",
+                    json={"model": model_name, "keep_alive": keep_alive},
                     timeout=to,
                 )
             r.raise_for_status()
@@ -454,6 +472,7 @@ class ModelRouter:
                 text, in_tok, out_tok = await self._call_local(system_prompt, messages, max_tokens)
             if self._bg_mode:
                 self._bg_cloud_tokens_used += in_tok + out_tok
+<<<<<<< Updated upstream
                 logger.debug(
                     "[Resource] BG cloud tokens used: %d/%d (this call: %d+%d)",
                     self._bg_cloud_tokens_used,
@@ -462,6 +481,13 @@ class ModelRouter:
                     out_tok,
                 )
         elif model_id in ("local", "local-free", "local-code", "local-general"):
+=======
+                logger.debug("[Resource] BG cloud tokens used: %d/%d (this call: %d+%d)",
+                             self._bg_cloud_tokens_used,
+                             int(_s("bg_cloud_token_budget") or 50_000), in_tok, out_tok)
+        elif model_id in ("local", "local-free", "local-code", "local-general",
+                          "runpod", "runpod-free", "runpod-code", "runpod-general"):
+>>>>>>> Stashed changes
             text, in_tok, out_tok = await self._call_local(
                 system_prompt,
                 messages,
@@ -571,6 +597,7 @@ class ModelRouter:
             )
         return content or ""
 
+<<<<<<< Updated upstream
     async def _call_local(
         self,
         system_prompt: str,
@@ -582,10 +609,32 @@ class ModelRouter:
         flat_messages = [
             {"role": m["role"], "content": self._flatten_content(m["content"])} for m in messages
         ]
+=======
+    async def _call_local(self, system_prompt: str,
+                          messages: list[dict], max_tokens: int = 1024,
+                          local_variant: str = "local",
+                          temperature: float | None = None) -> tuple[str, int, int]:
+        flat_messages = [{"role": m["role"], "content": self._flatten_content(m["content"])} for m in messages]
+        is_runpod = local_variant.startswith("runpod")
+        # For runpod variants, normalise to the equivalent local variant for options lookup
+        options_variant = local_variant.replace("runpod", "local") if is_runpod else local_variant
+        if is_runpod:
+            from brain.settings import settings as _s
+            host = str(_s.get("runpod_host") or "") or RUNPOD_HOST
+            http_timeout = RUNPOD_HTTP_TIMEOUT
+            keep_alive = RUNPOD_KEEP_ALIVE
+        else:
+            host = OLLAMA_HOST
+            http_timeout = OLLAMA_HTTP_TIMEOUT
+            keep_alive = OLLAMA_KEEP_ALIVE
+>>>>>>> Stashed changes
         base_model = os.environ.get("OLLAMA_MODEL", "qwen2.5:14b")
-        if local_variant == "local-code":
+        if is_runpod:
+            from brain.settings import settings as _s
+            model_name = str(_s.get("runpod_model") or "") or RUNPOD_MODEL
+        elif options_variant == "local-code":
             model_name = OLLAMA_CODE_MODEL
-        elif local_variant == "local-general":
+        elif options_variant == "local-general":
             model_name = OLLAMA_GENERAL_MODEL
         else:
             # local and local-free both use the base model
@@ -594,17 +643,17 @@ class ModelRouter:
         options: dict = {"num_predict": max_tokens}
         use_json_format = False
 
-        if local_variant == "local-code":
+        if options_variant == "local-code":
             # Tool planner — deterministic; large context for system prompt + skill blocks
             options["temperature"] = 0.1
             options["num_ctx"] = 8192
             use_json_format = True
-        elif local_variant == "local-general":
+        elif options_variant == "local-general":
             # Sleep consolidation (all three cells return JSON)
             options["temperature"] = 0.3
             options["num_ctx"] = 8192
             use_json_format = True
-        elif local_variant == "local-free":
+        elif options_variant == "local-free":
             # Plain-text output only (speak_bridge rewriter) — needs creative latitude
             options["temperature"] = 0.7
             options["num_ctx"] = 2048
@@ -624,14 +673,24 @@ class ModelRouter:
             "messages": [{"role": "system", "content": system_prompt}] + flat_messages,
             "stream": False,
             "options": options,
-            "keep_alive": OLLAMA_KEEP_ALIVE,  # keep model hot; fewer cold loads
+            "keep_alive": keep_alive,
         }
         if use_json_format:
             payload["format"] = "json"
+<<<<<<< Updated upstream
         async with self._get_local_semaphore():
             r = await self._get_http().post(
                 f"{OLLAMA_HOST}/api/chat", json=payload, timeout=OLLAMA_HTTP_TIMEOUT
             )
+=======
+        if is_runpod:
+            r = await self._get_http().post(f"{host}/api/chat", json=payload,
+                                            timeout=http_timeout)
+        else:
+            async with self._get_local_semaphore():
+                r = await self._get_http().post(f"{host}/api/chat", json=payload,
+                                                timeout=http_timeout)
+>>>>>>> Stashed changes
         r.raise_for_status()
         data = r.json()
         in_tok = int(data.get("prompt_eval_count", 0))

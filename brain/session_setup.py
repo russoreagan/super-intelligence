@@ -57,6 +57,11 @@ class _SetupMixin:
 
     # ── Setup phases ──────────────────────────────────────────────────────────
 
+    async def _setup_runpod(self) -> None:
+        from brain.runpod_manager import RunPodManager
+        self._runpod = RunPodManager()
+        await self._runpod.start()
+
     async def _setup_core(self) -> None:
         from brain.brainstem import Brainstem
         from brain.bus import Bus
@@ -403,6 +408,7 @@ class _SetupMixin:
 
     def _setup_loops(self) -> None:
         self.brainstem.register_loop("heartbeat", self._heartbeat_with_ui)
+        self.brainstem.register_loop("runpod_heartbeat", self._runpod_heartbeat_loop)
         if self.motor:
             self.brainstem.register_loop("task_worker", self._task_worker_loop)
         # Periodic in-process consolidation. Lets the brain run for days

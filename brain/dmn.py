@@ -322,7 +322,7 @@ DMN_FRAME_REPEAT_MAX = int(os.environ.get("BRAIN_DMN_FRAME_REPEAT_MAX", "2"))
 # Surface a random long-term memory into the monologue prompt every N ticks (only
 # when idle), giving idle thought concrete material to associate from instead of
 # collapsing into generic meta-thoughts. 0 disables.
-DMN_MEMORY_SEED_EVERY = int(os.environ.get("BRAIN_DMN_MEMORY_SEED_EVERY", "5"))
+DMN_MEMORY_SEED_EVERY = int(os.environ.get("BRAIN_DMN_MEMORY_SEED_EVERY", "3"))
 
 # Words that signal a thought is turning inward (self-referential / introspective).
 # Inward thoughts apply a small GABA bump — self-monitoring has a cost, which
@@ -448,11 +448,10 @@ class DefaultModeNetwork:
         self._monologue_cell = IntegratorCell(
             name="monologue",
             cluster="dmn",
-            model="local",
+            model="runpod",
             system_prompt=MONOLOGUE_SYSTEM,
             topics=["stream.thought"],
             max_calls_per_turn=1,
-            locality="local",
             timeout_seconds=60.0,
             # Run hot: idle thought is divergent ideation, not structured reasoning.
             # Low temp (0.3) was collapsing the stream into one repeated template.
@@ -463,11 +462,10 @@ class DefaultModeNetwork:
         self._simulation_cell = IntegratorCell(
             name="user_simulator",
             cluster="dmn",
-            model="local",
+            model="runpod",
             system_prompt=SIMULATION_SYSTEM,
             topics=["stream.prediction"],
             max_calls_per_turn=1,
-            locality="local",
             timeout_seconds=60.0,
         )
         self._simulation_cell.set_router(router)
@@ -475,11 +473,10 @@ class DefaultModeNetwork:
         self._anticipator_cell = IntegratorCell(
             name="anticipator",
             cluster="dmn",
-            model="local",
+            model="runpod",
             system_prompt=ANTICIPATOR_SYSTEM,
             topics=["stream.anticipation"],
             max_calls_per_turn=1,
-            locality="local",
             timeout_seconds=60.0,
         )
         self._anticipator_cell.set_router(router)
@@ -487,11 +484,10 @@ class DefaultModeNetwork:
         self._prefetcher_cell = IntegratorCell(
             name="prefetcher",
             cluster="dmn",
-            model="local",
+            model="runpod",
             system_prompt=PREFETCHER_SYSTEM,
             topics=["stream.prefetch"],
             max_calls_per_turn=1,
-            locality="local",
             timeout_seconds=60.0,
         )
         self._prefetcher_cell.set_router(router)
@@ -502,11 +498,10 @@ class DefaultModeNetwork:
         self._planner_cell = IntegratorCell(
             name="planner",
             cluster="dmn",
-            model="local-general",
+            model="runpod-general",
             system_prompt=PLANNER_SYSTEM,
             topics=[],
             max_calls_per_turn=1,
-            locality="local",
             timeout_seconds=90.0,  # planning takes longer than a thought tick
         )
         self._planner_cell.set_router(router)
@@ -515,12 +510,11 @@ class DefaultModeNetwork:
         self._judge_cell = IntegratorCell(
             name="speak_judge",
             cluster="dmn",
-            model="local",
+            model="runpod",
             system_prompt=JUDGE_SYSTEM,
             topics=[],
             max_calls_per_turn=1,
             timeout_seconds=20.0,
-            locality="local",
         )
         self._judge_cell.set_router(router)
 
@@ -532,12 +526,11 @@ class DefaultModeNetwork:
         self._bridge_cell = IntegratorCell(
             name="speak_bridge",
             cluster="dmn",
-            model="local-free",  # plain-text output — no JSON grammar constraint
+            model="runpod-free",  # plain-text output — no JSON grammar constraint
             system_prompt=BRIDGE_SYSTEM,
             topics=[],
             max_calls_per_turn=1,
-            locality="local",  # locked to local — must never escape to a cloud API
-            timeout_seconds=12.0,  # Ollama can be slow on cold load
+            timeout_seconds=12.0,
         )
         self._bridge_cell.set_router(router)
 
@@ -1784,9 +1777,10 @@ class DefaultModeNetwork:
         if self._thought_count % DMN_MEMORY_SEED_EVERY != 0:
             return
         # Only when the user is idle — keep live-conversation ticks grounded in the
-        # actual exchange, not a random old memory.
+        # actual exchange, not a random old memory. 30s is enough separation from
+        # the last message; 120s was too conservative and starved the model of fuel.
         try:
-            if get_idle_seconds() < 120:
+            if get_idle_seconds() < 30:
                 return
         except Exception:
             pass
@@ -1852,6 +1846,20 @@ class DefaultModeNetwork:
                 f"\nConceptual territory already covered (choose a DIFFERENT angle):\n"
                 f"{angles_block}"
             )
+            # Detect cluster saturation and make it explicit to the model.
+            from collections import Counter as _Counter
+            prefixes = [
+                a.rsplit("-", 1)[0] if "-" in a else a for a in self._recent_angles
+            ]
+            top_cluster, top_count = _Counter(prefixes).most_common(1)[0]
+            if top_count >= 3:
+                prompt_parts.append(
+                    f"\nATTENTION: You've spent {top_count} of the last {len(self._recent_angles)}"
+                    f" thoughts on '{top_cluster}'. Break out entirely — pick a COMPLETELY"
+                    f" different subject: the code, your own state, the broader world,"
+                    f" a memory, a question about Russ, the project itself, anything"
+                    f" unrelated to '{top_cluster}'."
+                )
         if self._memory_seed and not startup:
             prompt_parts.append(
                 f"\nA memory surfaced: {self._memory_seed}\n"
@@ -2000,6 +2008,20 @@ class DefaultModeNetwork:
                 or max_cos >= sem_thr * 0.92
             ):
                 is_dup, dup_reason = True, f"repeat angle '{angle}'"
+
+        # Cluster-prefix suppression: if N recent angles share a common prefix
+        # (e.g. 3x "craftsmanship-*"), the brain is stuck in a topic attractor.
+        # Block new thoughts in the same cluster even when the suffix differs.
+        _CLUSTER_SATURATION = int(os.environ.get("BRAIN_DMN_CLUSTER_SATURATION", "3"))
+        if not is_dup and angle and "-" in angle:
+            cluster = angle.rsplit("-", 1)[0]
+            cluster_count = sum(
+                1
+                for a in self._recent_angles
+                if a == cluster or a.startswith(cluster + "-")
+            )
+            if cluster_count >= _CLUSTER_SATURATION:
+                is_dup, dup_reason = True, f"cluster saturation '{cluster}' ({cluster_count}x)"
 
         # Frame-repetition gate: catches template collapse — same opening shape
         # ("i should INQUIRE …") with a swapped topic noun, which slips past both

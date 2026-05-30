@@ -200,6 +200,19 @@ class _LoopsMixin:
             await asyncio.sleep(60)
             await self.brainstem.heartbeat_once(emitter=self._emitter)
 
+    async def _runpod_heartbeat_loop(self) -> None:
+        import json as _json
+        import time as _time
+        _path = os.path.join(os.path.dirname(__file__), "..", "second_brain", "runpod_heartbeat.json")
+        _path = os.path.realpath(_path)
+        while True:
+            await asyncio.sleep(300)  # write every 5 minutes
+            try:
+                with open(_path, "w") as _f:
+                    _json.dump({"ts": _time.time()}, _f)
+            except Exception:
+                pass
+
     async def _speak_gate_loop(self) -> None:
         SPEAK_GATE_INTERVAL = float(_brain_settings.get("speak_gate_poll_interval") or 5.0)
         SPEAK_CAND_MAX_AGE = float(_brain_settings.get("speak_candidate_max_age_s") or 60.0)

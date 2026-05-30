@@ -48,7 +48,7 @@ class SleepConsolidation:
         self._self_updater = IntegratorCell(
             name="self_updater",
             cluster="sleep",
-            model="local-general",
+            model="runpod-general",
             system_prompt=SELF_UPDATE_SYSTEM,
             topics=[],
             max_calls_per_turn=1,
@@ -60,7 +60,7 @@ class SleepConsolidation:
         self._synthesizer = IntegratorCell(
             name="episode_synthesizer",
             cluster="sleep",
-            model="local-general",
+            model="runpod-general",
             system_prompt=EPISODE_SYNTHESIS_SYSTEM,
             topics=[],
             max_calls_per_turn=1,
@@ -72,7 +72,7 @@ class SleepConsolidation:
         self._thought_consolidator = IntegratorCell(
             name="thought_consolidator",
             cluster="sleep",
-            model="local-general",
+            model="runpod-general",
             system_prompt=THOUGHT_CONSOLIDATION_SYSTEM,
             topics=[],
             max_calls_per_turn=1,
@@ -84,7 +84,7 @@ class SleepConsolidation:
         self._personality_observer = IntegratorCell(
             name="personality_observer",
             cluster="sleep",
-            model="local-general",
+            model="runpod-general",
             system_prompt=PERSONALITY_OBSERVATION_SYSTEM,
             topics=[],
             max_calls_per_turn=1,

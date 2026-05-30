@@ -19,7 +19,7 @@ SETTINGS_PATH = Path(__file__).parent / "settings.json"
 # Each entry: key → default value
 # Groups mirror the settings UI sections.
 
-DEFAULTS: dict[str, float | int] = {
+DEFAULTS: dict[str, float | int | str] = {
     # ── Section 1: Emotional Reactivity ──────────────────────────────────────
     "emotional_reactivity_scale": 1.00,
     "sentiment_DA_weight": 0.15,
@@ -52,13 +52,13 @@ DEFAULTS: dict[str, float | int] = {
     "weight_max": 3.00,
     "gaba_skip_threshold_high": 0.55,
     # ── Section 4: Default Mode Network ──────────────────────────────────────
-    "dmn_interval": 8.0,  # active baseline (was 15s)
-    "dmn_idle_interval": 25.0,  # when get_idle_seconds > 60s
+    "dmn_interval": 8.0,  # active baseline — fires when any mouse/keyboard activity detected
+    "dmn_idle_interval": 45.0,  # when fully away from computer (OS idle > 60s)
     "dmn_overlap_threshold": 0.35,
-    "ach_suppression_weight": 1.00,
-    "glu_suppression_weight": 0.30,
+    "ach_suppression_weight": 0.70,  # was 1.00 — was over-suppressing idle thought
+    "glu_suppression_weight": 0.25,  # was 0.30
     "gaba_suppression_reduction": 0.15,
-    "suppression_skip_prob_max": 0.85,
+    "suppression_skip_prob_max": 0.55,  # was 0.85 — cap skip at 55% not 85%
     "speak_gate_poll_interval": 5.0,  # how often the speak gate evaluates candidates
     "speak_candidate_max_age_s": 60.0,  # drop unspoken candidates older than this
     "speak_candidate_max_attempts": 4,  # drop a candidate after this many judge re-defers
@@ -285,6 +285,15 @@ DEFAULTS: dict[str, float | int] = {
     #   remainder of the day.
     #   Default $5.00 — generous for normal interactive use; tighten if needed.
     "cloud_daily_usd_budget": 5.0,
+    # ── Section: RunPod ───────────────────────────────────────────────────────
+    # Overrides the RUNPOD_HOST / RUNPOD_MODEL env vars at runtime — no restart
+    # needed. Empty string = fall back to env var.
+    "runpod_host": "",
+    "runpod_model": "",
+    # max_runpod_hours: watchdog stops the pod if the brain hasn't been seen
+    # alive for this many hours. Resets continuously while the brain is running.
+    # Acts as a backstop against runaway costs after a crash/force-kill.
+    "max_runpod_hours": 8.0,
     # ── Section: Chemistry model & Personas ──────────────────────────────────
     # chem_decay_model controls how neuromodulator/hormone levels relax each turn:
     #   "baseline" — homeostatic setpoint; gradual two-way relaxation toward the
@@ -330,7 +339,7 @@ class Settings:
     """Singleton that holds the current runtime settings."""
 
     def __init__(self) -> None:
-        self._data: dict[str, float | int] = dict(DEFAULTS)
+        self._data: dict[str, float | int | str] = dict(DEFAULTS)
         self._load()
 
     def _load(self) -> None:

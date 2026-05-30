@@ -172,7 +172,7 @@ class SkillSelector:
         self._conversational_cell = IntegratorCell(
             name="skill_selector_conversational",
             cluster="frontal",
-            model="haiku",
+            model="runpod",
             system_prompt=_CONVERSATIONAL_SYSTEM,
             topics=[],
             max_tokens=80,
@@ -198,12 +198,11 @@ class SkillSelector:
         self._meta_cell = IntegratorCell(
             name="skill_ruminate_meta",
             cluster="dmn",
-            model="local",
+            model="runpod",
             system_prompt=_META_RUMINATE_SYSTEM,
             topics=[],
             max_tokens=120,
             timeout_seconds=15.0,
-            locality="local",
         )
         self._meta_cell.set_router(router)
 
@@ -639,7 +638,7 @@ class SkillSelector:
         worker = IntegratorCell(
             name="skill_ruminate_worker",
             cluster="dmn",
-            model="local",
+            model="runpod",
             system_prompt=(
                 f"You are reflecting on a thought using a specific cognitive framework "
                 f"({skill_name}: {descr[:150]}). {mode_hint} Produce a single concise "
@@ -648,7 +647,6 @@ class SkillSelector:
             topics=[],
             max_tokens=300,
             timeout_seconds=18.0,
-            locality="local",
             skills=[skill_name],
             max_calls_per_turn=999,
         )

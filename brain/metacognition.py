@@ -110,7 +110,7 @@ class MetacognitionCell:
         self._reflector = IntegratorCell(
             name="self_reflector",
             cluster="metacognition",
-            model="haiku",
+            model="runpod",
             system_prompt=SELF_REFLECTION_SYSTEM,
             topics=["meta.reflection"],
             max_calls_per_turn=1,

@@ -193,12 +193,11 @@ class MotorCortexCluster:
         self._planner = IntegratorCell(
             name="tool_planner",
             cluster=CLUSTER,
-            model="local-code",
+            model="runpod-code",
             system_prompt=planner_system,
             topics=["temporal.features"],
             max_calls_per_turn=2,
             timeout_seconds=_CELL_TIMEOUT_S,
-            locality="local",
         )
         self._planner.set_router(router)
 
@@ -234,14 +233,11 @@ class MotorCortexCluster:
         self._criteria_checker = IntegratorCell(
             name="criteria_checker",
             cluster=CLUSTER,
-            model="local-code",
+            model="runpod-code",
             system_prompt=_CRITERIA_CHECK_SYSTEM,
             topics=[],
             max_calls_per_turn=1,
-            # 90s, not 30s: a cold model load alone is ~50s, so a 30s ceiling
-            # guarantees the first call after eviction fails. Headroom > cold-load.
             timeout_seconds=_CELL_TIMEOUT_S,
-            locality="local",
         )
         self._criteria_checker.set_router(router)
 
@@ -567,7 +563,7 @@ class MotorCortexCluster:
         # benefits from this pre-load on the first story of each job.
         await emitter.emit_event({"type": "task_warming_up", "job_id": job_id})
         try:
-            warmed = await self._router.warmup_local("local-code")
+            warmed = await self._router.warmup_local("runpod-code")
             if warmed:
                 logger.info("[InternalJob] Tactical planner model warm — proceeding to plan")
         except Exception as e:

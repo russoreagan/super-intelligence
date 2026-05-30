@@ -131,6 +131,7 @@ class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
     async def run(self) -> None:
         logger.info("Session %s starting", self.session_id)
         await self._setup_core()
+        await self._setup_runpod()
         await self._setup_wiring()
         await self._setup_clusters()
         await self._setup_ui()
@@ -325,6 +326,12 @@ class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
                 await self._streaming_mic.stop()
             except Exception as _e:
                 logger.debug("streaming mic shutdown error: %s", _e)
+
+        if getattr(self, "_runpod", None) is not None:
+            try:
+                await self._runpod.stop()
+            except Exception as _e:
+                logger.debug("runpod shutdown error: %s", _e)
 
         if self._pending_encodes:
             logger.info(
