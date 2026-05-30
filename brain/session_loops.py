@@ -59,7 +59,12 @@ class _LoopsMixin:
         mic.resume_capture()
         await asyncio.sleep(self._mic_unmute_delay_s)
         if self._ptt_held:
-            mic.unmute()
+            # Space is still held — re-open WITH push-to-talk semantics so Deepgram's
+            # UtteranceEnd stays suppressed across mid-sentence pauses. Without
+            # ptt_hold=True here, a held phrase spoken right after the entity finishes
+            # talking gets finalized at the first pause and only its first half is
+            # captured (the rest is lost when the brain responds and re-mutes).
+            mic.unmute(ptt_hold=True)
         else:
             mic.mute()
         self._tts_did_mute = False
