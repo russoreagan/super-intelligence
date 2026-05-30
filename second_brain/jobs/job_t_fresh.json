@@ -1,0 +1,39 @@
+{
+  "job_id": "job_t_fresh",
+  "task_id": null,
+  "goal": "read f.txt",
+  "success": true,
+  "done": true,
+  "source": "user",
+  "ralph_mode": false,
+  "total_attempts": 1,
+  "steps": [
+    {
+      "tool": "read_file",
+      "args": {
+        "path": "/private/tmp/claude-501/pytest-of-russ/pytest-71/test_no_resume_runs_strategic_0/f.txt"
+      },
+      "reason": "r"
+    }
+  ],
+  "results": [
+    "hi"
+  ],
+  "written_files": [],
+  "plan_steps": [
+    {
+      "id": "US-001",
+      "description": "read it",
+      "expected_tool": "read_file",
+      "acceptance_criteria": []
+    }
+  ],
+  "stories_completed": 0,
+  "productive_steps": 0,
+  "unverified_stories": [],
+  "success_criteria": "",
+  "complexity": "",
+  "spoken_summary": null,
+  "created_at": "2026-05-29T15:13:26.791880+00:00",
+  "completed_at": "2026-05-29T15:13:26.791882+00:00"
+}

@@ -56,16 +56,26 @@ class Neuromodulators:
 
     DECAY = 0.85  # per-turn decay multiplier
     CHANNELS = ("ACh", "DA", "GABA", "Glu", "NE")
-    _FLOORS = {"ACh": 0.10, "DA": 0.30, "GABA": 0.02, "Glu": 0.15, "NE": 0.15}
+    # Absolute safety bounds — values can never sit below these regardless of
+    # baseline. Distinct from the resting baseline (which is the homeostatic
+    # setpoint and is persona-configurable). Rarely binding.
+    _HARD_MIN = {"ACh": 0.02, "DA": 0.02, "GABA": 0.0, "Glu": 0.02, "NE": 0.02}
+    # Historical resting/init values, used as the default baseline/start when no
+    # persona (or older settings.json) overrides them. _DEF_BASELINE mirrors the
+    # original _FLOORS; _DEF_INIT mirrors the original warm-start levels.
+    _DEF_BASELINE = {"ACh": 0.10, "DA": 0.30, "GABA": 0.02, "Glu": 0.15, "NE": 0.15}
+    _DEF_INIT = {"ACh": 0.20, "DA": 0.50, "GABA": 0.05, "Glu": 0.30, "NE": 0.25}
 
     def __init__(self) -> None:
-        self._levels: dict[str, float] = {
-            "ACh": 0.20,
-            "DA": 0.50,
-            "GABA": 0.05,
-            "Glu": 0.30,
-            "NE": 0.25,
+        from brain.settings import settings as _s  # local import: settings loads before Bus()
+
+        self._baseline: dict[str, float] = {
+            ch: float(_s.get(f"chem_baseline_{ch}", self._DEF_BASELINE[ch])) for ch in self.CHANNELS
         }
+        self._levels: dict[str, float] = {
+            ch: float(_s.get(f"chem_init_{ch}", self._DEF_INIT[ch])) for ch in self.CHANNELS
+        }
+        self._model: str = str(_s.get("chem_decay_model", "baseline"))
 
     def add(self, channel: str, delta: float) -> None:
         self._levels[channel] = max(0.0, min(1.0, self._levels[channel] + delta))
@@ -74,14 +84,24 @@ class Neuromodulators:
         return self._levels[channel]
 
     def decay(self, turns: float = 1.0) -> None:
-        """Decay all channels by DECAY**turns toward their floors.
+        """Relax all channels toward their resting baselines.
 
         turns > 1.0 means more time passed than the reference interval (slow
         conversation); turns < 1.0 means less (rapid back-and-forth).
+
+        "baseline" (default): homeostatic relaxation toward the setpoint from
+            both directions — a depleted channel recovers gradually, an elevated
+            one settles gradually. "floor": legacy clamp that snaps anything
+            below baseline back up in a single turn (kept for regression/rollback).
         """
         rate = self.DECAY**turns
         for ch in self.CHANNELS:
-            self._levels[ch] = max(self._FLOORS[ch], self._levels[ch] * rate)
+            b = self._baseline[ch]
+            if self._model == "floor":
+                lvl = max(b, self._levels[ch] * rate)
+            else:
+                lvl = b + (self._levels[ch] - b) * rate
+            self._levels[ch] = max(self._HARD_MIN[ch], min(1.0, lvl))
 
     def snapshot(self) -> dict[str, float]:
         return dict(self._levels)
@@ -105,15 +125,23 @@ class HormonalState:
 
     CHANNELS = ("5HT", "CORT", "OXT", "AEA")
     _DECAY = {"5HT": 0.995, "CORT": 0.970, "OXT": 0.998, "AEA": 0.930}
-    _FLOORS = {"5HT": 0.20, "CORT": 0.02, "OXT": 0.15, "AEA": 0.10}
+    # See Neuromodulators for the meaning of these three. The slow per-channel
+    # rates above are exactly why baseline relaxation matters here: a depleted
+    # 5HT/OXT should lift over many turns, not snap back in one.
+    _HARD_MIN = {"5HT": 0.02, "CORT": 0.0, "OXT": 0.02, "AEA": 0.02}
+    _DEF_BASELINE = {"5HT": 0.20, "CORT": 0.02, "OXT": 0.15, "AEA": 0.10}
+    _DEF_INIT = {"5HT": 0.50, "CORT": 0.05, "OXT": 0.30, "AEA": 0.30}
 
     def __init__(self) -> None:
-        self._levels: dict[str, float] = {
-            "5HT": 0.50,
-            "CORT": 0.05,
-            "OXT": 0.30,
-            "AEA": 0.30,
+        from brain.settings import settings as _s  # local import: settings loads before Bus()
+
+        self._baseline: dict[str, float] = {
+            ch: float(_s.get(f"chem_baseline_{ch}", self._DEF_BASELINE[ch])) for ch in self.CHANNELS
         }
+        self._levels: dict[str, float] = {
+            ch: float(_s.get(f"chem_init_{ch}", self._DEF_INIT[ch])) for ch in self.CHANNELS
+        }
+        self._model: str = str(_s.get("chem_decay_model", "baseline"))
 
     def add(self, channel: str, delta: float) -> None:
         self._levels[channel] = max(0.0, min(1.0, self._levels[channel] + delta))
@@ -122,9 +150,16 @@ class HormonalState:
         return self._levels[channel]
 
     def decay(self, turns: float = 1.0) -> None:
-        """Decay all channels by their individual rates ** turns toward their floors."""
+        """Relax all channels toward their resting baselines at each channel's
+        own rate. See Neuromodulators.decay for the "baseline"/"floor" models."""
         for ch in self.CHANNELS:
-            self._levels[ch] = max(self._FLOORS[ch], self._levels[ch] * (self._DECAY[ch] ** turns))
+            rate = self._DECAY[ch] ** turns
+            b = self._baseline[ch]
+            if self._model == "floor":
+                lvl = max(b, self._levels[ch] * rate)
+            else:
+                lvl = b + (self._levels[ch] - b) * rate
+            self._levels[ch] = max(self._HARD_MIN[ch], min(1.0, lvl))
 
     def snapshot(self) -> dict[str, float]:
         return dict(self._levels)

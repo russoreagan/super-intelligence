@@ -279,6 +279,44 @@ DEFAULTS: dict[str, float | int] = {
     # local_max_concurrent: max simultaneous Ollama inference calls.
     #   Prevents saturating CPU/GPU during multi-cell background work.
     "local_max_concurrent": 3,
+    # ── Section: Chemistry model & Personas ──────────────────────────────────
+    # chem_decay_model controls how neuromodulator/hormone levels relax each turn:
+    #   "baseline" — homeostatic setpoint; gradual two-way relaxation toward the
+    #                baseline (level = baseline + (level-baseline)*rate). A depleted
+    #                channel recovers GRADUALLY, honouring the slow-hormone design.
+    #   "floor"    — legacy clamp (level = max(baseline, level*rate)). A channel
+    #                below baseline snaps back up in one turn. Kept for regression
+    #                diffing and instant rollback; "floor" reproduces old behaviour.
+    "chem_decay_model": "baseline",
+    # Persona resting baselines — the setpoint each channel relaxes toward (the
+    # sustained trait). Defaults equal the historical bus floors, so a brain with
+    # no persona set keeps its current resting point; only the decay CURVE changes.
+    "chem_baseline_DA": 0.30,
+    "chem_baseline_ACh": 0.10,
+    "chem_baseline_GABA": 0.02,
+    "chem_baseline_Glu": 0.15,
+    "chem_baseline_NE": 0.15,
+    "chem_baseline_5HT": 0.20,
+    "chem_baseline_CORT": 0.02,
+    "chem_baseline_OXT": 0.15,
+    "chem_baseline_AEA": 0.10,
+    # Persona starting levels — the value at boot. Defaults equal the historical
+    # warm-start levels, so the no-persona brain starts exactly where it used to.
+    # Personas write init == baseline (start at rest).
+    "chem_init_DA": 0.50,
+    "chem_init_ACh": 0.20,
+    "chem_init_GABA": 0.05,
+    "chem_init_Glu": 0.30,
+    "chem_init_NE": 0.25,
+    "chem_init_5HT": 0.50,
+    "chem_init_CORT": 0.05,
+    "chem_init_OXT": 0.30,
+    "chem_init_AEA": 0.30,
+    # Persona identity — written when a persona is initialized. Empty = neutral.
+    # persona_name also routes per-persona learned state into
+    # second_brain/personas/<slug>/ (see brain/run.py) and tags every eval row.
+    "persona_name": "",
+    "persona_born": "",
 }
 
 

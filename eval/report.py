@@ -19,7 +19,8 @@ DEFAULT_LOG = Path("eval/turns.jsonl")
 
 
 def load_turns(log_path: Path, session_id: str | None = None,
-               tail: int | None = None, since_ts: float | None = None) -> list[dict]:
+               tail: int | None = None, since_ts: float | None = None,
+               persona: str | None = None) -> list[dict]:
     """Read JSONL, merge patches into turns, return list of merged turns."""
     if not log_path.exists():
         return []
@@ -40,6 +41,8 @@ def load_turns(log_path: Path, session_id: str | None = None,
             if rec.get("type") == "turn":
                 tid = rec.get("turn_id", "")
                 if session_id and rec.get("session_id") != session_id:
+                    continue
+                if persona is not None and rec.get("persona_name", "") != persona:
                     continue
                 if since_ts and rec.get("ts", 0) < since_ts:
                     continue
@@ -200,6 +203,9 @@ def main() -> None:
                         help="Only show the last N turns")
     parser.add_argument("--session", type=str, default=None,
                         help="Filter by session_id")
+    parser.add_argument("--persona", type=str, default=None,
+                        help='Filter by persona_name (e.g. --persona "The Sage"; '
+                             'use --persona "" for neutral/no-persona turns)')
     parser.add_argument("--since", type=float, default=None, metavar="DAYS",
                         help="Only show turns from the last N days (e.g. --since 7)")
     parser.add_argument("--log", type=str, default=None,
@@ -210,7 +216,8 @@ def main() -> None:
     log_path = Path(args.log) if args.log else Path(
         os.environ.get("BRAIN_EVAL_LOG", str(DEFAULT_LOG))
     )
-    turns = load_turns(log_path, session_id=args.session, tail=args.tail, since_ts=since_ts)
+    turns = load_turns(log_path, session_id=args.session, tail=args.tail,
+                       since_ts=since_ts, persona=args.persona)
     report(turns)
 
 

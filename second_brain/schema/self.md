@@ -116,7 +116,7 @@ temporal: temporal-cycle-detection | temporal-futures-mapping | temporal-horizon
 writing: writing-arc-design | writing-argument | writing-audience-calibration | writing-character-development | writing-copy | writing-dialogue | writing-executive-summary | writing-inconsistency-audit | writing-line-editing | writing-plot-structure | writing-pov | writing-prose-elevation | writing-report | writing-restructure | writing-rhetoric | writing-scene-construction | writing-technical | writing-tone-alignment | writing-voice-consistency | writing-worldbuilding
 
 ## Current mood signature
-DA=0.42 GABA=0.04 ACh=0.47 dominant=excitement
+DA=0.38 GABA=0.03 ACh=0.47 dominant=thoughtful
 
 ## Values
 

@@ -98,7 +98,10 @@ if curl -sf "http://localhost:${OLLAMA_PORT}/api/tags" &>/dev/null; then
     ok "Ollama is already running."
 else
     info "Starting Ollama in the background..."
-    OLLAMA_NUM_PARALLEL="${OLLAMA_NUM_PARALLEL:-2}" ollama serve &>/tmp/ollama.log &
+    OLLAMA_NUM_PARALLEL="${OLLAMA_NUM_PARALLEL:-1}" \
+    OLLAMA_MAX_LOADED_MODELS="${OLLAMA_MAX_LOADED_MODELS:-2}" \
+    OLLAMA_KEEP_ALIVE="${OLLAMA_KEEP_ALIVE:-10m}" \
+        ollama serve &>/tmp/ollama.log &
     OLLAMA_STARTED=true
 
     info "Waiting for Ollama to be ready..."
