@@ -6471,7 +6471,7 @@ function _renderPersonaState() {
       headerBadge.textContent = short;
       headerBadge.classList.remove('neutral');
     } else {
-      headerBadge.textContent = '·';
+      headerBadge.textContent = 'Default';
       headerBadge.classList.add('neutral');
     }
   }
@@ -6484,7 +6484,7 @@ function _renderPersonaState() {
     const born = currentSettings.persona_born ? new Date(currentSettings.persona_born).toLocaleDateString() : '';
     statusEl.innerHTML = `Active: <b>${name}</b>${custom ? ' · customized' : ''}${born ? ' · since ' + born : ''}`;
   } else {
-    statusEl.textContent = 'Neutral (default chemistry)';
+    statusEl.textContent = 'Default chemistry';
   }
   // Decay-model toggle reflect
   const model = currentSettings.chem_decay_model || 'baseline';
@@ -6520,7 +6520,7 @@ function _buildPersonaPicker() {
   neutral.className = 'persona-pick-neutral' + (!current ? ' current' : '');
   neutral.innerHTML =
     `<span class="persona-pick-check">${!current ? '✓' : ''}</span>` +
-    `<span class="persona-pick-neutral-label">Neutral (default)</span>`;
+    `<span class="persona-pick-neutral-label">Default</span>`;
   neutral.addEventListener('click', () => _switchPersona('', null));
   list.appendChild(neutral);
 }
