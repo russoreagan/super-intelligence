@@ -57,6 +57,11 @@ class _MotorFakeRouter:
     async def embed(self, text: str):
         return [0.0] * 768
 
+    # Background-mode stubs (no-op for tests; real ModelRouter tracks budget)
+    def enter_background_mode(self) -> None: pass
+    def exit_background_mode(self) -> None: pass
+    async def warmup_local(self, model_key: str = "local-code", **kwargs) -> bool: return True
+
 
 def _make_fake_router(tool_plan: dict | None = None) -> _MotorFakeRouter:
     return _MotorFakeRouter(tool_plan)
@@ -1189,6 +1194,10 @@ class TestExecuteInternalJob:
             async def embed(self, text: str):
                 return [0.0] * 768
 
+            def enter_background_mode(self) -> None: pass
+            def exit_background_mode(self) -> None: pass
+            async def warmup_local(self, model_key: str = "local-code", **kwargs) -> bool: return True
+
         return JobRouter()
 
     def _make_motor_for_job(self, tmp_path, router):
@@ -1278,6 +1287,10 @@ class TestExecuteInternalJob:
 
             async def embed(self, text: str):
                 return [0.0] * 768
+
+            def enter_background_mode(self) -> None: pass
+            def exit_background_mode(self) -> None: pass
+            async def warmup_local(self, model_key: str = "local-code", **kwargs) -> bool: return True
 
         motor, _ = self._make_motor_for_job(tmp_path, EmptyTacticalRouter())
 
@@ -1925,6 +1938,10 @@ class TestJobWallClockDeadline:
 
             async def embed(self, text):
                 return [0.0] * 768
+
+            def enter_background_mode(self) -> None: pass
+            def exit_background_mode(self) -> None: pass
+            async def warmup_local(self, model_key: str = "local-code", **kwargs) -> bool: return True
 
         return JobRouter()
 

@@ -279,6 +279,12 @@ DEFAULTS: dict[str, float | int] = {
     # local_max_concurrent: max simultaneous Ollama inference calls.
     #   Prevents saturating CPU/GPU during multi-cell background work.
     "local_max_concurrent": 3,
+    # cloud_daily_usd_budget: hard ceiling on total cloud spend per calendar day
+    #   (UTC). 0 = no cap. Persisted to second_brain/cloud_usage.json so it
+    #   survives restarts. When hit, all cloud calls fall back to local for the
+    #   remainder of the day.
+    #   Default $5.00 — generous for normal interactive use; tighten if needed.
+    "cloud_daily_usd_budget": 5.0,
     # ── Section: Chemistry model & Personas ──────────────────────────────────
     # chem_decay_model controls how neuromodulator/hormone levels relax each turn:
     #   "baseline" — homeostatic setpoint; gradual two-way relaxation toward the

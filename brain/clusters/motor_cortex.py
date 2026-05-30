@@ -181,15 +181,19 @@ class MotorCortexCluster:
         # Strategic planner: same cluster + model, different prompt. Used on the
         # first call of an internal job to produce an upfront plan; subsequent
         # calls use the tactical (per-step) planner above.
+        # CLOUD: strategic planner uses Sonnet 4.6 for stronger upfront decomposition.
+        # No locality="local" — cloud is intentional. The session's egress gateway
+        # (injected into the router via set_egress) pseudonymizes the prompt before
+        # it leaves the device. Runs inside background mode in execute_internal_job
+        # so the bg_cloud_token_budget + daily USD cap both apply.
         self._strategic_planner = IntegratorCell(
             name="strategic_planner",
             cluster=CLUSTER,
-            model="local-code",
+            model="sonnet",
             system_prompt=_STRATEGIC_SYSTEM,
             topics=[],
             max_calls_per_turn=1,
-            timeout_seconds=_CELL_TIMEOUT_S,
-            locality="local",
+            timeout_seconds=90.0,  # cloud doesn't need cold-load headroom; 90s = generous
         )
         self._strategic_planner.set_router(router)
 
@@ -209,15 +213,16 @@ class MotorCortexCluster:
         self._criteria_checker.set_router(router)
 
         # Verifier: final approval pass for medium/high complexity jobs.
+        # CLOUD: Sonnet 4.6 for quality review of completed work.
+        # Same reasoning as strategic_planner above.
         self._verifier = IntegratorCell(
             name="job_verifier",
             cluster=CLUSTER,
-            model="local-code",
+            model="sonnet",
             system_prompt=_VERIFIER_SYSTEM,
             topics=[],
             max_calls_per_turn=1,
-            timeout_seconds=_CELL_TIMEOUT_S,
-            locality="local",
+            timeout_seconds=60.0,
         )
         self._verifier.set_router(router)
 
@@ -430,11 +435,26 @@ class MotorCortexCluster:
         designed for sustained autonomous work triggered by the follow-through
         loop, not by a user-turn. Budget is chemistry-modulated (DA/CORT);
         pass budget>0 to override.
+
+        Runs in background mode: cloud cells (strategic_planner, verifier) are
+        subject to bg_cloud_token_budget + daily USD cap; falls back to local
+        if either is exhausted.
         """
         from brain.ui.emitter import emitter
         job_id = f"job_{turn_id}"
         self.reset_turn(job_id)
 
+        # Mark as autonomous/background so cloud budget guards apply.
+        self._router.enter_background_mode()
+        try:
+            return await self._execute_internal_job_body(
+                goal, turn_id, job_id, budget, emitter)
+        finally:
+            self._router.exit_background_mode()
+
+    async def _execute_internal_job_body(self, goal: str, turn_id: str, job_id: str,
+                                          budget: int, emitter) -> dict:
+        """Internal body of execute_internal_job — runs under background mode."""
         # Sample neuromodulator / hormonal state once at job start.
         # This modulates how ambitious the plan is and how many steps we'll take.
         chem = self._chem_snapshot()
@@ -454,25 +474,23 @@ class MotorCortexCluster:
             self._obs.begin_job(job_id, goal=goal, chem=chem)
 
         # Surface the job immediately so the user can see something is brewing
-        # even before the strategic plan finishes (local-code planner can take
-        # 10-30s on the 14B model).
+        # even before the strategic plan finishes (cloud planner is fast but
+        # local tactical planner still needs a warm-up pass for the first call).
         await emitter.emit_event({
             "type": "task_planning",
             "job_id": job_id,
             "goal": goal,
         })
 
-        # Step 0: warm up the planner model as an explicit, separately-timed step.
-        # A cold 14B load is ~50s (up to ~3min under memory pressure); doing it here
-        # — with its own generous timeout in ModelRouter.warmup_local — means that
-        # latency is paid once, up front, instead of being charged against (and
-        # tripping) the strategic/tactical planner's per-call timeout. Best-effort:
-        # if warmup fails the job still proceeds via the normal retry path.
+        # Step 0: warm up the LOCAL tactical planner model (qwen2.5:14b).
+        # Strategic planner is now cloud (Sonnet) — no warmup needed for it.
+        # The tactical planner (_planner cell) still uses local-code, so it
+        # benefits from this pre-load on the first story of each job.
         await emitter.emit_event({"type": "task_warming_up", "job_id": job_id})
         try:
             warmed = await self._router.warmup_local("local-code")
             if warmed:
-                logger.info("[InternalJob] Planner model warm — proceeding to plan")
+                logger.info("[InternalJob] Tactical planner model warm — proceeding to plan")
         except Exception as e:
             logger.debug("[InternalJob] Warmup step errored (continuing): %s", e)
 

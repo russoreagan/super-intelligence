@@ -85,6 +85,9 @@ class TestExecuteJobResume:
             async def warmup_local(self, *a, **k):
                 return True
 
+            def enter_background_mode(self) -> None: pass
+            def exit_background_mode(self) -> None: pass
+
         motor = self._make_motor(tmp_path, ResumeRouter())
 
         # Craft an interrupted prior run: 2-story plan, story 1 already done.
@@ -143,6 +146,9 @@ class TestExecuteJobResume:
             async def warmup_local(self, *a, **k):
                 return True
 
+            def enter_background_mode(self) -> None: pass
+            def exit_background_mode(self) -> None: pass
+
         motor = self._make_motor(tmp_path, NormalRouter())
         # No resumable record
         motor.job_store.get_resumable = MagicMock(return_value=None)
@@ -175,6 +181,9 @@ class TestExecuteJobResume:
                 warmups["n"] += 1
                 return True
 
+            def enter_background_mode(self) -> None: pass
+            def exit_background_mode(self) -> None: pass
+
         motor = self._make_motor(tmp_path, R())
         motor.job_store.get_resumable = MagicMock(return_value=None)
 
@@ -201,6 +210,9 @@ class TestExecuteJobResume:
 
             async def warmup_local(self, *a, **k):
                 raise RuntimeError("ollama unreachable")
+
+            def enter_background_mode(self) -> None: pass
+            def exit_background_mode(self) -> None: pass
 
         motor = self._make_motor(tmp_path, R())
         motor.job_store.get_resumable = MagicMock(return_value=None)

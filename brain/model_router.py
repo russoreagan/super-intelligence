@@ -51,6 +51,19 @@ OLLAMA_KEEP_ALIVE = os.environ.get("OLLAMA_KEEP_ALIVE", "30m")
 OLLAMA_MODEL_LOAD_TIMEOUT = float(os.environ.get("OLLAMA_MODEL_LOAD_TIMEOUT_SECONDS", "240"))
 
 
+# Sonnet 4.6 and Haiku 4.5 pricing ($/1M tokens: input, output, cache_read).
+# Used only for logging/budgeting; update if Anthropic changes pricing.
+_CLOUD_RATES: dict[str, tuple[float, float, float]] = {
+    "claude-sonnet-4-6": (3.0, 15.0, 0.30),
+    "claude-haiku-4-5-20251001": (1.0, 5.0, 0.10),
+}
+# Path for the per-day cloud-spend file.
+import os as _os
+_CLOUD_USAGE_PATH = _os.path.join(
+    _os.path.dirname(__file__), "..", "second_brain", "cloud_usage.json"
+)
+
+
 class ModelRouter:
     def __init__(self, obs=None) -> None:
         self._anthropic_client = None
@@ -60,6 +73,8 @@ class ModelRouter:
         self._obs = obs
         # Local-first embeddings; flip to "google" if Ollama is unreachable.
         self._embed_backend = "ollama"
+        # Egress pseudonymization gateway (injected from session after creation).
+        self._egress = None
 
         # ── Resource policy ───────────────────────────────────────────────────
         # Background mode: set True while running autonomous/self-initiated work.
@@ -69,6 +84,71 @@ class ModelRouter:
         self._bg_cloud_tokens_used: int = 0
         # Lazily-created semaphore; limits concurrent Ollama calls to protect device.
         self._local_semaphore: "asyncio.Semaphore | None" = None
+        # Daily cloud USD tracking — in-memory; loaded from disk lazily.
+        self._cloud_usd_today: float = 0.0
+        self._cloud_usd_date: str = ""  # "YYYY-MM-DD" (UTC)
+
+    # ── Egress pseudonymization ───────────────────────────────────────────────
+
+    def set_egress(self, gateway) -> None:
+        """Inject the session's PseudonymizationGateway.
+
+        Must be called once during session setup (after the gateway is created).
+        All subsequent cloud calls will be pseudonymized before dispatch and
+        de-pseudonymized on return.
+        """
+        self._egress = gateway
+
+    def _pseudonymize_messages(self, messages: list[dict]) -> list[dict]:
+        """Pseudonymize string message contents; leave structured/multimodal content unchanged."""
+        if self._egress is None:
+            return messages
+        result = []
+        for m in messages:
+            content = m["content"]
+            if isinstance(content, str):
+                ps, _ = self._egress.pseudonymize(content)
+                result.append({**m, "content": ps})
+            else:
+                result.append(m)  # list of parts (images, etc.) — don't modify
+        return result
+
+    # ── Daily cloud USD budget ────────────────────────────────────────────────
+
+    def _load_cloud_usd_today(self) -> float:
+        """Load today's (UTC) accumulated cloud USD from the persistent usage file."""
+        import datetime as _dt
+        import json
+        today = _dt.date.today().isoformat()
+        try:
+            path = os.path.realpath(_CLOUD_USAGE_PATH)
+            with open(path) as f:
+                data = json.load(f)
+            if data.get("date") == today:
+                return float(data.get("usd", 0.0))
+        except (FileNotFoundError, Exception):
+            pass
+        return 0.0
+
+    def _persist_cloud_usd(self) -> None:
+        """Persist today's cloud USD spend to disk (best-effort)."""
+        import json
+        try:
+            path = os.path.realpath(_CLOUD_USAGE_PATH)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w") as f:
+                json.dump({"date": self._cloud_usd_date, "usd": self._cloud_usd_today}, f)
+        except Exception as e:
+            logger.debug("[ModelRouter] cloud_usage persist failed: %s", e)
+
+    def _charge_cloud_usd(self, model_id: str, in_tok: int, out_tok: int, cache_read: int) -> float:
+        """Compute and accumulate USD for a completed cloud call. Returns call cost."""
+        ri, ro, rc = _CLOUD_RATES.get(model_id, (3.0, 15.0, 0.30))
+        usd = (in_tok * ri + out_tok * ro + cache_read * rc) / 1_000_000
+        if usd > 0:
+            self._cloud_usd_today = getattr(self, "_cloud_usd_today", 0.0) + usd
+            self._persist_cloud_usd()
+        return usd
 
     # ── Background mode controls ──────────────────────────────────────────────
 
@@ -221,6 +301,39 @@ class ModelRouter:
                     )
                     max_tokens = call_cap
 
+        # Daily cloud USD budget — hard ceiling across all cloud providers.
+        if _is_cloud:
+            import datetime as _dt
+            today_str = _dt.date.today().isoformat()
+            # Guard with getattr: tests may construct ModelRouter via __new__,
+            # bypassing __init__; these attributes might not exist in that case.
+            if getattr(self, "_cloud_usd_date", "") != today_str:
+                self._cloud_usd_date = today_str
+                self._cloud_usd_today = self._load_cloud_usd_today()
+            daily_cap = float(_s("cloud_daily_usd_budget") or 0.0)
+            if daily_cap > 0 and self._cloud_usd_today >= daily_cap:
+                logger.warning(
+                    "[Resource] Daily cloud USD cap reached ($%.4f / $%.2f) "
+                    "— routing %s/%s to local for the rest of today.",
+                    self._cloud_usd_today, daily_cap, cluster, cell,
+                )
+                model_key = "local"; model_id = "local"; _is_cloud = False
+
+        # ── R1 egress pseudonymization (gateway backstop before every cloud call) ──
+        # Idempotent: already-tokenized content (⟨type_n⟩) doesn't match PII patterns.
+        # The interactive turn path in session_turn.py also pseudonymizes before calling
+        # here; this catches all OTHER paths (motor, DMN, metacognition) that bypass it.
+        _egress_active = False
+        if _is_cloud and getattr(self, "_egress", None) is not None:
+            from brain.security import EGRESS_MODE as _egress_mode
+            if _egress_mode != "off":
+                _egress_active = True
+                system_prompt, _n = self._egress.pseudonymize(system_prompt)
+                messages = self._pseudonymize_messages(messages)
+                if _n > 0:
+                    logger.debug("[Egress] %s/%s: %d PII replacements in system_prompt",
+                                 cluster, cell, _n)
+
         start = time.time()
         bg_timeout = float(_s("bg_cloud_timeout_s") or 20.0) if (self._bg_mode and _is_cloud) else None
 
@@ -233,24 +346,34 @@ class ModelRouter:
             if skill_block:
                 system_prompt = f"{system_prompt}\n\n{skill_block}"
 
+        cache_read = 0
         if model_id.startswith("claude"):
             try:
                 coro = self._call_anthropic(model_id, system_prompt, messages, max_tokens)
                 if bg_timeout:
-                    text, in_tok, out_tok = await asyncio.wait_for(coro, timeout=bg_timeout)
+                    text, in_tok, out_tok, cache_read, cache_write = await asyncio.wait_for(
+                        coro, timeout=bg_timeout)
                 else:
-                    text, in_tok, out_tok = await coro
+                    text, in_tok, out_tok, cache_read, cache_write = await coro
             except asyncio.TimeoutError:
                 logger.warning(
                     "[Resource] Background cloud call %s/%s timed out after %.0fs — falling back to local.",
                     cluster, cell, bg_timeout,
                 )
                 text, in_tok, out_tok = await self._call_local(system_prompt, messages, max_tokens)
+                cache_read = cache_write = 0
             if self._bg_mode:
                 self._bg_cloud_tokens_used += in_tok + out_tok
                 logger.debug("[Resource] BG cloud tokens used: %d/%d (this call: %d+%d)",
                              self._bg_cloud_tokens_used,
                              int(_s("bg_cloud_token_budget") or 50_000), in_tok, out_tok)
+            # USD tracking + logging
+            usd = self._charge_cloud_usd(model_id, in_tok, out_tok, cache_read)
+            if cache_read > 0:
+                logger.debug("[Cache] %s/%s: %d cache-read tokens (%.4f¢ saved vs uncached)",
+                             cluster, cell, cache_read, cache_read * 0.27 / 10_000)
+            logger.debug("[Cloud] %s/%s: %d in + %d out + %d cached → $%.5f (day total $%.4f)",
+                         cluster, cell, in_tok, out_tok, cache_read, usd, self._cloud_usd_today)
         elif model_id.startswith("gemini"):
             try:
                 coro = self._call_google(model_id, system_prompt, messages, max_tokens)
@@ -277,6 +400,12 @@ class ModelRouter:
         else:
             raise ValueError(f"Unknown model key: {model_key}")
 
+        # ── Depseudonymize cloud response (restores ⟨type_n⟩ → real values) ──────
+        if _egress_active:
+            from brain.security import EGRESS_MODE as _egress_mode2
+            if _egress_mode2 not in ("redact", "block"):
+                text = self._egress.depseudonymize(text)
+
         latency = time.time() - start
         self._log_call(model_id, messages, in_tok, out_tok, latency, cluster=cluster or "", cell=cell or "")
         if self._obs and turn_id:
@@ -292,7 +421,9 @@ class ModelRouter:
         return text
 
     async def _call_anthropic(self, model_id: str, system_prompt: str,
-                              messages: list[dict], max_tokens: int = 1024) -> tuple[str, int, int]:
+                              messages: list[dict],
+                              max_tokens: int = 1024) -> tuple[str, int, int, int, int]:
+        """Call Anthropic Claude. Returns (text, in_tok, out_tok, cache_read, cache_write)."""
         client = self._get_anthropic()
         anthropic_msgs = [{"role": m["role"], "content": m["content"]} for m in messages]
 
@@ -307,7 +438,9 @@ class ModelRouter:
         usage = getattr(response, "usage", None)
         in_tok = getattr(usage, "input_tokens", 0) if usage else 0
         out_tok = getattr(usage, "output_tokens", 0) if usage else 0
-        return response.content[0].text, in_tok, out_tok
+        cache_read = getattr(usage, "cache_read_input_tokens", 0) if usage else 0
+        cache_write = getattr(usage, "cache_creation_input_tokens", 0) if usage else 0
+        return response.content[0].text, in_tok, out_tok, cache_read, cache_write
 
     async def _call_google(self, model_id: str, system_prompt: str,
                            messages: list[dict], max_tokens: int = 1024) -> tuple[str, int, int]:
