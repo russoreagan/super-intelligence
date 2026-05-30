@@ -6526,6 +6526,12 @@ function _buildPersonaPicker() {
 }
 
 async function _switchPersona(name, p) {
+  const label = name ? name : 'Default';
+  const msg = name
+    ? `Switch to ${name}? The brain will restart.`
+    : `Return to Default chemistry? The brain will restart.`;
+  if (!confirm(msg)) return;
+
   // Show "switching…" state
   document.getElementById('persona-pick-list').style.display = 'none';
   document.getElementById('persona-pick-restarting').style.display = 'block';
