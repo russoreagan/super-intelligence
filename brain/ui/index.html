@@ -180,6 +180,20 @@ input, select, textarea { font: inherit; color: inherit; background: none; borde
   gap: 8px;
   pointer-events: none;
 }
+#persona-header-badge {
+  padding: 5px 12px;
+  border-radius: 999px;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  background: oklch(0.20 0.03 220 / 0.6);
+  color: var(--accent);
+  border: 1px solid oklch(0.55 0.18 220 / 0.35);
+  white-space: nowrap;
+  pointer-events: none;
+}
 #emotion-badge {
   padding: 5px 16px;
   border-radius: 999px;
@@ -3229,6 +3243,7 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
     </div>
 
     <div class="header-center">
+      <span id="persona-header-badge" style="display:none"></span>
       <span id="emotion-badge">neutral</span>
       <div id="active-label">awaiting input</div>
     </div>
@@ -6351,6 +6366,21 @@ function _returnToNeutral() {
 function _renderPersonaState() {
   const name = currentSettings.persona_name || '';
   const statusEl = document.getElementById('persona-status');
+
+  // Header badge — shows next to mood when a persona is active
+  const headerBadge = document.getElementById('persona-header-badge');
+  if (headerBadge) {
+    if (name) {
+      // Strip "The " prefix to save space: "The Sage" → "Sage"
+      const short = name.replace(/^The\s+/i, '');
+      headerBadge.textContent = short;
+      headerBadge.style.display = '';
+    } else {
+      headerBadge.style.display = 'none';
+    }
+  }
+
+  // Settings section state
   document.querySelectorAll('.persona-card').forEach(c =>
     c.classList.toggle('active', c.dataset.persona === name));
   if (name) {
