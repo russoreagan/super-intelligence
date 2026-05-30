@@ -1,10 +1,3 @@
----
-name: category-data
-description: "Pick when working on databases, migrations, Supabase, or data access. Router—load up to 4 skills from this category when relevant."
-triggers: [database, SQL, migration, Supabase, schema, Drizzle]
-disable-model-invocation: false
----
-
 # Category: Data
 
 **When to pick this:** Pick when working on databases, migrations, Supabase, or data access.

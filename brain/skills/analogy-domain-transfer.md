@@ -1,11 +1,3 @@
----
-name: analogy-domain-transfer
-description: "Imports solutions from unrelated domains by finding structural similarities between your problem and solved problems elsewhere. Triggers: 'cross-domain analogy', 'what solves this elsewhere', 'find a parallel problem', 'look outside this field', 'borrow a solution'."
-category: analogy
-is_router: false
-tier: 2
----
-
 # Analogy Domain Transfer
 
 Your field has blind spots that your field created. The best solutions to structural
@@ -95,11 +87,3 @@ further.
 ## What's Next
 
 After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Domain transfer complete. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/logic-check` — Validate that the transfer holds and conclusions follow
-  - `/analogy-boundary-testing` — Test where the analogy breaks down
-  - `/creativity-alternatives` — Use the transferred ideas to generate new alternatives
-  - **Done** — Wrap up and synthesise what we have so far

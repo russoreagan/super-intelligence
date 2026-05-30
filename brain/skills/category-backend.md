@@ -1,10 +1,3 @@
----
-name: category-backend
-description: "Pick when working on server logic, services, WebSockets, or backend architecture. Router—load up to 4 skills from this category when relevant."
-triggers: [backend, server, FastAPI, Express, WebSocket, Prisma]
-disable-model-invocation: false
----
-
 # Category: Backend
 
 **When to pick this:** Pick when working on server logic, services, WebSockets, or backend architecture.

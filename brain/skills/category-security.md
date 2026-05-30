@@ -1,10 +1,3 @@
----
-name: category-security
-description: "Pick when implementing or reviewing auth, security, or accessibility. Router—load up to 4 skills from this category when relevant."
-triggers: [auth, security, JWT, OAuth, SAST, STRIDE, WCAG]
-disable-model-invocation: false
----
-
 # Category: Security
 
 **When to pick this:** Pick when implementing or reviewing auth, security, or accessibility.

@@ -1,11 +1,3 @@
----
-name: identity-mission-alignment
-description: "Tests whether a proposed decision is genuinely aligned with stated mission — or is rationalising a departure from it. Triggers: 'mission alignment', 'is this on mission', 'are we drifting', 'mission check', 'does this serve our purpose', 'on brand'."
-category: identity
-is_router: false
-tier: 2
----
-
 # Mission Alignment
 
 Organisations drift from mission gradually — through decisions that are each individually justifiable but collectively represent a departure from purpose. The test is not whether a decision can be argued to be consistent with mission, but whether it genuinely serves it.
@@ -82,11 +74,3 @@ What would someone fully committed to this mission do? Does the proposal fit?
 ## What's Next
 
 After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Mission alignment assessed. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/identity-values-clarification` — Clarify the values behind the mission
-  - `/decision-criteria-weighting` — Weight decisions against mission alignment
-  - `/strategy-positioning` — Position strategy to serve the mission
-  - **Done** — Wrap up and synthesise what we have so far

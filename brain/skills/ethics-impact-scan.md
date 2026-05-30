@@ -1,11 +1,3 @@
----
-name: ethics-impact-scan
-description: "Run a quick ethical impact assessment on a proposed feature, change, or decision before it ships. Use when the user is about to build or ship something and wants to surface who benefits, who's harmed, and at what scale — before commitments are made. TRIGGERS: 'ethics scan', 'impact check', 'who does this affect', 'is this safe to ship', any new feature proposal where stakeholder impact is unclear. Lightweight — takes minutes, not hours."
-category: ethics
-is_router: false
-tier: 2
----
-
 # Ethics Impact Scan
 
 A pre-ship ethical scan. Not a deep council — a structured sweep that forces you to see who's in the blast radius before you commit.
@@ -78,31 +70,3 @@ Proceed based on their selection.
 
 **Justice Assessment**
 [2–3 sentences on distribution: are benefits and burdens equitably spread, who bears disproportionate cost]
-
-**Flags**
-- 🔴 / 🟡 / 🟢 [flag + one sentence explanation]
-
-**Bottom Line**
-[One sentence: is this clear to ship, ship with mitigations, or needs more work]
-
----
-
-## Notes
-
-The scan is designed to be fast. It is not a substitute for the ethics-council on high-stakes decisions — it is the filter that tells you whether you need one. A clean scan means you've thought clearly about impact. A flagged scan means you have a specific thing to address or escalate.
-
-Do not use the scan to *justify* a decision you've already made. Run it before you've committed.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Impact scanned. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/ethics-empathy-circle` — Apply structured empathy to the highest-impact groups
-  - `/decision-premortem-analysis` — Run a premortem with impact findings in mind
-  - `/ethics-check` — Check overall ethical soundness given what the scan found
-  - **Done** — Wrap up and synthesise what we have so far

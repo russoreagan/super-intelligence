@@ -1,9 +1,3 @@
----
-name: api-rate-limiting
-description: Implements API rate limiting using token bucket, sliding window, and Redis-based algorithms to protect against abuse. Use when securing public APIs, implementing tiered access, or preventing denial-of-service attacks.
-disable-model-invocation: true
-
----
 # API Rate Limiting
 
 Protect APIs from abuse using rate limiting algorithms with per-user and per-endpoint strategies.

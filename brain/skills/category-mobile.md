@@ -1,10 +1,3 @@
----
-name: category-mobile
-description: "Pick when building or debugging mobile apps (React Native, Flutter). Router—load up to 4 skills from this category when relevant."
-triggers: [mobile, React Native, Flutter]
-disable-model-invocation: false
----
-
 # Category: Mobile
 
 **When to pick this:** Pick when building or debugging mobile apps (React Native, Flutter).

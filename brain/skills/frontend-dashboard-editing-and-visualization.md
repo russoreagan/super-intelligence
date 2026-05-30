@@ -1,11 +1,3 @@
----
-name: dashboard-editing-and-visualization
-description: Use when implementing or debugging charts/dashboards in this codebase, including chart-spec → renderer flow and dashboard layout edits via patch operations.
-summary: Chart spec → renderer pipeline and dashboard layout operations (move/resize/remove widgets).
-triggers: [chart, dashboard, visualization, widget, move, resize, layout, Recharts]
-disable-model-invocation: true
-
----
 # Dashboard Editing & Visualization (Definitive)
 
 ## Goal
@@ -22,4 +14,3 @@ Make safe, reversible changes to dashboards and charts by:\n+- understanding the
 - If multiple widgets match “the chart”, ask which one and show a numbered list.\n+- If placement is ambiguous (“over there”), ask for top/bottom/left/right or reference widget.\n+\n+### Collision handling (principles)
 - Detect overlap before applying.\n+- Prefer pushing other widgets down over silent overlap.\n+- Clamp to grid bounds; warn when layout is crowded.\n+\n+## Output format (dashboard edits)
 Return a single patch operation object with `op_type`, `payload`, and `reason` so edits are auditable and reversible.
-

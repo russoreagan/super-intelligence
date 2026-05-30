@@ -1,11 +1,3 @@
----
-name: writing-pov
-description: "Audits point-of-view for violations, consistency, and fit. Use when narration feels inconsistent, when there is unwanted head-hopping, or when the chosen POV isn't serving the story. Triggers: 'POV problems', 'head-hopping', 'point of view', 'the narration feels inconsistent', 'POV violations', 'narrative perspective', 'sometimes we know things the character shouldn't'."
-category: writing
-is_router: false
-tier: 3
----
-
 # Writing: Point of View
 
 POV is a contract with the reader about what the narration can know. The moment that contract is violated — the moment the narration accesses something it has promised not to access — the reader's trust breaks. Usually they don't know why. They just feel the seam, the moment the author's hand becomes visible. "How did we know that?" is the diagnostic question.
@@ -38,52 +30,3 @@ Violations fall into four categories:
 - **Inconsistency violations:** The POV type shifts without transition (close third suddenly going omniscient for one paragraph)
 
 For each violation: quote the line, identify the type, name what was accessed that couldn't be accessed.
-
-**Step 4: Fit Assessment**
-Does the chosen POV serve the story's core effect? Consider:
-- If the story's power is in *not knowing* something — close third may serve better than omniscient
-- If the story's power is in the narrator's *voice and personality* — first person may be more powerful
-- If the story requires events the protagonist can't witness — close third may be limiting; omniscient or multiple POV may be needed
-- If dramatic irony is central — omniscient or multiple POV enables it; first-person limits it
-
----
-
-## Output Format
-
-### POV Audit
-
-**Type Identified:** [First person / Close third / Omniscient / Second / Mixed — and whether mixed is intentional]
-
-**Contract Stated:** [What this POV promises about access to interiority and observation]
-
-**Violations:**
-- [Quoted line] — Type: [Interiority / Observation / Knowledge / Inconsistency] — What was accessed that couldn't be
-- [Repeat for each violation]
-- NONE FOUND if clean
-
-**Fit Assessment:** [Does this POV serve the story's core effect? What would be gained or lost by changing it?]
-
-**Recommendation:** [Maintain current POV with fixes / Consider switching to X because Y]
-
----
-
-## Notes
-
-- POV violations are a type of continuity error, but they require their own audit pass because they operate at the narrative level rather than the story level.
-- The hardest violations to catch in close third: the narrator describing what the POV character's own face looks like (characters don't see their own faces), and the narration accessing physical sensations the POV character has gone numb to (because the author needs the reader to feel them).
-- Pairs with `/writing-voice-consistency` — POV and voice are linked; a close-third narration that suddenly takes on the author's philosophical voice rather than the character's is both a POV violation and a voice inconsistency.
-- Pairs with `/writing-inconsistency-audit` — POV violations are logged there as a category; this skill provides the deeper analysis when they're numerous or the POV choice itself is the problem.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "POV established. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/writing-voice-consistency` — Ensure POV is voice-consistent throughout
-  - `/writing-scene-construction` — Construct scenes from the established POV
-  - `/writing-character-development` — Develop the character whose POV this is
-  - **Done** — Wrap up and synthesise what we have so far

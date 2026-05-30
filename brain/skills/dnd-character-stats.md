@@ -1,9 +1,3 @@
----
-name: dnd-character-stats
-description: D&D 5e character management with rolled or manual ability scores, app persistence (character APIs), modifiers, HP, and proficiency. Use when creating characters (4d6 drop lowest, auto-assign by class), showing/listing/updating characters, or implementing character CRUD and calculated stats.
-disable-model-invocation: true
----
-
 # D&D Character Stats
 
 Manage D&D 5e characters: roll ability scores, assign by class, confirm or adjust, persist via the app’s character APIs, and derive modifiers, HP, and proficiency.
@@ -58,18 +52,3 @@ Use when sorting rolled scores into abilities. Example order (highest roll → f
 Adjust for other classes as needed (e.g. Paladin: STR/CHA, Bard: CHA/DEX).
 
 ## Updates
-
-- **Level up:** Recalculate hp_max (add hit die for new level), update proficiency if threshold crossed (5, 9, 13, 17).
-- **Ability score change:** Recalculate modifier and any dependents (e.g. spell DC if INT/CHA/WIS).
-- **Damage/healing:** Set hp_current (clamp to 0..hp_max).
-
-## Error Handling
-
-- Duplicate name on create → error, suggest different name or update existing.
-- Show/list non-existent character → clear error, suggest `list` to see names (case-sensitive).
-
-## Integration with This App
-
-- **Dice:** Use the app’s **dice tool** or **request_player_roll** (or server-side dice service when available) for 4d6 drop lowest; do not run external scripts.
-- **Combat:** The app’s combat flow (dnd-simple-combat style) uses character HP, AC, and equipment from `query_character` and the character/combat APIs.
-- **Character sheet detail:** Use [dnd-5e-character-manager](skills/dnd-5e-character-manager/) for full PHB-derived calculations and validation; read/write character data via `query_character` and the character APIs.

@@ -1,18 +1,3 @@
----
-name: supabase-schema-from-requirements
-description: |
-  Execute Supabase primary workflow: Schema from Requirements.
-  Use when Starting a new project with defined data requirements,
-  Refactoring an existing schema based on new features, or Creating migrations from specification documents.
-  Trigger with phrases like "supabase schema from requirements",
-  "generate database schema with supabase".
-allowed-tools: Read, Write, Edit, Bash(npm:*), Grep
-version: 1.0.0
-license: MIT
-author: Jeremy Longshore <jeremy@intentsolutions.io>
-disable-model-invocation: true
-
----
 # Supabase Schema from Requirements
 
 ## Overview

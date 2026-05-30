@@ -1,9 +1,3 @@
----
-name: unity-vfx-graph
-description: Unity Visual Effect Graph skill for GPU particle systems, procedural effects, and high-performance visual effects.
-allowed-tools: Read, Grep, Write, Bash, Edit, Glob, WebFetch
----
-
 # Unity VFX Graph Skill
 
 Visual Effect Graph development for GPU-accelerated particle systems in Unity.

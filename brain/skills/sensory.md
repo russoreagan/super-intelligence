@@ -1,11 +1,3 @@
----
-name: sensory
-description: "Entry point for the sensory observation toolkit. Routes to the right observational skill based on your situation. Use when you say 'sensory', 'what are we missing', 'look more carefully', 'separate signal from noise', 'too much information', 'what actually matters here', 'observe this carefully', or want observational precision applied without knowing which specific tool fits."
-category: sensory
-is_router: true
-tier: 3
----
-
 # Sensory
 
 Applies disciplined observation and attention to any situation. Diagnoses what kind of observational work is needed and applies the right tool.

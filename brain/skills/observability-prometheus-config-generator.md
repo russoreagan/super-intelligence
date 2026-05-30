@@ -1,16 +1,3 @@
----
-name: "prometheus-config-generator"
-description: |
-  Generate prometheus config generator operations. Auto-activating skill for DevOps Advanced.
-  Triggers on: prometheus config generator, prometheus config generator
-  Part of the DevOps Advanced skill category. Use when configuring systems or services. Trigger with phrases like "prometheus config generator", "prometheus generator", "prometheus".
-allowed-tools: "Read, Write, Edit, Bash(cmd:*), Grep"
-version: 1.0.0
-license: MIT
-author: "Jeremy Longshore <jeremy@intentsolutions.io>"
-disable-model-invocation: true
-
----
 # Prometheus Config Generator
 
 ## Overview

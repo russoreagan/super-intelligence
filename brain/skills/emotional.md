@@ -1,11 +1,3 @@
----
-name: emotional
-description: "Entry point for the emotional intelligence toolkit. Routes to the right emotional skill based on your situation. Use when you say 'emotional', 'why are they behaving like this', 'what motivates them', 'why the resistance', 'what do they really want', 'trust issues', or want emotional/interpersonal reasoning applied without knowing which specific tool fits."
-category: emotional
-is_router: true
-tier: 1
----
-
 # Emotional
 
 Applies emotional intelligence to interpersonal and organizational situations. Diagnoses what kind of emotional reasoning is needed and applies the right tool.
@@ -62,7 +54,3 @@ In any negotiation, alignment challenge, or disagreement, stated positions are r
 ## Trust Audit
 
 *Maps what is building and eroding trust in a relationship or situation.*
-
-Trust degrades silently until it fails loudly. Audit trust across four dimensions: (1) Competence — do they believe you can deliver? (2) Integrity — do they believe you mean what you say? (3) Benevolence — do they believe you have their interests at heart? (4) Reliability — do they trust your follow-through? For each dimension: what recent events support or undermine trust? What actions would rebuild it?
-
-**Output:** Trust audit across four dimensions, with specific evidence for each. Priority actions that most efficiently rebuild trust.

@@ -1,11 +1,3 @@
----
-name: writing-plot-structure
-description: "Diagnoses structural failures in a story using the five-beat dramatic framework — inciting incident, first turning point, midpoint, dark night, climax. Use when a plot isn't working, the middle drags, momentum is lost, or the story feels loose. Triggers: 'the story isn't working', 'plot structure', 'my middle drags', 'the plot feels loose', 'story structure', 'momentum problem', 'the structure is off'."
-category: writing
-is_router: false
-tier: 3
----
-
 # Writing: Plot Structure
 
 Most plot problems are structural. When readers say "it loses momentum," "the middle drags," or "the ending felt rushed," they are usually reporting structural failures, not prose failures. The sentences may be excellent. The problem is in the architecture.
@@ -32,51 +24,3 @@ The protagonist confronts the central struggle with everything they have and app
 
 **Step 5: Climax and Resolution**
 The internal change enabled by the dark night allows the external problem to resolve. The key diagnostic: does the climax require the protagonist's change, or could any competent person have resolved it? If the resolution doesn't require the protagonist's specific internal transformation, the plot and character arc are running on parallel tracks that never truly connect.
-
-**For each beat:** Does it exist? Is it caused by the beat before it (cause-and-effect chain)? Does it raise the stakes rather than maintain them?
-
----
-
-## Output Format
-
-### Structural Map
-
-**Inciting Incident:** [Event + central question it raises / diagnosis of whether it is functioning]
-
-**First Turning Point:** [Commitment moment + stakes diagnosis / missing or weak?]
-
-**Midpoint:** [False victory or false defeat + direction shift / diagnosis]
-
-**Dark Night:** [Apparent defeat + active vs. passive diagnosis / earned or melodramatic?]
-
-**Climax and Resolution:** [How internal change enables external resolution / does the plot require this specific character?]
-
-**Cause-and-Effect Chain:** [Does each beat cause the next? Gaps or breaks identified]
-
-**Diagnosis:** [Primary structural problem(s) — which beats are missing, weak, or disconnected]
-
-**Recommended Fixes:** [Specific interventions for each problem beat]
-
----
-
-## Notes
-
-- Structural problems cannot be fixed at the prose level. If a beat is missing or broken, adding better sentences will not repair it.
-- A common false fix: adding subplots to fill structural gaps. Subplots that don't connect to the central question create weight without tension.
-- Pairs with `/writing-arc-design` — the internal arc must mirror the external structure; structural diagnosis and arc design must happen together for the fix to hold.
-- Pairs with `/writing-restructure` when the beats exist but are in the wrong sequence or proportion — restructure addresses arrangement, not the beats themselves.
-- Pairs with `/writing-scene-construction` when the structural beats are present but individual scenes within them are not delivering what the structure requires.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Plot structured. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/writing-arc-design` — Design the arc within the plot structure
-  - `/writing-character-development` — Develop characters in service of the plot
-  - `/narrative-tension-mapping` — Map tension across the plot structure
-  - **Done** — Wrap up and synthesise what we have so far

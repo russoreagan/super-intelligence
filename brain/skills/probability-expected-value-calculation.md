@@ -1,11 +1,3 @@
----
-name: probability-expected-value-calculation
-description: "Calculates expected value to compare options under uncertainty. Use when asked about 'expected value', 'is this risk worth taking', 'EV calculation', 'compare these options', 'worth the risk', or 'asymmetric risk'."
-category: probability
-is_router: false
-tier: 2
----
-
 # Probability Expected Value Calculation
 
 Expected value is the correct framework for comparing options under uncertainty. It multiplies each outcome's value by its probability and sums across all outcomes, producing a single number that accounts for the full distribution rather than just the most likely case. EV analysis forces explicitness about both probabilities and values — and it exposes asymmetric risk that intuition misses. One important constraint: EV math is overridden when any outcome is catastrophic enough to be unacceptable regardless of probability.
@@ -77,11 +69,3 @@ EV assumes outcomes are fungible and the decision will be made many times — ne
 ## What's Next
 
 After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Expected values calculated. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/decision-criteria-weighting` — Use expected values in the decision matrix
-  - `/resource-allocation-analysis` — Allocate resources proportional to expected value
-  - `/decision-premortem-analysis` — Stress-test the highest-EV option
-  - **Done** — Wrap up and synthesise what we have so far

@@ -1,11 +1,3 @@
----
-name: investigation
-description: "Entry point for the investigation toolkit. Routes to the right investigation skill based on what you're trying to establish. Use when you say 'investigate', 'verify this', 'check this claim', 'where does this come from', 'is this true', 'trace the source', 'stress-test this belief', 'what's the evidence', 'could something else explain this', or want to know whether something you've heard is actually true."
-category: investigation
-is_router: true
-tier: 2
----
-
 # Investigation
 
 Practical truth-finding methodology: tracing sources, decomposing claims, evaluating evidence, generating rival hypotheses, and triangulating across independent sources. Diagnoses what kind of investigative work is needed and routes to the right tool.
@@ -54,41 +46,3 @@ Surface the hidden architecture of a claim: what sub-claims are inside it, which
 ## Evidence Audit
 
 *Evaluate the quality, strength, and completeness of evidence for a claim.*
-
-Apply a structured evidence quality assessment: evidence type (RCT vs. observational vs. anecdote vs. expert opinion), sample quality, methodological soundness, conflicts of interest, and what is notably absent. Uses an evidence hierarchy to locate where the current evidence sits and what stronger evidence would look like.
-
-**Output:** Evidence inventory, type and quality classification, notable absences, conflict-of-interest flags, and an overall evidence quality verdict.
-
----
-
-## Counter-Hypothesis
-
-*Generate the best alternative explanations for the same observations.*
-
-Take a claim and systematically generate rival explanations that fit the available evidence equally well — or better. For each rival hypothesis, ask what evidence would distinguish it from the original. Identify the decisive test: the observation or experiment that, if run, would most cleanly discriminate between explanations.
-
-**Output:** Original claim restatement, 3-5 rival hypotheses with supporting evidence, distinguishing evidence for each, and the decisive test.
-
----
-
-## Triangulation
-
-*Verify a claim across genuinely independent sources.*
-
-Collect candidate sources for a claim. Classify them by independence — many sources that all trace back to the same original aren't independent, they're amplification. Assess whether truly independent sources converge (claim is more reliable) or diverge (claim is contested or uncertain). Issue a triangulation verdict.
-
-**Output:** Source list, independence classification, convergence/divergence assessment, and a reliability verdict based on the triangulation.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Investigation complete. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/logic-check` — Validate that conclusions drawn from the investigation hold
-  - `/probability-confidence-calibration` — Calibrate confidence given what the investigation found
-  - `/epistemology-limits` — Map the limits of what investigation can establish here
-  - **Done** — Wrap up and synthesise what we have so far

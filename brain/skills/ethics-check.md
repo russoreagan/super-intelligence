@@ -1,11 +1,3 @@
----
-name: ethics-check
-description: "A fast, comprehensive ethics report on any decision, action, or situation — runs all five ethical frameworks in a single pass. Lighter than ethics-council (no peer review, no HTML report), heavier than ethics-impact-scan. Triggers: 'ethics check', 'quick ethics review', 'full ethics report', 'check this ethically', 'run an ethics check', any request for a complete ethical assessment without full council process."
-category: ethics
-is_router: false
-tier: 2
----
-
 # Ethics Check
 
 Five ethical frameworks consistently applied produce a more complete picture than any single one. Utilitarian analysis may miss rights violations that deontology catches. Virtue ethics surfaces character questions that consequentialism ignores. Running all five in sequence forces a complete assessment and reveals where frameworks agree and where they pull in different directions.
@@ -69,36 +61,3 @@ Proceed based on their selection.
 
 **Care Ethics**
 [3–5 sentences: relationships at stake, vulnerability, responsiveness to those who depend on this]
-
-**Justice / Fairness**
-[3–5 sentences: distribution of benefits and burdens, procedural fairness, veil of ignorance test]
-
-### Agreement and Conflict Summary
-- **Frameworks agree:** [where multiple frameworks converge]
-- **Frameworks conflict:** [where they pull in different directions — name the tension]
-
-### Values at Stake
-- [The core values in tension or at risk]
-
-### Recommendation
-[Clear recommendation with rationale — and any conditions or safeguards that change the assessment]
-
----
-
-## Notes
-
-Use ethics-council when the situation requires deeper deliberation, peer challenge between frameworks, or a formal report. Use ethics-impact-scan for a lighter first pass. This skill sits between — a complete, fast, single-pass assessment.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Ethics checked. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/ethics-council` — Run adversarial ethical peer review for deeper scrutiny
-  - `/ethics-impact-scan` — Scan for affected parties the check may have missed
-  - `/decision-premortem-analysis` — Stress-test the ethically-checked plan
-  - **Done** — Wrap up and synthesise what we have so far

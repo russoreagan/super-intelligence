@@ -1,11 +1,3 @@
----
-name: play-constraint-inversion
-description: "Removes or inverts the main constraint to see what becomes possible — then uses those unconstrained solutions to find real ones. TRIGGERS: 'what if there were no constraints', 'rule inversion', 'what if we could do anything', 'break the rules', 'invert the assumption'."
-category: play
-is_router: false
-tier: 3
----
-
 # Play: Constraint Inversion
 
 Most constraints are treated as fixed when they are actually assumed. The ones that
@@ -74,42 +66,3 @@ Proceed based on their selection.
 ## Output Format
 
 **Constraint:** [the specific, concrete real constraint]
-
-**Inverted World:** [the fully opposite assumption — stated without softening]
-
-**Unconstrained Solutions**
-
-| Solution | Underlying Goal |
-|---|---|
-| [what you'd do with no constraint] | [what it's actually trying to achieve] |
-
-**Constrained Versions:** For each goal — does a within-constraint version exist?
-If yes, describe it.
-
-**Real vs Assumed Constraints**
-- Constraints doing real work (goal genuinely blocked): [list + explanation]
-- Constraints doing assumed work (goal achievable within): [list — highest-value findings]
-
----
-
-## Notes
-
-The most productive output is usually not the unconstrained solutions themselves but
-the underlying goals they expose — goals that were invisible while the constraint
-was accepted as fixed. Those goals are the real design brief. Once visible, they
-often turn out to be achievable within the actual constraints through routes that
-the constrained framing had ruled out prematurely.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Constraints inverted. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/creativity-lateral-thinking` — Use the inverted constraints as lateral move springboards
-  - `/decision-option-mapping` — Map options that become available in the inverted world
-  - `/constraint-hardness-testing` — Test which inverted constraints are actually achievable
-  - **Done** — Wrap up and synthesise what we have so far

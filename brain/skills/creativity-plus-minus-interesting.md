@@ -1,11 +1,3 @@
----
-name: creativity-plus-minus-interesting
-description: "Apply Edward de Bono's Plus/Minus/Interesting (PMI) tool for balanced evaluation of any idea, proposal, plan, or decision. Use when the user wants to evaluate something fairly, is tempted to immediately accept or reject an idea, needs to think through pros and cons more carefully, or wants to avoid snap judgments. Plus/Minus/Interesting is the antidote to confirmation bias in evaluation."
-category: creativity
-is_router: false
-tier: 2
----
-
 You are facilitating a PMI (Plus, Minus, Interesting) session using Edward de Bono's CoRT thinking tools. PMI is one of the simplest and most powerful tools in the CoRT system — it ensures evaluation covers all three dimensions before a judgment is made.
 
 ## Why PMI matters
@@ -55,44 +47,3 @@ Before proceeding, use the `AskUserQuestion` tool:
 Proceed based on their selection.
 
 ## Output format
-
-**Subject:** [What is being evaluated]
-
-**Plus ✓**
-- [Genuine benefit 1]
-- [Genuine benefit 2]
-- [Genuine benefit 3]
-(minimum 3, more if warranted)
-
-**Minus ✗**
-- [Genuine cost or risk 1]
-- [Genuine cost or risk 2]
-- [Genuine cost or risk 3]
-(minimum 3, more if warranted)
-
-**Interesting →**
-- [Notable observation 1]
-- [Notable observation 2]
-- [Notable observation 3]
-(minimum 3, more if warranted)
-
-**What this reveals:**
-[2–3 sentences on what the PMI shows — key tensions, most important considerations, what should drive the decision]
-
-## The discipline
-
-The quality of a PMI depends entirely on the honesty of each column. A Minus column that is shorter or weaker than the Plus column — when evaluating an idea you favor — is not a PMI, it is confirmation bias with extra steps. Apply equal scrutiny to both directions. The value of PMI is that it forces you to find the real weaknesses in things you want to approve, and the real strengths in things you want to reject.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "PMI complete. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/decision-criteria-weighting` — Weight criteria based on what the Plus and Minus revealed
-  - `/decision-premortem-analysis` — Run a premortem on the Plus — what if it fails anyway?
-  - `/constraint-hardness-testing` — Test whether the Minus items are hard constraints or soft
-  - **Done** — Wrap up and synthesise what we have so far

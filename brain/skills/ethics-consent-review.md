@@ -1,11 +1,3 @@
----
-name: ethics-consent-review
-description: "Review a UX flow, data practice, or communication pattern to verify that user consent is genuine — informed, voluntary, and meaningful. Use during design or implementation of checkout flows, onboarding, notification settings, permissions requests, terms of service, dark patterns, or any feature where users make choices about what they share or agree to. TRIGGERS: 'consent review', 'is this dark pattern', 'check this onboarding flow', 'is this consent genuine', any UX that involves users agreeing to something, sharing data, or opting in/out."
-category: ethics
-is_router: false
-tier: 2
----
-
 # Ethics Consent Review
 
 Consent is not a checkbox. It is a meaningful act by a person who understands what they're agreeing to, genuinely has the option to decline, and isn't being manipulated into compliance.
@@ -59,64 +51,3 @@ Is this a context where users have genuine alternatives? Can they use a competin
 ## Human Check-in
 
 Before proceeding, use the `AskUserQuestion` tool:
-
-- **Question:** "How do you want to run this?"
-- **Header:** "Scope"
-- **Options:**
-  - **Full analysis** — Complete all steps, reasoning shown throughout
-  - **Key findings only** — Bottom-line output, skip step-by-step detail
-  - **Dark patterns only** — Flag manipulative design elements specifically
-  - **Refine the framing** — Adjust what we're analyzing before starting
-
-Proceed based on their selection.
-
-## Output Format
-
-**Flow Being Reviewed:**
-[What UX, what consent moment, what the default is]
-
-**Informed Test**
-- Plain language: ✅ / ⚠️ / ❌ — [finding]
-- Material information prominent: ✅ / ⚠️ / ❌ — [finding]
-- Scope clarity: ✅ / ⚠️ / ❌ — [finding]
-- Surprise test: ✅ / ⚠️ / ❌ — [finding]
-
-**Voluntary Test**
-- Declining is easy: ✅ / ⚠️ / ❌ — [finding]
-- No coercion: ✅ / ⚠️ / ❌ — [finding]
-- Granular choice: ✅ / ⚠️ / ❌ — [finding]
-
-**Meaningful Test**
-Dark patterns detected:
-- [Pattern name if present]: ✅ None / ⚠️ Minor / ❌ Significant — [finding]
-
-**Power Dynamic**
-[1–2 sentences: do users have genuine alternatives; any vulnerability concerns]
-
-**Verdict**
-[Is this consent genuine? What are the specific problems if any?]
-
-**Recommended Changes**
-- [Specific fix per failing item]
-
----
-
-## Notes
-
-The standard is not "legally defensible consent." It is "consent a reasonable person would consider genuine." Those are not the same standard, and in the long run, the second one matters more for user trust.
-
-Where dark patterns are found, name them specifically. Vague concerns are easy to dismiss; named patterns with clear examples are not.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Consent reviewed. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/ethics-empathy-circle` — Apply empathy to those whose consent is in question
-  - `/communication-audience-modeling` — Model how to communicate consent requirements
-  - `/ethics-impact-scan` — Scan for impact on those whose consent was not obtained
-  - **Done** — Wrap up and synthesise what we have so far

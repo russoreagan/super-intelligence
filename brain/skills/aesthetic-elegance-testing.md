@@ -1,11 +1,3 @@
----
-name: aesthetic-elegance-testing
-description: "Tests whether a solution is more complex than it needs to be — distinguishing necessary complexity from accidental complexity that accreted over time. TRIGGERS: 'elegance test', 'is this too complex', 'over-engineered', 'is there a simpler way', 'does this feel right'."
-category: aesthetic
-is_router: false
-tier: 3
----
-
 # Aesthetic Elegance Testing
 
 Complexity is the default outcome of design by committee, incremental revision, and
@@ -79,36 +71,3 @@ Proceed based on their selection.
 | [component/mechanism/step] | [necessary / accreted] | [why it does or doesn't serve the core] |
 
 **Concept Count:** [n currently required] vs [n at irreducible minimum] — overhead: [gap]
-
-**30-Second Explanation Test:** [pass / fail — include the actual attempt]
-
-**Sources of Unnecessary Complexity**
-
-| Accreted Element | How It Was Introduced | Cost of Removal |
-|---|---|---|
-| [element] | [origin] | [what is lost if removed] |
-
-**Recommended Simplifications:** [specific removals or reductions, with trade-offs named]
-
----
-
-## Notes
-
-The question is not "can we defend every element" but "does every element earn its
-place." Elements that can be defended are not the same as elements that are necessary
-— hold the higher bar. Elegance is achieved not when there is nothing left to add,
-but when there is nothing left to remove.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Elegance tested. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/aesthetic-simplicity-analysis` — Simplify what elegance testing flagged as complex
-  - `/writing-prose-elevation` — Elevate prose flagged as inelegant
-  - `/aesthetic-coherence-check` — Verify that elegance is coherent with the whole
-  - **Done** — Wrap up and synthesise what we have so far

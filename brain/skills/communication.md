@@ -1,11 +1,3 @@
----
-name: communication
-description: "Entry point for the communication toolkit. Routes to the right communication skill based on your situation. Use when you say 'communication', 'how do I say this', 'will this land', 'which channel', 'what will they push back on', 'does this make sense', or want communication help without knowing which specific tool fits."
-category: communication
-is_router: true
-tier: 2
----
-
 # Communication
 
 Applies communication thinking to any message, proposal, or delivery decision. Diagnoses what kind of communication problem this is and applies the right tool.
@@ -62,7 +54,3 @@ Assess the message against four dimensions: (1) complexity — does understandin
 ## Objection Mapping
 
 *Maps likely objections before delivering a proposal.*
-
-List all stakeholders who will encounter this proposal. For each: what is their likely first objection? What's the deeper concern beneath it? Now assess each objection: is it addressable by changing the proposal, addressable by framing, or genuinely unresolvable? Objections anticipated feel addressed; objections that arrive as surprises derail.
-
-**Output:** Objection map — stakeholder, surface objection, underlying concern, and how to address it. Flags unresolvable objections the presenter must prepare for.

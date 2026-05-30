@@ -1,11 +1,3 @@
----
-name: analogy-structure-mapping
-description: "Identifies the deep structural correspondence between two situations — genuine isomorphism vs superficial similarity. Triggers: 'does this analogy hold', 'map the structure', 'is this really like that', 'structural similarity', 'test the comparison'."
-category: analogy
-is_router: false
-tier: 2
----
-
 # Analogy Structure Mapping
 
 Analogies are persuasive but often wrong. The surface similarity that makes a comparison
@@ -92,15 +84,3 @@ not just that individual elements can be paired. Two things can share every node
 entirely on the edges that connect them.
 
 ---
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Structure mapped. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/logic-check` — Validate that the structural mapping holds
-  - `/analogy-domain-transfer` — Use the structure map to guide a domain transfer
-  - `/systems-feedback-mapping` — Check if the structure reveals feedback dynamics
-  - **Done** — Wrap up and synthesise what we have so far

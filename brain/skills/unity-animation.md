@@ -1,9 +1,3 @@
----
-name: unity-animation
-description: Unity Animation skill for Animator controllers, Animation Rigging, Timeline integration, and animation state machines.
-allowed-tools: Read, Grep, Write, Bash, Edit, Glob, WebFetch
----
-
 # Unity Animation Skill
 
 Animation system implementation and configuration in Unity.

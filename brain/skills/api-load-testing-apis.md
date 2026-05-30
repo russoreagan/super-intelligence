@@ -1,17 +1,3 @@
----
-name: load-testing-apis
-description: |
-  Execute comprehensive load and stress testing to validate API performance and scalability.
-  Use when validating API performance under load.
-  Trigger with phrases like "load test the API", "stress test API", or "benchmark API performance".
-  
-allowed-tools: Read, Write, Edit, Grep, Glob, Bash(api:load-*)
-version: 1.0.0
-author: Jeremy Longshore <jeremy@intentsolutions.io>
-license: MIT
-disable-model-invocation: true
-
----
 # Load Testing Apis
 
 ## Overview

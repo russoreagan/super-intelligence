@@ -1,11 +1,3 @@
----
-name: narrative-tension-mapping
-description: "Finds or creates the tension that makes communication worth paying attention to. Use when asked 'this feels flat', 'no one's engaging', 'make this compelling', 'find the tension', 'what's the story here', or 'add stakes'."
-category: narrative
-is_router: false
-tier: 2
----
-
 # Narrative Tension Mapping
 
 Without a gap between current state and desired state, communication is noise. Tension is not drama or manufactured urgency — it is the honest articulation of what is wrong, at risk, or missing. Audiences disengage not because a topic is unimportant but because the communication fails to make the gap visible and real. The tension must be felt before the solution can land.
@@ -70,11 +62,3 @@ Tension is not negativity. Stating what is at risk is not pessimistic — it is 
 ## What's Next
 
 After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Tensions mapped. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/writing-arc-design` — Design the arc to resolve the mapped tensions
-  - `/writing-plot-structure` — Structure the plot around the tension points
-  - `/decision-premortem-analysis` — Stress-test whether the tensions actually resolve
-  - **Done** — Wrap up and synthesise what we have so far

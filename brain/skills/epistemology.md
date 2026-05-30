@@ -1,11 +1,3 @@
----
-name: epistemology
-description: "Entry point for the epistemology toolkit. Routes to the right skill based on your situation. Use when you say 'what do I actually know here', 'is this knowable', 'how certain should I be', 'what would justify believing this', 'what kind of claim is this', 'am I confusing assumption with knowledge', 'what are the limits of what we can establish', or want philosophical rigor applied to questions of knowledge without knowing which specific tool fits."
-category: epistemology
-is_router: true
-tier: 2
----
-
 # Epistemology
 
 Applies philosophical analysis to the nature, structure, and limits of knowledge. Diagnoses what kind of epistemic work is needed and routes to the right tool.
@@ -54,31 +46,3 @@ Identify the belief → ask what would need to be true for it to be justified �
 ## Epistemic Status
 
 *Honest, rigorous calibration: what do you know vs. believe vs. assume vs. hope?*
-
-Inventory all claims in a domain → assign each an epistemic status (known, reasonably believed, assumed, hoped, unknown) → trace dependencies: which high-confidence claims rest on lower-confidence foundations? Draws from the rationalist tradition of explicit epistemic labeling to replace confident-sounding vagueness with precise, honest calibration.
-
-**Output:** Structured epistemic status map across the domain, with dependency chains flagged where confident claims rest on shakier ground.
-
----
-
-## Limits
-
-*What can't be known here, and why — and what *can* be established within those limits?*
-
-Identify what you're trying to know → classify the type of limit if one exists (fundamental: Gödel-style, underdetermination, observer effects; practical: evidence unavailable, destroyed, or counterfactual; conceptual: the question may be malformed) → clarify what *can* be established within those limits → reframe the question into the answerable part. The point is not to conclude "we can't know" — it's to be precise about what kind of knowing is and isn't available.
-
-**Output:** Limit classification, what remains establishable, and a reframed question targeting the knowable.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Epistemology applied. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/investigation` — Apply practical investigation methods to what epistemology clarified
-  - `/probability-confidence-calibration` — Calibrate your confidence given the epistemic analysis
-  - `/logic-check` — Validate reasoning built on the epistemic foundations
-  - **Done** — Wrap up and synthesise what we have so far

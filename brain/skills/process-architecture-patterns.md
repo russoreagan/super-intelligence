@@ -1,9 +1,3 @@
----
-name: architecture-patterns
-description: Guiding principles for Clean Architecture, Hexagonal, and DDD. Use when planning how to structure or refactor backend code.
-disable-model-invocation: true
-
----
 # Architecture Patterns — Principles Reference
 
 ## Clean Architecture

@@ -1,11 +1,3 @@
----
-name: aesthetic-pattern-detection
-description: "Identifies the underlying formal pattern at work — because most successful designs, arguments, and solutions share deep structural patterns, and naming the pattern unlocks the playbook. TRIGGERS: 'what pattern is this', 'pattern recognition', 'why does this work', 'identify the form', 'what structure is at play', 'what archetype is this'."
-category: aesthetic
-is_router: false
-tier: 3
----
-
 # Aesthetic Pattern Detection
 
 Surface features differ — colours, words, technologies, industries. Formal patterns
@@ -76,36 +68,3 @@ Proceed based on their selection.
 **Archetype Match:** [closest domain archetype + which domain it comes from]
 
 **Pattern Name:** [precise name for the dominant pattern]
-
-**What Naming It Reveals:** [what becomes visible or legible that wasn't before]
-
-**Pattern Implications**
-
-| Implication | Description |
-|---|---|
-| What should come next | [the move the pattern calls for] |
-| What is violating the pattern | [specific elements that break it] |
-| Intentional or accidental | [productive subversion or incoherence] |
-
----
-
-## Notes
-
-Not every successful thing follows a single pattern cleanly — most operate with
-several simultaneously. Identify the dominant pattern first; note secondary patterns
-separately. The test of a good pattern name is whether it generates new options
-rather than just describing what's already there.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Patterns detected. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/aesthetic-coherence-check` — Check that detected patterns cohere
-  - `/systems-archetype-matching` — Match aesthetic patterns to systemic archetypes
-  - `/aesthetic-elegance-testing` — Test the elegance of the patterns
-  - **Done** — Wrap up and synthesise what we have so far

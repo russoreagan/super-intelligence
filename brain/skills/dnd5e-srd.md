@@ -1,9 +1,3 @@
----
-name: dnd5e-srd
-description: Retrieval-augmented generation (RAG) skill for the D&D 5e System Reference Document (SRD). Use when answering questions about D&D 5e core rules, spells, combat, equipment, conditions, monsters, and other SRD content. This skill provides agentic search-based access to the SRD split into page-range markdown files.
-disable-model-invocation: true
----
-
 # D&D 5e SRD RAG
 
 Search-based retrieval access to the D&D 5e System Reference Document (SRD), organized by page ranges as markdown files in a `references/` directory.

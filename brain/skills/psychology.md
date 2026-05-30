@@ -1,11 +1,3 @@
----
-name: psychology
-description: "Entry point for the psychology toolkit. Routes to the right psychology skill based on your situation. Use when you say 'psychology', 'what's driving this behavior', 'why is this person doing X', 'what biases are at play', 'how do I change a habit', 'how do I persuade', 'should I trust my gut', 'what motivates them', or want cognitive/behavioral analysis without knowing which specific tool fits."
-category: psychology
-is_router: true
-tier: 2
----
-
 # Psychology
 
 Applies cognitive and behavioral frameworks to understand why people think, feel, and act as they do — and how to influence and change that. Diagnoses what kind of psychological work is needed and routes to the right tool.
@@ -48,51 +40,3 @@ Key categories: confirmation bias (seeking confirming evidence), availability he
 *Diagnose what's actually driving behavior — surface motivation vs. root motivation.*
 
 Observe the behavior. Name the surface motivation (what they say they want, or what the obvious explanation is). Then probe deeper: which fundamental need is this serving? Apply Self-Determination Theory (autonomy, competence, relatedness), Maslow as a diagnostic (is a lower-level need unmet?), and the identity dimension ("I am the kind of person who..."). Identify what's actually needed for sustained engagement.
-
-**Output:** Surface motivation, root motivation, underlying need, and the lever that addresses the real driver.
-
----
-
-## Heuristics
-
-*Assess the fast-thinking pattern at work — when to trust it, when to override it.*
-
-Identify which heuristic is operating (representativeness, availability, affect, recognition). Classify whether it's in its domain of reliability. Assess whether there's a systematic distortion present. Produce a recommendation: trust the fast thinking, override it with deliberate analysis, or gather more information before deciding.
-
-Kahneman System 1 / System 2 framework: System 1 is fast, automatic, pattern-matching. It's adaptive within its domain of experience; it fails when applied outside that domain or when the situation has been engineered to exploit it.
-
-**Output:** Heuristic identified, domain assessment, distortion risk, and trust/override recommendation.
-
----
-
-## Persuasion
-
-*Select and construct the right influence approach for the context.*
-
-Identify what you're trying to change (belief, attitude, behavior, decision). Select the most appropriate influence approach: Cialdini's six principles (reciprocity, commitment/consistency, social proof, authority, liking, scarcity), elaboration likelihood model (central route for motivated/capable audiences; peripheral cues for low-engagement), or inoculation (pre-emptive counter-persuasion for hardening positions). Identify ethical constraints. Construct the approach.
-
-**Output:** Influence analysis, recommended approach, ethical assessment, and constructed message or approach.
-
----
-
-## Behavior Change
-
-*Diagnose what's maintaining a behavior and design the right intervention.*
-
-Identify the behavior to change. Classify what's maintaining it: habit loop (cue → routine → reward), motivation deficit, capability gap, friction, or identity conflict. Select the right intervention: habit redesign, implementation intentions, friction reduction, motivation amplification, or identity reframing. Design the concrete implementation.
-
-**Output:** Maintenance diagnosis, intervention type, and specific implementation design.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Psychology analysis complete. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/communication-audience-modeling` — Apply the psychological insights to communication strategy
-  - `/social-incentive-analysis` — Connect psychological analysis to social incentives
-  - `/emotional-motivation-mapping` — Deepen with emotional motivation analysis
-  - **Done** — Wrap up and synthesise what we have so far

@@ -1,9 +1,3 @@
----
-name: python-testing-brain
-description: pytest invocations, fixture patterns, async testing, and mock patterns for writing test steps. Brain-local reference optimized for planning test commands.
-disable-model-invocation: true
-
----
 # Python Testing Patterns — Brain Reference
 
 ## Running tests

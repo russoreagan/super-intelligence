@@ -1,16 +1,3 @@
----
-name: "graphql-resolver-creator"
-description: |
-  Create graphql resolver creator operations. Auto-activating skill for Backend Development.
-  Triggers on: graphql resolver creator, graphql resolver creator
-  Part of the Backend Development skill category. Use when working with graphql resolver creator functionality. Trigger with phrases like "graphql resolver creator", "graphql creator", "graphql".
-allowed-tools: "Read, Write, Edit, Bash(cmd:*), Grep"
-version: 1.0.0
-license: MIT
-author: "Jeremy Longshore <jeremy@intentsolutions.io>"
-disable-model-invocation: true
-
----
 # Graphql Resolver Creator
 
 ## Overview

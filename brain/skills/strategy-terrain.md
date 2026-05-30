@@ -1,11 +1,3 @@
----
-name: strategy-terrain
-description: "Maps the competitive landscape to identify where you have advantage, where contests are evenly matched, and where engagement is costly. Triggers: 'map the landscape', 'terrain analysis', 'where should I compete', 'what's the ground like', 'competitive landscape', 'where do I have advantage', 'which markets should I enter', 'is this fight worth having'."
-category: strategy
-is_router: false
-tier: 3
----
-
 # Strategy: Terrain
 
 Sun Tzu identifies six types of terrain and nine strategic situations in *The Art of War*, each demanding different conduct. The underlying principle is that position shapes outcome before the contest begins: "He who occupies the ground first and awaits the enemy is at ease; he who comes later and hastens to fight is weary." The key strategic question is not "how do I win this battle?" but "which battles should be fought at all?" Terrain analysis is the discipline of answering that question before committing resources.
@@ -48,34 +40,3 @@ Based on the above: which positions are worth fighting for, which require waitin
 
 **Contested Ground**
 [Evenly matched positions — with assessment of what tipping each requires and whether it's worth it]
-
-**Dangerous Ground**
-[Positions to avoid — explicit, without softening. Why each is dangerous for you specifically]
-
-**High-Ground Holder**
-[Who holds the strongest current position, why, and what taking it would require]
-
-**Terrain Verdict**
-[Clear prioritization: fight here, prepare here, avoid here — with rationale]
-
----
-
-## Notes
-
-Run terrain analysis before any other strategy skill — it establishes the competitive context that all other choices operate within. An accurate terrain map requires honest intelligence; pair with `/strategy-intelligence` when your knowledge of the landscape is uncertain or you suspect your assumptions about competitor positions are wrong.
-
-For moving to favorable ground once identified, use `/strategy-positioning`. For understanding what opponents hold in contested positions, use `/strategy-intelligence`. For deciding whether the overall objective is worth the terrain cost, use `/strategy-victory` first.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Terrain mapped. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/strategy-positioning` — Position on the most favourable terrain
-  - `/strategy-timing` — Time moves to terrain conditions
-  - `/strategy-force-economy` — Deploy force economically given the terrain
-  - **Done** — Wrap up and synthesise what we have so far

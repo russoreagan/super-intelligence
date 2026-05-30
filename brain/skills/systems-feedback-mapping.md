@@ -1,11 +1,3 @@
----
-name: systems-feedback-mapping
-description: "Identifies all reinforcing (+) and balancing (−) feedback loops in a system. Use when asked to 'map the feedback loops', 'why does this keep happening', 'unintended consequences', or 'system keeps oscillating'."
-category: systems
-is_router: false
-tier: 2
----
-
 # Systems Feedback Mapping
 
 Most system failures come from unrecognized feedback loops — especially delayed balancing loops that cause overshoot and collapse. Reinforcing loops amplify change in one direction; balancing loops push back toward a target. Until both types are visible and named, diagnosis and intervention are guesswork.
@@ -75,11 +67,3 @@ Loops are not permanent — the dominant loop shifts as variables hit limits or 
 ## What's Next
 
 After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Feedback loops mapped. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/systems-leverage-analysis` — Find leverage points within the feedback loops
-  - `/temporal-cycle-detection` — Detect cycles the feedback loops create
-  - `/strategy-positioning` — Position to exploit or break the key feedback loops
-  - **Done** — Wrap up and synthesise what we have so far

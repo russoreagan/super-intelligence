@@ -1,11 +1,3 @@
----
-name: writing-arc-design
-description: "Maps and repairs character arcs and thematic arcs by aligning external plot events with internal change. Use when an arc feels unearned, a change feels sudden, or the ending doesn't land. Triggers: 'the arc feels unearned', 'arc design', 'the ending doesn't land', 'character arc', 'thematic arc', 'the change feels sudden', 'the character just changes at the end'."
-category: writing
-is_router: false
-tier: 3
----
-
 # Writing: Arc Design
 
 Arcs feel unearned when the external plot and internal change are independent — when the character changes because the story requires it, not because the events forced it. This is the most common arc failure, and it produces the most visceral reader response: "the character just suddenly becomes a different person." The reader is right. The change happened on a schedule, not as a consequence.
@@ -28,58 +20,3 @@ What has changed? What is the new belief? Again, be specific. The end state shou
 Map the specific events that force the internal change. These must be caused by the plot — they are not random events that happen to push buttons; they are the story's central events landing on the character's specific vulnerability. For each pressure point: what does it press? What does the character's defence do in response? Does the defence hold, or does it start to crack?
 
 The arc requires at least three pressure points, and they should escalate: the first press is deflected, the second is harder to deflect, the third (the dark night) cannot be deflected at all.
-
-**Step 4: External-Internal Alignment**
-Map the parallel tracks:
-- External: [inciting incident → complication → midpoint shift → dark night → climax]
-- Internal: [defence holds → defence strained → defence fails → wound exposed → new belief tested]
-
-Do the external events directly generate the internal states? Or are they running on parallel tracks that don't connect? The test: could a different character, with a different wound and different defence, move through the same external events and arrive at the same ending? If yes, the plot is not doing character work — it is plot for its own sake.
-
-**Step 5: Thematic Argument**
-What does the story argue about the world? Not a message or a moral — an argument: a claim about how things are, how they should be, or what the cost of a particular way of living is. The ending should resolve this argument — not necessarily answer it definitively, but test it at full strength and show what the story believes.
-
----
-
-## Output Format
-
-### Arc Map
-
-**Start State:** [Belief / wound / worldview — specific and testable]
-
-**End State:** [New belief — the wound's answer, not its opposite / how it is demonstrated in action]
-
-**Pressure Points:**
-1. [Event → what it presses → character response → does defence hold?]
-2. [Event → what it presses → character response → does defence crack?]
-3. [Event → what it presses → character response → defence fails]
-
-**External-Internal Alignment:** [Map of parallel tracks + diagnosis of where they connect or diverge]
-
-**Thematic Argument:** [What does the story claim? / Does the ending resolve it at full strength?]
-
-**Arc Verdict:** [Earned / Unearned / Partially earned — specific diagnosis of what is missing]
-
----
-
-## Notes
-
-- The change must be earned by the pressure points, and the pressure points must be caused by the plot. Any link in this chain that is missing produces an unearned arc.
-- Slow arcs are not unearned arcs. A character who changes gradually across a long work can be completely earned if each pressure point genuinely presses and the defence genuinely fails. The problem is not pace — it is causation.
-- Pairs with `/writing-plot-structure` — the external structure is the mechanism that generates the pressure points; if the plot structure is broken, the arc cannot be earned.
-- Pairs with `/writing-character-development` — the arc endpoint must flow from the wound and defence; you cannot design the arc without the character profile.
-- Pairs with `/writing-scene-construction` when individual scenes are failing to deliver the pressure points — the architecture is right but the scenes aren't performing their function.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Arc designed. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/writing-plot-structure` — Structure the plot within the arc
-  - `/writing-character-development` — Develop characters to serve the arc
-  - `/narrative-tension-mapping` — Map tensions the arc must resolve
-  - **Done** — Wrap up and synthesise what we have so far

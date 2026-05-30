@@ -1,16 +1,3 @@
----
-name: "openapi-spec-generator"
-description: |
-  Generate openapi spec generator operations. Auto-activating skill for API Development.
-  Triggers on: openapi spec generator, openapi spec generator
-  Part of the API Development skill category. Use when working with APIs or building integrations. Trigger with phrases like "openapi spec generator", "openapi generator", "openapi".
-allowed-tools: "Read, Write, Edit, Bash(curl:*), Grep"
-version: 1.0.0
-license: MIT
-author: "Jeremy Longshore <jeremy@intentsolutions.io>"
-disable-model-invocation: true
-
----
 # Openapi Spec Generator
 
 ## Overview

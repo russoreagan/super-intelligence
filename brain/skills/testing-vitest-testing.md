@@ -1,10 +1,3 @@
----
-name: vitest-testing
-description: Modern TypeScript/JavaScript testing with Vitest. Fast unit and integration tests, native ESM support, Vite-powered HMR, and comprehensive mocking. Use for testing TS/JS projects.
-allowed-tools: Bash, Read, Edit, Write, Grep, Glob, TodoWrite
-disable-model-invocation: true
-
----
 # Vitest Testing
 
 Expert knowledge for testing JavaScript/TypeScript projects using Vitest - a blazingly fast testing framework powered by Vite.
@@ -179,61 +172,3 @@ it('advances timers', () => {
   vi.advanceTimersByTime(1000)
   expect(callback).toHaveBeenCalledOnce()
 })
-
-it('mocks dates', () => {
-  const date = new Date('2024-01-01')
-  vi.setSystemTime(date)
-  expect(Date.now()).toBe(date.getTime())
-})
-```
-
-## Coverage
-
-```bash
-# Generate coverage report
-bun test --coverage
-
-# HTML report
-bun test --coverage --coverage.reporter=html
-open coverage/index.html
-
-# Check against thresholds
-bun test --coverage --coverage.thresholds.lines=90
-```
-
-## Integration Testing
-
-```typescript
-import request from 'supertest'
-import { app } from './app'
-
-describe('API endpoints', () => {
-  it('creates a user', async () => {
-    const response = await request(app)
-      .post('/api/users')
-      .send({ name: 'John' })
-      .expect(201)
-
-    expect(response.body).toMatchObject({
-      id: expect.any(Number),
-      name: 'John',
-    })
-  })
-})
-```
-
-## Best Practices
-
-- One test file per source file: `math.ts` → `math.test.ts`
-- Group related tests with `describe()` blocks
-- Use descriptive test names
-- Mock only external dependencies
-- Use `concurrent` tests for independent async tests
-- Share expensive fixtures with `beforeAll()`
-- Aim for 80%+ coverage but don't chase 100%
-
-## See Also
-
-- `test-quality-analysis` - Detecting test smells
-- `playwright-testing` - E2E testing
-- `mutation-testing` - Validate test effectiveness

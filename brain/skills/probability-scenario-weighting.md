@@ -1,11 +1,3 @@
----
-name: probability-scenario-weighting
-description: "Assigns explicit probabilities to distinct scenarios before making a decision. Use when asked to 'assign probabilities', 'scenario weighting', 'how likely is each outcome', 'quantify the uncertainty', or 'probability distribution'."
-category: probability
-is_router: false
-tier: 2
----
-
 # Probability Scenario Weighting
 
 Vague uncertainty — "it might work, it might not" — produces poor decisions. Quantified uncertainty forces precision about what is actually believed and makes implicit assumptions visible. Assigning explicit probabilities to scenarios is not prediction; it is structured belief articulation. The process of assigning and calibrating probabilities often reveals more than the final numbers.
@@ -72,13 +64,3 @@ Resist collapsing scenarios into "optimistic / realistic / pessimistic" — this
 ---
 
 ## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Scenarios weighted. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/decision-premortem-analysis` — Run a premortem on the worst weighted scenarios
-  - `/decision-criteria-weighting` — Weight decision criteria against scenario probabilities
-  - `/temporal-horizon-mapping` — Map the weighted scenarios across time horizons
-  - **Done** — Wrap up and synthesise what we have so far

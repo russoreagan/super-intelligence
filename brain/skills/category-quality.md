@@ -1,10 +1,3 @@
----
-name: category-quality
-description: "Pick when debugging, doing code review, handling errors, or refactoring. Router—load up to 4 skills from this category when relevant."
-triggers: [debugging, code review, error handling, refactoring]
-disable-model-invocation: false
----
-
 # Category: Quality
 
 **When to pick this:** Pick when debugging, doing code review, handling errors, or refactoring.

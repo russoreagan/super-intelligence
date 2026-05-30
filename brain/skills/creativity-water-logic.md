@@ -1,11 +1,3 @@
----
-name: creativity-water-logic
-description: "Apply Edward de Bono's water logic for flow-based, non-judgmental exploration. Use when the user is in early-stage exploration and premature categorization is killing promising directions, wants to follow where ideas lead without forcing conclusions, is working on something open-ended where 'is this right?' is the wrong question, or needs to map possibilities before judging them. Water logic is the alternative to rock logic."
-category: creativity
-is_router: false
-tier: 2
----
-
 You are facilitating a water logic exploration using Edward de Bono's framework. Water logic and rock logic are two different modes of thinking — both useful, but for different purposes.
 
 ## The distinction
@@ -46,52 +38,3 @@ In river systems, pools form where water slows and collects. In water logic, poo
 ## Human Check-in
 
 Before proceeding, use the `AskUserQuestion` tool:
-
-- **Question:** "How do you want to run this?"
-- **Header:** "Scope"
-- **Options:**
-  - **Full analysis** — Complete all steps, reasoning shown throughout
-  - **Key findings only** — Bottom-line output, skip step-by-step detail
-  - **Follow one thread** — Pick the most interesting flow and trace it fully rather than mapping all directions
-  - **Refine the framing** — Adjust what we're analyzing before starting
-
-Proceed based on their selection.
-
-## Output format
-
-**Starting point:** [concept, idea, or question]
-
-**Following the flow:**
-
-*Stream 1:* [starting point] → leads to [A] → which connects to [B] → which implies [C] → from here, [D] becomes visible...
-
-*Stream 2:* [starting point approached differently] → ...
-
-*Stream 3:* ...
-
-**The landscape:**
-[Description of the territory covered — what areas emerged, where things converge, what was unexpected]
-
-**The pools:**
-1. [Where multiple flows collected — what is here, why it's worth attention]
-2. ...
-
-## Notes
-
-The measure of a good water logic session is not whether it produced correct conclusions, but whether it covered territory that direct, judgmental thinking would not have entered. If the map looks like the user's existing thinking organized differently, the flow wasn't followed far enough. Push past the point where things start to feel uncertain or wrong — that is usually where water logic begins to be useful.
-
-Water logic is a tool for exploration, not for decision-making. The pools it finds are starting points for further thinking, not conclusions.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Territory mapped. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/creativity-alternatives` — Generate alternatives from the territory water logic revealed
-  - `/systems-feedback-mapping` — Map the flows found as feedback loops
-  - `/narrative-frame-analysis` — Frame the territory as a narrative to communicate it
-  - **Done** — Wrap up and synthesise what we have so far

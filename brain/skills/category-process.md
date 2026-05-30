@@ -1,10 +1,3 @@
----
-name: category-process
-description: "Pick when writing PRDs, docs, runbooks, postmortems, or process/architecture decisions. Router—load up to 4 skills from this category when relevant."
-triggers: [PRD, docs, agile, postmortem, runbook, ADR]
-disable-model-invocation: false
----
-
 # Category: Process
 
 **When to pick this:** Pick when writing PRDs, docs, runbooks, postmortems, or process/architecture decisions.

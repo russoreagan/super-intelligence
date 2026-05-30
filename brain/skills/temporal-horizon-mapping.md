@@ -1,11 +1,3 @@
----
-name: temporal-horizon-mapping
-description: "Maps consequences of a decision across short, medium, and long time horizons. Use when asked about 'time horizons', 'what does this look like in 5 years', 'short-term vs long-term', 'map the implications over time', or 'think through the long-term'."
-category: temporal
-is_router: false
-tier: 3
----
-
 # Temporal Horizon Mapping
 
 Decisions that look good now often look very different at 1, 3, or 10 years. The most consequential errors in judgment come not from bad reasoning in the moment but from evaluating a decision at the wrong time horizon — optimizing for the immediate while the real costs land later. Making all three horizons explicit forces the tradeoff into view rather than leaving it implicit.
@@ -73,11 +65,3 @@ Short-term and long-term are not automatically in conflict — some decisions im
 ## What's Next
 
 After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Horizons mapped. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/temporal-futures-mapping` — Map futures at each horizon
-  - `/temporal-timing-analysis` — Time actions across the horizons
-  - `/strategy-timing` — Align strategy with the horizon structure
-  - **Done** — Wrap up and synthesise what we have so far

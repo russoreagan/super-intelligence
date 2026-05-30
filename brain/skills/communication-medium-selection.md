@@ -1,11 +1,3 @@
----
-name: communication-medium-selection
-description: "Matches the message to the right channel and format — the same content in the wrong medium loses most of its effect. Triggers: 'which channel', 'email vs meeting', 'should this be async or sync', 'medium fit', 'how should I deliver this'."
-category: communication
-is_router: false
-tier: 2
----
-
 # Communication Medium Selection
 
 The same content delivered through the wrong medium loses most of its effect. Bad news in
@@ -87,21 +79,3 @@ Proceed based on their selection.
 ---
 
 ## Notes
-
-The most common error is defaulting to async written (Slack, email) for messages with
-high emotional weight, because it feels faster and less confrontational. The short-term
-comfort always costs more in trust and rework than the difficult conversation would have.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Medium selected. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/communication-audience-modeling` — Model the audience for the selected medium
-  - `/writing-audience-calibration` — Calibrate the writing for the chosen medium
-  - `/communication-clarity-audit` — Audit clarity for the selected medium
-  - **Done** — Wrap up and synthesise what we have so far

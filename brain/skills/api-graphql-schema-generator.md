@@ -1,16 +1,3 @@
----
-name: "graphql-schema-generator"
-description: |
-  Generate graphql schema generator operations. Auto-activating skill for API Development.
-  Triggers on: graphql schema generator, graphql schema generator
-  Part of the API Development skill category. Use when working with graphql schema generator functionality. Trigger with phrases like "graphql schema generator", "graphql generator", "graphql".
-allowed-tools: "Read, Write, Edit, Bash(curl:*), Grep"
-version: 1.0.0
-license: MIT
-author: "Jeremy Longshore <jeremy@intentsolutions.io>"
-disable-model-invocation: true
-
----
 # Graphql Schema Generator
 
 ## Overview

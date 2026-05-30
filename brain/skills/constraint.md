@@ -1,11 +1,3 @@
----
-name: constraint
-description: "Entry point for the constraint toolkit. Routes to the right constraint skill based on your situation. Use when you say 'constraint', 'given this limit', 'we can't do X', 'is this really fixed', 'use the limitation', 'minimum viable', 'how do we do this anyway', or want constraint thinking applied without knowing which specific tool fits."
-category: constraint
-is_router: true
-tier: 2
----
-
 # Constraint
 
 Applies constraint reasoning to any situation where limits are shaping (or blocking) what's possible. Diagnoses what kind of constraint work is needed and applies the right tool.
@@ -62,7 +54,3 @@ Separate what is wanted from what is needed. For each element of the current sco
 ## Workaround Mapping
 
 *Finds paths around a fixed constraint without removing it.*
-
-Accept the constraint as fixed. Now map the solution space that exists within it: what can be done if this limit is permanent? Are there alternative routes to the same destination that don't require crossing this constraint? Are there partial solutions that get 80% of the value without hitting the limit at all? Routing around a constraint is often faster and more durable than trying to remove it.
-
-**Output:** Map of available paths given the fixed constraint, with effort and value estimates for each. The most viable workaround with reasoning.

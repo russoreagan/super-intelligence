@@ -1,11 +1,3 @@
----
-name: historical-failure-analysis
-description: "Extracts recurring failure modes from similar past situations — most failures have happened before in recognisable patterns. TRIGGERS: 'what usually goes wrong', 'failure pattern analysis', 'how do these typically fail', 'what went wrong last time', 'avoid past mistakes'."
-category: historical
-is_router: false
-tier: 3
----
-
 # Historical Failure Analysis
 
 Post-mortems reveal the same failure modes repeating across organisations, industries,
@@ -64,51 +56,3 @@ failure mode activates — would reduce its probability or limit its damage?
 ## Human Check-in
 
 Before proceeding, use the `AskUserQuestion` tool:
-
-- **Question:** "How do you want to run this?"
-- **Header:** "Scope"
-- **Options:**
-  - **Full analysis** — Complete all steps, reasoning shown throughout
-  - **Key findings only** — Bottom-line output, skip step-by-step detail
-  - **Recurring failure modes only** — Patterns that appear across multiple historical cases
-  - **Refine the framing** — Adjust what we're analyzing before starting
-
-Proceed based on their selection.
-
-## Output Format
-
-**Failure Mode Table**
-
-| Failure Mode | Typical Cause | Early Warning Signs | Present? | Probability | Impact | Priority |
-|---|---|---|---|---|---|---|
-| [mode name] | [root cause] | [observable signals] | [Y/N/partial] | [H/M/L] | [H/M/L] | [rank] |
-
-**Top 3 Failure Modes**
-
-For each of the top 3:
-- **Mode:** [name]
-- **Why it's high priority here:** [specific reasoning for this situation]
-- **Pre-emptive action:** [concrete step, named owner, specific timing]
-
----
-
-## Notes
-
-The goal is not exhaustive risk listing — a long list produces paralysis, not
-prevention. Identify the 2-3 failure modes most likely to be fatal to this specific
-endeavour and act on them now. The ones not in the top 3 are worth monitoring but
-not worth significant pre-emptive effort.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Historical failures analysed. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/decision-premortem-analysis` — Apply historical failure patterns to the current decision
-  - `/constraint-hardness-testing` — Test which historical failure causes are still hard constraints today
-  - `/strategy-positioning` — Position to avoid repeating historical failure modes
-  - **Done** — Wrap up and synthesise what we have so far

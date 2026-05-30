@@ -1,18 +1,3 @@
----
-name: supabase-auth-storage-realtime-core
-description: |
-  Execute Supabase secondary workflow: Auth + Storage + Realtime.
-  Use when implementing secondary use case,
-  or complementing primary workflow.
-  Trigger with phrases like "supabase auth storage realtime",
-  "implement full stack features with supabase".
-allowed-tools: Read, Write, Edit, Bash(npm:*), Grep
-version: 1.0.0
-license: MIT
-author: Jeremy Longshore <jeremy@intentsolutions.io>
-disable-model-invocation: true
-
----
 # Supabase Auth + Storage + Realtime
 
 ## Overview

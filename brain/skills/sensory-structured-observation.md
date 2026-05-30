@@ -1,11 +1,3 @@
----
-name: sensory-structured-observation
-description: "Applies disciplined observation to a situation — suspending interpretation to see what's actually there before deciding what it means. Triggers: 'observe this carefully', 'structured observation', 'what do you actually see', 'suspend interpretation', 'look more carefully'."
-category: sensory
-is_router: false
-tier: 3
----
-
 # Structured Observation
 
 Most observation is interpretation in disguise. We perceive a situation and instantly explain it — but the explanation overwrites the raw data. Structured observation forces a separation between what can be directly seen and what we conclude from it.
@@ -81,11 +73,3 @@ Run this before diagnosis, analysis, or decision. The discipline has most value 
 ## What's Next
 
 After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Observation complete. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/sensory-detail-mining` — Mine details from what structured observation revealed
-  - `/sensory-signal-detection` — Detect signals in the observed
-  - `/aesthetic-coherence-check` — Check coherence of what was observed
-  - **Done** — Wrap up and synthesise what we have so far

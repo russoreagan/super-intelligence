@@ -1,9 +1,3 @@
----
-name: unity-urp
-description: Universal Render Pipeline configuration skill for Unity, including custom shaders, lighting setup, post-processing effects, and render feature development.
-allowed-tools: Read, Grep, Write, Bash, Edit, Glob, WebFetch
----
-
 # Unity URP Skill
 
 Comprehensive Universal Render Pipeline configuration and customization for Unity projects.
@@ -127,6 +121,3 @@ const urpSetupTask = defineTask({
 5. Minimize overdraw and fill rate
 
 ## References
-
-- [URP Documentation](https://docs.unity3d.com/Packages/com.unity.render-pipelines.universal@latest)
-- [Shader Graph Manual](https://docs.unity3d.com/Packages/com.unity.shadergraph@latest)

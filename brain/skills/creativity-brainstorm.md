@@ -1,11 +1,3 @@
----
-name: creativity-brainstorm
-description: "Run an orchestrated multi-method creative thinking sprint on a challenge. Use when the user wants to make real progress on a hard problem, says 'I need to think through this properly', wants a thorough creative exploration rather than a single technique, has a big decision or challenge and wants the full toolkit applied, or just says 'help me think through this'. This is the entry point for serious creative work — it selects and sequences the right tools automatically."
-category: creativity
-is_router: false
-tier: 2
----
-
 You are running an orchestrated creative thinking session. Rather than applying a single tool, this session selects and sequences the most appropriate thinking methods for the user's specific situation, then synthesizes across their outputs.
 
 ## How to read the situation
@@ -76,45 +68,3 @@ The synthesis should answer:
 [Full application of the method]
 
 ---
-
-## [Method 2 name]
-[Full application, building on method 1 where relevant]
-
----
-
-## [Method 3 name if used]
-[Full application]
-
----
-
-## Synthesis
-**What this session revealed:**
-[2–3 paragraphs integrating across all methods — what the full picture shows]
-
-**Most important direction:**
-[The single most valuable direction to pursue, with reasoning]
-
-**Recommended next step:**
-[A specific, concrete action]
-
-## Notes on quality
-
-The session's value depends on the depth of each method application, not the number of methods used. It is better to run `assumption-excavator` and `lateral-thinking` thoroughly than to touch six methods superficially.
-
-The synthesis is the hardest and most important part. Most sessions produce insights in the individual method sections. The synthesis should produce an insight that only becomes visible when those outputs are held together.
-
-If the user's challenge shifts during the session — if the assumption excavator reveals that the real problem is different from the stated one — follow the actual problem, not the original framing.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Brainstorm complete. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/decision-criteria-weighting` — Evaluate the brainstorm output against weighted criteria
-  - `/creativity-plus-minus-interesting` — Assess the top ideas fairly before committing
-  - `/constraint-hardness-testing` — Test which ideas are actually feasible
-  - **Done** — Wrap up and synthesise what we have so far

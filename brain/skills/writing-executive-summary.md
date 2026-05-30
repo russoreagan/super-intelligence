@@ -1,11 +1,3 @@
----
-name: writing-executive-summary
-description: "Produces executive summaries, 1-page briefs, and board-level documents by extracting the situation, key findings, implications, and recommendation — answer-first, one page maximum. Use when a lengthy document needs a senior-audience brief that enables a decision. Triggers: 'executive summary', 'summarise this for a senior audience', '1-page brief', 'TL;DR for leadership', 'distil this', 'board summary', 'write a brief'."
-category: writing
-is_router: false
-tier: 3
----
-
 # Writing: Executive Summary
 
 Executive summaries fail when they summarise the document rather than answering the reader's question. A summary of a 40-page analysis is not what an executive needs. They need: what is the situation, what are the three things most important to know, what does it mean for their decision, and what should happen next. In that order. In one page.
@@ -40,46 +32,3 @@ Every sentence must earn its place. The test for each sentence: does a reader wi
 ---
 
 ## Output Format
-
-### Executive Summary
-
-**Situation:** [One sentence. What is the context or problem that prompted this analysis?]
-
-**Key Findings:**
-- [Finding 1 — most important to the reader's decision]
-- [Finding 2]
-- [Finding 3 — maximum]
-
-**Implications:** [2–3 sentences. What do these findings mean for the decision? What is at stake if action is taken, or not taken?]
-
-**Recommendation:** [One clear sentence. What should happen? Active voice, no hedging.]
-
-**Next Steps:**
-- [Specific action, owner if relevant, timeline]
-- [Second action]
-- [Third action if needed]
-
----
-
-## Notes
-
-- Max one page / 300 words. This is not a guideline — it is the requirement. An executive summary that requires two pages has failed.
-- The Situation sentence must be answer-first: it should be the one sentence that, if the executive reads nothing else, leaves them with the most important thing to know.
-- Passive language on recommendations ("it may be worth considering") signals that the writer is not confident in the recommendation. If you have done the analysis, make the recommendation. The executive can disagree — but they need a recommendation to react to.
-- Pairs with `/writing-report` — the executive summary sits above the full report. The report is for the reader who needs the detail; the summary is for the reader who needs the decision.
-- Pairs with `/writing-audience-calibration` — the executive's specific role, decision context, and prior knowledge shape every word of the summary; what an investor needs is different from what a CEO needs.
-- Pairs with `/writing-restructure` — if the source document is poorly structured, finding the three most important findings requires first identifying what the document actually says (which may require restructuring it).
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Executive summary written. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/communication-clarity-audit` — Audit summary clarity for the executive audience
-  - `/writing-audience-calibration` — Calibrate further for the executive reader
-  - `/writing-restructure` — Restructure if the summary doesn't flow
-  - **Done** — Wrap up and synthesise what we have so far

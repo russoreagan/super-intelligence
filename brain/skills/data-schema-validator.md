@@ -1,16 +1,3 @@
----
-name: "schema-validator"
-description: |
-  Validate schema validator operations. Auto-activating skill for Data Pipelines.
-  Triggers on: schema validator, schema validator
-  Part of the Data Pipelines skill category. Use when working with schema validator functionality. Trigger with phrases like "schema validator", "schema validator", "schema".
-allowed-tools: "Read, Write, Edit, Bash(cmd:*), Grep"
-version: 1.0.0
-license: MIT
-author: "Jeremy Longshore <jeremy@intentsolutions.io>"
-disable-model-invocation: true
-
----
 # Schema Validator
 
 ## Overview

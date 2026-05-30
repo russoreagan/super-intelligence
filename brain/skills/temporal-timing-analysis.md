@@ -1,11 +1,3 @@
----
-name: temporal-timing-analysis
-description: "Assesses whether now is the right time to act, wait, or prepare. Use when asked 'is now the right time', 'should we wait', 'are we too early', 'timing this decision', 'when to move', or 'momentum'."
-category: temporal
-is_router: false
-tier: 2
----
-
 # Temporal Timing Analysis
 
 Timing is often as consequential as the decision itself. The right action at the wrong time fails — too early before conditions are ready, too late after the window has closed. Most timing judgments are made implicitly, with the urgency of the moment substituting for analysis. Making timing explicit means identifying which conditions are present, which are absent, and whether the environment is moving toward or away from readiness.
@@ -75,11 +67,3 @@ If both costs (waiting and acting early) are high, the situation requires a stag
 ## What's Next
 
 After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Timing analysed. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/strategy-timing` — Translate timing analysis into strategy
-  - `/decision-reversibility-analysis` — Assess reversibility given timing constraints
-  - `/resource-allocation-analysis` — Allocate resources by timing priority
-  - **Done** — Wrap up and synthesise what we have so far

@@ -1,11 +1,3 @@
----
-name: refactoring
-description: Use when reducing complexity, splitting components/services, extracting hooks/modules, or improving maintainability without changing behavior.
-summary: Behavior-preserving improvements: extract hooks, split components, simplify conditionals, separate concerns.
-triggers: [refactor, clean up, simplify, extract, split, maintainability, technical debt]
-disable-model-invocation: true
-
----
 # Refactoring (Definitive)
 
 ## Goal

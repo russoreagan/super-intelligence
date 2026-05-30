@@ -1,16 +1,3 @@
----
-name: "pagination-helper"
-description: |
-  Configure with pagination helper operations. Auto-activating skill for API Development.
-  Triggers on: pagination helper, pagination helper
-  Part of the API Development skill category. Use when working with pagination helper functionality. Trigger with phrases like "pagination helper", "pagination helper", "pagination".
-allowed-tools: "Read, Write, Edit, Bash(curl:*), Grep"
-version: 1.0.0
-license: MIT
-author: "Jeremy Longshore <jeremy@intentsolutions.io>"
-disable-model-invocation: true
-
----
 # Pagination Helper
 
 ## Overview

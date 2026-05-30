@@ -1,10 +1,3 @@
----
-name: category-python
-description: "Pick when writing or optimizing Python, async code, or packaging. Router—load up to 4 skills from this category when relevant."
-triggers: [Python, asyncio, packaging, performance]
-disable-model-invocation: false
----
-
 # Category: Python
 
 **When to pick this:** Pick when writing or optimizing Python, async code, or packaging.

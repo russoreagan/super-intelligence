@@ -1,11 +1,3 @@
----
-name: decision-reversibility-analysis
-description: "Categorises a decision by reversibility and applies the appropriate level of process rigour. Triggers: 'is this reversible', 'how much should I think about this', 'one-way door', 'two-way door', 'decision type', 'how committed is this'."
-category: decision
-is_router: false
-tier: 2
----
-
 # Decision Reversibility Analysis
 
 Most people apply the same amount of thinking to every decision. This is wrong in both
@@ -86,21 +78,3 @@ Proceed based on their selection.
 ---
 
 ## Notes
-
-The most expensive error is treating a Type 1 decision as Type 2 — deciding quickly on
-something that cannot be undone. But the second-most expensive error is treating Type 2
-decisions as Type 1, because the opportunity cost of delay is real and cumulative.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Reversibility assessed. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/decision-premortem-analysis` — If it's a one-way door, stress-test it thoroughly
-  - `/decision-criteria-weighting` — Weight decision criteria differently given reversibility level
-  - `/resource-allocation-analysis` — Calibrate resource investment to match reversibility
-  - **Done** — Wrap up and synthesise what we have so far

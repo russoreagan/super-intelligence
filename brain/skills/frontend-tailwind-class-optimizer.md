@@ -1,16 +1,3 @@
----
-name: "tailwind-class-optimizer"
-description: |
-  Optimize tailwind class optimizer operations. Auto-activating skill for Frontend Development.
-  Triggers on: tailwind class optimizer, tailwind class optimizer
-  Part of the Frontend Development skill category. Use when working with tailwind class optimizer functionality. Trigger with phrases like "tailwind class optimizer", "tailwind optimizer", "tailwind".
-allowed-tools: "Read, Write, Edit, Bash(cmd:*), Grep"
-version: 1.0.0
-license: MIT
-author: "Jeremy Longshore <jeremy@intentsolutions.io>"
-disable-model-invocation: true
-
----
 # Tailwind Class Optimizer
 
 ## Overview

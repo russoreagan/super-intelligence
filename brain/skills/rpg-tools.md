@@ -1,9 +1,3 @@
----
-name: rpg-tools
-description: Solo RPG mechanical tools for dice rolling, tarot draws, oracles, name generation, character/location/memory/faction management, and story retrieval. Also provides guided campaign creation and pre-session setup. Use when the user asks to: roll dice, draw tarot cards, consult oracles, generate names, load characters or locations, track memories or factions, pull from story collections, start a new campaign, or do campaign prep/planning.
-disable-model-invocation: true
----
-
 # RPG Tools
 
 Mechanical tools for solo RPG sessions. Run scripts from `scripts/` (create or adapt paths to match this project, e.g. `skills/rpg-tools/scripts/` or project `scripts/`).
@@ -81,13 +75,3 @@ python scripts/pool.py reset NAME
 Filters (e.g. `--campaign`, `--character`, `--tag`) apply per tool; see tool help or references.
 
 ## Session Workflow
-
-- **Campaign Zero** – Pre-campaign brainstorming and bundle creation
-- **Session Setup** – Calibrate tone, direction, pacing
-- **Session Debrief** – Post-session reflection and character growth
-
-Optional modifiers: Mature Content, Combat Realism (see project `modifiers/` if present).
-
-## Creating Campaign Data
-
-Use reference guides for JSON schemas: character-guide, location-guide, faction-guide, memories-guide, nameset-guide, story-capture-guide, oracle-guide, pool-guide, campaign-state-guide. Create or point to these in the project if you implement full rpg-tools.

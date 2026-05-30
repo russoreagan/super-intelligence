@@ -1,11 +1,3 @@
----
-name: logic-causality-mapping
-description: "Map causal relationships, trace dependencies, and reason about consequences before acting. Use when you need to understand what causes what, what breaks if something changes, or what must be true for a plan to work. TRIGGERS: 'map the dependencies', 'what causes this', 'what breaks if I change X', 'trace the root cause', 'if X then what', 'what has to be true for this to work', any situation involving root cause analysis, impact assessment, dependency tracing, or reasoning about chains of effect."
-category: logic
-is_router: false
-tier: 2
----
-
 # Logic Causal Reasoning
 
 Correlation isn't causation. Neither is sequence. "This happened, then that happened" is not the same as "this caused that" — but it's treated as equivalent constantly, and it produces wrong diagnoses, failed fixes, and surprised engineers.
@@ -73,67 +65,3 @@ Test a causal claim by reasoning about the counterfactual world.
 ## Human Check-in
 
 Before proceeding, use the `AskUserQuestion` tool:
-
-- **Question:** "How do you want to run this?"
-- **Header:** "Scope"
-- **Options:**
-  - **Full analysis** — Complete all steps, reasoning shown throughout
-  - **Key findings only** — Bottom-line output, skip step-by-step detail
-  - **Direct causes only** — Map first-order causal links, skip downstream consequences
-  - **Refine the framing** — Adjust what we're analyzing before starting
-
-Proceed based on their selection.
-
-## Output Format
-
-**Mode:** [Root Cause / Impact Mapping / Dependency Mapping / Counterfactual]
-
-**Question:** [the specific causal question being answered]
-
-**[Mode-appropriate structure]**
-
-For Root Cause:
-- Proximate cause: [immediate trigger]
-- Root cause: [origin]
-- Contributing factors: [conditions that enabled it]
-- Evidence: [what confirms this vs what was ruled out]
-
-For Impact Mapping:
-- Direct effects: [level 1 dependencies affected]
-- Downstream effects: [level 2-3]
-- Irreversible effects: [flagged]
-- Cascade risks: [flagged]
-
-For Dependency Mapping:
-- Dependencies: [each, with status: guaranteed / assumed / unknown]
-- Single points of failure: [flagged]
-- Highest-risk assumptions: [ranked]
-
-For Counterfactual:
-- Causal claim tested: [X caused Y]
-- Counterfactual: [would Y happen without X?]
-- Verdict: [necessary / contributing / coincidental]
-- Conditions required alongside X: [if X alone wasn't sufficient]
-
-**Summary**
-[2-3 sentences on what the causal analysis reveals and what action it implies]
-
----
-
-## Notes
-
-Causal reasoning is always provisional — it produces the best available model given current evidence, not a proof. State explicitly what evidence would change the analysis. In complex systems, multiple causal chains often contribute to a single effect; resist the urge to stop at the first plausible explanation.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Causal chain mapped. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/systems-feedback-mapping` — Turn the causal map into a feedback loop analysis
-  - `/historical-precedent-analysis` — Check whether this causal chain has played out before
-  - `/constraint-hardness-testing` — Test which causal link is the weakest and most brittle
-  - **Done** — Wrap up and synthesise what we have so far

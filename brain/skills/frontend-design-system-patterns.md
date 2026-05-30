@@ -1,11 +1,3 @@
----
-name: design-system-patterns
-description: Use when creating or updating design tokens, theming, or component styling conventions, especially when ensuring theme compliance and consistent token fallback behavior across the app.
-summary: Design tokens, theming, component styling conventions, and theme compliance rules.
-triggers: [design system, token, theme, styling, CSS variable, color palette]
-disable-model-invocation: true
-
----
 # Design System Patterns (Definitive)
 
 ## Goal

@@ -1,11 +1,3 @@
----
-name: writing-argument
-description: "Builds and repairs persuasive arguments by surfacing the warrant, auditing evidence, addressing counterarguments, and identifying rhetorical substitutes. Use when an argument has holes, the case isn't landing, or evidence isn't connecting to the claim. Triggers: 'build an argument', 'argument structure', 'the argument isn't working', 'op-ed', 'persuasive writing', 'make the case for', 'my argument has holes', 'the evidence doesn't land'."
-category: writing
-is_router: false
-tier: 3
----
-
 # Writing: Argument
 
 Arguments fail not in the evidence but in the warrant — the unstated principle connecting evidence to claim. The warrant is the assumption that makes the argument work. Most writers never surface it, because to them it is obvious. But the reader may be supplying a different warrant — and reaching a different conclusion from the same evidence.
@@ -38,59 +30,3 @@ For each piece of evidence:
 
 **Step 4: Counterargument**
 Identify the strongest objection to the claim — the best case that a reasonable, informed person in disagreement could make. Then assess: is this counterargument addressed in the piece? If it is not addressed, the argument has a hole that every skeptical reader will find. If it is addressed, is it addressed honestly (engaging the best version) or with a strawman (misrepresenting it to make it easy to defeat)?
-
-**Step 5: Rhetorical Substitutes**
-Flag appeals that are standing in for reasoning:
-- **Appeal to authority:** "Studies show..." without naming which ones; "experts agree..." — which experts? This is not evidence; it is the *claim* that evidence exists.
-- **Appeal to emotion:** Emotionally charged language or stories that produce a feeling of agreement without logical support — not wrong to use, but should not substitute for the argument.
-- **Repetition as intensification:** Restating the claim more forcefully as if repetition adds proof.
-
-These are not automatically illegitimate — emotion and authority are genuine persuasive tools. The problem is when they *substitute* for reasoning rather than support it.
-
----
-
-## Output Format
-
-### Argument Audit
-
-**Central Claim:** [The argument in one sentence]
-
-**Warrant:** [Explicit statement of the connecting principle — acknowledged in the piece / reconstructed if implicit]
-
-**Evidence Quality:**
-- [Evidence piece] — Sufficient / Insufficient / Credible / Questionable / Relevant / Tangential
-- [Repeat]
-
-**Strongest Counterargument:** [The best objection to the claim] — Addressed / Not addressed / Strawmanned
-
-**Rhetorical Substitutes:**
-- [Quoted instance] — Type: [authority / emotion / repetition] — Substituting for: [what reasoning is missing]
-- NONE FOUND if clean
-
-**Verdict on Argument Strength:** [Strong / Has specific weaknesses / Weak — with diagnosis]
-
-**Reconstruction at Full Strength:** [The argument rebuilt — claim, warrant made explicit, evidence tightened, counterargument addressed, rhetorical substitutes replaced with reasoning]
-
----
-
-## Notes
-
-- A reconstructed argument at full strength is the most useful output: it shows the writer what the argument would look like if it were complete. Often the reconstruction reveals that the warrant is actually contestable and needs its own supporting argument.
-- The most useful diagnostic question: "Why should I believe that this evidence implies this claim?" The answer is the warrant. If the answer is "isn't it obvious?", the warrant is unstated.
-- Pairs with `/writing-rhetoric` — rhetoric analysis examines how the argument is being made (its framing, its appeals, its assumptions); argument analysis examines whether the argument is sound.
-- Pairs with `/writing-restructure` — many argument problems are structural: the claim comes too late, the counterargument is buried, the warrant appears at the end when it needs to anchor the whole.
-- Pairs with `/writing-audience-calibration` — the warrant that works for one audience may not work for another; calibration includes choosing which assumptions to surface and argue for.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Argument written. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/writing-rhetoric` — Strengthen the argument with rhetorical technique
-  - `/logic-argument-validation` — Validate the argument's logical structure
-  - `/communication-objection-mapping` — Address objections the argument will face
-  - **Done** — Wrap up and synthesise what we have so far

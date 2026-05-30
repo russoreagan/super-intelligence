@@ -1,16 +1,3 @@
----
-name: "redis-cache-manager"
-description: |
-  Manage redis cache manager operations. Auto-activating skill for Backend Development.
-  Triggers on: redis cache manager, redis cache manager
-  Part of the Backend Development skill category. Use when working with redis cache manager functionality. Trigger with phrases like "redis cache manager", "redis manager", "redis".
-allowed-tools: "Read, Write, Edit, Bash(cmd:*), Grep"
-version: 1.0.0
-license: MIT
-author: "Jeremy Longshore <jeremy@intentsolutions.io>"
-disable-model-invocation: true
-
----
 # Redis Cache Manager
 
 ## Overview

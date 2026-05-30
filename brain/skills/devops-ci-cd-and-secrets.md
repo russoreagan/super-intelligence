@@ -1,11 +1,3 @@
----
-name: ci-cd-and-secrets
-description: Use when designing or fixing CI/CD pipelines (GitHub Actions/GitLab) with safe deployments, approval gates, and secure secrets management.
-summary: CI/CD pipelines, deployment strategies (rolling/canary/blue-green), approval gates, and secrets management.
-triggers: [CI, CD, pipeline, deploy, GitHub Actions, GitLab, secrets, release]
-disable-model-invocation: true
-
----
 # CI/CD & Secrets (Definitive)
 
 ## Goal

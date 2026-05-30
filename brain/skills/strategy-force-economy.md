@@ -1,11 +1,3 @@
----
-name: strategy-force-economy
-description: "Finds the minimum intervention that achieves the objective — especially when you're outgunned or under-resourced. Triggers: 'do more with less', 'force economy', 'we're under-resourced', 'asymmetric advantage', 'outgunned', 'leverage point', 'how do we win when they have more', 'we can't outspend them', 'small team big problem'."
-category: strategy
-is_router: false
-tier: 3
----
-
 # Strategy: Force Economy
 
 Sun Tzu's highest strategic achievement is the victory that costs nothing — where the opponent's resistance collapses without direct contest: "Supreme excellence consists in breaking the enemy's resistance without fighting." This is not passivity. It is the discipline of identifying where a small input creates a large output — where the terrain, timing, information asymmetry, or a single relationship multiplies your effective force without requiring you to match the opponent unit for unit.
@@ -44,37 +36,3 @@ Can the objective be achieved without direct competition at all? Options: go aro
 
 **Maximum-Force Approach**
 [What the brute-force path costs — time, money, relationships, attention, risk]
-
-**Minimum-Force Alternatives**
-1. [Alternative 1 — approach and estimated cost]
-2. [Alternative 2 — approach and estimated cost]
-3. [Alternative 3 — approach and estimated cost]
-
-**Leverage Point**
-[The single highest-leverage node — small input, large output — and why it has this property]
-
-**Non-Contest Approaches**
-[Options that achieve the objective without direct competition — go around, ally with, make irrelevant, wait]
-
-**Recommended Approach**
-[The recommended path with resource estimate and the reasoning for why this achieves the objective at acceptable cost]
-
----
-
-## Notes
-
-Good position reduces force required — pair with `/strategy-positioning` to understand whether investment in positioning now reduces force cost later. Alliances multiply effective force — pair with `/strategy-alliance` when the leverage point involves bringing others in. Force economy analysis is most powerful when the objective is clear; if it isn't, run `/strategy-victory` first to establish what you're actually trying to achieve.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Force economy mapped. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/resource-leverage-mapping` — Find leverage that amplifies force economy
-  - `/strategy-positioning` — Position to maximise force economy
-  - `/resource-allocation-analysis` — Allocate to the areas of greatest force economy
-  - **Done** — Wrap up and synthesise what we have so far

@@ -1,18 +1,3 @@
----
-name: sentry-migration-deep-dive
-description: |
-  Execute migrate to Sentry from other error tracking tools.
-  Use when migrating from Rollbar, Bugsnag, Raygun,
-  or other error tracking solutions.
-  Trigger with phrases like "migrate to sentry", "sentry migration",
-  "switch from rollbar to sentry", "replace bugsnag with sentry".
-allowed-tools: Read, Write, Edit, Bash(npm:*), Bash(pip:*), Grep
-version: 1.0.0
-license: MIT
-author: Jeremy Longshore <jeremy@intentsolutions.io>
-disable-model-invocation: true
-
----
 # Sentry Migration Deep Dive
 
 ## Prerequisites

@@ -1,11 +1,3 @@
----
-name: sensory-signal-detection
-description: "Separates meaningful signal from background noise — finding what actually matters among everything present. Triggers: 'what actually matters here', 'separate signal from noise', 'too much information', 'find the signal', 'what should I focus on', 'what's relevant'."
-category: sensory
-is_router: false
-tier: 3
----
-
 # Signal Detection
 
 In any rich environment — data, feedback, conversation, a market — most of what is present is noise. Signal is what varies with the thing you're trying to understand; noise varies independently. The challenge is not finding more information, it's knowing which information is doing real work.

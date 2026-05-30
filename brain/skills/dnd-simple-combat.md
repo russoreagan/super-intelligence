@@ -1,9 +1,3 @@
----
-name: dnd-simple-combat
-description: D&D 5e training-arena combat: equipment, bestiary, initiative, turn-based attack/damage, victory conditions. Use when implementing or running simple D&D combat, turn-based state, or multi-step combat workflows.
-disable-model-invocation: true
----
-
 # D&D Simple Combat
 
 Orchestrate D&D 5e training-arena combat: equip characters, select monsters, roll initiative, resolve attacks and damage, track HP, and handle victory/defeat/flee/surrender.
@@ -41,18 +35,3 @@ Combat is a multi-phase process. Use the app’s **tools in order**: instantiate
 Combat tools return structured data (e.g. attack result with roll, bonus, hit, damage). Use that output to narrate and to update state; do not run scripts.
 
 ## Error Recovery
-
-- Character has no equipment → use character API to auto-equip starting gear if the app supports it, or prompt the user to equip.
-- No monsters for encounter → use **`instantiate_encounter`** with valid parameters (the app’s monster DB is pre-seeded); if the tool fails, suggest checking encounter parameters or session.
-- Character doesn’t exist → suggest creating a character via the app’s character create flow or listing characters via the app.
-
-## Attack Resolution (5e)
-
-- d20 + attack_bonus vs target AC
-- Natural 20: automatic hit, critical (roll damage dice twice)
-- Natural 1: automatic miss
-- Damage: roll damage_dice (+ modifier once); on crit add dice again
-
-## Delivering Combat to User
-
-Present combat in narrative form with transparent dice rolls (e.g. “Attack roll: 15 + 4 = 19 vs AC 15 – HIT! Damage: 7 slashing”). After each turn, ask what the player does (attack, flee, surrender) and continue the loop until an end condition.

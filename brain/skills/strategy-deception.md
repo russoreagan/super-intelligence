@@ -1,11 +1,3 @@
----
-name: strategy-deception
-description: "Manages information asymmetry in legitimate competitive contexts — what to protect, what impressions work in your favor, and what your opponent may be concealing from you. Triggers: 'conceal my position', 'information asymmetry', 'misdirection', 'what should I reveal vs conceal', 'negotiation deception', 'strategic ambiguity', 'manage what they know about me', 'read their signals'."
-category: strategy
-is_router: false
-tier: 3
----
-
 # Strategy: Deception
 
 Sun Tzu's most provocative statement: "All warfare is based on deception." Its operational meaning is not that lying is the path to victory. It is that controlling what your opponent believes about you is as important as controlling what you do. A general who moves in predictable, transparent ways gives the opponent full information and eliminates the element of surprise. A general who manages information deliberately — signaling strength where they are strong, concealing weakness, appearing where unexpected — compounds their effective advantage at no additional resource cost.
@@ -28,50 +20,3 @@ What beliefs, if held by your opponent, would work in your favor? These must be 
 
 **Step 3: Credible signals**
 What actions or statements could plausibly create those impressions? The signal must be consistent with your real position or the deception collapses on contact. Actions are more credible than statements. What are you already doing that, if visible, creates the right impression? What could you do that is authentic and creates the desired signal?
-
-**Step 4: Consistency check**
-Is what you're concealing consistently concealed across every surface — every team member, every document, every signal? Identify the specific consistency risks. Who on your side might inadvertently breach the information barrier? What artifacts could expose it?
-
-**Step 5: Counter-deception**
-What might your opponent be concealing or signaling falsely? What are they trying to make you believe? Apply the same framework in reverse: what impressions are they managing, what would they want you to assume, and where do their signals feel too clean or too consistent to be the full picture?
-
----
-
-## Output Format
-
-### Deception Analysis
-
-**Information to Protect**
-[Specific knowledge that would disadvantage you if known — listed item by item]
-
-**Advantageous False Impressions**
-[Beliefs your opponent holding would benefit you — each must be plausible from your actual position]
-
-**Credible Signals**
-[Actions or statements that create those impressions — with consistency rationale for each]
-
-**Consistency Check**
-[Where the information barrier could fail — team risks, artifact risks, behavioral inconsistencies to watch]
-
-**Counter-Deception Assessment**
-[What your opponent may be concealing, what impressions they're managing, where their signals are too clean]
-
----
-
-## Notes
-
-Deception requires accurate intelligence to work — you cannot manage an opponent's beliefs without knowing what they currently believe. Pair with `/strategy-intelligence` before running this analysis. For the signals component, game-theory's signaling analysis provides a more formal framework for credible commitment signals when the context warrants it. Pair with `/strategy-positioning` to understand whether the position you're protecting is strong enough to be worth protecting — concealing a weak position buys time but does not change the underlying situation.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Deception strategy mapped. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/game-theory-signaling` — Design signals that enable or counter the deception
-  - `/strategy-intelligence` — Gather intelligence to calibrate deception approach
-  - `/strategy-positioning` — Position to benefit from the deception
-  - **Done** — Wrap up and synthesise what we have so far

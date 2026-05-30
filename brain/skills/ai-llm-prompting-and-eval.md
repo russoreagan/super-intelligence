@@ -1,11 +1,3 @@
----
-name: prompting-and-eval
-description: Use when designing, optimizing, or debugging prompts/agent instructions and you need reliable structured outputs, context-efficient prompting, and an evaluation loop to prevent regressions.
-summary: LLM prompt design, structured outputs, context engineering, and evaluation loops for regressions.
-triggers: [prompt, LLM, context, few-shot, evaluation, structured output, agent instructions]
-disable-model-invocation: true
-
----
 # Prompting & Evaluation (Definitive)
 
 ## Goal

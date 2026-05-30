@@ -1,8 +1,3 @@
----
-name: dnd
-description: D&D 5e toolkit for players and DMs. Roll dice, look up spells and monsters, generate characters, create encounters, and spawn NPCs using the official SRD API. Use when working with D&D 5e, SRD, dice rolls, spell lookup, monster stat blocks, character generation, or encounter building.
----
-
 # D&D 5e Toolkit
 
 Assistant for Dungeons & Dragons 5th Edition: spell lookup, monster stats, dice rolling, character generation, encounters, and NPCs. Uses the [D&D 5e API](https://www.dnd5eapi.co/) (SRD).

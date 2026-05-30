@@ -1,11 +1,3 @@
----
-name: historical-cycle-detection
-description: "Identifies what recurring cycle the current situation is an instance of — and where in that cycle you currently are. TRIGGERS: 'what cycle is this', 'where are we in the cycle', 'is this a bubble', 'what comes next', 'have we been here before'."
-category: historical
-is_router: false
-tier: 3
----
-
 # Historical Cycle Detection
 
 Most situations that feel unprecedented are instances of recognisable cycles. The
@@ -65,56 +57,3 @@ playing out differently, or that the cycle identification needs revision.
 ## Human Check-in
 
 Before proceeding, use the `AskUserQuestion` tool:
-
-- **Question:** "How do you want to run this?"
-- **Header:** "Scope"
-- **Options:**
-  - **Full analysis** — Complete all steps, reasoning shown throughout
-  - **Key findings only** — Bottom-line output, skip step-by-step detail
-  - **Pattern match only** — The specific historical cycle this most resembles
-  - **Refine the framing** — Adjust what we're analyzing before starting
-
-Proceed based on their selection.
-
-## Output Format
-
-**Cycle Match:** [cycle type + one-sentence rationale for why this is the right match]
-
-**Current Position:** [named phase + specific evidence that locates it there]
-
-**Characteristic Signs**
-
-| Sign of Current Phase | Present / Absent / Partial | Notes |
-|---|---|---|
-| [typical indicator for this phase] | [assessment] | [specific observation] |
-
-**Typical Next Phase:** [what usually follows + the conditions that trigger the transition]
-
-**Divergences:** [specific ways this instance departs from the typical pattern —
-the highest-value analytical findings]
-
-**Implications:** [what the cycle position suggests about current priorities, risks,
-and timing]
-
----
-
-## Notes
-
-Cycle identification is a frame, not a forecast. The most valuable output is the
-divergences section — where this situation doesn't fit the expected pattern is where
-the most asymmetric insight lives. If there are no divergences, the analysis isn't
-done.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Historical cycles detected. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/temporal-cycle-detection` — Map the cycles forward into the future
-  - `/systems-archetype-matching` — Match the current situation to historical archetypes
-  - `/strategy-timing` — Align strategy with the detected cycles
-  - **Done** — Wrap up and synthesise what we have so far

@@ -1,11 +1,3 @@
----
-name: writing-restructure
-description: "Diagnoses and repairs structural problems in non-fiction, essays, and documents — wrong order, buried lead, wrong ending, proportion errors. Use when a piece is in the wrong order, starts too late, or spends space on the wrong things. Triggers: 'the piece is in the wrong order', 'restructure', 'buries the lede', 'the structure is off', 'reorganise this', 'the ending is in the wrong place', 'takes too long to get to the point'."
-category: writing
-is_router: false
-tier: 3
----
-
 # Writing: Restructure
 
 Structural problems are the hardest to see from inside the piece — because from inside, structure is invisible. The writer always knows where they're going; they know the context, the backstory, why the claim matters. The reader only knows where they've been. The result: pieces that are perfectly clear to the writer and impenetrable to the reader, because the reader doesn't have the context that makes the opening make sense, doesn't know that the important claim is on page four, and has no way to distinguish the load-bearing material from the scaffolding.
@@ -35,54 +27,3 @@ What is the first sentence or section that actually matters — where the piece'
 
 **Step 4: Find the Right Ending**
 Where does the piece's energy actually resolve? This is often not the last paragraph. Look for the sentence or paragraph where the piece's central claim gets its fullest, most resonant expression. Everything after that point may be retreating from the claim, adding caveats, or continuing past the natural stopping point.
-
-**Step 5: Proportion Audit**
-List each major section with an approximate word count or proportional weight. Ask: is the heaviest section the most important one? Is the lightest section actually the load-bearing claim? Proportion that doesn't match importance sends the reader false signals about what matters.
-
-**Step 6: Reorder Recommendation**
-Given the above, what is the optimal sequence? State the new structure as a sequence of sections with rationale for the order.
-
----
-
-## Output Format
-
-### Structural Diagnosis
-
-**Central Argument:** [One sentence — what the piece is trying to do]
-
-**Actual Structure Map:**
-1. [Section: what it does + approximate weight]
-2. [Section: what it does + approximate weight]
-3. [And so on]
-
-**Real Beginning:** [The sentence/section where the piece actually starts / Note on what precedes it and whether it should be cut or condensed]
-
-**Right Ending:** [Where the piece's energy resolves / Note on what follows it and whether it can be cut]
-
-**Proportion Audit:** [Most important sections vs. most space given / Mismatch between importance and weight]
-
-**Reorder Recommendation:** [New sequence with rationale for each position change]
-
----
-
-## Notes
-
-- The most useful diagnostic question: if you deleted the first third of the piece and sent the reader straight to what is currently the middle, would they be lost? If no, the first third is probably setup that the writer needed but the reader doesn't.
-- Restructuring should happen before line editing. Rewriting sentences in a section that will be cut or moved is wasted effort.
-- Pairs with `/writing-executive-summary` when the restructured piece needs a front-loaded brief for an audience that won't read the full document.
-- Pairs with `/writing-argument` when the structural problem is an argument-structure problem — the claim, warrant, and evidence are in the wrong order or the warrant is missing.
-- Pairs with `/writing-line-editing` after restructuring is complete — once the order is right, the sentences can be cleaned.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Restructuring complete. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/writing-line-editing` — Edit after restructuring
-  - `/writing-tone-alignment` — Realign tone after the restructure
-  - `/writing-voice-consistency` — Check voice is consistent after restructure
-  - **Done** — Wrap up and synthesise what we have so far

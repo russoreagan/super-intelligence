@@ -496,7 +496,8 @@ class ModelRouter:
 
         latency = time.time() - start
         self._log_call(
-            model_id, messages, in_tok, out_tok, latency, cluster=cluster or "", cell=cell or ""
+            model_id, messages, in_tok, out_tok, latency,
+            cluster=cluster or "", cell=cell or "", skills=skills or [],
         )
         if self._obs and turn_id:
             try:
@@ -508,6 +509,7 @@ class ModelRouter:
                     prompt_tokens=in_tok,
                     completion_tokens=out_tok,
                     latency_s=latency,
+                    skills=skills or [],
                 )
             except Exception as e:
                 logger.debug("obs.record_llm_call failed: %s", e)
@@ -748,6 +750,7 @@ class ModelRouter:
         latency_s: float = 0.0,
         cluster: str = "",
         cell: str = "",
+        skills: list[str] | None = None,
     ) -> None:
         self._call_log.append(
             {
@@ -758,6 +761,7 @@ class ModelRouter:
                 "latency_s": latency_s,
                 "cluster": cluster,
                 "cell": cell,
+                "skills": skills or [],
             }
         )
 

@@ -1,11 +1,3 @@
----
-name: aesthetic-simplicity-analysis
-description: "Finds the simpler version while preserving what matters — not arbitrary reduction, but finding the core and discarding what is not it. TRIGGERS: 'find the simple version', 'simplify this', 'what's the essence', 'less but better', 'strip it back', 'what could we remove'."
-category: aesthetic
-is_router: false
-tier: 3
----
-
 # Aesthetic Simplicity Analysis
 
 Simplicity is not minimalism for its own sake — it is the clarity that emerges when
@@ -79,37 +71,3 @@ Proceed based on their selection.
 | Element | Classification | Rationale |
 |---|---|---|
 | [component] | [essence / supporting / obscuring] | [why — what it does for the core] |
-
-**Simplified Version:** [what remains after removal and reduction]
-
-**What Was Lost**
-
-| Removed Element | What It Did | Acceptable Loss? |
-|---|---|---|
-| [element] | [secondary function] | [yes — free / yes — acceptable trade-off / no — reclassify] |
-
-**Verdict:** Does the simplified version deliver the essence clearly?
-[yes / partial — state what's still competing / no — revise classification]
-
----
-
-## Notes
-
-The goal is not the shortest version but the clearest. A long thing can be simple if
-every part serves the essence. A short thing can be incoherent if it's just been cut
-without finding the core first. Simplicity is achieved when adding anything would be
-wrong, and removing anything would be a loss.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Simplicity analysed. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/aesthetic-elegance-testing` — Test the elegance of the simplified version
-  - `/writing-line-editing` — Edit for the simplicity findings
-  - `/aesthetic-coherence-check` — Check the simplified version still coheres
-  - **Done** — Wrap up and synthesise what we have so far

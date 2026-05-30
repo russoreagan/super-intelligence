@@ -1,17 +1,3 @@
----
-name: ollama-model-safety-guardrails
-description: |
-  Select appropriate Ollama models for processing sensitive but legal content. Use when:
-  (1) llama3.2 or deepseek-r1 refuses to process content with "I cannot assist" responses,
-  (2) Local LLM returns generic safety disclaimers instead of following instructions,
-  (3) Need to process adult content, sex work data, or other legal-but-sensitive material
-  through a local LLM. Also covers using /api/chat vs /api/generate for system prompt
-  support, and structuring prompts for consistent format compliance.
-author: Claude Code
-version: 1.0.0
-date: 2026-01-23
----
-
 # Ollama Model Selection for Sensitive Content Processing
 
 ## Problem
@@ -87,48 +73,3 @@ objetivamente.`;
 ```
 
 ### Format Consistency
-
-Even with mistral, format compliance can be inconsistent. Improve it by:
-1. Writing the user prompt in the SAME language as the expected output
-2. Including explicit format examples in the prompt
-3. Using section headers (`##`) that match what you request
-4. Limiting input context (40 posts max, 300 chars each) to stay within context window
-
-## Verification
-- Model responds with structured content following your format
-- No safety disclaimers or refusals in the output
-- Response is in the requested language
-- Section headers match your specification
-
-## Example
-
-```javascript
-import { callOllama } from './ollama.js';
-
-// This works with mistral, fails with llama3.2
-const summary = await callOllama(`
-  Analiza estos 166 posts del foro sobre "Eliz" y responde EN ESPAÑOL:
-  ## Resumen
-  (2-3 oraciones: consenso general)
-  ## Apariencia
-  (Descripción física)
-  ...
-  Posts del foro:
-  [post content here]
-`);
-```
-
-## Notes
-- Model behavior may change with version updates; test after pulling new versions
-- `stream: false` is important for batch processing to get complete responses
-- For very long content, chunk posts and summarize in stages
-- The `/api/chat` response structure differs from `/api/generate`:
-  - Chat: `data.message.content`
-  - Generate: `data.response`
-- Consider adding `"temperature": 0.3` for more consistent structured output
-- Ollama auto-downloads models on first use but this blocks the first request
-
-## References
-- [Ollama API Documentation](https://github.com/ollama/ollama/blob/main/docs/api.md)
-- [Ollama Model Library](https://ollama.com/library)
-- [Mistral model card](https://ollama.com/library/mistral)

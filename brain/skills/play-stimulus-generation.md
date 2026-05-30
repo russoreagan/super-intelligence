@@ -1,11 +1,3 @@
----
-name: play-stimulus-generation
-description: "Introduces a random, unrelated element to break mental fixation — forcing new associations that bypass the groove of familiar thinking. TRIGGERS: 'random stimulus', 'random word technique', 'break the fixation', 'I keep thinking of the same things', 'unstick this', 'force new associations'."
-category: play
-is_router: false
-tier: 3
----
-
 # Play: Stimulus Generation
 
 When thinking is stuck it is usually stuck in a groove — a narrow set of associations
@@ -77,43 +69,3 @@ Before proceeding, use the `AskUserQuestion` tool:
 Proceed based on their selection.
 
 ## Output Format
-
-**Stuck Problem:** [description of the problem and what the stuck groove looks like]
-
-**Random Stimulus:** [the word, object, headline, or concept introduced]
-
-**Stimulus Attributes:** 1. [attribute] 2. [attribute] 3. [continue to 5-7]
-
-**Forced Connections**
-
-| Attribute | Connection to the Stuck Problem | Worth Developing? |
-|---|---|---|
-| [attribute] | [how it might apply — no filtering] | [yes / no / maybe] |
-
-**Most Promising Direction:** [the connection or reframe worth developing, and why]
-
-**Developed Idea:** [what it looks like as a concrete proposal — specific enough
-to test or act on]
-
----
-
-## Notes
-
-The random stimulus works not because it contains the answer but because connecting
-to it forces abandonment of the stuck groove. A connection that seems absurd at first
-may open a direction that a rational search would never find. Resist the urge to
-discard connections quickly — the most useful ones often require a second look.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Stimuli generated. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/creativity-lateral-thinking` — Use the stimuli as lateral move inputs
-  - `/creativity-random-entry` — Build further on the generated stimuli
-  - `/creativity-assumption-excavator` — Use the stimuli to surface hidden assumptions
-  - **Done** — Wrap up and synthesise what we have so far

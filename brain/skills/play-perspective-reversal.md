@@ -1,11 +1,3 @@
----
-name: play-perspective-reversal
-description: "Fully inhabits the opposing perspective — competitor, critic, user, or adversary — to find what is invisible from your own position. TRIGGERS: 'steelman the opposition', 'think like the competitor', 'play devil's advocate', 'see it from their side', 'role reversal', 'inhabit the other perspective'."
-category: play
-is_router: false
-tier: 3
----
-
 # Play: Perspective Reversal
 
 Every position has a blind spot — things that are invisible precisely because of
@@ -73,47 +65,3 @@ Before proceeding, use the `AskUserQuestion` tool:
 Proceed based on their selection.
 
 ## Output Format
-
-**Opposing Perspective:** [who + their vantage point and information set, stated
-fully and fairly]
-
-**What They See That You Don't:** [the specific blind spots and missed assumptions
-visible from their position]
-
-**Their Strategy:** [the specific moves their position makes available — what they
-would do and why]
-
-**Legitimacy Assessment**
-
-| Finding From Their Perspective | Legitimate? | Response Category |
-|---|---|---|
-| [what they see] | [yes / partially / no] | [must change / must defend / must communicate better] |
-
-**Priority Actions**
-- Must change: [what requires genuine adjustment to the approach]
-- Must defend: [what is correct but needs to be made more robust]
-- Must communicate better: [what is right but isn't landing — and the gap]
-
----
-
-## Notes
-
-The exercise fails if it becomes a performance of the other perspective rather than
-genuine inhabitation. The test is whether you find something that makes you
-uncomfortable — something you would prefer not to be true. If everything from the
-opposing perspective turns out to be wrong or irrelevant, you didn't actually inhabit
-it.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Perspective reversed. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/creativity-other-perspectives` — Apply structured other-perspectives to the reversed view
-  - `/communication-audience-modeling` — Model how the reversed view changes communication
-  - `/emotional-motivation-mapping` — Map motivations from the reversed perspective
-  - **Done** — Wrap up and synthesise what we have so far

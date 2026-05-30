@@ -1,11 +1,3 @@
----
-name: narrative-audience-modeling
-description: "Maps the audience's current beliefs, real goals, fears, and threshold conditions before communicating with them. Use when asked to 'model the audience', 'audience analysis', 'who am I talking to', 'what do they care about', or 'why aren't they getting it'."
-category: narrative
-is_router: false
-tier: 2
----
-
 # Narrative Audience Modeling
 
 Communication fails at the receiver, not the sender. The most common communication failure is not poor evidence or unclear logic — it is delivering a message the audience was not ready to receive, about a problem they do not recognize, to a goal they do not hold. Modeling the audience before communicating means identifying not what you want to say, but what they are able to hear.
@@ -73,11 +65,3 @@ If the threshold condition is not met first, nothing else lands. Sequence matter
 ## What's Next
 
 After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Narrative audience modelled. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/communication-audience-modeling` — Translate the narrative audience model into a communication plan
-  - `/writing-tone-alignment` — Align tone to what the narrative audience model revealed
-  - `/narrative-tension-mapping` — Map the tension points for this audience
-  - **Done** — Wrap up and synthesise what we have so far

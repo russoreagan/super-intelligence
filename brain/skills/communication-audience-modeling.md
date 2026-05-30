@@ -1,11 +1,3 @@
----
-name: communication-audience-modeling
-description: "Maps what the audience currently believes, actually cares about, and fears before communicating — because communication fails at the receiver, not the sender. Triggers: 'model the audience', 'audience analysis', 'who am I talking to', 'what do they care about', 'why aren't they getting it'."
-category: communication
-is_router: false
-tier: 2
----
-
 # Communication Audience Modeling
 
 Communication fails at the receiver. The sender almost always knows what they meant —
@@ -88,13 +80,3 @@ filtered out before it arrives.
 ---
 
 ## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Audience modelled. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/communication-objection-mapping` — Map the objections this audience will raise
-  - `/communication-clarity-audit` — Audit whether the message is clear to this specific audience
-  - `/writing-tone-alignment` — Align tone to the audience model
-  - **Done** — Wrap up and synthesise what we have so far

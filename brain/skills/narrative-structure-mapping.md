@@ -1,11 +1,3 @@
----
-name: narrative-structure-mapping
-description: "Applies story architecture to any communication — proposal, presentation, strategy doc — so it moves people rather than informing them. Use when asked to 'structure this as a story', 'make this compelling', 'narrative arc', 'how do I present this', or 'story structure'."
-category: narrative
-is_router: false
-tier: 2
----
-
 # Narrative Structure Mapping
 
 Facts don't change behavior; narrative does. The same information delivered as a story is more persuasive, more memorable, and more likely to produce action than the same information delivered as a report. Three-act structure works because it mirrors how humans process change: there is a world, the world is disrupted, a new world becomes possible. Any communication that needs to move people — not just inform them — benefits from this architecture.
@@ -76,13 +68,3 @@ The most common failure is leading with resolution — announcing the answer bef
 ---
 
 ## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Narrative structure mapped. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/writing-restructure` — Restructure based on what the structure mapping found
-  - `/narrative-tension-mapping` — Map tension points within the structure
-  - `/writing-arc-design` — Design the arc from the structure map
-  - **Done** — Wrap up and synthesise what we have so far

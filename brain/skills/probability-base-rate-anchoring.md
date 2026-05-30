@@ -1,11 +1,3 @@
----
-name: probability-base-rate-anchoring
-description: "Anchors estimates in historical base rates before adjusting for specific factors. Use when asked 'what's the base rate', 'am I being too optimistic', 'outside view', 'reference class', 'how often does this actually happen', or 'historical frequency'."
-category: probability
-is_router: false
-tier: 2
----
-
 # Probability Base Rate Anchoring
 
 The most common forecasting error is treating every situation as unique and ignoring what usually happens. Kahneman called this neglecting the outside view. Before adjusting for what makes this situation special, you must first establish what happens in situations like this one. The base rate is the outside view — the answer to "what fraction of attempts like this one succeed?" — and it is almost always more informative than inside-view reasoning about this particular case.
@@ -72,13 +64,3 @@ Only adjust from the base rate when you have specific, verifiable reasons — no
 ---
 
 ## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Base rates anchored. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/probability-scenario-weighting` — Weight scenarios against the established base rate
-  - `/probability-confidence-calibration` — Calibrate confidence given what the base rates revealed
-  - `/decision-criteria-weighting` — Feed adjusted probabilities into the decision criteria
-  - **Done** — Wrap up and synthesise what we have so far

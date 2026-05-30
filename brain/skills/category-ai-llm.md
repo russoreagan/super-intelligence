@@ -1,10 +1,3 @@
----
-name: category-ai-llm
-description: "Pick when the task involves LLMs, prompts, RAG, voice agents, or ElevenLabs. Router—load up to 4 skills from this category when relevant."
-triggers: [LLM, AI, agent, prompt, RAG, ElevenLabs, voice]
-disable-model-invocation: false
----
-
 # Category: AI/LLM
 
 **When to pick this:** Pick when the task involves LLMs, prompts, RAG, voice agents, or ElevenLabs.

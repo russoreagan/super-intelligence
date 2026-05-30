@@ -1,11 +1,3 @@
----
-name: strategy-alliance
-description: "Maps parties, identifies natural allies and swing parties, and assesses alliance stability for coalition-building in competitive contexts. Triggers: 'build alliances', 'coalition building', 'who are my allies', 'manage stakeholders', 'political coalition', 'alliance strategy', 'who do I need on my side', 'get people on board', 'organizational politics'."
-category: strategy
-is_router: false
-tier: 3
----
-
 # Strategy: Alliance
 
 Machiavelli's counter-intuitive warning in *The Prince*: alliances built on goodwill are fragile; alliances built on shared interest are durable. A prince who relies on gratitude will be disappointed the moment the interest calculus changes. A prince who builds alliances on the foundation of mutual benefit will hold them through adversity because both parties have a reason — independent of sentiment — to maintain the relationship.
@@ -32,53 +24,3 @@ Parties who might oppose you but needn't be actively won over — just prevented
 
 **Step 5: Alliance stability**
 What holds each proposed alliance together? Shared interest (durable), reciprocal obligation (moderately durable), goodwill (fragile), fear (durable while the fear holds but brittle on its removal). Apply Machiavelli's test: if the interest calculus changed tomorrow, would this party still be with you? Name every alliance that fails this test.
-
-**Step 6: Machiavelli test**
-For each alliance being proposed: is it based on genuine shared interest, or on the assumption of goodwill? Goodwill alliances require active maintenance and may not hold under pressure. Name them, and either identify the underlying interest that makes them durable or build in contingency.
-
----
-
-## Output Format
-
-### Alliance Map
-
-**Party Inventory**
-
-| Party | Actual interest | Current position | Capacity |
-|---|---|---|---|
-| [Name] | [What they actually want] | [Aligned / Neutral / Opposed] | [High / Medium / Low] |
-
-**Natural Allies**
-[Parties with genuine interest alignment — activation approach for each]
-
-**Swing Parties and Alignment Conditions**
-[Each swing party, the minimum offering that tips them, and whether that offering is available]
-
-**Parties to Neutralize**
-[Potential opponents — what they need to remain non-interfering, and the cost of that neutralization]
-
-**Alliance Stability Assessment**
-[For each proposed alliance: what holds it together, Machiavelli test result, stability rating]
-
-**Recommended Structure**
-[Which alliances to build, which parties to neutralize, which to deprioritize — sequenced by priority and feasibility]
-
----
-
-## Notes
-
-Alliances multiply effective force — pair with `/strategy-force-economy` when the question is how to achieve an objective against a stronger opponent. Knowing what parties actually want requires intelligence work — pair with `/strategy-intelligence` when the party map is uncertain. Use `/strategy-terrain` to understand which parties hold positions of structural advantage that would make them particularly valuable allies or particularly dangerous opponents.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Alliance strategy mapped. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/game-theory-coalition` — Analyse the coalition game dynamics of the alliance
-  - `/social-coalition-mapping` — Map social dynamics within the alliance
-  - `/strategy-positioning` — Position to benefit from the alliance
-  - **Done** — Wrap up and synthesise what we have so far

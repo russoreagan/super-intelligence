@@ -1,11 +1,3 @@
----
-name: testing-and-tdd
-description: Unified testing skill covering test strategy, TDD cycle, debugging failing/flaky tests, and requirement-driven test case generation.
-summary: Test strategy, TDD red-green-refactor cycle, debugging flaky tests, and QA test case generation.
-triggers: [test, TDD, unit test, integration test, coverage, flaky, QA, acceptance test]
-disable-model-invocation: true
-
----
 # Testing & TDD (Unified)
 
 ## Intent

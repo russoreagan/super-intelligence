@@ -1,11 +1,3 @@
----
-name: logic-check
-description: "A fast, comprehensive logic report on any argument, plan, or reasoning — validates premises, tests inference, detects fallacies, surfaces hidden assumptions, and produces a verdict. Lighter than logic-council (no peer review), heavier than logic-argument-validation (covers the whole reasoning, not just one argument). Triggers: 'logic check', 'quick logic review', 'check my reasoning', 'is this sound', 'full logic check', any request for a complete logical assessment."
-category: logic
-is_router: false
-tier: 1
----
-
 # Logic Check
 
 An argument can fail in three distinct places: a premise can be false, the inference can be invalid (the conclusion doesn't follow even if premises are true), or a hidden assumption can be doing load-bearing work without being examined. Most reasoning errors are invisible because they happen in exactly these places. A complete logic check must test all three.
@@ -75,36 +67,3 @@ Proceed based on their selection.
 ### Inference Validity
 **Valid:** Yes / No / Partially
 **Analysis:** [Does the conclusion follow from the premises? Where does the inference fail if it does?]
-
-### Fallacies Found
-- [Name of fallacy] — [Where it appears in the argument, specifically]
-- (None found — if absent)
-
-### Hidden Assumptions
-- [Assumption doing load-bearing work] — [Whether it holds]
-
-### Verdict
-**The reasoning:** Holds / Has specific problems / Does not hold
-
-**Specific problems (if any):**
-1. [Problem] — [Why it matters to the conclusion]
-
----
-
-## Notes
-
-Use logic-council when the situation requires adversarial peer challenge between logical positions. Use logic-argument-validation for a single, focused argument. This skill covers complete reasoning chains — plans, proposals, analyses — in a single pass.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Reasoning assessed. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/logic-fixer` — Fix the specific problems the check identified
-  - `/constraint-hardness-testing` — Test whether the flaws are hard constraints or soft assumptions
-  - `/decision-premortem-analysis` — Stress-test the plan the reasoning supports
-  - **Done** — Wrap up and synthesise what we have so far

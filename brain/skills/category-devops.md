@@ -1,10 +1,3 @@
----
-name: category-devops
-description: "Pick when setting up or changing CI/CD, containers, infra, or deployment. Router—load up to 4 skills from this category when relevant."
-triggers: [CI/CD, Docker, Kubernetes, Terraform, deploy]
-disable-model-invocation: false
----
-
 # Category: DevOps
 
 **When to pick this:** Pick when setting up or changing CI/CD, containers, infra, or deployment.

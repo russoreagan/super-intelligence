@@ -1,11 +1,3 @@
----
-name: constraint-workaround-mapping
-description: "Finds paths around a fixed constraint without removing it — routing around a hard limit to reach the same goal. Triggers: 'work around this', 'given this constraint', 'path around the blocker', 'how do we do this anyway', 'constrained solution'."
-category: constraint
-is_router: false
-tier: 2
----
-
 # Constraint Workaround Mapping
 
 Some constraints are real and cannot be inverted or removed. The question then is not how
@@ -96,11 +88,3 @@ constraint does NOT prevent is as important as what it does.
 ## What's Next
 
 After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Workarounds mapped. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/decision-option-mapping` — Map decision options using the available workarounds
-  - `/logic-check` — Validate the logic of the proposed workarounds
-  - `/decision-premortem-analysis` — Stress-test each workaround before committing
-  - **Done** — Wrap up and synthesise what we have so far

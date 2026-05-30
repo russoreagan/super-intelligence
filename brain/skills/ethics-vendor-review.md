@@ -1,11 +1,3 @@
----
-name: ethics-vendor-review
-description: "Evaluate a third-party vendor, supplier, partner, or integration against ethical standards before signing a contract or shipping their code or service. Use when considering a new supplier, SaaS tool, data provider, API integration, outsourcing arrangement, or partnership. TRIGGERS: 'vet this vendor', 'is this supplier ok', 'ethics check on this partner', 'should we use this third party', any third-party evaluation where labour practices, data handling, business model, or alignment with values is a consideration."
-category: ethics
-is_router: false
-tier: 2
----
-
 # Ethics Vendor Vetting
 
 Every supplier relationship is a values choice. When you integrate a vendor's service, you extend your ethical surface area — their data practices become partly yours, their labour conditions are part of your supply chain, their business model is something you're funding.
@@ -51,65 +43,3 @@ Examine:
 ## Human Check-in
 
 Before proceeding, use the `AskUserQuestion` tool:
-
-- **Question:** "How do you want to run this?"
-- **Header:** "Scope"
-- **Options:**
-  - **Full analysis** — Complete all steps, reasoning shown throughout
-  - **Key findings only** — Bottom-line output, skip step-by-step detail
-  - **Red flags only** — Specific concerns, skip domains that look clean
-  - **Refine the framing** — Adjust what we're analyzing before starting
-
-Proceed based on their selection.
-
-## Output Format
-
-**Vendor Being Vetted:**
-[Name, what they provide, depth of integration]
-
-**Virtue Ethics Assessment**
-| Dimension | Finding | Concern Level |
-|---|---|---|
-| Track record | [finding] | 🔴 / 🟡 / 🟢 |
-| Business model alignment | [finding] | 🔴 / 🟡 / 🟢 |
-| Values alignment | [finding] | 🔴 / 🟡 / 🟢 |
-| Transparency | [finding] | 🔴 / 🟡 / 🟢 |
-
-**Justice Assessment**
-| Dimension | Finding | Concern Level |
-|---|---|---|
-| Labour practices | [finding] | 🔴 / 🟡 / 🟢 |
-| Data practices | [finding] | 🔴 / 🟡 / 🟢 |
-| Market power | [finding] | 🔴 / 🟡 / 🟢 |
-| Displacement | [finding] | 🔴 / 🟡 / 🟢 |
-
-**Dependency Risk**
-[1–2 sentences: lock-in risk, exit difficulty, leverage they gain]
-
-**Verdict**
-[Proceed / Proceed with conditions / Do not proceed — and why]
-
-**Conditions or Mitigations**
-- [Specific contractual, technical, or procedural safeguard if proceeding with concerns]
-
----
-
-## Notes
-
-This vetting is based on available information — it is not a guarantee. For high-value or high-trust integrations (e.g. a vendor receiving sensitive user data), request their SOC 2 report, data processing agreement, and subprocessor list before proceeding.
-
-Where concerns are found but the business case is strong, name the trade-off explicitly rather than explaining it away. A conscious decision to proceed despite an ethical concern is better than a decision where the concern was never surfaced.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Vendor reviewed. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/ethics-check` — Run a full ethical check of the vendor relationship
-  - `/decision-criteria-weighting` — Weight vendor decision criteria on the ethical findings
-  - `/ethics-data-audit` — Audit the vendor's data practices
-  - **Done** — Wrap up and synthesise what we have so far

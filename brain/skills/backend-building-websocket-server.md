@@ -1,17 +1,3 @@
----
-name: building-websocket-server
-description: |
-  Build scalable WebSocket servers for real-time bidirectional communication.
-  Use when enabling real-time bidirectional communication.
-  Trigger with phrases like "build WebSocket server", "add real-time API", or "implement WebSocket".
-  
-allowed-tools: Read, Write, Edit, Grep, Glob, Bash(api:websocket-*)
-version: 1.0.0
-author: Jeremy Longshore <jeremy@intentsolutions.io>
-license: MIT
-disable-model-invocation: true
-
----
 # Building Websocket Server
 
 ## Overview

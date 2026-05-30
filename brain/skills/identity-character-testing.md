@@ -1,11 +1,3 @@
----
-name: identity-character-testing
-description: "Asks what a person or organisation of genuine integrity would do — grounding decisions in character rather than calculation. Triggers: 'character test', 'what would a person of integrity do', 'what does this say about us', 'gut check', 'would I be proud of this', 'are we being who we want to be'."
-category: identity
-is_router: false
-tier: 2
----
-
 # Character Testing
 
 Ethical calculation — weighing outcomes, mapping trade-offs — can be gamed. Character cannot. The question "what would a person of genuine integrity do here?" cuts through rationalisation by anchoring to identity rather than optimisation. It works best when something feels wrong but is hard to name.
@@ -69,26 +61,3 @@ Looking back in five years: proud / uncomfortable / regretful — and why?
 | The character test points toward | The proposed decision points toward | What's driving the divergence | Is it legitimate? |
 |----------------------------------|-------------------------------------|-------------------------------|-------------------|
 | ... | ... | ... | Yes / No |
-
-### Recommendation
-[What the character test implies — and whether it should override the original proposal]
-
----
-
-## Notes
-
-This test is most valuable when the calculation says one thing and something else says no. The discomfort is information — it deserves analysis rather than suppression.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Character tested. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/identity-values-clarification` — Clarify values that the character test revealed tensions in
-  - `/ethics-check` — Check whether character under pressure met ethical standards
-  - `/decision-premortem-analysis` — Stress-test decisions for consistency with character
-  - **Done** — Wrap up and synthesise what we have so far

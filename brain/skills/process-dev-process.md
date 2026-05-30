@@ -1,11 +1,3 @@
----
-name: dev-process
-description: Use when executing development work end-to-end (plan → implement → checkpoints → verify → PR/merge), especially when you need strict verification and consistent workflow hygiene.
-summary: End-to-end dev workflow: plan → implement → verify → PR with strict verification gates.
-triggers: [workflow, process, plan, verify, checkpoint, worktree, git hygiene]
-disable-model-invocation: true
-
----
 # Dev Process (Definitive)
 
 ## Goal

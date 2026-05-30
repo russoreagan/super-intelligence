@@ -1,9 +1,3 @@
----
-name: dnd-dice-roller
-description: Roll dice using D&D notation (d20, 2d6+3, advantage, disadvantage, drop lowest). Use when the user asks to roll dice, when playing D&D or similar TTRPGs, or when handling dice notation in the AI GM or game systems.
-disable-model-invocation: true
----
-
 # D&D Dice Roller
 
 Roll dice from natural language or notation. Parse user input, use the app’s dice tool or roll API, and present results clearly. Do not run external scripts; use the app’s tools.

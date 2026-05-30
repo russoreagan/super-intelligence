@@ -1,11 +1,3 @@
----
-name: analogy-boundary-testing
-description: "Finds where an analogy breaks down before it's relied upon. Analogies fail silently — the damage happens when decisions are made on a mapping that doesn't hold in the relevant dimension. Triggers: 'stress-test this analogy', 'where does this comparison break', 'does this really apply', 'test the metaphor', 'where is the analogy wrong'."
-category: analogy
-is_router: false
-tier: 2
----
-
 # Analogy Boundary Testing
 
 Analogies are tools, not truths. The danger is not using an analogy — it is using one past
@@ -98,11 +90,3 @@ genuine insight it contains.
 ## What's Next
 
 After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Analogy boundaries tested. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/analogy-domain-transfer` — Now that boundaries are clear, execute the transfer carefully
-  - `/logic-check` — Check whether conclusions crossed a boundary they shouldn't have
-  - `/constraint-hardness-testing` — Are the boundary differences hard constraints or soft?
-  - **Done** — Wrap up and synthesise what we have so far

@@ -1,11 +1,3 @@
----
-name: architecture-backend-data
-description: Use when making architectural/backend/data changes in this codebase (new endpoints/services/skills/migrations) and you need the correct files, patterns, and integration steps.
-summary: Codebase orientation: architecture patterns, backend services, data models, and integration checklists.
-triggers: [architecture, backend, data model, how does this work, where is, codebase, service, endpoint]
-disable-model-invocation: true
-
----
 # Architecture + Backend + Data Patterns (Definitive)
 
 ## Goal

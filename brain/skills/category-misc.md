@@ -1,10 +1,3 @@
----
-name: category-misc
-description: "Pick when the task touches monorepos, payments, Zod validation, or other cross-cutting concerns. Router—load up to 4 skills from this category when relevant."
-triggers: [monorepo, payment, Zod, blockchain]
-disable-model-invocation: false
----
-
 # Category: Misc
 
 **When to pick this:** Pick when the task touches monorepos, payments, Zod validation, or other cross-cutting concerns.

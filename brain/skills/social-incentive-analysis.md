@@ -1,11 +1,3 @@
----
-name: social-incentive-analysis
-description: "Maps the actual incentives driving behaviour — distinguishing stated motivations from the real incentive structures that shape what people do. Triggers: 'incentive analysis', 'why are they doing this', 'what are the actual incentives', 'follow the incentives', 'what does the system reward'."
-category: social
-is_router: false
-tier: 2
----
-
 # Incentive Analysis
 
 Most behaviour that looks irrational is perfectly rational given the actual incentives. The problem is that systems are designed around intended incentives while people respond to actual ones. Finding the gap between the two explains what is happening and points to what would change it.
@@ -82,13 +74,3 @@ Incentive analysis is most powerful when it reveals that a problem is not one of
 ---
 
 ## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Incentives analysed. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/social-coalition-mapping` — Align coalition building around the shared incentives
-  - `/game-theory-mechanism-design` — Design mechanisms to shift incentive structures
-  - `/communication-audience-modeling` — Model how incentives shape audience behaviour
-  - **Done** — Wrap up and synthesise what we have so far

@@ -1,10 +1,3 @@
----
-name: api-openai-api-reference
-description: "Reference for OpenAI REST API: auth, endpoints, Responses API, Chat Completions, debugging headers, rate limits. Use when integrating OpenAI API, calling chat/completions or responses, debugging API errors, or when the user mentions OpenAI API, chat completions, embeddings, or OpenAI endpoints."
-triggers: [OpenAI API, chat completions, responses API, embeddings, OpenAI endpoint]
-disable-model-invocation: true
----
-
 # OpenAI API Reference
 
 Quick reference for the OpenAI REST API. Load when integrating OpenAI, calling chat/responses endpoints, or debugging API issues.

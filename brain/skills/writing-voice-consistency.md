@@ -1,11 +1,3 @@
----
-name: writing-voice-consistency
-description: "Extracts a voice fingerprint from strong existing passages and uses it to audit and repair voice departures. Use when multiple contributors have created a fractured document, when brand voice has drifted, or when the writing doesn't sound like one person. Triggers: 'the voice isn't consistent', 'voice consistency', 'this doesn't sound like us', 'multi-author document', 'maintain voice', 'brand voice', 'the writing sounds like different people'."
-category: writing
-is_router: false
-tier: 3
----
-
 # Writing: Voice Consistency
 
 Voice is the sum of choices: sentence length preference, vocabulary range, degree of formality, stance toward the reader, use of metaphor and analogy, tolerance for digression, the character that comes through even in functional writing. It is recognisable even when you can't name what you're recognising. When it's absent or fractured, the reader feels it as a nagging sense that the writing has no centre — that no one is actually speaking to them.
@@ -49,43 +41,3 @@ For documents that will have multiple contributors or ongoing updates, translate
 ## Output Format
 
 ### Voice Analysis
-
-**Fingerprint (5–7 Characteristics):**
-1. [Characteristic: specific and testable]
-2. [And so on]
-
-**Representative Sample Passage:** [The passage that exemplifies all characteristics — quoted from existing text or composed if no strong existing passage exists]
-
-**Departures:**
-- [Location] — [Quoted passage] — Characteristic(s) violated: [list] — Direction of departure: [description]
-- [Repeat]
-- NONE FOUND if clean
-
-**Voice Guide (for brand/multi-author use):**
-- [Voice in one paragraph]
-- [DO/DON'T pairs with examples]
-- [Most common departures to watch for]
-
----
-
-## Notes
-
-- The voice fingerprint works only if it is extracted from the best existing work, not invented. A voice brief built from aspirational writing that doesn't match the actual document will not solve the consistency problem — it will create a new one.
-- For single-author documents, voice departures are usually caused by energy, time, or tone shifts. For multi-author documents, they're usually caused by each contributor's natural voice overriding the house voice.
-- Pairs with `/writing-tone-alignment` — tone is one dimension of voice. Voice consistency addresses the full identity of the speaker; tone alignment addresses one specific dimension (register).
-- Pairs with `/writing-audience-calibration` — voice must be calibrated to the audience; a perfectly consistent voice that is calibrated to the wrong reader is still failing.
-- Pairs with `/writing-prose-elevation` — elevation must stay in voice; an elevated passage that sounds like a different writer has traded one problem for another.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Voice consistency checked. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/writing-line-editing` — Edit for consistent voice throughout
-  - `/writing-tone-alignment` — Align tone with the voice
-  - `/writing-prose-elevation` — Elevate the consistent voice
-  - **Done** — Wrap up and synthesise what we have so far

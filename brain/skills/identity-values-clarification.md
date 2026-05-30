@@ -1,11 +1,3 @@
----
-name: identity-values-clarification
-description: "Surfaces and tests actual operative values — distinguishing what is stated from what decisions actually reveal. Triggers: 'values clarification', 'what do we actually stand for', 'is this consistent with our values', 'values alignment check', 'test the values', 'what do our decisions reveal'."
-category: identity
-is_router: false
-tier: 2
----
-
 # Values Clarification
 
 Stated values are aspirational. Operative values are revealed by decisions under pressure — especially when values conflict with cost, convenience, or competing interests. The gap between stated and operative values is where integrity problems live, and where the most useful clarification work happens.
@@ -76,11 +68,3 @@ The most productive use of this analysis is not to criticise but to surface hidd
 ## What's Next
 
 After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Values clarified. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/identity-mission-alignment` — Connect the clarified values to mission
-  - `/decision-criteria-weighting` — Weight decision criteria by values
-  - `/ethics-check` — Check whether values are applied consistently
-  - **Done** — Wrap up and synthesise what we have so far

@@ -1,11 +1,3 @@
----
-name: logic-argument-validation
-description: "Check whether an argument's premises actually support its conclusion, and identify logical fallacies. Use when reviewing a design decision, technical proposal, product argument, or any reasoning where the conclusion needs to hold up under scrutiny. TRIGGERS: 'validate this argument', 'does this logic hold', 'check my reasoning', 'is this a fallacy', 'find the flaw in this', any proposal or decision where the reasoning chain matters. Pairs well with logic-consistency-check when a full document needs scrutiny."
-category: logic
-is_router: false
-tier: 2
----
-
 # Logic Argument Validation
 
 An argument can *sound* compelling while the reasoning is broken. Confident language, plausible premises, a conclusion that feels right — none of these guarantee the argument actually holds. This skill validates the structure: do the premises support the conclusion, and is the reasoning free of fallacies?
@@ -82,29 +74,3 @@ Proceed based on their selection.
 
 **Fallacies Detected**
 - [Fallacy name]: [specific example from the argument] — or "None detected"
-
-**Verdict**
-[Does the argument hold? What is the specific weakest point?]
-
-**What would strengthen it**
-- [Specific fix — evidence needed, premise to qualify, step to make explicit]
-
----
-
-## Notes
-
-A broken argument isn't necessarily a wrong conclusion. The conclusion might be correct while the reasoning that supports it is flawed. Flag both: the structural problem *and* whether the conclusion still seems defensible by other means.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Argument validated. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/logic-fixer` — Repair the invalid inferences found
-  - `/ethics-check` — Check whether a valid argument is also ethically sound
-  - `/communication-objection-mapping` — Map how others will challenge this argument
-  - **Done** — Wrap up and synthesise what we have so far

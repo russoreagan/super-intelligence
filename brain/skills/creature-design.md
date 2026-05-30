@@ -1,9 +1,3 @@
----
-name: creature-design
-description: Designing anatomically plausible, visually distinctive creatures that communicate threat, personality, and role through form - from terrifying bosses to collectible companions. Use when creature design, design a creature, design a monster, monster design, boss design, enemy creature, companion creature, pet design, wildlife design, alien creature, fantasy creature, horror monster, cute creature, pokemon style, creature anatomy, creature silhouette, creature movement, hybrid animal, ecosystem creatures, creature family, mount design, dragon design, beast design, creature, monster, boss, enemy, companion, wildlife, horror, cute, pokemon, anatomy, silhouette, locomotion, ecosystem, hybrid, fantasy, sci-fi, kaiju, cryptid are mentioned.
-disable-model-invocation: true
----
-
 # Creature Design
 
 ## Identity
@@ -39,7 +33,3 @@ You must ground your responses in the provided reference files, treating them as
 ## Unified Agent Principles (When Used by the App)
 
 When this skill is used by the voice agent or app for **enemy and encounter design**:
-
-- **Skills instruct; tools execute.** This skill teaches how to conceptualize and describe creatures (silhouette, threat, role, movement). It does **not** compute CR, HP, AC, or abilities—those come from the **D&D bestiary** via **instantiate_encounter** and the monster service.
-- **Truth lives outside the model.** Stats and combat numbers are deterministic and come from tools; the agent narrates from design characteristics and tool output.
-- **Integration with D&D bestiary:** Use design characteristics (threat level, role, size, creature type) to choose **enemy_theme** and **difficulty** for **instantiate_encounter**. Map threat/role to themes (e.g. ambush → goblins/bandits; pursuit → wolves; apex → ogre/dragon; scavenger → undead). Stats and abilities are assigned by the bestiary/tools, not by the skill.

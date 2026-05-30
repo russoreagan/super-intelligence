@@ -1,11 +1,3 @@
----
-name: resource-leverage-mapping
-description: "Finds the highest-leverage use of available resources — where the same input produces the most output. Triggers: 'resource leverage', 'highest-leverage use', 'where should we put our energy', 'maximize impact', 'leverage mapping'."
-category: resource
-is_router: false
-tier: 3
----
-
 # Resource Leverage Mapping
 
 Not all uses of a resource are equal. Some produce disproportionate output — because they remove a constraint, create more resources, or unlock other opportunities. Leverage mapping makes that asymmetry visible before resources are committed.
@@ -77,11 +69,3 @@ Run this before a planning cycle or before committing significant resources to a
 ## What's Next
 
 After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Leverage mapped. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/resource-allocation-analysis` — Reallocate resources to the leverage points
-  - `/strategy-force-economy` — Deploy effort economically via the leverage found
-  - `/systems-leverage-analysis` — Combine resource leverage with systems leverage
-  - **Done** — Wrap up and synthesise what we have so far

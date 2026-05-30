@@ -1,11 +1,3 @@
----
-name: decision-criteria-weighting
-description: "Runs a weighted multi-criteria analysis — making explicit what matters, how much, and how each option performs against it. Triggers: 'weighted decision matrix', 'multi-criteria analysis', 'help me choose between', 'compare these options', 'decision matrix'."
-category: decision
-is_router: false
-tier: 2
----
-
 # Decision Criteria Weighting
 
 Intuitive decisions fail when too many criteria are in play and their relative importance
@@ -96,11 +88,3 @@ Making weights explicit moves the conversation to the right place.
 ## What's Next
 
 After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Criteria weighted and options ranked. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/decision-premortem-analysis` — Stress-test the winning option before committing
-  - `/decision-reversibility-analysis` — Assess how reversible the top option is
-  - `/ethics-check` — Check whether the top option is ethically sound
-  - **Done** — Wrap up and synthesise what we have so far

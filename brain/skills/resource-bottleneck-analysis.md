@@ -1,11 +1,3 @@
----
-name: resource-bottleneck-analysis
-description: "Identifies what is actually constraining throughput — using Theory of Constraints logic: the system can only move as fast as its slowest point. Triggers: 'bottleneck analysis', 'what's actually slowing this down', 'where's the constraint', 'theory of constraints', 'find the bottleneck', 'why are we moving slowly'."
-category: resource
-is_router: false
-tier: 3
----
-
 # Bottleneck Analysis
 
 A system can only move as fast as its slowest stage. Improving any stage other than the bottleneck does not improve overall throughput — it just creates more work waiting in front of the constraint. Finding and addressing the bottleneck is the highest-leverage intervention available.
@@ -76,19 +68,3 @@ Proceed based on their selection.
 ---
 
 ## Notes
-
-The bottleneck moves after you fix it — the next constraint becomes the new bottleneck. Repeat the analysis after each intervention rather than assuming the system is now optimised.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Bottlenecks identified. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/resource-leverage-mapping` — Find leverage at the bottlenecks
-  - `/constraint-workaround-mapping` — Work around the bottlenecks that can't be removed
-  - `/strategy-force-economy` — Apply force economy principles at the bottlenecks
-  - **Done** — Wrap up and synthesise what we have so far

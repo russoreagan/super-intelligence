@@ -1,11 +1,3 @@
----
-name: emotional-stakes-mapping
-description: "Maps what each stakeholder actually cares about underneath their stated position — because addressing the stated position while missing the real stake accomplishes nothing. TRIGGERS: 'what do they actually want', 'underlying stakes', 'what's really at stake', 'beneath the position', 'why won't they agree'."
-category: emotional
-is_router: false
-tier: 2
----
-
 # Emotional Stakes Mapping
 
 People argue about positions. They care about stakes. Addressing the stated position
@@ -77,40 +69,3 @@ Proceed based on their selection.
 | Stakeholder | Stated Position | Real Fear | Minimum Condition | Face-Saving Explanation |
 |---|---|---|---|---|
 | [name/role] | [explicit ask] | [underlying fear] | [the floor for agreement] | [how they'd narrate agreement] |
-
-**Alignment Zones**
-Stakes that multiple stakeholders share underneath apparently conflicting positions.
-List the shared underlying interest and which parties share it.
-
-**Conflict Zones**
-Stakes that genuinely compete — where one party's win requires another's loss. Name
-each conflict zone explicitly and identify what explicit negotiation or trade-off it
-requires.
-
-**Next Move**
-Given the alignment and conflict zones: what is the highest-leverage first
-conversation or action?
-
----
-
-## Notes
-
-Surface-level positions are negotiating stances; underlying stakes are the actual
-terrain. Work on the terrain. Conflict zones that can't be resolved through alignment
-require explicit trade-off decisions — don't paper over them with language that
-pretends everyone wins when they don't. The face-saving explanation step is often
-what makes agreement stick in practice even after it's been reached in principle.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Stakes mapped. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/decision-premortem-analysis` — Stress-test with highest-stakes outcomes in mind
-  - `/ethics-empathy-circle` — Apply structured empathy to the highest-stakes people
-  - `/communication-audience-modeling` — Model the audience through their stakes
-  - **Done** — Wrap up and synthesise what we have so far

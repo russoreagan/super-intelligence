@@ -1,11 +1,3 @@
----
-name: observability-and-performance
-description: Use when debugging reliability/performance issues and you need traces/metrics/logs, SLOs/error budgets, and profiling to identify and prevent regressions.
-summary: App-level observability: traces/metrics/logs, SLOs/error budgets, profiling, and LLM observability.
-triggers: [performance, latency, slow, profiling, bottleneck, SLO, error budget, LangSmith]
-disable-model-invocation: true
-
----
 # Observability & Performance (Definitive)
 
 ## Goal

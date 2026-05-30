@@ -1,11 +1,3 @@
----
-name: emotional-trust-audit
-description: "Maps what is building and eroding trust in a relationship or situation — trust degrades silently until it fails loudly. TRIGGERS: 'trust audit', 'why don't they trust us', 'relationship health check', 'what's eroding trust', 'build trust with'."
-category: emotional
-is_router: false
-tier: 2
----
-
 # Emotional Trust Audit
 
 Trust does not fail suddenly — it erodes incrementally through small signals that
@@ -76,39 +68,3 @@ Proceed based on their selection.
 ## Output Format
 
 **Driver Assessment**
-
-| Driver | Evidence Building Trust | Evidence Eroding Trust | Net Assessment |
-|---|---|---|---|
-| Competence | [specific evidence] | [specific evidence] | [strong/neutral/deficit] |
-| Reliability | [specific evidence] | [specific evidence] | [strong/neutral/deficit] |
-| Integrity | [specific evidence] | [specific evidence] | [strong/neutral/deficit] |
-| Benevolence | [specific evidence] | [specific evidence] | [strong/neutral/deficit] |
-
-**Most Damaged Driver:** [driver + one-sentence rationale]
-
-**Highest-Leverage Action:** [specific, concrete act — what, by whom, by when]
-
-**Behaviour to Stop:** [what must cease for repair actions to have any effect]
-
----
-
-## Notes
-
-Trust is rebuilt through consistent small acts, not dramatic gestures. The action
-recommended here is a first step, not a solution — sustainable repair requires
-sustained consistency. The behaviour-to-stop is non-negotiable and must precede
-everything else; repair while erosion continues is wasted effort.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Trust audited. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/communication-audience-modeling` — Model communication based on the trust level found
-  - `/strategy-alliance` — Build trust as a concrete alliance strategy
-  - `/social-incentive-analysis` — Align incentives to build trust over time
-  - **Done** — Wrap up and synthesise what we have so far

@@ -1,10 +1,3 @@
----
-name: category-frontend
-description: "Pick when building or changing UI, React components, styling, or frontend flows. Router—load up to 4 skills from this category when relevant."
-triggers: [React, UI, component, Tailwind, Next.js, frontend]
-disable-model-invocation: false
----
-
 # Category: Frontend
 
 **When to pick this:** Pick when building or changing UI, React components, styling, or frontend flows.

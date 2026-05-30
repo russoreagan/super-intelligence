@@ -1,11 +1,3 @@
----
-name: systems-archetype-matching
-description: "Applies the 8 classic system archetypes (Senge) to diagnose recurring system behavior. Use when asked 'this keeps repeating', 'the fix made it worse', 'we've solved this before', 'identify the pattern', or 'system archetype'."
-category: systems
-is_router: false
-tier: 2
----
-
 # Systems Archetype Matching
 
 Recurring system behaviors are not unique — they follow a small set of structural patterns that have known causes and known high-leverage responses. Senge's eight archetypes give names to these patterns. Matching the current situation to an archetype tells you what structure is producing the behavior and what intervention actually works, rather than re-discovering the same solution each cycle.
@@ -80,11 +72,3 @@ If two archetypes both fit, that is meaningful — overlapping archetypes indica
 ## What's Next
 
 After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Archetype matched. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/systems-leverage-analysis` — Find leverage points within the matched archetype
-  - `/systems-feedback-mapping` — Map feedback loops specific to the archetype
-  - `/historical-precedent-analysis` — Find historical precedents for this archetype
-  - **Done** — Wrap up and synthesise what we have so far

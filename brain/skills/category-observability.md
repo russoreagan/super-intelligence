@@ -1,10 +1,3 @@
----
-name: category-observability
-description: "Pick when adding or tuning logging, metrics, tracing, dashboards, or SLOs. Router—load up to 4 skills from this category when relevant."
-triggers: [logging, metrics, tracing, Grafana, Sentry, SLO]
-disable-model-invocation: false
----
-
 # Category: Observability
 
 **When to pick this:** Pick when adding or tuning logging, metrics, tracing, dashboards, or SLOs.

@@ -1,11 +1,3 @@
----
-name: strategy-victory
-description: "Defines what winning actually means before the contest begins — prevents the pyrrhic trap of winning in ways that lose the larger goal. Triggers: 'what does winning look like', 'define victory', 'victory conditions', 'what are we actually trying to achieve', 'define success', 'is winning worth it', 'pyrrhic trap', 'are we optimizing for the right thing'."
-category: strategy
-is_router: false
-tier: 3
----
-
 # Strategy: Victory
 
 Clausewitz's central insight in *On War*: "War is the continuation of politics by other means." The military contest is not the point; it is a means to a political end. The moment a commander loses sight of the political objective and optimizes purely for military victory, they have already failed strategically — because a military win that undermines the political aim is worse than a negotiated settlement.
@@ -39,43 +31,3 @@ How will you know when you've won? What observable condition tells you to stop? 
 ---
 
 ## Output Format
-
-### Victory Definition
-
-**Stated Objective**
-[How the objective is currently framed]
-
-**Real Objective**
-[The underlying political end — why the stated objective matters, and what you'd actually have if you achieved it]
-
-**Minimum Victory**
-[The least outcome that makes this worth the effort — what must be true]
-
-**Maximum Victory**
-[The unequivocal win — what makes the cost obviously worthwhile]
-
-**Pyrrhic Check**
-[What winning costs — and what would constitute a pyrrhic outcome even on a technical win]
-
-**Victory Recognition Conditions**
-[Observable conditions that tell you to stop — you have won, or you have lost and further prosecution only adds cost]
-
----
-
-## Notes
-
-Run this before any other strategy skill when the objective is unclear — all other skills operate in service of a defined objective, and without one, they produce well-structured answers to the wrong question. Pairs tightly with `/strategy-force-economy`: knowing minimum and maximum victory conditions shapes how much force to deploy, and when the minimum has been achieved. When the pyrrhic check suggests the cost of maximum victory is unacceptable, use `/strategy-alliance` and `/strategy-positioning` to understand whether the cost can be reduced before the contest begins.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Victory conditions defined. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/strategy-positioning` — Position to achieve the victory conditions
-  - `/decision-premortem-analysis` — Stress-test the victory definition
-  - `/strategy-timing` — Time moves toward victory
-  - **Done** — Wrap up and synthesise what we have so far

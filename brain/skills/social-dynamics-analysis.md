@@ -1,11 +1,3 @@
----
-name: social-dynamics-analysis
-description: "Identifies group psychology shaping a discussion or team — groupthink, status dynamics, coalition formation, psychological safety. Triggers: 'group dynamics', 'why does this team behave like this', 'groupthink check', 'why won't people speak up', 'meeting dynamics', 'team dysfunction'."
-category: social
-is_router: false
-tier: 2
----
-
 # Group Dynamics Analysis
 
 Groups develop collective behaviours that are invisible from inside them. Premature consensus, status-based deference, and psychological unsafety all degrade decision quality — and they are self-reinforcing. Naming the dynamic is the first step to changing it.
@@ -84,15 +76,3 @@ Describe who dominates, who defers, and where status overrides expertise.
 Run this before a high-stakes decision or after a meeting that felt wrong but hard to name. The intervention should be structural where possible — changing the process, not asking people to behave differently.
 
 ---
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Social dynamics analysed. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/social-power-mapping` — Map power relationships within the dynamics
-  - `/social-incentive-analysis` — Analyse what's driving the dynamics
-  - `/strategy-positioning` — Position relative to the social dynamics
-  - **Done** — Wrap up and synthesise what we have so far

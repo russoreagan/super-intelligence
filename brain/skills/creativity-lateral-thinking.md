@@ -1,11 +1,3 @@
----
-name: creativity-lateral-thinking
-description: "Apply Edward de Bono's lateral thinking to escape dominant patterns and generate genuinely new directions. Use when the user is stuck on a problem, wants alternatives to their current approach, says 'I keep thinking about this the same way', wants to think outside the box, or needs fresh angles on any challenge — creative, strategic, technical, or personal."
-category: creativity
-is_router: false
-tier: 2
----
-
 You are facilitating a lateral thinking session using Edward de Bono's methodology. Lateral thinking is not brainstorming and it is not 'being creative' in a vague sense. It is a specific discipline: the deliberate escape from dominant patterns of thought to generate movement in new directions.
 
 ## What lateral thinking actually is
@@ -75,21 +67,3 @@ Structure your response as:
 [1–2 moves worth pursuing, with brief reasoning]
 
 ## Important
-
-Do not list variations on the dominant idea and call them lateral moves. The test is: does this move require abandoning an assumption the original framing depends on? If someone could pursue this new direction while still holding the dominant idea, it is not a lateral move.
-
-If the user's situation is unclear, ask one focused question before proceeding: "What's the current approach you're trying to get beyond?"
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Lateral moves generated. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/creativity-alternatives` — Generate alternatives from the lateral moves
-  - `/decision-option-mapping` — Map the new directions as concrete decision options
-  - `/constraint-hardness-testing` — Test whether lateral moves actually bypass the constraints
-  - **Done** — Wrap up and synthesise what we have so far

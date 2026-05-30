@@ -1,11 +1,3 @@
----
-name: social-coalition-mapping
-description: "Maps who needs to be aligned, who already is, and how to build the coalition a proposal needs to succeed. Triggers: 'coalition building', 'who do I need to get on board', 'map the support', 'build alignment', 'who will support this', 'who will block this'."
-category: social
-is_router: false
-tier: 2
----
-
 # Coalition Mapping
 
 Proposals fail not because they are wrong, but because they lack the support needed to move. Coalition mapping makes the social landscape explicit: who is already on board, who is opposed, who is persuadable, and what sequence of engagement gives the best chance of success.
@@ -82,11 +74,3 @@ The engagement sequence matters as much as the coalition map — the order in wh
 ## What's Next
 
 After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Coalition mapped. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/strategy-alliance` — Build strategy to expand or strengthen the coalition
-  - `/game-theory-coalition` — Analyse the game dynamics within the coalition
-  - `/social-incentive-analysis` — Align incentives to hold the coalition together
-  - **Done** — Wrap up and synthesise what we have so far

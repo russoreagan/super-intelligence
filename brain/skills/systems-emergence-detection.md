@@ -1,11 +1,3 @@
----
-name: systems-emergence-detection
-description: "Identifies system-level properties that exist nowhere in any individual component. Use when asked about 'emergent behavior', 'components are fine but the system isn't', 'why does the whole behave like this', or 'what creates this property'."
-category: systems
-is_router: false
-tier: 2
----
-
 # Systems Emergence Detection
 
 Emergent properties are the most important features of complex systems and the least designed for. They arise from interactions between components, not from the components themselves — which is why fixing individual parts often fails to fix system-level problems. Identifying emergence requires asking not what each component does, but what arises when they interact.
@@ -73,11 +65,3 @@ Removing a component to fix an emergent property rarely works — the interactio
 ## What's Next
 
 After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Emergent properties detected. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/systems-leverage-analysis` — Find leverage in the emergent properties
-  - `/systems-feedback-mapping` — Map feedback loops creating the emergence
-  - `/strategy-positioning` — Position relative to the emergent dynamics
-  - **Done** — Wrap up and synthesise what we have so far

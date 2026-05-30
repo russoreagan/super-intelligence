@@ -1,11 +1,3 @@
----
-name: emotional-resistance-diagnosis
-description: "Diagnoses why people are resisting — finding what's underneath the pushback. Resistance is information, not obstruction; it always has a source. TRIGGERS: 'why are they resisting', 'diagnose the pushback', 'they won't get on board', 'people aren't buying in', 'resistance diagnosis'."
-category: emotional
-is_router: false
-tier: 2
----
-
 # Emotional Resistance Diagnosis
 
 Resistance is not a problem to overcome — it is a signal to decode. People resist for
@@ -66,49 +58,3 @@ Distinguish these before acting.
 ## Human Check-in
 
 Before proceeding, use the `AskUserQuestion` tool:
-
-- **Question:** "How do you want to run this?"
-- **Header:** "Scope"
-- **Options:**
-  - **Full analysis** — Complete all steps, reasoning shown throughout
-  - **Key findings only** — Bottom-line output, skip step-by-step detail
-  - **Resistance source only** — What's actually causing the resistance, skip the implications
-  - **Refine the framing** — Adjust what we're analyzing before starting
-
-Proceed based on their selection.
-
-## Output Format
-
-**Resistance Diagnosis**
-
-| Resistance | Type | Source | What They're Legitimately Protecting | What Reduces It | Engage or Clarify? |
-|---|---|---|---|---|---|
-| [description] | [type] | [root cause] | [legitimate interest] | [lever] | [engage/clarify] |
-
-**Engagement Priority**
-Which resistance requires the most substantive response first, and why. Name the
-one thing that, if addressed well, would most shift the overall dynamic.
-
----
-
-## Notes
-
-The worst response to resistance is to push harder. The best is to correctly
-classify it first — then respond to the actual type. Treating emotional resistance
-as intellectual (presenting more data) is a common and costly mistake. Treating
-political resistance as emotional (offering reassurance) is equally ineffective.
-Classification is the work.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Resistance diagnosed. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/emotional-trust-audit` — Assess whether trust issues are fuelling the resistance
-  - `/communication-objection-mapping` — Map objections rooted in the resistance
-  - `/strategy-alliance` — Build alliances to reduce or bypass the resistance
-  - **Done** — Wrap up and synthesise what we have so far

@@ -1,11 +1,3 @@
----
-name: communication-clarity-audit
-description: "Audits a communication for places where the message will be lost, misread, or misunderstood — before it's sent. Triggers: 'clarity audit', 'will this be understood', 'check my message', 'edit for clarity', 'where will this be misread'."
-category: communication
-is_router: false
-tier: 1
----
-
 # Communication Clarity Audit
 
 Most clarity failures are invisible to the sender because the sender knows what they meant.
@@ -96,11 +88,3 @@ before anything else.
 ## What's Next
 
 After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Clarity audited. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/writing-line-editing` — Fix the clarity issues the audit identified
-  - `/communication-objection-mapping` — Address the objections hiding behind confusing points
-  - `/writing-restructure` — Restructure if the clarity issues are structural
-  - **Done** — Wrap up and synthesise what we have so far

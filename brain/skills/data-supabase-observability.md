@@ -1,18 +1,3 @@
----
-name: supabase-observability
-description: |
-  Execute set up comprehensive observability for Supabase integrations with metrics, traces, and alerts.
-  Use when implementing monitoring for Supabase operations, setting up dashboards,
-  or configuring alerting for Supabase integration health.
-  Trigger with phrases like "supabase monitoring", "supabase metrics",
-  "supabase observability", "monitor supabase", "supabase alerts", "supabase tracing".
-allowed-tools: Read, Write, Edit
-version: 1.0.0
-license: MIT
-author: Jeremy Longshore <jeremy@intentsolutions.io>
-disable-model-invocation: true
-
----
 # Supabase Observability
 
 ## Prerequisites

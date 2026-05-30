@@ -1,11 +1,3 @@
----
-name: narrative-frame-analysis
-description: "Identifies the current frame around a situation and generates alternative frames that reveal different truths. Use when asked to 'reframe this', 'the framing is wrong', 'change the narrative', 'different angle', or 'why won't they see it'."
-category: narrative
-is_router: false
-tier: 2
----
-
 # Narrative Frame Analysis
 
 Frames are invisible until named. The same facts support radically different conclusions depending on who is the protagonist, what counts as the problem, and what counts as success. Most communication failures are framing failures — not evidence failures. Reframing does not change the facts; it changes which facts are salient and which conclusions they support.

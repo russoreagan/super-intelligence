@@ -1,11 +1,3 @@
----
-name: game-theory
-description: "Routes to the right game-theory skill for your strategic situation. Triggers: 'game theory', 'strategic interaction', 'what will they do', 'payoff analysis', 'how do I think about this strategically', 'incentive design', 'cooperation problem', 'bidding strategy', any situation where the best choice depends on what others choose."
-category: game-theory
-is_router: true
-tier: 3
----
-
 # Game Theory
 
 Your best move depends on what they'll do — and their best move depends on what you'll do. This interdependence is the defining feature of strategic interaction. Game theory provides formal tools for reasoning through it: mapping payoffs, finding stable outcomes, designing incentives, and analysing how cooperation forms and breaks down.
@@ -50,13 +42,3 @@ If confirmed, invoke the appropriate skill. If the situation spans multiple type
 ---
 
 ## Important distinction
-
-Game theory provides formal payoff structure: it tells you what a rational player will do given the rules, payoffs, and other players. Strategy (see `/strategy`) provides contextual wisdom: how to position, when to act, how to use terrain and timing. They are complementary — use game theory to understand the structure of the interaction, and strategy to act effectively within it. When both apply, use game theory first to clarify what the incentives actually are, then strategy to decide how to play.
-
----
-
-## Notes
-
-The category skills are: `/game-theory-equilibrium`, `/game-theory-prisoners-dilemma`, `/game-theory-signaling`, `/game-theory-mechanism-design`, `/game-theory-iterated`, `/game-theory-coalition`, `/game-theory-auction`.
-
-Related categories: `/strategy` (contextual wisdom for acting within games), `/decision` (single-player choice without strategic interaction), `/social` (power dynamics and coalition politics).

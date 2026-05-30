@@ -690,6 +690,7 @@ class ObservabilityLayer:
         prompt_tokens: int,
         completion_tokens: int,
         latency_s: float,
+        skills: list[str] | None = None,
     ) -> None:
         if not self._langfuse:
             return
@@ -698,12 +699,15 @@ class ObservabilityLayer:
             cluster_entry = self._active_cluster_spans.get(f"{turn_id}:{cluster}")
             parent = cluster_entry[0] if cluster_entry else self._active_spans.get(turn_id)
             if parent:
+                meta: dict = {"latency_s": round(latency_s, 3)}
+                if skills:
+                    meta["skills"] = skills
                 gen = parent.start_observation(
                     name=f"{cluster}.{cell}",
                     as_type="generation",
                     model=model,
                     usage_details={"input": prompt_tokens, "output": completion_tokens},
-                    metadata={"latency_s": round(latency_s, 3)},
+                    metadata=meta,
                 )
                 gen.end()
         except Exception as e:

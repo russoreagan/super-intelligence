@@ -1,11 +1,3 @@
----
-name: analogy-perspective-shifting
-description: "Approaches a problem from completely different fields to break the assumption blindness that comes from domain expertise. Triggers: 'fresh eyes', 'outside perspective', 'what would a [different expert] say', 'beginner's mind', 'approach from another field'."
-category: analogy
-is_router: false
-tier: 2
----
-
 # Analogy Perspective Shifting
 
 Domain expertise creates assumption blindness. The more you know about a field, the more
@@ -90,13 +82,3 @@ your frame — you've just dressed it in different vocabulary.
 ---
 
 ## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Perspectives shifted. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/communication-audience-modeling` — Model the audience through each shifted perspective
-  - `/creativity-alternatives` — Generate alternatives from each perspective
-  - `/emotional-motivation-mapping` — Map motivations visible from each perspective
-  - **Done** — Wrap up and synthesise what we have so far

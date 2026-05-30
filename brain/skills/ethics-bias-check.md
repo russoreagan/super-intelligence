@@ -1,11 +1,3 @@
----
-name: ethics-bias-check
-description: "Evaluate an algorithm, model, ranking system, recommendation engine, or automated decision process for discriminatory patterns and unfair outcomes. Use before deploying any system that makes decisions about people or ranks/filters/scores people. TRIGGERS: 'bias check', 'check this algorithm for bias', 'is this fair', 'fairness audit', any ML model, ranking function, scoring system, content recommendation, or automated decision that differentiates between people."
-category: ethics
-is_router: false
-tier: 1
----
-
 # Ethics Bias Check
 
 Algorithms that treat everyone the same can still discriminate. A ranking that optimises for engagement may systematically deprioritise certain groups. A model trained on historical data may encode historical injustice. A feature that works well on average may fail badly for users who aren't the implicit default.
@@ -60,49 +52,3 @@ Before proceeding, use the `AskUserQuestion` tool:
   - **Refine the framing** — Adjust what we're analyzing before starting
 
 Proceed based on their selection.
-
-## Output Format
-
-**System Being Audited:**
-[What it does, inputs, outputs, who it affects]
-
-**Implicit Default**
-[Who the system is optimised for; who may be disadvantaged by that assumption]
-
-**Bias Findings**
-
-| Dimension | Finding | Severity |
-|---|---|---|
-| Direct bias (protected characteristics) | [finding] | 🔴 / 🟡 / 🟢 |
-| Proxy bias (correlated features) | [finding] | 🔴 / 🟡 / 🟢 |
-| Training data issues | [finding] | 🔴 / 🟡 / 🟢 |
-| Feedback loop risk | [finding] | 🔴 / 🟡 / 🟢 |
-| Error cost distribution | [finding] | 🔴 / 🟡 / 🟢 |
-
-**Most Significant Concern**
-[One specific, concrete finding that warrants most attention]
-
-**Recommended Actions**
-- [Specific mitigation per finding, or "escalate to ethics-council" for significant concerns]
-
----
-
-## Notes
-
-A clean bias check is not a guarantee of fairness — it is evidence of serious effort. Bias is often subtle and emerges at scale. Where this check surfaces concerns, treat them as decisions to be made consciously, not problems to be explained away.
-
-For systems with high-stakes outputs (credit, hiring, healthcare, content moderation), this check is a minimum. Consider ongoing monitoring post-deployment, not just a pre-ship audit.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Biases identified. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/ethics-check` — Run a full ethical assessment of the bias-affected reasoning
-  - `/logic-fixer` — Correct bias-induced logic errors
-  - `/decision-criteria-weighting` — Re-weight decision criteria after removing bias
-  - **Done** — Wrap up and synthesise what we have so far

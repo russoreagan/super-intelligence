@@ -1,9 +1,3 @@
----
-name: python-async-brain
-description: Key Python asyncio patterns for writing correct async tool steps. Covers gather, tasks, queues, semaphores, and common pitfalls.
-disable-model-invocation: true
-
----
 # Python Async Patterns — Brain Reference
 
 ## Running things concurrently

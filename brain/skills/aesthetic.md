@@ -1,11 +1,3 @@
----
-name: aesthetic
-description: "Entry point for the aesthetic toolkit. Routes to the right aesthetic skill based on your situation. Use when you say 'aesthetic', 'check the design', 'does this feel right', 'is this elegant', 'is this too complex', 'what pattern is this', 'find the simpler version', or want an aesthetic lens applied without knowing which specific tool fits."
-category: aesthetic
-is_router: true
-tier: 3
----
-
 # Aesthetic
 
 Applies aesthetic reasoning to any artifact — design, writing, code, product, argument. Diagnoses what kind of aesthetic question is being asked and applies the right tool.

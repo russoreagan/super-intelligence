@@ -1,9 +1,3 @@
----
-name: unity-cinemachine
-description: Unity Cinemachine skill for virtual cameras, procedural camera control, and cinematic sequences.
-allowed-tools: Read, Grep, Write, Bash, Edit, Glob, WebFetch
----
-
 # Unity Cinemachine Skill
 
 Procedural camera system using Unity Cinemachine.

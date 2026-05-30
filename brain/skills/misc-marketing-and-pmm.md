@@ -1,11 +1,3 @@
----
-name: marketing-and-pmm
-description: Use when defining ICP, positioning, messaging, GTM plans, launches, competitive intel, and demand-gen channel mix (including TV/CTV) for growth-stage teams.
-summary: ICP, positioning (April Dunford), messaging architecture, GTM plans, launches, and competitive intel.
-triggers: [marketing, PMM, positioning, messaging, GTM, launch, ICP, competitive]
-disable-model-invocation: true
-
----
 # Marketing & PMM (Definitive)
 
 ## Goal

@@ -1,11 +1,3 @@
----
-name: creativity-assumption-excavator
-description: "Surface and challenge the hidden assumptions in any problem, plan, or framing. Use when the user feels stuck despite trying multiple approaches, a problem seems intractable, a plan keeps failing for unclear reasons, something 'obvious' keeps producing unexpected results, or before using any other creative thinking tool when the problem itself might be wrongly framed. This is the prerequisite skill — run it when the ground itself might be wrong."
-category: creativity
-is_router: false
-tier: 2
----
-
 You are facilitating an assumption excavation. This is a meta-tool — it operates on the framing of a problem before any other thinking is applied. It is most valuable when other approaches haven't worked, because the reason they failed is often that the problem was wrongly defined.
 
 ## Why assumptions matter
@@ -49,65 +41,3 @@ For the 3–5 assumptions that most constrain the solution space, ask:
 
 **Step 4: Generate lateral moves from dropped assumptions**
 For each challenged assumption, what becomes possible when it is relaxed or inverted? This connects to the lateral thinking primitive — each dropped assumption is a potential departure point.
-
-Name 1–2 new directions that open up when each key assumption is questioned.
-
-## Human Check-in
-
-Before proceeding, use the `AskUserQuestion` tool:
-
-- **Question:** "How do you want to run this?"
-- **Header:** "Scope"
-- **Options:**
-  - **Full analysis** — Complete all steps, reasoning shown throughout
-  - **Key findings only** — Bottom-line output, skip step-by-step detail
-  - **Load-bearing assumptions only** — The ones that most change the problem if they turn out to be wrong
-  - **Refine the framing** — Adjust what we're analyzing before starting
-
-Proceed based on their selection.
-
-## Output format
-
-**Problem as framed:** [restated in user's language]
-
-**Surface assumptions:**
-- This framing assumes: [assumption] *(load-bearing: low/medium/high)*
-- ...
-
-**Structural assumptions:**
-- This framing assumes: [assumption] *(load-bearing: high)*
-- ...
-
-**Identity assumptions:**
-- This framing assumes: [assumption about the solver]
-- ...
-
-**Challenging the key assumptions:**
-
-*Assumption: [most load-bearing assumption]*
-- Is it actually true? [assessment]
-- What if it weren't? [implications]
-- What opens up: [new directions]
-
-*(repeat for 2–4 more)*
-
-**Reframings worth exploring:**
-[2–3 ways to restate the problem that become available once key assumptions are dropped]
-
-## The insight this tool exists to deliver
-
-Most intractable problems are intractable because of the frame, not the content. When smart people keep failing at a problem, the usual explanation is not insufficient intelligence — it's that everyone is working within an assumption that makes the problem unsolvable. The assumption excavator's job is to find that assumption and name it. Once named, it can be changed.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Assumptions surfaced. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/creativity-lateral-thinking` — Use the exposed assumptions as springboards for lateral moves
-  - `/decision-option-mapping` — Map new options now that assumptions are cleared
-  - `/constraint-hardness-testing` — Test whether the assumptions were actually hard constraints
-  - **Done** — Wrap up and synthesise what we have so far

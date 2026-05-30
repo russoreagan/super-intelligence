@@ -1,11 +1,3 @@
----
-name: analogy
-description: "Entry point for the analogy toolkit. Routes to the right analogy skill based on your situation. Use when you say 'analogy', 'is this like that', 'find a comparison', 'import a solution from elsewhere', 'fresh eyes on this', 'where does this metaphor break', or want analogical reasoning applied without knowing which specific tool fits."
-category: analogy
-is_router: true
-tier: 2
----
-
 # Analogy
 
 Applies analogical reasoning to any problem. Diagnoses what kind of analogy work is needed and applies the right tool.
@@ -64,7 +56,3 @@ Name the home domain — the expertise lens being applied by default. Now select
 ## Structure Mapping
 
 *Identifies the deep structural correspondence between two situations.*
-
-List the elements of situation A. List the elements of situation B. For each element in A: does a corresponding element exist in B? Are the relationships between elements preserved? Test whether the mapping is genuine isomorphism or just surface similarity. Surface similarity fails on deeper structure; genuine isomorphism predicts behavior accurately.
-
-**Output:** Element-by-element correspondence table, relationship preservation check, verdict on whether the analogy is structurally valid, and what the mapping predicts.

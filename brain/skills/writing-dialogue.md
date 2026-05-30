@@ -1,11 +1,3 @@
----
-name: writing-dialogue
-description: "Diagnoses and repairs dialogue for subtext, voice differentiation, exposition, and forward momentum. Use when dialogue sounds wrong, on-the-nose, or when characters all sound the same. Triggers: 'the dialogue sounds wrong', 'dialogue feels on the nose', 'dialogue review', 'characters sound the same', 'dialogue fix', 'dialogue is too direct', 'the dialogue explains too much'."
-category: writing
-is_router: false
-tier: 3
----
-
 # Writing: Dialogue
 
 Dialogue fails in two primary ways: it says exactly what it means (no subtext), or it explains things the characters already know (exposition dressed as conversation). Both failures produce the same effect on the reader — a sense of flatness, of the author's hand visible, of characters becoming mouthpieces rather than people.
@@ -38,66 +30,3 @@ If the voices are interchangeable — if you could swap the speakers' lines with
 Flag any lines where characters explain things they both already know, solely for the reader's benefit. This is the "As you know, Bob" problem: "As you know, we've been married for fifteen years and your father never approved of me." Neither character needs to be told this. It's only there for the reader — and the reader knows it.
 
 Exposition that is genuinely needed can be delivered through conflict (characters who have different versions of the same event), curiosity (a character who genuinely doesn't know something), or revelation (information emerging under pressure, not volunteered).
-
-**Step 4: Scene Function**
-What is the dialogue doing? Mark all that apply:
-- **Conflict:** Two opposing wants in direct tension
-- **Revelation:** Something new emerges for a character or reader
-- **Bonding:** Intimacy or connection established or tested
-- **Negotiation:** Characters working toward an arrangement
-- **Deflection:** A character managing a threat through misdirection
-
-If the dialogue serves no discernible function — if it is simply exchange — it should be cut or redirected.
-
-**Step 5: Forward Momentum**
-Does the dialogue advance the scene, or does it stall it? Diagnose the rate at which the scene's situation changes through the dialogue. If the first and last lines of the dialogue exchange are in the same state as each other, the dialogue is stalling.
-
----
-
-## Output Format
-
-### Dialogue Analysis
-
-**Speaker Goals:**
-- [Speaker A]: Surface goal / Subtext goal
-- [Speaker B]: Surface goal / Subtext goal
-- FLAGGED: [any speaker whose surface and subtext goals are identical]
-
-**Voice Differentiation:**
-- [Speaker A]: Rhythm / Vocabulary / Evasion pattern / Silence relationship
-- [Speaker B]: Same
-- FLAGGED: [any voices that are interchangeable]
-
-**Exposition Flags:** [Quoted lines + why they're exposition + how to deliver the information legitimately]
-
-**Scene Function:** [Conflict / Revelation / Bonding / Negotiation / Deflection — mark all present / FLAG if none]
-
-**Forward Momentum:** [Does the scene advance through dialogue? Where does it stall?]
-
-**Line-by-Line Notes:** [Specific notes on strongest exchanges and weakest — quote and diagnose]
-
-**Rewrites for Flagged Lines:** [Specific rewrites that restore subtext, differentiate voice, or remove exposition]
-
----
-
-## Notes
-
-- Subtext does not mean obscure. The reader should be able to feel what's underneath even if the characters don't say it. Clarity and subtext are not in tension.
-- The best dialogue rewrites keep the surface plausible while loading the subtext — the characters are still talking about something real, but the real thing is not what they say.
-- Pairs with `/writing-scene-construction` for diagnosing the dialogue within its scene context — dialogue problems are often scene-construction problems.
-- Pairs with `/writing-character-development` because voice flows from character: the wound and defence determine how a character speaks, evades, and what they're incapable of saying directly.
-- Pairs with `/writing-voice-consistency` when the issue is that a character's voice is inconsistent across the manuscript rather than within a single scene.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Dialogue written. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/writing-voice-consistency` — Ensure dialogue is voice-consistent throughout
-  - `/writing-character-development` — Use dialogue to deepen character
-  - `/writing-scene-construction` — Embed the dialogue in its scene
-  - **Done** — Wrap up and synthesise what we have so far

@@ -1,11 +1,3 @@
----
-name: mindset
-description: "Entry point for the mindset toolkit. Routes to the right mindset skill based on your situation. Use when you say 'mindset', 'change my perspective', 'I keep thinking about this the wrong way', 'help me deal with what I can't control', 'I want to flourish more', 'I keep treating failure personally', 'I'm stuck in a negative thought loop', 'I can't focus', 'I want to get into flow', or any request for a philosophical or psychological orientation shift."
-category: mindset
-is_router: true
-tier: 2
----
-
 # Mindset
 
 Applies deep philosophy-grade thinking orientations to life, work, and challenge. Diagnoses what kind of mindset work is needed and routes to the right tool — whether that's learning to distinguish what's in your control, building genuine flourishing, shifting how you relate to failure, restructuring a thought distortion, or designing conditions for optimal experience.
@@ -50,35 +42,3 @@ Based on Seligman's PERMA model (Positive emotion, Engagement, Relationships, Me
 ## Growth Mindset
 
 *Identify the fixed-mindset trigger, surface the hidden belief, and design the learning response.*
-
-Based on Carol Dweck's research — the actual mechanics, not the pop version. Fixed mindset treats abilities as fixed traits; growth mindset treats them as developable capacities. Process: identify the fixed-mindset trigger (challenge, failure, comparison) → surface the hidden fixed-mindset belief → reframe through the growth lens → design a concrete learning response.
-
----
-
-## Reframe
-
-*Map the cognitive distortion and generate a more accurate interpretation.*
-
-Based on CBT cognitive restructuring. The cognitive triangle: thoughts → feelings → behaviors. Core process: identify the automatic thought → examine evidence for and against → name the cognitive distortion → generate an alternative interpretation equally consistent with the facts but more useful. Not about forced positivity — about accuracy.
-
----
-
-## Flow
-
-*Diagnose why flow isn't occurring and redesign the conditions for optimal experience.*
-
-Based on Csikszentmihalyi's flow framework. Flow requires: clear goals, immediate feedback, and challenge/skill balance. Process: identify the target activity → audit what's blocking flow (wrong challenge/skill ratio? absent feedback? unclear goals? interruptions?) → redesign the conditions → enter the flow channel.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Mindset work complete. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/identity-values-clarification` — Connect the mindset shift to your underlying values
-  - `/emotional-motivation-mapping` — Map the motivations connected to the mindset patterns
-  - `/decision-premortem-analysis` — Stress-test decisions with the new mindset applied
-  - **Done** — Wrap up and synthesise what we have so far

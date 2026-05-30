@@ -1,11 +1,3 @@
----
-name: strategy-positioning
-description: "Builds the conditions for competitive unassailability before the contest begins. Triggers: 'create a position', 'competitive positioning', 'make myself the obvious choice', 'how do I make myself hard to compete with', 'strategic positioning', 'establish advantage before competing', 'what makes me hard to displace', 'build a moat'."
-category: strategy
-is_router: false
-tier: 3
----
-
 # Strategy: Positioning
 
 Sun Tzu: "The good fighters of old first put themselves beyond the possibility of defeat, and then waited for an opportunity of defeating the enemy." The first move is not to attack — it is to make yourself unassailable. Position precedes contest.
@@ -41,39 +33,3 @@ Would a rational, well-resourced opponent, looking at your fully-built position,
 
 **Ideal Unassailable Position**
 [Specific description — what you own, what you're known for, what relationships you hold, what makes a rational opponent go around rather than through]
-
-**Required Assets and Capabilities**
-- *Have:* [What you currently hold that contributes to this position]
-- *Need:* [What is missing — specific gaps between current state and ideal]
-
-**Current Position**
-[Honest assessment of what you actually own today]
-
-**Gap-Widening Moves**
-[Ranked investments and actions — highest leverage per unit of investment first]
-
-**Position Test Result**
-[Would a rational, well-resourced opponent choose a different arena? What's missing if no]
-
-**Implementation Path**
-[Sequenced steps — what to build first, in what order, over what timeframe]
-
----
-
-## Notes
-
-Terrain analysis identifies which positions are available — run `/strategy-terrain` first when you're not yet sure which positions exist worth holding. Better positioning reduces force required to defend: pair with `/strategy-force-economy` to understand how position investment pays back in reduced ongoing cost. For the specific timing of when to build vs. when to contest now, pair with `/strategy-timing`.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Position mapped. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/strategy-timing` — Time the position move
-  - `/strategy-alliance` — Build alliances to strengthen the position
-  - `/decision-premortem-analysis` — Stress-test the position before committing
-  - **Done** — Wrap up and synthesise what we have so far

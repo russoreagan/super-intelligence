@@ -1,11 +1,3 @@
----
-name: resource
-description: "Entry point for the resource toolkit. Routes to the right resource skill based on your situation. Use when you say 'resource', 'capacity', 'bottleneck', 'allocation', 'where should we focus', 'where are we wasting', 'highest leverage', 'what's slowing us down', or want resource reasoning applied without knowing which specific tool fits."
-category: resource
-is_router: true
-tier: 3
----
-
 # Resource
 
 Applies resource reasoning to allocation, constraints, leverage, and waste. Diagnoses what kind of resource work is needed and applies the right tool.
@@ -62,7 +54,3 @@ Leverage is where the same input produces the most output. Not all investments a
 ## Waste Audit
 
 *Finds where resources are being lost, duplicated, or underused.*
-
-Apply the seven wastes to knowledge work: (1) Overproduction — work done before it's needed, (2) Waiting — time spent blocked or idle, (3) Transport — handoffs that add no value, (4) Over-processing — more work than the task requires, (5) Inventory — work in progress that isn't being acted on, (6) Motion — effort that doesn't produce output, (7) Defects — rework from problems earlier in the process. Find the biggest waste category and its source.
-
-**Output:** Waste audit across all seven categories, the biggest waste sources, and the highest-impact reductions.

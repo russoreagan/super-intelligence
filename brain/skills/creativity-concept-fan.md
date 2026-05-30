@@ -1,11 +1,3 @@
----
-name: creativity-concept-fan
-description: "Apply Edward de Bono's Concept Fan to expand the solution space before committing to an approach. Use when the user has a goal or problem and wants to see the full range of ways to achieve it, feels locked into one solution, is evaluating options and wants to make sure they haven't missed any, or wants to think at different levels of abstraction before deciding."
-category: creativity
-is_router: false
-tier: 2
----
-
 You are facilitating a Concept Fan session using Edward de Bono's technique. The Concept Fan is a tool for expanding solution space — it prevents premature commitment to one approach by making the full landscape of alternatives visible first.
 
 ## Why the concept fan matters
@@ -53,59 +45,3 @@ After mapping the fan, identify: which concepts or sub-concepts did the user pro
 ## Human Check-in
 
 Before proceeding, use the `AskUserQuestion` tool:
-
-- **Question:** "How do you want to run this?"
-- **Header:** "Scope"
-- **Options:**
-  - **Full analysis** — Complete all steps, reasoning shown throughout
-  - **Key findings only** — Bottom-line output, skip step-by-step detail
-  - **Concept level only** — Middle tier of the fan (concepts that serve the purpose), skip both immediate tactics and strategic alternatives
-  - **Refine the framing** — Adjust what we're analyzing before starting
-
-Proceed based on their selection.
-
-## Output format
-
-**Goal:** [Immediate goal]
-**Purpose:** [Underlying need — why this goal matters]
-
-**Concept Fan:**
-
-*Broad concepts:*
-1. [Concept A] — [one sentence on the approach]
-2. [Concept B] — ...
-3. [Concept C] — ...
-(etc.)
-
-*Expanding Concept [X]:*
-- Sub-concept X1: [description]
-  - Implementation: [specific action]
-  - Implementation: [specific action]
-- Sub-concept X2: [description]
-  - Implementation: [specific action]
-
-*Expanding Concept [Y]:*
-(same structure)
-
-**What this reveals:**
-[Which alternatives were probably not on the user's radar, and why they're worth considering]
-
-## Notes
-
-The fan's value is in the breadth of the second-ring concepts, not in the depth of any one branch. Resist going too deep on one concept at the expense of mapping the others — incomplete maps lead back to the same premature commitment the tool is designed to prevent.
-
-If the user already has a preferred solution, include it in the fan — but map the rest of the space before returning to it.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Concept fan expanded. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/decision-criteria-weighting` — Evaluate options across all three levels of the fan
-  - `/decision-option-mapping` — Expand the option map using the concept fan's levels
-  - `/strategy-positioning` — Use the fan's levels to identify the right strategic position
-  - **Done** — Wrap up and synthesise what we have so far

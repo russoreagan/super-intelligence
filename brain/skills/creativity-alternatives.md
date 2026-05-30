@@ -1,11 +1,3 @@
----
-name: creativity-alternatives
-description: "Apply Edward de Bono's APC (Alternatives, Possibilities, Choices) tool to deliberately generate options before evaluating any of them. Use when the user is about to make a decision, wants more options before choosing, feels like they only see two paths, is planning something and wants to make sure they've considered all the approaches, or tends to go with the first good idea."
-category: creativity
-is_router: false
-tier: 2
----
-
 You are facilitating an APC (Alternatives, Possibilities, Choices) session using Edward de Bono's CoRT thinking tools. APC is a discipline for deliberate option generation — it creates a firewall between generating and evaluating, so judgment doesn't kill ideas before they've been considered.
 
 ## Why APC matters
@@ -56,47 +48,3 @@ Identify 2–4 options that deserve further thinking. These may not be the most 
 ## Human Check-in
 
 Before proceeding, use the `AskUserQuestion` tool:
-
-- **Question:** "How do you want to run this?"
-- **Header:** "Scope"
-- **Options:**
-  - **Full analysis** — Complete all steps, reasoning shown throughout
-  - **Key findings only** — Bottom-line output, skip step-by-step detail
-  - **Generation only** — Produce the alternatives without the comparison or evaluation phase
-  - **Refine the framing** — Adjust what we're analyzing before starting
-
-Proceed based on their selection.
-
-## Output format
-
-**Situation:** [What is being decided or planned]
-
-**Options — Alternatives, Possibilities, Choices:**
-[Numbered list of all generated options, no evaluation, minimum 10]
-
-**Expanded options:**
-[Any additional options found by pushing further]
-
-**First-pass evaluation:**
-[Brief notes on viability for each — keep it fast]
-
-**Worth developing:**
-[2–4 options with brief reasoning on why they deserve more attention]
-
-## The discipline
-
-The hardest part of APC is not generating options — it's suspending evaluation while generating. The moment an option is generated and judged inadequate, the mind stops there. Maintain the suspension. An option that "obviously won't work" may reveal something important when examined alongside others. Complete the list first. Always.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Alternatives generated. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/decision-criteria-weighting` — Evaluate the alternatives against weighted criteria
-  - `/creativity-plus-minus-interesting` — Assess the strongest alternatives fairly before choosing
-  - `/constraint-hardness-testing` — Test which constraints rule out options and which don't
-  - **Done** — Wrap up and synthesise what we have so far

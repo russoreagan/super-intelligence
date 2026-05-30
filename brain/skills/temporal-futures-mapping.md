@@ -1,11 +1,3 @@
----
-name: temporal-futures-mapping
-description: "Explores possible, probable, and preferable futures using scenario thinking. Use when asked about 'scenario planning', 'futures thinking', 'possible futures', 'how might this play out', 'futures cone', or 'what could happen'."
-category: temporal
-is_router: false
-tier: 3
----
-
 # Temporal Futures Mapping
 
 The future is not a single path — it is a cone of possibilities that narrows as time passes and choices are made. Scenario thinking does not predict the future; it maps the cone so that plans can be tested against multiple plausible worlds rather than a single assumed one. Plans that only work in one scenario are fragile. Plans robust across several are resilient.

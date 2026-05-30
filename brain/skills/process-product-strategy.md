@@ -1,11 +1,3 @@
----
-name: product-strategy
-description: Use when setting product vision/strategy, analyzing a market, defining goals (OKRs), prioritizing roadmap, and aligning teams on measurable outcomes.
-summary: Market analysis, vision, OKRs, roadmap prioritization, and strategy alignment.
-triggers: [strategy, vision, OKR, roadmap, prioritize, market, competitive, goals]
-disable-model-invocation: true
-
----
 # Product Strategy (Definitive)
 
 ## Goal

@@ -1,11 +1,3 @@
----
-name: aesthetic-coherence-check
-description: "Tests whether the parts of something form a unified whole — finding the jarring inconsistencies that accumulate when different contributors work without a shared vision. TRIGGERS: 'coherence check', 'does this feel unified', 'something feels off', 'inconsistent', 'check the whole', 'does this hang together'."
-category: aesthetic
-is_router: false
-tier: 3
----
-
 # Aesthetic Coherence Check
 
 Incoherence is the default product of collaboration without a shared vision. Each part
@@ -79,32 +71,3 @@ Proceed based on their selection.
 | [component] | [signal it sends] | [implicit value] | [audience/context assumption] |
 
 **Inconsistencies**
-
-| Inconsistency | What Conflicts | Why It Jars | Recommended Adjustment |
-|---|---|---|---|
-| [name it precisely] | [the specific conflict] | [effect on the reader/user] | [what to change] |
-
-**Overall Coherence Assessment:** [unified / partially coherent / incoherent + rationale]
-
----
-
-## Notes
-
-Coherence is not uniformity — contrast and tension can serve a unified vision. The
-question is whether every element is working toward the same intended identity, even
-if they take different forms to do it. The most common source of incoherence is not
-bad judgment but absent shared vision — people optimised locally for different things.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Coherence checked. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/aesthetic-elegance-testing` — Test the elegance of the coherent elements
-  - `/writing-restructure` — Restructure incoherent elements
-  - `/logic-consistency-check` — Check logical consistency alongside aesthetic coherence
-  - **Done** — Wrap up and synthesise what we have so far

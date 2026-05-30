@@ -1,11 +1,3 @@
----
-name: api-design
-description: Unified API design skill combining REST/GraphQL best practices, consistent error/pagination/versioning, and contract-first typed API patterns.
-summary: REST/GraphQL API design with consistent contracts, error handling, pagination, and typed clients.
-triggers: [API, endpoint, REST, GraphQL, contract, request, response, route]
-disable-model-invocation: true
-
----
 # API Design (Unified)
 
 ## Intent

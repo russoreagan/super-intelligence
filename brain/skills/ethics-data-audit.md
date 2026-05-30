@@ -1,11 +1,3 @@
----
-name: ethics-data-audit
-description: "Audit a data collection, retention, or sharing decision against ethical standards. Use when the user is making decisions about what data to collect, how long to keep it, who can access it, or who it's shared with. TRIGGERS: 'audit this data decision', 'is this data practice ok', 'data ethics check', any change to data models, privacy controls, analytics instrumentation, data sharing agreements, or retention policies. Goes beyond legal compliance — evaluates whether the practice is ethical, not just lawful."
-category: ethics
-is_router: false
-tier: 2
----
-
 # Ethics Data Audit
 
 Legal compliance sets the floor. This audit asks whether your data practices clear a higher bar: are they *ethical*?
@@ -67,39 +59,3 @@ Proceed based on their selection.
 | Purpose limitation | ✅ / ⚠️ / ❌ | [explanation] |
 | Right to exit | ✅ / ⚠️ / ❌ | [explanation] |
 | Data as means | ✅ / ⚠️ / ❌ | [explanation] |
-
-**Care Ethics Findings**
-| Dimension | Status | Notes |
-|---|---|---|
-| Power asymmetry | ✅ / ⚠️ / ❌ | [explanation] |
-| Vulnerable populations | ✅ / ⚠️ / ❌ | [explanation] |
-| Trust test | ✅ / ⚠️ / ❌ | [explanation] |
-| Harm potential | ✅ / ⚠️ / ❌ | [explanation] |
-
-**Verdict**
-[2–3 sentences: is this practice ethical, what are the key concerns, what would need to change]
-
-**Recommended Actions**
-- [Specific change or safeguard, if any]
-
----
-
-## Notes
-
-This audit does not replace legal review. It supplements it. A practice can pass this audit and still require legal sign-off. A practice that fails this audit should not be excused by legal compliance.
-
-If the audit turns up significant concerns, consider escalating to `ethics-council` for a full multi-framework analysis.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Data practices audited. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/ethics-consent-review` — Review consent for data practices found in the audit
-  - `/ethics-impact-scan` — Scan broader impact of the data practices
-  - `/logic-check` — Validate the reasoning about data use
-  - **Done** — Wrap up and synthesise what we have so far

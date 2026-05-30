@@ -1,11 +1,3 @@
----
-name: game-theory-mechanism-design
-description: "Designs rules and incentive systems that produce desired outcomes even when players are self-interested. Triggers: 'mechanism design', 'incentive design', 'design a system that makes people do X', 'reverse game theory', 'incentivize honest behavior', 'design rules', 'how do I get people to reveal their true preferences', 'how do I align incentives', 'the current system produces the wrong behavior'."
-category: game-theory
-is_router: false
-tier: 3
----
-
 # Game Theory: Mechanism Design
 
 Standard game theory takes the rules as given and asks what rational players will do. Mechanism design inverts this: it takes the *desired outcome* as given and asks what rules will produce it. This is why it is often called reverse game theory.
@@ -36,67 +28,3 @@ Describe the current equilibrium or default behaviour — what players actually 
 Design the rules and payoffs. Work through three components:
 
 **a. Information revelation**: How do you incentivise players to truthfully reveal their private information? Apply the revelation principle: design payoffs so truth-telling is the dominant strategy. Ask: "If a player with private information X reports Y instead, do they gain or lose?" The mechanism should ensure they lose — or at minimum don't gain — from misreporting.
-
-**b. Rules and allocation**: Given truthful reports, what decision rule produces the desired outcome? How are goods, tasks, payments, or recognition allocated?
-
-**c. Transfers and penalties**: What monetary or non-monetary transfers ensure the mechanism is individually rational (players prefer participating to not) and incentive-compatible (players prefer truth-telling to lying)?
-
-**Step 5: Manipulation check**
-Test the mechanism against strategic players. Ask: "What would a player with extreme private information do?" Try the boundary cases: the player with the highest possible valuation, the lowest, the one who most wants to game the system. Can they improve their outcome by misreporting? If yes, identify the loophole and revise.
-
----
-
-## Output Format
-
-### Mechanism Design
-
-**Desired Outcome**
-[Precisely stated: whose behaviour, what information, what allocation]
-
-**Player Map**
-[For each player: private information they hold + current incentives + what they'd do without the mechanism]
-
-**Misalignment Diagnosis**
-[Current equilibrium / default behaviour and why it fails to produce the desired outcome]
-
-**Mechanism Specification**
-- *Information revelation rule*: [How truth-telling becomes dominant — what the payoff structure looks like]
-- *Decision/allocation rule*: [How reported information is processed into outcomes]
-- *Transfers and participation constraints*: [What ensures players prefer to participate and to be honest]
-
-**Manipulation Check**
-[Results of testing against boundary-case players — can they game the mechanism? Identified loopholes and revisions]
-
-**Revised Mechanism** *(if manipulation found)*
-[Updated rules addressing the identified vulnerability]
-
-**Implementation Notes**
-[Practical considerations: information requirements, enforcement, whether the mechanism is robust to partial participation]
-
----
-
-## Notes
-
-The revelation principle guarantees that for any goal achievable by any mechanism, there is a direct, honest mechanism that achieves it. But "achievable in principle" doesn't always mean "simple to implement." When the mechanism requires detailed information or complex transfer schedules, consider whether a simpler but slightly less optimal mechanism is more practical.
-
-Mechanism design is the formal version of the incentive design problem that appears everywhere: performance reviews, procurement, platform rules, voting systems, club governance, and any setting where the designer wants players with private information to behave in a collectively beneficial way.
-
-For analysis of the equilibrium your mechanism produces (confirming it actually works as intended), use `/game-theory-equilibrium`. For auction-specific mechanism design — the most studied instance of the field — use `/game-theory-auction`.
-
-For the related problem of getting players to cooperate over time (rather than getting a static mechanism right), use `/game-theory-iterated`.
-
-Pairs with: `/social-incentive-analysis` (the social and political dimensions of the same incentive problem), `/game-theory-equilibrium` (verifying the mechanism's equilibrium), `/game-theory-auction` (specialised mechanism design for competitive bidding).
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Mechanism designed. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/logic-check` — Validate the mechanism's internal logic
-  - `/game-theory-equilibrium` — Model what equilibrium the mechanism produces
-  - `/decision-premortem-analysis` — Stress-test the mechanism for failure modes
-  - **Done** — Wrap up and synthesise what we have so far

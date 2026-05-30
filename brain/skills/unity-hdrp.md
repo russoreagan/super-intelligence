@@ -1,9 +1,3 @@
----
-name: unity-hdrp
-description: High Definition Render Pipeline configuration for Unity, including ray tracing, volumetric effects, and high-fidelity graphics setup.
-allowed-tools: Read, Grep, Write, Bash, Edit, Glob, WebFetch
----
-
 # Unity HDRP Skill
 
 High Definition Render Pipeline configuration for high-fidelity graphics in Unity.

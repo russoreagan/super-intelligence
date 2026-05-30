@@ -1,9 +1,3 @@
----
-name: enact-dice-roll-rust
-description: Roll dice with configurable sides and count; returns individual rolls and total. Use when the user or system needs dice rolls (d4, d6, d8, d10, d12, d20, d100 or custom sides) with a specified number of dice, or when integrating with Enact/MCP dice tools.
-disable-model-invocation: true
----
-
 # Dice Roll (configurable sides and count)
 
 Roll any number of dice with configurable sides. Supports common types (d4, d6, d8, d10, d12, d20, d100) and custom sides.

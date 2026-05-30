@@ -1,11 +1,3 @@
----
-name: skill-management
-description: Create, review, install, and maintain skills and MCP integrations safely (structure, progressive disclosure, security scanning, and documentation-to-skill workflows).
-summary: Create, review, and maintain skills and MCP integrations with security scanning and provenance tracking.
-triggers: [skill, MCP, integration, create skill, install skill, docs to skill]
-disable-model-invocation: true
-
----
 # Skill Management (Unified)
 
 ## Intent

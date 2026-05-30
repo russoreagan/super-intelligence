@@ -1,11 +1,3 @@
----
-name: narrative
-description: "Entry point for the narrative toolkit. Routes to the right narrative skill based on your situation. Use when you say 'narrative', 'story', 'this feels flat', 'how do I structure this', 'the framing is wrong', 'who am I talking to', 'make this compelling', 'find the tension', or want narrative/storytelling help without knowing which specific tool fits."
-category: narrative
-is_router: true
-tier: 2
----
-
 # Narrative
 
 Applies narrative and storytelling thinking to communication, strategy, and meaning-making. Diagnoses what kind of narrative work is needed and applies the right tool.
@@ -62,7 +54,3 @@ Information delivered as data rarely moves people. Information delivered as stor
 ## Tension Mapping
 
 *Finds or creates the tension that makes communication worth paying attention to.*
-
-Without tension, there is no story. Without story, there is no attention. Tension is the gap between where things are and where they should be — or between what we know and what we need to know. Find the tension already present in this situation: what's at stake? What could go wrong? What is the unresolved question the audience needs answered? If tension is absent, it must be created — not manufactured, but surfaced from what's actually true.
-
-**Output:** The genuine tension in this situation, how to make it visible and felt, and how the communication resolves it.

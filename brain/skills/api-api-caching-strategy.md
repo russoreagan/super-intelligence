@@ -1,16 +1,3 @@
----
-name: "api-caching-strategy"
-description: |
-  Configure api caching strategy operations. Auto-activating skill for API Development.
-  Triggers on: api caching strategy, api caching strategy
-  Part of the API Development skill category. Use when working with APIs or building integrations. Trigger with phrases like "api caching strategy", "api strategy", "api".
-allowed-tools: "Read, Write, Edit, Bash(curl:*), Grep"
-version: 1.0.0
-license: MIT
-author: "Jeremy Longshore <jeremy@intentsolutions.io>"
-disable-model-invocation: true
-
----
 # Api Caching Strategy
 
 ## Overview

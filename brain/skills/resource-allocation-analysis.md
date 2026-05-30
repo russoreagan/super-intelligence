@@ -1,11 +1,3 @@
----
-name: resource-allocation-analysis
-description: "Distributes limited resources across competing needs — making the trade-offs explicit rather than implicit. Triggers: 'resource allocation', 'how do we distribute this', 'competing priorities', 'trade-off analysis', 'how do we split this', 'allocation decision'."
-category: resource
-is_router: false
-tier: 3
----
-
 # Resource Allocation Analysis
 
 Every allocation is a trade-off — giving to one thing means giving less to another. The problem is that most allocations are made implicitly, leaving the trade-offs invisible. Making trade-offs explicit forces honest prioritisation and prevents the political habit of pretending everything can be fully funded.
@@ -79,11 +71,3 @@ The most useful output is the trade-off column — if the trade-offs can't be wr
 ## What's Next
 
 After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Allocation analysed. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/resource-bottleneck-analysis` — Find bottlenecks in the current allocation
-  - `/decision-criteria-weighting` — Weight criteria by resource constraints
-  - `/resource-waste-audit` — Audit for waste in the current allocation
-  - **Done** — Wrap up and synthesise what we have so far

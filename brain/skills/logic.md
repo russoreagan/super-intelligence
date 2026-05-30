@@ -1,11 +1,3 @@
----
-name: logic
-description: "Entry point for the logic toolkit. Routes to the right logic skill based on your situation. Use when you say 'logic', 'is this sound', 'check my reasoning', 'find the flaw', 'fix this argument', 'find contradictions', 'map the dependencies', 'map the constraints', or want logical analysis applied without knowing which specific tool fits."
-category: logic
-is_router: true
-tier: 2
----
-
 # Logic
 
 Applies logical analysis to arguments, plans, reasoning, and systems. Diagnoses what kind of logical work is needed and applies the right tool.
@@ -66,37 +58,3 @@ Identify the argument structure: premises → conclusion. Test each premise: is 
 ## Consistency Check
 
 *Surfaces internal contradictions in a document, spec, or plan.*
-
-Read for conflict, not comprehension. For each claim or requirement: does any other part of the document contradict it? Are there requirements that can't all be satisfied simultaneously? Are there edge cases that expose a hidden conflict? Documents that grew incrementally frequently have internal contradictions that no single author introduced but no one caught.
-
-**Output:** Contradictions inventory, classified by severity (surface vs. structural), with specific locations and suggested resolutions.
-
----
-
-## Causality Mapping
-
-*Maps causal relationships, traces dependencies, and reasons about consequences.*
-
-Build the causal chain: A causes B because [mechanism]. B enables/requires C. If X changes, what else must change? What has to be true for the plan to work — what are the causal prerequisites? Where are the dependencies that, if broken, break everything downstream? Causal maps reveal the leverage points and the fragile assumptions.
-
-**Output:** Causal chain diagram (in text), key dependencies, critical path, and the assumptions the whole structure rests on.
-
----
-
-## Constraint Mapping
-
-*Maps the full constraint landscape for a decision, design, or plan.*
-
-Inventory all constraints: (1) Classify each as hard (physical/legal), soft (organizational/political), or assumed (may not be real). (2) Find conflicts between constraints — requirements that can't all be satisfied. (3) Find the constraint boundary — the actual solution space that remains. (4) Identify which constraints, if relaxed, would most expand the solution space.
-
-**Output:** Constraint inventory classified by type, conflict map, solution space definition, and highest-value constraints to challenge.
-
----
-
-## Logic Fixer
-
-*Takes broken reasoning and produces a corrected version.*
-
-Diagnose the specific failure: which premise is false? Where does the inference fail? What fallacy is present? What's the circular dependency? Then repair: restate the argument in a form that is valid, where every premise is defensible and the conclusion actually follows. The goal is not just to identify what's wrong — it's to produce reasoning that works.
-
-**Output:** Diagnosis of the specific logical failure(s). Repaired argument that is valid and sound. If the conclusion cannot be saved, a clear statement of what conclusion *is* supportable.

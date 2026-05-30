@@ -1,13 +1,3 @@
----
-name: browsing-with-playwright
-description: |
-  Browser automation using Playwright MCP. Navigate websites, fill forms, click elements,
-  take screenshots, and extract data. Use when tasks require web browsing, form submission,
-  web scraping, UI testing, or any browser interaction. NOT when only fetching static
-  content (use curl/wget instead).
-disable-model-invocation: true
-
----
 # Browser Automation
 
 Automate browser interactions via Playwright MCP server.
@@ -113,48 +103,3 @@ For complex workflows, use `browser_run_code` to run multiple actions in one cal
 python3 scripts/mcp-client.py call -u http://localhost:8808 -t browser_run_code \
   -p '{"code": "async (page) => { await page.goto(\"https://example.com\"); await page.click(\"text=Learn more\"); return await page.title(); }"}'
 ```
-
-**Tip:** Use `browser_run_code` for complex multi-step operations that should be atomic (all-or-nothing).
-
-## Workflow: Form Submission
-
-1. Navigate to page
-2. Get snapshot to find element refs
-3. Fill form fields using refs
-4. Click submit
-5. Wait for confirmation
-6. Screenshot result
-
-## Workflow: Data Extraction
-
-1. Navigate to page
-2. Get snapshot (contains text content)
-3. Use browser_evaluate for complex extraction
-4. Process results
-
-## Verification
-
-Run: `python3 scripts/verify.py`
-
-Expected: `✓ Playwright MCP server running`
-
-## If Verification Fails
-
-1. Run diagnostic: `pgrep -f "@playwright/mcp"`
-2. Check: Server process running on port 8808
-3. Try: `bash scripts/start-server.sh`
-4. **Stop and report** if still failing - do not proceed with downstream steps
-
-## Tool Reference
-
-See [references/playwright-tools.md](references/playwright-tools.md) for complete tool documentation.
-
-## Troubleshooting
-
-| Issue | Solution |
-|-------|----------|
-| Element not found | Run browser_snapshot first to get current refs |
-| Click fails | Try browser_hover first, then click |
-| Form not submitting | Use `"submit": true` with browser_type |
-| Page not loading | Increase wait time or use browser_wait_for |
-| Server not responding | Stop and restart: `bash scripts/stop-server.sh && bash scripts/start-server.sh` |

@@ -1,11 +1,3 @@
----
-name: ethics-crisis-triage
-description: "Rapid multi-framework ethical assessment when something has already gone wrong — a data breach, a harmful outcome, a discriminatory incident, a policy failure, or any situation requiring an urgent ethical response. Use when the user is dealing with an active incident or has just discovered something went wrong. TRIGGERS: 'ethics triage', 'something went wrong', 'incident ethics', 'how do we handle this', any post-incident or mid-incident situation where the ethical dimensions of a response need to be worked out fast."
-category: ethics
-is_router: false
-tier: 2
----
-
 # Ethics Crisis Triage
 
 When something goes wrong, the pressure is immediate and the thinking needs to be fast. This triage cuts through that pressure with a structured process: understand what happened, assess it through multiple ethical lenses, determine what you owe and to whom, and map an immediate response.
@@ -66,66 +58,3 @@ Not the communications plan — the ethical framework for how you respond:
 ## Human Check-in
 
 Before proceeding, use the `AskUserQuestion` tool:
-
-- **Question:** "How do you want to run this?"
-- **Header:** "Scope"
-- **Options:**
-  - **Full analysis** — Complete all steps, reasoning shown throughout
-  - **Key findings only** — Bottom-line output, skip step-by-step detail
-  - **Immediate harm only** — Who's being harmed right now and what stops it fastest
-  - **Refine the framing** — Adjust what we're analyzing before starting
-
-Proceed based on their selection.
-
-## Output Format
-
-**Incident:**
-[What happened, what is known, who is affected, what is ongoing]
-
-**Rapid Framework Sweep**
-
-| Framework | Key Finding | Urgency |
-|---|---|---|
-| Utilitarian | [what minimises harm from here] | 🔴 / 🟡 |
-| Deontological | [what you owe regardless of cost] | 🔴 / 🟡 |
-| Care Ethics | [who is most vulnerable, what relationship demands] | 🔴 / 🟡 |
-| Justice | [is response fair; disproportionate harm?] | 🔴 / 🟡 |
-
-**Immediate Obligations**
-- Notify now: [who]
-- Stop now: [what]
-- Preserve: [what]
-- Decisions requiring authority: [what decisions, who decides]
-
-**Response Framework**
-- Transparency: [what to disclose, to whom, when]
-- Accountability: [who owns this; is it being taken or deflected]
-- Remedy: [what is being offered; is it proportionate]
-- Prevention: [what commitment is being made]
-
-**Key Ethical Risk in the Response**
-[One sentence: the single biggest ethical risk in how this is being handled — e.g. "The current response prioritises legal protection over user notification, which risks compounding the original harm with a transparency failure."]
-
----
-
-## Notes
-
-Triage identifies what you're obligated to do. Whether you do it is a leadership decision, not an ethical analysis decision.
-
-Where the triage surfaces a significant ethical dimension that wasn't being weighed in the response — name it explicitly. The value of this skill in a crisis is not reassurance; it is surfacing the thing that would later be described as "what we should have done."
-
-For complex incidents with significant ongoing consequences, follow triage with a full `ethics-council` session once the immediate crisis is stabilised.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Crisis triaged. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/decision-premortem-analysis` — Stress-test the crisis response plan
-  - `/communication-audience-modeling` — Model how affected parties will receive the response
-  - `/ethics-empathy-circle` — Apply structured empathy to those affected by the crisis
-  - **Done** — Wrap up and synthesise what we have so far

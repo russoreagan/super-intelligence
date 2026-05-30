@@ -1,11 +1,3 @@
----
-name: probability
-description: "Entry point for the probability toolkit. Routes to the right probabilistic thinking skill based on your situation. Use when you say 'probability', 'how likely', 'am I overconfident', 'quantify this', 'what's the base rate', 'expected value', 'scenario weighting', or want probabilistic reasoning applied without knowing which specific tool fits."
-category: probability
-is_router: true
-tier: 2
----
-
 # Probability
 
 Applies probabilistic thinking to estimates, decisions, and uncertainty. Diagnoses what kind of probability work is needed and applies the right tool.
@@ -62,7 +54,3 @@ For each option: list possible outcomes and their probabilities. Estimate the va
 ## Scenario Weighting
 
 *Assigns explicit probabilities to distinct scenarios before making a decision.*
-
-Define 3-5 mutually exclusive, collectively exhaustive scenarios for how this situation could unfold. For each scenario: what are the key conditions that make it happen? Assign a probability to each (they must sum to 100%). For each scenario: what decision is optimal? Now aggregate: given the scenario probabilities, what is the best overall decision?
-
-**Output:** Scenario inventory with probabilities, optimal decision per scenario, and the overall recommendation weighted by scenario probabilities.

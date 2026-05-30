@@ -1,18 +1,3 @@
----
-name: supabase-migration-deep-dive
-description: |
-  Execute Supabase major re-architecture and migration strategies with strangler fig pattern.
-  Use when migrating to or from Supabase, performing major version upgrades,
-  or re-platforming existing integrations to Supabase.
-  Trigger with phrases like "migrate supabase", "supabase migration",
-  "switch to supabase", "supabase replatform", "supabase upgrade major".
-allowed-tools: Read, Write, Edit, Bash(npm:*), Bash(node:*), Bash(kubectl:*)
-version: 1.0.0
-license: MIT
-author: Jeremy Longshore <jeremy@intentsolutions.io>
-disable-model-invocation: true
-
----
 # Supabase Migration Deep Dive
 
 ## Prerequisites

@@ -1,11 +1,3 @@
----
-name: writing-worldbuilding
-description: "Audits a fictional world for internal consistency, texture, economy, and constraint-story alignment. Use when a world feels thin, generic, like a backdrop rather than a place people actually inhabit. Triggers: 'the world feels thin', 'worldbuilding', 'my world doesn't feel real', 'the setting is generic', 'world audit', 'the world feels like a backdrop'."
-category: writing
-is_router: false
-tier: 3
----
-
 # Writing: Worldbuilding
 
 Worlds fail when they are described rather than inhabited. The difference is texture. A described world tells you what things are — "a dystopian future where technology controls society." An inhabited world shows you what it costs to live there: what people eat, what they fear, what they fight over, what they take for granted, what they lie about. The first is a category. The second is a place.
@@ -29,48 +21,3 @@ How do people survive? How is power acquired and maintained? What do people trad
 
 **Step 4: Texture**
 Specific details that make the world inhabited — not the large-scale facts, but the granular particulars: food, clothing, speech patterns, rituals, insults, jokes, signs, smells. For each world zone (a location, a social class, a faction), identify what specific sensory details are present and what is missing. The test: could these details only exist in this world, or are they generic?
-
-**Step 5: Constraint-Story Alignment**
-Does the world's structure create the story's conflict, or is the world irrelevant to the plot? This is the integration test. Map the connection: world rule → social consequence → character situation → story problem. If the chain breaks at any point, the world is decorative rather than load-bearing.
-
----
-
-## Output Format
-
-### World Audit
-
-**Rules Inventory:** [Physical / social / technological / magical governing rules — internal consistency check — loopholes or conveniences flagged]
-
-**History:** [Pre-story events + how they're visible in the present / missing historical presence flagged]
-
-**Economy:** [Survival mechanisms / power acquisition / what is competed over / leverage structures / gaps or arbitrary elements]
-
-**Texture:** [Present specific details — per zone if relevant / Missing sensory/cultural particulars / World-specific vs. generic details distinguished]
-
-**Constraint-Story Alignment:** [The chain: world rule → social consequence → character situation → story problem / Where the chain breaks]
-
-**Gaps and Inconsistencies:** [Internal contradictions / rules violated by plot convenience / areas requiring further development]
-
----
-
-## Notes
-
-- The most common worldbuilding error is exposition: delivering world information through characters explaining things to each other. World texture should emerge through action, conflict, and specific detail — not through characters lecturing.
-- Comprehensiveness is not the goal. A world that feels real is not one where every question has been answered — it's one where the questions the story raises are answered, and the answers feel like part of a larger coherent system.
-- Pairs with `/writing-inconsistency-audit` for world-rule violations throughout the manuscript — worldbuilding establishes the rules; the audit finds where they're broken.
-- Pairs with `/writing-character-development` because characters are produced by their world: their wound, defence, and want are shaped by the economy, history, and social rules they grew up inside.
-- Pairs with `/writing-scene-construction` for deploying world texture at the scene level — what sensory details make this specific location feel inhabited.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "World built. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/writing-scene-construction` — Construct scenes in the world
-  - `/narrative-structure-mapping` — Map the narrative structure of the world
-  - `/writing-character-development` — Develop characters native to the world
-  - **Done** — Wrap up and synthesise what we have so far

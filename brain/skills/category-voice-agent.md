@@ -1,10 +1,3 @@
----
-name: category-voice-agent
-description: "Pick when building, optimizing, or debugging voice agents (Pipecat, STT/TTS, Deepgram, ElevenLabs, OpenAI TTS). Router—load up to 4 skills from this category when relevant. All skills in this category are manual (load on demand)."
-triggers: [voice agent, Pipecat, STT, TTS, Deepgram, ElevenLabs, Whisper, sag, speech, transcription]
-disable-model-invocation: false
----
-
 # Category: Voice Agent
 
 **When to pick this:** Pick when building, optimizing, or debugging voice agents, Pipecat pipelines, Pipecat Cloud deploy, STT/TTS, or tool-execute flow.

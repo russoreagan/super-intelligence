@@ -1,11 +1,3 @@
----
-name: strategy-timing
-description: "Analyzes whether to act now or wait, reads your opponent's rhythm, and identifies trigger conditions for the right moment. Triggers: 'when should I act', 'timing analysis', 'is now the right moment', 'should I wait', 'when to launch', 'when to make my move', 'is the window closing', 'am I too early', 'am I too late'."
-category: strategy
-is_router: false
-tier: 3
----
-
 # Strategy: Timing
 
 Miyamoto Musashi opens *The Book of Five Rings* with a meditation on timing: "Timing exists in everything." His insight is not simply that timing matters — it is that timing must be actively read rather than passively experienced. A swordsman who ignores his opponent's rhythm and attacks on his own preferred schedule will find the interval closed. A swordsman who reads when the opponent is overextended, committed, or off-balance will find the interval open.
@@ -44,38 +36,3 @@ What is the cost of acting too early? What is the cost of acting too late? Which
 
 **Conditions Favoring Action Now**
 [Windows closing, costs of delay, time-sensitive advantages]
-
-**Conditions Favoring Waiting**
-[Improving conditions, intelligence gaps, opponent developments approaching]
-
-**Situation Type**
-[Flowing / Stable / Turning — with brief rationale]
-
-**Opponent's Rhythm**
-[Where they are in their cycle, when they are most off-balance, what the interval looks like]
-
-**Cost Asymmetry**
-[Cost of acting too early vs. too late — which error is less recoverable]
-
-**Recommended Timing**
-[Act now / Wait for trigger / Wait for specific condition] — with trigger conditions stated explicitly: "Act when X occurs" or "Do not act before Y is true"
-
----
-
-## Notes
-
-Timing decisions depend heavily on intelligence quality — pair with `/strategy-intelligence` when your picture of the opponent's current state is uncertain. Timing and position interact: sometimes the right timing is simply "when your position is ready" — pair with `/strategy-positioning` when that's the case. For flowing situations with closing windows, force economy becomes critical — pair with `/strategy-force-economy` to identify the minimum effective action before the window closes.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Timing mapped. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/strategy-positioning` — Execute the position at the right time
-  - `/decision-premortem-analysis` — Stress-test the timing assumptions
-  - `/temporal-timing-analysis` — Validate the timing with temporal analysis
-  - **Done** — Wrap up and synthesise what we have so far

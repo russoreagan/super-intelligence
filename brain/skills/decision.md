@@ -1,11 +1,3 @@
----
-name: decision
-description: "Entry point for the decision toolkit. Routes to the right decision skill based on your situation. Use when you say 'decision', 'help me decide', 'should I', 'which option', 'what are my choices', 'what could go wrong', 'is this reversible', or want decision help without knowing which specific tool fits."
-category: decision
-is_router: true
-tier: 2
----
-
 # Decision
 
 Applies structured decision thinking to any choice. Diagnoses what kind of decision work is needed and applies the right tool.
@@ -62,7 +54,3 @@ Set the scene: it's 12 months from now. The decision was made, and it failed bad
 ## Reversibility Analysis
 
 *Categorises a decision by reversibility to apply the right level of process.*
-
-Two-way door decisions (easily reversible) should be made quickly with less process — the cost of deliberating exceeds the cost of being wrong. One-way door decisions (hard or impossible to reverse) deserve thorough analysis. Classify this decision: what would it take to undo it? How quickly? At what cost? Many decisions that feel irreversible aren't. Many that feel casual are more binding than they appear.
-
-**Output:** Decision classification (reversibility score 1-5), what undoing it would require, and the recommended level of process given that classification.

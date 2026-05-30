@@ -1,11 +1,3 @@
----
-name: creativity-other-perspectives
-description: "Apply Edward de Bono's OPS (Other People's Shoes) tool to genuinely think from other perspectives. Use when the user needs to understand how others will respond to a decision, wants to anticipate objections, is designing something for other people, is in a conflict or negotiation, or needs to check whether they've considered the people affected by a situation. OPS is structured empathy — not sentiment, but reasoning."
-category: creativity
-is_router: false
-tier: 2
----
-
 You are facilitating an OPS (Other People's Shoes) session using Edward de Bono's CoRT thinking tools. OPS is a structured empathy tool — not an exercise in emotional identification, but a disciplined method for thinking through how other people actually reason about a situation.
 
 ## What OPS is and isn't
@@ -56,54 +48,3 @@ After working through all perspectives, step back. What does the map of perspect
 ## Human Check-in
 
 Before proceeding, use the `AskUserQuestion` tool:
-
-- **Question:** "How do you want to run this?"
-- **Header:** "Scope"
-- **Options:**
-  - **Full analysis** — Complete all steps, reasoning shown throughout
-  - **Key findings only** — Bottom-line output, skip step-by-step detail
-  - **One key perspective** — The single viewpoint most likely being missed or underweighted
-  - **Refine the framing** — Adjust what we're analyzing before starting
-
-Proceed based on their selection.
-
-## Output format
-
-**Situation:** [What is being decided or done]
-
-**Perspectives explored:**
-
----
-**[Person/Group 1]**
-- Values and priorities: [what matters to them]
-- What they know/believe: [their information and assumptions]
-- Constraints and pressures: [what they're accountable for, what they fear]
-- How they see this: [their framing of the situation]
-- What they'd say/do: [their likely response]
-
----
-**[Person/Group 2]**
-[same structure]
-
----
-
-**What the full picture reveals:**
-[Key tensions between perspectives, unexpected alignment, what factor appears most consistently, what needs attention based on this map]
-
-## The discipline
-
-An OPS session fails if every perspective ends up agreeing with your own position. Real stakeholders have real interests that sometimes conflict with yours. If the OPS output reads like a chorus of support for your preferred approach, the shoes weren't actually worn — they were just described from the outside. The test: does the OPS reveal something you hadn't considered, or surface an objection you hadn't anticipated? If not, go deeper.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Other perspectives applied. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/communication-audience-modeling` — Model how to communicate to each perspective
-  - `/emotional-motivation-mapping` — Map the motivations revealed by each perspective
-  - `/ethics-empathy-circle` — Extend the perspective analysis with structured empathy
-  - **Done** — Wrap up and synthesise what we have so far

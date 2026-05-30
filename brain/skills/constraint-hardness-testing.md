@@ -1,11 +1,3 @@
----
-name: constraint-hardness-testing
-description: "Tests whether a stated constraint is real — distinguishing genuine limits from assumptions, habits, or politics dressed as facts. Triggers: 'is this really a constraint', 'challenge the assumption', 'who says we can't', 'is this actually fixed', 'test the constraint'."
-category: constraint
-is_router: false
-tier: 2
----
-
 # Constraint Hardness Testing
 
 Organisations accumulate phantom constraints — rules that were real once and calcified, or
@@ -98,15 +90,3 @@ constraint that cannot be sourced precisely, treat it as Assumed and test it —
 testing is almost always lower than the cost of a permanent workaround.
 
 ---
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Constraints tested. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/constraint-workaround-mapping` — Route around the hard constraints
-  - `/constraint-scope-reduction` — Reduce scope to avoid constraints that can't be bypassed
-  - `/decision-option-mapping` — See what options remain given hard and soft constraints
-  - **Done** — Wrap up and synthesise what we have so far

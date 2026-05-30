@@ -1,11 +1,3 @@
----
-name: play-worst-case-reversal
-description: "Deliberately designs the worst possible version — then reverses each failure mode into a design principle. Removes the pressure of being right and unlocks creative honesty that polite brainstorming suppresses. TRIGGERS: 'worst possible idea', 'how would you make this terrible', 'reverse brainstorm', 'design the failure', 'how would you deliberately fail'."
-category: play
-is_router: false
-tier: 3
----
-
 # Play: Worst-Case Reversal
 
 Direct brainstorming produces cautious, socially acceptable ideas. Designing the
@@ -82,31 +74,3 @@ Proceed based on their selection.
 | [specific failure mode — concrete and unfiltered] | [affirmative design requirement] |
 
 **Design Requirements Derived:** [clean numbered list of all reversed principles]
-
-**Audit Against Existing Design**
-- Already present and strong: [list]
-- Present but weak or inconsistent: [list — these need tightening]
-- Missing entirely: [list — these are the highest priority findings]
-
----
-
-## Notes
-
-The uncomfortable entries in the worst-possible list are the most valuable — they
-surface real tensions that politeness has kept invisible. If every item on your list
-feels obvious and safe, you haven't gone far enough. Push into the territory where
-naming it feels a little risky.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Worst cases reversed. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/decision-premortem-analysis` — Formalise the worst case as a structured premortem
-  - `/constraint-workaround-mapping` — Address the worst cases with concrete workarounds
-  - `/creativity-alternatives` — Generate alternatives that avoid the worst cases
-  - **Done** — Wrap up and synthesise what we have so far

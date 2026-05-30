@@ -1,11 +1,3 @@
----
-name: probability-confidence-calibration
-description: "Tests whether stated confidence levels match available evidence — catching overconfidence and underconfidence. Use when asked to 'calibrate my confidence', 'am I overconfident', 'confidence check', 'how sure should I be', or 'is this as certain as it seems'."
-category: probability
-is_router: false
-tier: 2
----
-
 # Probability Confidence Calibration
 
 Overconfidence is the most documented and costly bias in judgment. People who say they are 90% confident are right far less than 90% of the time. But underconfidence is also costly — excessive hedging prevents commitment and action when evidence is actually sufficient. Calibration is not about being less confident; it is about having confidence levels that match the available evidence.
@@ -79,13 +71,3 @@ A well-calibrated person is not one who is always uncertain — they are confide
 ---
 
 ## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Confidence calibrated. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/probability-scenario-weighting` — Weight scenarios with calibrated confidence levels
-  - `/decision-premortem-analysis` — Stress-test with calibrated risk estimates
-  - `/decision-reversibility-analysis` — Assess how reversibility changes given this uncertainty level
-  - **Done** — Wrap up and synthesise what we have so far

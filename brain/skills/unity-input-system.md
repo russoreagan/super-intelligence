@@ -1,9 +1,3 @@
----
-name: unity-input-system
-description: Unity New Input System configuration skill for action maps, device bindings, control schemes, and cross-platform input handling.
-allowed-tools: Read, Grep, Write, Bash, Edit, Glob, WebFetch
----
-
 # Unity Input System Skill
 
 New Input System configuration and implementation for Unity.

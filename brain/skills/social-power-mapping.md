@@ -1,11 +1,3 @@
----
-name: social-power-mapping
-description: "Maps who holds power — formal authority, informal influence, gatekeeping, expertise — and how it flows. Triggers: 'power map', 'who has power here', 'who actually decides', 'map the politics', 'who do I need to get on board', 'who are the gatekeepers'."
-category: social
-is_router: false
-tier: 2
----
-
 # Power Mapping
 
 Org charts describe formal authority. Power is different. It includes informal influence (whose opinion shifts decisions), gatekeeping (who controls access), and expertise (whose knowledge others depend on). A proposal that ignores actual power distribution will fail even if it is correct.

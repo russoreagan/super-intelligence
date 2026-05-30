@@ -1,11 +1,3 @@
----
-name: identity
-description: "Entry point for the identity toolkit. Routes to the right identity skill based on your situation. Use when you say 'identity', 'who are we', 'values check', 'is this on mission', 'what do we actually stand for', 'gut check', 'are we drifting', or want identity/values reasoning applied without knowing which specific tool fits."
-category: identity
-is_router: true
-tier: 2
----
-
 # Identity
 
 Applies identity and values reasoning to decisions and directions. Diagnoses what kind of identity work is needed and applies the right tool.

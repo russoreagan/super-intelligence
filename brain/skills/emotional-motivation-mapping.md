@@ -1,11 +1,3 @@
----
-name: emotional-motivation-mapping
-description: "Maps what genuinely drives different people — beyond stated reasons and job descriptions. Use when incentives seem misaligned or individual behaviour is hard to predict. TRIGGERS: 'what motivates them', 'motivation map', 'why are they behaving like this', 'what drives this person', 'understand the incentives'."
-category: emotional
-is_router: false
-tier: 2
----
-
 # Emotional Motivation Mapping
 
 People tell you what they think they should want. They behave according to what they
@@ -74,40 +66,3 @@ Proceed based on their selection.
 ## Output Format
 
 **Motivation Map**
-
-| Person/Group | Extrinsic | Intrinsic | Social/Political | Dominant Motivator |
-|---|---|---|---|---|
-| [name/role] | [key external rewards/penalties] | [mastery/autonomy/purpose/belonging] | [status/relationships/reputation] | [single strongest driver] |
-
-**Situation Assessment**
-For each dominant motivator: does the current situation reward or punish it? Name
-the specific mechanism — the exact way the setup serves or frustrates the dominant
-motivator.
-
-**Alignment Recommendations**
-What specific changes would align each dominant motivator with the needed outcome?
-Prioritise by likely influence on actual behaviour.
-
----
-
-## Notes
-
-Dominant motivators rarely change — but the situation around them can be redesigned.
-Look for the misalignment first; don't assume the solution is to change the person.
-The most common failure is designing incentive systems around extrinsic motivators
-while the dominant motivator is intrinsic — the system pulls in the wrong direction
-and produces compliance without commitment.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Motivations mapped. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/communication-audience-modeling` — Model communication strategy based on motivations
-  - `/social-incentive-analysis` — Connect motivations to incentive structures
-  - `/emotional-resistance-diagnosis` — Identify where motivations create resistance
-  - **Done** — Wrap up and synthesise what we have so far

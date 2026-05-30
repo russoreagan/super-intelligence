@@ -1,11 +1,3 @@
----
-name: logic-constraint-mapping
-description: "Map the full constraint landscape for a decision, design, or plan — distinguishing hard limits from soft preferences, surfacing hidden constraints, and finding conflicts between them. Use before committing to an approach, when a plan keeps hitting unexpected walls, or when it's unclear what's actually negotiable. TRIGGERS: 'map the constraints', 'what are we actually working with', 'what's blocking this', 'what can we change', 'constraint analysis', any situation where the boundaries of what's possible need to be understood before proceeding."
-category: logic
-is_router: false
-tier: 2
----
-
 # Logic Constraint Mapping
 
 Every decision happens inside a constraint space. Some limits are real and fixed. Others feel fixed but aren't. And some constraints conflict with each other in ways nobody has named yet.
@@ -67,57 +59,3 @@ What's genuinely open? After removing hard and near-hard constraints, what remai
 ## Human Check-in
 
 Before proceeding, use the `AskUserQuestion` tool:
-
-- **Question:** "How do you want to run this?"
-- **Header:** "Scope"
-- **Options:**
-  - **Full analysis** — Complete all steps, reasoning shown throughout
-  - **Key findings only** — Bottom-line output, skip step-by-step detail
-  - **Hard constraints only** — Identify which limits are truly non-negotiable, skip soft and assumed
-  - **Refine the framing** — Adjust what we're analyzing before starting
-
-Proceed based on their selection.
-
-## Output Format
-
-**Context:** [what decision or plan this constraint map is for]
-
-**Constraint Inventory**
-
-| Constraint | Type | Hardness | Source |
-|---|---|---|---|
-| [constraint] | Limit / Preference / Hidden | Hard / Soft / Unknown | [who imposed it, why] |
-
-**Hardness Reassessments**
-- [constraint stated as hard] → actually [softer] because [reason]
-
-**Hidden Constraints Found**
-- [constraint]: [what revealed it; what it blocks]
-
-**Conflicts**
-| Constraint A | Constraint B | Trade-off | Owner |
-|---|---|---|---|
-| [A] | [B] | [what gives if you prioritise A; what gives if you prioritise B] | [who decides] |
-
-**Degrees of Freedom**
-[What is genuinely negotiable; where the real solution space is]
-
----
-
-## Notes
-
-The value of this map is not finding solutions — it's establishing ground truth about what's actually fixed before committing to an approach. A constraint map produced before design prevents the common failure mode: a clever solution that satisfies stated requirements while violating an unstated one that everyone assumed was obvious.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Constraints mapped. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/constraint-hardness-testing` — Test which mapped constraints are real vs assumed
-  - `/constraint-workaround-mapping` — Find routes around the binding constraints
-  - `/decision-option-mapping` — See what decision options remain given the constraints
-  - **Done** — Wrap up and synthesise what we have so far

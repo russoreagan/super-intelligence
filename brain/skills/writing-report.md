@@ -1,11 +1,3 @@
----
-name: writing-report
-description: "Writes and audits business reports, briefing documents, and information reports for answer-first structure, precision, hierarchy, and navigability. Use when a report buries its findings, is written for the writer rather than the reader, or lacks clear structure. Triggers: 'write a report', 'report writing', 'business report', 'briefing document', 'information report', 'research summary', 'the report isn't clear', 'buries the findings'."
-category: writing
-is_router: false
-tier: 3
----
-
 # Writing: Report
 
 Reports fail when they are written for the writer rather than the reader. The writer knows the context, did the work, and wants to show the rigour of the process. The reader needs to know the answer, understand its implications, and decide what to do — usually in less time than the writer spent writing. These are incompatible objectives, and when the report serves the writer's needs, it fails the reader.
@@ -35,48 +27,3 @@ Are sections ordered by importance? Does each section have a clear, functional h
 
 **Step 4: Precision**
 Flag every instance of vague quantification or hedging language: significant, substantial, many, some, often, rarely, most. For each: is there a specific number available? If yes, use it. If no, state the absence: "data not available" or "estimate pending" rather than a vague word that implies precision.
-
-**Step 5: Navigability**
-Can a time-pressed reader find what they need without reading everything? Check: is there an executive summary? Are section headers navigable? If there is a key recommendation, is it labelled clearly? Is there a table of contents for documents over 10 pages?
-
----
-
-## Output Format
-
-### Report Audit
-
-**Reader's Question:** [Specific decision the reader needs to make]
-
-**Answer-First Assessment:** [Does the opening answer the question? / What is the first section actually doing?]
-
-**Hierarchy Map:** [Current section order + assessment of whether importance matches position / Answer headers vs. topic headers]
-
-**Precision Flags:** [Quoted vague language + specific alternative if number is available / "Data absent" note if not]
-
-**Navigability Assessment:** [Executive summary present? / Headers navigable? / Time-pressed reader path]
-
-**Recommended Structural Changes:** [Specific reorderings, reframings, and section header rewrites]
-
----
-
-## Notes
-
-- Answer-first is not optional for executive audiences. The more senior the reader, the less time they will spend looking for the point. The point must be first.
-- The most common resistance to answer-first structure: "but the reader needs the context to understand the finding." Test this assumption. Usually the reader needs a fraction of the context they're given, and they need it after the finding, not before.
-- Pairs with `/writing-executive-summary` — for reports requiring a one-page brief above the full document.
-- Pairs with `/writing-audience-calibration` — the reader profile shapes every structural decision; the report format for a technical team and for a board are different documents.
-- Pairs with `/writing-restructure` when the report's problems are primarily structural — the findings are buried not in the prose but in the architecture.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Report written. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/writing-executive-summary` — Add an executive summary to the report
-  - `/writing-audience-calibration` — Calibrate the report for its specific audience
-  - `/communication-clarity-audit` — Audit report clarity throughout
-  - **Done** — Wrap up and synthesise what we have so far

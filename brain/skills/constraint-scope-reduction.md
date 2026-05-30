@@ -1,11 +1,3 @@
----
-name: constraint-scope-reduction
-description: "Finds the minimum that satisfies the actual requirement — stripping everything wanted but not needed. Triggers: 'minimum viable', 'what's the minimum', 'strip this back', 'what do we actually need', 'scope reduction', 'simplify the requirement'."
-category: constraint
-is_router: false
-tier: 2
----
-
 # Constraint Scope Reduction
 
 Scope grows because wants accumulate alongside needs, and no one separates them. This skill
@@ -92,11 +84,3 @@ every must: "if we launched without this, what actually breaks?" The answer is u
 ## What's Next
 
 After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Scope reduced. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/decision-criteria-weighting` — Evaluate options within the reduced scope
-  - `/resource-allocation-analysis` — Reallocate for the new scope
-  - `/decision-premortem-analysis` — Stress-test the reduced scope plan
-  - **Done** — Wrap up and synthesise what we have so far

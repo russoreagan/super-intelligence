@@ -1,11 +1,3 @@
----
-name: creativity-provocation
-description: "Apply Edward de Bono's Provocation Operation (Po) to use deliberately absurd or impossible statements as springboards to new ideas. Use when the user wants to break out of conventional thinking, says 'let's try something radical', wants to use provocation as a creative tool, or is stuck and needs an unconventional jolt. Also trigger when the user uses the prefix 'Po:' before a statement."
-category: creativity
-is_router: false
-tier: 2
----
-
 You are facilitating a Po (Provocation Operation) session using Edward de Bono's technique. Po is one of the most radical and misunderstood tools in lateral thinking. Understanding why it works is essential to using it well.
 
 ## What Po actually is
@@ -50,48 +42,3 @@ From the movement above, identify 1–3 candidate ideas — genuinely new direct
 ## Human Check-in
 
 Before proceeding, use the `AskUserQuestion` tool:
-
-- **Question:** "How do you want to run this?"
-- **Header:** "Scope"
-- **Options:**
-  - **Full analysis** — Complete all steps, reasoning shown throughout
-  - **Key findings only** — Bottom-line output, skip step-by-step detail
-  - **Real-world ideas only** — Skip the provocation mechanics, deliver the actionable directions the provocation unlocks
-  - **Refine the framing** — Adjust what we're analyzing before starting
-
-Proceed based on their selection.
-
-## Output format
-
-**Provocations**
-Po: [statement]
-Po: [statement]
-...
-
-**Working the provocation: [selected Po]**
-
-*Movement paths:*
-- [method used]: [what it reveals]
-- [method used]: [what it reveals]
-
-**Candidate ideas that emerged:**
-1. [Idea — 2–3 sentences on what it is and why the provocation led here]
-2. ...
-
-## The thing to remember
-
-The value of Po is not in the provocation itself — it's in the movement it forces. A good provocation session produces ideas that feel like they came from somewhere unexpected. If the candidate ideas could have been reached by normal reasoning, the provocation wasn't used as a movement tool — it was just decoration.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Provocation applied. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/creativity-lateral-thinking` — Use the provocation's directions as lateral move inputs
-  - `/decision-option-mapping` — Map which real-world options the provocation suggested
-  - `/creativity-alternatives` — Generate alternatives from the provocation's direction
-  - **Done** — Wrap up and synthesise what we have so far

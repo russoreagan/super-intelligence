@@ -1,11 +1,3 @@
----
-name: accessibility
-description: Use when designing, auditing, or implementing UI to meet WCAG (AA baseline) including keyboard support, ARIA patterns, focus management, contrast, reduced motion, and screen reader compatibility.
-summary: WCAG AA compliance: keyboard navigation, screen reader, contrast, focus states, and ARIA patterns.
-triggers: [accessibility, a11y, WCAG, screen reader, keyboard, ARIA, focus, contrast]
-disable-model-invocation: true
-
----
 # Accessibility (Definitive)
 
 ## Goal

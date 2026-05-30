@@ -1,11 +1,3 @@
----
-name: docs-and-writing
-description: Use when drafting or improving documentation or written deliverables (design docs, specs, decision docs, postmortems, executive updates) and you need clear structure, audience fit, and reader-testing.
-summary: Technical docs, specs, decision docs, postmortems, and co-authoring workflows with reader testing.
-triggers: [document, write, spec, RFC, ADR, postmortem, runbook, memo]
-disable-model-invocation: true
-
----
 # Docs & Writing (Definitive)
 
 ## Goal

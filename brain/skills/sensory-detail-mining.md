@@ -1,11 +1,3 @@
----
-name: sensory-detail-mining
-description: "Finds specific details being overlooked — the most important information is often present but not being registered. Triggers: 'what are we missing', 'go deeper on this', 'find the details', 'be more specific', 'what exactly is happening', 'ground this in specifics'."
-category: sensory
-is_router: false
-tier: 3
----
-
 # Detail Mining
 
 Abstractions are useful — but they lose the specific detail that often contains the real insight. "Users are frustrated" is an abstraction that conceals which users, in which moment, doing what, saying what exactly. Detail mining forces that concealment back into the open.
@@ -78,11 +70,3 @@ This skill is most useful immediately before a decision, a diagnosis, or a desig
 ## What's Next
 
 After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Details mined. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/sensory-signal-detection` — Detect signals in the mined details
-  - `/writing-scene-construction` — Use the mined details in scene construction
-  - `/aesthetic-pattern-detection` — Detect aesthetic patterns in the details
-  - **Done** — Wrap up and synthesise what we have so far

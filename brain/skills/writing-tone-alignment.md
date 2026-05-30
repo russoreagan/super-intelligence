@@ -1,11 +1,3 @@
----
-name: writing-tone-alignment
-description: "Diagnoses and repairs tone drift — shifts in register, formality, warmth, or rhythm that make a piece feel like it was written by multiple people or in multiple moods. Use when the voice changes mid-piece without intention. Triggers: 'the tone keeps shifting', 'tone drift', 'tone alignment', 'inconsistent register', 'the voice changes mid-piece', 'this sounds like different writers'."
-category: writing
-is_router: false
-tier: 3
----
-
 # Writing: Tone Alignment
 
 Tone drift is what happens when a piece moves through multiple registers without intention — formal to casual, warm to clinical, urgent to contemplative — destroying the reader's sense of who is speaking. The reader cannot trust a voice they cannot locate. When they feel the voice shift, they become aware they are reading a *document* rather than inhabiting a communication. The intimacy, or the authority, or the momentum — whatever the piece was building — dissolves.
@@ -38,52 +30,3 @@ For each departure, what produced it?
 - **Functional shift:** The section is doing something different (explaining vs. persuading vs. narrating) and the register shifted with the function without awareness
 
 Understanding the cause determines the correction.
-
-**Step 4: Prescribe Corrections**
-For each flagged section: what specific changes bring it into alignment? This may involve vocabulary choices ("synergistic" → "works well together"), sentence length adjustments, the removal of hedging language, or the addition of warmth. Be specific — "make it more casual" is not actionable; "replace the three nominalisations in this paragraph and cut the passive construction in the final sentence" is.
-
----
-
-## Output Format
-
-### Tone Audit
-
-**Intended Tone:**
-- Formality: [X/10, characterised]
-- Warmth: [X/10, characterised]
-- Urgency: [paced characterisation]
-- Stance toward reader: [peer / student / customer / etc.]
-- Sentence rhythm: [characterised]
-
-**Flagged Departures:**
-- [Location] — [Quoted passage] — Dimension shifted: [formality / warmth / urgency / stance / rhythm] — Direction of drift: [toward formal / toward casual / etc.]
-- [Repeat for each]
-- NONE FOUND if clean
-
-**Cause Diagnoses:** [Per departure: source bleed / multi-author drift / energy change / register confusion / functional shift]
-
-**Correction Prescriptions:** [Per departure: specific changes — vocabulary, sentence structure, register adjustments]
-
----
-
-## Notes
-
-- Tone drift is different from intentional register shift. Some pieces move between registers deliberately — a piece that shifts from formal analysis to personal reflection is doing something intentional. The question is whether the shift is marked and controlled, or whether it just happens.
-- Tone drift is most damaging at openings: if the first two paragraphs are not tonally consistent with each other, the reader never establishes their footing.
-- Pairs with `/writing-voice-consistency` — voice is the who speaking; tone is the how. They are related but distinct. Voice consistency asks "does this sound like the same person?"; tone alignment asks "is that person speaking in a consistent register?"
-- Pairs with `/writing-audience-calibration` — tone is part of calibration; a piece can be tonally consistent but calibrated to the wrong audience entirely.
-- Pairs with `/writing-line-editing` — many tone corrections happen at the sentence level (word choice, sentence structure), so the two tools often work together.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Tone aligned. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/writing-voice-consistency` — Check voice consistency after tone alignment
-  - `/writing-line-editing` — Edit for the aligned tone
-  - `/writing-audience-calibration` — Verify tone serves the audience
-  - **Done** — Wrap up and synthesise what we have so far

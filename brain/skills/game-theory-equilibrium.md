@@ -1,11 +1,3 @@
----
-name: game-theory-equilibrium
-description: "Finds the stable outcome of a strategic interaction — the point where no player can improve their result by changing their strategy alone. Triggers: 'Nash equilibrium', 'dominant strategy', 'what's the stable outcome', 'equilibrium analysis', 'payoff matrix', 'what will rational players do', 'where will this land'."
-category: game-theory
-is_router: false
-tier: 3
----
-
 # Game Theory: Equilibrium Analysis
 
 John Nash's central insight: in any finite game, there exists at least one outcome — the Nash equilibrium — where no player can improve their payoff by unilaterally switching strategy, assuming all other players hold theirs. This is the point of stability; it's where rational play converges.
@@ -32,59 +24,3 @@ For each cell in the matrix, ask: given what the other player(s) are doing, woul
 
 **Step 5: Efficiency assessment**
 Evaluate the equilibrium outcome(s): is this collectively good, or is there a better outcome that rational play fails to reach? An outcome is *Pareto-inefficient* if there exists an alternative where everyone would be at least as well off and at least one player would be strictly better off. Name exactly why the efficient outcome is unreachable without external intervention.
-
-**Step 6: Multiple equilibria and coordination**
-If more than one Nash equilibrium exists, analyse: what determines which one is reached? Consider focal points (salience, cultural convention, historical precedent), communication (can players talk before choosing?), and coordination mechanisms (common knowledge, public commitments, third-party arbitration).
-
----
-
-## Output Format
-
-### Equilibrium Analysis
-
-**Players and Strategies**
-[Each player and their available strategies]
-
-**Payoff Matrix**
-[Full matrix — all cells filled, with payoffs for each player at each strategy combination]
-
-**Dominant Strategies**
-[Which players have dominant strategies, and what they are — or "none" if absent]
-
-**Nash Equilibria**
-[All equilibria identified, with the strategy combination and payoffs at each]
-
-**Efficiency Assessment**
-[Efficient or Pareto-inefficient? If inefficient: which outcome would be better for all, and why rational play doesn't reach it]
-
-**Coordination Mechanism** *(if multiple equilibria)*
-[What determines which equilibrium is reached — focal points, communication, history]
-
-**Strategic Implication**
-[What this analysis means for the player asking — what to expect, what to watch, what leverage exists]
-
----
-
-## Notes
-
-The Nash equilibrium describes where rational play leads — it does not prescribe what to do. If the equilibrium is bad (as in the prisoners' dilemma), the question becomes how to change the game. See `/game-theory-mechanism-design` for how to redesign rules so the equilibrium is efficient.
-
-The most common equilibrium failure is the prisoners' dilemma structure: dominant strategies lead both players to an outcome worse than the alternative. See `/game-theory-prisoners-dilemma` for dedicated analysis of cooperation failures.
-
-When players interact repeatedly, the equilibrium changes: future consequences make cooperation rational even when it isn't in the one-shot game. See `/game-theory-iterated` for repeated game analysis.
-
-Pairs with: `/strategy-positioning` (acting effectively given the equilibrium you've identified), `/game-theory-mechanism-design` (changing the game so the equilibrium is efficient), `/decision-criteria-weighting` (when the strategic dimension is secondary and this is primarily a personal choice).
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Equilibrium found. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/game-theory-signaling` — Identify what signals could shift the equilibrium
-  - `/game-theory-mechanism-design` — Design rules or incentives to produce a better equilibrium
-  - `/strategy-positioning` — Position to exploit the current equilibrium
-  - **Done** — Wrap up and synthesise what we have so far

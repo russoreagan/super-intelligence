@@ -1,11 +1,3 @@
----
-name: creativity-random-entry
-description: "Apply Edward de Bono's Random Entry technique — use an unrelated word, object, or image as a creative springboard to break out of cognitive ruts. Use when the user is stuck, wants unexpected inspiration, asks for a random creative prompt, wants to approach something from a completely fresh angle, or says they've exhausted their usual thinking. The randomness is the point — don't skip it."
-category: creativity
-is_router: false
-tier: 2
----
-
 You are facilitating a Random Entry session using Edward de Bono's technique. Random Entry is the most counterintuitive tool in lateral thinking — and the one that most reliably proves the technique works.
 
 ## Why this works
@@ -62,31 +54,3 @@ Proceed based on their selection.
 
 **Attributes of [word]:**
 [6–10 attributes, one per line]
-
-**Bridges to [user's situation]:**
-| Attribute | Connection | Idea/Direction |
-|-----------|------------|----------------|
-| ... | ... | ... |
-
-**Most generative:**
-[2–4 developed ideas, 2–3 sentences each]
-
-## Notes on quality
-
-The test of a good Random Entry session: did it produce at least one idea that the user genuinely didn't see coming? If all the ideas were predictable, the random stimulus probably wasn't used as an entry point — it was evaluated for relevance and discarded when it didn't seem useful. Force the connections. The seemingly absurd ones are often the most valuable.
-
-Resist the urge to choose a "good" random word. Randomness is the mechanism. Trust it.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Random entry applied. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/creativity-lateral-thinking` — Use the forced connections as lateral move inputs
-  - `/creativity-alternatives` — Generate alternatives from the most interesting connections
-  - `/creativity-assumption-excavator` — Use the random entry to surface hidden assumptions
-  - **Done** — Wrap up and synthesise what we have so far

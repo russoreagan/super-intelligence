@@ -1,11 +1,3 @@
----
-name: systems-leverage-analysis
-description: "Finds where small interventions produce large, lasting change using Donella Meadows' leverage point hierarchy. Use when asked 'where should we intervene', 'highest leverage', 'what actually changes this system', or 'find the lever'."
-category: systems
-is_router: false
-tier: 2
----
-
 # Systems Leverage Analysis
 
 Most interventions target low-leverage parameters — adjusting numbers, tweaking rates — when high-leverage structural points are available and being ignored. Donella Meadows identified 12 places to intervene in a system, ranging from parameters (nearly powerless) to paradigm (most powerful). The reason high-leverage points go unused is that they face the highest resistance; understanding this is part of the analysis.
@@ -73,11 +65,3 @@ High-leverage points are often counterintuitive — pushing harder in the obviou
 ## What's Next
 
 After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Leverage points identified. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/strategy-positioning` — Use leverage points for strategic positioning
-  - `/resource-allocation-analysis` — Allocate resources to the highest-leverage points
-  - `/decision-premortem-analysis` — Stress-test the assumptions behind leverage estimates
-  - **Done** — Wrap up and synthesise what we have so far

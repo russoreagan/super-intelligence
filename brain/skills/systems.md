@@ -1,11 +1,3 @@
----
-name: systems
-description: "Entry point for the systems thinking toolkit. Routes to the right systems skill based on your situation. Use when you say 'systems', 'feedback loops', 'how does this system work', 'where should we intervene', 'unexpected behavior', 'what archetype is this', 'find the leverage', or want systems thinking applied without knowing which specific tool fits."
-category: systems
-is_router: true
-tier: 2
----
-
 # Systems
 
 Applies systems thinking to complex, dynamic situations. Diagnoses what kind of systems analysis is needed and applies the right tool.
@@ -62,7 +54,3 @@ Identify reinforcing loops (R): A increases B, B increases A — creates exponen
 ## Leverage Analysis
 
 *Finds where small interventions produce large, lasting change.*
-
-Apply Donella Meadows' leverage point hierarchy. Low-leverage interventions: adjusting numbers, parameters, flow rates. Medium-leverage: changing feedback loop strength, information availability, rules. High-leverage: changing system goals, system structure, the paradigm the system operates within. Map current interventions by leverage level. Find the higher-leverage points being avoided — they're usually avoided for a reason (political resistance, long time horizon, requires belief change). That reason is worth examining.
-
-**Output:** Intervention map by leverage level, identification of high-leverage points being avoided and why, and the most feasible high-leverage intervention.

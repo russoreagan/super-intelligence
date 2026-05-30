@@ -1,9 +1,3 @@
----
-name: unity-physics
-description: Unity Physics skill for collision detection, rigidbody dynamics, raycasting, and physics configuration.
-allowed-tools: Read, Grep, Write, Bash, Edit, Glob, WebFetch
----
-
 # Unity Physics Skill
 
 Physics system configuration and implementation in Unity.

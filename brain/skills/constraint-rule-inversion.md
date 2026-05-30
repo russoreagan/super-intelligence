@@ -1,11 +1,3 @@
----
-name: constraint-rule-inversion
-description: "Flips a constraint into a creative driver — uses the limit as the generative force rather than working around it. Triggers: 'invert the constraint', 'use the limitation', 'constraint as feature', 'what if this limit was the requirement'."
-category: constraint
-is_router: false
-tier: 2
----
-
 # Constraint Rule Inversion
 
 Most constraints are treated as walls. This skill treats them as foundations. The limit that

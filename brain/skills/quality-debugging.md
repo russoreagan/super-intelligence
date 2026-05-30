@@ -1,11 +1,3 @@
----
-name: debugging
-description: Use when debugging bugs, test failures, performance regressions, or unexpected behavior and you need a systematic root-cause approach with evidence and minimal, validated fixes.
-summary: Systematic root-cause debugging with hypothesis testing, evidence-first investigation, and minimal fixes.
-triggers: [bug, error, crash, failing, broken, investigate, debug, fix, not working]
-disable-model-invocation: true
-
----
 # Debugging (Definitive)
 
 ## Core rule
@@ -80,4 +72,3 @@ Change one thing to validate the hypothesis (or add instrumentation).
 ## Verification
 <command + output summary>
 ```
-

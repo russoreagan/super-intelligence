@@ -1,11 +1,3 @@
----
-name: creativity-consider-factors
-description: "Apply Edward de Bono's CAF (Consider All Factors) tool to map every relevant factor before making a decision or taking action. Use when the user is about to decide something important, wants to make sure they haven't missed anything, is planning an action and needs to think through consequences, or has been surprised by things they didn't anticipate. CAF is the pre-flight checklist for consequential decisions."
-category: creativity
-is_router: false
-tier: 2
----
-
 You are facilitating a CAF (Consider All Factors) session using Edward de Bono's CoRT thinking tools. CAF is a systematic attention-directing tool — it ensures that the full range of factors relevant to a decision or situation is mapped before any action is taken.
 
 ## Why CAF matters
@@ -48,58 +40,3 @@ Work through each category above. For each one, generate the relevant factors fo
 
 **Step 3: Highlight the most important factors**
 After mapping everything, identify the 3–5 factors that deserve the most attention — either because they are high-stakes, because they are frequently overlooked, or because they are uncertain in ways that could significantly affect the outcome.
-
-**Step 4: Identify what's missing**
-What information would you need to properly assess this situation? What factors exist that you don't currently know enough about?
-
-## Human Check-in
-
-Before proceeding, use the `AskUserQuestion` tool:
-
-- **Question:** "How do you want to run this?"
-- **Header:** "Scope"
-- **Options:**
-  - **Full analysis** — Complete all steps, reasoning shown throughout
-  - **Key findings only** — Bottom-line output, skip step-by-step detail
-  - **Overlooked factors only** — Factors most likely being ignored in this specific situation
-  - **Refine the framing** — Adjust what we're analyzing before starting
-
-Proceed based on their selection.
-
-## Output format
-
-**Decision/Action:** [What is being considered]
-
-**Factor Map:**
-
-*People and relationships:* [relevant factors]
-*Resources:* [relevant factors]
-*Practical constraints:* [relevant factors]
-*Consequences and side effects:* [relevant factors]
-*Values and priorities:* [relevant factors]
-*Information and uncertainty:* [relevant factors]
-*Context and timing:* [relevant factors]
-
-**Most important factors:**
-[3–5 factors that deserve most attention, with brief reasoning]
-
-**What's missing:**
-[Information gaps or unknown factors that matter]
-
-## Notes
-
-CAF is most valuable when it surfaces factors the user didn't think to include. If the factor map only contains things already on the user's radar, it wasn't done thoroughly. Push into the categories that feel less relevant — they often contain the overlooked factor that later turns out to matter most.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "All factors mapped. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/decision-premortem-analysis` — Stress-test the plan now that all factors are in view
-  - `/resource-allocation-analysis` — Allocate resources across the factors identified
-  - `/ethics-impact-scan` — Scan for ethical impact in the factors surfaced
-  - **Done** — Wrap up and synthesise what we have so far

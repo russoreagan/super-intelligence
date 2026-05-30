@@ -1,11 +1,3 @@
----
-name: historical
-description: "Entry point for the historical reasoning toolkit. Routes to the right historical skill based on your situation. Use when you say 'historical', 'has this happened before', 'what does history say', 'what cycle is this', 'what usually goes wrong', 'what's the lesson', or want historical reasoning applied without knowing which specific tool fits."
-category: historical
-is_router: true
-tier: 3
----
-
 # Historical
 
 Applies historical reasoning to current situations. Diagnoses what kind of historical analysis is needed and applies the right tool.
@@ -62,7 +54,3 @@ Historical cases carry both contingent details (specific to their time and place
 ## Precedent Analysis
 
 *Finds and applies genuinely similar historical situations.*
-
-Distinguish true precedents from superficial analogies. A true precedent shares the underlying causal structure, not just surface similarity. Find 2-3 candidate precedents. For each: what makes it genuinely similar? What makes it different in ways that matter? What did decision-makers do, and what happened? What would they have done differently in hindsight?
-
-**Output:** Precedent inventory with genuine vs. superficial similarity assessment, decision-outcome analysis for each, and the lessons that most directly apply.

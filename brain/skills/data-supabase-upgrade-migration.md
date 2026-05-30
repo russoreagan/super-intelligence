@@ -1,18 +1,3 @@
----
-name: supabase-upgrade-migration
-description: |
-  Execute analyze, plan, and execute Supabase SDK upgrades with breaking change detection.
-  Use when upgrading Supabase SDK versions, detecting deprecations,
-  or migrating to new API versions.
-  Trigger with phrases like "upgrade supabase", "supabase migration",
-  "supabase breaking changes", "update supabase SDK", "analyze supabase version".
-allowed-tools: Read, Write, Edit, Bash(npm:*), Bash(git:*)
-version: 1.0.0
-license: MIT
-author: Jeremy Longshore <jeremy@intentsolutions.io>
-disable-model-invocation: true
-
----
 # Supabase Upgrade Migration
 
 ## Prerequisites

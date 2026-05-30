@@ -1,11 +1,3 @@
----
-name: temporal
-description: "Entry point for the temporal thinking toolkit. Routes to the right temporal skill based on your situation. Use when you say 'temporal', 'timing', 'when', 'long term', 'what happens in 5 years', 'what cycle is this', 'should we wait', 'possible futures', or want time-horizon thinking applied without knowing which specific tool fits."
-category: temporal
-is_router: true
-tier: 2
----
-
 # Temporal
 
 Applies temporal reasoning to timing, horizons, cycles, and futures. Diagnoses what kind of time-based analysis is needed and applies the right tool.
@@ -62,7 +54,3 @@ Use the futures cone: (1) Possible — what could happen (full range), (2) Plaus
 ## Timing Analysis
 
 *Assesses whether now is the right time to act, wait, or prepare.*
-
-Timing matters as much as the action itself. Assess four dimensions: (1) Readiness — is the capability to execute actually present? (2) Window — is there a time-limited opportunity or threat? (3) Momentum — is the context moving toward or away from favorable conditions? (4) Cost of waiting — does delay make things harder, or allow important information to emerge? The right action at the wrong time often fails; the same action at the right time succeeds.
-
-**Output:** Assessment across all four dimensions, the timing recommendation (act now / wait / prepare to act), and the conditions that would trigger reassessment.

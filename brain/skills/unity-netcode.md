@@ -1,9 +1,3 @@
----
-name: unity-netcode
-description: Unity Netcode for GameObjects skill for multiplayer networking, RPCs, state synchronization, and server-authoritative gameplay.
-allowed-tools: Read, Grep, Write, Bash, Edit, Glob, WebFetch
----
-
 # Unity Netcode Skill
 
 Multiplayer networking using Unity Netcode for GameObjects.

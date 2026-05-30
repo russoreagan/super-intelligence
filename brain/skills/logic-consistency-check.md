@@ -1,11 +1,3 @@
----
-name: logic-consistency-check
-description: "Surface internal contradictions, conflicting requirements, and edge cases that expose hidden conflicts in a document, spec, plan, design, or set of requirements. Use when something feels off but you can't pinpoint why, before committing to a design, or when requirements have grown incrementally and may have drifted out of sync. TRIGGERS: 'consistency check', 'find contradictions', 'does this spec make sense', 'check for conflicts', 'something feels wrong here', reviewing requirements docs, technical specs, architecture plans, product briefs, or any document where internal coherence matters."
-category: logic
-is_router: false
-tier: 2
----
-
 # Logic Consistency Check
 
 Requirements drift. Specs accumulate. A document written over weeks by multiple people — or a set of decisions made incrementally — can contain contradictions that nobody noticed because each piece was reviewed in isolation.
@@ -86,29 +78,3 @@ Proceed based on their selection.
 
 **Hidden Assumptions**
 - [assumption]: [which requirements depend on it; whether it's safe]
-
-**Verdict**
-[Overall consistency assessment — clean, minor issues, or significant conflicts that need resolution before proceeding]
-
-**Recommended Resolutions**
-- [Specific change per conflict — which item to amend and how]
-
----
-
-## Notes
-
-Not every inconsistency is equally urgent. Flag severity: a contradiction in core requirements is a blocker; an ambiguity in an edge case may just need a decision logged. The goal is to make implicit conflicts explicit so they can be resolved consciously rather than discovered in production.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Consistency checked. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/logic-fixer` — Resolve the inconsistencies found
-  - `/aesthetic-coherence-check` — Check conceptual and aesthetic coherence alongside logical consistency
-  - `/identity-values-clarification` — Resolve any values conflicts underlying the inconsistencies
-  - **Done** — Wrap up and synthesise what we have so far

@@ -1,11 +1,3 @@
----
-name: temporal-cycle-detection
-description: "Identifies what recurring cycle a situation is an instance of and where in that cycle you currently are. Use when asked 'what cycle is this', 'where are we in the cycle', 'have we seen this before', 'detect the pattern', 'hype cycle', or 'where in the curve'."
-category: temporal
-is_router: false
-tier: 2
----
-
 # Temporal Cycle Detection
 
 Every situation that feels unprecedented is usually an instance of a recurring cycle. Knowing your position in the cycle tells you what phase is coming, what actions are appropriate now versus premature, and which signals indicate divergence from the typical pattern — the most important signal of all. Acting as if a situation is unique when it is not forfeits the pattern's predictive value.
@@ -75,19 +67,3 @@ Proceed based on their selection.
 ---
 
 ## Notes
-
-If no cycle fits well, that is itself a finding — either the situation is genuinely novel or it requires a composite of two cycles. Name the mismatch explicitly rather than forcing a fit.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Cycles detected. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/historical-cycle-detection` — Look for historical evidence that confirms the cycles
-  - `/temporal-timing-analysis` — Time actions to the detected cycles
-  - `/strategy-timing` — Align strategy with the cycle timing
-  - **Done** — Wrap up and synthesise what we have so far

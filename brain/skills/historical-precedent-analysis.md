@@ -1,11 +1,3 @@
----
-name: historical-precedent-analysis
-description: "Finds and applies genuinely similar historical situations to inform a current decision — distinguishing true precedents from superficial analogies. TRIGGERS: 'historical precedent', 'has this happened before', 'what does history say', 'find a precedent', 'what did others do in this situation'."
-category: historical
-is_router: false
-tier: 3
----
-
 # Historical Precedent Analysis
 
 History doesn't repeat — but structures do. The error is searching for surface
@@ -79,36 +71,3 @@ Proceed based on their selection.
 | [descriptive name] | [specific context] | [approach taken] | [what happened] |
 
 **Structural Mapping**
-
-| Precedent | Where It Maps | Where It Diverges | Key Differing Variables |
-|---|---|---|---|
-| [name] | [structural overlap] | [structural gap] | [variables that differ] |
-
-**Lesson:** [the transferable principle — the underlying rule, stated without
-domain-specific language]
-
-**Caveats:** [where the precedent fails to apply and what would need to be different
-for it to hold]
-
----
-
-## Notes
-
-The strongest precedent is often the most surprising one — from a completely
-different domain that shares the underlying dynamics. Don't default to the obvious
-comparison within the same industry. The abstractions done in Step 1 determine the
-quality of everything that follows — spend time there.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Precedents analysed. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/historical-lesson-extraction` — Extract lessons from the precedents found
-  - `/decision-criteria-weighting` — Weight criteria against precedent outcomes
-  - `/strategy-positioning` — Position relative to what happened in comparable cases
-  - **Done** — Wrap up and synthesise what we have so far

@@ -1,11 +1,3 @@
----
-name: strategy-intelligence
-description: "Audits what you actually know vs. what you're assuming about yourself and your opponent before acting. Triggers: 'what do I actually know', 'intelligence audit', 'know your enemy', 'what am I assuming vs knowing', 'prep for negotiation', 'what information do I have', 'what don't I know about them', 'am I missing something important'."
-category: strategy
-is_router: false
-tier: 3
----
-
 # Strategy: Intelligence
 
 Sun Tzu's most quoted principle — "Know yourself and know your enemy; in a hundred battles you will never be in peril" — is often treated as a slogan. Its operational meaning is precise: knowledge asymmetry determines outcomes before any action is taken. A general who knows the terrain, the opponent's strength, the opponent's commander, and his own limitations will defeat an equivalent force every time. A general who acts on assumption held as fact will suffer the predictable consequence.
@@ -57,26 +49,3 @@ For each current assumption in the opponent audit: rate the risk if that assumpt
 
 **Recommended Information Gathering**
 [For each top gap: how to close it, what it costs, whether it's worth closing before acting]
-
-**Assumption Risk Summary**
-[High-risk assumptions that could cause strategic failure — these are the decisions to hold until more intelligence is available]
-
----
-
-## Notes
-
-Pairs with `/strategy-terrain` — intelligence informs the terrain map, and an inaccurate terrain map comes from treating assumptions as facts. Pairs with `/strategy-deception` — once you know what your opponent currently believes about you, you can manage that belief deliberately. Use `/strategy-timing` to determine whether gathering more intelligence before acting is worth the delay.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Intelligence gathered. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/strategy-positioning` — Use the intelligence for strategic positioning
-  - `/strategy-deception` — Use intelligence to detect or plan deception
-  - `/game-theory-signaling` — Interpret signals with the intelligence gathered
-  - **Done** — Wrap up and synthesise what we have so far

@@ -1,10 +1,3 @@
----
-name: category-testing
-description: "Pick when writing or fixing tests, setting up test infra, or doing TDD. Router—load up to 4 skills from this category when relevant."
-triggers: [test, Jest, Vitest, Playwright, E2E, TDD]
-disable-model-invocation: false
----
-
 # Category: Testing
 
 **When to pick this:** Pick when writing or fixing tests, setting up test infra, or doing TDD.

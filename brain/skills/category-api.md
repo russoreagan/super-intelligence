@@ -1,10 +1,3 @@
----
-name: category-api
-description: "Pick when designing or changing REST/GraphQL endpoints, contracts, or API tooling. Router—load up to 4 skills from this category when relevant."
-triggers: [API, REST, GraphQL, endpoint, OpenAPI, rate limit]
-disable-model-invocation: false
----
-
 # Category: API
 
 **When to pick this:** Pick when designing or changing REST/GraphQL endpoints, contracts, or API tooling.

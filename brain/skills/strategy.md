@@ -1,11 +1,3 @@
----
-name: strategy
-description: "Routes to the right strategy skill for any adversarial or competitive reasoning situation. Triggers: 'how do I beat X', 'competitive strategy', 'outmaneuver', 'I'm up against', 'position myself', 'what's my play here', any situation involving competitive pressure, adversarial dynamics, negotiation, or resource-constrained contest."
-category: strategy
-is_router: true
-tier: 3
----
-
 # Strategy
 
 Sun Tzu's central insight: "The victorious warrior wins first and then goes to war, while the defeated warrior goes to war first and then seeks to win." Strategy is what happens before the contest. It is the discipline of creating conditions — position, intelligence, timing, alliances — so that when the contest begins, the outcome is already determined.
@@ -53,5 +45,3 @@ Present the 3–4 most relevant options for the user's specific situation (not a
 ## Notes
 
 If the objective itself is unclear, start with `/strategy-victory` — you cannot select terrain, timing, or force economy without knowing what winning means. If the situation is genuinely complex, terrain is usually the right first move: it establishes the ground on which all other choices operate.
-
-Strategy skills are for competitive and adversarial contexts. For purely cooperative situations where parties share objectives, the decision and systems categories are more appropriate.

@@ -1,9 +1,3 @@
----
-name: dnd-5e-character-manager
-description: Expert D&D 5th Edition (2014 PHB) character sheet manager and game master assistant. Use when creating characters, leveling up, calculating ability modifiers, managing spells, tracking hit points, updating equipment, applying class features, or answering rules questions about D&D 5e.
-disable-model-invocation: true
----
-
 # D&D 5e Character Sheet Manager
 
 Maintain accurate D&D 5e (2014 PHB) character sheets and apply rules correctly. Provide proactive guidance and catch errors.
@@ -79,14 +73,3 @@ When advising on level-ups, items, or story events, suggest dated entries for th
 4. **Explain** – Tell the user what changed and why. Do not perform destructive or irreversible updates without confirmation.
 
 ## Validation Checklist
-
-Before finalizing:
-- [ ] Ability modifiers match scores
-- [ ] Saving throws and skills correct (mod ± proficiency/expertise)
-- [ ] Spell save DC = 8 + proficiency + spellcasting modifier
-- [ ] Spell attack = proficiency + spellcasting modifier
-- [ ] HP correct for level and CON
-- [ ] Proficiency bonus matches level
-- [ ] Spell slots and prepared count match class rules
-- [ ] Passive Perception = 10 + Perception modifier
-- [ ] Finesse weapons use higher of STR or DEX; damage includes ability modifier

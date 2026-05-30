@@ -1,11 +1,3 @@
----
-name: error-handling
-description: Use when designing APIs or implementing resilient behavior: defining error categories, propagating errors safely, adding retries/backoff, and producing actionable logs/messages.
-summary: Error classification, custom hierarchies, retries with backoff, graceful degradation, and logging.
-triggers: [exception, error handling, retry, fallback, graceful degradation, logging, resilience]
-disable-model-invocation: true
-
----
 # Error Handling (Definitive)
 
 ## Goal

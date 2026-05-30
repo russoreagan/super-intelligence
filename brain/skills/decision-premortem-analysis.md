@@ -1,11 +1,3 @@
----
-name: decision-premortem-analysis
-description: "Imagines the decision has been made and failed — then diagnoses why. Breaks the commitment bias that prevents honest risk assessment after a direction is chosen. Triggers: 'pre-mortem', 'imagine this failed', 'what could go wrong', 'assume this doesn't work', 'failure mode analysis'."
-category: decision
-is_router: false
-tier: 2
----
-
 # Decision Premortem Analysis
 
 Once a direction is chosen, commitment bias makes honest risk assessment nearly impossible
@@ -92,13 +84,3 @@ which assumptions, if wrong, would make the entire direction invalid?
 ---
 
 ## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Failure modes mapped. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/constraint-workaround-mapping` — Address the top failure modes with concrete workarounds
-  - `/decision-criteria-weighting` — Revise decision criteria based on failure mode findings
-  - `/strategy-positioning` — Adapt strategy to reduce the probability of the worst failures
-  - **Done** — Wrap up and synthesise what we have so far

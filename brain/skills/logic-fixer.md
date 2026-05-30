@@ -1,11 +1,3 @@
----
-name: logic-fixer
-description: "Take broken reasoning — a flawed argument, contradictory spec, unsound plan, or invalid inference — diagnose exactly what's wrong, and produce a corrected version. Use when you have reasoning that doesn't hold and you want it fixed, not just critiqued. TRIGGERS: 'fix this reasoning', 'repair this argument', 'this logic is broken, fix it', 'make this argument sound', 'my reasoning is circular, help', any situation where broken reasoning needs to be made valid rather than just flagged. Pairs with logic-argument-validation (which diagnoses) and logic-council (which pressure-tests) — this skill fixes."
-category: logic
-is_router: false
-tier: 2
----
-
 # Logic Fixer
 
 Diagnosis without repair is incomplete. This skill takes broken reasoning and produces a corrected version — one where the premises actually support the conclusion, the hidden assumptions are made explicit, the fallacies are removed, and the argument can be defended.
@@ -72,41 +64,3 @@ Proceed based on their selection.
 
 **Original reasoning:**
 [The broken argument, spec, or reasoning as provided]
-
-**Diagnosis**
-| Issue | Location | Type |
-|---|---|---|
-| [what's broken] | [where in the argument] | [failure type] |
-
-**Fixed Version**
-[The corrected argument — written cleanly, as if it were the original. Not a tracked-changes edit, but a finished version.]
-
-**What Changed**
-| Original | Fixed | Why |
-|---|---|---|
-| [original claim/step] | [fixed version] | [reason] |
-
-**Strength Assessment**
-[Is the fixed argument now sound? Does it establish what the original was trying to establish, or did the repairs require narrowing the conclusion? Be honest about this.]
-
----
-
-## Notes
-
-Sometimes a broken argument can't be fixed because the conclusion isn't supportable — the premises, even repaired, don't get you there. In those cases, the honest output is: "This conclusion cannot be established with the evidence available. Here is what the available evidence *does* support." That is more useful than a technically valid argument for a weaker claim dressed up to look like the original.
-
-The fixer's job is sound reasoning, not salvaging a predetermined conclusion.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Reasoning repaired. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/logic-check` — Verify the fix holds under full scrutiny
-  - `/decision-premortem-analysis` — Stress-test the corrected plan
-  - `/communication-clarity-audit` — Check the corrected reasoning is communicated clearly
-  - **Done** — Wrap up and synthesise what we have so far

@@ -1,11 +1,3 @@
----
-name: ethics
-description: "Entry point for the ethics toolkit. Routes to the right ethical analysis skill based on your situation. Use when you say 'ethics', 'is this ethical', 'sanity check this', 'who does this affect', 'is this fair', 'something feels wrong', or want ethical reasoning applied without knowing which specific tool fits."
-category: ethics
-is_router: true
-tier: 2
----
-
 # Ethics
 
 Applies ethical reasoning to decisions, designs, policies, and practices. Diagnoses the type and depth of ethical work needed and applies the right tool.
@@ -64,57 +56,3 @@ See `ethics-council` for the full multi-agent process with 5 independent framewo
 ## Ethics Crisis Triage
 
 *Rapid ethical assessment when something has already gone wrong.*
-
-In a crisis, the instinct is to manage rather than reason. This tool forces ethical clarity under pressure. Apply a rapid three-layer assessment: (1) Immediate harm — who is being harmed right now, and what stops it fastest? (2) Accountability — what transparency is owed, and to whom? (3) Response ethics — which response options themselves create new ethical problems? Crisis responses that cut ethical corners tend to create second crises.
-
-**Output:** Immediate harm assessment, accountability obligations, ethically viable response options, and what to avoid.
-
----
-
-## Ethics Data Audit
-
-*Audit a data decision against ethical standards.*
-
-Goes beyond legal compliance. Assess: (1) Necessity — is collecting this data actually required for the stated purpose? (2) Proportionality — is the scope of collection proportional to the benefit? (3) Consent — do people meaningfully understand and agree to this? (4) Harm potential — what's the worst realistic use or breach? (5) Retention — how long is too long?
-
-**Output:** Data practice assessment across all five dimensions, with specific changes that would make the practice clearly ethical.
-
----
-
-## Ethics Bias Check
-
-*Evaluates an algorithm or model for discriminatory patterns.*
-
-Assess the system against protected characteristics: does it produce systematically different outcomes for different groups? If so: is the difference justified by legitimate criteria, or does it reflect historical bias in training data? Apply four fairness standards: equal treatment, equal outcome, individual fairness, and counterfactual fairness. Flag which standard is being violated and by what mechanism.
-
-**Output:** Fairness assessment per standard, identified disparate impacts, root cause of bias, and mitigation recommendations.
-
----
-
-## Ethics Consent Review
-
-*Reviews a UX flow for genuine consent.*
-
-Genuine consent is informed, voluntary, and meaningful — not just legally checkboxed. Evaluate the flow: Can users meaningfully understand what they're agreeing to? Are they under pressure (dark patterns, urgency, buried choices)? Is opting out as easy as opting in? Would a user feel deceived after the fact?
-
-**Output:** Consent quality assessment, specific dark patterns identified, and changes needed for consent to be genuine.
-
----
-
-## Ethics Impact Scan
-
-*Quick pre-ship ethical impact assessment.*
-
-Before committing, surface: who benefits from this? Who bears costs or risk? At what scale? Are the costs and benefits distributed fairly? Are any harms irreversible? This is a lightweight check that takes minutes — the goal is to catch obvious ethical problems before they become embedded in shipped product.
-
-**Output:** Benefit/harm map, distribution assessment, irreversibility flags, and a go/no-go recommendation with conditions.
-
----
-
-## Ethics Vendor Review
-
-*Evaluates a third-party against ethical standards.*
-
-Assess across five domains: (1) Labor practices — how are workers treated in the supply chain? (2) Data handling — how do they use data about you and your users? (3) Business model — does their incentive structure align with your values? (4) Environmental impact, (5) Political/social alignment — do their positions or practices conflict with stated values? A vendor whose practices conflict with your values makes your product complicit.
-
-**Output:** Vendor assessment across all five domains, red flags, and a recommendation on whether to proceed.

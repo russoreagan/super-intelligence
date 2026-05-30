@@ -1,11 +1,3 @@
----
-name: historical-lesson-extraction
-description: "Extracts the transferable principle from a specific historical case — separating the contingent surface details from the underlying rule that applies across contexts. TRIGGERS: 'what's the lesson', 'extract the lesson', 'what should we learn from this', 'generalise from this case', 'apply this to our situation'."
-category: historical
-is_router: false
-tier: 3
----
-
 # Historical Lesson Extraction
 
 Every case contains multiple lessons. Most people extract the wrong one — the surface
@@ -81,35 +73,3 @@ the outcome]
 language, including the mechanism]
 
 **Transferability Assessment**
-
-| Required Condition | Present in Current Situation? | Notes |
-|---|---|---|
-| [condition the principle requires] | [yes / no / partially] | [specific observation] |
-
-**Application:** [how the principle applies to the current situation — what it implies
-concretely]
-
-**Caveats:** [conditions under which this principle would mislead]
-
----
-
-## Notes
-
-The principle is wrong if it only describes the original case. Test it against three
-other cases in different domains — if it doesn't transfer, it's a description, not a
-principle. Keep abstracting until it does. The mechanism is the hardest and most
-important element: a principle without a mechanism is an observation, not a lesson.
-
----
-
-## What's Next
-
-After delivering this output, use `AskUserQuestion` to offer the next move:
-
-- **Question:** "Lessons extracted. What's next?"
-- **Header:** "Next"
-- **Options:**
-  - `/decision-criteria-weighting` — Weight decision criteria by the historical lessons
-  - `/strategy-positioning` — Position to apply what history teaches
-  - `/systems-leverage-analysis` — Find leverage points the historical lessons reveal
-  - **Done** — Wrap up and synthesise what we have so far
