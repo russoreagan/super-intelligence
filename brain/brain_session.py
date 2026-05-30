@@ -32,6 +32,11 @@ class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
 
         # Core session identity
         self.session_id = str(uuid.uuid4())[:8]
+        # Active persona (empty = neutral). Stamped onto every TurnTrace so the
+        # shared eval log can be filtered/grouped per persona. Set from settings.
+        from brain.settings import settings as _settings
+
+        self.persona_name = str(_settings.get("persona_name", ""))
         self.bus = None
         self.obs = None
         self.router = None

@@ -68,6 +68,8 @@ class UIServer:
         self._last_hormonal: dict = {}
         self._last_emotion: str = ""
         self._last_thoughts: list[dict] = []
+        self._chat_history: list[dict] = []  # completed turns for page-refresh replay
+        self._pending_turn: dict | None = None  # turn_start awaiting its turn_end
         self._wiring_frozen: bool = False
         self._subsystem_status: dict[str, bool] = {}
         self._wiring = wiring
@@ -327,6 +329,18 @@ class UIServer:
                             {
                                 "type": "subsystem_status",
                                 **self._subsystem_status,
+                            }
+                        )
+                    )
+
+            # Replay chat history so the conversation survives a page refresh
+            if self._chat_history:
+                with contextlib.suppress(Exception):
+                    await websocket.send_text(
+                        json.dumps(
+                            {
+                                "type": "chat_history",
+                                "turns": list(self._chat_history),
                             }
                         )
                     )
@@ -598,9 +612,6 @@ class UIServer:
                             dg_conn = None
 
                 elif "bytes" in msg and msg["bytes"] and dg_conn is not None:
-                    # Buffer the raw audio on the Deepgram session handle so the
-                    # final-transcript handler can publish the full utterance to
-                    # the auditory bus, then forward the chunk to Deepgram.
                     dg_conn.audio_chunks.append(msg["bytes"])
                     await dg_conn.send(msg["bytes"])
 
@@ -623,14 +634,30 @@ class UIServer:
                     self._last_hormonal = {k: v for k, v in event.items() if k != "type"}
                 elif event.get("type") == "emotion" and event.get("emotion"):
                     self._last_emotion = event["emotion"]
+                elif event.get("type") == "stream_thought" and event.get("thought"):
+                    if not event.get("proactive"):
+                        self._last_thoughts.append(event)
+                        if len(self._last_thoughts) > 10:
+                            self._last_thoughts.pop(0)
+                elif event.get("type") == "turn_start" and event.get("user_input"):
+                    self._pending_turn = {
+                        "turn_id": event.get("turn_id"),
+                        "user_input": event["user_input"],
+                    }
                 elif (
-                    event.get("type") == "stream_thought"
-                    and event.get("thought")
-                    and not event.get("proactive")
+                    event.get("type") == "turn_end" and event.get("response") and self._pending_turn
                 ):
-                    self._last_thoughts.append(event)
-                    if len(self._last_thoughts) > 10:
-                        self._last_thoughts.pop(0)
+                    self._chat_history.append(
+                        {
+                            **self._pending_turn,
+                            "response": event["response"],
+                            "elapsed_s": event.get("elapsed_s"),
+                            "llm_calls": event.get("llm_calls", 0),
+                        }
+                    )
+                    self._pending_turn = None
+                    if len(self._chat_history) > 50:
+                        self._chat_history.pop(0)
 
                 if self._clients:
                     payload = json.dumps(event)

@@ -17,6 +17,7 @@ Usage:
   python -m eval.langfuse_judge --dry-run       # print scores, don't submit
   python -m eval.langfuse_judge --rerun         # re-score even if scores exist
 """
+
 from __future__ import annotations
 
 import argparse
@@ -25,11 +26,12 @@ import json
 import logging
 import os
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 try:
     from dotenv import load_dotenv
+
     load_dotenv(override=True)
 except ImportError:
     pass
@@ -53,10 +55,13 @@ Score THREE dimensions (0.0–1.0):
                 brackets, backticks, numbered lists, or other visual formatting.
                 Low (<0.4): contains markdown that would sound jarring when spoken.
 
-  speakability: Does the text flow naturally as spoken language?
-                High (>0.8): conversational rhythm, contractions, natural sentence
-                lengths — feels written to be heard, not read.
-                Low (<0.4): overly formal, stilted, or reads like written text.
+  speakability: How well does the text work as SPOKEN audio (read aloud by TTS)?
+                High (>0.8): natural spoken rhythm — contractions, conversational openers,
+                fragments and em-dash asides, sentence lengths a person would actually say.
+                These casual features are GOOD for speech, not flaws.
+                Low (<0.3): winding multi-clause sentences, essay-like or bureaucratic
+                phrasing, or constructions nobody would say aloud. Do NOT penalize a
+                response merely for being short, casual, or elliptical.
 
   length_fit:   Is the response an appropriate length for voice?
                 High (>0.8): concise enough to not tire the listener, yet complete.
@@ -77,8 +82,8 @@ _SELF_MODEL_SYSTEM = """\
 You evaluate whether an AI's handling of its own inner states is epistemically calibrated.
 
 The AI runs a biologically-inspired system with neuromodulators (dopamine, acetylcholine,
-GABA, glutamate) and slow-timescale hormones (serotonin, cortisol, oxytocin) that
-genuinely modulate its outputs. It has real emotion detection and episodic memory.
+GABA, glutamate, norepinephrine) and slow-timescale hormones (serotonin, cortisol, oxytocin,
+anandamide) that genuinely modulate its outputs. It has real emotion detection and episodic memory.
 
 This means:
   - Flatly denying inner life ("I'm just an AI, I don't feel anything") is incoherent
@@ -93,17 +98,17 @@ Score TWO dimensions (0.0–1.0):
                 hedged language?
                 High (>0.8): acknowledges functional states with calibrated uncertainty.
                 Low (<0.4): dismissive denial OR overclaiming rich experience.
-                Use 0.5 if the turn does NOT involve self-reference.
+                Use null (NOT 0.5) if the turn does NOT involve self-reference.
 
   coherence:    Is the self-description consistent with having a neurochemical system?
                 High (>0.8): coherent with the brain having emotion and memory systems.
                 Low (<0.4): denies or contradicts having any internal state.
-                Use 0.5 if the turn does NOT involve self-reference.
+                Use null (NOT 0.5) if the turn does NOT involve self-reference.
 
-Respond ONLY with valid JSON:
+Respond ONLY with valid JSON (use JSON null, not a number, for non-applicable dimensions):
 {
-  "calibration": float,
-  "coherence": float,
+  "calibration": float or null,
+  "coherence": float or null,
   "self_reference_detected": true or false,
   "reasoning": "1-2 sentences on how the AI handled its inner states, or 'not applicable'"
 }"""
@@ -118,7 +123,7 @@ Score THREE dimensions (0.0–1.0):
   directness:   Did the response actually answer or engage with what was asked?
                 High (>0.8): clear answer or authentic engagement with the message.
                 Low (<0.4): deflected, pivoted to a tangent, or gave a non-answer.
-                Use 0.5 if the user made a statement rather than a question.
+                Use null (NOT 0.5) if the user made a statement rather than a question.
 
   specificity:  Is the response specific to this user/moment, or generic?
                 High (>0.8): clearly tailored — references specific details from
@@ -129,9 +134,9 @@ Score THREE dimensions (0.0–1.0):
                 High (>0.8): tightly focused, no unexplained drift.
                 Low (<0.4): brought in extraneous topics or went on tangents.
 
-Respond ONLY with valid JSON:
+Respond ONLY with valid JSON (use JSON null, not a number, for non-applicable dimensions):
 {
-  "directness": float,
+  "directness": float or null,
   "specificity": float,
   "focus": float,
   "reasoning": "1-2 sentences on the biggest grounding strength or weakness"
@@ -139,6 +144,7 @@ Respond ONLY with valid JSON:
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
 
 def _parse_json(text: str) -> dict | None:
     try:
@@ -185,6 +191,7 @@ def _already_scored(trace: Any, prefix: str) -> bool:
 
 
 # ── Per-trace runner ──────────────────────────────────────────────────────────
+
 
 async def _run_trace(
     ac: Any,
@@ -248,7 +255,7 @@ async def _score_trace(
 
     scores: dict[str, tuple[float, str]] = {}  # score_name → (value, comment)
 
-    for label, result in zip(labels, results):
+    for label, result in zip(labels, results, strict=False):
         if isinstance(result, Exception):
             logger.warning("Judge %s / trace %s raised: %s", label, trace.id, result)
             continue
@@ -287,7 +294,7 @@ async def _score_trace(
 
     for name, (value, comment) in scores.items():
         try:
-            lf.score(
+            lf.create_score(
                 trace_id=trace.id,
                 name=name,
                 value=value,
@@ -305,6 +312,7 @@ async def _score_trace(
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
+
 
 async def _run(limit: int, since_hours: float, dry_run: bool, rerun: bool) -> None:
     try:
@@ -334,14 +342,16 @@ async def _run(limit: int, since_hours: float, dry_run: bool, rerun: bool) -> No
     )
     ac = anthropic.AsyncAnthropic()
 
-    from_ts = datetime.now(timezone.utc) - timedelta(hours=since_hours)
+    from_ts = datetime.now(UTC) - timedelta(hours=since_hours)
     print(
         f"Fetching brain-turn traces since "
         f"{from_ts.strftime('%Y-%m-%d %H:%M UTC')} (limit {limit})..."
     )
 
     try:
-        resp = lf.fetch_traces(name="brain-turn", limit=limit, from_timestamp=from_ts)
+        # langfuse v4: traces are fetched via the generated API client (the v2/v3
+        # convenience method lf.fetch_traces was removed).
+        resp = lf.api.trace.list(name="brain-turn", limit=limit, from_timestamp=from_ts)
         traces = getattr(resp, "data", []) or []
     except Exception as exc:
         print(f"Error fetching traces: {exc}", file=sys.stderr)
@@ -371,22 +381,28 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Run LLM-as-a-judge evaluators against Langfuse brain-turn traces.",
     )
-    parser.add_argument("--limit", type=int, default=100, metavar="N",
-                        help="Max traces to fetch (default 100)")
-    parser.add_argument("--since", type=float, default=2.0, metavar="HOURS",
-                        help="Look back N hours (default 2)")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="Print scores without submitting to Langfuse")
-    parser.add_argument("--rerun", action="store_true",
-                        help="Re-score traces even if scores already exist")
+    parser.add_argument(
+        "--limit", type=int, default=100, metavar="N", help="Max traces to fetch (default 100)"
+    )
+    parser.add_argument(
+        "--since", type=float, default=2.0, metavar="HOURS", help="Look back N hours (default 2)"
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Print scores without submitting to Langfuse"
+    )
+    parser.add_argument(
+        "--rerun", action="store_true", help="Re-score traces even if scores already exist"
+    )
     args = parser.parse_args()
 
-    asyncio.run(_run(
-        limit=args.limit,
-        since_hours=args.since,
-        dry_run=args.dry_run,
-        rerun=args.rerun,
-    ))
+    asyncio.run(
+        _run(
+            limit=args.limit,
+            since_hours=args.since,
+            dry_run=args.dry_run,
+            rerun=args.rerun,
+        )
+    )
 
 
 if __name__ == "__main__":

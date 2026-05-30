@@ -9,6 +9,7 @@ The report reader merges patches into turns by turn_id on read.
 log_turn() is called synchronously from ObservabilityLayer.record_turn().
 patch_turn() is called from background tasks (baseline, scorer) — thread-safe.
 """
+
 from __future__ import annotations
 
 import dataclasses

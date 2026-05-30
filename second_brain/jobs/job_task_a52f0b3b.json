@@ -1,0 +1,37 @@
+{
+  "job_id": "job_task_a52f0b3b",
+  "task_id": "a52f0b3b",
+  "goal": "use cloud reasoning to search recent academic papers on the psychological effects and user behavior changes caused by hold-to-talk features in communication tools",
+  "success": false,
+  "source": "user",
+  "ralph_mode": false,
+  "total_attempts": 2,
+  "steps": [
+    {
+      "tool": "none",
+      "args": {},
+      "reason": "[planner failed]"
+    },
+    {
+      "tool": "none",
+      "args": {},
+      "reason": "[planner failed]"
+    }
+  ],
+  "results": [
+    "",
+    ""
+  ],
+  "written_files": [],
+  "plan_steps": [
+    {
+      "description": "use cloud reasoning to search recent academic papers on the psychological effects and user behavior changes caused by hold-to-talk features in communication tools",
+      "expected_tool": "?",
+      "acceptance_criteria": [],
+      "id": "US-001"
+    }
+  ],
+  "spoken_summary": "I wasn't able to search for those papers \u2014 my planner couldn't figure out how to execute that task. I don't have direct access to academic databases or the internet to pull recent research on hold-to-talk psychology. Want me to help you with something I can actually do, like analyzing a document you already have or working with files on your system?",
+  "created_at": "2026-05-29T14:36:13.845930+00:00",
+  "completed_at": "2026-05-29T14:36:13.845936+00:00"
+}

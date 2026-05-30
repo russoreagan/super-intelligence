@@ -18,6 +18,20 @@ import os
 
 from brain.bus import Bus
 from brain.cell import IntegratorCell
+from brain.clusters.job_store import JobStore
+from brain.clusters.motor_dispatcher import ToolDispatcher
+from brain.clusters.motor_prompts import (
+    CRITERIA_CHECK_SYSTEM as _CRITERIA_CHECK_SYSTEM,
+)
+from brain.clusters.motor_prompts import (
+    PLANNER_SYSTEM_BASE as _PLANNER_SYSTEM_BASE,
+)
+from brain.clusters.motor_prompts import (
+    STRATEGIC_SYSTEM as _STRATEGIC_SYSTEM,
+)
+from brain.clusters.motor_prompts import (
+    VERIFIER_SYSTEM as _VERIFIER_SYSTEM,
+)
 from brain.clusters.motor_subsystem import MotorSubsystem
 from brain.model_router import ModelRouter
 from brain.neuron import SwitchNeuron
@@ -29,28 +43,55 @@ logger = logging.getLogger(__name__)
 CLUSTER = "motor_cortex"
 
 # ── Timeout / retry configuration ─────────────────────────────────────────────
-# Per-tool dispatch timeout: how long a single tool call may run before it is
-# killed and returns [error]. Covers all tools — sync file ops run in executor,
-# async ops (run_command, fetch_url, query_langfuse) have their own inner
-# timeouts but the envelope here is the hard ceiling.
-# Override: BRAIN_TOOL_TIMEOUT_SECONDS env var > brain/settings.json > 30s default.
+# Philosophy: a job is allowed to take a LONG time as long as it keeps making
+# progress. Timeouts here are not "this is taking too long, give up" limits —
+# they are safety nets that only trip on a genuine hang (a wedged Ollama, a stuck
+# subprocess). Set them generously above real worst-case latency so slow-but-
+# healthy work always completes; rely on retries to ride out transient blips.
+
+# Per-tool dispatch timeout: kills a single tool call only if it truly hangs.
+# Filesystem ops are sub-second; run_command/fetch_url have their own inner
+# limits. 120s is far above any healthy tool call but still catches a stuck mount.
+# Override: BRAIN_TOOL_TIMEOUT_SECONDS env var > brain/settings.json > 120s default.
 _TOOL_TIMEOUT_S: float = float(
-    os.environ.get("BRAIN_TOOL_TIMEOUT_SECONDS") or _brain_settings.get("tool_timeout_seconds", 30)
+    os.environ.get("BRAIN_TOOL_TIMEOUT_SECONDS") or _brain_settings.get("tool_timeout_seconds", 120)
 )
 
 # Per-dispatch retry count for transient [error] outputs (not [blocked]).
 # A retry only fires when the tool returned [error] — it does NOT retry [blocked]
-# (safety sandbox) or deliberate tool="none" skips.
-# Override: BRAIN_TOOL_RETRIES env var > brain/settings.json > 1 default.
+# (safety sandbox) or deliberate tool="none" skips. More retries = more chances
+# to recover from a transient blip before the step is considered failed.
+# Override: BRAIN_TOOL_RETRIES env var > brain/settings.json > 2 default.
 _TOOL_RETRIES: int = int(
-    os.environ.get("BRAIN_TOOL_RETRIES") or _brain_settings.get("tool_retries", 1)
+    os.environ.get("BRAIN_TOOL_RETRIES") or _brain_settings.get("tool_retries", 2)
 )
 
-# Wall-clock deadline for a complete internal job (all stories + retries).
-# Prevents a slow local model or pathological retry loop from running forever.
-# Override: BRAIN_JOB_TIMEOUT_SECONDS env var > brain/settings.json > 300s (5 min).
+# Per-LLM-call timeout for the local planner/criteria/verifier cells. A cold
+# model load is ~50s and a slow 14B generation can add more; 180s gives healthy
+# calls plenty of room while still bounding a wedged server. Used for all four
+# motor cells (see IntegratorCell construction below).
+# Override: BRAIN_PLANNER_TIMEOUT_SECONDS env var > brain/settings.json > 180s.
+_CELL_TIMEOUT_S: float = float(
+    os.environ.get("BRAIN_PLANNER_TIMEOUT_SECONDS")
+    or _brain_settings.get("planner_timeout_seconds", 180)
+)
+
+# How many times the tactical planner re-asks the local model when a call comes
+# back empty/unparseable (timeout, transient error). Each attempt gets the full
+# _CELL_TIMEOUT_S. More attempts = more resilience to a slow/cold model.
+# Override: BRAIN_PLANNER_RETRIES env var > brain/settings.json > 3 default.
+_PLANNER_RETRIES: int = int(
+    os.environ.get("BRAIN_PLANNER_RETRIES") or _brain_settings.get("planner_retries", 3)
+)
+
+# Wall-clock safety net for a complete internal job (all stories + retries).
+# This is NOT a "job is too slow" limit — it only exists so a truly wedged model
+# can't hang the task worker forever. Default 1800s (30 min) is deliberately far
+# above any healthy multi-step job. A long job that keeps making progress runs to
+# completion; only a genuine hang hits this.
+# Override: BRAIN_JOB_TIMEOUT_SECONDS env var > brain/settings.json > 1800s.
 _JOB_TIMEOUT_S: float = float(
-    os.environ.get("BRAIN_JOB_TIMEOUT_SECONDS") or _brain_settings.get("job_timeout_seconds", 300)
+    os.environ.get("BRAIN_JOB_TIMEOUT_SECONDS") or _brain_settings.get("job_timeout_seconds", 1800)
 )
 
 # Single source of truth for every tool name the motor cortex can actually
@@ -107,24 +148,6 @@ def _tool_appropriateness_warning(tool: str, goal: str, story_desc: str) -> str 
     return None
 
 
-# Imports deferred to module bottom to avoid a circular import with the motor
-# subpackage (job_store / motor_dispatcher import names defined above).
-from brain.clusters.job_store import JobStore  # noqa: E402
-from brain.clusters.motor_dispatcher import ToolDispatcher  # noqa: E402
-from brain.clusters.motor_prompts import (  # noqa: E402
-    CRITERIA_CHECK_SYSTEM as _CRITERIA_CHECK_SYSTEM,
-)
-from brain.clusters.motor_prompts import (  # noqa: E402
-    PLANNER_SYSTEM_BASE as _PLANNER_SYSTEM_BASE,
-)
-from brain.clusters.motor_prompts import (  # noqa: E402
-    STRATEGIC_SYSTEM as _STRATEGIC_SYSTEM,
-)
-from brain.clusters.motor_prompts import (  # noqa: E402
-    VERIFIER_SYSTEM as _VERIFIER_SYSTEM,
-)
-
-
 class MotorCortexCluster:
     def __init__(
         self,
@@ -160,7 +183,13 @@ class MotorCortexCluster:
             lobe_hint="Lobe capabilities (recall_memory, analyze_image) not yet configured.",
         )
 
-        # Planner: local Ollama — tool decisions stay on-device
+        # Planner: local Ollama — tool decisions stay on-device.
+        # NO skills injected here: the planner's only job is to pick a tool + args
+        # (read_file vs list_files vs run_command). Domain skill docs (Unity, dev
+        # process, etc.) are ~8K tokens that would overflow num_ctx (8192) and slow
+        # every eval, without helping tool selection. Domain knowledge belongs in
+        # the actual work step, not the tool-router; SkillSelector handles dynamic
+        # injection where it's genuinely needed.
         self._planner = IntegratorCell(
             name="tool_planner",
             cluster=CLUSTER,
@@ -168,37 +197,27 @@ class MotorCortexCluster:
             system_prompt=planner_system,
             topics=["temporal.features"],
             max_calls_per_turn=2,
-            timeout_seconds=60.0,
+            timeout_seconds=_CELL_TIMEOUT_S,
             locality="local",
-            skills=[
-                "quality-debugging",
-                "dev-process",
-                "devops-git-advanced-workflows",
-                # Unity skills — active when working on Evolution App or Karaoke Hero
-                "unity-development",
-                "unity-animation",
-                "unity-physics",
-                "unity-shader-graph",
-                "unity-ui-toolkit",
-                "unity-urp",
-                "unity-input-system",
-                "unity-vfx-graph",
-            ],
         )
         self._planner.set_router(router)
 
         # Strategic planner: same cluster + model, different prompt. Used on the
         # first call of an internal job to produce an upfront plan; subsequent
         # calls use the tactical (per-step) planner above.
+        # CLOUD: strategic planner uses Sonnet 4.6 for stronger upfront decomposition.
+        # No locality="local" — cloud is intentional. The session's egress gateway
+        # (injected into the router via set_egress) pseudonymizes the prompt before
+        # it leaves the device. Runs inside background mode in execute_internal_job
+        # so the bg_cloud_token_budget + daily USD cap both apply.
         self._strategic_planner = IntegratorCell(
             name="strategic_planner",
             cluster=CLUSTER,
-            model="local-code",
+            model="sonnet",
             system_prompt=_STRATEGIC_SYSTEM,
             topics=[],
             max_calls_per_turn=1,
-            timeout_seconds=60.0,
-            locality="local",
+            timeout_seconds=90.0,  # cloud doesn't need cold-load headroom; 90s = generous
         )
         self._strategic_planner.set_router(router)
 
@@ -219,21 +238,24 @@ class MotorCortexCluster:
             system_prompt=_CRITERIA_CHECK_SYSTEM,
             topics=[],
             max_calls_per_turn=1,
-            timeout_seconds=30.0,
+            # 90s, not 30s: a cold model load alone is ~50s, so a 30s ceiling
+            # guarantees the first call after eviction fails. Headroom > cold-load.
+            timeout_seconds=_CELL_TIMEOUT_S,
             locality="local",
         )
         self._criteria_checker.set_router(router)
 
         # Verifier: final approval pass for medium/high complexity jobs.
+        # CLOUD: Sonnet 4.6 for quality review of completed work.
+        # Same reasoning as strategic_planner above.
         self._verifier = IntegratorCell(
             name="job_verifier",
             cluster=CLUSTER,
-            model="local-code",
+            model="sonnet",
             system_prompt=_VERIFIER_SYSTEM,
             topics=[],
             max_calls_per_turn=1,
-            timeout_seconds=30.0,
-            locality="local",
+            timeout_seconds=60.0,
         )
         self._verifier.set_router(router)
 
@@ -488,12 +510,27 @@ class MotorCortexCluster:
         designed for sustained autonomous work triggered by the follow-through
         loop, not by a user-turn. Budget is chemistry-modulated (DA/CORT);
         pass budget>0 to override.
+
+        Runs in background mode: cloud cells (strategic_planner, verifier) are
+        subject to bg_cloud_token_budget + daily USD cap; falls back to local
+        if either is exhausted.
         """
         from brain.ui.emitter import emitter
 
         job_id = f"job_{turn_id}"
         self.reset_turn(job_id)
 
+        # Mark as autonomous/background so cloud budget guards apply.
+        self._router.enter_background_mode()
+        try:
+            return await self._execute_internal_job_body(goal, turn_id, job_id, budget, emitter)
+        finally:
+            self._router.exit_background_mode()
+
+    async def _execute_internal_job_body(
+        self, goal: str, turn_id: str, job_id: str, budget: int, emitter
+    ) -> dict:
+        """Internal body of execute_internal_job — runs under background mode."""
         # Sample neuromodulator / hormonal state once at job start.
         # This modulates how ambitious the plan is and how many steps we'll take.
         chem = self._chem_snapshot()
@@ -514,8 +551,8 @@ class MotorCortexCluster:
             self._obs.begin_job(job_id, goal=goal, chem=chem)
 
         # Surface the job immediately so the user can see something is brewing
-        # even before the strategic plan finishes (local-code planner can take
-        # 10-30s on the 14B model).
+        # even before the strategic plan finishes (cloud planner is fast but
+        # local tactical planner still needs a warm-up pass for the first call).
         await emitter.emit_event(
             {
                 "type": "task_planning",
@@ -524,62 +561,111 @@ class MotorCortexCluster:
             }
         )
 
-        # 1. Strategic plan — pass chemistry state so the planner can calibrate
-        # complexity (e.g. fewer steps when stressed, more thorough when motivated).
-        # Select general-purpose skills for the goal and let the strategic planner
-        # reason with them in context (planning-stage skills).
-        if self._task_skills.available:
-            self._strategic_planner.skills = await self._task_skills.select(goal, k=3)
-        self._strategic_planner.reset_turn(job_id)
-        raw_plan = await self._strategic_planner.call(
-            [{"role": "user", "content": f"Goal: {goal}\nBrain state: {chem_ctx}"}]
-        )
-        plan = safe_json_parse(raw_plan) or {}
-        # Support Ralph-style "stories" (with acceptance_criteria) and legacy "steps" format.
-        stories_planned = (
-            plan.get("stories")
-            or [
-                {
-                    "description": s.get("description", ""),
-                    "expected_tool": s.get("expected_tool", "?"),
-                    "acceptance_criteria": [],
-                    "id": f"US-{i + 1:03d}",
-                }
-                for i, s in enumerate(plan.get("steps") or [])
-            ]
-            or [
-                {
-                    "description": goal,
-                    "expected_tool": "?",
-                    "acceptance_criteria": [],
-                    "id": "US-001",
-                }
-            ]
-        )
-        # Neutralize hallucinated/typo'd expected_tool values so a bad strategic
-        # hint can't mislead the tactical planner (or the UI). The tactical
-        # planner can still pick a valid tool from the story description.
-        for story in stories_planned:
-            et = story.get("expected_tool", "?")
-            if et not in ("?", "") and et not in _DISPATCHABLE_TOOLS:
-                logger.warning(
-                    "[InternalJob] Story %s: invalid expected_tool '%s' — neutralized",
-                    story.get("id"),
-                    et,
-                )
-                story["expected_tool"] = "?"
+        # Step 0: warm up the LOCAL tactical planner model (qwen2.5:14b).
+        # Strategic planner is now cloud (Sonnet) — no warmup needed for it.
+        # The tactical planner (_planner cell) still uses local-code, so it
+        # benefits from this pre-load on the first story of each job.
+        await emitter.emit_event({"type": "task_warming_up", "job_id": job_id})
+        try:
+            warmed = await self._router.warmup_local("local-code")
+            if warmed:
+                logger.info("[InternalJob] Tactical planner model warm — proceeding to plan")
+        except Exception as e:
+            logger.debug("[InternalJob] Warmup step errored (continuing): %s", e)
 
-        # Designate per-story skills at plan time so each execution step uses what
-        # the plan assigned rather than re-selecting (planner designates → steps reuse).
-        if self._task_skills.available:
+        # Resume check: if a prior run of THIS job (same deterministic job_id) was
+        # interrupted mid-flight, pick up where it left off instead of re-planning
+        # and re-executing from scratch. The task queue re-queues interrupted tasks
+        # at boot with the same task.id → same job_id, so this fires automatically.
+        resume = (
+            self.job_store.get_resumable(job_id)
+            if hasattr(self.job_store, "get_resumable")
+            else None
+        )
+        if resume:
+            stories_planned = resume.get("plan_steps") or []
+            success_criteria = resume.get("success_criteria", "")
+            complexity = resume.get("complexity", "low")
+            use_ralph = complexity in ("medium", "high")
+            _MAX_STORY_RETRIES = 2
+            resume_from = int(resume.get("stories_completed", 0))
+            logger.info(
+                "[InternalJob] RESUMING job %s from story %d/%d (%d steps already done)",
+                job_id,
+                resume_from + 1,
+                len(stories_planned),
+                len(resume.get("steps") or []),
+            )
+            await emitter.emit_event(
+                {
+                    "type": "task_resumed",
+                    "job_id": job_id,
+                    "stories_completed": resume_from,
+                    "steps_total": len(stories_planned),
+                }
+            )
+        else:
+            resume_from = 0
+            # 1. Strategic plan — pass chemistry state and persona planning style so
+            # the planner can calibrate both ambition and cognitive approach.
+            # Select general-purpose skills for the goal and let the strategic planner
+            # reason with them in context (planning-stage skills).
+            if self._task_skills.available:
+                self._strategic_planner.skills = await self._task_skills.select(goal, k=3)
+            persona_hint = self._persona_planning_hint()
+            plan_ctx = f"Goal: {goal}\nBrain state: {chem_ctx}"
+            if persona_hint:
+                plan_ctx += f"\n{persona_hint}"
+            self._strategic_planner.reset_turn(job_id)
+            raw_plan = await self._strategic_planner.call([{"role": "user", "content": plan_ctx}])
+            plan = safe_json_parse(raw_plan) or {}
+            # Support Ralph-style "stories" (with acceptance_criteria) and legacy "steps" format.
+            stories_planned = (
+                plan.get("stories")
+                or [
+                    {
+                        "description": s.get("description", ""),
+                        "expected_tool": s.get("expected_tool", "?"),
+                        "acceptance_criteria": [],
+                        "id": f"US-{i + 1:03d}",
+                    }
+                    for i, s in enumerate(plan.get("steps") or [])
+                ]
+                or [
+                    {
+                        "description": goal,
+                        "expected_tool": "?",
+                        "acceptance_criteria": [],
+                        "id": "US-001",
+                    }
+                ]
+            )
+            # Neutralize hallucinated/typo'd expected_tool values so a bad strategic
+            # hint can't mislead the tactical planner (or the UI). The tactical
+            # planner can still pick a valid tool from the story description.
             for story in stories_planned:
-                story["skills"] = await self._task_skills.select(story.get("description", ""), k=2)
+                et = story.get("expected_tool", "?")
+                if et not in ("?", "") and et not in _DISPATCHABLE_TOOLS:
+                    logger.warning(
+                        "[InternalJob] Story %s: invalid expected_tool '%s' — neutralized",
+                        story.get("id"),
+                        et,
+                    )
+                    story["expected_tool"] = "?"
 
-        success_criteria = plan.get("success_criteria", "")
-        complexity = plan.get("complexity", "low")
-        # Ralph loop activates for medium/high complexity: per-story retry + final verifier.
-        use_ralph = complexity in ("medium", "high")
-        _MAX_STORY_RETRIES = 2
+            # Designate per-story skills at plan time so each execution step uses what
+            # the plan assigned rather than re-selecting (planner designates → steps reuse).
+            if self._task_skills.available:
+                for story in stories_planned:
+                    story["skills"] = await self._task_skills.select(
+                        story.get("description", ""), k=2
+                    )
+
+            success_criteria = plan.get("success_criteria", "")
+            complexity = plan.get("complexity", "low")
+            # Ralph loop activates for medium/high complexity: per-story retry + final verifier.
+            use_ralph = complexity in ("medium", "high")
+            _MAX_STORY_RETRIES = 2
 
         logger.info(
             "[InternalJob] %s — %d stories planned (complexity=%s, ralph=%s, criteria: %s)",
@@ -611,13 +697,27 @@ class MotorCortexCluster:
         )
         total_attempts = 0
 
-        steps_taken: list[dict] = []
-        results_log: list[str] = []
+        # When resuming, restore the steps/results/productive count already done so
+        # the final record and spoken summary reflect the whole job, not just the
+        # post-resume portion.
+        steps_taken: list[dict] = list(resume.get("steps", [])) if resume else []
+        results_log: list[str] = list(resume.get("results", [])) if resume else []
         last_result: dict | None = None
         clarification_question: str | None = None
-        success = True
+        # productive_steps = tool calls that executed and returned real (non-error,
+        # non-blocked, non-mismatch) output. Job success is judged on whether real
+        # work happened — NOT on whether every story's strict acceptance criteria
+        # were met. A plan's final "summarize/analyze" story often carries criteria
+        # a tool call can't satisfy (e.g. "list all methods"); letting that fail the
+        # whole job would discard genuinely useful work. unverified_stories records
+        # those as caveats for the spoken summary without failing the job.
+        productive_steps = int(resume.get("productive_steps", 0)) if resume else 0
+        unverified_stories: list[str] = list(resume.get("unverified_stories", [])) if resume else []
+        stopped_early = ""  # set to a reason string if a safety net tripped
 
         for idx, story in enumerate(stories_planned):
+            if idx < resume_from:
+                continue  # already completed in a prior (interrupted) run
             if self._calls_this_turn >= effective_budget:
                 logger.warning(
                     "[InternalJob] Budget exhausted (%d) at story %d/%d",
@@ -625,7 +725,7 @@ class MotorCortexCluster:
                     idx + 1,
                     len(stories_planned),
                 )
-                success = False
+                stopped_early = "budget exhausted"
                 break
             if total_attempts >= _MAX_TOTAL_ATTEMPTS:
                 logger.warning(
@@ -634,7 +734,7 @@ class MotorCortexCluster:
                     idx + 1,
                     len(stories_planned),
                 )
-                success = False
+                stopped_early = "attempt cap reached"
                 break
             if _time.monotonic() >= _job_deadline:
                 logger.warning(
@@ -643,7 +743,7 @@ class MotorCortexCluster:
                     idx + 1,
                     len(stories_planned),
                 )
-                success = False
+                stopped_early = "time limit reached"
                 break
 
             story_desc = story.get("description", "")
@@ -785,7 +885,6 @@ class MotorCortexCluster:
                             "question": clarification_question,
                         }
                     )
-                    success = False
                     break
 
                 logger.info(
@@ -855,6 +954,12 @@ class MotorCortexCluster:
                     verified = step_success
                     unmet = []
 
+                # A real tool call with real output (not a mismatch) = productive
+                # work, regardless of whether the story's strict criteria pass.
+                # Job success is judged on this, not on every criterion being met.
+                if step_success and not warning:
+                    productive_steps += 1
+
                 await emitter.emit_event(
                     {
                         "type": "task_step_done",
@@ -876,7 +981,12 @@ class MotorCortexCluster:
             if clarification_question:
                 break
             if not story_passed:
-                success = False
+                # Record the unverified story as a caveat — but do NOT fail the whole
+                # job for it. The story may have done real work (e.g. read a file) and
+                # only "failed" because its criterion was unsatisfiable by a tool call
+                # (common for final summarize/analyze stories). Job success is judged
+                # on productive work overall, below.
+                unverified_stories.append(story_desc[:80])
                 logger.warning(
                     "[InternalJob] Story %d/%d not verified after %d attempt(s): %s",
                     idx + 1,
@@ -885,16 +995,40 @@ class MotorCortexCluster:
                     story_desc[:60],
                 )
 
-        # 3. Ralph: final verification pass for medium/high complexity jobs
+            # Persist progress after EACH story so an interruption (crash, shutdown)
+            # can be resumed from the next story rather than restarting the whole job.
+            # done=False marks the record as resumable; the final save (done=True)
+            # below clears that. stories_completed is idx+1 because this story is now
+            # finished (passed or finalized as a caveat).
+            self._persist_progress(
+                job_id=job_id,
+                goal=goal,
+                steps=steps_taken,
+                results=results_log,
+                plan_steps=stories_planned,
+                stories_completed=idx + 1,
+                productive_steps=productive_steps,
+                unverified_stories=unverified_stories,
+                success_criteria=success_criteria,
+                complexity=complexity,
+                source="self" if getattr(self, "_current_source", "") == "self" else "user",
+                ralph_mode=use_ralph,
+                total_attempts=total_attempts,
+            )
+
+        # 3. Ralph: final verification pass for medium/high complexity jobs.
+        # Advisory only — its issues are surfaced for the spoken summary, but a
+        # rejection no longer fails a job that did productive work.
         verification_issues = ""
-        if use_ralph and success and not clarification_question and steps_taken:
+        if use_ralph and productive_steps > 0 and not clarification_question and steps_taken:
             approved, issues = await self._verify_job(
                 goal, success_criteria, steps_taken, results_log, job_id
             )
             if not approved:
                 verification_issues = issues
-                success = False
-                logger.warning("[InternalJob] Final verifier rejected: %s", issues[:120])
+                logger.info(
+                    "[InternalJob] Final verifier flagged issues (advisory): %s", issues[:120]
+                )
             else:
                 logger.info("[InternalJob] Final verifier approved")
             await emitter.emit_event(
@@ -904,6 +1038,15 @@ class MotorCortexCluster:
                     "approved": approved,
                     "issues": issues,
                 }
+            )
+
+        # Job success = did we accomplish real work and weren't we blocked on the
+        # user? Strict criteria/verifier verdicts are advisory caveats, not failures.
+        # A job only fails if it produced nothing usable or is waiting on the user.
+        success = productive_steps > 0 and not clarification_question
+        if stopped_early and not success:
+            logger.warning(
+                "[InternalJob] Stopped early (%s) with no productive steps", stopped_early
             )
 
         # 4. Completion
@@ -949,6 +1092,7 @@ class MotorCortexCluster:
             "success": success,
             "steps_taken_count": len(steps_taken),
             "steps_planned_count": len(stories_planned),
+            "productive_steps": productive_steps,
             "steps": steps_taken,
             "results": results_log,
             "plan_steps": stories_planned,
@@ -956,12 +1100,14 @@ class MotorCortexCluster:
             "last_output": (last_result or {}).get("output", "") if last_result else "",
             "ralph_mode": use_ralph,
             "verification_issues": verification_issues,
+            "unverified_stories": unverified_stories,
+            "stopped_early": stopped_early,
             "total_attempts": total_attempts,
             "attempt_cap": _MAX_TOTAL_ATTEMPTS,
         }
 
     async def _tactical_plan(
-        self, plan_prompt: str, job_id: str, retries: int = 2
+        self, plan_prompt: str, job_id: str, retries: int = _PLANNER_RETRIES
     ) -> tuple[dict, bool]:
         """Run the tactical (per-step) planner for an internal job.
 
@@ -1233,6 +1379,46 @@ class MotorCortexCluster:
         else:
             parts.append("Select the right tool and arguments.")
         return "\n".join(parts)
+
+    def _persist_progress(
+        self,
+        *,
+        job_id: str,
+        goal: str,
+        steps: list[dict],
+        results: list[str],
+        plan_steps: list[dict],
+        stories_completed: int,
+        productive_steps: int,
+        unverified_stories: list[str],
+        success_criteria: str,
+        complexity: str,
+        source: str,
+        ralph_mode: bool,
+        total_attempts: int,
+    ) -> None:
+        """Checkpoint an in-progress job (done=False) so it can be resumed if
+        interrupted. Best-effort — a failed checkpoint never breaks the job."""
+        try:
+            self.job_store.save(
+                job_id=job_id,
+                goal=goal,
+                steps=steps,
+                results=results,
+                success=productive_steps > 0,
+                done=False,
+                source=source,
+                ralph_mode=ralph_mode,
+                total_attempts=total_attempts,
+                plan_steps=plan_steps,
+                stories_completed=stories_completed,
+                productive_steps=productive_steps,
+                unverified_stories=unverified_stories,
+                success_criteria=success_criteria,
+                complexity=complexity,
+            )
+        except Exception as e:
+            logger.debug("[InternalJob] progress checkpoint failed (non-fatal): %s", e)
 
     async def _notify_job_complete(
         self,
@@ -1557,6 +1743,49 @@ class MotorCortexCluster:
         cort = float(chem.get("CORT", 0.5))
         shift = (da - 0.5) * 6.0 - (cort - 0.5) * 6.0
         return max(6, min(20, base + int(round(shift))))
+
+    # Per-persona planning orientations injected into the strategic planner's user
+    # message alongside the chemistry context. Each entry describes the cognitive
+    # *style* the planner should adopt — not what to do, but how to approach it.
+    # Only the traits that chemistry won't produce on its own are stated here.
+    _PERSONA_PLANNING_HINTS: dict[str, str] = {
+        "The Visionary": (
+            "Planning style (Visionary): start with the highest-impact part first. "
+            "Prefer fewer, bolder stories over many small cautious ones. "
+            "If there's a more interesting angle on this goal, pursue that. "
+            "Don't over-specify details upfront — move fast and adjust."
+        ),
+        "The Empath": (
+            "Planning style (Empath): before committing to steps, consider who this "
+            "affects and whether the approach genuinely serves them. "
+            "Favour stories that verify impact or check in over stories that assume. "
+            "Ask: does the plan address the human need, not just the stated task?"
+        ),
+        "The Analyst": (
+            "Planning style (Analyst): decompose into the smallest independently "
+            "verifiable units. Each story must have specific, checkable acceptance "
+            "criteria — not 'it works' but 'output contains X'. "
+            "Flag any ambiguity in the goal that needs resolving before execution. "
+            "If a related task was left incomplete, note it and consider addressing it first."
+        ),
+        "The Poet": (
+            "Planning style (Poet): name the most likely failure point before planning "
+            "steps — what will probably go wrong? Be sceptical of approaches that look "
+            "too clean. Prefer fewer, deeper stories over many shallow ones. "
+            "Question whether this is the right goal, or just the obvious one."
+        ),
+        "The Sage": (
+            "Planning style (Sage): before breaking into steps, identify what the deeper "
+            "goal actually is — what problem does this solve at a higher level? "
+            "Prefer a plan that gets at the root rather than addresses the surface. "
+            "Fewer, more considered stories over many hurried ones."
+        ),
+    }
+
+    def _persona_planning_hint(self) -> str:
+        """Return the active persona's planning orientation, or empty string if neutral."""
+        persona = str(_brain_settings.get("persona_name", ""))
+        return self._PERSONA_PLANNING_HINTS.get(persona, "")
 
     def _chem_description(self, chem: dict[str, float]) -> str:
         """Short human-readable description of the brain's current chemical state,
