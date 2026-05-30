@@ -332,6 +332,16 @@ DEFAULTS: dict[str, float | int | str] = {
     # second_brain/personas/<slug>/ (see brain/run.py) and tags every eval row.
     "persona_name": "",
     "persona_born": "",
+    # Active persona's ElevenLabs voice ID. Applied at boot via pns.set_voice_id().
+    # Empty = use ELEVENLABS_VOICE_ID env var or built-in default.
+    "persona_voice_id": "",
+    # Per-persona saved voice IDs. Written when a persona is initialized with a voice.
+    # Restored automatically when that persona is switched to.
+    "persona_voice_the_visionary": "",
+    "persona_voice_the_empath": "",
+    "persona_voice_the_analyst": "",
+    "persona_voice_the_poet": "",
+    "persona_voice_the_sage": "",
 }
 
 

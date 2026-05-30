@@ -89,6 +89,11 @@ class _SetupMixin:
             os.environ.get("BRAIN_PROACTIVE_RESPONSE_WINDOW", "8")
         )
         self.pns = PNS(self.bus, on_speaking_change=self._on_speaking_change)
+        # Apply the active persona's saved voice ID at boot so the voice follows
+        # the persona across restarts without requiring manual re-selection.
+        _persona_vid = str(_brain_settings.get("persona_voice_id", "")).strip()
+        if _persona_vid:
+            self.pns.set_voice_id(_persona_vid)
 
     async def _setup_wiring(self) -> None:
         from brain.observability.decisions import decisions as decisions_log

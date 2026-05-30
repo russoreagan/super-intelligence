@@ -3762,6 +3762,13 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
             <button class="persona-btn ghost" id="persona-neutral-btn">Return to neutral</button>
             <span class="ctrl-hint">Initializing sets the chemistry — then Save + Restart.</span>
           </div>
+          <div class="persona-actions" style="margin-top:0;margin-bottom:8px">
+            <span class="ctrl-label" style="font-size:11px;color:var(--fg-dim)">Voice</span>
+            <select id="persona-voice-select" style="background:var(--bg-2);color:var(--fg);border:1px solid var(--line);border-radius:7px;padding:5px 8px;font-size:11px;font-family:var(--mono);cursor:pointer;flex:1;max-width:220px">
+              <option value="">— no voice preference —</option>
+            </select>
+            <span class="ctrl-hint">Saved with this persona. Overrides the header voice picker at boot.</span>
+          </div>
           <div class="persona-warn" id="persona-warn"></div>
 
           <details class="persona-adv">
@@ -6308,7 +6315,14 @@ async function loadSettingsFromServer() {
     currentSettings = { ...data.settings };
     defaultSettings = { ...data.defaults };
     applySettingsToUI(currentSettings);
-    if (typeof _renderPersonaState === 'function') _renderPersonaState();
+    if (typeof _renderPersonaState === 'function') {
+      _renderPersonaState();
+      // Restore saved voice in the persona voice picker for the current persona
+      const activeName = currentSettings.persona_name || '';
+      if (activeName && typeof _populatePersonaVoiceSelect === 'function') {
+        _populatePersonaVoiceSelect(activeName);
+      }
+    }
   } catch (e) {
     console.warn('Settings: failed to load from server', e);
   }
@@ -6414,6 +6428,33 @@ function _chemMatchesPersona(name) {
     Math.abs(parseFloat(currentSettings['chem_baseline_' + ch] ?? -1) - p.chem[ch]) < 1e-6);
 }
 
+function _personaSlug(name) {
+  return 'persona_voice_' + name.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
+}
+
+function _populatePersonaVoiceSelect(selectedPersonaName) {
+  // Mirror the header voice-select options into the persona voice picker.
+  const src = document.getElementById('voice-select');
+  const dst = document.getElementById('persona-voice-select');
+  if (!dst) return;
+  dst.innerHTML = '<option value="">— no voice preference —</option>';
+  if (src) {
+    [...src.options].forEach(o => {
+      if (!o.value) return;
+      const opt = document.createElement('option');
+      opt.value = o.value; opt.textContent = o.textContent;
+      dst.appendChild(opt);
+    });
+  }
+  // Restore the saved voice for this persona if one exists
+  if (selectedPersonaName) {
+    const saved = currentSettings[_personaSlug(selectedPersonaName)] || '';
+    dst.value = saved || '';
+  } else {
+    dst.value = '';
+  }
+}
+
 function _selectPersona(name) {
   _selectedPersona = name;
   document.querySelectorAll('.persona-card').forEach(c =>
@@ -6426,6 +6467,7 @@ function _selectPersona(name) {
   warn.textContent = (born && born !== name)
     ? `Switches the active brain. ${name} resumes its own saved history; ${born}'s brain stays untouched.`
     : '';
+  _populatePersonaVoiceSelect(name);
 }
 
 function _initializePersona() {
@@ -6435,6 +6477,11 @@ function _initializePersona() {
     currentSettings['chem_baseline_' + ch] = p.chem[ch];
     currentSettings['chem_init_' + ch] = p.chem[ch]; // start at rest
   }
+  // Save selected voice for this persona and set it as the active voice
+  const voiceSel = document.getElementById('persona-voice-select');
+  const vid = voiceSel ? voiceSel.value : '';
+  currentSettings[_personaSlug(_selectedPersona)] = vid;
+  currentSettings['persona_voice_id'] = vid;
   currentSettings['persona_name'] = _selectedPersona;
   currentSettings['persona_born'] = new Date().toISOString();
   applySettingsToUI(currentSettings);
@@ -6451,6 +6498,7 @@ function _returnToNeutral() {
   }
   currentSettings['persona_name'] = '';
   currentSettings['persona_born'] = '';
+  currentSettings['persona_voice_id'] = '';
   _selectedPersona = null;
   applySettingsToUI(currentSettings);
   _renderPersonaState();
@@ -6482,7 +6530,13 @@ function _renderPersonaState() {
   if (name) {
     const custom = (name in PERSONAS) && !_chemMatchesPersona(name);
     const born = currentSettings.persona_born ? new Date(currentSettings.persona_born).toLocaleDateString() : '';
-    statusEl.innerHTML = `Active: <b>${name}</b>${custom ? ' · customized' : ''}${born ? ' · since ' + born : ''}`;
+    const vid = currentSettings[_personaSlug(name)] || '';
+    const voiceName = vid ? (() => {
+      const sel = document.getElementById('voice-select');
+      const opt = sel ? [...sel.options].find(o => o.value === vid) : null;
+      return opt ? opt.textContent : vid.slice(0, 8) + '…';
+    })() : '';
+    statusEl.innerHTML = `Active: <b>${name}</b>${custom ? ' · customized' : ''}${born ? ' · since ' + born : ''}${voiceName ? ' · voice: ' + voiceName : ''}`;
   } else {
     statusEl.textContent = 'Default chemistry';
   }
@@ -6546,12 +6600,15 @@ async function _switchPersona(name, p) {
       patch['chem_baseline_' + ch] = p.chem[ch];
       patch['chem_init_' + ch] = p.chem[ch];
     }
+    // Restore the saved voice for this persona (if one was set)
+    patch['persona_voice_id'] = currentSettings[_personaSlug(name)] || '';
   } else {
     // Neutral: restore defaults
     for (const ch of channels) {
       patch['chem_baseline_' + ch] = defaultSettings['chem_baseline_' + ch] ?? 0;
       patch['chem_init_' + ch] = defaultSettings['chem_init_' + ch] ?? 0;
     }
+    patch['persona_voice_id'] = '';
   }
 
   try {
