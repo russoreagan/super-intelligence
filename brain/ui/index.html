@@ -6661,6 +6661,16 @@ _renderPersonaState(); // show badge immediately (uses empty currentSettings →
   } catch (_) { /* brain offline or static preview — badge stays as DEFAULT */ }
 })();
 
+// Write voice preference to currentSettings immediately on change — not only
+// on Initialize — so Save Settings captures it even without re-clicking Initialize.
+document.getElementById('persona-voice-select').addEventListener('change', function() {
+  const vid = this.value;
+  currentSettings['persona_voice_id'] = vid;
+  // Also persist to the per-persona slot so switching back restores it.
+  const persona = currentSettings.persona_name || _selectedPersona || '';
+  if (persona) currentSettings[_personaSlug(persona)] = vid;
+});
+
 document.getElementById('persona-init-btn').addEventListener('click', _initializePersona);
 document.getElementById('persona-neutral-btn').addEventListener('click', () => {
   if (confirm('Reset chemistry to neutral and clear the active persona?')) _returnToNeutral();
