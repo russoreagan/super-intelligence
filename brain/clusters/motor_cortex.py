@@ -221,6 +221,15 @@ class MotorCortexCluster:
         )
         self._strategic_planner.set_router(router)
 
+        # Static base skills the tactical planner always carries; dynamically
+        # selected task skills are appended per task/story on top of these.
+        self._base_planner_skills: list[str] = list(self._planner.skills)
+        # Selector over the general-purpose skill population (separate from the
+        # self-reflection index). No-op until _task_skills_index.json is built.
+        from brain.clusters.task_skill_selector import TaskSkillSelector
+
+        self._task_skills = TaskSkillSelector(router)
+
         # Criteria checker: per-story acceptance criteria verification in Ralph-mode jobs.
         self._criteria_checker = IntegratorCell(
             name="criteria_checker",
@@ -363,6 +372,16 @@ class MotorCortexCluster:
             logger.info("[MotorCortex] Task goal received: %s", task_goal[:80])
 
         work_goal = task_goal or raw_text
+
+        # Select general-purpose skills relevant to this turn's goal and inject
+        # them into the tactical planner (on top of its static base skills).
+        if self._task_skills.available:
+            picked = await self._task_skills.select(work_goal, k=2)
+            self._planner.skills = self._base_planner_skills + [
+                s for s in picked if s not in self._base_planner_skills
+            ]
+        else:
+            self._planner.skills = self._base_planner_skills
 
         # Gather subsystem context (e.g. muscle memory prior procedures)
         subsystem_context = ""
@@ -589,6 +608,10 @@ class MotorCortexCluster:
             resume_from = 0
             # 1. Strategic plan — pass chemistry state and persona planning style so
             # the planner can calibrate both ambition and cognitive approach.
+            # Select general-purpose skills for the goal and let the strategic planner
+            # reason with them in context (planning-stage skills).
+            if self._task_skills.available:
+                self._strategic_planner.skills = await self._task_skills.select(goal, k=3)
             persona_hint = self._persona_planning_hint()
             plan_ctx = f"Goal: {goal}\nBrain state: {chem_ctx}"
             if persona_hint:
@@ -629,6 +652,14 @@ class MotorCortexCluster:
                         et,
                     )
                     story["expected_tool"] = "?"
+
+            # Designate per-story skills at plan time so each execution step uses what
+            # the plan assigned rather than re-selecting (planner designates → steps reuse).
+            if self._task_skills.available:
+                for story in stories_planned:
+                    story["skills"] = await self._task_skills.select(
+                        story.get("description", ""), k=2
+                    )
 
             success_criteria = plan.get("success_criteria", "")
             complexity = plan.get("complexity", "low")
@@ -717,6 +748,11 @@ class MotorCortexCluster:
 
             story_desc = story.get("description", "")
             story_criteria = story.get("acceptance_criteria", [])
+            # Apply the skills the plan designated for this story (on top of the
+            # tactical planner's static base skills) — no per-step re-selection.
+            self._planner.skills = self._base_planner_skills + [
+                s for s in story.get("skills", []) if s not in self._base_planner_skills
+            ]
             story_passed = False
             # Low complexity still gets ONE retry so a failed criteria/appropriateness
             # check can self-correct (the retry feeds the prior output back as a hint).

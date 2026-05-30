@@ -26,3 +26,11 @@ second_brain/wiring_history/
 
 # macOS
 .DS_Store
+
+# Runtime state — regenerated at boot / mutated every turn; not source.
+# (schema/*.md is the editable identity seed and stays tracked.)
+second_brain/jobs/
+second_brain/wiring.json
+second_brain/dmn_novelty.json
+second_brain/task_queue.json
+second_brain/deferred_thoughts.md
