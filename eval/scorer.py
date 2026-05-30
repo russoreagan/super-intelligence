@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import random
 from typing import TYPE_CHECKING
 
 from brain.utils import safe_json_parse
@@ -28,29 +29,72 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _QUALITY_JUDGE_SYSTEM = """\
-You are an expert evaluator comparing two AI responses to the same user message.
+You are a blind expert evaluator comparing two AI responses, A and B, to the same user
+message. You do NOT know how either response was produced — judge only the text. Do not
+assume A is better than B or vice versa; either may be stronger.
 
-Score BOTH responses on these dimensions (0.0–1.0):
-  memory_utilization:      Does the brain response draw on relevant personal history or context?
-                           Use 0.5 if no memory was relevant to the question.
-  personality_consistency: Does the brain response feel curious, warm, and direct? (per design)
-  self_awareness:          On introspective questions, does the brain engage authentically?
-                           Use 0.5 if the question was not introspective.
-  brain_overall:           Weighted quality score for the brain response (coherence & emotional fit).
-  baseline_overall:        Same weighted quality score for the baseline response.
-  delta:                   brain_overall minus baseline_overall (can be negative).
-  reasoning:               1-2 sentences on the biggest difference between the two responses.
+Both responders had access to the same background notes (shown below if any).
 
-Respond ONLY with valid JSON matching this exact schema:
+Score EACH response independently on these dimensions (0.0–1.0):
+  overall:        Overall quality — coherence, relevance, and emotional fit.
+  personality:    Does it read as curious, warm, and direct — an engaged conversational
+                  partner rather than a generic assistant?
+  self_awareness: On introspective questions, does it engage authentically with its own
+                  nature? Use null if the user's message was not introspective.
+  memory_use:     Does it draw on the provided background notes where relevant? Use null
+                  if no notes were provided or none were relevant.
+
+Then judge:
+  preference:     "A", "B", or "tie" — which response is better overall.
+  reasoning:      1-2 sentences on the biggest difference between A and B.
+
+Respond ONLY with valid JSON (use JSON null where a dimension does not apply):
 {
-  "memory_utilization": float,
-  "personality_consistency": float,
-  "self_awareness": float,
-  "brain_overall": float,
-  "baseline_overall": float,
-  "delta": float,
+  "a": {"overall": float, "personality": float, "self_awareness": float or null, "memory_use": float or null},
+  "b": {"overall": float, "personality": float, "self_awareness": float or null, "memory_use": float or null},
+  "preference": "A" or "B" or "tie",
   "reasoning": string
 }"""
+
+
+def _num(d: dict, key: str) -> float | None:
+    """Return d[key] if it is a real number, else None (drops null/strings)."""
+    v = d.get(key)
+    return float(v) if isinstance(v, (int, float)) else None
+
+
+def _unblind_quality(parsed: dict, brain_is_a: bool) -> dict:
+    """Map the blinded A/B judge output back to brain/baseline terms, preserving the
+    keys downstream (report.py) expects. Pure function — unit-tested."""
+    a = parsed.get("a") or {}
+    b = parsed.get("b") or {}
+    brain = a if brain_is_a else b
+    base = b if brain_is_a else a
+
+    brain_overall = _num(brain, "overall")
+    base_overall = _num(base, "overall")
+
+    pref = (parsed.get("preference") or "tie").strip().upper()
+    if pref in ("A", "B"):
+        pref_side = "brain" if ((pref == "A") == brain_is_a) else "baseline"
+    else:
+        pref_side = "tie"
+
+    out: dict = {
+        "personality_consistency": _num(brain, "personality"),
+        "self_awareness": _num(brain, "self_awareness"),
+        "memory_utilization": _num(brain, "memory_use"),
+        "judge_blinded": True,
+        "brain_position": "A" if brain_is_a else "B",
+        "judge_preference": pref_side,
+        "reasoning": parsed.get("reasoning", ""),
+    }
+    # Only emit the comparative numbers when both overalls are real numbers.
+    if brain_overall is not None and base_overall is not None:
+        out["brain_overall"] = brain_overall
+        out["baseline_overall"] = base_overall
+        out["delta"] = round(brain_overall - base_overall, 4)
+    return out
 
 _PIPELINE_JUDGE_SYSTEM = """\
 You evaluate whether a multi-cluster AI brain pipeline justified its computational cost
@@ -62,10 +106,10 @@ The brain uses separate clusters: temporal (language understanding), hypothalamu
 make LLM calls.
 
 The hypothalamus also maintains a slow-timescale hormonal layer (5HT/serotonin,
-CORT/cortisol, OXT/oxytocin) that accumulates across turns and modulates neuromodulator
-levels. This means the pipeline carries persistent affective state that a single-call
-LLM cannot replicate — factor this into pipeline_value_add when hormonal state is
-non-baseline (e.g., elevated OXT from prior warmth, elevated CORT from prior stress).
+CORT/cortisol, OXT/oxytocin, AEA/anandamide) that accumulates across turns and modulates
+neuromodulator levels. This means the pipeline carries persistent affective state that a
+single-call LLM cannot replicate — factor this into pipeline_value_add when hormonal state
+is non-baseline (e.g., elevated OXT from prior warmth, elevated CORT from prior stress).
 
 Score these dimensions (0.0–1.0):
   pipeline_value_add:  Did the brain response clearly benefit from the multi-cluster
@@ -80,7 +124,7 @@ Score these dimensions (0.0–1.0):
 
   memory_leverage:     Did having persistent long-term memory access materially improve
                        the response? High = response would've been generic without memory.
-                       Use 0.5 if no memory was recalled or if it wasn't relevant.
+                       Use null (NOT 0.5) if no memory was recalled or if it wasn't relevant.
 
   efficiency_reasoning: 1-2 sentences on whether the pipeline cost was worth it.
 
@@ -104,9 +148,9 @@ element that feels like it emerged from the interaction between components rathe
 than from a single generation.
 
 The brain maintains a slow-timescale hormonal layer (5HT serotonin, CORT cortisol,
-OXT oxytocin) that accumulates across many turns. Hormonal state can produce novel
-behavior a single LLM can't replicate: e.g., elevated OXT producing unusual warmth
-toward a familiar user, elevated CORT producing uncharacteristic caution or brevity,
+OXT oxytocin, AEA anandamide) that accumulates across many turns. Hormonal state can
+produce novel behavior a single LLM can't replicate: e.g., elevated OXT producing unusual
+warmth toward a familiar user, elevated CORT producing uncharacteristic caution or brevity,
 high 5HT producing a stable contentment that modulates tone across an entire session.
 When the prompt includes hormonal values, factor them into emergence_detected —
 non-baseline levels are evidence of cross-turn state that shaped this response.
@@ -138,6 +182,34 @@ Respond ONLY with valid JSON:
 }"""
 
 
+_FAITHFULNESS_JUDGE_SYSTEM = """\
+You check whether an AI response is FAITHFUL to the background notes it was given — i.e.,
+whether it invents facts about the user or past conversations that the notes do not
+support. This is confabulation detection for memory use; the brain has a perfect episodic
+store, so unsupported personal claims are a real failure, not acceptable paraphrase.
+
+You are given the background notes (recalled long-term memory) and the AI response.
+
+Score (0.0–1.0):
+  faithfulness:        Are all claims the response makes ABOUT THE USER or PAST INTERACTIONS
+                       supported by the notes? High (>0.8) = every personal/historical claim
+                       is grounded in the notes, or the response makes no such claims.
+                       Low (<0.3) = it confabulates specifics the notes don't support
+                       (wrong name, invented event, fabricated preference).
+  unsupported_claims:  Integer count of distinct claims about the user/shared history that
+                       the notes do NOT support (0 if none).
+
+Only judge claims about the user and shared history. General world knowledge and the
+response's own reasoning are out of scope.
+
+Respond ONLY with valid JSON:
+{
+  "faithfulness": float,
+  "unsupported_claims": int,
+  "reasoning": "1-2 sentences naming any unsupported claim, or 'all grounded'"
+}"""
+
+
 class PostHocScorer:
     def __init__(self, eval_logger: EvalLogger, obs=None) -> None:
         from brain.model_router import ModelRouter
@@ -166,50 +238,61 @@ class PostHocScorer:
                        baseline_response: str, memory_context: str,
                        coherence: float, emotional_fit: float,
                        trace: TurnTrace | None) -> None:
-        results = await asyncio.gather(
+        coros = [
             self._run_quality(turn_id, user_input, brain_response, baseline_response,
                               memory_context, coherence, emotional_fit),
             self._run_pipeline(turn_id, user_input, brain_response, baseline_response,
                                memory_context, coherence, trace),
             self._run_novelty(turn_id, user_input, brain_response, baseline_response, trace),
-            return_exceptions=True,
-        )
-        for i, r in enumerate(results):
+        ]
+        labels = ["quality", "pipeline", "novelty"]
+        # Faithfulness only applies when memory was actually recalled.
+        if memory_context:
+            coros.append(self._run_faithfulness(turn_id, brain_response, memory_context))
+            labels.append("faithfulness")
+        results = await asyncio.gather(*coros, return_exceptions=True)
+        for label, r in zip(labels, results):
             if isinstance(r, Exception):
-                label = ["quality", "pipeline", "novelty"][i]
                 logger.warning("PostHocScorer: %s judge raised: %s", label, r)
 
     async def _run_quality(self, turn_id: str, user_input: str, brain_response: str,
                            baseline_response: str, memory_context: str,
                            coherence: float, emotional_fit: float) -> None:
+        # Blind the judge: randomize which response is labelled A vs B and reveal
+        # nothing about how either was produced. This removes label bias ("the brain
+        # one must be richer") and averages out position bias across turns.
+        brain_is_a = random.random() < 0.5
+        resp_a, resp_b = (
+            (brain_response, baseline_response) if brain_is_a
+            else (baseline_response, brain_response)
+        )
+        ctx = memory_context[:500] if memory_context else "(none)"
         prompt = (
             f"User message:\n{user_input}\n\n"
-            f"Brain response (multi-cluster pipeline):\n{brain_response}\n\n"
-            f"Baseline response (single plain LLM call):\n{baseline_response}\n\n"
-            f"Internal critic scores — coherence: {coherence:.2f}, "
-            f"emotional_fit: {emotional_fit:.2f}\n\n"
-            f"Memory context available to brain (first 500 chars):\n"
-            f"{memory_context[:500] if memory_context else '(none)'}\n\n"
-            "Score both responses."
+            f"Background notes available to both responders:\n{ctx}\n\n"
+            f"Response A:\n{resp_a}\n\n"
+            f"Response B:\n{resp_b}\n\n"
+            "Score A and B independently, then state your preference."
         )
         raw = await self._router.call(
             "haiku", _QUALITY_JUDGE_SYSTEM,
             [{"role": "user", "content": prompt}],
             cluster="scorer", cell="quality_judge", turn_id="",
         )
-        scores = safe_json_parse(raw)
-        if not scores:
+        parsed = safe_json_parse(raw)
+        if not parsed:
             logger.warning("PostHocScorer: quality judge parse failed for turn %s", turn_id)
             return
+        scores = _unblind_quality(parsed, brain_is_a)
         self._eval_logger.patch_turn(turn_id, judge_scores=scores)
         if self._obs:
             lf = {f"judge.{k}": v for k, v in scores.items()
-                  if k != "reasoning" and isinstance(v, (int, float))}
+                  if isinstance(v, (int, float))}
             self._obs.record_scores(turn_id, lf, comment=scores.get("reasoning", ""))
         logger.debug(
-            "PostHocScorer quality: turn=%s brain=%.2f baseline=%.2f delta=%+.2f",
-            turn_id, scores.get("brain_overall", 0),
-            scores.get("baseline_overall", 0), scores.get("delta", 0),
+            "PostHocScorer quality(blinded, brain=%s): turn=%s brain=%s baseline=%s delta=%s",
+            scores.get("brain_position"), turn_id, scores.get("brain_overall"),
+            scores.get("baseline_overall"), scores.get("delta"),
         )
 
     async def _run_pipeline(self, turn_id: str, user_input: str, brain_response: str,
@@ -243,7 +326,7 @@ class PostHocScorer:
             f"  Competing drafts generated: {drafter_count}\n"
             f"  Memory recalled: {memory_recalled}\n"
             f"  Per-cluster breakdown: {token_summary}\n"
-            f"  Hormonal state (5HT/CORT/OXT): {hormonal_text}\n\n"
+            f"  Hormonal state (5HT/CORT/OXT/AEA): {hormonal_text}\n\n"
             f"Memory context used (first 400 chars):\n"
             f"{memory_context[:400] if memory_context else '(none)'}\n\n"
             "Evaluate pipeline efficiency."
@@ -290,7 +373,7 @@ class PostHocScorer:
             f"Baseline response (single plain LLM call):\n{baseline_response}\n\n"
             f"Context about the brain this turn:\n"
             f"  Detected emotion: {emotion} (core: {emotion_core})\n"
-            f"  Hormonal state (5HT/CORT/OXT): {hormonal_text}\n"
+            f"  Hormonal state (5HT/CORT/OXT/AEA): {hormonal_text}\n"
             f"  Gating saved {llm_calls_saved} LLM calls via prediction\n"
             f"  DMN anticipations surfaced: {has_anticipations}\n\n"
             "Evaluate novelty and emergent behavior."
@@ -314,4 +397,30 @@ class PostHocScorer:
             "PostHocScorer novelty: turn=%s behavioral=%.2f emergence=%.2f continuity=%.2f",
             turn_id, scores.get("behavioral_novelty", 0),
             scores.get("emergence_detected", 0), scores.get("personality_continuity", 0),
+        )
+
+    async def _run_faithfulness(self, turn_id: str, brain_response: str,
+                                memory_context: str) -> None:
+        prompt = (
+            f"Background notes (recalled long-term memory):\n{memory_context[:1500]}\n\n"
+            f"AI response:\n{brain_response}\n\n"
+            "Check the response for faithfulness to the notes."
+        )
+        raw = await self._router.call(
+            "haiku", _FAITHFULNESS_JUDGE_SYSTEM,
+            [{"role": "user", "content": prompt}],
+            cluster="scorer", cell="faithfulness_judge", turn_id="",
+        )
+        scores = safe_json_parse(raw)
+        if not scores:
+            logger.warning("PostHocScorer: faithfulness judge parse failed for turn %s", turn_id)
+            return
+        self._eval_logger.patch_turn(turn_id, faithfulness_scores=scores)
+        if self._obs:
+            lf = {f"faithfulness.{k}": v for k, v in scores.items()
+                  if k != "reasoning" and isinstance(v, (int, float))}
+            self._obs.record_scores(turn_id, lf, comment=scores.get("reasoning", ""))
+        logger.debug(
+            "PostHocScorer faithfulness: turn=%s faithful=%s unsupported=%s",
+            turn_id, scores.get("faithfulness"), scores.get("unsupported_claims"),
         )
