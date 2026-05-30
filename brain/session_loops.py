@@ -114,7 +114,11 @@ class _LoopsMixin:
     def _is_mic_muted(self) -> bool:
         if self._streaming_mic is not None:
             return self._streaming_mic.is_muted
-        return False
+        # streaming_mic not yet initialised (or voice mode off) — report as muted
+        # so the UI button shows the safe default rather than "active".
+        # The UI is set up before the mic (see brain_session.py run()), so a browser
+        # that connects during the startup window would otherwise see 'active'.
+        return True
 
     async def _emit(self, cluster: str, intensity: float, note: str, turn_id: str = "") -> None:
         if self._emitter:

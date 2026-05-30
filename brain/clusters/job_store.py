@@ -13,13 +13,13 @@ Config (env vars override settings.json):
   BRAIN_JOB_STORE_MAX_JOBS — max number of job files to keep (default 100)
   BRAIN_JOB_STORE_MAX_MB   — max total size in MB (default 100)
 """
-
 from __future__ import annotations
 
 import json
 import logging
 import os
 from datetime import UTC, datetime
+from pathlib import Path
 
 from brain.second_brain.store import SECOND_BRAIN_ROOT
 
@@ -34,7 +34,6 @@ _DEFAULT_MAX_MB = 100
 def _max_jobs() -> int:
     try:
         from brain.settings import settings
-
         return int(
             os.environ.get("BRAIN_JOB_STORE_MAX_JOBS")
             or settings.get("job_store_max_jobs", _DEFAULT_MAX_JOBS)
@@ -46,7 +45,6 @@ def _max_jobs() -> int:
 def _max_bytes() -> int:
     try:
         from brain.settings import settings
-
         mb = int(
             os.environ.get("BRAIN_JOB_STORE_MAX_MB")
             or settings.get("job_store_max_mb", _DEFAULT_MAX_MB)
@@ -83,14 +81,27 @@ class JobStore:
         total_attempts: int = 0,
         plan_steps: list[dict] | None = None,
         spoken_summary: str | None = None,
+        done: bool = True,
+        stories_completed: int = 0,
+        productive_steps: int = 0,
+        unverified_stories: list[str] | None = None,
+        success_criteria: str = "",
+        complexity: str = "",
     ) -> None:
-        """Save or overwrite a job record. Triggers cleanup afterward."""
+        """Save or overwrite a job record. Triggers cleanup afterward.
+
+        done=False marks an in-progress (resumable) checkpoint written after each
+        story; get_resumable() finds these. The final save passes done=True.
+        stories_completed + plan_steps are what a resumed run reads to skip
+        already-finished stories.
+        """
         written_files = _extract_written_files(steps)
         record = {
             "job_id": job_id,
             "task_id": task_id,
             "goal": goal,
             "success": success,
+            "done": done,
             "source": source,
             "ralph_mode": ralph_mode,
             "total_attempts": total_attempts,
@@ -98,19 +109,19 @@ class JobStore:
             "results": results,
             "written_files": written_files,
             "plan_steps": plan_steps or [],
+            "stories_completed": stories_completed,
+            "productive_steps": productive_steps,
+            "unverified_stories": unverified_stories or [],
+            "success_criteria": success_criteria,
+            "complexity": complexity,
             "spoken_summary": spoken_summary,
             "created_at": datetime.now(UTC).isoformat(),
             "completed_at": datetime.now(UTC).isoformat(),
         }
         self._write(job_id, record)
         self._cleanup()
-        logger.info(
-            "[JobStore] Saved job %s (success=%s, %d steps, %d files)",
-            job_id,
-            success,
-            len(steps),
-            len(written_files),
-        )
+        logger.info("[JobStore] Saved job %s (done=%s, success=%s, %d steps, %d files)",
+                    job_id, done, success, len(steps), len(written_files))
 
     def update_summary(self, job_id: str, spoken_summary: str) -> bool:
         """Attach a spoken summary to an existing job record. Returns True if found."""
@@ -152,6 +163,23 @@ class JobStore:
             logger.warning("[JobStore] get failed for %s: %s", job_id, e)
             return None
 
+    def get_resumable(self, job_id: str) -> dict | None:
+        """Return a prior record for job_id ONLY if it was left incomplete
+        (done=False) with a usable plan and at least one story still pending.
+        Returns None for fresh jobs and for fully-completed prior runs, so a
+        normal re-run is never mistaken for a resume.
+        """
+        record = self.get(job_id)
+        if not record:
+            return None
+        if record.get("done", True):
+            return None  # completed normally — not resumable
+        plan = record.get("plan_steps") or []
+        completed = int(record.get("stories_completed", 0))
+        if not plan or completed >= len(plan):
+            return None  # nothing left to resume
+        return record
+
     def list_recent(self, limit: int = 20) -> list[dict]:
         """Return the most recent jobs (metadata only, no step results)."""
         files = sorted(JOBS_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
@@ -159,19 +187,17 @@ class JobStore:
         for f in files[:limit]:
             try:
                 record = json.loads(f.read_text())
-                out.append(
-                    {
-                        "job_id": record.get("job_id"),
-                        "task_id": record.get("task_id"),
-                        "goal": record.get("goal"),
-                        "success": record.get("success"),
-                        "source": record.get("source"),
-                        "written_files": record.get("written_files", []),
-                        "spoken_summary": record.get("spoken_summary"),
-                        "created_at": record.get("created_at"),
-                        "steps_count": len(record.get("steps", [])),
-                    }
-                )
+                out.append({
+                    "job_id": record.get("job_id"),
+                    "task_id": record.get("task_id"),
+                    "goal": record.get("goal"),
+                    "success": record.get("success"),
+                    "source": record.get("source"),
+                    "written_files": record.get("written_files", []),
+                    "spoken_summary": record.get("spoken_summary"),
+                    "created_at": record.get("created_at"),
+                    "steps_count": len(record.get("steps", [])),
+                })
             except Exception:
                 pass
         return out
@@ -214,7 +240,6 @@ class JobStore:
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
-
 
 def _extract_written_files(steps: list[dict]) -> list[str]:
     """Collect paths from any write_file or append_file steps."""

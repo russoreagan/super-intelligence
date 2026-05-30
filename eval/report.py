@@ -24,6 +24,7 @@ def load_turns(
     session_id: str | None = None,
     tail: int | None = None,
     since_ts: float | None = None,
+    persona: str | None = None,
 ) -> list[dict]:
     """Read JSONL, merge patches into turns, return list of merged turns."""
     if not log_path.exists():
@@ -45,6 +46,8 @@ def load_turns(
             if rec.get("type") == "turn":
                 tid = rec.get("turn_id", "")
                 if session_id and rec.get("session_id") != session_id:
+                    continue
+                if persona is not None and rec.get("persona_name", "") != persona:
                     continue
                 if since_ts and rec.get("ts", 0) < since_ts:
                     continue
@@ -96,39 +99,53 @@ def report(turns: list[dict]) -> None:
 
     # ── Quality summary ──────────────────────────────────────────────────
     if scored:
-        brain_scores = [t["judge_scores"].get("brain_overall", 0) for t in scored]
-        base_scores = [t["judge_scores"].get("baseline_overall", 0) for t in scored]
-        deltas = [t["judge_scores"].get("delta", 0) for t in scored]
+        # Only count numeric scores — non-applicable dimensions are now null and
+        # must be excluded from aggregates rather than counted as 0 or 0.5.
+        def _vals(key: str, *, only_recall: bool = False) -> list[float]:
+            out = []
+            for t in scored:
+                if only_recall and not t.get("memory_recalled"):
+                    continue
+                v = t["judge_scores"].get(key)
+                if isinstance(v, (int, float)):
+                    out.append(v)
+            return out
 
-        brain_avg = sum(brain_scores) / len(brain_scores)
-        base_avg = sum(base_scores) / len(base_scores)
-        delta_avg = sum(deltas) / len(deltas)
+        brain_scores = _vals("brain_overall")
+        base_scores = _vals("baseline_overall")
+        deltas = _vals("delta")
 
-        wins = sum(1 for d in deltas if d > 0.1)
-        losses = sum(1 for d in deltas if d < -0.1)
+        if brain_scores and base_scores and deltas:
+            brain_avg = sum(brain_scores) / len(brain_scores)
+            base_avg = sum(base_scores) / len(base_scores)
+            delta_avg = sum(deltas) / len(deltas)
 
-        print("  QUALITY SCORES (judge-evaluated turns)")
-        print(f"  Brain avg:          {brain_avg:.3f}  {fmt_bar(brain_avg)}")
-        print(f"  Baseline avg:       {base_avg:.3f}  {fmt_bar(base_avg)}")
-        print(f"  Avg delta:          {delta_avg:+.3f}")
-        print(f"  Brain wins  (>0.1): {wins}/{len(scored)}")
-        print(f"  Brain losses(<0.1): {losses}/{len(scored)}")
-        print()
+            wins = sum(1 for d in deltas if d > 0.1)
+            losses = sum(1 for d in deltas if d < -0.1)
 
-        # Memory utilization
-        mem_scores = [
-            t["judge_scores"].get("memory_utilization", 0.5)
-            for t in scored
-            if t.get("memory_recalled")
-        ]
+            blinded = sum(1 for t in scored if t["judge_scores"].get("judge_blinded"))
+            tag = " (blinded)" if blinded == len(scored) else ""
+
+            print(f"  QUALITY SCORES (judge-evaluated turns){tag}")
+            print(f"  Brain avg:          {brain_avg:.3f}  {fmt_bar(brain_avg)}")
+            print(f"  Baseline avg:       {base_avg:.3f}  {fmt_bar(base_avg)}")
+            print(f"  Avg delta:          {delta_avg:+.3f}")
+            print(f"  Brain wins  (>0.1): {wins}/{len(deltas)}")
+            print(f"  Brain losses(<0.1): {losses}/{len(deltas)}")
+            print()
+
+        # Memory utilization (numeric only, on turns with recall)
+        mem_scores = _vals("memory_utilization", only_recall=True)
         if mem_scores:
-            mem_avg = sum(mem_scores) / len(mem_scores)
-            print(f"  Memory utilization: {mem_avg:.3f} (avg on turns with recall)")
+            print(
+                f"  Memory utilization: {sum(mem_scores) / len(mem_scores):.3f} "
+                f"(avg on {len(mem_scores)} turns with recall)"
+            )
 
-        # Personality consistency
-        pers_scores = [t["judge_scores"].get("personality_consistency", 0.5) for t in scored]
-        pers_avg = sum(pers_scores) / len(pers_scores)
-        print(f"  Personality cons.:  {pers_avg:.3f}")
+        # Personality consistency (numeric only)
+        pers_scores = _vals("personality_consistency")
+        if pers_scores:
+            print(f"  Personality cons.:  {sum(pers_scores) / len(pers_scores):.3f}")
         print()
 
     # ── Draft scores (internal critic — always available) ────────────────
@@ -206,6 +223,13 @@ def main() -> None:
     )
     parser.add_argument("--session", type=str, default=None, help="Filter by session_id")
     parser.add_argument(
+        "--persona",
+        type=str,
+        default=None,
+        help='Filter by persona_name (e.g. --persona "The Sage"; '
+        'use --persona "" for neutral/no-persona turns)',
+    )
+    parser.add_argument(
         "--since",
         type=float,
         default=None,
@@ -221,7 +245,9 @@ def main() -> None:
     log_path = (
         Path(args.log) if args.log else Path(os.environ.get("BRAIN_EVAL_LOG", str(DEFAULT_LOG)))
     )
-    turns = load_turns(log_path, session_id=args.session, tail=args.tail, since_ts=since_ts)
+    turns = load_turns(
+        log_path, session_id=args.session, tail=args.tail, since_ts=since_ts, persona=args.persona
+    )
     report(turns)
 
 

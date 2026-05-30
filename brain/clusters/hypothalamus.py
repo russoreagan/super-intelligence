@@ -122,12 +122,15 @@ class HypothalamusCluster:
         # (Yerkes-Dodson) is governed by its own weights and should not be
         # amplified by the emotional reactivity dial (which controls valence/
         # arousal swings, not alertness overload).
+        # NE is also NOT scaled by turns — LC phasic release depends on stimulus
+        # intensity, not elapsed time. Long gaps don't accumulate alertness;
+        # if anything, rest brings NE toward baseline (handled by decay).
         ne_delta = (
             salience * settings.get("ne_salience_weight")
             + surprise * settings.get("ne_surprise_weight")
             + hostility * settings.get("ne_hostility_weight")
         )
-        nm.add("NE", ne_delta * turns)
+        nm.add("NE", ne_delta)
 
         # Satiation: if salience is low (routine), desensitize
         if salience < settings.get("salience_satiation_threshold"):

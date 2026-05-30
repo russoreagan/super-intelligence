@@ -1,0 +1,37 @@
+{
+  "job_id": "job_task_2faf6eb4",
+  "task_id": "2faf6eb4",
+  "goal": "Search recent papers on the impact of emotional state on decision-making in both humans and AI.",
+  "success": false,
+  "source": "user",
+  "ralph_mode": false,
+  "total_attempts": 2,
+  "steps": [
+    {
+      "tool": "none",
+      "args": {},
+      "reason": "[planner failed]"
+    },
+    {
+      "tool": "none",
+      "args": {},
+      "reason": "[planner failed]"
+    }
+  ],
+  "results": [
+    "",
+    ""
+  ],
+  "written_files": [],
+  "plan_steps": [
+    {
+      "description": "Search recent papers on the impact of emotional state on decision-making in both humans and AI.",
+      "expected_tool": "?",
+      "acceptance_criteria": [],
+      "id": "US-001"
+    }
+  ],
+  "spoken_summary": "I ran into trouble with the planning step and couldn't actually search for those papers \u2014 looks like something went wrong on my end. Want me to try a different approach, or would you like to search manually on a platform like Google Scholar or arXiv?",
+  "created_at": "2026-05-29T12:50:18.922500+00:00",
+  "completed_at": "2026-05-29T12:50:18.922528+00:00"
+}

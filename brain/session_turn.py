@@ -84,6 +84,7 @@ class _TurnMixin:
         trace = TurnTrace(
             turn_id=turn_id,
             session_id=self.session_id,
+            persona_name=self.persona_name,
             user_input=user_input,
         )
         trace.prior_neuromod = self.bus.neuromod.snapshot()

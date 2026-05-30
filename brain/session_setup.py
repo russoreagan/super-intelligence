@@ -134,6 +134,10 @@ class _SetupMixin:
         self._core_context, recent_episodes = await self.hippocampus.boot(self.session_id)
         self.parietal.seed(recent_episodes)
         self._egress = PseudonymizationGateway()
+        # Inject into the router so ALL cloud calls are pseudonymized at the
+        # dispatch layer (R1 gateway backstop — catches motor, DMN, metacognition
+        # paths that don't go through session_turn's per-field pseudonymization).
+        self.router.set_egress(self._egress)
 
     async def _setup_ui(self) -> None:
         self._ui_enabled = self.args.ui or os.environ.get("BRAIN_UI", "false").lower() == "true"
