@@ -3,8 +3,10 @@ ModelRouter — single dispatch point for all LLM calls.
 Cell config declares model: "haiku" | "flash" | "flash-lite" | "local".
 This class decides the actual API call. Swap providers here, nowhere else.
 """
+
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import time
@@ -17,9 +19,9 @@ MODEL_MAP = {
     "flash": "gemini-2.5-flash",
     "flash-lite": "gemini-2.5-flash-lite",
     "local": "local",
-    "local-free": "local-free",       # same model as local, plain-text output (no JSON grammar)
-    "local-code": "local-code",       # routes to OLLAMA_CODE_MODEL (defaults to qwen2.5:14b — the hot model)
-    "local-general": "local-general", # routes to OLLAMA_GENERAL_MODEL (qwen2.5:14b)
+    "local-free": "local-free",  # same model as local, plain-text output (no JSON grammar)
+    "local-code": "local-code",  # routes to OLLAMA_CODE_MODEL (defaults to qwen2.5:14b — the hot model)
+    "local-general": "local-general",  # routes to OLLAMA_GENERAL_MODEL (qwen2.5:14b)
 }
 
 # Embedding dim must match EpisodicStore table schema (see brain/second_brain/store.py).
@@ -58,9 +60,8 @@ _CLOUD_RATES: dict[str, tuple[float, float, float]] = {
     "claude-haiku-4-5-20251001": (1.0, 5.0, 0.10),
 }
 # Path for the per-day cloud-spend file.
-import os as _os
-_CLOUD_USAGE_PATH = _os.path.join(
-    _os.path.dirname(__file__), "..", "second_brain", "cloud_usage.json"
+_CLOUD_USAGE_PATH = os.path.join(
+    os.path.dirname(__file__), "..", "second_brain", "cloud_usage.json"
 )
 
 
@@ -68,7 +69,7 @@ class ModelRouter:
     def __init__(self, obs=None) -> None:
         self._anthropic_client = None
         self._google_client = None
-        self._http_client = None   # persistent httpx client; reused across Ollama calls
+        self._http_client = None  # persistent httpx client; reused across Ollama calls
         self._call_log: list[dict] = []
         self._obs = obs
         # Local-first embeddings; flip to "google" if Ollama is unreachable.
@@ -83,7 +84,7 @@ class ModelRouter:
         # Session-level token counter for background cloud usage (in + out combined).
         self._bg_cloud_tokens_used: int = 0
         # Lazily-created semaphore; limits concurrent Ollama calls to protect device.
-        self._local_semaphore: "asyncio.Semaphore | None" = None
+        self._local_semaphore: asyncio.Semaphore | None = None
         # Daily cloud USD tracking — in-memory; loaded from disk lazily.
         self._cloud_usd_today: float = 0.0
         self._cloud_usd_date: str = ""  # "YYYY-MM-DD" (UTC)
@@ -119,6 +120,7 @@ class ModelRouter:
         """Load today's (UTC) accumulated cloud USD from the persistent usage file."""
         import datetime as _dt
         import json
+
         today = _dt.date.today().isoformat()
         try:
             path = os.path.realpath(_CLOUD_USAGE_PATH)
@@ -133,6 +135,7 @@ class ModelRouter:
     def _persist_cloud_usd(self) -> None:
         """Persist today's cloud USD spend to disk (best-effort)."""
         import json
+
         try:
             path = os.path.realpath(_CLOUD_USAGE_PATH)
             os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -178,15 +181,18 @@ class ModelRouter:
     @property
     def bg_cloud_budget_remaining(self) -> int:
         """How many background cloud tokens are left before fallback to local."""
-        from brain.settings import settings as _settings; _s = _settings.get
+        from brain.settings import settings as _settings
+
+        _s = _settings.get
         budget = int(_s("bg_cloud_token_budget") or 50_000)
         return max(0, budget - self._bg_cloud_tokens_used)
 
-    def _get_local_semaphore(self) -> "asyncio.Semaphore":
+    def _get_local_semaphore(self) -> asyncio.Semaphore:
         """Lazily-created concurrency limiter for Ollama calls."""
         if self._local_semaphore is None:
-            import asyncio
-            from brain.settings import settings as _settings; _s = _settings.get
+            from brain.settings import settings as _settings
+
+            _s = _settings.get
             limit = int(_s("local_max_concurrent") or 3)
             self._local_semaphore = asyncio.Semaphore(limit)
         return self._local_semaphore
@@ -194,6 +200,7 @@ class ModelRouter:
     def _get_anthropic(self):
         if self._anthropic_client is None:
             import anthropic
+
             self._anthropic_client = anthropic.AsyncAnthropic(
                 api_key=os.environ["ANTHROPIC_API_KEY"]
             )
@@ -202,6 +209,7 @@ class ModelRouter:
     def _get_google(self):
         if self._google_client is None:
             from google import genai
+
             self._google_client = genai.Client(api_key=os.environ["GOOGLE_API_KEY"])
         return self._google_client
 
@@ -209,6 +217,7 @@ class ModelRouter:
         """Lazily-created persistent httpx client; avoids a new TCP connection per Ollama call."""
         if self._http_client is None:
             import httpx
+
             self._http_client = httpx.AsyncClient()
         return self._http_client
 
@@ -223,8 +232,9 @@ class ModelRouter:
             return os.environ.get("OLLAMA_MODEL", "qwen2.5:14b")
         return None
 
-    async def warmup_local(self, model_key: str = "local-code",
-                           timeout: float | None = None) -> bool:
+    async def warmup_local(
+        self, model_key: str = "local-code", timeout: float | None = None
+    ) -> bool:
         """Preload a local Ollama model into memory as an explicit, separately-timed
         step so the cold-load latency (~50s, up to ~3min under memory pressure) is
         NOT charged against — and does not trip — the planner's per-call timeout.
@@ -236,7 +246,6 @@ class ModelRouter:
         model_name = self._resolve_local_model(model_key)
         if model_name is None:
             return False  # cloud models don't need warming
-        import asyncio
         to = timeout if timeout is not None else OLLAMA_MODEL_LOAD_TIMEOUT
         try:
             # POST /api/generate with no prompt loads the model and returns immediately
@@ -251,17 +260,28 @@ class ModelRouter:
             logger.info("[ModelRouter] Warmed up local model %s", model_name)
             return True
         except Exception as e:
-            logger.warning("[ModelRouter] Warmup of %s failed (continuing anyway): %s",
-                           model_name, e)
+            logger.warning(
+                "[ModelRouter] Warmup of %s failed (continuing anyway): %s", model_name, e
+            )
             return False
 
-    async def call(self, model_key: str, system_prompt: str, messages: list[dict],
-                   *, cluster: str = "", cell: str = "", turn_id: str = "",
-                   locality: str = "either", max_tokens: int = 1024,
-                   skills: list[str] | None = None,
-                   temperature: float | None = None) -> str:
-        import asyncio
-        from brain.settings import settings as _settings; _s = _settings.get
+    async def call(
+        self,
+        model_key: str,
+        system_prompt: str,
+        messages: list[dict],
+        *,
+        cluster: str = "",
+        cell: str = "",
+        turn_id: str = "",
+        locality: str = "either",
+        max_tokens: int = 1024,
+        skills: list[str] | None = None,
+        temperature: float | None = None,
+    ) -> str:
+        from brain.settings import settings as _settings
+
+        _s = _settings.get
 
         model_id = MODEL_MAP.get(model_key, model_key)
 
@@ -272,9 +292,15 @@ class ModelRouter:
                 "[Security] Memory cell %s/%s is restricted to local-only inference but model '%s' "
                 "routes to a cloud API — redirecting to Ollama. If Ollama isn't running this call "
                 "will fail. Fix: run 'ollama serve' and 'ollama pull qwen2.5:14b'.",
-                cluster, cell, model_id,
+                cluster,
+                cell,
+                model_id,
             )
-            model_key = model_key if model_key in ("local", "local-free", "local-code", "local-general") else "local"
+            model_key = (
+                model_key
+                if model_key in ("local", "local-free", "local-code", "local-general")
+                else "local"
+            )
             model_id = model_key
             _is_cloud = False
 
@@ -286,7 +312,10 @@ class ModelRouter:
                 logger.warning(
                     "[Resource] Background cloud budget exhausted (%d/%d tokens used) "
                     "— routing %s/%s to local for this call.",
-                    self._bg_cloud_tokens_used, budget, cluster, cell,
+                    self._bg_cloud_tokens_used,
+                    budget,
+                    cluster,
+                    cell,
                 )
                 model_key = "local"
                 model_id = "local"
@@ -297,13 +326,17 @@ class ModelRouter:
                 if max_tokens > call_cap:
                     logger.debug(
                         "[Resource] Background call %s/%s: capping max_tokens %d→%d",
-                        cluster, cell, max_tokens, call_cap,
+                        cluster,
+                        cell,
+                        max_tokens,
+                        call_cap,
                     )
                     max_tokens = call_cap
 
         # Daily cloud USD budget — hard ceiling across all cloud providers.
         if _is_cloud:
             import datetime as _dt
+
             today_str = _dt.date.today().isoformat()
             # Guard with getattr: tests may construct ModelRouter via __new__,
             # bypassing __init__; these attributes might not exist in that case.
@@ -315,9 +348,14 @@ class ModelRouter:
                 logger.warning(
                     "[Resource] Daily cloud USD cap reached ($%.4f / $%.2f) "
                     "— routing %s/%s to local for the rest of today.",
-                    self._cloud_usd_today, daily_cap, cluster, cell,
+                    self._cloud_usd_today,
+                    daily_cap,
+                    cluster,
+                    cell,
                 )
-                model_key = "local"; model_id = "local"; _is_cloud = False
+                model_key = "local"
+                model_id = "local"
+                _is_cloud = False
 
         # ── R1 egress pseudonymization (gateway backstop before every cloud call) ──
         # Idempotent: already-tokenized content (⟨type_n⟩) doesn't match PII patterns.
@@ -326,22 +364,27 @@ class ModelRouter:
         _egress_active = False
         if _is_cloud and getattr(self, "_egress", None) is not None:
             from brain.security import EGRESS_MODE as _egress_mode
+
             if _egress_mode != "off":
                 _egress_active = True
                 system_prompt, _n = self._egress.pseudonymize(system_prompt)
                 messages = self._pseudonymize_messages(messages)
                 if _n > 0:
-                    logger.debug("[Egress] %s/%s: %d PII replacements in system_prompt",
-                                 cluster, cell, _n)
+                    logger.debug(
+                        "[Egress] %s/%s: %d PII replacements in system_prompt", cluster, cell, _n
+                    )
 
         start = time.time()
-        bg_timeout = float(_s("bg_cloud_timeout_s") or 20.0) if (self._bg_mode and _is_cloud) else None
+        bg_timeout = (
+            float(_s("bg_cloud_timeout_s") or 20.0) if (self._bg_mode and _is_cloud) else None
+        )
 
         # Inject skill text into system prompt before dispatch — applies to all backends
         # (Haiku, Gemini, local). Previously this was scoped to local-only, which silently
         # dropped skills passed to cloud cells like frontal drafters.
         if skills:
             from brain.skill_loader import SkillLoader
+
             skill_block = SkillLoader.load_many(skills)
             if skill_block:
                 system_prompt = f"{system_prompt}\n\n{skill_block}"
@@ -352,28 +395,48 @@ class ModelRouter:
                 coro = self._call_anthropic(model_id, system_prompt, messages, max_tokens)
                 if bg_timeout:
                     text, in_tok, out_tok, cache_read, cache_write = await asyncio.wait_for(
-                        coro, timeout=bg_timeout)
+                        coro, timeout=bg_timeout
+                    )
                 else:
                     text, in_tok, out_tok, cache_read, cache_write = await coro
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.warning(
                     "[Resource] Background cloud call %s/%s timed out after %.0fs — falling back to local.",
-                    cluster, cell, bg_timeout,
+                    cluster,
+                    cell,
+                    bg_timeout,
                 )
                 text, in_tok, out_tok = await self._call_local(system_prompt, messages, max_tokens)
-                cache_read = cache_write = 0
+                cache_read = 0
             if self._bg_mode:
                 self._bg_cloud_tokens_used += in_tok + out_tok
-                logger.debug("[Resource] BG cloud tokens used: %d/%d (this call: %d+%d)",
-                             self._bg_cloud_tokens_used,
-                             int(_s("bg_cloud_token_budget") or 50_000), in_tok, out_tok)
+                logger.debug(
+                    "[Resource] BG cloud tokens used: %d/%d (this call: %d+%d)",
+                    self._bg_cloud_tokens_used,
+                    int(_s("bg_cloud_token_budget") or 50_000),
+                    in_tok,
+                    out_tok,
+                )
             # USD tracking + logging
             usd = self._charge_cloud_usd(model_id, in_tok, out_tok, cache_read)
             if cache_read > 0:
-                logger.debug("[Cache] %s/%s: %d cache-read tokens (%.4f¢ saved vs uncached)",
-                             cluster, cell, cache_read, cache_read * 0.27 / 10_000)
-            logger.debug("[Cloud] %s/%s: %d in + %d out + %d cached → $%.5f (day total $%.4f)",
-                         cluster, cell, in_tok, out_tok, cache_read, usd, self._cloud_usd_today)
+                logger.debug(
+                    "[Cache] %s/%s: %d cache-read tokens (%.4f¢ saved vs uncached)",
+                    cluster,
+                    cell,
+                    cache_read,
+                    cache_read * 0.27 / 10_000,
+                )
+            logger.debug(
+                "[Cloud] %s/%s: %d in + %d out + %d cached → $%.5f (day total $%.4f)",
+                cluster,
+                cell,
+                in_tok,
+                out_tok,
+                cache_read,
+                usd,
+                self._cloud_usd_today,
+            )
         elif model_id.startswith("gemini"):
             try:
                 coro = self._call_google(model_id, system_prompt, messages, max_tokens)
@@ -381,20 +444,29 @@ class ModelRouter:
                     text, in_tok, out_tok = await asyncio.wait_for(coro, timeout=bg_timeout)
                 else:
                     text, in_tok, out_tok = await coro
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.warning(
                     "[Resource] Background cloud call %s/%s timed out after %.0fs — falling back to local.",
-                    cluster, cell, bg_timeout,
+                    cluster,
+                    cell,
+                    bg_timeout,
                 )
                 text, in_tok, out_tok = await self._call_local(system_prompt, messages, max_tokens)
             if self._bg_mode:
                 self._bg_cloud_tokens_used += in_tok + out_tok
-                logger.debug("[Resource] BG cloud tokens used: %d/%d (this call: %d+%d)",
-                             self._bg_cloud_tokens_used,
-                             int(_s("bg_cloud_token_budget") or 50_000), in_tok, out_tok)
+                logger.debug(
+                    "[Resource] BG cloud tokens used: %d/%d (this call: %d+%d)",
+                    self._bg_cloud_tokens_used,
+                    int(_s("bg_cloud_token_budget") or 50_000),
+                    in_tok,
+                    out_tok,
+                )
         elif model_id in ("local", "local-free", "local-code", "local-general"):
             text, in_tok, out_tok = await self._call_local(
-                system_prompt, messages, max_tokens, local_variant=model_id,
+                system_prompt,
+                messages,
+                max_tokens,
+                local_variant=model_id,
                 temperature=temperature,
             )
         else:
@@ -403,26 +475,32 @@ class ModelRouter:
         # ── Depseudonymize cloud response (restores ⟨type_n⟩ → real values) ──────
         if _egress_active:
             from brain.security import EGRESS_MODE as _egress_mode2
+
             if _egress_mode2 not in ("redact", "block"):
                 text = self._egress.depseudonymize(text)
 
         latency = time.time() - start
-        self._log_call(model_id, messages, in_tok, out_tok, latency, cluster=cluster or "", cell=cell or "")
+        self._log_call(
+            model_id, messages, in_tok, out_tok, latency, cluster=cluster or "", cell=cell or ""
+        )
         if self._obs and turn_id:
             try:
                 self._obs.record_llm_call(
-                    turn_id=turn_id, cluster=cluster or "unknown",
-                    cell=cell or "unknown", model=model_id,
-                    prompt_tokens=in_tok, completion_tokens=out_tok,
+                    turn_id=turn_id,
+                    cluster=cluster or "unknown",
+                    cell=cell or "unknown",
+                    model=model_id,
+                    prompt_tokens=in_tok,
+                    completion_tokens=out_tok,
                     latency_s=latency,
                 )
             except Exception as e:
                 logger.debug("obs.record_llm_call failed: %s", e)
         return text
 
-    async def _call_anthropic(self, model_id: str, system_prompt: str,
-                              messages: list[dict],
-                              max_tokens: int = 1024) -> tuple[str, int, int, int, int]:
+    async def _call_anthropic(
+        self, model_id: str, system_prompt: str, messages: list[dict], max_tokens: int = 1024
+    ) -> tuple[str, int, int, int, int]:
         """Call Anthropic Claude. Returns (text, in_tok, out_tok, cache_read, cache_write)."""
         client = self._get_anthropic()
         anthropic_msgs = [{"role": m["role"], "content": m["content"]} for m in messages]
@@ -431,8 +509,9 @@ class ModelRouter:
             model=model_id,
             max_tokens=max_tokens,
             cache_control={"type": "ephemeral"},
-            system=[{"type": "text", "text": system_prompt,
-                      "cache_control": {"type": "ephemeral"}}],
+            system=[
+                {"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}
+            ],
             messages=anthropic_msgs,
         )
         usage = getattr(response, "usage", None)
@@ -442,8 +521,9 @@ class ModelRouter:
         cache_write = getattr(usage, "cache_creation_input_tokens", 0) if usage else 0
         return response.content[0].text, in_tok, out_tok, cache_read, cache_write
 
-    async def _call_google(self, model_id: str, system_prompt: str,
-                           messages: list[dict], max_tokens: int = 1024) -> tuple[str, int, int]:
+    async def _call_google(
+        self, model_id: str, system_prompt: str, messages: list[dict], max_tokens: int = 1024
+    ) -> tuple[str, int, int]:
         from google.genai import types
 
         client = self._get_google()
@@ -459,15 +539,14 @@ class ModelRouter:
                     if part.get("type") == "text":
                         parts.append(types.Part(text=part["text"]))
                     elif part.get("type") == "image":
-                        parts.append(types.Part(
-                            inline_data=types.Blob(mime_type=part["mime"], data=part["data"])
-                        ))
+                        parts.append(
+                            types.Part(
+                                inline_data=types.Blob(mime_type=part["mime"], data=part["data"])
+                            )
+                        )
                 contents.append(types.Content(role=role, parts=parts))
             else:
-                contents.append(types.Content(
-                    role=role,
-                    parts=[types.Part(text=raw)]
-                ))
+                contents.append(types.Content(role=role, parts=[types.Part(text=raw)]))
 
         response = await client.aio.models.generate_content(
             model=model_id,
@@ -485,14 +564,24 @@ class ModelRouter:
     @staticmethod
     def _flatten_content(content) -> str:
         if isinstance(content, list):
-            return " ".join(p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text")
+            return " ".join(
+                p.get("text", "")
+                for p in content
+                if isinstance(p, dict) and p.get("type") == "text"
+            )
         return content or ""
 
-    async def _call_local(self, system_prompt: str,
-                          messages: list[dict], max_tokens: int = 1024,
-                          local_variant: str = "local",
-                          temperature: float | None = None) -> tuple[str, int, int]:
-        flat_messages = [{"role": m["role"], "content": self._flatten_content(m["content"])} for m in messages]
+    async def _call_local(
+        self,
+        system_prompt: str,
+        messages: list[dict],
+        max_tokens: int = 1024,
+        local_variant: str = "local",
+        temperature: float | None = None,
+    ) -> tuple[str, int, int]:
+        flat_messages = [
+            {"role": m["role"], "content": self._flatten_content(m["content"])} for m in messages
+        ]
         base_model = os.environ.get("OLLAMA_MODEL", "qwen2.5:14b")
         if local_variant == "local-code":
             model_name = OLLAMA_CODE_MODEL
@@ -540,8 +629,9 @@ class ModelRouter:
         if use_json_format:
             payload["format"] = "json"
         async with self._get_local_semaphore():
-            r = await self._get_http().post(f"{OLLAMA_HOST}/api/chat", json=payload,
-                                            timeout=OLLAMA_HTTP_TIMEOUT)
+            r = await self._get_http().post(
+                f"{OLLAMA_HOST}/api/chat", json=payload, timeout=OLLAMA_HTTP_TIMEOUT
+            )
         r.raise_for_status()
         data = r.json()
         in_tok = int(data.get("prompt_eval_count", 0))
@@ -588,7 +678,8 @@ class ModelRouter:
                 logger.warning(
                     "Ollama returned %d-dimensional embeddings but %d were expected — "
                     "wrong model pulled? Check OLLAMA_EMBED_MODEL in .env (should be 'nomic-embed-text').",
-                    len(vec), EMBEDDING_DIM,
+                    len(vec),
+                    EMBEDDING_DIM,
                 )
             return None
         except Exception as e:
@@ -611,21 +702,37 @@ class ModelRouter:
                 logger.warning(
                     "Google returned %d-dimensional embeddings despite output_dimensionality=%d — "
                     "check GOOGLE_EMBED_MODEL in .env.",
-                    len(vec), EMBEDDING_DIM,
+                    len(vec),
+                    EMBEDDING_DIM,
                 )
             return None
         except Exception as e:
-            logger.warning("Google embedding API failed — memory search may be degraded this turn: %s", e)
+            logger.warning(
+                "Google embedding API failed — memory search may be degraded this turn: %s", e
+            )
             return None
 
-    def _log_call(self, model_id: str, messages: list[dict],
-                   in_tok: int = 0, out_tok: int = 0, latency_s: float = 0.0,
-                   cluster: str = "", cell: str = "") -> None:
-        self._call_log.append({
-            "model": model_id, "msgs": len(messages),
-            "in": in_tok, "out": out_tok, "latency_s": latency_s,
-            "cluster": cluster, "cell": cell,
-        })
+    def _log_call(
+        self,
+        model_id: str,
+        messages: list[dict],
+        in_tok: int = 0,
+        out_tok: int = 0,
+        latency_s: float = 0.0,
+        cluster: str = "",
+        cell: str = "",
+    ) -> None:
+        self._call_log.append(
+            {
+                "model": model_id,
+                "msgs": len(messages),
+                "in": in_tok,
+                "out": out_tok,
+                "latency_s": latency_s,
+                "cluster": cluster,
+                "cell": cell,
+            }
+        )
 
     @property
     def total_calls_this_turn(self) -> int:

@@ -26,12 +26,13 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import statistics
 import sys
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 try:
     from dotenv import load_dotenv
@@ -75,7 +76,7 @@ def _flaw_flags(values: list[float], n_total: int, n_null: int) -> list[str]:
         if not flags:
             flags.append("NO-NUMERIC-VALUES")
         return flags
-    distinct = set(round(v, 4) for v in nums)
+    distinct = {round(v, 4) for v in nums}
     std = statistics.pstdev(nums) if len(nums) > 1 else 0.0
     half = sum(1 for v in nums if abs(v - 0.5) < 1e-6)
     oor = sum(1 for v in nums if v < 0.0 or v > 1.0)
@@ -106,7 +107,7 @@ def _run(since_days: float, name_filter: str | None, hard_cap: int, json_out: st
         or os.environ.get("LANGFUSE_BASE_URL", "https://cloud.langfuse.com"),
     )
 
-    since = datetime.now(timezone.utc) - timedelta(days=since_days)
+    since = datetime.now(UTC) - timedelta(days=since_days)
     print(f"Fetching scores since {since:%Y-%m-%d %H:%M UTC} (cap {hard_cap})...")
     scores = _fetch_scores(lf, since, hard_cap)
     print(f"Pulled {len(scores)} score records.\n")
@@ -152,7 +153,7 @@ def _run(since_days: float, name_filter: str | None, hard_cap: int, json_out: st
             "std": round(statistics.pstdev(nums), 3) if len(nums) > 1 else 0.0,
             "min": round(min(nums), 3) if nums else None,
             "max": round(max(nums), 3) if nums else None,
-            "n_distinct": len(set(round(v, 4) for v in nums)),
+            "n_distinct": len({round(v, 4) for v in nums}),
             "config_ids": sorted(g["config_ids"]),
             "environments": sorted(g["envs"]),
             "flaws": flags,
@@ -180,10 +181,14 @@ def _run(since_days: float, name_filter: str | None, hard_cap: int, json_out: st
     if flagged:
         print("\nLikely-flawed evaluators (and where to fix them):")
         for r in flagged:
-            where = "Langfuse UI" if r["source"] == "EVAL" else (
-                "this repo" if r["source"] == "API" else "n/a (human)"
+            where = (
+                "Langfuse UI"
+                if r["source"] == "EVAL"
+                else ("this repo" if r["source"] == "API" else "n/a (human)")
             )
-            print(f"  • {r['name']} [{r['source_label']}] → fix in {where}: {'; '.join(r['flaws'])}")
+            print(
+                f"  • {r['name']} [{r['source_label']}] → fix in {where}: {'; '.join(r['flaws'])}"
+            )
 
     if json_out:
         with open(json_out, "w") as f:
@@ -194,8 +199,17 @@ def _run(since_days: float, name_filter: str | None, hard_cap: int, json_out: st
 # ── Offline mode: audit a Langfuse observations export (.jsonl / .json) ─────────
 
 _SCORE_PREFIXES = (
-    "voice.", "grounding.", "self_model.", "critic.", "thought.", "emotion.",
-    "judge.", "pipeline.", "novelty.", "faithfulness.", "safety.",
+    "voice.",
+    "grounding.",
+    "self_model.",
+    "critic.",
+    "thought.",
+    "emotion.",
+    "judge.",
+    "pipeline.",
+    "novelty.",
+    "faithfulness.",
+    "safety.",
 )
 
 
@@ -206,10 +220,8 @@ def _load_export(path: str) -> list[dict]:
             for line in f:
                 line = line.strip()
                 if line:
-                    try:
+                    with contextlib.suppress(json.JSONDecodeError):
                         out.append(json.loads(line))
-                    except json.JSONDecodeError:
-                        pass
         return out
     with open(path) as f:
         data = json.load(f)
@@ -249,7 +261,7 @@ def _audit_file(path: str, json_out: str | None) -> None:
         n = len(vals)
         std = statistics.pstdev(vals) if n > 1 else 0.0
         mean = statistics.mean(vals)
-        distinct = len(set(round(v, 3) for v in vals))
+        distinct = len({round(v, 3) for v in vals})
         half = sum(1 for v in vals if abs(v - 0.5) < 1e-6) / n
         flags = []
         if std < 1e-6:
@@ -264,27 +276,42 @@ def _audit_file(path: str, json_out: str | None) -> None:
             flags.append("OUT-OF-RANGE")
         if multi:
             flags.append(f"MULTI-SCORED({multi} traces — local+native overlap?)")
-        report.append({
-            "name": name, "recs": recs_with, "n_values": n, "mean": round(mean, 3),
-            "std": round(std, 3), "min": round(min(vals), 2), "max": round(max(vals), 2),
-            "distinct": distinct, "pct_half": round(100 * half, 1), "flaws": flags,
-        })
+        report.append(
+            {
+                "name": name,
+                "recs": recs_with,
+                "n_values": n,
+                "mean": round(mean, 3),
+                "std": round(std, 3),
+                "min": round(min(vals), 2),
+                "max": round(max(vals), 2),
+                "distinct": distinct,
+                "pct_half": round(100 * half, 1),
+                "flaws": flags,
+            }
+        )
 
     report.sort(key=lambda r: (not r["flaws"], r["name"]))
     print("=" * 86)
-    print(f"{'EVALUATOR':<26}{'recs':>5}{'mean':>7}{'std':>7}{'min':>6}{'max':>6}{'dist':>5}{'%0.5':>6}")
+    print(
+        f"{'EVALUATOR':<26}{'recs':>5}{'mean':>7}{'std':>7}{'min':>6}{'max':>6}{'dist':>5}{'%0.5':>6}"
+    )
     print("=" * 86)
     for r in report:
-        print(f"{r['name']:<26}{r['recs']:>5}{r['mean']:>7.3f}{r['std']:>7.3f}"
-              f"{r['min']:>6.2f}{r['max']:>6.2f}{r['distinct']:>5}{r['pct_half']:>5.0f}%")
+        print(
+            f"{r['name']:<26}{r['recs']:>5}{r['mean']:>7.3f}{r['std']:>7.3f}"
+            f"{r['min']:>6.2f}{r['max']:>6.2f}{r['distinct']:>5}{r['pct_half']:>5.0f}%"
+        )
         for fl in r["flaws"]:
             print(f"    ⚠  {fl}")
     print("=" * 86)
     flagged = [r for r in report if r["flaws"]]
     print(f"\n{len(flagged)} of {len(report)} populated evaluators flagged.")
     if empty:
-        print(f"\nEvaluators present in the schema but PRODUCED NO SCORES (didn't run / "
-              f"not submitting): {', '.join(empty)}")
+        print(
+            f"\nEvaluators present in the schema but PRODUCED NO SCORES (didn't run / "
+            f"not submitting): {', '.join(empty)}"
+        )
     print(
         "\nNote: this export flattens scores as columns and does not carry the score "
         "`source`, so local-vs-native can't be read directly. MULTI-SCORED traces (>1 "
@@ -300,8 +327,12 @@ def _audit_file(path: str, json_out: str | None) -> None:
 
 def main() -> None:
     p = argparse.ArgumentParser(description="Audit Langfuse evaluator scores for flaws.")
-    p.add_argument("--from-file", dest="from_file", default=None,
-                   help="Audit a Langfuse observations export (.jsonl/.json) instead of the live API")
+    p.add_argument(
+        "--from-file",
+        dest="from_file",
+        default=None,
+        help="Audit a Langfuse observations export (.jsonl/.json) instead of the live API",
+    )
     p.add_argument("--since-days", type=float, default=4.0, help="Look back N days (default 4)")
     p.add_argument("--name", default=None, help="Only audit this score name")
     p.add_argument("--cap", type=int, default=5000, help="Max score records to pull")

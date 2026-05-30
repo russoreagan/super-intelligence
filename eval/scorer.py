@@ -12,6 +12,7 @@ Three parallel judge calls answer three specific questions:
 Writes eval_patch records via EvalLogger.patch_turn().
 Gated by BRAIN_EVAL_SCORE=true env flag.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -95,6 +96,7 @@ def _unblind_quality(parsed: dict, brain_is_a: bool) -> dict:
         out["baseline_overall"] = base_overall
         out["delta"] = round(brain_overall - base_overall, 4)
     return out
+
 
 _PIPELINE_JUDGE_SYSTEM = """\
 You evaluate whether a multi-cluster AI brain pipeline justified its computational cost
@@ -213,6 +215,7 @@ Respond ONLY with valid JSON:
 class PostHocScorer:
     def __init__(self, eval_logger: EvalLogger, obs=None) -> None:
         from brain.model_router import ModelRouter
+
         self._eval_logger = eval_logger
         self._obs = obs
         self._router = ModelRouter(obs=None)
@@ -220,29 +223,66 @@ class PostHocScorer:
 
     # ── Public ───────────────────────────────────────────────────────────────
 
-    def fire(self, *, turn_id: str, user_input: str, brain_response: str,
-             baseline_response: str, memory_context: str,
-             coherence: float, emotional_fit: float,
-             trace: TurnTrace | None = None) -> None:
+    def fire(
+        self,
+        *,
+        turn_id: str,
+        user_input: str,
+        brain_response: str,
+        baseline_response: str,
+        memory_context: str,
+        coherence: float,
+        emotional_fit: float,
+        trace: TurnTrace | None = None,
+    ) -> None:
         """Schedule all three judge calls in parallel. Non-blocking."""
         if not self._enabled:
             return
         asyncio.create_task(
-            self._run_all(turn_id, user_input, brain_response, baseline_response,
-                          memory_context, coherence, emotional_fit, trace)
+            self._run_all(
+                turn_id,
+                user_input,
+                brain_response,
+                baseline_response,
+                memory_context,
+                coherence,
+                emotional_fit,
+                trace,
+            )
         )
 
     # ── Private ──────────────────────────────────────────────────────────────
 
-    async def _run_all(self, turn_id: str, user_input: str, brain_response: str,
-                       baseline_response: str, memory_context: str,
-                       coherence: float, emotional_fit: float,
-                       trace: TurnTrace | None) -> None:
+    async def _run_all(
+        self,
+        turn_id: str,
+        user_input: str,
+        brain_response: str,
+        baseline_response: str,
+        memory_context: str,
+        coherence: float,
+        emotional_fit: float,
+        trace: TurnTrace | None,
+    ) -> None:
         coros = [
-            self._run_quality(turn_id, user_input, brain_response, baseline_response,
-                              memory_context, coherence, emotional_fit),
-            self._run_pipeline(turn_id, user_input, brain_response, baseline_response,
-                               memory_context, coherence, trace),
+            self._run_quality(
+                turn_id,
+                user_input,
+                brain_response,
+                baseline_response,
+                memory_context,
+                coherence,
+                emotional_fit,
+            ),
+            self._run_pipeline(
+                turn_id,
+                user_input,
+                brain_response,
+                baseline_response,
+                memory_context,
+                coherence,
+                trace,
+            ),
             self._run_novelty(turn_id, user_input, brain_response, baseline_response, trace),
         ]
         labels = ["quality", "pipeline", "novelty"]
@@ -251,19 +291,27 @@ class PostHocScorer:
             coros.append(self._run_faithfulness(turn_id, brain_response, memory_context))
             labels.append("faithfulness")
         results = await asyncio.gather(*coros, return_exceptions=True)
-        for label, r in zip(labels, results):
+        for label, r in zip(labels, results, strict=False):
             if isinstance(r, Exception):
                 logger.warning("PostHocScorer: %s judge raised: %s", label, r)
 
-    async def _run_quality(self, turn_id: str, user_input: str, brain_response: str,
-                           baseline_response: str, memory_context: str,
-                           coherence: float, emotional_fit: float) -> None:
+    async def _run_quality(
+        self,
+        turn_id: str,
+        user_input: str,
+        brain_response: str,
+        baseline_response: str,
+        memory_context: str,
+        coherence: float,
+        emotional_fit: float,
+    ) -> None:
         # Blind the judge: randomize which response is labelled A vs B and reveal
         # nothing about how either was produced. This removes label bias ("the brain
         # one must be richer") and averages out position bias across turns.
         brain_is_a = random.random() < 0.5
         resp_a, resp_b = (
-            (brain_response, baseline_response) if brain_is_a
+            (brain_response, baseline_response)
+            if brain_is_a
             else (baseline_response, brain_response)
         )
         ctx = memory_context[:500] if memory_context else "(none)"
@@ -275,9 +323,12 @@ class PostHocScorer:
             "Score A and B independently, then state your preference."
         )
         raw = await self._router.call(
-            "haiku", _QUALITY_JUDGE_SYSTEM,
+            "haiku",
+            _QUALITY_JUDGE_SYSTEM,
             [{"role": "user", "content": prompt}],
-            cluster="scorer", cell="quality_judge", turn_id="",
+            cluster="scorer",
+            cell="quality_judge",
+            turn_id="",
         )
         parsed = safe_json_parse(raw)
         if not parsed:
@@ -286,18 +337,27 @@ class PostHocScorer:
         scores = _unblind_quality(parsed, brain_is_a)
         self._eval_logger.patch_turn(turn_id, judge_scores=scores)
         if self._obs:
-            lf = {f"judge.{k}": v for k, v in scores.items()
-                  if isinstance(v, (int, float))}
+            lf = {f"judge.{k}": v for k, v in scores.items() if isinstance(v, (int, float))}
             self._obs.record_scores(turn_id, lf, comment=scores.get("reasoning", ""))
         logger.debug(
             "PostHocScorer quality(blinded, brain=%s): turn=%s brain=%s baseline=%s delta=%s",
-            scores.get("brain_position"), turn_id, scores.get("brain_overall"),
-            scores.get("baseline_overall"), scores.get("delta"),
+            scores.get("brain_position"),
+            turn_id,
+            scores.get("brain_overall"),
+            scores.get("baseline_overall"),
+            scores.get("delta"),
         )
 
-    async def _run_pipeline(self, turn_id: str, user_input: str, brain_response: str,
-                            baseline_response: str, memory_context: str,
-                            coherence: float, trace: TurnTrace | None) -> None:
+    async def _run_pipeline(
+        self,
+        turn_id: str,
+        user_input: str,
+        brain_response: str,
+        baseline_response: str,
+        memory_context: str,
+        coherence: float,
+        trace: TurnTrace | None,
+    ) -> None:
         llm_calls = getattr(trace, "llm_calls", "?") if trace else "?"
         cluster_tokens = getattr(trace, "cluster_tokens", {}) if trace else {}
         memory_recalled = getattr(trace, "memory_recalled", False) if trace else False
@@ -307,13 +367,16 @@ class PostHocScorer:
 
         token_summary = (
             "; ".join(
-                f"{cl}: {v.get('calls', 0)} calls / {v.get('in', 0)+v.get('out', 0)} tokens"
+                f"{cl}: {v.get('calls', 0)} calls / {v.get('in', 0) + v.get('out', 0)} tokens"
                 for cl, v in cluster_tokens.items()
-            ) if cluster_tokens else "(not available)"
+            )
+            if cluster_tokens
+            else "(not available)"
         )
         hormonal_text = (
             ", ".join(f"{k}={v:.3f}" for k, v in hormonal.items())
-            if hormonal else "(not available)"
+            if hormonal
+            else "(not available)"
         )
 
         prompt = (
@@ -332,9 +395,12 @@ class PostHocScorer:
             "Evaluate pipeline efficiency."
         )
         raw = await self._router.call(
-            "haiku", _PIPELINE_JUDGE_SYSTEM,
+            "haiku",
+            _PIPELINE_JUDGE_SYSTEM,
             [{"role": "user", "content": prompt}],
-            cluster="scorer", cell="pipeline_judge", turn_id="",
+            cluster="scorer",
+            cell="pipeline_judge",
+            turn_id="",
         )
         scores = safe_json_parse(raw)
         if not scores:
@@ -342,29 +408,41 @@ class PostHocScorer:
             return
         self._eval_logger.patch_turn(turn_id, pipeline_scores=scores)
         if self._obs:
-            lf = {f"pipeline.{k}": v for k, v in scores.items()
-                  if k != "efficiency_reasoning" and isinstance(v, (int, float))}
-            self._obs.record_scores(turn_id, lf,
-                                    comment=scores.get("efficiency_reasoning", ""))
+            lf = {
+                f"pipeline.{k}": v
+                for k, v in scores.items()
+                if k != "efficiency_reasoning" and isinstance(v, (int, float))
+            }
+            self._obs.record_scores(turn_id, lf, comment=scores.get("efficiency_reasoning", ""))
         logger.debug(
             "PostHocScorer pipeline: turn=%s value_add=%.2f calls_justified=%.2f memory_leverage=%.2f",
-            turn_id, scores.get("pipeline_value_add", 0),
-            scores.get("calls_justified", 0), scores.get("memory_leverage", 0),
+            turn_id,
+            scores.get("pipeline_value_add", 0),
+            scores.get("calls_justified", 0),
+            scores.get("memory_leverage", 0),
         )
 
-    async def _run_novelty(self, turn_id: str, user_input: str, brain_response: str,
-                           baseline_response: str, trace: TurnTrace | None) -> None:
+    async def _run_novelty(
+        self,
+        turn_id: str,
+        user_input: str,
+        brain_response: str,
+        baseline_response: str,
+        trace: TurnTrace | None,
+    ) -> None:
         emotion = getattr(trace, "emotion", "neutral") if trace else "neutral"
         emotion_core = getattr(trace, "emotion_core", "neutral") if trace else "neutral"
         llm_calls_saved = getattr(trace, "llm_calls_saved", 0) if trace else 0
         hormonal = getattr(trace, "hormonal", {}) if trace else {}
         has_anticipations = bool(
-            trace and getattr(trace, "fired_path", None) and
-            any(p.get("tag") == "anticipator" for p in trace.fired_path)
+            trace
+            and getattr(trace, "fired_path", None)
+            and any(p.get("tag") == "anticipator" for p in trace.fired_path)
         )
         hormonal_text = (
             ", ".join(f"{k}={v:.3f}" for k, v in hormonal.items())
-            if hormonal else "(not available)"
+            if hormonal
+            else "(not available)"
         )
 
         prompt = (
@@ -379,9 +457,12 @@ class PostHocScorer:
             "Evaluate novelty and emergent behavior."
         )
         raw = await self._router.call(
-            "haiku", _NOVELTY_JUDGE_SYSTEM,
+            "haiku",
+            _NOVELTY_JUDGE_SYSTEM,
             [{"role": "user", "content": prompt}],
-            cluster="scorer", cell="novelty_judge", turn_id="",
+            cluster="scorer",
+            cell="novelty_judge",
+            turn_id="",
         )
         scores = safe_json_parse(raw)
         if not scores:
@@ -389,27 +470,35 @@ class PostHocScorer:
             return
         self._eval_logger.patch_turn(turn_id, novelty_scores=scores)
         if self._obs:
-            lf = {f"novelty.{k}": v for k, v in scores.items()
-                  if k != "novelty_reasoning" and isinstance(v, (int, float))}
-            self._obs.record_scores(turn_id, lf,
-                                    comment=scores.get("novelty_reasoning", ""))
+            lf = {
+                f"novelty.{k}": v
+                for k, v in scores.items()
+                if k != "novelty_reasoning" and isinstance(v, (int, float))
+            }
+            self._obs.record_scores(turn_id, lf, comment=scores.get("novelty_reasoning", ""))
         logger.debug(
             "PostHocScorer novelty: turn=%s behavioral=%.2f emergence=%.2f continuity=%.2f",
-            turn_id, scores.get("behavioral_novelty", 0),
-            scores.get("emergence_detected", 0), scores.get("personality_continuity", 0),
+            turn_id,
+            scores.get("behavioral_novelty", 0),
+            scores.get("emergence_detected", 0),
+            scores.get("personality_continuity", 0),
         )
 
-    async def _run_faithfulness(self, turn_id: str, brain_response: str,
-                                memory_context: str) -> None:
+    async def _run_faithfulness(
+        self, turn_id: str, brain_response: str, memory_context: str
+    ) -> None:
         prompt = (
             f"Background notes (recalled long-term memory):\n{memory_context[:1500]}\n\n"
             f"AI response:\n{brain_response}\n\n"
             "Check the response for faithfulness to the notes."
         )
         raw = await self._router.call(
-            "haiku", _FAITHFULNESS_JUDGE_SYSTEM,
+            "haiku",
+            _FAITHFULNESS_JUDGE_SYSTEM,
             [{"role": "user", "content": prompt}],
-            cluster="scorer", cell="faithfulness_judge", turn_id="",
+            cluster="scorer",
+            cell="faithfulness_judge",
+            turn_id="",
         )
         scores = safe_json_parse(raw)
         if not scores:
@@ -417,10 +506,15 @@ class PostHocScorer:
             return
         self._eval_logger.patch_turn(turn_id, faithfulness_scores=scores)
         if self._obs:
-            lf = {f"faithfulness.{k}": v for k, v in scores.items()
-                  if k != "reasoning" and isinstance(v, (int, float))}
+            lf = {
+                f"faithfulness.{k}": v
+                for k, v in scores.items()
+                if k != "reasoning" and isinstance(v, (int, float))
+            }
             self._obs.record_scores(turn_id, lf, comment=scores.get("reasoning", ""))
         logger.debug(
             "PostHocScorer faithfulness: turn=%s faithful=%s unsupported=%s",
-            turn_id, scores.get("faithfulness"), scores.get("unsupported_claims"),
+            turn_id,
+            scores.get("faithfulness"),
+            scores.get("unsupported_claims"),
         )

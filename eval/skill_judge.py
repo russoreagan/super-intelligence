@@ -81,7 +81,11 @@ def _load(path: str) -> tuple[dict, list]:
 def _selected_overall(turn: dict) -> float | None:
     """Mean 'overall' of the selected draft(s), if internal critic scores exist."""
     ds = turn.get("draft_scores") or []
-    sel = [d.get("overall") for d in ds if d.get("selected") and isinstance(d.get("overall"), (int, float))]
+    sel = [
+        d.get("overall")
+        for d in ds
+        if d.get("selected") and isinstance(d.get("overall"), (int, float))
+    ]
     if not sel:
         sel = [d.get("overall") for d in ds if isinstance(d.get("overall"), (int, float))]
     return statistics.mean(sel) if sel else None
@@ -117,8 +121,10 @@ def _run(path: str, limit: int, dry_run: bool) -> None:
         elif kind == "skill_selector_gated_out" and tid:
             gated.add(tid)
 
-    print(f"Skill selector: {len(picked)} turns with a chosen framework, "
-          f"{len(gated)} gated out (in {path}).\n")
+    print(
+        f"Skill selector: {len(picked)} turns with a chosen framework, "
+        f"{len(gated)} gated out (in {path}).\n"
+    )
 
     # ── Deterministic: quality on skill turns vs gated turns ──────────────────
     skill_q = [q for tid in picked if (q := _selected_overall(turns.get(tid, {}))) is not None]
@@ -127,7 +133,9 @@ def _run(path: str, limit: int, dry_run: bool) -> None:
         print("  DETERMINISTIC (selected-draft 'overall' critic score):")
         print(f"    skill-selected turns: mean {statistics.mean(skill_q):.3f}  (n={len(skill_q)})")
         print(f"    gated-out turns:      mean {statistics.mean(gated_q):.3f}  (n={len(gated_q)})")
-        print(f"    difference:           {statistics.mean(skill_q) - statistics.mean(gated_q):+.3f}\n")
+        print(
+            f"    difference:           {statistics.mean(skill_q) - statistics.mean(gated_q):+.3f}\n"
+        )
     else:
         print("  DETERMINISTIC: not enough turns with internal critic scores to compare.\n")
 
@@ -157,7 +165,9 @@ def _run(path: str, limit: int, dry_run: bool) -> None:
         )
         try:
             msg = client.messages.create(
-                model=_MODEL, max_tokens=200, system=_SYSTEM,
+                model=_MODEL,
+                max_tokens=200,
+                system=_SYSTEM,
                 messages=[{"role": "user", "content": prompt}],
             )
             sc = _parse_json(msg.content[0].text)
@@ -179,8 +189,10 @@ def _run(path: str, limit: int, dry_run: bool) -> None:
         print(f"    benefit: mean {statistics.mean(benefits):.3f}")
     low = sum(1 for b in benefits if b < 0.4)
     if benefits:
-        print(f"    low-benefit selections (<0.4): {low}/{len(benefits)} "
-              f"— candidates for tuning the selector")
+        print(
+            f"    low-benefit selections (<0.4): {low}/{len(benefits)} "
+            f"— candidates for tuning the selector"
+        )
 
 
 def main() -> None:

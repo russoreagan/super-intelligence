@@ -12,6 +12,7 @@ Gated by BRAIN_EVAL_LEARNING=true env flag.
 Scores posted to Langfuse as a standalone session-summary span (not tied to any
 single turn). Also written to eval JSONL as a "learning_summary" record.
 """
+
 from __future__ import annotations
 
 import logging
@@ -97,13 +98,15 @@ Respond ONLY with valid JSON:
 class LearningJudge:
     def __init__(self, eval_logger: EvalLogger, obs=None) -> None:
         from brain.model_router import ModelRouter
+
         self._eval_logger = eval_logger
         self._obs = obs
         self._router = ModelRouter(obs=None)
         self._enabled = os.environ.get("BRAIN_EVAL_LEARNING", "").lower() in ("1", "true", "yes")
 
-    async def evaluate(self, session_id: str, full_traces: list[TurnTrace],
-                       session_metrics: dict) -> None:
+    async def evaluate(
+        self, session_id: str, full_traces: list[TurnTrace], session_metrics: dict
+    ) -> None:
         """
         Run the session-end learning judge. Non-blocking — call with await at shutdown.
         session_metrics should come from LearningMonitor.session_metrics().
@@ -111,8 +114,9 @@ class LearningJudge:
         if not self._enabled:
             return
         if len(full_traces) < _MIN_TURNS:
-            logger.debug("LearningJudge: only %d turns — skipping (need %d)",
-                         len(full_traces), _MIN_TURNS)
+            logger.debug(
+                "LearningJudge: only %d turns — skipping (need %d)", len(full_traces), _MIN_TURNS
+            )
             return
 
         prompt = self._build_prompt(full_traces, session_metrics)
@@ -135,14 +139,16 @@ class LearningJudge:
             return
 
         # Write to eval JSONL
-        self._eval_logger._append({
-            "type": "learning_summary",
-            "session_id": session_id,
-            "ts": time.time(),
-            "turn_count": len(full_traces),
-            "structural_metrics": session_metrics,
-            "judge_scores": scores,
-        })
+        self._eval_logger._append(
+            {
+                "type": "learning_summary",
+                "session_id": session_id,
+                "ts": time.time(),
+                "turn_count": len(full_traces),
+                "structural_metrics": session_metrics,
+                "judge_scores": scores,
+            }
+        )
 
         # Post to Langfuse as a standalone session-summary span
         if self._obs:
@@ -172,7 +178,7 @@ class LearningJudge:
             correct = sum(1 for o in outcomes if o.get("correct"))
             acc = f"{correct}/{len(outcomes)}" if outcomes else "n/a"
             return (
-                f"  Turn {idx+1}: user={t.user_input[:80]!r}\n"
+                f"  Turn {idx + 1}: user={t.user_input[:80]!r}\n"
                 f"    response={t.response[:120]!r}\n"
                 f"    emotion={t.emotion} | llm_calls={t.llm_calls} "
                 f"saved={saved} | predictor_acc={acc}"
@@ -191,8 +197,9 @@ class LearningJudge:
         ]:
             val = metrics.get(key)
             if val is not None:
-                trend_lines.append(f"  {label}: {val:+.4f}" if isinstance(val, float)
-                                   else f"  {label}: {val}")
+                trend_lines.append(
+                    f"  {label}: {val:+.4f}" if isinstance(val, float) else f"  {label}: {val}"
+                )
 
         # Hebbian section
         hebbian_lines = []
@@ -203,25 +210,29 @@ class LearningJudge:
             gainers = [d for d in wiring_deltas if d["delta"] > 0]
             losers = [d for d in wiring_deltas if d["delta"] < 0]
             if gainers:
-                g_text = ", ".join(f"{d['src']}→{d['tgt']} (+{d['delta']:.4f})"
-                                   for d in gainers[:5])
+                g_text = ", ".join(
+                    f"{d['src']}→{d['tgt']} (+{d['delta']:.4f})" for d in gainers[:5]
+                )
                 hebbian_lines.append(f"  Top gainers: {g_text}")
             if losers:
-                l_text = ", ".join(f"{d['src']}→{d['tgt']} ({d['delta']:.4f})"
-                                   for d in losers[:5])
+                l_text = ", ".join(f"{d['src']}→{d['tgt']} ({d['delta']:.4f})" for d in losers[:5])
                 hebbian_lines.append(f"  Top losers: {l_text}")
         else:
             hebbian_lines.append("  (No Hebbian data available — wiring may not have run yet)")
 
         cross_drift = metrics.get("cross_session_drift")
         if cross_drift is not None:
-            hebbian_lines.append(f"  Cross-session RMS weight drift from oldest snapshot: {cross_drift:.4f}")
+            hebbian_lines.append(
+                f"  Cross-session RMS weight drift from oldest snapshot: {cross_drift:.4f}"
+            )
 
         prompt = (
             f"SESSION: {metrics.get('turns_recorded', n)} turns total\n\n"
             f"EARLY TURNS (first third):\n{early_text}\n\n"
             f"LATE TURNS (last third):\n{late_text}\n\n"
-            f"PREDICTOR / GATING TREND:\n" + "\n".join(trend_lines or ["  (insufficient data)"]) + "\n\n"
+            f"PREDICTOR / GATING TREND:\n"
+            + "\n".join(trend_lines or ["  (insufficient data)"])
+            + "\n\n"
             "HEBBIAN WEIGHT CHANGES (this session):\n" + "\n".join(hebbian_lines) + "\n\n"
             "Evaluate learning."
         )

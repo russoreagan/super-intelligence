@@ -67,7 +67,7 @@ Respond ONLY with valid JSON:
 }"""
 
 
-def _load_sessions(path: str) -> "OrderedDict[str, list]":
+def _load_sessions(path: str) -> OrderedDict[str, list]:
     sessions: OrderedDict[str, list] = OrderedDict()
     with open(path) as f:
         for line in f:
@@ -85,7 +85,7 @@ def _load_sessions(path: str) -> "OrderedDict[str, list]":
     return sessions
 
 
-def _sample(sessions: "OrderedDict[str, list]", sids: list[str], per_session: int) -> str:
+def _sample(sessions: OrderedDict[str, list], sids: list[str], per_session: int) -> str:
     blocks = []
     for sid in sids:
         turns = sessions[sid]

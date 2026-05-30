@@ -10,6 +10,7 @@ Compares brain latency to single-LLM baseline if BaselineRunner has run.
 Enable that via the "Eval" button in the UI header or
 BRAIN_EVAL_BASELINE=true BRAIN_EVAL_INTENSIVE=true at start time.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -50,7 +51,9 @@ def stats(label: str, vals: list[float]) -> None:
     avg = statistics.mean(vals)
     med = statistics.median(vals)
     p90 = s[int(0.9 * (n - 1))] if n > 1 else s[0]
-    print(f"  {label:24} n={n:4}  avg={avg:6.2f}s  med={med:6.2f}s  p90={p90:6.2f}s  min={min(vals):5.2f}  max={max(vals):6.2f}")
+    print(
+        f"  {label:24} n={n:4}  avg={avg:6.2f}s  med={med:6.2f}s  p90={p90:6.2f}s  min={min(vals):5.2f}  max={max(vals):6.2f}"
+    )
 
 
 def main() -> None:
@@ -73,14 +76,17 @@ def main() -> None:
     stats("brain llm_calls", [t.get("llm_calls", 0) for t in turns if t.get("llm_calls", 0) > 0])
 
     # Baseline-paired turns (BaselineRunner has filled baseline_latency_s)
-    paired = [(t.get("elapsed_s", 0), t.get("baseline_latency_s", 0)) for t in turns
-              if t.get("baseline_latency_s", 0) > 0]
+    paired = [
+        (t.get("elapsed_s", 0), t.get("baseline_latency_s", 0))
+        for t in turns
+        if t.get("baseline_latency_s", 0) > 0
+    ]
     print(f"\n=== BASELINE COMPARISON ({len(paired)} paired turns) ===")
     if not paired:
         print("  No baseline data. Click the 'Eval' button in the UI header,")
         print("  or set BRAIN_EVAL_BASELINE=true BRAIN_EVAL_INTENSIVE=true and restart.")
     else:
-        stats("brain elapsed_s",    [b for b, _ in paired])
+        stats("brain elapsed_s", [b for b, _ in paired])
         stats("baseline elapsed_s", [s for _, s in paired])
         ratios = [b / s for b, s in paired if s > 0.1]
         if ratios:

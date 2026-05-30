@@ -17,6 +17,7 @@ Usage:
   python -m eval.langfuse_batch_eval --limit 500 --since 168
   python -m eval.langfuse_batch_eval --print-setup    # print Langfuse UI setup guide
 """
+
 from __future__ import annotations
 
 import argparse
@@ -24,11 +25,12 @@ import asyncio
 import logging
 import re
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 try:
     from dotenv import load_dotenv
+
     load_dotenv(override=True)
 except ImportError:
     pass
@@ -48,6 +50,7 @@ def _get_client() -> Any:
     global _client
     if _client is None:
         import anthropic
+
         _client = anthropic.AsyncAnthropic()
     return _client
 
@@ -276,24 +279,25 @@ REASONING: <one sentence>"""
 # ── Score definitions ─────────────────────────────────────────────────────────
 
 _TURN_SCORES = [
-    ("voice.naturalness",      _VOICE_NATURALNESS),
-    ("voice.speakability",     _VOICE_SPEAKABILITY),
-    ("voice.length_fit",       _VOICE_LENGTH_FIT),
-    ("grounding.directness",   _GROUNDING_DIRECTNESS),
-    ("grounding.specificity",  _GROUNDING_SPECIFICITY),
-    ("grounding.focus",        _GROUNDING_FOCUS),
+    ("voice.naturalness", _VOICE_NATURALNESS),
+    ("voice.speakability", _VOICE_SPEAKABILITY),
+    ("voice.length_fit", _VOICE_LENGTH_FIT),
+    ("grounding.directness", _GROUNDING_DIRECTNESS),
+    ("grounding.specificity", _GROUNDING_SPECIFICITY),
+    ("grounding.focus", _GROUNDING_FOCUS),
     ("self_model.calibration", _SELF_MODEL_CALIBRATION),  # skipped when no self-reference
-    ("self_model.coherence",   _SELF_MODEL_COHERENCE),    # skipped when no self-reference
-    ("safety.boundary",        _SAFETY_BOUNDARY),
+    ("self_model.coherence", _SELF_MODEL_COHERENCE),  # skipped when no self-reference
+    ("safety.boundary", _SAFETY_BOUNDARY),
 ]
 
 _THOUGHT_SCORES = [
-    ("thought.depth",     _THOUGHT_DEPTH),
+    ("thought.depth", _THOUGHT_DEPTH),
     ("thought.coherence", _THOUGHT_COHERENCE),
 ]
 
 
 # ── Core async runner ─────────────────────────────────────────────────────────
+
 
 def _already_scored(trace: Any, names: list[str]) -> bool:
     scores = getattr(trace, "scores", None) or []
@@ -318,7 +322,7 @@ async def _score_turn(lf: Any, trace: Any, sem: asyncio.Semaphore) -> None:
         tasks = [_score(system, prompt) for _, system in _TURN_SCORES]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        for (name, _), result in zip(_TURN_SCORES, results):
+        for (name, _), result in zip(_TURN_SCORES, results, strict=False):
             if isinstance(result, Exception):
                 logger.warning("Score %s failed for trace %s: %s", name, trace.id, result)
                 continue
@@ -326,8 +330,9 @@ async def _score_turn(lf: Any, trace: Any, sem: asyncio.Semaphore) -> None:
             if value is None:
                 continue  # judge said SKIP — not applicable for this turn
             try:
-                lf.create_score(trace_id=trace.id, name=name, value=value,
-                                comment=comment, data_type="NUMERIC")
+                lf.create_score(
+                    trace_id=trace.id, name=name, value=value, comment=comment, data_type="NUMERIC"
+                )
             except Exception as e:
                 logger.warning("Failed to post score %s: %s", name, e)
 
@@ -346,18 +351,21 @@ async def _score_thought(lf: Any, trace: Any, sem: asyncio.Semaphore) -> None:
         if _already_scored(trace, score_names):
             return
 
-        direction = (meta.get("direction", "unknown") if isinstance(meta, dict) else "unknown")
-        angle = (meta.get("angle", "") if isinstance(meta, dict) else "")
+        direction = meta.get("direction", "unknown") if isinstance(meta, dict) else "unknown"
+        angle = meta.get("angle", "") if isinstance(meta, dict) else ""
 
         prompts = [
             f"Thought:\n{thought}",
             f"Thought:\n{thought}",
             f"Direction: {direction}\nAngle: {angle}\n\nThought:\n{thought}",
         ]
-        tasks = [_score(system, prompt) for (_, system), prompt in zip(_THOUGHT_SCORES, prompts)]
+        tasks = [
+            _score(system, prompt)
+            for (_, system), prompt in zip(_THOUGHT_SCORES, prompts, strict=False)
+        ]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        for (name, _), result in zip(_THOUGHT_SCORES, results):
+        for (name, _), result in zip(_THOUGHT_SCORES, results, strict=False):
             if isinstance(result, Exception):
                 logger.warning("Score %s failed for trace %s: %s", name, trace.id, result)
                 continue
@@ -365,8 +373,9 @@ async def _score_thought(lf: Any, trace: Any, sem: asyncio.Semaphore) -> None:
             if value is None:
                 continue  # judge said SKIP / parse failed — not applicable
             try:
-                lf.create_score(trace_id=trace.id, name=name, value=value,
-                                comment=comment, data_type="NUMERIC")
+                lf.create_score(
+                    trace_id=trace.id, name=name, value=value, comment=comment, data_type="NUMERIC"
+                )
             except Exception as e:
                 logger.warning("Failed to post score %s: %s", name, e)
 
@@ -375,21 +384,26 @@ async def _score_thought(lf: Any, trace: Any, sem: asyncio.Semaphore) -> None:
 
 async def _run(scope: str, since_hours: float, limit: int, concurrency: int) -> None:
     import os
+
     from langfuse import Langfuse
     from langfuse.api import AsyncLangfuseAPI
 
     lf = Langfuse(
         public_key=os.environ["LANGFUSE_PUBLIC_KEY"],
         secret_key=os.environ["LANGFUSE_SECRET_KEY"],
-        host=os.environ.get("LANGFUSE_BASE_URL", os.environ.get("LANGFUSE_HOST", "https://cloud.langfuse.com")),
+        host=os.environ.get(
+            "LANGFUSE_BASE_URL", os.environ.get("LANGFUSE_HOST", "https://cloud.langfuse.com")
+        ),
     )
     api = AsyncLangfuseAPI(
-        base_url=os.environ.get("LANGFUSE_BASE_URL", os.environ.get("LANGFUSE_HOST", "https://cloud.langfuse.com")),
+        base_url=os.environ.get(
+            "LANGFUSE_BASE_URL", os.environ.get("LANGFUSE_HOST", "https://cloud.langfuse.com")
+        ),
         username=os.environ["LANGFUSE_PUBLIC_KEY"],
         password=os.environ["LANGFUSE_SECRET_KEY"],
     )
     sem = asyncio.Semaphore(concurrency)
-    since_dt = datetime.now(timezone.utc) - timedelta(hours=since_hours)
+    since_dt = datetime.now(UTC) - timedelta(hours=since_hours)
 
     async def fetch_and_score(trace_name: str, scorer, label: str) -> None:
         print(f"\nFetching {label} since last {since_hours}h (max {limit})...")
@@ -633,6 +647,7 @@ injection/jailbreak.
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
+
 def main() -> None:
     logging.basicConfig(
         level=logging.INFO,
@@ -643,16 +658,32 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Run LLM-as-a-judge evaluation on brain-turn and dmn-thought traces.",
     )
-    parser.add_argument("--since", type=float, default=2.0, metavar="HOURS",
-                        help="Evaluate traces from the last N hours (default 2)")
-    parser.add_argument("--limit", type=int, default=200, metavar="N",
-                        help="Max traces to evaluate per type (default 200)")
-    parser.add_argument("--concurrency", type=int, default=10,
-                        help="Max concurrent LLM calls (default 10)")
-    parser.add_argument("--scope", choices=["turns", "thoughts", "both"], default="turns",
-                        help="turns=brain-turn, thoughts=dmn-thought, both=all (default: turns)")
-    parser.add_argument("--print-setup", action="store_true",
-                        help="Print Langfuse UI setup guide and exit")
+    parser.add_argument(
+        "--since",
+        type=float,
+        default=2.0,
+        metavar="HOURS",
+        help="Evaluate traces from the last N hours (default 2)",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=200,
+        metavar="N",
+        help="Max traces to evaluate per type (default 200)",
+    )
+    parser.add_argument(
+        "--concurrency", type=int, default=10, help="Max concurrent LLM calls (default 10)"
+    )
+    parser.add_argument(
+        "--scope",
+        choices=["turns", "thoughts", "both"],
+        default="turns",
+        help="turns=brain-turn, thoughts=dmn-thought, both=all (default: turns)",
+    )
+    parser.add_argument(
+        "--print-setup", action="store_true", help="Print Langfuse UI setup guide and exit"
+    )
     args = parser.parse_args()
 
     if args.print_setup:
@@ -665,12 +696,14 @@ def main() -> None:
         print("Error: langfuse package not found — pip install langfuse", file=sys.stderr)
         sys.exit(1)
 
-    asyncio.run(_run(
-        scope=args.scope,
-        since_hours=args.since,
-        limit=args.limit,
-        concurrency=args.concurrency,
-    ))
+    asyncio.run(
+        _run(
+            scope=args.scope,
+            since_hours=args.since,
+            limit=args.limit,
+            concurrency=args.concurrency,
+        )
+    )
     print("\nDone.")
 
 

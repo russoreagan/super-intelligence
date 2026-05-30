@@ -15,6 +15,7 @@ Usage:
     uv run python -m eval.compare --log eval/turns.jsonl
     uv run python -m eval.compare --gating on,off  # filter to specific modes
 """
+
 from __future__ import annotations
 
 import argparse
@@ -92,11 +93,13 @@ def render(report: dict) -> str:
         if not grp.get("count"):
             lines.append(f"[{grp['label']:>3}] (no turns)")
             continue
-        lines.append(f"[{grp['label']:>3}] {grp['count']:>4} turns | "
-                     f"total_calls={grp['total_llm_calls']:>4} | "
-                     f"avg/turn={grp['avg_llm_calls']:>5} | "
-                     f"saved={grp['total_llm_calls_saved']:>3} | "
-                     f"quality={grp['avg_quality']} (n={grp['quality_n']})")
+        lines.append(
+            f"[{grp['label']:>3}] {grp['count']:>4} turns | "
+            f"total_calls={grp['total_llm_calls']:>4} | "
+            f"avg/turn={grp['avg_llm_calls']:>5} | "
+            f"saved={grp['total_llm_calls_saved']:>3} | "
+            f"quality={grp['avg_quality']} (n={grp['quality_n']})"
+        )
 
     # Comparison verdict
     on = next((g for g in report["groups"] if g["label"] == "on"), None)
@@ -114,16 +117,18 @@ def render(report: dict) -> str:
             or off.get("avg_quality") is None
             or (on["avg_quality"] - off["avg_quality"]) >= -0.05
         )
-        lines.append(f"Pass criterion (≥25% reduction, ≤0.05 quality drop): "
-                     f"{'PASS' if pass_cri else 'FAIL'}")
+        lines.append(
+            f"Pass criterion (≥25% reduction, ≤0.05 quality drop): {'PASS' if pass_cri else 'FAIL'}"
+        )
     return "\n".join(lines)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Compare predict-and-surprise gating on vs off")
     parser.add_argument("--log", default="eval/turns.jsonl", help="Path to JSONL turn log")
-    parser.add_argument("--gating", default="on,off",
-                        help="Comma-separated subset of {on, off} to report")
+    parser.add_argument(
+        "--gating", default="on,off", help="Comma-separated subset of {on, off} to report"
+    )
     args = parser.parse_args()
 
     path = Path(args.log)
@@ -134,8 +139,7 @@ def main() -> int:
 
     requested = {g.strip() for g in args.gating.split(",") if g.strip()}
     buckets = bucket_by_gating(turns)
-    groups = [summarize(label, ts) for label, ts in buckets.items()
-              if label in requested]
+    groups = [summarize(label, ts) for label, ts in buckets.items() if label in requested]
 
     report = {
         "source": str(path),
