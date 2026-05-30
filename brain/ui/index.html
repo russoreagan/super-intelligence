@@ -6646,6 +6646,21 @@ document.addEventListener('click', (e) => {
 });
 
 _renderPersonaCards();
+_renderPersonaState(); // show badge immediately (uses empty currentSettings → "DEFAULT")
+
+// Fetch settings on page load so the badge reflects the real active persona
+// without requiring the user to open settings first.
+(async () => {
+  try {
+    const res = await fetch('/settings');
+    if (!res.ok) return;
+    const data = await res.json();
+    Object.assign(currentSettings, data.settings || {});
+    Object.assign(defaultSettings, data.defaults || {});
+    _renderPersonaState();
+  } catch (_) { /* brain offline or static preview — badge stays as DEFAULT */ }
+})();
+
 document.getElementById('persona-init-btn').addEventListener('click', _initializePersona);
 document.getElementById('persona-neutral-btn').addEventListener('click', () => {
   if (confirm('Reset chemistry to neutral and clear the active persona?')) _returnToNeutral();
