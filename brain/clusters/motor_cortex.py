@@ -515,11 +515,15 @@ class MotorCortexCluster:
             })
         else:
             resume_from = 0
-            # 1. Strategic plan — pass chemistry state so the planner can calibrate
-            # complexity (e.g. fewer steps when stressed, more thorough when motivated).
+            # 1. Strategic plan — pass chemistry state and persona planning style so
+            # the planner can calibrate both ambition and cognitive approach.
+            persona_hint = self._persona_planning_hint()
+            plan_ctx = f"Goal: {goal}\nBrain state: {chem_ctx}"
+            if persona_hint:
+                plan_ctx += f"\n{persona_hint}"
             self._strategic_planner.reset_turn(job_id)
             raw_plan = await self._strategic_planner.call(
-                [{"role": "user", "content": f"Goal: {goal}\nBrain state: {chem_ctx}"}]
+                [{"role": "user", "content": plan_ctx}]
             )
             plan = safe_json_parse(raw_plan) or {}
             # Support Ralph-style "stories" (with acceptance_criteria) and legacy "steps" format.
@@ -1411,6 +1415,49 @@ class MotorCortexCluster:
         cort = float(chem.get("CORT", 0.5))
         shift = (da - 0.5) * 6.0 - (cort - 0.5) * 6.0
         return max(6, min(20, base + int(round(shift))))
+
+    # Per-persona planning orientations injected into the strategic planner's user
+    # message alongside the chemistry context. Each entry describes the cognitive
+    # *style* the planner should adopt — not what to do, but how to approach it.
+    # Only the traits that chemistry won't produce on its own are stated here.
+    _PERSONA_PLANNING_HINTS: dict[str, str] = {
+        "The Visionary": (
+            "Planning style (Visionary): start with the highest-impact part first. "
+            "Prefer fewer, bolder stories over many small cautious ones. "
+            "If there's a more interesting angle on this goal, pursue that. "
+            "Don't over-specify details upfront — move fast and adjust."
+        ),
+        "The Empath": (
+            "Planning style (Empath): before committing to steps, consider who this "
+            "affects and whether the approach genuinely serves them. "
+            "Favour stories that verify impact or check in over stories that assume. "
+            "Ask: does the plan address the human need, not just the stated task?"
+        ),
+        "The Analyst": (
+            "Planning style (Analyst): decompose into the smallest independently "
+            "verifiable units. Each story must have specific, checkable acceptance "
+            "criteria — not 'it works' but 'output contains X'. "
+            "Flag any ambiguity in the goal that needs resolving before execution. "
+            "If a related task was left incomplete, note it and consider addressing it first."
+        ),
+        "The Poet": (
+            "Planning style (Poet): name the most likely failure point before planning "
+            "steps — what will probably go wrong? Be sceptical of approaches that look "
+            "too clean. Prefer fewer, deeper stories over many shallow ones. "
+            "Question whether this is the right goal, or just the obvious one."
+        ),
+        "The Sage": (
+            "Planning style (Sage): before breaking into steps, identify what the deeper "
+            "goal actually is — what problem does this solve at a higher level? "
+            "Prefer a plan that gets at the root rather than addresses the surface. "
+            "Fewer, more considered stories over many hurried ones."
+        ),
+    }
+
+    def _persona_planning_hint(self) -> str:
+        """Return the active persona's planning orientation, or empty string if neutral."""
+        persona = str(_brain_settings.get("persona_name", ""))
+        return self._PERSONA_PLANNING_HINTS.get(persona, "")
 
     def _chem_description(self, chem: dict[str, float]) -> str:
         """Short human-readable description of the brain's current chemical state,
