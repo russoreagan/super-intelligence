@@ -472,22 +472,11 @@ class ModelRouter:
                 text, in_tok, out_tok = await self._call_local(system_prompt, messages, max_tokens)
             if self._bg_mode:
                 self._bg_cloud_tokens_used += in_tok + out_tok
-<<<<<<< Updated upstream
-                logger.debug(
-                    "[Resource] BG cloud tokens used: %d/%d (this call: %d+%d)",
-                    self._bg_cloud_tokens_used,
-                    int(_s("bg_cloud_token_budget") or 50_000),
-                    in_tok,
-                    out_tok,
-                )
-        elif model_id in ("local", "local-free", "local-code", "local-general"):
-=======
                 logger.debug("[Resource] BG cloud tokens used: %d/%d (this call: %d+%d)",
                              self._bg_cloud_tokens_used,
                              int(_s("bg_cloud_token_budget") or 50_000), in_tok, out_tok)
         elif model_id in ("local", "local-free", "local-code", "local-general",
                           "runpod", "runpod-free", "runpod-code", "runpod-general"):
->>>>>>> Stashed changes
             text, in_tok, out_tok = await self._call_local(
                 system_prompt,
                 messages,
@@ -597,19 +586,6 @@ class ModelRouter:
             )
         return content or ""
 
-<<<<<<< Updated upstream
-    async def _call_local(
-        self,
-        system_prompt: str,
-        messages: list[dict],
-        max_tokens: int = 1024,
-        local_variant: str = "local",
-        temperature: float | None = None,
-    ) -> tuple[str, int, int]:
-        flat_messages = [
-            {"role": m["role"], "content": self._flatten_content(m["content"])} for m in messages
-        ]
-=======
     async def _call_local(self, system_prompt: str,
                           messages: list[dict], max_tokens: int = 1024,
                           local_variant: str = "local",
@@ -627,7 +603,6 @@ class ModelRouter:
             host = OLLAMA_HOST
             http_timeout = OLLAMA_HTTP_TIMEOUT
             keep_alive = OLLAMA_KEEP_ALIVE
->>>>>>> Stashed changes
         base_model = os.environ.get("OLLAMA_MODEL", "qwen2.5:14b")
         if is_runpod:
             from brain.settings import settings as _s
@@ -677,12 +652,6 @@ class ModelRouter:
         }
         if use_json_format:
             payload["format"] = "json"
-<<<<<<< Updated upstream
-        async with self._get_local_semaphore():
-            r = await self._get_http().post(
-                f"{OLLAMA_HOST}/api/chat", json=payload, timeout=OLLAMA_HTTP_TIMEOUT
-            )
-=======
         if is_runpod:
             r = await self._get_http().post(f"{host}/api/chat", json=payload,
                                             timeout=http_timeout)
@@ -690,7 +659,6 @@ class ModelRouter:
             async with self._get_local_semaphore():
                 r = await self._get_http().post(f"{host}/api/chat", json=payload,
                                                 timeout=http_timeout)
->>>>>>> Stashed changes
         r.raise_for_status()
         data = r.json()
         in_tok = int(data.get("prompt_eval_count", 0))
