@@ -7,7 +7,6 @@ WebSocket /ws → bidirectional:
     server → client: activation events, neuromod, emotion, turn start/end
     client → server: {"type": "user_message", "text": "..."}
 """
-
 from __future__ import annotations
 
 import asyncio
@@ -42,32 +41,31 @@ HTML_PATH = Path(__file__).parent / "index.html"
 
 
 class UIServer:
-    def __init__(
-        self,
-        emitter_queue: asyncio.Queue,
-        on_user_message: Callable[[str], None] | None = None,
-        on_voice_change: Callable[[str], None] | None = None,
-        on_eval_mode: Callable[[bool], None] | None = None,
-        on_mic_toggle: Callable[[], bool] | None = None,
-        on_mic_ptt: Callable[[bool], None] | None = None,
-        is_muted_fn: Callable[[], bool] | None = None,
-        on_interrupt: Callable[[], None] | None = None,
-        wiring=None,
-        bus=None,
-    ) -> None:
+    def __init__(self, emitter_queue: asyncio.Queue,
+                 on_user_message: Callable[[str], None] | None = None,
+                 on_voice_change: Callable[[str], None] | None = None,
+                 on_eval_mode: Callable[[bool], None] | None = None,
+                 on_mic_toggle: Callable[[], bool] | None = None,
+                 on_mic_ptt: Callable[[bool], None] | None = None,
+                 is_muted_fn: Callable[[], bool] | None = None,
+                 on_interrupt: Callable[[], None] | None = None,
+                 wiring=None,
+                 bus=None) -> None:
         self._queue = emitter_queue
         self._on_user_message = on_user_message
         self._on_voice_change = on_voice_change
         self._on_eval_mode = on_eval_mode
-        self._on_mic_toggle = on_mic_toggle  # () -> is_muted (bool) — toggles
-        self._on_mic_ptt = on_mic_ptt  # (down: bool) -> None — push-to-talk hold
-        self._is_muted_fn = is_muted_fn  # () -> is_muted (bool) — read-only; None = no Python voice
+        self._on_mic_toggle = on_mic_toggle      # () -> is_muted (bool) — toggles
+        self._on_mic_ptt = on_mic_ptt            # (down: bool) -> None — push-to-talk hold
+        self._is_muted_fn = is_muted_fn          # () -> is_muted (bool) — read-only; None = no Python voice
         self._on_interrupt = on_interrupt
         self._clients: set = set()
         self._last_neuromod: dict = {}
         self._last_hormonal: dict = {}
         self._last_emotion: str = ""
         self._last_thoughts: list[dict] = []
+        self._chat_history: list[dict] = []   # completed turns for page-refresh replay
+        self._pending_turn: dict | None = None # turn_start awaiting its turn_end
         self._wiring_frozen: bool = False
         self._subsystem_status: dict[str, bool] = {}
         self._wiring = wiring
@@ -107,26 +105,22 @@ class UIServer:
         @app.get("/settings")
         async def get_settings():
             from brain.settings import DEFAULTS, settings
-
             return {"settings": settings.all(), "defaults": DEFAULTS}
 
         @app.post("/settings")
         async def save_settings(request: Request):
             from brain.settings import settings
-
             body = await request.json()
             try:
                 settings.save(body)
                 return {"ok": True}
             except Exception as e:
                 from fastapi.responses import JSONResponse
-
                 return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
 
         @app.post("/settings/reset")
         async def reset_settings():
             from brain.settings import settings
-
             settings.reset_to_defaults()
             settings.save()
             return {"ok": True, "settings": settings.all()}
@@ -145,24 +139,20 @@ class UIServer:
         @app.post("/restart")
         async def restart_brain():
             """Re-exec the current process with the same args — restarts the brain."""
-
             async def _do_restart():
                 await asyncio.sleep(0.4)
                 cmd = [sys.executable] + sys.argv
                 logger.info("Restarting brain: %s", " ".join(cmd))
                 os.execv(sys.executable, cmd)
-
             asyncio.create_task(_do_restart())
             return {"ok": True}
 
         @app.post("/shutdown")
         async def shutdown_brain():
             """Gracefully shut down the brain process."""
-
             async def _do_shutdown():
                 await asyncio.sleep(0.4)
                 os.kill(os.getpid(), __import__("signal").SIGTERM)
-
             asyncio.create_task(_do_shutdown())
             return {"ok": True}
 
@@ -185,7 +175,6 @@ class UIServer:
             out, so the UI can explain to the user why some are missing.
             """
             import httpx
-
             api_key = os.environ.get("ELEVENLABS_API_KEY", "")
             if not api_key:
                 return {"voices": [], "message": "ELEVENLABS_API_KEY not set"}
@@ -194,12 +183,10 @@ class UIServer:
                 async with httpx.AsyncClient(timeout=8) as client:
                     # Fetch both in parallel — model capabilities + voice list
                     voices_resp, models_resp = await asyncio.gather(
-                        client.get(
-                            "https://api.elevenlabs.io/v1/voices", headers={"xi-api-key": api_key}
-                        ),
-                        client.get(
-                            "https://api.elevenlabs.io/v1/models", headers={"xi-api-key": api_key}
-                        ),
+                        client.get("https://api.elevenlabs.io/v1/voices",
+                                   headers={"xi-api-key": api_key}),
+                        client.get("https://api.elevenlabs.io/v1/models",
+                                   headers={"xi-api-key": api_key}),
                     )
                 voices_resp.raise_for_status()
                 models_resp.raise_for_status()
@@ -207,7 +194,9 @@ class UIServer:
                 models_raw = models_resp.json()
 
                 # Look up the configured model's capabilities
-                model_caps = next((m for m in models_raw if m.get("model_id") == model_id), {})
+                model_caps = next(
+                    (m for m in models_raw if m.get("model_id") == model_id), {}
+                )
                 # Default False: if the model lookup fails or the field is missing,
                 # assume pro voices are NOT served (safe). Allowing them through
                 # when uncertain causes eleven_v3 to silently substitute its own
@@ -216,9 +205,8 @@ class UIServer:
 
                 # Categorize the user's voices
                 pro_voices = [v for v in voices_raw if v.get("category") == "professional"]
-                custom_voices = [
-                    v for v in voices_raw if v.get("category") not in ("premade", "professional")
-                ]
+                custom_voices = [v for v in voices_raw
+                                 if v.get("category") not in ("premade", "professional")]
                 premade_voices = [v for v in voices_raw if v.get("category") == "premade"]
 
                 if serves_pro:
@@ -245,7 +233,10 @@ class UIServer:
                         f"{model_id} does not serve them."
                     )
 
-                voices = [{"voice_id": v["voice_id"], "name": v["name"]} for v in candidates]
+                voices = [
+                    {"voice_id": v["voice_id"], "name": v["name"]}
+                    for v in candidates
+                ]
                 return {"voices": voices, "model_id": model_id, "message": message}
             except Exception as e:
                 logger.warning("Failed to fetch ElevenLabs voices: %s", e)
@@ -256,7 +247,6 @@ class UIServer:
         @app.post("/upload_image")
         async def upload_image(file: UploadFile):
             import tempfile
-
             suffix = Path(file.filename or "upload").suffix or ".jpg"
             content = await file.read()
             with tempfile.NamedTemporaryFile(
@@ -268,7 +258,6 @@ class UIServer:
         @app.get("/{filename}")
         async def static_asset(filename: str):
             from fastapi import HTTPException
-
             filepath = ui_dir / filename
             if filepath.is_file() and filepath.parent == ui_dir:
                 return FileResponse(str(filepath))
@@ -282,54 +271,50 @@ class UIServer:
 
             # Send current mic state so the button reflects reality on connect.
             with contextlib.suppress(Exception):
-                await websocket.send_text(
-                    json.dumps(
-                        {
-                            "type": "mic_state",
-                            "status": self._mic_status(),
-                        }
-                    )
-                )
+                await websocket.send_text(json.dumps({
+                    "type": "mic_state",
+                    "status": self._mic_status(),
+                }))
 
             # Send current neuromod + hormonal state immediately on connect
             if self._last_neuromod:
                 with contextlib.suppress(Exception):
-                    await websocket.send_text(
-                        json.dumps({"type": "neuromod", **self._last_neuromod})
-                    )
+                    await websocket.send_text(json.dumps(
+                        {"type": "neuromod", **self._last_neuromod}
+                    ))
             if self._last_hormonal:
                 with contextlib.suppress(Exception):
-                    await websocket.send_text(
-                        json.dumps({"type": "hormonal", **self._last_hormonal})
-                    )
+                    await websocket.send_text(json.dumps(
+                        {"type": "hormonal", **self._last_hormonal}
+                    ))
             if self._last_emotion:
                 with contextlib.suppress(Exception):
-                    await websocket.send_text(
-                        json.dumps({"type": "emotion", "emotion": self._last_emotion})
-                    )
+                    await websocket.send_text(json.dumps(
+                        {"type": "emotion", "emotion": self._last_emotion}
+                    ))
 
             # Tell the client about wiring state (frozen tag in plasticity panel)
             with contextlib.suppress(Exception):
-                await websocket.send_text(
-                    json.dumps(
-                        {
-                            "type": "wiring_status",
-                            "frozen": self._wiring_frozen,
-                        }
-                    )
-                )
+                await websocket.send_text(json.dumps({
+                    "type": "wiring_status",
+                    "frozen": self._wiring_frozen,
+                }))
 
             # Subsystem health — sent on every connect so status pill is always current
             if self._subsystem_status:
                 with contextlib.suppress(Exception):
-                    await websocket.send_text(
-                        json.dumps(
-                            {
-                                "type": "subsystem_status",
-                                **self._subsystem_status,
-                            }
-                        )
-                    )
+                    await websocket.send_text(json.dumps({
+                        "type": "subsystem_status",
+                        **self._subsystem_status,
+                    }))
+
+            # Replay chat history so the conversation survives a page refresh
+            if self._chat_history:
+                with contextlib.suppress(Exception):
+                    await websocket.send_text(json.dumps({
+                        "type": "chat_history",
+                        "turns": list(self._chat_history),
+                    }))
 
             # Replay recent thoughts so the feed isn't blank on reconnect
             for thought_event in list(self._last_thoughts):
@@ -367,29 +352,24 @@ class UIServer:
         api_key = os.environ.get("DEEPGRAM_API_KEY", "")
         if not api_key:
             with contextlib.suppress(Exception):
-                await websocket.send_text(
-                    json.dumps({"type": "transcript_error", "msg": "DEEPGRAM_API_KEY not set"})
-                )
+                await websocket.send_text(json.dumps(
+                    {"type": "transcript_error", "msg": "DEEPGRAM_API_KEY not set"}
+                ))
             return None
 
-        client = AsyncDeepgramClient()  # picks up DEEPGRAM_API_KEY from env
+        client = AsyncDeepgramClient()     # picks up DEEPGRAM_API_KEY from env
         audio_queue: asyncio.Queue = asyncio.Queue()
 
         class DGSession:
             """Thin wrapper so _receive_loop can call .send() and .finish()."""
-
             def __init__(self) -> None:
                 self._task: asyncio.Task | None = None
-                # Raw audio bytes for the in-progress utterance. _receive_loop
-                # appends incoming chunks here; _listen drains it on each final
-                # transcript to publish the full utterance to the auditory bus.
-                self.audio_chunks: list[bytes] = []
 
             async def send(self, data: bytes) -> None:
                 await audio_queue.put(data)
 
             async def finish(self) -> None:
-                await audio_queue.put(None)  # sentinel → closes the connection
+                await audio_queue.put(None)   # sentinel → closes the connection
                 if self._task:
                     try:
                         await asyncio.wait_for(asyncio.shield(self._task), timeout=2.0)
@@ -398,15 +378,14 @@ class UIServer:
 
         session = DGSession()
 
-        # Accumulate diarized words across chunks for one utterance so we can
-        # publish to the auditory bus on final. (Raw audio bytes are buffered on
-        # the DGSession handle as `.audio_chunks`, written by _receive_loop.)
+        # Accumulate raw audio bytes and diarized words across chunks for one
+        # utterance so we can publish to the auditory bus on final.
+        _audio_chunks: list[bytes] = []
         _diarized_words: list[dict] = []
         _utterance_start_s: float | None = None
 
-        async def _publish_utterance(
-            transcript: str, audio_bytes: bytes, words: list[dict]
-        ) -> None:
+        async def _publish_utterance(transcript: str, audio_bytes: bytes,
+                                     words: list[dict]) -> None:
             """Mirror what streaming_mic publishes so the auditory cortex gets
             the same events regardless of whether voice mode is active."""
             if not (self._bus and audio_bytes):
@@ -415,37 +394,24 @@ class UIServer:
             try:
                 await self._bus.publish_dict(
                     "auditory.raw_audio",
-                    {
-                        "audio_bytes": audio_bytes,
-                        "sample_rate": 16000,
-                        "duration_s": duration_s,
-                        "channels": 1,
-                        "dtype": "int16",
-                    },
+                    {"audio_bytes": audio_bytes, "sample_rate": 16000,
+                     "duration_s": duration_s, "channels": 1, "dtype": "int16"},
                     source="ui",
                 )
                 await self._bus.publish_dict(
                     "auditory.diarized_audio",
-                    {
-                        "audio_bytes": audio_bytes,
-                        "sample_rate": 16000,
-                        "duration_s": duration_s,
-                        "dtype": "int16",
-                        "diarized_words": words,
-                        "transcript": transcript,
-                    },
+                    {"audio_bytes": audio_bytes, "sample_rate": 16000,
+                     "duration_s": duration_s, "dtype": "int16",
+                     "diarized_words": words, "transcript": transcript},
                     source="ui",
                 )
-                logger.debug(
-                    "UI: published utterance to auditory bus (%d bytes, %d words)",
-                    len(audio_bytes),
-                    len(words),
-                )
+                logger.debug("UI: published utterance to auditory bus (%d bytes, %d words)",
+                             len(audio_bytes), len(words))
             except Exception as e:
                 logger.debug("UI: auditory publish failed: %s", e)
 
         async def _run_session() -> None:
-            nonlocal _diarized_words, _utterance_start_s
+            nonlocal _audio_chunks, _diarized_words, _utterance_start_s
             try:
                 async with client.listen.v1.connect(
                     model="nova-3",
@@ -453,43 +419,37 @@ class UIServer:
                     smart_format=True,
                     punctuate=True,
                     interim_results=True,
-                    endpointing=150,  # ms of silence before finalising (was 300)
-                    utterance_end_ms=1000,  # also fire on utterance boundary
-                    diarize=True,  # enable speaker diarization for auditory cortex
+                    endpointing=150,         # ms of silence before finalising (was 300)
+                    utterance_end_ms=1000,   # also fire on utterance boundary
+                    diarize=True,            # enable speaker diarization for auditory cortex
                 ) as conn:
                     logger.info("UI: Deepgram live session started for client")
 
                     async def _listen() -> None:
-                        nonlocal _diarized_words
+                        nonlocal _audio_chunks, _diarized_words
                         async for msg in conn:
                             if isinstance(msg, ListenV1Results):
                                 try:
                                     alt = msg.channel.alternatives[0]
                                     if alt.transcript:
-                                        await websocket.send_text(
-                                            json.dumps(
-                                                {
-                                                    "type": "transcript",
-                                                    "text": alt.transcript,
-                                                    "is_final": msg.is_final,
-                                                }
-                                            )
-                                        )
+                                        await websocket.send_text(json.dumps({
+                                            "type": "transcript",
+                                            "text": alt.transcript,
+                                            "is_final": msg.is_final,
+                                        }))
                                     if msg.is_final and alt.transcript:
                                         # Harvest diarized words and flush the
                                         # audio buffer to the auditory bus.
                                         words = []
                                         for w in getattr(alt, "words", []) or []:
-                                            words.append(
-                                                {
-                                                    "word": getattr(w, "word", ""),
-                                                    "start": getattr(w, "start", 0.0),
-                                                    "end": getattr(w, "end", 0.0),
-                                                    "speaker": getattr(w, "speaker", 0),
-                                                }
-                                            )
-                                        audio_bytes = b"".join(session.audio_chunks)
-                                        session.audio_chunks.clear()
+                                            words.append({
+                                                "word": getattr(w, "word", ""),
+                                                "start": getattr(w, "start", 0.0),
+                                                "end": getattr(w, "end", 0.0),
+                                                "speaker": getattr(w, "speaker", 0),
+                                            })
+                                        audio_bytes = b"".join(_audio_chunks)
+                                        _audio_chunks = []
                                         _diarized_words = []
                                         asyncio.create_task(
                                             _publish_utterance(alt.transcript, audio_bytes, words)
@@ -520,26 +480,22 @@ class UIServer:
                     # from a voice_stop) so it can reopen a fresh session.
                     if dg_closed_early:
                         with contextlib.suppress(Exception):
-                            await websocket.send_text(
-                                json.dumps(
-                                    {
-                                        "type": "transcript_error",
-                                        "msg": "Deepgram closed connection",
-                                    }
-                                )
-                            )
+                            await websocket.send_text(json.dumps({
+                                "type": "transcript_error",
+                                "msg": "Deepgram closed connection",
+                            }))
             except Exception as e:
                 logger.warning("Deepgram session error — voice input unavailable: %s", e)
                 with contextlib.suppress(Exception):
-                    await websocket.send_text(
-                        json.dumps({"type": "transcript_error", "msg": str(e)})
-                    )
+                    await websocket.send_text(json.dumps(
+                        {"type": "transcript_error", "msg": str(e)}
+                    ))
 
         session._task = asyncio.create_task(_run_session())
         # Give the connection a moment to establish before we declare success
         await asyncio.sleep(0.3)
         if session._task.done():
-            return None  # connection failed immediately
+            return None   # connection failed immediately
         return session
 
     async def _receive_loop(self, websocket) -> None:
@@ -561,14 +517,10 @@ class UIServer:
                         # also broadcasts the settled state once any async flush
                         # completes — this echo just makes the click feel instant.)
                         with contextlib.suppress(Exception):
-                            await websocket.send_text(
-                                json.dumps(
-                                    {
-                                        "type": "mic_state",
-                                        "status": self._mic_status(),
-                                    }
-                                )
-                            )
+                            await websocket.send_text(json.dumps({
+                                "type": "mic_state",
+                                "status": self._mic_status(),
+                            }))
                     elif t == "mic_ptt" and self._on_mic_ptt:
                         # Push-to-talk: {down:true} on Space keydown (go live),
                         # {down:false} on keyup (flush held phrase + re-mute).
@@ -598,10 +550,7 @@ class UIServer:
                             dg_conn = None
 
                 elif "bytes" in msg and msg["bytes"] and dg_conn is not None:
-                    # Buffer the raw audio on the Deepgram session handle so the
-                    # final-transcript handler can publish the full utterance to
-                    # the auditory bus, then forward the chunk to Deepgram.
-                    dg_conn.audio_chunks.append(msg["bytes"])
+                    _audio_chunks.append(msg["bytes"])
                     await dg_conn.send(msg["bytes"])
 
             except Exception:
@@ -623,14 +572,26 @@ class UIServer:
                     self._last_hormonal = {k: v for k, v in event.items() if k != "type"}
                 elif event.get("type") == "emotion" and event.get("emotion"):
                     self._last_emotion = event["emotion"]
-                elif (
-                    event.get("type") == "stream_thought"
-                    and event.get("thought")
-                    and not event.get("proactive")
-                ):
-                    self._last_thoughts.append(event)
-                    if len(self._last_thoughts) > 10:
-                        self._last_thoughts.pop(0)
+                elif event.get("type") == "stream_thought" and event.get("thought"):
+                    if not event.get("proactive"):
+                        self._last_thoughts.append(event)
+                        if len(self._last_thoughts) > 10:
+                            self._last_thoughts.pop(0)
+                elif event.get("type") == "turn_start" and event.get("user_input"):
+                    self._pending_turn = {
+                        "turn_id": event.get("turn_id"),
+                        "user_input": event["user_input"],
+                    }
+                elif event.get("type") == "turn_end" and event.get("response") and self._pending_turn:
+                    self._chat_history.append({
+                        **self._pending_turn,
+                        "response": event["response"],
+                        "elapsed_s": event.get("elapsed_s"),
+                        "llm_calls": event.get("llm_calls", 0),
+                    })
+                    self._pending_turn = None
+                    if len(self._chat_history) > 50:
+                        self._chat_history.pop(0)
 
                 if self._clients:
                     payload = json.dumps(event)
@@ -646,7 +607,6 @@ class UIServer:
 
     async def start(self, host: str = "127.0.0.1", port: int = 8765) -> None:
         import uvicorn
-
         self._app = self._build_app()
 
         # Start broadcast loop as a background task

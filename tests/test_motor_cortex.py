@@ -29,30 +29,23 @@ Coverage:
     - tool_result included in drafter context when present
     - tool_result absent when not set
 """
-
 from __future__ import annotations
 
-import asyncio
 import json
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
 
 # ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------
 
-
 def _make_bus():
     from brain.bus import Bus
-
     return Bus()
 
 
 class _MotorFakeRouter:
     """FakeRouter that accepts **kwargs (including `locality`) from IntegratorCell."""
-
     def __init__(self, plan: dict | None = None):
         self._plan = plan or {}
         self._call_log: list[dict] = []
@@ -72,7 +65,6 @@ def _make_fake_router(tool_plan: dict | None = None) -> _MotorFakeRouter:
 def _make_motor(tmp_path, tool_plan=None, cloud=None):
     from brain.bus import Bus
     from brain.clusters.motor_cortex import MotorCortexCluster
-
     bus = Bus()
     router = _make_fake_router(tool_plan)
     allowed = [str(tmp_path)]
@@ -83,12 +75,11 @@ def _make_cloud_executor(tmp_path=None):
     """CloudExecutor with no real binary or extension dirs."""
     from brain.bus import Bus
     from brain.clusters.cloud_executor import CloudExecutor
-
     bus = Bus()
     exe = CloudExecutor.__new__(CloudExecutor)
     exe._bus = bus
     exe._schema = None
-    exe._claude_bin = None  # no real binary
+    exe._claude_bin = None        # no real binary
     exe._connectors = {}
     exe._trusted_dirs = []
     exe._pending = None
@@ -100,7 +91,6 @@ def _make_cloud_executor(tmp_path=None):
 # ---------------------------------------------------------------------------
 # MotorCortexCluster — path validation
 # ---------------------------------------------------------------------------
-
 
 class TestMotorPathValidation:
     def _motor(self, tmp_path):
@@ -134,7 +124,6 @@ class TestMotorPathValidation:
     def test_no_allowed_paths_blocks_everything(self):
         from brain.bus import Bus
         from brain.clusters.motor_cortex import MotorCortexCluster
-
         bus = Bus()
         router = _make_fake_router()
         m = MotorCortexCluster(bus, router, allowed_paths=[])
@@ -151,7 +140,6 @@ class TestMotorPathValidation:
 # ---------------------------------------------------------------------------
 # MotorCortexCluster — command validation
 # ---------------------------------------------------------------------------
-
 
 class TestMotorCommandValidation:
     def _motor(self, tmp_path):
@@ -191,7 +179,6 @@ class TestMotorCommandValidation:
 # ---------------------------------------------------------------------------
 # MotorCortexCluster — file tools
 # ---------------------------------------------------------------------------
-
 
 class TestMotorReadFile:
     def test_reads_existing_file(self, tmp_path):
@@ -341,7 +328,6 @@ class TestMotorSearchFiles:
 # MotorCortexCluster — run_command (async, subprocess mocked)
 # ---------------------------------------------------------------------------
 
-
 class TestMotorRunCommand:
     async def test_allowed_command_executes(self, tmp_path):
         m, _ = _make_motor(tmp_path)
@@ -391,7 +377,6 @@ class TestMotorRunCommand:
 # MotorCortexCluster — execute() routing
 # ---------------------------------------------------------------------------
 
-
 class TestMotorExecuteRouting:
     async def test_planner_none_returns_none(self, tmp_path):
         m, _ = _make_motor(tmp_path, tool_plan={"tool": "none", "args": {}, "reason": "noop"})
@@ -401,15 +386,12 @@ class TestMotorExecuteRouting:
     async def test_planner_invalid_json_returns_none(self, tmp_path):
         from brain.bus import Bus
         from brain.clusters.motor_cortex import MotorCortexCluster
-
         bus = Bus()
         router = _MotorFakeRouter(plan=None)  # call() returns "{}" — not a valid plan
         router._plan = {}  # empty dict → tool defaults to missing → treated as none
-
         # Override to return non-JSON
         async def _bad_call(*args, **kwargs):
             return "not json at all"
-
         router.call = _bad_call
         m = MotorCortexCluster(bus, router, allowed_paths=[str(tmp_path)])
         result = await m.execute({"raw_text": "hi"}, "turn1")
@@ -432,11 +414,9 @@ class TestMotorExecuteRouting:
         assert result["success"] is True
 
     async def test_cloud_action_with_no_executor_returns_error(self, tmp_path):
-        plan = {
-            "tool": "cloud_action",
-            "args": {"task": "check email", "is_write": False, "context_facts": []},
-            "reason": "cloud",
-        }
+        plan = {"tool": "cloud_action",
+                "args": {"task": "check email", "is_write": False, "context_facts": []},
+                "reason": "cloud"}
         m, _ = _make_motor(tmp_path, tool_plan=plan, cloud=None)
         result = await m.execute({"raw_text": "check my email"}, "turn1")
         assert result is not None
@@ -458,13 +438,11 @@ class TestMotorExecuteRouting:
 # MotorCortexCluster — cloud dispatch (confirmation gate)
 # ---------------------------------------------------------------------------
 
-
 class TestMotorCloudDispatch:
     def _make_cloud(self):
         """Cloud executor stub that records calls."""
         from brain.bus import Bus
         from brain.clusters.cloud_executor import CloudExecutor
-
         bus = Bus()
         cloud = CloudExecutor.__new__(CloudExecutor)
         cloud._bus = bus
@@ -486,12 +464,8 @@ class TestMotorCloudDispatch:
         cloud = self._make_cloud()
         plan = {
             "tool": "cloud_action",
-            "args": {
-                "task": "list my emails",
-                "is_write": False,
-                "context_facts": [],
-                "description": "list emails",
-            },
+            "args": {"task": "list my emails", "is_write": False,
+                     "context_facts": [], "description": "list emails"},
             "reason": "cloud read",
         }
         m, _ = _make_motor(tmp_path, tool_plan=plan, cloud=cloud)
@@ -504,12 +478,8 @@ class TestMotorCloudDispatch:
         cloud = self._make_cloud()
         plan = {
             "tool": "cloud_action",
-            "args": {
-                "task": "send email to Bob",
-                "is_write": True,
-                "context_facts": [],
-                "description": "send email to Bob",
-            },
+            "args": {"task": "send email to Bob", "is_write": True,
+                     "context_facts": [], "description": "send email to Bob"},
             "reason": "cloud write",
         }
         m, bus = _make_motor(tmp_path, tool_plan=plan, cloud=cloud)
@@ -531,12 +501,8 @@ class TestMotorCloudDispatch:
         cloud = self._make_cloud()
         plan = {
             "tool": "cloud_action",
-            "args": {
-                "task": "search calendar",
-                "is_write": False,
-                "context_facts": [],
-                "description": "search calendar",
-            },
+            "args": {"task": "search calendar", "is_write": False,
+                     "context_facts": [], "description": "search calendar"},
             "reason": "cloud read",
         }
         m, _ = _make_motor(tmp_path, tool_plan=plan, cloud=cloud)
@@ -547,7 +513,6 @@ class TestMotorCloudDispatch:
 # ---------------------------------------------------------------------------
 # MotorCortexCluster — add_allowed_path
 # ---------------------------------------------------------------------------
-
 
 class TestMotorAddAllowedPath:
     def test_adds_new_path(self, tmp_path):
@@ -568,7 +533,6 @@ class TestMotorAddAllowedPath:
 # ---------------------------------------------------------------------------
 # CloudExecutor — binary discovery
 # ---------------------------------------------------------------------------
-
 
 class TestCloudBinaryDiscovery:
     def test_finds_binary_via_glob(self, tmp_path):
@@ -619,34 +583,31 @@ class TestCloudBinaryDiscovery:
 # CloudExecutor — connector discovery
 # ---------------------------------------------------------------------------
 
-
 class TestCloudConnectorDiscovery:
     def test_reads_enabled_extensions(self, tmp_path):
         from brain.clusters.cloud_executor import CloudExecutor
 
         settings_dir = tmp_path / "Claude Extensions Settings"
         settings_dir.mkdir()
-        (settings_dir / "ant.dir.ant.anthropic.imessage.json").write_text('{"isEnabled": true}')
+        (settings_dir / "ant.dir.ant.anthropic.imessage.json").write_text(
+            '{"isEnabled": true}'
+        )
         (settings_dir / "ant.dir.gh.ableton.ableton-knowledge.json").write_text(
             '{"isEnabled": false}'
         )
 
         exe = CloudExecutor.__new__(CloudExecutor)
-        with (
-            patch("pathlib.Path.exists", return_value=True),
-            patch("pathlib.Path.glob", return_value=list(settings_dir.glob("*.json"))),
-        ):
+        with patch("pathlib.Path.exists", return_value=True), \
+             patch("pathlib.Path.glob", return_value=list(settings_dir.glob("*.json"))):
             # Call directly with real path
             exe._connectors = {}
             exe._trusted_dirs = []
             for json_file in settings_dir.glob("*.json"):
                 import json as _json
-
                 ext_id = json_file.stem
                 data = _json.loads(json_file.read_text())
                 if data.get("isEnabled"):
                     from brain.clusters.cloud_executor import _EXTENSION_NAMES
-
                     display = _EXTENSION_NAMES.get(ext_id, ext_id.split(".")[-1])
                     exe._connectors[ext_id] = display
 
@@ -670,7 +631,6 @@ class TestCloudConnectorDiscovery:
 # ---------------------------------------------------------------------------
 # CloudExecutor — confirmation detection
 # ---------------------------------------------------------------------------
-
 
 class TestCloudConfirmationDetection:
     def test_yes_confirms(self):
@@ -696,7 +656,6 @@ class TestCloudConfirmationDetection:
 # ---------------------------------------------------------------------------
 # CloudExecutor — pending state
 # ---------------------------------------------------------------------------
-
 
 class TestCloudPendingState:
     def test_starts_with_no_pending(self):
@@ -731,7 +690,6 @@ class TestCloudPendingState:
 # ---------------------------------------------------------------------------
 # CloudExecutor — minimal context (build_prompt)
 # ---------------------------------------------------------------------------
-
 
 class TestCloudMinimalContext:
     def test_includes_task(self):
@@ -768,7 +726,6 @@ class TestCloudMinimalContext:
 # ---------------------------------------------------------------------------
 # CloudExecutor — result screening (guardrail 2)
 # ---------------------------------------------------------------------------
-
 
 class TestCloudResultScreening:
     def test_clean_output_is_fenced(self):
@@ -812,7 +769,6 @@ class TestCloudResultScreening:
 # CloudExecutor — subprocess mock (full _run path)
 # ---------------------------------------------------------------------------
 
-
 class TestCloudSubprocess:
     async def test_successful_call_returns_fenced_output(self):
         from brain.bus import Bus
@@ -830,10 +786,8 @@ class TestCloudSubprocess:
         mock_proc.communicate = AsyncMock(return_value=(b"Found 3 calendar events.", b""))
         mock_proc.returncode = 0
 
-        with (
-            patch("asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)),
-            patch.object(exe, "_append_tool_log", AsyncMock()),
-        ):
+        with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)), \
+             patch.object(exe, "_append_tool_log", AsyncMock()):
             result = await exe._run("check calendar", [])
 
         assert result["success"] is True
@@ -856,10 +810,8 @@ class TestCloudSubprocess:
         mock_proc.communicate = AsyncMock(side_effect=TimeoutError())
         mock_proc.kill = MagicMock()
 
-        with (
-            patch("asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)),
-            patch.object(exe, "_append_tool_log", AsyncMock()),
-        ):
+        with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)), \
+             patch.object(exe, "_append_tool_log", AsyncMock()):
             result = await exe._run("check calendar", [])
 
         assert result["success"] is False
@@ -888,10 +840,8 @@ class TestCloudSubprocess:
         mock_proc.communicate = AsyncMock(return_value=(b"Email sent.", b""))
         mock_proc.returncode = 0
 
-        with (
-            patch("asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)) as mock_exec,
-            patch.object(exe, "_append_tool_log", AsyncMock()),
-        ):
+        with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=mock_proc)) as mock_exec, \
+             patch.object(exe, "_append_tool_log", AsyncMock()):
             result = await exe.execute_pending()
 
         assert result["success"] is True
@@ -907,19 +857,14 @@ class TestCloudSubprocess:
 # CloudExecutor — audit log
 # ---------------------------------------------------------------------------
 
-
 class _TrackingFile:
     """File-like object whose content survives __exit__ (unlike StringIO)."""
-
     def __init__(self):
         self.content = ""
-
     def write(self, s: str) -> None:
         self.content += s
-
     def __enter__(self):
         return self
-
     def __exit__(self, *_):
         pass  # intentionally do not close so getvalue works after the with block
 
@@ -947,7 +892,6 @@ class TestCloudAuditLog:
             await exe._append_tool_log("task", "result", True)
         # Timestamps look like "2026-05-22 14:30"
         import re
-
         assert re.search(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}", tracker.content)
 
     async def test_long_output_preview_truncated(self):
@@ -970,13 +914,11 @@ class TestCloudAuditLog:
 # Frontal drafter prompt — tool_result injection
 # ---------------------------------------------------------------------------
 
-
 class TestFrontalToolResultInjection:
     def _make_frontal(self):
         from brain.brainstem import Brainstem
         from brain.bus import Bus
         from brain.clusters.frontal import FrontalCluster
-
         bus = Bus()
         router = _make_fake_router()
         brainstem = Brainstem(bus, router)
@@ -990,12 +932,8 @@ class TestFrontalToolResultInjection:
             memory=memory,
             parietal="",
             affect={},
-            instruction={
-                "response_type": "informative",
-                "target_length": "brief",
-                "tone": "neutral",
-                "key_points": [],
-            },
+            instruction={"response_type": "informative", "target_length": "brief",
+                         "tone": "neutral", "key_points": []},
         )
         assert "3 calendar events found" in prompt
         assert "tool_result" in prompt.lower() or "tool execution" in prompt.lower()
@@ -1008,12 +946,8 @@ class TestFrontalToolResultInjection:
             memory=memory,
             parietal="",
             affect={},
-            instruction={
-                "response_type": "chitchat",
-                "target_length": "brief",
-                "tone": "warm",
-                "key_points": [],
-            },
+            instruction={"response_type": "chitchat", "target_length": "brief",
+                         "tone": "warm", "key_points": []},
         )
         assert "tool execution result" not in prompt.lower()
 
@@ -1025,12 +959,8 @@ class TestFrontalToolResultInjection:
             memory=memory,
             parietal="",
             affect={},
-            instruction={
-                "response_type": "task",
-                "target_length": "medium",
-                "tone": "neutral",
-                "key_points": [],
-            },
+            instruction={"response_type": "task", "target_length": "medium",
+                         "tone": "neutral", "key_points": []},
         )
         # The closing tag inside the value should be neutralised by the fence
         assert "</dat​a>" in prompt or "malicious" in prompt  # neutralised or present
@@ -1042,7 +972,6 @@ class TestFrontalToolResultInjection:
 # Motor cortex — neuromodulator-aware switch behaviour
 # ---------------------------------------------------------------------------
 
-
 class TestMotorSwitchModulation:
     """Contracts for the chemistry-modulated switches in motor cortex."""
 
@@ -1053,15 +982,8 @@ class TestMotorSwitchModulation:
         motor, _bus = _make_motor(tmp_path)
         # Sweep every channel to its disabling extreme.
         worst_chem = {
-            "DA": 1.0,
-            "ACh": 1.0,
-            "GABA": 1.0,
-            "Glu": 1.0,
-            "NE": 1.0,
-            "OXT": 1.0,
-            "CORT": 1.0,
-            "5HT": 1.0,
-            "AEA": 1.0,
+            "DA": 1.0, "ACh": 1.0, "GABA": 1.0, "Glu": 1.0, "NE": 1.0,
+            "OXT": 1.0, "CORT": 1.0, "5HT": 1.0, "AEA": 1.0,
         }
         eff = motor._safety_inhibitor.effective_threshold(worst_chem)
         assert eff >= motor._safety_inhibitor.min_threshold
@@ -1097,22 +1019,19 @@ class TestMotorSwitchModulation:
     def test_action_gate_modulator_profile(self, tmp_path):
         motor, _ = _make_motor(tmp_path)
         # High DA should lower the action_gate threshold (approach motivation).
-        assert motor._action_gate.effective_threshold(
-            {"DA": 1.0}
-        ) < motor._action_gate.effective_threshold({"DA": 0.0})
+        assert motor._action_gate.effective_threshold({"DA": 1.0}) < \
+               motor._action_gate.effective_threshold({"DA": 0.0})
 
     def test_fallback_reporter_modulator_profile(self, tmp_path):
         motor, _ = _make_motor(tmp_path)
         # High NE should lower the fallback_reporter threshold (alarm system).
-        assert motor._fallback_reporter.effective_threshold(
-            {"NE": 1.0}
-        ) < motor._fallback_reporter.effective_threshold({"NE": 0.0})
+        assert motor._fallback_reporter.effective_threshold({"NE": 1.0}) < \
+               motor._fallback_reporter.effective_threshold({"NE": 0.0})
 
 
 # ---------------------------------------------------------------------------
 # MotorCortexCluster — job budget (chemistry-modulated)
 # ---------------------------------------------------------------------------
-
 
 class TestEffectiveJobBudget:
     def test_neutral_chemistry_returns_twelve(self, tmp_path):
@@ -1145,7 +1064,6 @@ class TestEffectiveJobBudget:
 # MotorCortexCluster — chemistry description
 # ---------------------------------------------------------------------------
 
-
 class TestChemDescription:
     def test_empty_returns_balanced(self, tmp_path):
         motor, _ = _make_motor(tmp_path)
@@ -1176,11 +1094,9 @@ class TestChemDescription:
 # MotorCortexCluster — lobe bridge dispatch
 # ---------------------------------------------------------------------------
 
-
 class TestDispatchLobe:
     def _make_bridge(self, result: str = "bridge result"):
         from brain.clusters.lobe_bridge import LobeBridge
-
         bridge = LobeBridge()
 
         async def _handler(**kwargs) -> str:
@@ -1224,11 +1140,9 @@ class TestDispatchLobe:
 # MotorCortexCluster — set_lobe_bridge prompt update
 # ---------------------------------------------------------------------------
 
-
 class TestSetLobeBridge:
     def test_updates_planner_prompt_with_capabilities(self, tmp_path):
         from brain.clusters.lobe_bridge import LobeBridge
-
         motor, _ = _make_motor(tmp_path)
         bridge = LobeBridge()
 
@@ -1243,7 +1157,6 @@ class TestSetLobeBridge:
 
     def test_empty_bridge_uses_none_hint(self, tmp_path):
         from brain.clusters.lobe_bridge import LobeBridge
-
         motor, _ = _make_motor(tmp_path)
         bridge = LobeBridge()
         motor.set_lobe_bridge(bridge)
@@ -1254,7 +1167,6 @@ class TestSetLobeBridge:
 # ---------------------------------------------------------------------------
 # MotorCortexCluster — execute_internal_job()
 # ---------------------------------------------------------------------------
-
 
 class TestExecuteInternalJob:
     """Tests for the background multi-step job executor."""
@@ -1282,7 +1194,6 @@ class TestExecuteInternalJob:
     def _make_motor_for_job(self, tmp_path, router):
         from brain.bus import Bus
         from brain.clusters.motor_cortex import MotorCortexCluster
-
         bus = Bus()
         return MotorCortexCluster(bus, router, allowed_paths=[str(tmp_path)]), bus
 
@@ -1322,7 +1233,8 @@ class TestExecuteInternalJob:
 
         strategic = {
             "steps": [
-                {"description": f"read pass {i}", "expected_tool": "read_file"} for i in range(4)
+                {"description": f"read pass {i}", "expected_tool": "read_file"}
+                for i in range(4)
             ],
             "success_criteria": "all reads done",
             "complexity": "low",
@@ -1376,8 +1288,13 @@ class TestExecuteInternalJob:
 
         assert result["success"] is False
 
-    async def test_budget_exhausted_marks_failure(self, tmp_path):
-        """Job stops and marks success=False when budget runs out before plan completes."""
+    async def test_budget_exhausted_after_productive_work_is_success(self, tmp_path):
+        """Budget runs out mid-plan, but a productive step already ran → success=True.
+
+        New semantics: a job that did real work is NOT a fail-out just because a
+        safety net (budget) stopped it before every story completed. stopped_early
+        records the reason as a caveat.
+        """
         strategic = {
             "steps": [
                 {"description": "step A", "expected_tool": "read_file"},
@@ -1387,7 +1304,6 @@ class TestExecuteInternalJob:
             "success_criteria": "all done",
             "complexity": "medium",
         }
-        # Planner always returns a read_file call — budget of 1 will exhaust
         f = tmp_path / "x.txt"
         f.write_text("x")
         tactical = [{"tool": "read_file", "args": {"path": str(f)}, "reason": "r"}] * 10
@@ -1399,8 +1315,94 @@ class TestExecuteInternalJob:
         with patch("brain.ui.emitter.emitter", mock_emitter):
             result = await motor.execute_internal_job("do many things", "t1", budget=1)
 
-        assert result["success"] is False
-        assert result["steps_taken_count"] == 1  # stopped after 1
+        assert result["success"] is True            # did real work before stopping
+        assert result["productive_steps"] >= 1
+        assert result["stopped_early"] == "budget exhausted"
+        assert result["steps_taken_count"] == 1     # stopped after 1
+
+    async def test_unverifiable_story_does_not_fail_job(self, tmp_path):
+        """A story whose criteria can't be met (e.g. an unsatisfiable 'summarize'
+        criterion) is recorded as a caveat but does NOT fail a job that did work."""
+        f = tmp_path / "mod.py"
+        f.write_text("class Thing:\n    def method(self): pass\n")
+        strategic = {
+            "stories": [
+                {"id": "US-001", "description": "read the module",
+                 "expected_tool": "read_file", "acceptance_criteria": ["file content returned"]},
+                {"id": "US-002", "description": "summarize the module",
+                 "expected_tool": "read_file",
+                 "acceptance_criteria": ["lists every method and attribute"]},  # unsatisfiable
+            ],
+            "success_criteria": "module summarized", "complexity": "low",
+        }
+        # story 1: read (criteria met). story 2: read again, but criteria never met → 2 attempts
+        tactical = [
+            {"tool": "read_file", "args": {"path": str(f)}, "reason": "read"},
+            {"verified": True, "unmet": []},                      # story1 criteria check
+            {"tool": "read_file", "args": {"path": str(f)}, "reason": "read"},
+            {"verified": False, "unmet": ["no method list"]},     # story2 attempt1 check
+            {"tool": "read_file", "args": {"path": str(f)}, "reason": "read again"},
+            {"verified": False, "unmet": ["no method list"]},     # story2 attempt2 check
+        ]
+        router = self._make_job_router(strategic, tactical)
+        motor, _ = self._make_motor_for_job(tmp_path, router)
+
+        mock_emitter = MagicMock()
+        mock_emitter.emit_event = AsyncMock()
+        with patch("brain.ui.emitter.emitter", mock_emitter):
+            result = await motor.execute_internal_job("read and summarize mod.py", "t1")
+
+        assert result["success"] is True               # real work happened
+        assert result["productive_steps"] >= 1
+        assert len(result["unverified_stories"]) == 1  # the summarize story is a caveat
+        assert "summarize" in result["unverified_stories"][0].lower()
+
+    async def test_zero_productive_work_fails(self, tmp_path):
+        """A job where every step is blocked/errored (no real output) → success=False."""
+        strategic = {
+            "stories": [{"id": "US-001", "description": "read a forbidden file",
+                         "expected_tool": "read_file", "acceptance_criteria": []}],
+            "success_criteria": "done", "complexity": "low",
+        }
+        # path outside allowed roots → [blocked] every time → no productive step
+        tactical = [{"tool": "read_file", "args": {"path": "/etc/shadow"}, "reason": "r"}] * 5
+        router = self._make_job_router(strategic, tactical)
+        motor, _ = self._make_motor_for_job(tmp_path, router)
+
+        mock_emitter = MagicMock()
+        mock_emitter.emit_event = AsyncMock()
+        with patch("brain.ui.emitter.emitter", mock_emitter):
+            result = await motor.execute_internal_job("read forbidden", "t1")
+
+        assert result["success"] is False              # nothing productive happened
+        assert result["productive_steps"] == 0
+
+    async def test_verifier_rejection_is_advisory_not_failure(self, tmp_path):
+        """A medium-complexity job whose final verifier rejects still succeeds if it
+        did productive work — the rejection is recorded as verification_issues."""
+        f = tmp_path / "x.txt"
+        f.write_text("data")
+        strategic = {
+            "stories": [{"id": "US-001", "description": "read the file",
+                         "expected_tool": "read_file",
+                         "acceptance_criteria": ["content returned"]}],
+            "success_criteria": "thoroughly analyzed", "complexity": "medium",
+        }
+        tactical = [
+            {"tool": "read_file", "args": {"path": str(f)}, "reason": "read"},
+            {"verified": True, "unmet": []},                    # story criteria check
+            {"approved": False, "issues": "analysis not deep enough"},  # final verifier
+        ]
+        router = self._make_job_router(strategic, tactical)
+        motor, _ = self._make_motor_for_job(tmp_path, router)
+
+        mock_emitter = MagicMock()
+        mock_emitter.emit_event = AsyncMock()
+        with patch("brain.ui.emitter.emitter", mock_emitter):
+            result = await motor.execute_internal_job("analyze x.txt", "t1")
+
+        assert result["success"] is True                       # work was done
+        assert result["verification_issues"] == "analysis not deep enough"  # surfaced as caveat
 
     async def test_clarification_pauses_job(self, tmp_path):
         """ask_user response sets clarification and stops the loop."""
@@ -1409,9 +1411,9 @@ class TestExecuteInternalJob:
             "success_criteria": "got answer",
             "complexity": "low",
         }
-        tactical = [
-            {"tool": "ask_user", "args": {"question": "Which directory?"}, "reason": "need path"}
-        ]
+        tactical = [{"tool": "ask_user",
+                     "args": {"question": "Which directory?"},
+                     "reason": "need path"}]
         router = self._make_job_router(strategic, tactical)
         motor, _ = self._make_motor_for_job(tmp_path, router)
 
@@ -1432,13 +1434,9 @@ class TestExecuteInternalJob:
             "success_criteria": "recalled",
             "complexity": "low",
         }
-        tactical = [
-            {
-                "tool": "recall_memory",
-                "args": {"topic": "project goals", "entities": []},
-                "reason": "need context",
-            }
-        ]
+        tactical = [{"tool": "recall_memory",
+                     "args": {"topic": "project goals", "entities": []},
+                     "reason": "need context"}]
         router = self._make_job_router(strategic, tactical)
         motor, _ = self._make_motor_for_job(tmp_path, router)
 
@@ -1497,16 +1495,12 @@ class TestExecuteInternalJob:
         f = tmp_path / "x.txt"
         f.write_text("content")
         strategic = {
-            "stories": [
-                {
-                    "id": "US-001",
-                    "description": "read x",
-                    "expected_tool": "read_file",
-                    "acceptance_criteria": ["content returned"],
-                }
-            ],
-            "success_criteria": "read",
-            "complexity": "medium",
+            "stories": [{
+                "id": "US-001", "description": "read x",
+                "expected_tool": "read_file",
+                "acceptance_criteria": ["content returned"],
+            }],
+            "success_criteria": "read", "complexity": "medium",
         }
         # attempt 0 fails criteria, attempt 1 passes — two dispatches for one story
         tactical = [
@@ -1532,7 +1526,7 @@ class TestExecuteInternalJob:
         end_kwargs = mock_obs.end_job.call_args[1]
         # steps_completed reflects unique stories completed (1 story)
         # total_attempts captures the two actual dispatches
-        assert end_kwargs["steps_completed"] == 2  # 2 tool dispatches recorded in steps_taken
+        assert end_kwargs["steps_completed"] == 2   # 2 tool dispatches recorded in steps_taken
         assert end_kwargs["total_attempts"] == 2
         assert end_kwargs["steps_planned"] == 1
 
@@ -1540,16 +1534,12 @@ class TestExecuteInternalJob:
         """total_attempts captures attempts consumed by the M3 appropriateness gate."""
         (tmp_path / "a.txt").write_text("x")
         strategic = {
-            "stories": [
-                {
-                    "id": "US-001",
-                    "description": "categorize files in project",
-                    "expected_tool": "list_files",
-                    "acceptance_criteria": [],
-                }
-            ],
-            "success_criteria": "done",
-            "complexity": "low",
+            "stories": [{
+                "id": "US-001", "description": "categorize files in project",
+                "expected_tool": "list_files",
+                "acceptance_criteria": [],
+            }],
+            "success_criteria": "done", "complexity": "low",
         }
         # attempt 0 → query_langfuse (rejected by gate), attempt 1 → list_files (passes)
         tactical = [
@@ -1566,7 +1556,8 @@ class TestExecuteInternalJob:
         mock_emitter = MagicMock()
         mock_emitter.emit_event = AsyncMock()
         with patch("brain.ui.emitter.emitter", mock_emitter):
-            result = await motor.execute_internal_job("categorize files in project", "t1")
+            result = await motor.execute_internal_job(
+                "categorize files in project", "t1")
 
         assert result["success"] is True
         end_kwargs = mock_obs.end_job.call_args[1]
@@ -1579,16 +1570,12 @@ class TestExecuteInternalJob:
         f = tmp_path / "f.txt"
         f.write_text("data")
         strategic = {
-            "stories": [
-                {
-                    "id": "US-001",
-                    "description": "read the file",
-                    "expected_tool": "no_such_tool",  # hallucinated
-                    "acceptance_criteria": [],
-                }
-            ],
-            "success_criteria": "done",
-            "complexity": "low",
+            "stories": [{
+                "id": "US-001", "description": "read the file",
+                "expected_tool": "no_such_tool",  # hallucinated
+                "acceptance_criteria": [],
+            }],
+            "success_criteria": "done", "complexity": "low",
         }
         tactical = [{"tool": "read_file", "args": {"path": str(f)}, "reason": "r"}]
         router = self._make_job_router(strategic, tactical)
@@ -1639,16 +1626,12 @@ class TestExecuteInternalJob:
         f = tmp_path / "data.txt"
         f.write_text("content")
         strategic = {
-            "stories": [
-                {
-                    "id": "US-001",
-                    "description": "read the data file",
-                    "expected_tool": "read_file",
-                    "acceptance_criteria": ["file content retrieved"],
-                }
-            ],
-            "success_criteria": "read",
-            "complexity": "low",
+            "stories": [{
+                "id": "US-001", "description": "read the data file",
+                "expected_tool": "read_file",
+                "acceptance_criteria": ["file content retrieved"],
+            }],
+            "success_criteria": "read", "complexity": "low",
         }
         # attempt 0: read_file → criteria FALSE → retry; attempt 1: read_file → criteria TRUE
         tactical = [
@@ -1671,16 +1654,12 @@ class TestExecuteInternalJob:
         """M3: query_langfuse on a file goal is rejected and retried as a file tool."""
         (tmp_path / "a.txt").write_text("x")
         strategic = {
-            "stories": [
-                {
-                    "id": "US-001",
-                    "description": "categorize the files in the project",
-                    "expected_tool": "list_files",
-                    "acceptance_criteria": ["a file listing is produced"],
-                }
-            ],
-            "success_criteria": "files categorized",
-            "complexity": "low",
+            "stories": [{
+                "id": "US-001", "description": "categorize the files in the project",
+                "expected_tool": "list_files",
+                "acceptance_criteria": ["a file listing is produced"],
+            }],
+            "success_criteria": "files categorized", "complexity": "low",
         }
         tactical = [
             {"tool": "query_langfuse", "args": {"operation": "recent_traces"}, "reason": "?"},
@@ -1693,7 +1672,8 @@ class TestExecuteInternalJob:
         mock_emitter = MagicMock()
         mock_emitter.emit_event = AsyncMock()
         with patch("brain.ui.emitter.emitter", mock_emitter):
-            result = await motor.execute_internal_job("categorize the files in the project", "t1")
+            result = await motor.execute_internal_job(
+                "categorize the files in the project", "t1")
         tools = [s["tool"] for s in result["steps"]]
         assert tools == ["query_langfuse", "list_files"]  # mismatch → self-corrected
         assert result["success"] is True
@@ -1701,27 +1681,23 @@ class TestExecuteInternalJob:
     async def test_legitimate_langfuse_goal_no_false_positive(self, tmp_path):
         """M3: query_langfuse on an observability goal is accepted — no retry."""
         strategic = {
-            "stories": [
-                {
-                    "id": "US-001",
-                    "description": "summarize recent langfuse trace scores",
-                    "expected_tool": "query_langfuse",
-                    "acceptance_criteria": [],
-                }
-            ],
-            "success_criteria": "done",
-            "complexity": "low",
+            "stories": [{
+                "id": "US-001", "description": "summarize recent langfuse trace scores",
+                "expected_tool": "query_langfuse",
+                "acceptance_criteria": [],
+            }],
+            "success_criteria": "done", "complexity": "low",
         }
-        tactical = [
-            {"tool": "query_langfuse", "args": {"operation": "recent_scores"}, "reason": "obs"}
-        ]
+        tactical = [{"tool": "query_langfuse",
+                     "args": {"operation": "recent_scores"}, "reason": "obs"}]
         router = self._make_job_router(strategic, tactical)
         motor, _ = self._make_motor_for_job(tmp_path, router)
         motor._dispatcher._query_langfuse = AsyncMock(return_value="[]")
         mock_emitter = MagicMock()
         mock_emitter.emit_event = AsyncMock()
         with patch("brain.ui.emitter.emitter", mock_emitter):
-            result = await motor.execute_internal_job("review recent langfuse trace scores", "t1")
+            result = await motor.execute_internal_job(
+                "review recent langfuse trace scores", "t1")
         assert [s["tool"] for s in result["steps"]] == ["query_langfuse"]
         assert result["success"] is True
 
@@ -1730,16 +1706,12 @@ class TestExecuteInternalJob:
         f = tmp_path / "x.txt"
         f.write_text("x")
         strategic = {
-            "stories": [
-                {
-                    "id": "US-001",
-                    "description": "do the thing",
-                    "expected_tool": "summarize_text",  # not a real tool
-                    "acceptance_criteria": [],
-                }
-            ],
-            "success_criteria": "done",
-            "complexity": "low",
+            "stories": [{
+                "id": "US-001", "description": "do the thing",
+                "expected_tool": "summarize_text",  # not a real tool
+                "acceptance_criteria": [],
+            }],
+            "success_criteria": "done", "complexity": "low",
         }
         tactical = [{"tool": "read_file", "args": {"path": str(f)}, "reason": "r"}]
         router = self._make_job_router(strategic, tactical)
@@ -1760,8 +1732,7 @@ class TestMotorPlanPromptExpectedTool:
     def test_expected_tool_injected_as_hint(self, tmp_path):
         m, _ = _make_motor(tmp_path)
         prompt = m._build_plan_prompt(
-            "categorize files", {}, "", [], [], expected_tool="list_files"
-        )
+            "categorize files", {}, "", [], [], expected_tool="list_files")
         assert "list_files" in prompt
         assert "Strategic hint" in prompt
 
@@ -1787,13 +1758,11 @@ class TestStrategicPromptGuidance:
 
     def test_strategic_prompt_forbids_langfuse_for_files(self):
         from brain.clusters.motor_prompts import STRATEGIC_SYSTEM
-
         assert "NEVER query_langfuse" in STRATEGIC_SYSTEM
         assert "list_files" in STRATEGIC_SYSTEM
 
     def test_planner_base_marks_langfuse_observability_only(self):
         from brain.clusters.motor_prompts import PLANNER_SYSTEM_BASE
-
         assert "observability data ONLY" in PLANNER_SYSTEM_BASE
 
 
@@ -1802,26 +1771,22 @@ class TestToolAppropriatenessHelper:
 
     def test_flags_langfuse_on_file_goal(self):
         from brain.clusters.motor_cortex import _tool_appropriateness_warning
-
-        assert (
-            _tool_appropriateness_warning(
-                "query_langfuse", "categorize files", "list and group files"
-            )
-            is not None
-        )
+        assert _tool_appropriateness_warning(
+            "query_langfuse", "categorize files", "list and group files") is not None
 
     def test_allows_langfuse_on_observability_goal(self):
         from brain.clusters.motor_cortex import _tool_appropriateness_warning
-
-        assert (
-            _tool_appropriateness_warning("query_langfuse", "summarize recent langfuse traces", "")
-            is None
-        )
+        assert _tool_appropriateness_warning(
+            "query_langfuse", "summarize recent langfuse traces", "") is None
 
     def test_ignores_non_langfuse_tools(self):
         from brain.clusters.motor_cortex import _tool_appropriateness_warning
+        assert _tool_appropriateness_warning(
+            "list_files", "categorize files", "") is None
 
-        assert _tool_appropriateness_warning("list_files", "categorize files", "") is None
+
+import asyncio
+import pytest
 
 
 class TestDispatchTimeout:
@@ -1841,15 +1806,15 @@ class TestDispatchTimeout:
 
         motor._dispatch_once = hang_once  # type: ignore
         import brain.clusters.motor_cortex as mc_mod
-
         original = mc_mod._TOOL_TIMEOUT_S
-        mc_mod._TOOL_TIMEOUT_S = 0.05  # 50ms ceiling
-        mc_mod._TOOL_RETRIES = 0  # no retries so the test stays fast
+        original_retries = mc_mod._TOOL_RETRIES
+        mc_mod._TOOL_TIMEOUT_S = 0.05   # 50ms ceiling
+        mc_mod._TOOL_RETRIES = 0        # no retries so the test stays fast
         try:
             result = await motor._dispatch("read_file", {"path": str(tmp_path / "x.txt")})
         finally:
             mc_mod._TOOL_TIMEOUT_S = original
-            mc_mod._TOOL_RETRIES = 1
+            mc_mod._TOOL_RETRIES = original_retries
 
         assert result.startswith("[error]")
         assert "timed out" in result
@@ -1872,7 +1837,6 @@ class TestDispatchTimeout:
 
         motor._dispatcher._read_file = flaky_read  # type: ignore
         import brain.clusters.motor_cortex as mc_mod
-
         original_retries = mc_mod._TOOL_RETRIES
         mc_mod._TOOL_RETRIES = 1
         try:
@@ -1895,9 +1859,8 @@ class TestDispatchTimeout:
 
         motor._dispatcher._read_file = blocked_read  # type: ignore
         import brain.clusters.motor_cortex as mc_mod
-
         original_retries = mc_mod._TOOL_RETRIES
-        mc_mod._TOOL_RETRIES = 3  # would retry 3 times if not blocked
+        mc_mod._TOOL_RETRIES = 3   # would retry 3 times if not blocked
         try:
             result = await motor._dispatch("read_file", {"path": "/etc/passwd"})
         finally:
@@ -1911,7 +1874,6 @@ class TestDispatchTimeout:
         """[error] Unknown tool is not retried (not a transient error)."""
         motor, _ = _make_motor(tmp_path)
         import brain.clusters.motor_cortex as mc_mod
-
         original_retries = mc_mod._TOOL_RETRIES
         mc_mod._TOOL_RETRIES = 3
         try:
@@ -1933,7 +1895,6 @@ class TestDispatchTimeout:
 
         motor._dispatcher._read_file = always_fails  # type: ignore
         import brain.clusters.motor_cortex as mc_mod
-
         original_retries = mc_mod._TOOL_RETRIES
         mc_mod._TOOL_RETRIES = 2
         try:
@@ -1951,7 +1912,6 @@ class TestJobWallClockDeadline:
     def _make_job_router(self, strategic_plan, tactical_steps):
         """Reuse TestExecuteInternalJob's helper pattern."""
         import json as _json
-
         responses = [_json.dumps(strategic_plan)] + [_json.dumps(s) for s in tactical_steps]
         call_count = {"n": 0}
 
@@ -1976,29 +1936,22 @@ class TestJobWallClockDeadline:
         f.write_text("x")
         strategic = {
             "stories": [
-                {
-                    "id": f"US-{i:03d}",
-                    "description": f"step {i}",
-                    "expected_tool": "read_file",
-                    "acceptance_criteria": [],
-                }
+                {"id": f"US-{i:03d}", "description": f"step {i}",
+                 "expected_tool": "read_file", "acceptance_criteria": []}
                 for i in range(5)
             ],
-            "success_criteria": "all done",
-            "complexity": "low",
+            "success_criteria": "all done", "complexity": "low",
         }
         tactical = [{"tool": "read_file", "args": {"path": str(f)}, "reason": "r"}] * 10
 
         router = self._make_job_router(strategic, tactical)
         from brain.bus import Bus
         from brain.clusters.motor_cortex import MotorCortexCluster
-
         motor = MotorCortexCluster(Bus(), router, allowed_paths=[str(tmp_path)])
 
         import brain.clusters.motor_cortex as mc_mod
-
         original_timeout = mc_mod._JOB_TIMEOUT_S
-        mc_mod._JOB_TIMEOUT_S = 0.0  # deadline already passed
+        mc_mod._JOB_TIMEOUT_S = 0.0          # deadline already passed
         mock_emitter = MagicMock()
         mock_emitter.emit_event = AsyncMock()
         try:

@@ -1,0 +1,37 @@
+{
+  "job_id": "job_task_d972289b",
+  "task_id": "d972289b",
+  "goal": "Check for recent academic papers on AI brain architecture and neuroscience, focusing on changes since last review.",
+  "success": false,
+  "source": "user",
+  "ralph_mode": false,
+  "total_attempts": 2,
+  "steps": [
+    {
+      "tool": "none",
+      "args": {},
+      "reason": "[planner failed]"
+    },
+    {
+      "tool": "none",
+      "args": {},
+      "reason": "[planner failed]"
+    }
+  ],
+  "results": [
+    "",
+    ""
+  ],
+  "written_files": [],
+  "plan_steps": [
+    {
+      "description": "Check for recent academic papers on AI brain architecture and neuroscience, focusing on changes since last review.",
+      "expected_tool": "?",
+      "acceptance_criteria": [],
+      "id": "US-001"
+    }
+  ],
+  "spoken_summary": "I wasn't able to search for those papers \u2014 I don't have the tools to browse the internet or access academic databases. Want me to help you organize papers you already have, or do you have another way you'd like me to assist with this?",
+  "created_at": "2026-05-29T12:57:29.444898+00:00",
+  "completed_at": "2026-05-29T12:57:29.444917+00:00"
+}

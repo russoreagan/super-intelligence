@@ -1,0 +1,37 @@
+{
+  "job_id": "job_task_04724dc1",
+  "task_id": "04724dc1",
+  "goal": "Check how hold-to-talk features are implemented in our system and their mechanics.",
+  "success": false,
+  "source": "user",
+  "ralph_mode": false,
+  "total_attempts": 2,
+  "steps": [
+    {
+      "tool": "none",
+      "args": {},
+      "reason": "[planner failed]"
+    },
+    {
+      "tool": "none",
+      "args": {},
+      "reason": "[planner failed]"
+    }
+  ],
+  "results": [
+    "",
+    ""
+  ],
+  "written_files": [],
+  "plan_steps": [
+    {
+      "description": "Check how hold-to-talk features are implemented in our system and their mechanics.",
+      "expected_tool": "?",
+      "acceptance_criteria": [],
+      "id": "US-001"
+    }
+  ],
+  "spoken_summary": "I wasn't able to look into the hold-to-talk implementation \u2014 the planner ran into issues and couldn't figure out what steps to take. Do you want to point me at a specific file or folder where that code lives?",
+  "created_at": "2026-05-29T09:21:02.956056+00:00",
+  "completed_at": "2026-05-29T09:21:02.956084+00:00"
+}

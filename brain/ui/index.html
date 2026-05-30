@@ -4939,6 +4939,21 @@ function handle(msg) {
     case 'task_summary':
       handleTaskEvent(msg);
       break;
+    case 'chat_history': {
+      if (Array.isArray(msg.turns) && msg.turns.length) {
+        const msgs = document.getElementById('messages');
+        msgs.innerHTML = '';
+        msg.turns.forEach(t => {
+          if (t.user_input) appendUserMessage(t.user_input);
+          if (t.response) {
+            const elapsed = t.elapsed_s ? t.elapsed_s.toFixed(1) + 's' : '';
+            appendBrainMessage(t.turn_id, t.response, t.llm_calls || 0, elapsed);
+          }
+        });
+        scrollChat();
+      }
+      break;
+    }
   }
 }
 
