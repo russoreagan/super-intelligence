@@ -613,6 +613,37 @@ class _TurnMixin:
         turn_result = self.brainstem.end_turn()
 
         nm_snap = self.bus.neuromod.snapshot()
+
+        # N1 (colony-features-ii): live trail reinforcement. Reinforce the edges this
+        # turn actually fired, scaled by a lightweight outcome (per-turn DA delta —
+        # the dopaminergic "did this pay off" signal). Fast within-session plasticity
+        # over the slow sleep-consolidated weights; the overlay decays and evaporates
+        # at session end. Always recorded; applied to live reads only when
+        # colony_trail_apply=1 (otherwise shadow mode for the audit gate).
+        if settings.get("colony_features", 0) and getattr(self, "wiring", None) is not None:
+            try:
+                _da_now = float(nm_snap.get("DA", 0.5))
+                _da_prior = float((trace.prior_neuromod or {}).get("DA", _da_now))
+                _outcome = max(-1.0, min(1.0, (_da_now - _da_prior) * 4.0))
+                _path_names = [n["name"] for n in (trace.fired_path or []) if n.get("name")]
+                self.wiring.decay_trails()
+                if abs(_outcome) > 0.02 and len(_path_names) >= 2:
+                    _amt = _outcome * float(settings.get("colony_trail_gain", 0.05))
+                    _n = self.wiring.reinforce_trail(_path_names, _amt)
+                    if _n:
+                        from brain.observability.decisions import decisions as _decisions
+
+                        _decisions.log(
+                            "trail_reinforced",
+                            turn_id=turn_id,
+                            outcome=round(_outcome, 3),
+                            amount=round(_amt, 4),
+                            edges=_n,
+                            applied=int(settings.get("colony_trail_apply", 0)),
+                        )
+            except Exception:
+                pass
+
         llm_calls = self.router.turn_calls_excluding_background()
 
         cluster_tokens: dict[str, dict] = {}

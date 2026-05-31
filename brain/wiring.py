@@ -52,6 +52,12 @@ class Wiring:
         self._edges: dict[tuple[str, str], Edge] = {}
         # Snapshot of weights at session boot — used for session-delta reports
         self._session_baseline: dict[tuple[str, str], float] = {}
+        # N1 (colony-features-ii): transient, NON-PERSISTED "trail" overlay — fast
+        # within-session plasticity over the slow, sleep-consolidated weights. Paths
+        # that fire AND pay off get reinforced live (stigmergy: trails strengthen as
+        # they're walked); the overlay decays each turn and evaporates at session end.
+        self._trail: dict[tuple[str, str], float] = {}
+        self._trail_decay_ts: float | None = None
         self._load()
 
     def add(
@@ -70,9 +76,65 @@ class Wiring:
         return e.effective_weight() if e else 1.0
 
     def get_edge_weight(self, source: str, target: str) -> float:
-        """Magnitude only (unsigned). Returns the resting weight for missing edges."""
+        """Magnitude only (unsigned). Returns the resting weight for missing edges.
+
+        N1: when colony trail-reinforcement is APPLIED (colony_features AND
+        colony_trail_apply), the transient trail overlay is added to the persisted
+        weight (clamped to [WEIGHT_MIN, WEIGHT_MAX]). In shadow mode (apply=0) the
+        overlay is recorded but NOT reflected here — reads stay on the persisted
+        weight so the feature can be measured before it influences routing."""
         e = self._edges.get((source, target))
-        return e.weight if e else WEIGHT_REST
+        base = e.weight if e else WEIGHT_REST
+        if _settings.get("colony_features", 0) and _settings.get("colony_trail_apply", 0):
+            overlay = self._trail.get((source, target), 0.0)
+            if overlay:
+                return max(WEIGHT_MIN, min(WEIGHT_MAX, base + overlay))
+        return base
+
+    # ── N1: live trail reinforcement (transient, non-persisted) ───────────────
+
+    def decay_trails(self, now: float | None = None) -> None:
+        """Exponentially decay all trail overlays toward zero (half-life from
+        colony_trail_half_life_s). Called once per turn."""
+        if not self._trail:
+            self._trail_decay_ts = now if now is not None else time.time()
+            return
+        now = time.time() if now is None else now
+        if self._trail_decay_ts is None:
+            self._trail_decay_ts = now
+            return
+        elapsed = max(0.0, now - self._trail_decay_ts)
+        hl = float(_settings.get("colony_trail_half_life_s", 120.0))
+        if hl > 0 and elapsed > 0:
+            factor = 0.5 ** (elapsed / hl)
+            for k in list(self._trail):
+                self._trail[k] *= factor
+                if abs(self._trail[k]) < 1e-4:
+                    del self._trail[k]
+        self._trail_decay_ts = now
+
+    def reinforce_trail(
+        self, fired_path: list[str], amount: float, now: float | None = None
+    ) -> int:
+        """Bump the trail overlay along a fired path by signed `amount` (clamped to
+        ±colony_trail_clamp). Only existing edges. Records even in shadow mode — it's
+        get_edge_weight that gates whether the overlay influences live reads. Returns
+        the count of edges touched. No-op when colony features are off."""
+        if not _settings.get("colony_features", 0) or abs(amount) < 1e-9 or len(fired_path) < 2:
+            return 0
+        self.decay_trails(now)
+        clamp = float(_settings.get("colony_trail_clamp", 0.5))
+        n = 0
+        for i in range(len(fired_path) - 1):
+            key = (fired_path[i], fired_path[i + 1])
+            if key in self._edges:
+                self._trail[key] = max(-clamp, min(clamp, self._trail.get(key, 0.0) + amount))
+                n += 1
+        return n
+
+    def trail_snapshot(self) -> dict[str, float]:
+        """Current would-be trail overlays (for the N1 shadow-audit correlation gate)."""
+        return {f"{s}→{t}": round(v, 4) for (s, t), v in self._trail.items()}
 
     def hebbian_update(self, fired_path: list[str], delta: float | None = None) -> int:
         """Nudge weights along a path that produced a good (or bad) outcome.

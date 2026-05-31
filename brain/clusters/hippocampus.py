@@ -18,8 +18,8 @@ from brain.neuron import StatefulSwitch, SwitchNeuron
 from brain.observability.decisions import decisions
 from brain.predictor import should_bypass_gating
 from brain.second_brain.store import Episode, EpisodicStore, SchemaStore
-from brain.settings import settings
 from brain.security import sanitize_fact
+from brain.settings import settings
 from brain.utils import safe_json_parse
 from brain.wiring import Wiring
 
@@ -357,6 +357,10 @@ class HippocampusCluster:
         # delta range under conservative coefficients (≤0.15) is approximately
         # ±0.075. Scale to integer shifts in {-3, …, +3}.
         shift = int(round(delta * 20))
+        # N2 (colony-features-ii): when the hippocampus is recruited (a memory-heavy
+        # turn won recruitment budget), widen the net further — up to +4 lookups.
+        if settings.get("colony_features", 0):
+            shift += int(round(self._bus.recruitment_level("hippocampus") * 4))
         return max(4, min(12, 8 + shift))
 
     def _entity_grep_depth(self, chem: dict[str, float], schema_k: int) -> int:

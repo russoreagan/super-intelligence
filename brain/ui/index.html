@@ -1002,9 +1002,9 @@ input, select, textarea { font: inherit; color: inherit; background: none; borde
    NEUROMODS
    ========================================================= */
 .nm-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 .nm-row {
   display: flex; flex-direction: column;
@@ -3385,21 +3385,6 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
       <!-- Brain tab -->
       <div class="left-tab-content" id="tab-brain">
         <section class="col-section">
-          <div class="section-label">Cortical Lobes <span class="count">5</span></div>
-          <div class="region-list" id="region-list-cortical"></div>
-        </section>
-
-        <section class="col-section">
-          <div class="section-label">Subcortical <span class="count">3</span></div>
-          <div class="region-list" id="region-list-subcortical"></div>
-        </section>
-
-        <section class="col-section">
-          <div class="section-label">Brainstem · Cerebellum <span class="count">2</span></div>
-          <div class="region-list" id="region-list-passive"></div>
-        </section>
-
-        <section class="col-section">
           <div class="section-label">Neuromodulators</div>
           <div class="nm-grid">
             <div class="nm-row">
@@ -3423,32 +3408,42 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
               <div class="nm-track"><div class="nm-fill" id="nm-NE" style="background: oklch(0.75 0.16 300); width: 25%"></div></div>
             </div>
           </div>
-          <div class="mood-display">
-            <span class="mood-dot" id="mood-dot"></span>
-            <span class="mood-name" id="mood-name">neutral</span>
-            <span class="mood-key">Mood</span>
+        </section>
+
+        <section class="panel-section">
+          <h3 class="panel-label">Hormonal</h3>
+          <div class="nm-row">
+            <div class="nm-head"><span class="nm-name">5HT</span><span class="nm-num" id="nm-num-5HT">30%</span></div>
+            <div class="nm-track"><div class="nm-fill" id="nm-5HT" style="background: oklch(0.80 0.14 85); width: 30%"></div></div>
+          </div>
+          <div class="nm-row">
+            <div class="nm-head"><span class="nm-name">OXT</span><span class="nm-num" id="nm-num-OXT">25%</span></div>
+            <div class="nm-track"><div class="nm-fill" id="nm-OXT" style="background: oklch(0.75 0.18 0); width: 25%"></div></div>
+          </div>
+          <div class="nm-row">
+            <div class="nm-head"><span class="nm-name">CORT</span><span class="nm-num" id="nm-num-CORT">10%</span></div>
+            <div class="nm-track"><div class="nm-fill" id="nm-CORT" style="background: oklch(0.70 0.17 55); width: 10%"></div></div>
+          </div>
+          <div class="nm-row">
+            <div class="nm-head"><span class="nm-name">AEA</span><span class="nm-num" id="nm-num-AEA">20%</span></div>
+            <div class="nm-track"><div class="nm-fill" id="nm-AEA" style="background: oklch(0.72 0.16 145); width: 20%"></div></div>
           </div>
         </section>
 
-          <section class="panel-section">
-            <h3 class="panel-label">Hormonal</h3>
-            <div class="nm-row">
-              <div class="nm-head"><span class="nm-name">5HT</span><span class="nm-num" id="nm-num-5HT">30%</span></div>
-              <div class="nm-track"><div class="nm-fill" id="nm-5HT" style="background: oklch(0.80 0.14 85); width: 30%"></div></div>
-            </div>
-            <div class="nm-row">
-              <div class="nm-head"><span class="nm-name">OXT</span><span class="nm-num" id="nm-num-OXT">25%</span></div>
-              <div class="nm-track"><div class="nm-fill" id="nm-OXT" style="background: oklch(0.75 0.18 0); width: 25%"></div></div>
-            </div>
-            <div class="nm-row">
-              <div class="nm-head"><span class="nm-name">CORT</span><span class="nm-num" id="nm-num-CORT">10%</span></div>
-              <div class="nm-track"><div class="nm-fill" id="nm-CORT" style="background: oklch(0.70 0.17 55); width: 10%"></div></div>
-            </div>
-            <div class="nm-row">
-              <div class="nm-head"><span class="nm-name">AEA</span><span class="nm-num" id="nm-num-AEA">20%</span></div>
-              <div class="nm-track"><div class="nm-fill" id="nm-AEA" style="background: oklch(0.72 0.16 145); width: 20%"></div></div>
-            </div>
-          </section>
+        <section class="col-section">
+          <div class="section-label">Cortical Lobes <span class="count">5</span></div>
+          <div class="region-list" id="region-list-cortical"></div>
+        </section>
+
+        <section class="col-section">
+          <div class="section-label">Subcortical <span class="count">3</span></div>
+          <div class="region-list" id="region-list-subcortical"></div>
+        </section>
+
+        <section class="col-section">
+          <div class="section-label">Brainstem · Cerebellum <span class="count">2</span></div>
+          <div class="region-list" id="region-list-passive"></div>
+        </section>
 
         <section class="pane log-pane" id="plasticity-pane">
           <header class="pane-head">

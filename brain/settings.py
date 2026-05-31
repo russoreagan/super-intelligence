@@ -466,11 +466,33 @@ DEFAULTS: dict[str, float | int | str] = {
     "colony_primer_gain": 0.30,                     # scales Message.primer nudges into hormonal channels
     # Phase 4/7 — recruitment amplification + mobilization cascade
     "colony_recruit_gain": 0.40,                    # scales need_level → recruitment level
-    # Phase 5 — threshold diversity (division of labor)
-    "colony_threshold_spread": 0.08,                # ± bound on deterministic per-switch threshold jitter
+    # Phase 5 — threshold diversity (DEPRECATED — see colony-features-ii / N3).
+    # spread_threshold is left inert; variance without real specialization is
+    # noise (Lynch et al. 2024). Do NOT wire it in. Kept only for the dormant helper.
+    "colony_threshold_spread": 0.08,                # ± bound (UNUSED — spread_threshold is deprecated)
     # Phase 8 — aggregate-state neuromodulation feedback (highest-risk loop)
     "colony_state_feedback_gain": 0.02,             # tiny gain on prior-turn aggregate → neuromod nudges
     "colony_state_feedback_clamp": 0.05,            # max total feedback contribution per channel per turn
+    # ── Colony Layer II — ant-colony lessons (all under colony_features) ──────
+    # C3 — recruitment satisfaction/stop signal: a met need actively lowers
+    # recruitment (composite start+stop thresholds) instead of only passive decay.
+    "colony_satisfy_rate": 0.50,                    # fraction of recruitment removed per unit satisfaction
+    "colony_satisfy_critic_floor": 0.6,             # critic score above which a commit counts as "need met"
+    # C4 — rate-of-change in quorum: a fast-rising signal trips quorum via slope
+    # even before the level threshold is reached.
+    "colony_quorum_slope_threshold": 0.20,          # concentration rise per second that trips quorum
+    # N2 — softmax multi-need recruitment allocation across competing clusters.
+    "colony_recruit_budget": 1.0,                   # total recruitment budget shared per turn
+    "colony_recruit_softmax_temp": 0.5,             # Boltzmann temperature (lower = sharper allocation)
+    # N3 — sensory-filter specialization: per-persona input-sensitivity gain over
+    # feature categories (the real division-of-labor axis; supersedes Phase 5).
+    "colony_sensory_filter": 0,                     # 1 = apply per-persona sensitivity gains; 0 = off
+    "colony_sensory_gain_span": 0.30,               # ± span of the per-(persona,category) sensitivity gain
+    # N1 — live trail reinforcement (highest-risk; shadow-first).
+    "colony_trail_apply": 0,                        # 1 = apply overlay to live weights; 0 = shadow (log only)
+    "colony_trail_gain": 0.05,                      # per-turn trail bump scale (× outcome)
+    "colony_trail_clamp": 0.50,                     # max |overlay| added to any edge's persisted weight
+    "colony_trail_half_life_s": 120.0,              # trail overlay decay half-life within a session
 }
 
 

@@ -698,11 +698,20 @@ class FrontalCluster:
         if settings.get("colony_features", 0):
             salience = float(features.get("salience") or 0.0)
             base_need = max(0.0, (drafter_count - 1) / 2.0)  # planner ask 1..3 → 0..1
-            need = max(base_need, salience)
-            if features.get("requires_memory"):
-                need = max(need, 0.6)
-            gain = float(settings.get("colony_recruit_gain", 0.4))
-            self._bus.recruit("frontal", need * gain)
+            frontal_need = max(base_need, salience)
+            # N2: competing needs share a bounded recruitment budget via softmax —
+            # frontal (query difficulty), hippocampus (memory-heavy turn → deeper
+            # recall), and caution (threat quorum). Allocation replaces the prior
+            # single-cluster recruit() so mobilization is proportional and competitive.
+            hippo_need = 0.6 if features.get("requires_memory") else 0.1 * salience
+            caution_need = 0.8 if self._bus.quorum("affect.state") else 0.0
+            self._bus.allocate_recruitment(
+                {
+                    "frontal": frontal_need,
+                    "hippocampus": hippo_need,
+                    "caution": caution_need,
+                }
+            )
             recruit_lvl = self._bus.recruitment_level("frontal")
             max_drafters = len(self._drafters)
             extra = int(round(recruit_lvl * (max_drafters - drafter_count)))
@@ -712,12 +721,29 @@ class FrontalCluster:
                     "recruitment_mobilized",
                     turn_id=turn_id,
                     cluster="frontal",
-                    need=round(need, 3),
+                    need=round(frontal_need, 3),
                     recruit_level=round(recruit_lvl, 3),
                     base_count=drafter_count,
                     recruited_count=new_count,
                 )
                 drafter_count = new_count
+
+            # N4 (colony-features-ii): quorum → commitment phase-shift. When the
+            # threat channel reaches quorum (sustained or fast-rising threat), the
+            # colony flips from deliberation to decisive action — collapse to a
+            # single draft and commit. Applied AFTER recruitment so commitment
+            # overrides mobilization under genuine threat (acorn-ant nest-choice
+            # phase shift: Chan et al. 2025).
+            if self._bus.quorum("affect.state") and drafter_count > 1:
+                decisions.log(
+                    "quorum_commit_phase_shift",
+                    turn_id=turn_id,
+                    cluster="frontal",
+                    from_count=drafter_count,
+                    to_count=1,
+                    reason="threat_quorum",
+                )
+                drafter_count = 1
 
         self._drafter_count_selector.fire(
             min(1.0, drafter_count / 3.0), str(drafter_count), snapshot=chem
@@ -926,6 +952,13 @@ class FrontalCluster:
                         break
                 self._critic_predictor.record(critic_sig, ("ok",))
                 self._critic_predictor.record_outcome(critic_sig, best[2])
+                # C3 (colony-features-ii): a high-quality commit means the drafting
+                # need is met — actively release frontal recruitment (satisfaction
+                # threshold) rather than waiting for passive decay. Cuts thrashing.
+                if settings.get("colony_features", 0) and best[2] >= float(
+                    settings.get("colony_satisfy_critic_floor", 0.6)
+                ):
+                    self._bus.satisfy("frontal", best[2])
                 return best[1]
 
         # Single draft — endorse directly
