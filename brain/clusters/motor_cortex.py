@@ -508,6 +508,16 @@ class MotorCortexCluster:
             if tool == "cloud_action":
                 last_result = await self._dispatch_cloud(args, turn_id)
                 output = (last_result or {}).get("output", "")
+            elif tool in ("recall_memory", "analyze_image"):
+                output = await self._dispatch_lobe(tool, args, turn_id)
+                last_result = {
+                    "tool": tool,
+                    "args": args,
+                    "reason": reason,
+                    "output": output,
+                    "success": not output.startswith("[error]"),
+                }
+                await self._bus.publish_dict("motor.result", last_result, source=CLUSTER)
             else:
                 output = await self._dispatch(tool, args)
                 last_result = {
@@ -1347,6 +1357,16 @@ class MotorCortexCluster:
             if tool == "cloud_action":
                 last_result = await self._dispatch_cloud(args, turn_id)
                 output = (last_result or {}).get("output", "")
+            elif tool in ("recall_memory", "analyze_image"):
+                output = await self._dispatch_lobe(tool, args, turn_id)
+                last_result = {
+                    "tool": tool,
+                    "args": args,
+                    "reason": reason,
+                    "output": output,
+                    "success": not output.startswith("[error]"),
+                }
+                await self._bus.publish_dict("motor.result", last_result, source=CLUSTER)
             else:
                 output = await self._dispatch(tool, args)
                 last_result = {

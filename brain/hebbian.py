@@ -68,13 +68,68 @@ class HebbianUpdater:
         mod = 0.5 + da_avg + 0.5 * ach_avg
         return max(0.3, min(1.2, mod))
 
+    def _turn_plasticity(self, trace) -> float:
+        """Per-turn plasticity multiplier keyed to AROUSAL / emotional INTENSITY
+        (not valence sign), with an inverted-U high-stress knee.
+
+        Basis (see plan References): three-factor learning rules — neuromodulators
+        continuously scale how much a co-activation imprints — plus the inverted-U
+        of stress on memory: moderate arousal ENHANCES encoding (emotionally intense
+        events of EITHER sign imprint hard — fear learning), while only EXTREME
+        stress impairs it. This replaces the legacy all-or-nothing `defuse_path`
+        skip with a graded factor.
+
+        Returns 1.0 (identity — legacy behaviour preserved) when the
+        `graded_plasticity` flag is off.
+        """
+        if not settings.get("graded_plasticity", 0):
+            return 1.0
+        nm = trace.neuromod or {}
+        ach = float(nm.get("ACh", 0.3))
+        ne = float(nm.get("NE", 0.15))
+        da = float(nm.get("DA", 0.5))
+        gaba = float(nm.get("GABA", 0.0))
+        prior = getattr(trace, "prior_neuromod", None) or {}
+        da_swing = abs(da - float(prior.get("DA", da)))
+        hormonal = getattr(trace, "hormonal", None) or {}
+        cort = float(hormonal.get("CORT", 0.0))
+
+        # Arousal drive (alertness + novelty + reward swing). Centered so a
+        # resting turn (~0.3) contributes nothing.
+        arousal = (ach + ne + da_swing) / 3.0
+        # Emotional intensity: |valence| of entity or user emotion. Either sign.
+        intensity = max(
+            abs(self._emotion_valence(trace.emotion)),
+            abs(self._emotion_valence(getattr(trace, "user_emotion", "") or "")),
+        )
+        w_ar = float(settings.get("plasticity_arousal_weight", 0.5))
+        w_in = float(settings.get("plasticity_intensity_weight", 0.4))
+        plast = 1.0 + w_ar * (arousal - 0.3) + w_in * intensity
+
+        # Inverted-U descending limb: only stress above the knee dampens, scaling
+        # from 1.0 at the knee toward (1 - damp) at maximal stress.
+        knee = float(settings.get("plasticity_stress_knee", 0.7))
+        stress = max(gaba, cort)
+        if stress > knee:
+            damp = float(settings.get("plasticity_stress_damp", 0.6))
+            frac = min(1.0, (stress - knee) / max(1e-6, 1.0 - knee))
+            plast *= 1.0 - damp * frac
+
+        lo = float(settings.get("plasticity_turn_min", 0.4))
+        hi = float(settings.get("plasticity_turn_max", 1.3))
+        return max(lo, min(hi, plast))
+
     def _should_skip_hebbian(self, trace, outcome: float) -> tuple[bool, str]:
         """Skip Hebbian for turns where the entity wasn't in a state worth learning from."""
         if abs(outcome) < 0.02:
             return True, "outcome_near_zero"
-        gaba = float(trace.neuromod.get("GABA", 0.0))
-        if gaba > settings.get("gaba_skip_threshold_high") and len(trace.draft_scores) <= 1:
-            return True, "defuse_path"
+        # Legacy all-or-nothing defensive skip. When graded_plasticity is on this
+        # is replaced by the inverted-U high-stress dampener in _turn_plasticity
+        # (learn LESS from extreme-stress turns, not zero) — biologically faithful.
+        if not settings.get("graded_plasticity", 0):
+            gaba = float(trace.neuromod.get("GABA", 0.0))
+            if gaba > settings.get("gaba_skip_threshold_high") and len(trace.draft_scores) <= 1:
+                return True, "defuse_path"
         emotion = (trace.emotion or "").lower()
         if emotion in ("confused", "flat"):
             return True, f"dissociated_emotion={emotion}"
@@ -170,6 +225,7 @@ class HebbianUpdater:
         plasticity = self._plasticity_modulator(full_traces)
         gainers: list[tuple[str, float]] = []
         losers: list[tuple[str, float]] = []
+        turn_plasticities: list[float] = []
         total_updated = 0
         skipped = 0
 
@@ -190,7 +246,9 @@ class HebbianUpdater:
                 skipped += 1
                 continue
 
-            delta = outcome * settings.get("hebbian_outcome_delta") * plasticity
+            turn_plast = self._turn_plasticity(trace)
+            turn_plasticities.append(turn_plast)
+            delta = outcome * settings.get("hebbian_outcome_delta") * plasticity * turn_plast
             path_names = [n["name"] for n in trace.fired_path]
             before = {
                 (path_names[i], path_names[i + 1]): self._wiring.get_edge_weight(
@@ -218,6 +276,7 @@ class HebbianUpdater:
                         to_weight=round(now, 4),
                         delta=round(edge_delta, 4),
                         outcome=round(outcome, 3),
+                        turn_plasticity=round(turn_plast, 3),
                         breakdown=breakdown,
                     )
 
@@ -258,6 +317,12 @@ class HebbianUpdater:
             "session_plasticity_summary",
             session_id=session_id,
             plasticity_modulator=round(plasticity, 3),
+            graded_plasticity=int(settings.get("graded_plasticity", 0)),
+            avg_turn_plasticity=(
+                round(sum(turn_plasticities) / len(turn_plasticities), 3)
+                if turn_plasticities
+                else None
+            ),
             edges_updated=total_updated,
             turns_skipped=skipped,
             signal_quality={

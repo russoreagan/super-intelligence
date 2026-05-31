@@ -31,6 +31,10 @@ class HypothalamusCluster:
         self._bus = bus
         self._last_decay_time: float = time.monotonic()
         self._current_turns: float = 1.0  # set by process(), consumed by decay_turn()
+        # Phase 8 (colony features): the PRIOR turn's aggregate cluster activity,
+        # snapshotted at end-of-turn and fed back into chemistry at the start of the
+        # next turn (prior-turn read avoids within-turn runaway).
+        self._prev_aggregate: dict[str, float] | None = None
 
         # Stateful switches with decay
         self._valence_switch = StatefulSwitch(
@@ -89,9 +93,66 @@ class HypothalamusCluster:
 
         return calibrated_sentiment, calibrated_hostility
 
+    def _snapshot_aggregate(self) -> None:
+        """Phase 8: capture this turn's aggregate cluster activity at end-of-turn,
+        for feedback into chemistry next turn. Pure read of the current trace."""
+        if not settings.get("colony_features", 0):
+            return
+        try:
+            from brain.observability.firing_path import current_turn_trace
+
+            tr = current_turn_trace.get()
+        except Exception:
+            tr = None
+        if tr is None:
+            self._prev_aggregate = None
+            return
+        fired = getattr(tr, "fired_path", None) or []
+        switch_fires = sum(1 for e in fired if e.get("kind") == "switch")
+        self._prev_aggregate = {
+            # firing volume → arousal (effortful turns)
+            "arousal": min(1.0, switch_fires / 25.0),
+            # chemistry-suppressed fires → inhibition/conflict load
+            "inhibition": min(1.0, float(getattr(tr, "suppressed_switch_count", 0)) / 10.0),
+        }
+
+    def _apply_state_feedback(self) -> None:
+        """Phase 8: nudge neuromods from the PRIOR turn's aggregate activity. Small
+        gain + per-channel clamp keep this activity→chemistry loop bounded; reading
+        the prior turn (not the current one) prevents within-turn runaway."""
+        if not settings.get("colony_features", 0) or not self._prev_aggregate:
+            return
+        gain = float(settings.get("colony_state_feedback_gain", 0.02))
+        clamp = float(settings.get("colony_state_feedback_clamp", 0.05))
+        agg = self._prev_aggregate
+
+        def _bounded(signal: float) -> float:
+            return max(-clamp, min(clamp, gain * signal))
+
+        glu_d = _bounded(agg.get("arousal", 0.0))  # effort → general arousal
+        gaba_d = _bounded(agg.get("inhibition", 0.0))  # conflict → caution
+        self._bus.neuromod.add("Glu", glu_d)
+        self._bus.neuromod.add("GABA", gaba_d)
+        try:
+            from brain.observability.decisions import decisions
+
+            decisions.log(
+                "state_feedback_applied",
+                prior_arousal=round(agg.get("arousal", 0.0), 3),
+                prior_inhibition=round(agg.get("inhibition", 0.0), 3),
+                Glu_delta=round(glu_d, 4),
+                GABA_delta=round(gaba_d, 4),
+            )
+        except Exception:
+            pass
+
     async def process(self, features: dict) -> dict:
         """Update neuromod levels from temporal features. Return affect summary."""
         nm = self._bus.neuromod
+
+        # Phase 8 (colony features): fold in the prior turn's aggregate cluster
+        # activity before appraisal-driven updates (clamped, prior-turn → bounded).
+        self._apply_state_feedback()
 
         # Compute time-weighted turns (elapsed since last decay / reference interval).
         # Increments for text-derived signals are multiplied by turns so that
@@ -458,5 +519,17 @@ class HypothalamusCluster:
         scaling and decay use the same elapsed-time measurement per turn.
         """
         self._last_decay_time = time.monotonic()
+        # Phase 3 (colony features): apply any primer nudges deposited by messages
+        # this turn BEFORE decay, so they integrate then relax naturally. The
+        # hypothalamus is the single hormonal-state writer.
+        if settings.get("colony_features", 0):
+            primers = self._bus.drain_primers()
+            if primers:
+                gain = float(settings.get("colony_primer_gain", 0.30))
+                for ch, v in primers.items():
+                    if ch in self._bus.hormonal.CHANNELS:
+                        self._bus.hormonal.add(ch, v * gain)
         self._bus.neuromod.decay(self._current_turns)
         self._bus.hormonal.decay(self._current_turns)
+        # Phase 8: snapshot this turn's aggregate for next turn's feedback.
+        self._snapshot_aggregate()

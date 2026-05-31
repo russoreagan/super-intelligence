@@ -691,6 +691,34 @@ class FrontalCluster:
                 glu_deficit, "low_arousal_drop_count", {"Glu": round(nm["Glu"], 3)}, snapshot=chem
             )
             drafter_count = max(1, drafter_count - 1)
+        # Phase 7 (colony features): graded mobilization cascade. A query-difficulty
+        # need raises frontal's recruitment level, which mobilizes more parallel
+        # drafters (overriding a conservative planner) in proportion to need. Self-
+        # limiting: capped at the drafter pool, and recruitment decays as need falls.
+        if settings.get("colony_features", 0):
+            salience = float(features.get("salience") or 0.0)
+            base_need = max(0.0, (drafter_count - 1) / 2.0)  # planner ask 1..3 → 0..1
+            need = max(base_need, salience)
+            if features.get("requires_memory"):
+                need = max(need, 0.6)
+            gain = float(settings.get("colony_recruit_gain", 0.4))
+            self._bus.recruit("frontal", need * gain)
+            recruit_lvl = self._bus.recruitment_level("frontal")
+            max_drafters = len(self._drafters)
+            extra = int(round(recruit_lvl * (max_drafters - drafter_count)))
+            if extra > 0:
+                new_count = min(max_drafters, drafter_count + extra)
+                decisions.log(
+                    "recruitment_mobilized",
+                    turn_id=turn_id,
+                    cluster="frontal",
+                    need=round(need, 3),
+                    recruit_level=round(recruit_lvl, 3),
+                    base_count=drafter_count,
+                    recruited_count=new_count,
+                )
+                drafter_count = new_count
+
         self._drafter_count_selector.fire(
             min(1.0, drafter_count / 3.0), str(drafter_count), snapshot=chem
         )
@@ -976,7 +1004,17 @@ class FrontalCluster:
             hs = self._bus.hormonal.snapshot()
         except Exception:
             hs = {}
-        return {**nm, **hs}
+        snap = {**nm, **hs}
+        # Phase 4 (colony features): inject the RECRUIT channel so recruitable
+        # switches lower their thresholds under mobilization. None when colony is
+        # off → modulator skipped (strict no-op).
+        try:
+            rc = self._bus.recruit_channel("frontal")
+            if rc is not None:
+                snap["RECRUIT"] = rc
+        except Exception:
+            pass
+        return snap
 
     def _select_drafters(self, count: int, turn_id: str) -> list[int]:
         """Pick which drafter indices to fire, weighted by wiring edge weight.

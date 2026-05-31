@@ -15,6 +15,7 @@ prior behaviour at every call site.
 
 from __future__ import annotations
 
+import hashlib
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -190,6 +191,39 @@ class StatefulSwitch(SwitchNeuron):
     @property
     def state(self) -> float:
         return self._state
+
+
+def spread_threshold(
+    base: float,
+    persona_seed: str,
+    switch_name: str,
+    spread: float | None = None,
+) -> float:
+    """Phase 5 (colony features): deterministic, persona-seeded threshold jitter.
+
+    Response-threshold *diversity* is what turns a uniform population into one with
+    division of labor (guards vs. soldiers vs. bystanders given the SAME signal —
+    the bee result). This returns `base` shifted by a deterministic per-(persona,
+    switch) offset within ±spread, so different personas get distinct "who-fires-
+    first" distributions while staying fully reproducible in eval (no RNG).
+
+    Returns `base` unchanged when colony features are off (strict no-op).
+    """
+    try:
+        from brain.settings import settings as _settings
+
+        if not _settings.get("colony_features", 0):
+            return base
+        if spread is None:
+            spread = float(_settings.get("colony_threshold_spread", 0.08))
+    except Exception:
+        return base
+    if spread <= 0:
+        return base
+    digest = hashlib.md5(f"{persona_seed}:{switch_name}".encode()).hexdigest()
+    frac = int(digest[:8], 16) / 0xFFFFFFFF  # [0, 1]
+    offset = (frac * 2.0 - 1.0) * spread  # [-spread, +spread]
+    return max(0.05, min(0.95, base + offset))
 
 
 def make_threshold_gate(
