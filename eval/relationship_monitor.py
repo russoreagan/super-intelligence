@@ -62,6 +62,12 @@ def compute_relationship_metrics(turns: list[dict]) -> dict:
     # Register variety — is the detector actually producing different labels?
     registers = {t.get("style_register") for t in style_noted if t.get("style_register")}
 
+    # Performed-emotion gating: rate + flavour breakdown.
+    performed = [t for t in turns if t.get("performed_emotion_offered")]
+    performed_flavors: dict[str, int] = defaultdict(int)
+    for t in performed:
+        performed_flavors[t["performed_emotion_offered"]] += 1
+
     # Bond / affection trajectories
     bonds = [float(t["bond"]) for t in turns if t.get("bond") is not None]
     affections = [int(t["affection"]) for t in turns if t.get("affection") is not None]
@@ -105,6 +111,8 @@ def compute_relationship_metrics(turns: list[dict]) -> dict:
         "disclosure_resolved_count": len(resolved),
         "style_note_rate": round(len(style_noted) / n, 4),
         "style_register_variety": sorted(registers),
+        "performed_emotion_rate": round(len(performed) / n, 4),
+        "performed_emotion_flavors": dict(performed_flavors),
         "oxt_connected_rate": round(len(oxt_connected) / n, 4),
         "reunion_boost_turns": len(reunion_turns),
         "bond_trajectory": _traj(bonds),
@@ -147,6 +155,8 @@ def _print_report(m: dict) -> None:
           f"{rr:.1%}" if rr is not None else "  reciprocation rate        : n/a (no resolved)")
     print(f"  style-note rate           : {m['style_note_rate']:.1%}")
     print(f"  style register variety    : {m['style_register_variety'] or '(none)'}")
+    print(f"  performed-emotion rate    : {m['performed_emotion_rate']:.1%} "
+          f"{dict(m['performed_emotion_flavors']) or ''}")
     print(f"  OXT 'connected' rate      : {m['oxt_connected_rate']:.1%}")
     print(f"  reunion-boost turns       : {m['reunion_boost_turns']}")
     print(f"  bond trajectory           : {m['bond_trajectory']}")

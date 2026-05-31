@@ -162,6 +162,9 @@ class TurnTrace:
     # The user's detected register this turn ("casual/terse" etc.) when style
     # synchrony fired — lets analysis verify the detector is actually varying.
     style_register: str = ""
+    # Performed-emotion flavour offered to the drafter this turn (gated on
+    # relationship + mood): "" | "playful" | "cheer_up" | "tension_break".
+    performed_emotion_offered: str = ""
 
     # ── Voice / prosody fields (populated when --ears is active) ─────────────
     speaker_name: str = ""
@@ -441,6 +444,11 @@ class ObservabilityLayer:
                                 else {}
                             ),
                             **({"style_register": trace.style_register} if trace.style_register else {}),
+                            **(
+                                {"performed_emotion_offered": trace.performed_emotion_offered}
+                                if trace.performed_emotion_offered
+                                else {}
+                            ),
                             **(
                                 {"oxt_connected_reached": True}
                                 if trace.oxt_connected_reached

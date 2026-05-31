@@ -522,3 +522,87 @@ def test_user_style_register_empty_before_min_turns():
     p = _fresh_parietal()
     p.update_user_style("hello", "text", 0.1, 0.5)
     assert p.user_style_register("text") == ""
+
+
+# ── Performed-emotion gate (relationship + mood) ──────────────────────────────
+
+
+def _user_model(score: int, tier: str) -> str:
+    return f"## Affection score\n- Score: {score}\n- Familiarity: {tier}\n"
+
+
+def _perf(score, tier, user_emo="neutral", tone="neutral"):
+    from brain.clusters.frontal import FrontalCluster
+
+    features = {"user_emotion": user_emo, "user_tone_toward_ai": tone, "intent": "chitchat"}
+    return FrontalCluster._performed_emotion_gate(features, {}, _user_model(score, tier))
+
+
+def test_performed_blocked_for_unfamiliar_cool():
+    # The explicit "definitely not": unfamiliar + cool/guarded.
+    assert _perf(-20, "new")[0] is False   # guarded
+    assert _perf(-15, "new")[0] is False   # cool
+    # New but not warm enough (below new floor 15) → blocked even at neutral.
+    assert _perf(5, "new")[0] is False
+
+
+def test_performed_blocked_for_cool_even_if_familiar():
+    # A cool/guarded relationship blocks performance regardless of familiarity.
+    assert _perf(-15, "close")[0] is False
+    assert _perf(-30, "acquainted")[0] is False
+
+
+def test_performed_playful_when_user_positive():
+    ok, flavor = _perf(30, "close", user_emo="happy")
+    assert ok is True and flavor == "playful"
+    ok, flavor = _perf(20, "acquainted", tone="joking")
+    assert ok is True and flavor == "playful"
+
+
+def test_performed_cheerup_requires_established_relationship():
+    # Down user + close warm relationship → cheer_up allowed.
+    ok, flavor = _perf(30, "close", user_emo="sad")
+    assert ok is True and flavor == "cheer_up"
+    # Down user + new/low relationship → NOT allowed (won't land).
+    assert _perf(18, "new", user_emo="sad")[0] is False
+    assert _perf(10, "acquainted", user_emo="sad")[0] is False  # below cheerup floor 20
+
+
+def test_performed_tension_break_on_friction():
+    ok, flavor = _perf(25, "close", user_emo="frustrated")
+    assert ok is True and flavor == "tension_break"
+    ok, flavor = _perf(25, "acquainted", tone="impatient")
+    assert ok is True and flavor == "tension_break"
+
+
+def test_performed_neutral_mood_needs_warmth():
+    # Neutral mood, warm enough → playful.
+    assert _perf(15, "acquainted")[0] is True
+    assert _perf(12, "new")[0] is False  # new + only mild warmth (below new floor)
+    # Neutral mood, close familiarity even at modest affection → allowed.
+    assert _perf(5, "close")[0] is True
+
+
+def test_performed_gate_disabled_returns_always_on(monkeypatch):
+    from brain.settings import settings
+
+    monkeypatch.setitem(settings._data, "enable_performed_emotion_gate", 0)
+    try:
+        ok, flavor = _perf(-50, "new", user_emo="angry")
+        assert ok is True  # feature off → preserve old always-offered behaviour
+    finally:
+        monkeypatch.setitem(settings._data, "enable_performed_emotion_gate", 1)
+
+
+def test_performed_emotion_monitor_metric():
+    from eval.relationship_monitor import compute_relationship_metrics
+
+    turns = [
+        _turn(performed_emotion_offered="playful"),
+        _turn(performed_emotion_offered="cheer_up"),
+        _turn(),
+        _turn(performed_emotion_offered="playful"),
+    ]
+    m = compute_relationship_metrics(turns)
+    assert m["performed_emotion_rate"] == 0.75
+    assert m["performed_emotion_flavors"] == {"playful": 2, "cheer_up": 1}

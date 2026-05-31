@@ -32,16 +32,11 @@ logger = logging.getLogger(__name__)
 
 CLUSTER = "cloud_executor"
 
-# Extension ID → human-readable connector name (for planner context string)
-_EXTENSION_NAMES: dict[str, str] = {
-    "ant.dir.ant.anthropic.imessage": "iMessages",
-    "ant.dir.ant.anthropic.chrome-control": "Chrome browser",
-    "ant.dir.gh.elevenlabs.agents-mcp-app": "ElevenLabs",
-    "ant.dir.gh.ableton.ableton-knowledge": "Ableton",
-    "ant.dir.gh.adobe.react-aria": "Adobe/React Aria",
-    "ant.dir.gh.elevenlabs.elevenlabs-player": "ElevenLabs Player",
-    "e6e0b098-dd18-42f4-a840-5205def659b7": "scite (scientific literature search)",
-}
+# Paths for dynamic connector discovery
+_CLAUDE_SUPPORT = Path(os.path.expanduser("~/Library/Application Support/Claude"))
+_EXTENSIONS_SETTINGS_DIR = _CLAUDE_SUPPORT / "Claude Extensions Settings"
+_EXTENSIONS_INSTALLS_FILE = _CLAUDE_SUPPORT / "extensions-installations.json"
+_EXTENSIONS_DIR = _CLAUDE_SUPPORT / "Claude Extensions"
 
 # Words that indicate user confirmation of a pending write action
 _CONFIRM_WORDS = frozenset(
@@ -132,33 +127,108 @@ class CloudExecutor:
     # ── Binary + connector discovery ───────────────────────────────────────────
 
     def _find_claude_binary(self) -> str | None:
-        """Find the newest installed Claude Code CLI binary."""
-        pattern = os.path.expanduser(
-            "~/Library/Application Support/Claude/claude-code/*/claude.app/Contents/MacOS/claude"
-        )
-        candidates = glob.glob(pattern)
+        """Find the Claude Code CLI binary, trying all known locations.
+
+        Searches multiple patterns so it survives app updates, path structure
+        changes, and the macOS app-bundle vs bare-binary layouts. Returns the
+        newest match across all patterns, or None if Claude isn't installed.
+        """
+        import shutil
+
+        # Fastest path: on $PATH (e.g. symlinked by the installer)
+        if shutil.which("claude"):
+            return shutil.which("claude")
+
+        # All known layouts under Application Support, newest version last
+        patterns = [
+            # macOS app bundle (current default)
+            "~/Library/Application Support/Claude/claude-code/*/claude.app/Contents/MacOS/claude",
+            # Bare binary (VM / alternate install)
+            "~/Library/Application Support/Claude/claude-code-vm/*/claude",
+            # Future-proofing: bare binary alongside the app bundle
+            "~/Library/Application Support/Claude/claude-code/*/claude",
+        ]
+        candidates = []
+        for pattern in patterns:
+            candidates.extend(glob.glob(os.path.expanduser(pattern)))
+
         if not candidates:
             return None
-        # Sort by version string — newest last (semver-ish comparison)
+        # Sort so the highest version number wins across all layouts
         return sorted(candidates)[-1]
 
     def _discover_connectors(self) -> dict[str, str]:
-        """Return {extension_id: display_name} for enabled extensions."""
-        settings_dir = Path(
-            os.path.expanduser("~/Library/Application Support/Claude/Claude Extensions Settings")
-        )
-        if not settings_dir.exists():
+        """Return {extension_id: display_name} for all enabled extensions.
+
+        Display names are read from extensions-installations.json (the richest
+        source — has display_name from each extension's manifest) with a fallback
+        to the individual manifest.json in the extension directory. No hard-coded
+        list — any extension added to Claude is automatically picked up.
+        """
+        if not _EXTENSIONS_SETTINGS_DIR.exists():
             return {}
+
+        # Build display-name index from the installations manifest.
+        # Structure: {"extensions": {"<id>": {"manifest": {"display_name": "..."}}}}
+        install_names: dict[str, str] = {}
+        try:
+            data = json.loads(_EXTENSIONS_INSTALLS_FILE.read_text())
+            for ext_id, ext_data in data.get("extensions", {}).items():
+                manifest = ext_data.get("manifest", {})
+                name = manifest.get("display_name") or manifest.get("name")
+                if name:
+                    install_names[ext_id] = name
+        except Exception:
+            pass
+
         enabled: dict[str, str] = {}
-        for json_file in settings_dir.glob("*.json"):
-            ext_id = json_file.stem  # filename without .json
+        for json_file in _EXTENSIONS_SETTINGS_DIR.glob("*.json"):
+            ext_id = json_file.stem
             try:
-                data = json.loads(json_file.read_text())
-                if data.get("isEnabled"):
-                    display = _EXTENSION_NAMES.get(ext_id, ext_id.split(".")[-1])
-                    enabled[ext_id] = display
+                if not json.loads(json_file.read_text()).get("isEnabled"):
+                    continue
             except Exception:
                 continue
+
+            # Priority: installations manifest > individual manifest.json > ID tail
+            if ext_id in install_names:
+                display = install_names[ext_id]
+            else:
+                display = None
+                manifest_path = _EXTENSIONS_DIR / ext_id / "manifest.json"
+                if manifest_path.exists():
+                    try:
+                        m = json.loads(manifest_path.read_text())
+                        display = m.get("display_name") or m.get("name")
+                    except Exception:
+                        pass
+                if not display:
+                    # Fall back to the last human-readable component of the ID
+                    parts = [p for p in ext_id.split(".") if not p.startswith("ant")]
+                    display = parts[-1] if parts else ext_id
+
+            enabled[ext_id] = display
+
+        # Also pick up MCP servers added via the Claude CLI (~/.claude.json).
+        # Recursively scan so any nesting structure (top-level, per-project, future layouts)
+        # is caught automatically without needing to know the schema in advance.
+        cli_config = Path(os.path.expanduser("~/.claude.json"))
+        try:
+            cli_data = json.loads(cli_config.read_text())
+
+            def _collect_mcp_servers(obj: object) -> None:
+                if not isinstance(obj, dict):
+                    return
+                for name in obj.get("mcpServers", {}):
+                    if name not in enabled:
+                        enabled[name] = name
+                for v in obj.values():
+                    _collect_mcp_servers(v)
+
+            _collect_mcp_servers(cli_data)
+        except Exception:
+            pass
+
         return enabled
 
     def _discover_trusted_dirs(self) -> list[str]:
@@ -319,6 +389,12 @@ class CloudExecutor:
             f"If your response will be lengthy (more than ~400 words), write the full "
             f"findings to {research_dir}/<YYYYMMDD-HHmmss>-result.md (use actual "
             f"timestamp) and return only a concise summary with the file path."
+        )
+        parts.append(
+            "When reading files: use the Read tool to get the text content. "
+            "If the file is HTML, strip all markup and work only with the readable text. "
+            "Never return raw file contents — always respond with your own understanding or summary of what the file contains. "
+            "Never use Bash to open files in a browser or app (no `open` command)."
         )
         return "\n".join(parts)
 

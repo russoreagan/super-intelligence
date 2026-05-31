@@ -12,6 +12,7 @@ import time
 from brain.emotion_hierarchy import core_of
 from brain.emotion_presets import strip_reaction_tags
 from brain.security import EGRESS_MODE
+from brain.settings import settings
 
 # Strip [mood:X]...[/mood] markup from display text — TTS handles its own expansion.
 _MOOD_MARKUP_RE = re.compile(r"\[mood:[^\]]+\](.*?)\[/mood\]", re.DOTALL | re.IGNORECASE)
@@ -184,9 +185,7 @@ class _TurnMixin:
                 if latest_speaker.get("identified") and latest_speaker.get("speaker_name"):
                     features["speaker_name"] = latest_speaker["speaker_name"]
                 elif not latest_speaker.get("identified"):
-                    from brain.settings import settings as _settings_ref
-
-                    _soft_threshold = float(_settings_ref.get("speaker_primary_soft_threshold"))
+                    _soft_threshold = float(settings.get("speaker_primary_soft_threshold"))
                     _match_score = latest_speaker.get("match_score", 0.0)
                     _closest = latest_speaker.get("closest_match") or ""
                     _primary = self.hippocampus._schema.primary_user_name()

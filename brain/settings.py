@@ -263,6 +263,16 @@ DEFAULTS: dict[str, float | int | str] = {
     # regardless of story count or per-story retry budget.
     # Can also be overridden per-session via BRAIN_RALPH_MAX_ATTEMPTS env var.
     "ralph_max_total_attempts": 12,
+    # ── Section: Cloud call timeouts (anti-hang) ─────────────────────────────
+    # Bound every Anthropic call so a stalled connection can't freeze a motor
+    # job at the strategic-plan step. read timeout bounds long generations;
+    # connect timeout catches dead sockets fast; retries are bounded.
+    "anthropic_timeout_s": 120.0,
+    "anthropic_connect_timeout_s": 10.0,
+    "anthropic_max_retries": 2,
+    # Hard ceiling on a single structured (tool-use) call, enforced via
+    # asyncio.wait_for on top of the client timeout (belt-and-suspenders).
+    "structured_call_timeout_s": 150.0,
     # ── Section 16: Resource Policy ───────────────────────────────────────────
     # Controls how much compute the brain is allowed to use for autonomous /
     # background work (self-initiated tasks, metacognition, DMN exploration).
@@ -397,6 +407,15 @@ DEFAULTS: dict[str, float | int | str] = {
     "self_disclosure_cooldown_turns": 8,            # min turns between disclosure prompts
     "self_disclosure_min_affection": 5,             # affection score floor for voice disclosure
     "self_disclosure_text_min_affection": 20,       # affection score floor for text disclosure
+    # ── Section: Performed Emotion Gate ──────────────────────────────────────
+    # Deliberate/performed emotion ([mood:X] markup, set_mood) is a playful,
+    # humor-leaning intimacy device. Gate WHEN the drafter is encouraged to use
+    # it by relationship depth + the user's mood. Off → preserve the old
+    # always-offered behaviour.
+    "enable_performed_emotion_gate": 1,
+    "performed_emotion_min_affection": 10,          # general warmth floor (neutral mood)
+    "performed_emotion_new_min_affection": 15,      # higher floor when familiarity is still "new"
+    "performed_emotion_cheerup_min_affection": 20,  # bar to attempt cheer-up / tension-break when user is down
     # ── Section: Style Synchrony ─────────────────────────────────────────────
     "enable_style_synchrony": 1,                    # 1 = track and inject user style register
     "style_ema_alpha_voice": 0.25,                  # EMA weight for voice style (per turn)

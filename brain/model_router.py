@@ -234,9 +234,22 @@ class ModelRouter:
     def _get_anthropic(self):
         if self._anthropic_client is None:
             import anthropic
+            import httpx
 
+            from brain.settings import settings as _settings
+
+            # Explicit timeout + bounded retries so NO cloud call can hang
+            # indefinitely. The SDK's default (600s) let a stalled connection
+            # freeze whole motor-cortex jobs at the strategic-plan call. A short
+            # connect timeout catches dead sockets fast; the read timeout bounds
+            # long generations. Tunable via settings.
+            _read_to = float(_settings.get("anthropic_timeout_s") or 120.0)
+            _connect_to = float(_settings.get("anthropic_connect_timeout_s") or 10.0)
+            _retries = int(_settings.get("anthropic_max_retries") or 2)
             self._anthropic_client = anthropic.AsyncAnthropic(
-                api_key=os.environ["ANTHROPIC_API_KEY"]
+                api_key=os.environ["ANTHROPIC_API_KEY"],
+                timeout=httpx.Timeout(_read_to, connect=_connect_to),
+                max_retries=_retries,
             )
         return self._anthropic_client
 
@@ -611,20 +624,27 @@ class ModelRouter:
                     "cache_control": {"type": "ephemeral"},
                 }
             ]
+            # Hard wait_for bound on top of the client timeout so a structured
+            # planning call can never outlive its budget AND never holds the
+            # cloud semaphore indefinitely (which would starve other cloud cells).
+            _struct_to = float(_s("structured_call_timeout_s") or 150.0)
             async with self._get_cloud_semaphore():
-                response = await client.messages.create(
-                    model=model_id,
-                    max_tokens=max_tokens,
-                    system=[
-                        {
-                            "type": "text",
-                            "text": system_prompt,
-                            "cache_control": {"type": "ephemeral"},
-                        }
-                    ],
-                    messages=anthropic_msgs,
-                    tools=tools,
-                    tool_choice={"type": "tool", "name": tool_name},
+                response = await asyncio.wait_for(
+                    client.messages.create(
+                        model=model_id,
+                        max_tokens=max_tokens,
+                        system=[
+                            {
+                                "type": "text",
+                                "text": system_prompt,
+                                "cache_control": {"type": "ephemeral"},
+                            }
+                        ],
+                        messages=anthropic_msgs,
+                        tools=tools,
+                        tool_choice={"type": "tool", "name": tool_name},
+                    ),
+                    timeout=_struct_to,
                 )
             usage = getattr(response, "usage", None)
             in_tok = getattr(usage, "input_tokens", 0) if usage else 0

@@ -1337,6 +1337,83 @@ class FrontalCluster:
             and entity_has_something
         )
 
+    @staticmethod
+    def _performed_emotion_gate(features: dict, affect: dict, user_content: str) -> tuple[bool, str]:
+        """Decide whether to ENCOURAGE performed/deliberate emotion this turn, and
+        with what flavour. Performed emotion ([mood:X], set_mood) is a playful,
+        humor-leaning intimacy device — it should track relationship depth and the
+        user's mood.
+
+        Returns (allowed, flavour) where flavour ∈ {"playful","cheer_up",
+        "tension_break",""}. Pure function — unit-testable.
+
+        Rules (per design):
+          - Tied to humor; enabled by higher familiarity and positive affection.
+          - Usually for a user in a good mood, but allowed to cheer someone up or
+            break tension — which requires an ESTABLISHED relationship to land.
+          - Definitely NOT with someone unfamiliar in a cool/guarded relationship.
+        """
+        from brain.metacognition import relationship_stage_from_content
+
+        if not settings.get("enable_performed_emotion_gate"):
+            return True, "playful"  # feature off → preserve old always-offered behaviour
+
+        stage = relationship_stage_from_content(user_content)
+        tier = stage.tier
+        aff = stage.affection
+        label = stage.affection_label
+        user_emo = (features.get("user_emotion") or "").lower()
+        user_tone = (features.get("user_tone_toward_ai") or "").lower()
+
+        # Hard block: an actively cool/guarded relationship — performed emotion
+        # reads as inappropriate or cutting-sarcastic, not playful.
+        if label in ("guarded", "cool"):
+            return False, ""
+        # Hard block: unfamiliar AND not warm yet (the explicit "definitely not"
+        # case: someone really unfamiliar with a cool relationship).
+        if tier == "new" and aff < int(settings.get("performed_emotion_new_min_affection")):
+            return False, ""
+
+        positive_emos = {
+            "happy", "playful", "amused", "excited", "content", "warm",
+            "affectionate", "grateful", "engaged", "curious", "joyful",
+        }
+        negative_emos = {
+            "sad", "anxious", "frustrated", "disappointed", "down", "stressed",
+            "overwhelmed", "distressed", "hurt", "lonely", "tired", "annoyed", "angry",
+        }
+        user_positive = user_emo in positive_emos or user_tone in (
+            "warm", "joking", "praising", "playful",
+        )
+        user_negative = user_emo in negative_emos or user_tone in (
+            "dismissive", "impatient", "insulting",
+        )
+
+        # Good mood → playful performance is the sweet spot.
+        if user_positive:
+            return True, "playful"
+
+        # Down/tense → only attempt to lift the mood if the relationship is
+        # established enough to land it. You don't joke a stranger out of a bad mood.
+        if user_negative:
+            if tier in ("acquainted", "close") and aff >= int(
+                settings.get("performed_emotion_cheerup_min_affection")
+            ):
+                if user_tone in ("impatient", "dismissive") or user_emo in (
+                    "frustrated", "annoyed", "angry",
+                ):
+                    return True, "tension_break"
+                return True, "cheer_up"
+            return False, ""
+
+        # Neutral mood → light playful performance when there's enough warmth.
+        if aff >= int(settings.get("performed_emotion_min_affection")) or tier in (
+            "acquainted", "close",
+        ):
+            return True, "playful"
+
+        return False, ""
+
     def _build_cached_context(self, memory: dict) -> str:
         """Per-session-stable drafter context — sent as a dedicated cached system block.
 
@@ -1582,38 +1659,56 @@ class FrontalCluster:
         if expressive:
             parts.append(f"Your expressive state — {expressive}")
 
-        # ── Emotional agency: can honour, soften, or deliberately contradict ──
-        # Only injected when the feature is enabled; kept brief so it doesn't
-        # crowd out the actual drafting instruction.
+        # ── Emotional agency: honour/soften (always) + performed emotion (gated) ──
+        # The genuine emotion is already conveyed above. THIS block offers the
+        # [mood:X] performance tool — a playful, humor-leaning device — and is
+        # gated on relationship depth + the user's mood (see _performed_emotion_gate).
         try:
-            from brain.emotion_presets import get_tag as _get_tag
             from brain.settings import settings as _s
 
             if _s.get("emotional_expression_enabled", 1):
-                _preset_tag = _get_tag(_emotion)
-                if _preset_tag is not None:
-                    # Direct match — tell the drafter it can use its own emotion OR any other
+                _perf_allowed, _perf_flavor = self._performed_emotion_gate(
+                    features, affect, _user_content
+                )
+                _AVAILABLE = (
+                    "happy, excited, laughing, proud, warm, playful, calm, curious, "
+                    "thoughtful, confident, sad, angry, anxious, embarrassed, frustrated, "
+                    "surprised, disappointed, sarcastic"
+                )
+                if _perf_allowed:
+                    _flavor_line = {
+                        "playful": (
+                            "Humor is on the table — you can perform an exaggerated or "
+                            "contrasting emotion for comic effect (mock-indignation, deadpan, "
+                            "theatrical delight). Lean into it when it lands."
+                        ),
+                        "cheer_up": (
+                            "They seem low — you may perform warmth or lightness to gently "
+                            "lift the mood. Keep it kind, never dismissive of how they feel."
+                        ),
+                        "tension_break": (
+                            "There's some tension — a light performed beat (mock-exasperation, "
+                            "a wink of humor) can defuse it. Read the room; abandon it if it "
+                            "won't land."
+                        ),
+                    }.get(_perf_flavor, "")
                     parts.append(
-                        f"Emotional expression: you are genuinely feeling {_emotion}. "
-                        f"The voice will reflect this automatically. "
-                        f"You can deliberately contradict or shift that feeling on specific sentences "
-                        f"for any expressive purpose — for example, sarcasm, humour, irony, emphasis, "
-                        f"or because the user asked you to perform a particular emotion. "
-                        f"Wrap the sentence: [mood:X]sentence[/mood] "
-                        f"(e.g. [mood:{_emotion}]...[/mood] to lean in, or [mood:calm] to soften). "
+                        f"Emotional expression: you are genuinely feeling {_emotion} (the voice "
+                        f"reflects this automatically). You may also PERFORM a different emotion "
+                        f"on specific sentences for expressive effect. {_flavor_line} "
+                        f"Wrap the sentence: [mood:X]sentence[/mood] (e.g. [mood:{_emotion}] to "
+                        f"lean in, [mood:calm] to soften). Available: {_AVAILABLE}. "
                         f"1–2 sentences max; skip if the response doesn't call for it."
                     )
+                    _mark_trace_flag("performed_emotion_offered", _perf_flavor)
                 else:
-                    # Emotion has no direct preset but the drafter can still use any available one
+                    # Relationship/mood don't support playful performance — keep
+                    # delivery sincere. The genuine emotion still shows through.
                     parts.append(
-                        f"Emotional expression: you are feeling {_emotion}. "
-                        f"You can give a specific sentence a different emotional delivery "
-                        f"for any expressive purpose — for example, sarcasm, humour, irony, emphasis, "
-                        f"or because the user asked you to perform a particular emotion. "
-                        f"Wrap the sentence: [mood:X]sentence[/mood]. "
-                        f"Available: happy, excited, laughing, proud, warm, playful, calm, "
-                        f"curious, thoughtful, confident, sad, angry, anxious, embarrassed, "
-                        f"frustrated, surprised, disappointed, sarcastic."
+                        f"Emotional expression: you are genuinely feeling {_emotion}; let it "
+                        f"show sincerely. Keep your delivery authentic this turn — no performed "
+                        f"or contrasting emotion (it wouldn't fit the relationship or their mood "
+                        f"right now). You may still soften with [mood:calm] if helpful."
                     )
         except Exception:
             pass

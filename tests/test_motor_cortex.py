@@ -578,25 +578,39 @@ class TestMotorAddAllowedPath:
 
 
 class TestCloudBinaryDiscovery:
+    # The discovery now tries `shutil.which("claude")` FIRST (PATH symlink), then
+    # falls back to globbing known Application Support layouts. Tests mock
+    # shutil.which → None so the glob fallback is exercised deterministically.
     def test_finds_binary_via_glob(self, tmp_path):
         from brain.clusters.cloud_executor import CloudExecutor
 
-        # Create a fake versioned binary path
         bin_dir = tmp_path / "claude-code" / "2.1.100" / "claude.app" / "Contents" / "MacOS"
         bin_dir.mkdir(parents=True)
         fake_bin = bin_dir / "claude"
         fake_bin.write_text("#!/bin/sh")
 
-        with patch("glob.glob", return_value=[str(fake_bin)]):
+        with patch("shutil.which", return_value=None), patch(
+            "glob.glob", return_value=[str(fake_bin)]
+        ):
             exe = CloudExecutor.__new__(CloudExecutor)
             result = exe._find_claude_binary()
 
         assert result == str(fake_bin)
 
+    def test_finds_binary_via_path_first(self):
+        # If `claude` is on PATH, that wins without touching the glob fallback.
+        from brain.clusters.cloud_executor import CloudExecutor
+
+        with patch("shutil.which", return_value="/usr/local/bin/claude"):
+            exe = CloudExecutor.__new__(CloudExecutor)
+            result = exe._find_claude_binary()
+
+        assert result == "/usr/local/bin/claude"
+
     def test_returns_none_when_not_found(self):
         from brain.clusters.cloud_executor import CloudExecutor
 
-        with patch("glob.glob", return_value=[]):
+        with patch("shutil.which", return_value=None), patch("glob.glob", return_value=[]):
             exe = CloudExecutor.__new__(CloudExecutor)
             result = exe._find_claude_binary()
 
@@ -613,12 +627,11 @@ class TestCloudBinaryDiscovery:
             p.write_text("")
             bins.append(str(p))
 
-        with patch("glob.glob", return_value=bins):
+        with patch("shutil.which", return_value=None), patch("glob.glob", return_value=bins):
             exe = CloudExecutor.__new__(CloudExecutor)
             result = exe._find_claude_binary()
 
-        # sorted() picks highest lexicographically — 2.1.9 is last alphabetically
-        # The real code does sorted()[-1]; verify it returns one of the paths
+        # Real code does sorted()[-1] across all patterns; verify it returns a path.
         assert result in bins
 
 
@@ -628,8 +641,12 @@ class TestCloudBinaryDiscovery:
 
 
 class TestCloudConnectorDiscovery:
-    def test_reads_enabled_extensions(self, tmp_path):
-        from brain.clusters.cloud_executor import CloudExecutor
+    def test_reads_enabled_extensions(self, tmp_path, monkeypatch):
+        # New behaviour: _discover_connectors reads enabled extensions from the
+        # settings dir, resolves display names from extensions-installations.json
+        # (no hard-coded list), and skips disabled ones. We point the module-level
+        # path constants at temp fixtures and call the REAL method.
+        import brain.clusters.cloud_executor as ce
 
         settings_dir = tmp_path / "Claude Extensions Settings"
         settings_dir.mkdir()
@@ -637,28 +654,46 @@ class TestCloudConnectorDiscovery:
         (settings_dir / "ant.dir.gh.ableton.ableton-knowledge.json").write_text(
             '{"isEnabled": false}'
         )
+        installs = tmp_path / "extensions-installations.json"
+        installs.write_text(
+            '{"extensions": {"ant.dir.ant.anthropic.imessage": '
+            '{"manifest": {"display_name": "iMessages"}}}}'
+        )
 
-        exe = CloudExecutor.__new__(CloudExecutor)
-        with (
-            patch("pathlib.Path.exists", return_value=True),
-            patch("pathlib.Path.glob", return_value=list(settings_dir.glob("*.json"))),
-        ):
-            # Call directly with real path
-            exe._connectors = {}
-            exe._trusted_dirs = []
-            for json_file in settings_dir.glob("*.json"):
-                import json as _json
+        monkeypatch.setattr(ce, "_EXTENSIONS_SETTINGS_DIR", settings_dir)
+        monkeypatch.setattr(ce, "_EXTENSIONS_INSTALLS_FILE", installs)
+        monkeypatch.setattr(ce, "_EXTENSIONS_DIR", tmp_path / "Claude Extensions")
 
-                ext_id = json_file.stem
-                data = _json.loads(json_file.read_text())
-                if data.get("isEnabled"):
-                    from brain.clusters.cloud_executor import _EXTENSION_NAMES
+        exe = ce.CloudExecutor.__new__(ce.CloudExecutor)
+        connectors = exe._discover_connectors()
 
-                    display = _EXTENSION_NAMES.get(ext_id, ext_id.split(".")[-1])
-                    exe._connectors[ext_id] = display
+        # Enabled extension picked up with its dynamic display name; disabled skipped.
+        assert connectors.get("ant.dir.ant.anthropic.imessage") == "iMessages"
+        assert "ant.dir.gh.ableton.ableton-knowledge" not in connectors
 
-        assert "ant.dir.ant.anthropic.imessage" in exe._connectors
-        assert "ant.dir.gh.ableton.ableton-knowledge" not in exe._connectors
+    def test_display_name_falls_back_to_id_tail(self, tmp_path, monkeypatch):
+        # With no installs manifest and no individual manifest.json, the display
+        # name falls back to the last non-"ant" component of the extension id.
+        import brain.clusters.cloud_executor as ce
+
+        settings_dir = tmp_path / "Claude Extensions Settings"
+        settings_dir.mkdir()
+        (settings_dir / "ant.dir.gh.vendor.cool-tool.json").write_text('{"isEnabled": true}')
+
+        monkeypatch.setattr(ce, "_EXTENSIONS_SETTINGS_DIR", settings_dir)
+        monkeypatch.setattr(ce, "_EXTENSIONS_INSTALLS_FILE", tmp_path / "missing.json")
+        monkeypatch.setattr(ce, "_EXTENSIONS_DIR", tmp_path / "Claude Extensions")
+
+        exe = ce.CloudExecutor.__new__(ce.CloudExecutor)
+        connectors = exe._discover_connectors()
+        assert connectors.get("ant.dir.gh.vendor.cool-tool") == "cool-tool"
+
+    def test_no_settings_dir_returns_empty(self, tmp_path, monkeypatch):
+        import brain.clusters.cloud_executor as ce
+
+        monkeypatch.setattr(ce, "_EXTENSIONS_SETTINGS_DIR", tmp_path / "does-not-exist")
+        exe = ce.CloudExecutor.__new__(ce.CloudExecutor)
+        assert exe._discover_connectors() == {}
 
     def test_connectors_summary_formats_list(self):
         exe = _make_cloud_executor()
@@ -1298,6 +1333,30 @@ class TestExecuteInternalJob:
                 return True
 
         return JobRouter()
+
+    async def test_hung_job_force_fails_not_freezes(self, tmp_path, monkeypatch):
+        """A hung step (e.g. a stalled strategic-plan call) must force-fail the job
+        via the HARD wall-clock bound, not freeze forever at 0/N steps."""
+        import brain.clusters.motor_cortex as mc
+
+        router = self._make_job_router({"steps": []}, [])
+        motor, _ = self._make_motor_for_job(tmp_path, router)
+
+        # Make the body hang; shrink the hard bound so the test is fast.
+        async def _hang(*a, **k):
+            await asyncio.sleep(30)
+
+        monkeypatch.setattr(motor, "_execute_internal_job_body", _hang)
+        monkeypatch.setattr(mc, "_JOB_TIMEOUT_S", 0.2)
+        monkeypatch.setattr(mc, "_JOB_HARD_TIMEOUT_GRACE_S", 0.0)
+
+        mock_emitter = MagicMock()
+        mock_emitter.emit_event = AsyncMock()
+        with patch("brain.ui.emitter.emitter", mock_emitter):
+            result = await motor.execute_internal_job("hang forever", "thang")
+
+        assert result["success"] is False
+        assert result.get("error") == "wall_clock_timeout"
 
     def _make_motor_for_job(self, tmp_path, router):
         from brain.bus import Bus

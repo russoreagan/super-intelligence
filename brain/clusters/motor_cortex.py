@@ -93,6 +93,11 @@ _PLANNER_RETRIES: int = int(
 _JOB_TIMEOUT_S: float = float(
     os.environ.get("BRAIN_JOB_TIMEOUT_SECONDS") or _brain_settings.get("job_timeout_seconds", 1800)
 )
+# Grace added on top of the internal poll-deadline before the HARD wait_for bound
+# force-kills the job. The internal deadline should normally stop the job first
+# (graceful); the hard bound only catches a genuinely hung await. Module-level so
+# tests can shrink it.
+_JOB_HARD_TIMEOUT_GRACE_S: float = 30.0
 
 # Single source of truth for every tool name the motor cortex can actually
 # dispatch (local _dispatch, cloud_action, lobe-bridge, ask_user, none). Used to
@@ -555,7 +560,38 @@ class MotorCortexCluster:
         # Mark as autonomous/background so cloud budget guards apply.
         self._router.enter_background_mode()
         try:
-            return await self._execute_internal_job_body(goal, turn_id, job_id, budget, emitter)
+            # HARD wall-clock bound on the ENTIRE job. The internal _job_deadline
+            # is only POLLED inside the story loop, so it can't interrupt a hung
+            # await (e.g. a stalled strategic-plan call before the loop even
+            # starts — the classic "frozen at 0/N steps" failure). wait_for makes
+            # the deadline real: a hang anywhere fails the job cleanly.
+            return await asyncio.wait_for(
+                self._execute_internal_job_body(goal, turn_id, job_id, budget, emitter),
+                timeout=_JOB_TIMEOUT_S + _JOB_HARD_TIMEOUT_GRACE_S,
+            )
+        except (TimeoutError, asyncio.TimeoutError):
+            logger.error(
+                "[InternalJob] HARD timeout (%.0fs) — job '%s' force-failed "
+                "(a cloud call hung past the deadline). Goal: %.80s",
+                _JOB_TIMEOUT_S,
+                job_id,
+                goal,
+            )
+            with contextlib.suppress(Exception):
+                await emitter.emit_event(
+                    {
+                        "type": "task_failed",
+                        "job_id": job_id,
+                        "reason": "wall_clock_timeout",
+                        "goal": goal[:200],
+                    }
+                )
+            return {
+                "success": False,
+                "goal": goal,
+                "summary": f"Job timed out after {_JOB_TIMEOUT_S:.0f}s (a step hung).",
+                "error": "wall_clock_timeout",
+            }
         finally:
             self._router.exit_background_mode()
 
