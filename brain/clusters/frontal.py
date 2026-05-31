@@ -1589,6 +1589,22 @@ class FrontalCluster:
                     f"(use if relevant, otherwise ignore):\n"
                     f"{fence('prefetched', chr(10).join(pre_lines), nonce)}"
                 )
+        if memory.get("open_threads"):
+            # Unfinished ideas the DMN has been working that bear on what the user
+            # is doing right now — surfaced at the moment they're relevant. Weave
+            # in naturally if it helps; ignore if it doesn't fit.
+            ot_lines = []
+            for item in memory["open_threads"]:
+                summ = item.get("summary", "")
+                last = (item.get("progress") or [""])[-1] if item.get("progress") else ""
+                if summ:
+                    ot_lines.append(f"- {summ}" + (f" (so far: {last[:160]})" if last else ""))
+            if ot_lines:
+                parts.append(
+                    f"Open threads of yours relevant here (raise one if it genuinely "
+                    f"helps, otherwise ignore):\n"
+                    f"{fence('open_threads', chr(10).join(ot_lines), nonce)}"
+                )
         if memory.get("vision"):
             parts.append(f"Image analysis:\n{fence('image_analysis', memory['vision'], nonce)}")
         # NOTE: self-model and user-model moved to _build_cached_context() — sent in full

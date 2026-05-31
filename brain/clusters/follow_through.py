@@ -203,6 +203,21 @@ class ResultReporter:
             max_tokens=200,
         )
         self._cell.set_router(router)
+        # Fallback: a short spoken summary is cheap and latency-tolerant, so if the
+        # local/RunPod model returns nothing usable (cold pod, degeneration), retry
+        # once on Haiku rather than persisting an empty/garbled summary into the job.
+        self._fallback_cell = IntegratorCell(
+            name="result_reporter_fallback",
+            cluster="frontal",
+            model="haiku",
+            system_prompt=_REPORTER_SYSTEM,
+            topics=[],
+            max_calls_per_turn=1,
+            timeout_seconds=15.0,
+            locality="cloud",
+            max_tokens=200,
+        )
+        self._fallback_cell.set_router(router)
 
     async def report(self, job_summary: dict, turn_id: str) -> str:
         """Return a 1-2 sentence summary suitable for TTS. Empty string on failure."""
@@ -220,22 +235,33 @@ class ResultReporter:
             lines.append(f"Step {i + 1} [{tool}] {reason}\n  → {out}")
         transcript = "\n".join(lines) if lines else "(no steps executed)"
 
-        self._cell.reset_turn(turn_id)
+        prompt = (
+            f"Goal: {goal}\n"
+            f"Success: {success}\n\n"
+            f"What I did:\n{transcript}\n\n"
+            "Now write the spoken summary."
+        )
+
+        def _clean(text: str | None) -> str:
+            return (text or "").strip().strip('"').strip()
+
+        # Primary: local/RunPod model.
         try:
-            text = await self._cell.call(
-                [
-                    {
-                        "role": "user",
-                        "content": (
-                            f"Goal: {goal}\n"
-                            f"Success: {success}\n\n"
-                            f"What I did:\n{transcript}\n\n"
-                            "Now write the spoken summary."
-                        ),
-                    }
-                ]
-            )
+            self._cell.reset_turn(turn_id)
+            text = _clean(await self._cell.call([{"role": "user", "content": prompt}]))
         except Exception as e:
-            logger.debug("[ResultReporter] failed: %s", e)
+            logger.debug("[ResultReporter] primary (runpod) failed: %s", e)
+            text = ""
+
+        if text:
+            return text
+
+        # Fallback: Haiku. The router already strips ChatML tokens, so an empty
+        # result here means the local model produced nothing usable.
+        try:
+            self._fallback_cell.reset_turn(f"{turn_id}_fallback")
+            logger.info("[ResultReporter] primary empty — falling back to Haiku")
+            return _clean(await self._fallback_cell.call([{"role": "user", "content": prompt}]))
+        except Exception as e:
+            logger.debug("[ResultReporter] Haiku fallback failed: %s", e)
             return ""
-        return (text or "").strip().strip('"')

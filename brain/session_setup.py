@@ -343,6 +343,13 @@ class _SetupMixin:
 
         await self.dmn.start(self.session_id)
 
+        # One-shot: fold any legacy self.md "## Open Questions" into the unified
+        # ledger so open questions live in one place (no-op if none exist).
+        try:
+            await self.dmn.migrate_legacy_open_questions()
+        except Exception as _mig_err:
+            logger.warning("[DMN] Legacy open-questions migration skipped: %s", _mig_err)
+
         try:
             _oq_text = self.hippocampus._schema.read("open_questions.md")
             if _oq_text:

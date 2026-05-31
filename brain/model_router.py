@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import time
 
 logger = logging.getLogger(__name__)
@@ -59,6 +60,30 @@ OLLAMA_KEEP_ALIVE = os.environ.get("OLLAMA_KEEP_ALIVE", "30m")
 # up to ~3 min under memory pressure; this is deliberately generous because warmup
 # is a one-time cost that makes every subsequent planner call fast.
 OLLAMA_MODEL_LOAD_TIMEOUT = float(os.environ.get("OLLAMA_MODEL_LOAD_TIMEOUT_SECONDS", "240"))
+
+# ChatML special tokens. Qwen2.5 (the default local/RunPod model) emits <|im_end|>
+# to close a message. Without it set as a stop sequence, a degraded or
+# memory-pressured model can run past end-of-turn and emit <|im_start|> over and
+# over until num_predict is hit — corrupting planner JSON and spoken summaries
+# (observed in failed job records). We set these as stop tokens on the /api/chat
+# payload AND strip them defensively from any returned text.
+_CHATML_STOP = ["<|im_end|>", "<|endoftext|>"]
+_CHATML_TOKEN_RE = re.compile(r"<\|(?:im_start|im_end|im_sep|endoftext)\|>")
+
+
+def _strip_chatml(text: str) -> str:
+    """Remove leaked ChatML/control tokens and trailing tool-call scaffolding.
+
+    Defense in depth (A2): even with stop tokens set, a degraded model can leak
+    special tokens; we never want those persisted into job records or memory.
+    """
+    if not text:
+        return text
+    cleaned = _CHATML_TOKEN_RE.sub("", text)
+    # Some templates emit a dangling <tool_call> block after the answer when the
+    # model fails to close it — drop everything from the first such marker on.
+    cleaned = re.sub(r"<tool_call>.*$", "", cleaned, flags=re.DOTALL)
+    return cleaned.strip()
 
 
 # Sonnet 4.6 and Haiku 4.5 pricing ($/1M tokens: input, output, cache_read).
@@ -838,6 +863,9 @@ class ModelRouter:
         if temperature is not None:
             options["temperature"] = float(temperature)
 
+        # Stop on the ChatML end-of-message token so the model halts at end-of-turn
+        # instead of degenerating into repeated <|im_start|> until num_predict.
+        options["stop"] = _CHATML_STOP
         payload: dict = {
             "model": model_name,
             "messages": [{"role": "system", "content": system_prompt}] + flat_messages,
@@ -858,7 +886,7 @@ class ModelRouter:
         data = r.json()
         in_tok = int(data.get("prompt_eval_count", 0))
         out_tok = int(data.get("eval_count", 0))
-        return data["message"]["content"], in_tok, out_tok
+        return _strip_chatml(data["message"]["content"]), in_tok, out_tok
 
     async def embed(self, text: str) -> list[float] | None:
         """

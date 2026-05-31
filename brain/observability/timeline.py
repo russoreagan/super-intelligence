@@ -602,8 +602,14 @@ class ObservabilityLayer:
         angle: str | None,
         count: int,
         neuromod: dict | None = None,
+        outcome: dict | None = None,
     ) -> None:
-        """Create a standalone Langfuse trace for one DMN internal thought."""
+        """Create a standalone Langfuse trace for one DMN internal thought.
+
+        `outcome` records what the thought actually DID — opened/advanced/concluded
+        a thread, deferred a conclusion to the user, spoke, or nothing — so the
+        loop's follow-through is visible in the trace rather than just the input.
+        """
         if not self._langfuse:
             return
         try:
@@ -614,6 +620,7 @@ class ObservabilityLayer:
                     name="dmn-thought",
                     as_type="span",
                     input={"thought": thought},
+                    output=(outcome if outcome else {"action": "none"}),
                     metadata={
                         "direction": direction,
                         "angle": angle or "",

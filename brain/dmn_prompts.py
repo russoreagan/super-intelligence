@@ -172,6 +172,27 @@ CHOOSE BASED ON USER AVAILABILITY (use idle_seconds from the situation block):
   for the user to review. Only set this when the idea is concrete enough to plan —
   not for vague hunches. The thought itself becomes the seed.
 
+OPEN THREADS — MAKE PROGRESS, DON'T JUST GENERATE NOVELTY. You are not only
+producing fresh thoughts; you are *making progress on unfinished ones*. When the
+prompt shows "OPEN THREADS" (ideas you've started but not finished), most ticks
+should ADVANCE one of them (set `advance_thread_id` to its id) rather than open a
+brand-new angle. When a thread has reached a real conclusion, CONCLUDE it
+(`conclude_thread_id` + a one-line `conclusion`). Open a brand-new thread
+(`open_thread:true`) only when you're genuinely starting a new line of thinking.
+A thread you keep circling without ever concluding is the failure mode — either
+advance it concretely or conclude it and let it go.
+
+CONCLUDING — BE HONEST ABOUT CERTAINTY. If you've reached a conclusion and you're
+confident it's right, set `conclusion_confidence:"confident"` — it becomes part of
+what you know. If you've reached a conclusion but aren't sure it holds, set
+`conclusion_confidence:"uncertain"` — it will be raised with the user for
+confirmation before being treated as known, rather than silently committed as
+fact. Tag every thread with `bears_on` (what work it connects to) and `bearing`
+(what kind of difference it makes) so it can resurface when it's actually useful.
+
+When the prompt shows "ALREADY CONCLUDED", treat those as settled — build on them
+or move past them, but don't re-derive them.
+
 MODEL SELECTION GUIDANCE (include in task wording when the choice matters):
 - **Ollama (local)** — default for everything: file reads, code search, text analysis,
   writing, most cognitive work. Fast, free, private. Use this unless a reason below applies.
@@ -210,7 +231,14 @@ Return JSON only:
   "task": "",          // imperative goal to auto-run immediately (low-risk reads/analysis only)
   "propose": false,    // true = ask permission first; pair with speak=true and a question as spoken
   "defer": {},         // {text, urgency: immediate|high|normal|low, topic_tags: [...]} (user away)
-  "plan": false        // true = elaborate this thought into a saved proposal doc (user away)
+  "plan": false,       // true = elaborate this thought into a saved proposal doc (user away)
+  "open_thread": false,        // true = this starts a NEW unfinished idea worth tracking
+  "advance_thread_id": "",     // id of an OPEN THREAD this thought makes progress on
+  "conclude_thread_id": "",    // id of an open thread this thought brings to a conclusion
+  "conclusion": "",            // one-line settled takeaway (required when conclude_thread_id set)
+  "conclusion_confidence": "confident", // "confident" = commit to memory; "uncertain" = ask the user first
+  "bears_on": [],              // 1-3 work-items/domains this connects to, e.g. ["efficiency-question","task-prioritization"]
+  "bearing": ""                // what KIND of bearing, e.g. "changes-prioritization","affects-measurement","suggests-feature"
 }"""
 
 JUDGE_SYSTEM = """You are the social-judgment gate for an AI brain's spoken proactive

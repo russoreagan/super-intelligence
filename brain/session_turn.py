@@ -381,6 +381,17 @@ class _TurnMixin:
                 relationship=_relationship,
             )
 
+            # Conversational ledger intents (B5): manual project assignment, or
+            # confirming/correcting a conclusion the DMN raised. Best-effort and
+            # non-blocking — never holds up the response.
+            try:
+                _ledger_evt = await self.dmn.process_user_message_for_ledger(user_input)
+                if _ledger_evt:
+                    memory["ledger_event"] = _ledger_evt
+                    logger.info("[DMN] Ledger intent handled: %s", _ledger_evt.get("action"))
+            except Exception as _li_err:
+                logger.debug("[DMN] Ledger-intent handling skipped: %s", _li_err)
+
             ABSENCE_THRESHOLD_S = 300.0
             absence_s = time.time() - self._last_turn_ts
             if absence_s >= ABSENCE_THRESHOLD_S and self.dmn.has_deferred_content():
@@ -441,6 +452,32 @@ class _TurnMixin:
                                 embedding_fn=self.router.embed,
                             )
                         )
+
+            # ── Live-work thread routing (B8/B9) ──────────────────────────────
+            # Surface open threads relevant to what the user is working on now,
+            # volume gated by the AI's focus + the user's load. Injected like
+            # prefetched context; closed-out after the response (note_threads_used).
+            try:
+                self.dmn.observe_user_turn(features, user_input)
+                _budget = self.dmn.compute_routing_budget()
+                _activity = " ".join(
+                    str(x) for x in (
+                        user_input,
+                        features.get("topic_summary", ""),
+                        " ".join(features.get("entities", []) or []),
+                        getattr(self.dmn, "_last_projects", ""),
+                    )
+                )
+                _routed = self.dmn.route_threads_for_turn(_activity, budget=_budget)
+                if _routed:
+                    memory["open_threads"] = [
+                        {"id": t.id, "summary": t.summary, "progress": t.progress[-1:]}
+                        for t in _routed
+                    ]
+                    self._routed_threads = _routed
+                    logger.info("[DMN] Routed %d open thread(s) into the turn", len(_routed))
+            except Exception as _rt_err:
+                logger.debug("[DMN] Thread routing skipped: %s", _rt_err)
 
         # ── Per-turn speaker context injection ────────────────────────────────
         _speaker = features.get("speaker_name", "")
@@ -829,6 +866,15 @@ class _TurnMixin:
 
         if self.dmn:
             self.dmn.note_last_response(final)
+            # Close the loop (B8): a routed thread the response actually engaged is
+            # marked resolved-by-use; ignored ones decay their routing weight (B9).
+            _routed = getattr(self, "_routed_threads", None)
+            if _routed:
+                try:
+                    await self.dmn.note_threads_used(_routed, final)
+                except Exception as _nt_err:
+                    logger.debug("[DMN] note_threads_used skipped: %s", _nt_err)
+                self._routed_threads = []
             self.dmn.resume()
 
         self._last_turn_ts = time.time()
