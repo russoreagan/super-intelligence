@@ -231,14 +231,20 @@ class MotorCortexCluster:
         # every eval, without helping tool selection. Domain knowledge belongs in
         # the actual work step, not the tool-router; SkillSelector handles dynamic
         # injection where it's genuinely needed.
+        # CLOUD: tactical per-step planner runs on Haiku. Previously runpod-code
+        # (local Ollama), which made every job depend on a healthy remote pod —
+        # a wedged/slow pod (524s) failed every job at the planning step. Haiku
+        # is cheap, fast, and reliable; cost is bounded by background-mode budgets
+        # + the job rate limiter (see execute_internal_job). Runs in background
+        # mode so bg_cloud_token_budget + daily USD cap both apply.
         self._planner = IntegratorCell(
             name="tool_planner",
             cluster=CLUSTER,
-            model="runpod-code",
+            model="haiku",
             system_prompt=planner_system,
             topics=["temporal.features"],
             max_calls_per_turn=2,
-            timeout_seconds=_CELL_TIMEOUT_S,
+            timeout_seconds=90.0,  # cloud: no cold-load headroom needed
         )
         self._planner.set_router(router)
 
@@ -271,14 +277,16 @@ class MotorCortexCluster:
         self._task_skills = TaskSkillSelector(router)
 
         # Criteria checker: per-story acceptance criteria verification in Ralph-mode jobs.
+        # CLOUD (Haiku): moved off local runpod-code for the same reliability reason
+        # as the tactical planner — a wedged pod must not fail acceptance checks.
         self._criteria_checker = IntegratorCell(
             name="criteria_checker",
             cluster=CLUSTER,
-            model="runpod-code",
+            model="haiku",
             system_prompt=_CRITERIA_CHECK_SYSTEM,
             topics=[],
             max_calls_per_turn=1,
-            timeout_seconds=_CELL_TIMEOUT_S,
+            timeout_seconds=60.0,
         )
         self._criteria_checker.set_router(router)
 
@@ -295,6 +303,15 @@ class MotorCortexCluster:
             timeout_seconds=60.0,
         )
         self._verifier.set_router(router)
+
+        # ── Job rate-limiting state (cost guard for autonomous motor jobs) ──────
+        # Now that planning runs on cloud (Haiku/Sonnet), an unbounded number of
+        # autonomous jobs could run up cost. These cap how many jobs can run per
+        # session, per rolling window, and concurrently. Cloud spend is ALSO
+        # bounded independently by bg_cloud_token_budget + cloud_daily_usd_budget.
+        self._job_start_times: list[float] = []  # monotonic timestamps, pruned per check
+        self._session_job_count: int = 0
+        self._active_job_count: int = 0
 
         # Switches (~6 total; 2 inhibitory ≈ 33% — acceptable for small action cluster)
         # Modulator profiles per plan /Users/russ/.claude/plans/and-what-affects-these-memoized-parnas.md.
@@ -537,6 +554,26 @@ class MotorCortexCluster:
 
         return last_result
 
+    def _check_job_rate_limit(self) -> str | None:
+        """Return a human-readable decline reason if a new motor job would exceed
+        any configured cap, else None. Caps: concurrent, rolling-window, session."""
+        import time as _t
+
+        now = _t.monotonic()
+        window_s = float(_brain_settings.get("motor_job_window_s") or 3600.0)
+        max_window = int(_brain_settings.get("motor_max_jobs_per_window") or 10)
+        max_session = int(_brain_settings.get("motor_max_jobs_per_session") or 30)
+        max_concurrent = int(_brain_settings.get("motor_max_concurrent_jobs") or 1)
+        # Prune timestamps outside the rolling window
+        self._job_start_times = [t for t in self._job_start_times if now - t <= window_s]
+        if self._active_job_count >= max_concurrent:
+            return f"a job is already running (max concurrent {max_concurrent})"
+        if len(self._job_start_times) >= max_window:
+            return f"rate limit reached ({max_window} jobs per {int(window_s / 60)} min)"
+        if self._session_job_count >= max_session:
+            return f"session limit reached ({max_session} jobs)"
+        return None
+
     # ── Internal-directive entry point ─────────────────────────────────────
     async def execute_internal_job(self, goal: str, turn_id: str, budget: int = 0) -> dict:
         """Run a self-directed multi-step job: strategic plan upfront, then
@@ -555,6 +592,31 @@ class MotorCortexCluster:
         from brain.ui.emitter import emitter
 
         job_id = f"job_{turn_id}"
+
+        # ── Rate limiter (cost guard) ───────────────────────────────────────────
+        # Decline cleanly BEFORE any work / cloud spend if a cap is hit.
+        _decline = self._check_job_rate_limit()
+        if _decline:
+            logger.warning("[InternalJob] Declined job (%s): %.80s", _decline, goal)
+            with contextlib.suppress(Exception):
+                await emitter.emit_event(
+                    {"type": "task_declined", "job_id": job_id, "reason": _decline,
+                     "goal": goal[:200]}
+                )
+            return {
+                "success": False,
+                "goal": goal,
+                "summary": f"Job declined — {_decline}.",
+                "error": "rate_limited",
+            }
+
+        # Accepted: record for the limiter and mark one job active.
+        import time as _t
+
+        self._job_start_times.append(_t.monotonic())
+        self._session_job_count += 1
+        self._active_job_count += 1
+
         self.reset_turn(job_id)
 
         # Mark as autonomous/background so cloud budget guards apply.
@@ -594,6 +656,7 @@ class MotorCortexCluster:
             }
         finally:
             self._router.exit_background_mode()
+            self._active_job_count = max(0, self._active_job_count - 1)
 
     async def _execute_internal_job_body(
         self, goal: str, turn_id: str, job_id: str, budget: int, emitter
@@ -629,17 +692,10 @@ class MotorCortexCluster:
             }
         )
 
-        # Step 0: warm up the LOCAL tactical planner model (qwen2.5:14b).
-        # Strategic planner is now cloud (Sonnet) — no warmup needed for it.
-        # The tactical planner (_planner cell) still uses local-code, so it
-        # benefits from this pre-load on the first story of each job.
-        await emitter.emit_event({"type": "task_warming_up", "job_id": job_id})
-        try:
-            warmed = await self._router.warmup_local("runpod-code")
-            if warmed:
-                logger.info("[InternalJob] Tactical planner model warm — proceeding to plan")
-        except Exception as e:
-            logger.debug("[InternalJob] Warmup step errored (continuing): %s", e)
+        # Both planners are now cloud (Sonnet strategic + Haiku tactical), so there
+        # is no local model to pre-load — the old runpod-code warmup is gone. It
+        # was also actively harmful when the pod was wedged: it hit the failing
+        # endpoint on every job before any work began.
 
         # Resume check: if a prior run of THIS job (same deterministic job_id) was
         # interrupted mid-flight, pick up where it left off instead of re-planning

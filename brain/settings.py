@@ -263,6 +263,13 @@ DEFAULTS: dict[str, float | int | str] = {
     # regardless of story count or per-story retry budget.
     # Can also be overridden per-session via BRAIN_RALPH_MAX_ATTEMPTS env var.
     "ralph_max_total_attempts": 12,
+    # Motor-cortex job rate limits (cost guard now that planning runs on cloud).
+    # Cloud spend is also bounded by bg_cloud_token_budget + cloud_daily_usd_budget;
+    # these additionally cap how MANY autonomous jobs can run.
+    "motor_max_concurrent_jobs": 1,      # only one autonomous job at a time
+    "motor_max_jobs_per_window": 10,     # ≤ this many job starts per window
+    "motor_job_window_s": 3600.0,        # rolling window = 1 hour
+    "motor_max_jobs_per_session": 30,    # absolute ceiling per process lifetime
     # ── Section: Cloud call timeouts (anti-hang) ─────────────────────────────
     # Bound every Anthropic call so a stalled connection can't freeze a motor
     # job at the strategic-plan step. read timeout bounds long generations;

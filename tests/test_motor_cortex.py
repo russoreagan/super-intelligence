@@ -1365,6 +1365,51 @@ class TestExecuteInternalJob:
         bus = Bus()
         return MotorCortexCluster(bus, router, allowed_paths=[str(tmp_path)]), bus
 
+    def test_planning_cells_are_cloud_not_runpod(self, tmp_path):
+        """Tactical planner + criteria checker must be on cloud (Haiku), not the
+        fragile local runpod path, so jobs don't depend on pod health."""
+        router = self._make_job_router({"steps": []}, [])
+        motor, _ = self._make_motor_for_job(tmp_path, router)
+        assert motor._planner.model == "haiku"
+        assert motor._criteria_checker.model == "haiku"
+        # Strategic + verifier stay on the stronger cloud model.
+        assert motor._strategic_planner.model == "sonnet"
+        assert motor._verifier.model == "sonnet"
+
+    async def test_job_declined_when_over_concurrency(self, tmp_path, monkeypatch):
+        router = self._make_job_router({"steps": []}, [])
+        motor, _ = self._make_motor_for_job(tmp_path, router)
+        # Simulate a job already running.
+        motor._active_job_count = 1
+        from brain.settings import settings
+        monkeypatch.setitem(settings._data, "motor_max_concurrent_jobs", 1)
+
+        mock_emitter = MagicMock()
+        mock_emitter.emit_event = AsyncMock()
+        with patch("brain.ui.emitter.emitter", mock_emitter):
+            result = await motor.execute_internal_job("do a thing", "t1")
+        assert result["success"] is False
+        assert result["error"] == "rate_limited"
+
+    async def test_job_declined_when_session_cap_hit(self, tmp_path, monkeypatch):
+        router = self._make_job_router({"steps": []}, [])
+        motor, _ = self._make_motor_for_job(tmp_path, router)
+        from brain.settings import settings
+        monkeypatch.setitem(settings._data, "motor_max_jobs_per_session", 2)
+        motor._session_job_count = 2  # already at cap
+
+        mock_emitter = MagicMock()
+        mock_emitter.emit_event = AsyncMock()
+        with patch("brain.ui.emitter.emitter", mock_emitter):
+            result = await motor.execute_internal_job("another", "t2")
+        assert result["error"] == "rate_limited"
+        assert "session limit" in result["summary"]
+
+    def test_rate_limit_check_passes_when_under_caps(self, tmp_path):
+        router = self._make_job_router({"steps": []}, [])
+        motor, _ = self._make_motor_for_job(tmp_path, router)
+        assert motor._check_job_rate_limit() is None  # fresh motor, nothing running
+
     async def test_single_step_job_reads_file(self, tmp_path):
         """Happy path: strategic plan → one read_file step → success."""
         f = tmp_path / "data.txt"

@@ -219,8 +219,10 @@ class TestExecuteJobResume:
         assert "task_resumed" not in events
         assert "task_start" in events  # normal planning path emitted task_start
 
-    async def test_warmup_called_before_planning(self, tmp_path):
-        """The warmup step fires once per job before planning."""
+    async def test_no_local_warmup_now_that_planning_is_cloud(self, tmp_path):
+        """Both planners are cloud (Sonnet strategic + Haiku tactical), so the job
+        must NOT call warmup_local — the old runpod-code pre-load is gone (it hit
+        the failing pod on every job). The job still completes normally."""
         f = tmp_path / "f.txt"
         f.write_text("hi")
 
@@ -230,7 +232,7 @@ class TestExecuteJobResume:
             async def call_structured(self, model_key, system_prompt, messages, **kwargs):
                 return {
                     "stories": [
-                        {"id": "US-001", "description": "x", "expected_tool": "?",
+                        {"id": "US-001", "description": "read f", "expected_tool": "read_file",
                          "acceptance_criteria": []}
                     ],
                     "complexity": "low",
@@ -258,48 +260,7 @@ class TestExecuteJobResume:
         mock_emitter = MagicMock()
         mock_emitter.emit_event = AsyncMock()
         with patch("brain.ui.emitter.emitter", mock_emitter):
-            await motor.execute_internal_job("do nothing", "t_warm")
+            result = await motor.execute_internal_job("read f", "t_warm")
 
-        assert warmups["n"] == 1
-        events = [c.args[0].get("type") for c in mock_emitter.emit_event.call_args_list]
-        assert "task_warming_up" in events
-
-    async def test_warmup_failure_is_nonfatal(self, tmp_path):
-        """If warmup raises, the job still proceeds."""
-        f = tmp_path / "f.txt"
-        f.write_text("hi")
-
-        class R:
-            async def call_structured(self, model_key, system_prompt, messages, **kwargs):
-                return {
-                    "stories": [
-                        {"id": "US-001", "description": "read f", "expected_tool": "read_file",
-                         "acceptance_criteria": []}
-                    ],
-                    "complexity": "low",
-                }
-
-            async def call(self, model_key, system_prompt, messages, **kwargs):
-                return json.dumps({"tool": "read_file", "args": {"path": str(f)}, "reason": "r"})
-
-            async def embed(self, text):
-                return [0.0] * 768
-
-            async def warmup_local(self, *a, **k):
-                raise RuntimeError("ollama unreachable")
-
-            def enter_background_mode(self) -> None:
-                pass
-
-            def exit_background_mode(self) -> None:
-                pass
-
-        motor = self._make_motor(tmp_path, R())
-        motor.job_store.get_resumable = MagicMock(return_value=None)
-
-        mock_emitter = MagicMock()
-        mock_emitter.emit_event = AsyncMock()
-        with patch("brain.ui.emitter.emitter", mock_emitter):
-            result = await motor.execute_internal_job("read f", "t_warmfail")
-
-        assert "job_id" in result  # did not crash
+        assert warmups["n"] == 0  # no local warmup at all
+        assert "job_id" in result  # job still ran to completion
