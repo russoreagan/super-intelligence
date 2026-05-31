@@ -229,7 +229,7 @@ class RunPodManager:
         try:
             r = await self._get_http().post(
                 f"{host}/api/generate",
-                json={"model": model, "keep_alive": "30m"},
+                json={"model": model, "prompt": "", "keep_alive": "30m"},
                 timeout=300.0,
             )
             r.raise_for_status()
