@@ -719,6 +719,26 @@ class TestCloudConnectorDiscovery:
         assert "mcp__weather" in pats  # nested (per-project) servers caught too
         assert "mcp__*" not in pats  # the old no-op glob is gone
 
+    def test_read_path_excludes_write_tools(self, monkeypatch):
+        """Read tasks must NOT grant Write/Edit/Bash; confirmed write tasks do.
+        MCP servers are granted in both paths (read access by intent)."""
+        from brain.clusters.cloud_executor import CloudExecutor
+
+        exe = CloudExecutor.__new__(CloudExecutor)
+        monkeypatch.setattr(exe, "_mcp_allow_patterns", lambda: ["mcp__scite"])
+
+        read = exe._allowed_tools(write_allowed=False).split(",")
+        write = exe._allowed_tools(write_allowed=True).split(",")
+
+        for w in ("Write", "Edit", "Bash", "NotebookEdit"):
+            assert w not in read  # read path can't mutate
+        assert "Read" in read and "WebSearch" in read
+        assert "mcp__scite" in read  # connectors readable on the read path
+
+        for w in ("Write", "Edit", "Bash"):
+            assert w in write  # confirmed write path gets write tools
+        assert "mcp__scite" in write
+
     def test_connectors_summary_formats_list(self):
         exe = _make_cloud_executor()
         exe._connectors = {"a": "Gmail", "b": "Calendar"}

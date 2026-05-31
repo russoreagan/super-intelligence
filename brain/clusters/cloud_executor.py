@@ -231,6 +231,26 @@ class CloudExecutor:
 
         return enabled
 
+    # Built-in tool split. READ tools are always granted; WRITE-capable tools
+    # are added only on a user-confirmed write action.
+    _READ_TOOLS = ("WebSearch", "WebFetch", "Read", "LS", "Grep", "Glob")
+    _WRITE_TOOLS = ("Write", "Edit", "Bash", "NotebookEdit")
+
+    def _allowed_tools(self, write_allowed: bool) -> str:
+        """Comma-separated --allowedTools value.
+
+        Read tools + every connected MCP server are always granted (the entity
+        can freely use any connector you've set up in Claude). Write-capable
+        built-ins are included ONLY when write_allowed — i.e. after a per-action
+        user confirmation — so a plain read task can't mutate the filesystem or
+        shell out.
+        """
+        tools = list(self._READ_TOOLS)
+        if write_allowed:
+            tools += list(self._WRITE_TOOLS)
+        tools += self._mcp_allow_patterns()
+        return ",".join(tools)
+
     def _mcp_allow_patterns(self) -> list[str]:
         """Server-level --allowedTools grants for connected MCP servers.
 
@@ -312,20 +332,27 @@ class CloudExecutor:
     # ── Main execution paths ───────────────────────────────────────────────────
 
     async def execute_read(self, task: str, context_facts: list[str], turn_id: str = "") -> dict:
-        """Execute immediately — read-only, no confirmation needed."""
-        return await self._run(task, context_facts, turn_id=turn_id)
+        """Execute immediately — READ-ONLY. The subprocess is granted only read
+        tools (web/file reads + MCP servers); write-capable built-ins (Write,
+        Edit, Bash) are withheld so a read task can't mutate anything."""
+        return await self._run(task, context_facts, turn_id=turn_id, write_allowed=False)
 
     async def execute_pending(self, turn_id: str = "") -> dict | None:
-        """Execute the stored write action after user has confirmed."""
+        """Execute the stored write action AFTER the user has confirmed it
+        (case-by-case). Only here does the subprocess get write-capable tools."""
         if not self._pending:
             return None
         action = self._pending
         self._pending = None
-        return await self._run(action["task"], action.get("context_facts", []), turn_id=turn_id)
+        return await self._run(
+            action["task"], action.get("context_facts", []), turn_id=turn_id, write_allowed=True
+        )
 
     # ── Subprocess call ────────────────────────────────────────────────────────
 
-    async def _run(self, task: str, context_facts: list[str], turn_id: str = "") -> dict:
+    async def _run(
+        self, task: str, context_facts: list[str], turn_id: str = "", write_allowed: bool = False
+    ) -> dict:
         if not self._claude_bin:
             return {
                 "tool": "cloud_action",
@@ -342,21 +369,7 @@ class CloudExecutor:
         for d in self._trusted_dirs:
             add_dir_args.extend(["--add-dir", d])
 
-        # Build the allowed-tools list. Standard built-ins, plus an explicit
-        # server-level grant for each connected MCP server so the entity has
-        # read access to its tools (scite, etc.) without an interactive prompt
-        # it can't answer headlessly.
-        #
-        # NOTE: the old ",mcp__*" was a no-op — --allowedTools does NOT treat
-        # "mcp__*" as a wildcard, so MCP tool calls sat pending approval forever.
-        # We grant each server at "mcp__<server>" level (covers all its tools).
-        # This is READ access by intent; write actions are independently gated
-        # upstream by the motor cortex's is_write confirmation path before any
-        # cloud_action dispatches here.
-        allowed_tools = "WebSearch,WebFetch,Bash,Read,Write,Edit,LS"
-        mcp_grants = self._mcp_allow_patterns()
-        if mcp_grants:
-            allowed_tools += "," + ",".join(mcp_grants)
+        allowed_tools = self._allowed_tools(write_allowed)
 
         try:
             proc = await asyncio.create_subprocess_exec(
