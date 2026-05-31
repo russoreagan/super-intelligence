@@ -222,13 +222,29 @@ class RunPodManager:
         settings.update({"runpod_host": local_host})
         logger.info("[RunPod] runpod_host → local Ollama (%s)", local_host)
 
+    async def _warmup_model(self, host: str) -> None:
+        """Preload the inference model into VRAM before cells start hitting it."""
+        model = os.environ.get("RUNPOD_MODEL", "qwen2.5:32b")
+        logger.info("[RunPod] Warming up %s into VRAM...", model)
+        try:
+            r = await self._get_http().post(
+                f"{host}/api/generate",
+                json={"model": model, "keep_alive": "30m"},
+                timeout=300.0,
+            )
+            r.raise_for_status()
+            logger.info("[RunPod] Model %s warm and resident", model)
+        except Exception as e:
+            logger.warning("[RunPod] Warmup failed (non-fatal — cells will cold-load): %s", e)
+
     async def _activate_pod(self, pod_id: str) -> bool:
-        """Wait for pod, pull models, apply host. Returns True on full success."""
+        """Wait for pod, pull models, warm up, apply host. Returns True on full success."""
         if not await self._wait_until_ready(pod_id):
             return False
         host = self._pod_host(pod_id)
         if not await self._pull_models(host):
             return False
+        await self._warmup_model(host)
         self._apply_host(pod_id)
         return True
 
