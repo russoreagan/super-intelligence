@@ -18,6 +18,7 @@ from brain.neuron import StatefulSwitch, SwitchNeuron
 from brain.observability.decisions import decisions
 from brain.predictor import should_bypass_gating
 from brain.second_brain.store import Episode, EpisodicStore, SchemaStore
+from brain.settings import settings
 from brain.security import sanitize_fact
 from brain.utils import safe_json_parse
 from brain.wiring import Wiring

@@ -37,8 +37,9 @@ _PRICE_CEILING = 0.50        # max $/hr — hard cutoff
 _MIGRATE_THRESHOLD = 0.20    # log a suggestion if new option is 20%+ cheaper
 
 _POLL_S = 5.0
-_READY_TIMEOUT_S = 300.0     # 5 min max for pod to come up
-_WATCHER_INTERVAL_S = 1800.0 # check for better options every 30 min
+_READY_TIMEOUT_S = 300.0      # 5 min max for pod to come up
+_WATCHER_INTERVAL_S = 1800.0  # check for better options every 30 min (pod running)
+_CAPACITY_POLL_S = 300.0      # check for capacity every 5 min (no pod, on local fallback)
 
 
 class RunPodManager:
@@ -166,6 +167,13 @@ class RunPodManager:
         settings.update({"runpod_host": host})
         logger.info("[RunPod] runpod_host → %s", host)
 
+    def _clear_host(self) -> None:
+        """Point runpod_host at local Ollama so cells don't hit a dead pod URL."""
+        from brain.settings import settings
+        local_host = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+        settings.update({"runpod_host": local_host})
+        logger.info("[RunPod] runpod_host → local Ollama (%s)", local_host)
+
     # ── Public API ────────────────────────────────────────────────────────────
 
     async def start(self) -> bool:
@@ -176,6 +184,7 @@ class RunPodManager:
         """
         if not self._api_key:
             logger.info("[RunPod] No API key — skipping pod management")
+            self._clear_host()
             return False
 
         try:
@@ -190,16 +199,17 @@ class RunPodManager:
                     self._watcher_task = asyncio.create_task(self._watch())
                     return True
                 if existing.get("desiredStatus") in ("EXITED", "STOPPED"):
-                    await self._resume_pod(pod_id)
-                    self._pod_id = pod_id
-                    if await self._wait_until_ready(pod_id):
-                        self._apply_host(pod_id)
-                        self._spawn_watchdog(pod_id)
-                        self._watcher_task = asyncio.create_task(self._watch())
-                        return True
-                    return False
+                    try:
+                        await self._resume_pod(pod_id)
+                        self._pod_id = pod_id
+                        if await self._wait_until_ready(pod_id):
+                            self._apply_host(pod_id)
+                            self._watcher_task = asyncio.create_task(self._watch())
+                            return True
+                    except Exception as e:
+                        logger.warning("[RunPod] Resume failed (%s) — trying best available GPU", e)
 
-            # No existing pod — pick best GPU and create one
+            # No existing pod or resume failed — pick best available GPU and create one
             gpu_types = await self._fetch_gpu_types()
             ranked = self._rank_gpus(gpu_types)
             if not ranked:
@@ -222,11 +232,15 @@ class RunPodManager:
                     await self._stop_pod(pod_id)
                     self._pod_id = None
 
-            logger.warning("[RunPod] All GPU options failed — using local Ollama")
+            logger.warning("[RunPod] All GPU options failed — using local Ollama, will retry every %.0fs", _CAPACITY_POLL_S)
+            self._clear_host()
+            self._watcher_task = asyncio.create_task(self._watch())
             return False
 
         except Exception as e:
-            logger.warning("[RunPod] Startup failed — using local Ollama: %s", e)
+            logger.warning("[RunPod] Startup failed — using local Ollama, will retry every %.0fs: %s", _CAPACITY_POLL_S, e)
+            self._clear_host()
+            self._watcher_task = asyncio.create_task(self._watch())
             return False
 
     async def _stop_pod(self, pod_id: str) -> None:
@@ -251,25 +265,45 @@ class RunPodManager:
     # ── Background watcher ────────────────────────────────────────────────────
 
     async def _watch(self) -> None:
-        """Log when a meaningfully cheaper GPU option becomes available."""
+        """
+        When no pod is running: poll every 5 min for available capacity and
+        spin one up as soon as a GPU comes free.
+        When a pod is running: log if a meaningfully cheaper option appears.
+        """
         while True:
-            await asyncio.sleep(_WATCHER_INTERVAL_S)
+            interval = _WATCHER_INTERVAL_S if self._pod_id else _CAPACITY_POLL_S
+            await asyncio.sleep(interval)
             try:
                 gpu_types = await self._fetch_gpu_types()
                 ranked = self._rank_gpus(gpu_types)
                 if not ranked:
                     continue
-                best = ranked[0]
-                if (self._current_price and
-                        best["_price"] < self._current_price * (1 - _MIGRATE_THRESHOLD)):
-                    logger.info(
-                        "[RunPod] Better GPU available: %s (%dGB, $%.2f/hr vs current $%.2f/hr)"
-                        " — restart the app to switch.",
-                        best["displayName"], best["memoryInGb"],
-                        best["_price"], self._current_price,
-                    )
+
+                if self._pod_id is None:
+                    # No pod running — try to claim the best available GPU
+                    logger.info("[RunPod] Capacity check — trying %s (%dGB, $%.2f/hr)",
+                                ranked[0]["displayName"], ranked[0]["memoryInGb"], ranked[0]["_price"])
+                    for gpu in ranked:
+                        pod_id = await self._create_pod(gpu["id"])
+                        if pod_id:
+                            self._pod_id = pod_id
+                            self._current_price = gpu["_price"]
+                            if await self._wait_until_ready(pod_id):
+                                self._apply_host(pod_id)
+                                logger.info("[RunPod] Pod acquired mid-session — cells switching from local to RunPod")
+                                break
+                            await self._stop_pod(pod_id)
+                            self._pod_id = None
                 else:
-                    logger.debug("[RunPod] Watcher: current GPU still optimal (best available: %s $%.2f/hr)",
-                                 best["displayName"], best["_price"])
+                    # Pod running — log if something meaningfully cheaper appeared
+                    best = ranked[0]
+                    if (self._current_price and
+                            best["_price"] < self._current_price * (1 - _MIGRATE_THRESHOLD)):
+                        logger.info(
+                            "[RunPod] Better GPU available: %s (%dGB, $%.2f/hr vs current $%.2f/hr)"
+                            " — restart the app to switch.",
+                            best["displayName"], best["memoryInGb"],
+                            best["_price"], self._current_price,
+                        )
             except Exception as e:
                 logger.debug("[RunPod] Watcher error: %s", e)
