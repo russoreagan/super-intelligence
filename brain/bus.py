@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import math
 import time
 from collections import deque
 from collections.abc import Callable
@@ -235,6 +236,10 @@ class Bus:
         self._conc_context: dict[str, deque] = {}
         self._zero_since: dict[str, float] = {}
         self._quiet_onset: set[str] = set()
+        # C4 (colony-features-ii): previous (level, ts) sample per topic + last slope,
+        # so quorum can fire on a fast RISE, not just an absolute level.
+        self._conc_prev: dict[str, tuple[float, float]] = {}
+        self._conc_slope: dict[str, float] = {}
         # ── Phase 3/4: pending primer nudges + recruitment levels ─────────────
         self._pending_primers: dict[str, float] = {}
         self._recruitment: dict[str, float] = {}
@@ -326,7 +331,14 @@ class Bus:
         except Exception:
             mag = float(msg.confidence)
         _, cap, *_ = self._conc_settings()
-        self._concentration[topic] = min(cap, self._concentration.get(topic, 0.0) + max(0.0, mag))
+        new_level = min(cap, self._concentration.get(topic, 0.0) + max(0.0, mag))
+        # C4: slope = rise in concentration per second since the previous sample.
+        prev = self._conc_prev.get(topic)
+        if prev is not None:
+            dt = max(1e-6, now - prev[1])
+            self._conc_slope[topic] = (new_level - prev[0]) / dt
+        self._conc_prev[topic] = (new_level, now)
+        self._concentration[topic] = new_level
         ring = self._conc_context.setdefault(topic, deque(maxlen=8))
         tags = msg.payload.get("tags") or msg.payload.get("entities") or []
         ring.append({"tags": list(tags), "neuromod": self.neuromod.snapshot(), "ts": now})
@@ -343,12 +355,23 @@ class Bus:
         self.concentration(topic, now)  # refresh state
         return self._topic_status.get(topic, CONC_UNARMED)
 
+    def concentration_slope(self, topic: str) -> float:
+        """C4: most recent rise-rate (concentration units per second) for a topic.
+        Positive = rising fast; 0 when untracked or no prior sample."""
+        return self._conc_slope.get(topic, 0.0)
+
     def quorum(self, topic: str, now: float | None = None) -> bool:
-        """ARMED and concentration ≥ quorum threshold → collective-action trigger."""
+        """ARMED and (concentration ≥ level threshold OR rising fast). The slope term
+        (C4) lets a fast-rising signal trip quorum before it reaches the level bar —
+        a rapidly-escalating threat mobilises sooner than a slow accumulation."""
         level = self.concentration(topic, now)
         if self._topic_status.get(topic) != CONC_ARMED:
             return False
-        return level >= float(settings.get("colony_quorum_threshold", 1.5))
+        if level >= float(settings.get("colony_quorum_threshold", 1.5)):
+            return True
+        return self.concentration_slope(topic) >= float(
+            settings.get("colony_quorum_slope_threshold", 0.20)
+        )
 
     def is_quiet(self, topic: str, now: float | None = None) -> bool:
         """True only for an ARMED→QUIET topic — never from cold start (UNARMED)."""
@@ -417,6 +440,40 @@ class Bus:
         self._recruitment[cluster] = max(
             0.0, min(1.0, self._recruitment.get(cluster, 0.0) + float(amount))
         )
+
+    def satisfy(self, cluster: str, amount: float, now: float | None = None) -> None:
+        """C3 (colony-features-ii): a met need actively LOWERS recruitment, rather
+        than waiting for passive decay. Converts Phase-7 from a response-only
+        (start) threshold into a composite start+stop threshold — the satisfaction
+        signal that minimises task-switching (Lynch & Dornhaus, 2024). `amount` in
+        [0,1] is the fraction of current recruitment to release (× colony_satisfy_rate)."""
+        if not settings.get("colony_features", 0):
+            return
+        now = time.time() if now is None else now
+        self._decay_recruit(cluster, now)
+        cur = self._recruitment.get(cluster, 0.0)
+        rate = float(settings.get("colony_satisfy_rate", 0.5))
+        self._recruitment[cluster] = max(0.0, cur * (1.0 - max(0.0, min(1.0, amount)) * rate))
+
+    def allocate_recruitment(self, needs: dict[str, float], now: float | None = None) -> None:
+        """N2 (colony-features-ii): distribute a bounded recruitment budget across
+        COMPETING cluster needs via a Boltzmann (softmax) allocation — the multi-task
+        generalization of the response-threshold model (Lynch & Pavlic, 2024). The
+        total spent scales with the strongest need (so zero need → no recruitment),
+        and softmax sharpens the split toward the most-needed cluster. No-op when off."""
+        if not settings.get("colony_features", 0) or not needs:
+            return
+        items = list(needs.items())
+        mx = max(v for _, v in items)
+        if mx <= 1e-6:
+            return  # no real need → no mobilization
+        temp = max(1e-6, float(settings.get("colony_recruit_softmax_temp", 0.5)))
+        budget = float(settings.get("colony_recruit_budget", 1.0))
+        exps = [math.exp(v / temp) for _, v in items]
+        total = sum(exps) or 1.0
+        saturation = min(1.0, mx)  # spend in proportion to the strongest need
+        for (cluster, _), e in zip(items, exps, strict=False):
+            self.recruit(cluster, budget * (e / total) * saturation, now)
 
     def recruitment_level(self, cluster: str, now: float | None = None) -> float:
         """Current decayed recruitment level for a cluster in [0, 1] (0 when off)."""

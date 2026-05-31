@@ -199,15 +199,17 @@ def spread_threshold(
     switch_name: str,
     spread: float | None = None,
 ) -> float:
-    """Phase 5 (colony features): deterministic, persona-seeded threshold jitter.
+    """DEPRECATED (Phase 5) — DO NOT WIRE INTO CLUSTER CONSTRUCTION.
 
-    Response-threshold *diversity* is what turns a uniform population into one with
-    division of labor (guards vs. soldiers vs. bystanders given the SAME signal —
-    the bee result). This returns `base` shifted by a deterministic per-(persona,
-    switch) offset within ±spread, so different personas get distinct "who-fires-
-    first" distributions while staying fully reproducible in eval (no RNG).
-
-    Returns `base` unchanged when colony features are off (strict no-op).
+    The idea was deterministic, persona-seeded *response-threshold* jitter to create
+    division of labor. The ant task-allocation literature is blunt that this does
+    NOT help — response-threshold variance performs no better than (often worse than)
+    random unless the units are GENUINELY differentiated, structurally or sensorily
+    (Lynch, Wilson & Dornhaus, 2024). This system's units are not, so threshold
+    jitter would be pure noise that breaks the model's assumptions. The real
+    division-of-labor axis is *perceptual* differentiation — see `sensory_gain`
+    below, which supersedes this. Kept inert for reference and back-compat; it
+    still returns `base` unchanged when colony features are off.
     """
     try:
         from brain.settings import settings as _settings
@@ -224,6 +226,43 @@ def spread_threshold(
     frac = int(digest[:8], 16) / 0xFFFFFFFF  # [0, 1]
     offset = (frac * 2.0 - 1.0) * spread  # [-spread, +spread]
     return max(0.05, min(0.95, base + offset))
+
+
+# N3 (colony-features-ii): per-persona sensory-filter specialization. Real ant
+# division of labor comes substantially from workers differing in their ABILITY TO
+# DETECT task stimuli (odorant-receptor expression), not in response threshold
+# (Caminer, Libbrecht & Majoe, 2023). We model that as a deterministic, per-persona
+# sensitivity GAIN over feature CATEGORIES: a persona perceives some categories of
+# input more strongly (lower effective detection bar), others less. This is a genuine
+# specialization axis (unlike arbitrary threshold jitter), so it sidesteps the
+# Lynch/Dornhaus worse-than-random trap. Default leans are gentle and centred at 1.0.
+_PERSONA_SENSORY_LEANS: dict[str, dict[str, float]] = {
+    # category → signed lean in [-1, 1]; scaled by colony_sensory_gain_span.
+    "the_empath": {"affective": +1.0, "analytic": -0.5},
+    "the_analyst": {"analytic": +1.0, "affective": -0.5},
+    "the_visionary": {"novelty": +1.0, "analytic": +0.3},
+    "the_poet": {"affective": +0.7, "novelty": +0.7},
+    "the_sage": {"threat": -0.3, "affective": +0.3, "analytic": +0.3},
+}
+
+
+def sensory_gain(persona_seed: str, category: str) -> float:
+    """Per-persona input-sensitivity multiplier for a feature `category`
+    (e.g. "affective", "analytic", "novelty", "threat"). >1.0 = this persona
+    detects the category more readily (its category-tagged switches see a boosted
+    input level before the threshold test); <1.0 = less readily. Returns 1.0
+    (identity — strict no-op) when colony features or the sensory filter are off,
+    or for unknown personas/categories."""
+    try:
+        from brain.settings import settings as _settings
+
+        if not _settings.get("colony_features", 0) or not _settings.get("colony_sensory_filter", 0):
+            return 1.0
+        span = float(_settings.get("colony_sensory_gain_span", 0.30))
+    except Exception:
+        return 1.0
+    lean = _PERSONA_SENSORY_LEANS.get(persona_seed, {}).get(category, 0.0)
+    return max(0.1, 1.0 + lean * span)
 
 
 def make_threshold_gate(

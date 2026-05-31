@@ -177,10 +177,20 @@ class HypothalamusCluster:
 
         er_scale = settings.get("emotional_reactivity_scale")
 
+        # N3 (colony-features-ii): per-persona SENSORY-FILTER gains. A persona
+        # perceives some categories of input more strongly than others (the real
+        # division-of-labor axis — differential detection, not response threshold).
+        # Identity (1.0) unless colony_features AND colony_sensory_filter are on.
+        from brain.neuron import sensory_gain
+
+        _persona = str(settings.get("persona_name", ""))
+        _affect_gain = sensory_gain(_persona, "affective")
+        _novelty_gain = sensory_gain(_persona, "novelty")
+
         # DA: valence signal (reward / positive engagement)
-        valence_delta = (sentiment * settings.get("sentiment_DA_weight") * er_scale) - (
-            hostility * settings.get("hostility_DA_weight")
-        )
+        valence_delta = (
+            sentiment * settings.get("sentiment_DA_weight") * er_scale * _affect_gain
+        ) - (hostility * settings.get("hostility_DA_weight"))
         nm.add("DA", valence_delta * turns)
 
         # GABA: threat / caution signal (inhibitory)
@@ -189,11 +199,11 @@ class HypothalamusCluster:
         elif hostility > settings.get("hostility_GABA_threshold_med"):
             nm.add("GABA", settings.get("hostility_GABA_increment_med") * turns)
 
-        # ACh: novelty / attention signal
+        # ACh: novelty / attention signal (scaled by the persona's novelty sensitivity)
         novelty_delta = (
             surprise * settings.get("surprise_ACh_weight")
             + salience * settings.get("salience_ACh_weight")
-        ) * er_scale
+        ) * er_scale * _novelty_gain
         if self._satiation_inhibitor.state > 0.5:
             novelty_delta *= 1.0 - self._satiation_inhibitor.state * settings.get(
                 "satiation_inhibition_factor"
