@@ -75,6 +75,16 @@ class _SetupMixin:
         from brain.pns import PNS
 
         self.bus = Bus()
+        # Phase 2 (colony features): prototype concentration tracking on ONE
+        # high-stakes channel — threat — using the GABA dimension of affect.state
+        # (subtract a baseline so only genuinely elevated threat accumulates).
+        from brain.settings import settings as _colony_s
+
+        if _colony_s.get("colony_features", 0):
+            self.bus.track_concentration(
+                "affect.state",
+                lambda p: max(0.0, float((p.get("neuromod") or {}).get("GABA", 0.0)) - 0.2),
+            )
         self.obs = ObservabilityLayer(self.session_id)
         (
             self._eval_logger,

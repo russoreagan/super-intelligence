@@ -1577,6 +1577,13 @@ class DefaultModeNetwork:
         if self._thought_count % 4 == 0 and self._hippocampus is not None and not self.prefetched:
             await self._run_step("prefetcher", self._run_prefetcher(turn_id))
 
+        # Phase 6 (colony features): silence-triggered recall. When a topic that was
+        # active goes quiet (a fresh ARMED→QUIET edge), recall what surrounded it
+        # while it was hot — hippocampal replay during quiescence. Idle-gated and
+        # debounced (fire-once per quiet onset).
+        if settings.get("colony_features", 0) and self._hippocampus is not None:
+            await self._run_step("silence_recall", self._run_silence_recall(turn_id))
+
         self._last_tick_latency = time.time() - t_start
         self._note_tick_outcome(model_ok)
 
@@ -2192,6 +2199,60 @@ class DefaultModeNetwork:
             self._bus.neuromod.add("ACh", -(ach - ACH_FLOOR) * DECAY_RATE)
         if glu > GLU_FLOOR:
             self._bus.neuromod.add("Glu", -(glu - GLU_FLOOR) * DECAY_RATE)
+
+    async def _run_silence_recall(self, turn_id: str) -> None:
+        """Phase 6: on a fresh ARMED→QUIET edge for a tracked topic, recall the
+        memories associated with its prior high-concentration window. Reuses the
+        existing hippocampus.recall path; surfaces the result as a monologue seed
+        and lets recall_affect recolor chemistry."""
+        # Only during genuine lulls — never mid-exchange.
+        try:
+            if get_idle_seconds() < 30:
+                return
+        except Exception:
+            pass
+        for topic in self._bus.tracked_topics():
+            if not self._bus.consume_quiet_onset(topic):
+                continue  # no fresh quiet onset (debounced)
+            # Build a recall cue from the associated-context ring captured while hot.
+            seen: set[str] = set()
+            cue_tags: list[str] = []
+            for entry in self._bus.concentration_context(topic):
+                for tag in entry.get("tags") or []:
+                    if tag not in seen:
+                        seen.add(tag)
+                        cue_tags.append(str(tag))
+            query = " ".join(cue_tags) if cue_tags else topic
+            try:
+                result = await self._hippocampus.recall(
+                    query=query,
+                    entities=cue_tags[:5],
+                    turn_id=turn_id + "_silence",
+                    embedding_fn=self._router.embed,
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.debug("[Background reflection] Silence recall failed for %r: %s", topic, e)
+                continue
+            # recall_affect nudges chemistry (warmth/recognition or residual threat).
+            for ch, delta in (result.get("recall_affect") or {}).items():
+                with contextlib.suppress(Exception):
+                    self._bus.neuromod.add(ch, float(delta))
+            episodes = (result.get("episodes") or "")[:400]
+            if episodes:
+                self._memory_seed = (
+                    f"A quiet moment brought back something about [{', '.join(cue_tags[:3])}]: "
+                    f"{episodes}"
+                )
+            from brain.observability.decisions import decisions as _decisions
+
+            _decisions.log(
+                "silence_triggered_recall",
+                turn_id=turn_id,
+                topic=topic,
+                cue=query[:80],
+                had_episodes=bool(episodes),
+            )
+            break  # one silence recall per tick
 
     async def _run_prefetcher(self, turn_id: str) -> None:
         self._prefetcher_cell.reset_turn(turn_id + "_pre")

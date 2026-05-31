@@ -431,6 +431,46 @@ DEFAULTS: dict[str, float | int | str] = {
     "style_entity_formality_baseline": 0.25,        # entity's natural formality (0=casual, 1=formal)
     "style_entity_verbosity_baseline": 0.45,        # entity's natural verbosity (0=terse, 1=expansive)
     "style_min_turns_for_injection": 3,             # turns tracked before injecting style note
+    # ── Section: Graded plasticity (correctness fix — NOT colony-gated) ───────
+    # The legacy all-or-nothing `defuse_path` skip (gaba_skip_threshold_high) is
+    # biologically wrong: real plasticity is graded and neuromodulator-scaled
+    # (three-factor learning rules), and aversive/stress states follow an
+    # inverted-U (moderate arousal ENHANCES encoding; only extreme stress
+    # impairs). When on, a per-turn plasticity factor keyed to arousal/emotional
+    # intensity (not valence sign) multiplies the Hebbian delta, and the binary
+    # skip becomes a graded high-stress dampener. Ships on its own flag,
+    # independent of colony_features. Default 0 → flip to 1 after eval validates.
+    "graded_plasticity": 0,                         # 1 = graded per-turn plasticity; 0 = legacy binary skip
+    "plasticity_turn_min": 0.40,                    # floor of the per-turn plasticity multiplier
+    "plasticity_turn_max": 1.30,                    # ceiling of the per-turn plasticity multiplier
+    "plasticity_arousal_weight": 0.50,              # ACh+NE+surprise+|DA swing| → plasticity gain
+    "plasticity_intensity_weight": 0.40,            # |valence| (either sign) → plasticity gain
+    "plasticity_stress_knee": 0.70,                 # CORT/GABA above this = inverted-U descending limb
+    "plasticity_stress_damp": 0.60,                 # max multiplicative dampening at extreme stress
+    # ── Section: Colony / non-brain (superorganism) capabilities ─────────────
+    # Single master toggle for the bio-inspired colony layer (Phases 2–8 of the
+    # colony-features plan). 0 = every colony behaviour is a strict no-op and the
+    # brain behaves exactly as before. Per-feature tuning knobs below take effect
+    # only when this is on. The three feedback loops (concentration, recruitment,
+    # chemistry self-feedback) are also independently observable in the decisions
+    # log so they can be validated in increasing-risk order.
+    "colony_features": 0,                           # 1 = enable colony layer; 0 = off (no-op)
+    # Phase 2 — topic concentration / quorum / silence (threat channel first)
+    "colony_conc_half_life_s": 45.0,                # exponential half-life of topic concentration
+    "colony_conc_cap": 10.0,                        # max accumulated concentration (chatty-topic bound)
+    "colony_arm_threshold": 1.00,                   # concentration must cross this to become ARMED
+    "colony_quorum_threshold": 1.50,                # ARMED + concentration ≥ this → quorum
+    "colony_silence_floor": 0.15,                   # ARMED concentration decays below this → QUIET
+    "colony_silence_disarm_s": 600.0,               # zero-dwell this long → disarm back to UNARMED
+    # Phase 3 — releaser + primer in one message
+    "colony_primer_gain": 0.30,                     # scales Message.primer nudges into hormonal channels
+    # Phase 4/7 — recruitment amplification + mobilization cascade
+    "colony_recruit_gain": 0.40,                    # scales need_level → recruitment level
+    # Phase 5 — threshold diversity (division of labor)
+    "colony_threshold_spread": 0.08,                # ± bound on deterministic per-switch threshold jitter
+    # Phase 8 — aggregate-state neuromodulation feedback (highest-risk loop)
+    "colony_state_feedback_gain": 0.02,             # tiny gain on prior-turn aggregate → neuromod nudges
+    "colony_state_feedback_clamp": 0.05,            # max total feedback contribution per channel per turn
 }
 
 

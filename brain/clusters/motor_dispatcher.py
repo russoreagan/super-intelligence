@@ -180,7 +180,7 @@ class ToolDispatcher:
                 return f"[error] Not a directory: {resolved}"
             matches = list(p.rglob(pattern)) if recursive else list(p.glob(pattern))
             if not matches:
-                return "(no files matched)"
+                return "[empty] no files matched"
             lines = [str(m.relative_to(p)) for m in sorted(matches)[:200]]
             result = "\n".join(lines)
             if len(matches) > 200:

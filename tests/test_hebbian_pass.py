@@ -216,8 +216,11 @@ def test_should_skip_hebbian_near_zero_outcome(monkeypatch, tmp_path):
 
 
 def test_should_skip_hebbian_defuse_path(monkeypatch, tmp_path):
+    from brain.settings import settings
     from brain.sleep import SleepConsolidation
 
+    # Legacy binary-skip behaviour applies only when graded_plasticity is OFF.
+    monkeypatch.setitem(settings._data, "graded_plasticity", 0)
     w = _isolated_wiring(monkeypatch, tmp_path)
     sc = SleepConsolidation(_StubRouter(), _StubSchema(), _StubEpisodic(), wiring=w)
     trace = _make_trace(GABA=0.7)
@@ -465,3 +468,102 @@ def test_skip_threshold_lowered_to_002(monkeypatch, tmp_path):
     skip_zero, reason = sc._should_skip_hebbian(trace, outcome=0.01)
     assert skip_zero is True
     assert "near_zero" in reason
+
+
+# ── Phase 1: graded plasticity (correctness fix) ──────────────────────────────
+
+
+def _sc(monkeypatch, tmp_path):
+    from brain.sleep import SleepConsolidation
+
+    w = _isolated_wiring(monkeypatch, tmp_path)
+    return SleepConsolidation(_StubRouter(), _StubSchema(), _StubEpisodic(), wiring=w)
+
+
+def test_turn_plasticity_identity_when_flag_off(monkeypatch, tmp_path):
+    """graded_plasticity off → _turn_plasticity is exactly 1.0 (legacy preserved)."""
+    from brain.settings import settings
+
+    monkeypatch.setitem(settings._data, "graded_plasticity", 0)
+    sc = _sc(monkeypatch, tmp_path)
+    trace = _make_trace(DA=0.95, prior_DA=0.1, ACh=0.9, emotion="happy")
+    assert sc._hebbian._turn_plasticity(trace) == 1.0
+
+
+def test_turn_plasticity_arousal_direction(monkeypatch, tmp_path):
+    """High-arousal turn learns harder than a flat low-arousal turn."""
+    from brain.settings import settings
+
+    monkeypatch.setitem(settings._data, "graded_plasticity", 1)
+    sc = _sc(monkeypatch, tmp_path)
+    aroused = _make_trace(DA=0.95, prior_DA=0.40, ACh=0.80, emotion="neutral")
+    flat = _make_trace(DA=0.30, prior_DA=0.30, ACh=0.05, emotion="neutral")
+    p_aroused = sc._hebbian._turn_plasticity(aroused)
+    p_flat = sc._hebbian._turn_plasticity(flat)
+    assert p_aroused > 1.0 > p_flat
+
+
+def test_turn_plasticity_inverted_u_high_stress_dampens(monkeypatch, tmp_path):
+    """Extreme stress (above the knee) dampens plasticity vs. moderate stress."""
+    from brain.settings import settings
+
+    monkeypatch.setitem(settings._data, "graded_plasticity", 1)
+    sc = _sc(monkeypatch, tmp_path)
+    moderate = _make_trace(DA=0.5, prior_DA=0.5, ACh=0.3, GABA=0.30, emotion="neutral")
+    extreme = _make_trace(DA=0.5, prior_DA=0.5, ACh=0.3, GABA=0.95, emotion="neutral")
+    assert sc._hebbian._turn_plasticity(extreme) < sc._hebbian._turn_plasticity(moderate)
+
+
+def test_turn_plasticity_intense_aversive_still_learns(monkeypatch, tmp_path):
+    """Emotionally intense aversive turns imprint hard (not zeroed) below the knee —
+    the fear-learning case the old binary skip got wrong."""
+    from brain.settings import settings
+
+    monkeypatch.setitem(settings._data, "graded_plasticity", 1)
+    sc = _sc(monkeypatch, tmp_path)
+    # high arousal + intense negative emotion, stress below the knee
+    intense_neg = _make_trace(DA=0.7, prior_DA=0.3, ACh=0.7, GABA=0.4, emotion="anger")
+    assert sc._hebbian._turn_plasticity(intense_neg) > 1.0
+
+
+def test_turn_plasticity_bounds(monkeypatch, tmp_path):
+    """Always clamped to [plasticity_turn_min, plasticity_turn_max]."""
+    from brain.settings import settings
+
+    monkeypatch.setitem(settings._data, "graded_plasticity", 1)
+    # Tighten the bounds so the clamp is exercised deterministically regardless
+    # of how a given emotion label resolves to valence.
+    monkeypatch.setitem(settings._data, "plasticity_turn_min", 0.50)
+    monkeypatch.setitem(settings._data, "plasticity_turn_max", 1.05)
+    sc = _sc(monkeypatch, tmp_path)
+    huge = _make_trace(DA=1.0, prior_DA=0.0, ACh=1.0, emotion="happy")  # would exceed 1.05
+    tiny = _make_trace(DA=0.5, prior_DA=0.5, ACh=0.0, GABA=1.0, emotion="neutral")  # would fall below 0.5
+    assert sc._hebbian._turn_plasticity(huge) == pytest.approx(1.05)
+    assert sc._hebbian._turn_plasticity(tiny) == pytest.approx(0.50)
+
+
+def test_graded_plasticity_disables_binary_defuse_skip(monkeypatch, tmp_path):
+    """With graded_plasticity on, the all-or-nothing defuse_path skip no longer fires —
+    high-stress turns are dampened (not skipped)."""
+    from brain.settings import settings
+
+    monkeypatch.setitem(settings._data, "graded_plasticity", 1)
+    sc = _sc(monkeypatch, tmp_path)
+    trace = _make_trace(GABA=0.7)
+    trace.draft_scores = [{"draft_id": "defuse", "overall": 0.9, "selected": True}]
+    skip, reason = sc._should_skip_hebbian(trace, outcome=0.5)
+    assert skip is False  # graded dampener handles it instead of skipping
+
+
+def test_graded_plasticity_keeps_hard_skips(monkeypatch, tmp_path):
+    """near_zero and dissociated_emotion remain hard skips even when graded is on."""
+    from brain.settings import settings
+
+    monkeypatch.setitem(settings._data, "graded_plasticity", 1)
+    sc = _sc(monkeypatch, tmp_path)
+    near_zero = _make_trace()
+    skip, reason = sc._should_skip_hebbian(near_zero, outcome=0.005)
+    assert skip is True and "near_zero" in reason
+    flat = _make_trace(emotion="flat")
+    skip2, reason2 = sc._should_skip_hebbian(flat, outcome=0.5)
+    assert skip2 is True and "dissociated" in reason2

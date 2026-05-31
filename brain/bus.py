@@ -9,11 +9,23 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import time
+from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from brain.settings import settings
+
 MAX_HOPS = 8
 DEFAULT_TTL = 30.0  # seconds
+
+# Topic concentration state machine (Phase 2 — colony features).
+# UNARMED: cold start — concentration has never crossed the arm threshold; its
+#          silence is NOT meaningful. ARMED: was active. QUIET: was ARMED and has
+#          since decayed below the silence floor — silence-as-signal.
+CONC_UNARMED = "unarmed"
+CONC_ARMED = "armed"
+CONC_QUIET = "quiet"
 
 
 @dataclass
@@ -25,6 +37,11 @@ class Message:
     ttl: float = DEFAULT_TTL
     hop_count: int = 0
     ts: float = field(default_factory=time.time)
+    # Phase 3 (colony features): a message can carry a slow PRIMER effect
+    # alongside its fast releaser payload — a dict of hormonal channel → nudge.
+    # Applied to HormonalState by the hypothalamus on drain. None = releaser-only
+    # (backward compatible).
+    primer: dict[str, float] | None = None
 
     def hop(self) -> Message:
         return Message(
@@ -35,6 +52,7 @@ class Message:
             ttl=self.ttl,
             hop_count=self.hop_count + 1,
             ts=self.ts,
+            primer=self.primer,
         )
 
     @property
@@ -206,6 +224,21 @@ class Bus:
         self.neuromod = Neuromodulators()
         self.hormonal = HormonalState()
         self._lock = asyncio.Lock()
+        # ── Phase 2: topic concentration / quorum / silence (colony features) ──
+        # Only topics explicitly registered via track_concentration() accumulate.
+        # `_tracked` maps topic → optional magnitude_fn(payload)->float (default
+        # uses msg.confidence). State machine + context ring are per-topic.
+        self._tracked: dict[str, Callable[[dict], float] | None] = {}
+        self._concentration: dict[str, float] = {}
+        self._conc_ts: dict[str, float] = {}
+        self._topic_status: dict[str, str] = {}
+        self._conc_context: dict[str, deque] = {}
+        self._zero_since: dict[str, float] = {}
+        self._quiet_onset: set[str] = set()
+        # ── Phase 3/4: pending primer nudges + recruitment levels ─────────────
+        self._pending_primers: dict[str, float] = {}
+        self._recruitment: dict[str, float] = {}
+        self._recruit_ts: dict[str, float] = {}
 
     def subscribe(self, topic: str) -> asyncio.Queue:
         q: asyncio.Queue = asyncio.Queue(maxsize=256)
@@ -219,9 +252,194 @@ class Bus:
         self._subscribers.setdefault(sentinel, []).append(q)
         return q
 
+    # ── Phase 2: topic concentration / quorum / silence ───────────────────────
+
+    def track_concentration(
+        self, topic: str, magnitude_fn: Callable[[dict], float] | None = None
+    ) -> None:
+        """Register `topic` for concentration tracking. `magnitude_fn(payload)`
+        returns the per-message contribution (defaults to msg.confidence). Only
+        registered topics accumulate — keeps the mechanism scoped (threat first)."""
+        self._tracked[topic] = magnitude_fn
+        self._topic_status.setdefault(topic, CONC_UNARMED)
+
+    def _conc_settings(self) -> tuple[float, float, float, float, float]:
+        return (
+            float(settings.get("colony_conc_half_life_s", 45.0)),
+            float(settings.get("colony_conc_cap", 10.0)),
+            float(settings.get("colony_arm_threshold", 1.0)),
+            float(settings.get("colony_silence_floor", 0.15)),
+            float(settings.get("colony_silence_disarm_s", 600.0)),
+        )
+
+    def _decay_to(self, topic: str, now: float) -> None:
+        """Apply exponential half-life decay to a topic's concentration up to `now`."""
+        last = self._conc_ts.get(topic)
+        if last is None:
+            self._conc_ts[topic] = now
+            self._concentration.setdefault(topic, 0.0)
+            return
+        elapsed = max(0.0, now - last)
+        hl, *_ = self._conc_settings()
+        if hl > 0 and elapsed > 0 and topic in self._concentration:
+            self._concentration[topic] *= 0.5 ** (elapsed / hl)
+        self._conc_ts[topic] = now
+
+    def _update_state(self, topic: str, now: float) -> None:
+        """Advance the UNARMED→ARMED→QUIET state machine (and disarm on long zero-dwell)."""
+        level = self._concentration.get(topic, 0.0)
+        status = self._topic_status.get(topic, CONC_UNARMED)
+        _, _, arm, floor, disarm_s = self._conc_settings()
+        if level >= arm:
+            status = CONC_ARMED  # (re-)arm; covers UNARMED→ARMED and QUIET→ARMED
+            self._zero_since.pop(topic, None)
+        elif status == CONC_ARMED and level < floor:
+            status = CONC_QUIET  # fresh ARMED→QUIET edge
+            self._quiet_onset.add(topic)
+        # Disarm back to UNARMED after a long dwell at ~zero so a one-time burst
+        # long ago doesn't make permanent silence "meaningful".
+        eps = floor * 0.1
+        if level <= eps:
+            z = self._zero_since.get(topic)
+            if z is None:
+                self._zero_since[topic] = now
+            elif (now - z) >= disarm_s:
+                status = CONC_UNARMED
+                self._zero_since.pop(topic, None)
+                self._quiet_onset.discard(topic)
+        else:
+            self._zero_since.pop(topic, None)
+        self._topic_status[topic] = status
+
+    def _accumulate(self, msg: Message, now: float | None = None) -> None:
+        """Add a message's contribution to its topic concentration (colony-gated)."""
+        if not settings.get("colony_features", 0):
+            return
+        topic = msg.topic
+        if topic not in self._tracked:
+            return
+        now = time.time() if now is None else now
+        self._decay_to(topic, now)
+        fn = self._tracked[topic]
+        try:
+            mag = float(fn(msg.payload)) if fn else float(msg.confidence)
+        except Exception:
+            mag = float(msg.confidence)
+        _, cap, *_ = self._conc_settings()
+        self._concentration[topic] = min(cap, self._concentration.get(topic, 0.0) + max(0.0, mag))
+        ring = self._conc_context.setdefault(topic, deque(maxlen=8))
+        tags = msg.payload.get("tags") or msg.payload.get("entities") or []
+        ring.append({"tags": list(tags), "neuromod": self.neuromod.snapshot(), "ts": now})
+        self._update_state(topic, now)
+
+    def concentration(self, topic: str, now: float | None = None) -> float:
+        """Current decayed concentration for a tracked topic (also advances state)."""
+        now = time.time() if now is None else now
+        self._decay_to(topic, now)
+        self._update_state(topic, now)
+        return self._concentration.get(topic, 0.0)
+
+    def topic_status(self, topic: str, now: float | None = None) -> str:
+        self.concentration(topic, now)  # refresh state
+        return self._topic_status.get(topic, CONC_UNARMED)
+
+    def quorum(self, topic: str, now: float | None = None) -> bool:
+        """ARMED and concentration ≥ quorum threshold → collective-action trigger."""
+        level = self.concentration(topic, now)
+        if self._topic_status.get(topic) != CONC_ARMED:
+            return False
+        return level >= float(settings.get("colony_quorum_threshold", 1.5))
+
+    def is_quiet(self, topic: str, now: float | None = None) -> bool:
+        """True only for an ARMED→QUIET topic — never from cold start (UNARMED)."""
+        self.concentration(topic, now)  # refresh state
+        return self._topic_status.get(topic) == CONC_QUIET
+
+    def consume_quiet_onset(self, topic: str, now: float | None = None) -> bool:
+        """Fire-once edge: True the first time a topic newly enters QUIET, then clears.
+        Debounces silence→recall so a single quiet onset triggers exactly one action."""
+        self.concentration(topic, now)  # refresh state (may set the onset flag)
+        if topic in self._quiet_onset:
+            self._quiet_onset.discard(topic)
+            return True
+        return False
+
+    def concentration_context(self, topic: str) -> list[dict]:
+        """The associated-context ring captured during the high-concentration window."""
+        return list(self._conc_context.get(topic, ()))
+
+    def tracked_topics(self) -> list[str]:
+        """Topics registered for concentration tracking."""
+        return list(self._tracked.keys())
+
+    # ── Phase 3: releaser + primer ────────────────────────────────────────────
+
+    def _collect_primer(self, msg: Message) -> None:
+        """Accumulate a message's primer nudges (colony-gated). Centralised here so
+        hormonal writes stay owned by the hypothalamus, which drains them per turn."""
+        if not settings.get("colony_features", 0) or not msg.primer:
+            return
+        for ch, v in msg.primer.items():
+            try:
+                self._pending_primers[ch] = self._pending_primers.get(ch, 0.0) + float(v)
+            except (TypeError, ValueError):
+                continue
+
+    def drain_primers(self) -> dict[str, float]:
+        """Return and clear the accumulated primer nudges (called once per turn by
+        the hypothalamus, the single hormonal-state writer)."""
+        out = dict(self._pending_primers)
+        self._pending_primers.clear()
+        return out
+
+    # ── Phase 4/7: recruitment amplification ──────────────────────────────────
+
+    def _decay_recruit(self, cluster: str, now: float) -> None:
+        last = self._recruit_ts.get(cluster)
+        if last is None:
+            self._recruit_ts[cluster] = now
+            self._recruitment.setdefault(cluster, 0.0)
+            return
+        elapsed = max(0.0, now - last)
+        hl = float(settings.get("colony_conc_half_life_s", 45.0))
+        if hl > 0 and elapsed > 0 and cluster in self._recruitment:
+            self._recruitment[cluster] *= 0.5 ** (elapsed / hl)
+        self._recruit_ts[cluster] = now
+
+    def recruit(self, cluster: str, amount: float, now: float | None = None) -> None:
+        """Raise a cluster's (decaying) recruitment level in proportion to need.
+        Higher recruitment lowers recruitable switches' thresholds — more responders
+        mobilise as the need escalates. No-op when colony features are off."""
+        if not settings.get("colony_features", 0):
+            return
+        now = time.time() if now is None else now
+        self._decay_recruit(cluster, now)
+        self._recruitment[cluster] = max(
+            0.0, min(1.0, self._recruitment.get(cluster, 0.0) + float(amount))
+        )
+
+    def recruitment_level(self, cluster: str, now: float | None = None) -> float:
+        """Current decayed recruitment level for a cluster in [0, 1] (0 when off)."""
+        if not settings.get("colony_features", 0):
+            return 0.0
+        now = time.time() if now is None else now
+        self._decay_recruit(cluster, now)
+        return self._recruitment.get(cluster, 0.0)
+
+    def recruit_channel(self, cluster: str, now: float | None = None) -> float | None:
+        """The RECRUIT value to inject into a cluster's chem snapshot, or None when
+        colony features are off (so the modulator is simply skipped — strict no-op).
+        Maps recruitment 0→1 onto 0.5→1.0 so that ZERO recruitment is NEUTRAL under
+        effective_threshold's (level-0.5) centering, not threshold-raising."""
+        if not settings.get("colony_features", 0):
+            return None
+        return 0.5 + 0.5 * self.recruitment_level(cluster, now)
+
     async def publish(self, msg: Message) -> None:
         if msg.expired:
             return
+        self._accumulate(msg)
+        self._collect_primer(msg)
         # exact-topic subscribers
         for q in self._subscribers.get(msg.topic, []):
             with contextlib.suppress(asyncio.QueueFull):
