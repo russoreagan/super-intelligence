@@ -956,6 +956,9 @@ class _TurnMixin:
         except Exception as _e:
             logger.warning("[TaskWorker] Task [%s] execution failed: %s", task.id, _e)
             self._task_queue.mark_done(task.id, success=False)
+            if self.dmn and self.dmn.is_project_task(task.id):
+                with contextlib.suppress(Exception):
+                    await self.dmn.note_project_complete(task.id, False, "execution error")
             return
         finally:
             if is_self:
@@ -966,6 +969,9 @@ class _TurnMixin:
         if summary.get("clarification"):
             question = summary["clarification"]
             self._task_queue.mark_blocked(task.id, reason=question)
+            if self.dmn and self.dmn.is_project_task(task.id):
+                with contextlib.suppress(Exception):
+                    await self.dmn.note_project_blocked(task.id, question)
             logger.info(
                 "[TaskWorker] Task [%s] blocked on clarification: %s", task.id, question[:120]
             )
@@ -998,6 +1004,15 @@ class _TurnMixin:
                 if summary.get("success")
                 else "I couldn't finish that — something went wrong."
             )
+        # Project check-in: if this was a background project step, update the
+        # project's status so the next idle cycle advances to the next one.
+        if self.dmn and self.dmn.is_project_task(task.id):
+            try:
+                await self.dmn.note_project_complete(
+                    task.id, bool(summary.get("success")), spoken_summary
+                )
+            except Exception as _pe:
+                logger.debug("[TaskWorker] project check-in failed: %s", _pe)
         # Always store in ring buffer — LLM context gets the result regardless of topic.
         self._recent_task_results.append(
             {

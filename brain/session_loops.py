@@ -541,6 +541,16 @@ class _LoopsMixin:
                         self_goal = self.dmn.take_self_task()
                         if self_goal:
                             self._task_queue.enqueue(self_goal, source="self", priority=2)
+                        else:
+                            # Clock-in: no ad-hoc self-task → start the next project
+                            # step so a project is always making background progress
+                            # while rumination runs in parallel. One at a time.
+                            proj = self.dmn.next_project_goal()
+                            if proj:
+                                name, goal = proj
+                                t = self._task_queue.enqueue(goal, source="self", priority=2)
+                                if t:
+                                    self.dmn.note_project_started(name, t.id)
                     continue
                 if self.pns.is_speaking or not self._ui_message_queue.empty():
                     continue
