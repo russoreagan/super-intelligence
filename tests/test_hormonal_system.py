@@ -83,11 +83,17 @@ def _hostile_features(**overrides) -> dict:
 
 class TestHormonalState:
     def test_initial_values(self):
+        # Init levels are settings-driven (chem_init_*), so the active persona's
+        # baseline chemistry legitimately overrides the code defaults. Assert against
+        # the configured values (the same source __init__ reads) so the test is
+        # persona-independent rather than hardcoding defaults.
+        from brain.settings import settings as _s
+
         hs = HormonalState()
         snap = hs.snapshot()
-        assert snap["5HT"] == pytest.approx(0.50)
-        assert snap["CORT"] == pytest.approx(0.05)
-        assert snap["OXT"] == pytest.approx(0.30)
+        for ch in ("5HT", "CORT", "OXT"):
+            expected = float(_s.get(f"chem_init_{ch}", HormonalState._DEF_INIT[ch]))
+            assert snap[ch] == pytest.approx(expected)
 
     def test_add_clamps_at_one(self):
         hs = HormonalState()
@@ -533,12 +539,17 @@ class TestNorepinephrine:
     """Unit tests for NE as 5th neuromod channel and apply_ne_color()."""
 
     def test_ne_present_in_neuromod_snapshot(self):
-        from brain.bus import Bus
+        # Intent: NE is exposed as a neuromod channel in the snapshot. Its init value
+        # is settings-driven (chem_init_NE), so assert presence + the configured value
+        # rather than a hardcoded default that the active persona overrides.
+        from brain.bus import Bus, Neuromodulators
+        from brain.settings import settings as _s
 
         bus = Bus()
         snap = bus.neuromod.snapshot()
         assert "NE" in snap
-        assert snap["NE"] == pytest.approx(0.25)
+        expected = float(_s.get("chem_init_NE", Neuromodulators._DEF_INIT["NE"]))
+        assert snap["NE"] == pytest.approx(expected)
 
     def test_ne_floor_respected_on_decay(self):
         from brain.bus import Neuromodulators
@@ -623,12 +634,17 @@ class TestAnandamide:
     """Unit tests for AEA as 4th hormonal channel and its homeostatic effects."""
 
     def test_aea_present_in_hormonal_snapshot(self):
-        from brain.bus import Bus
+        # Intent: AEA is exposed as a hormonal channel in the snapshot. Its init value
+        # is settings-driven (chem_init_AEA), so assert presence + the configured value
+        # rather than a hardcoded default that the active persona overrides.
+        from brain.bus import Bus, HormonalState
+        from brain.settings import settings as _s
 
         bus = Bus()
         snap = bus.hormonal.snapshot()
         assert "AEA" in snap
-        assert snap["AEA"] == pytest.approx(0.30)
+        expected = float(_s.get("chem_init_AEA", HormonalState._DEF_INIT["AEA"]))
+        assert snap["AEA"] == pytest.approx(expected)
 
     def test_aea_floor_respected_on_decay(self):
         from brain.bus import HormonalState

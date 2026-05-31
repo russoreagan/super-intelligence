@@ -125,6 +125,44 @@ class TurnTrace:
     #           "tool_exception", "draft_quality_low", "draft_quality_high"
     neuromod_midturn: list[dict] = field(default_factory=list)
 
+    # ── Input modality ────────────────────────────────────────────────────────
+    # "voice" when prosody data arrived (Deepgram STT pipeline active);
+    # "text" for typed input. Derived after hypothalamus.process() returns.
+    # Voice and text have different communication norms (elaboration, brevity,
+    # emoticon vs. prosody signalling) — modality gates channel calibration.
+    input_modality: str = "text"
+
+    # ── Text paralinguistic features (populated for text turns only) ──────────
+    # The text-channel equivalent of prosody: laughter/warmth/negativity markers,
+    # emoji, abbreviations, exclamation density. Empty dict for voice turns.
+    text_paralinguistics: dict = field(default_factory=dict)
+
+    # ── Relationship instrumentation ──────────────────────────────────────────
+    # Per-turn signals that make the §2.4 research bets falsifiable. Without
+    # these, a feature that never fires is indistinguishable from one that fires
+    # and has no effect.
+    disclosure_fired: bool = False           # self-disclosure opportunity injected this turn
+    style_note_emitted: bool = False         # bounded style-synchrony note injected this turn
+    oxt_connected_reached: bool = False      # OXT cleared the "connected" threshold this turn
+    bond: float = 0.0                        # latent closeness high-water mark for this speaker
+    reunion_boost_applied: float = 1.0       # affection-delta multiplier on reengagement (1.0 = none)
+    user_sentiment: float = 0.0              # user's detected sentiment this turn (for reciprocation proxy)
+    # Reciprocation proxy: did the user's sentiment rise on the turn AFTER a
+    # disclosure? Populated one turn late by the session loop (None until known).
+    disclosure_reciprocated: "bool | None" = None
+    # ── Relationship STAGE snapshot (irrecoverable post-hoc) ──────────────────
+    # The schema (user.md) is continuously overwritten, so the relationship state
+    # AT THE TIME OF THE TURN cannot be reconstructed later. Captured here so
+    # every behavioural signal can be correlated against relationship depth.
+    affection: int = 0                       # live affection score at turn time (-50..100)
+    affection_label: str = ""                # guarded|cool|neutral|friendly|warm|close
+    familiarity_tier: str = ""               # new|acquainted|close
+    # Selected draft's empathy score, hoisted from draft_scores for easy aggregation.
+    selected_empathy_score: float = 0.0
+    # The user's detected register this turn ("casual/terse" etc.) when style
+    # synchrony fired — lets analysis verify the detector is actually varying.
+    style_register: str = ""
+
     # ── Voice / prosody fields (populated when --ears is active) ─────────────
     speaker_name: str = ""
     speaker_score: float = 0.0  # voiceprint cosine similarity (0–1)
@@ -376,6 +414,42 @@ class ObservabilityLayer:
                             **(
                                 {"prosody_shimmer": trace.prosody_shimmer}
                                 if trace.prosody_shimmer
+                                else {}
+                            ),
+                            # ── relationship (non-empty / non-default only) ───
+                            "input_modality": trace.input_modality,
+                            **({"affection": trace.affection} if trace.affection else {}),
+                            **(
+                                {"affection_label": trace.affection_label}
+                                if trace.affection_label
+                                else {}
+                            ),
+                            **(
+                                {"familiarity_tier": trace.familiarity_tier}
+                                if trace.familiarity_tier
+                                else {}
+                            ),
+                            **({"bond": trace.bond} if trace.bond else {}),
+                            **(
+                                {"disclosure_fired": True}
+                                if trace.disclosure_fired
+                                else {}
+                            ),
+                            **(
+                                {"style_note_emitted": True}
+                                if trace.style_note_emitted
+                                else {}
+                            ),
+                            **({"style_register": trace.style_register} if trace.style_register else {}),
+                            **(
+                                {"oxt_connected_reached": True}
+                                if trace.oxt_connected_reached
+                                else {}
+                            ),
+                            **(
+                                {"reunion_boost_applied": trace.reunion_boost_applied}
+                                if trace.reunion_boost_applied
+                                and trace.reunion_boost_applied != 1.0
                                 else {}
                             ),
                         },

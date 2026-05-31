@@ -90,6 +90,7 @@ class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
         self._emotion_judge = None
         self._learning_monitor = None
         self._learning_judge = None
+        self._relationship_judge = None
 
         # Motor
         self.motor = None

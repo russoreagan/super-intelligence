@@ -431,6 +431,13 @@ class _LoopsMixin:
                 full_traces=traces_full,
                 session_thoughts=dmn_thoughts,
             )
+            # Persist the user's learned style register so the next session
+            # resumes warm rather than cold-starting (F3).
+            try:
+                _primary = self.hippocampus._schema.primary_user_name()
+                await self.parietal.save_style_to_schema(self.hippocampus._schema, _primary or "")
+            except Exception:
+                pass
             # Refresh DMN's project context from the (possibly rewritten)
             # open_questions.md so any sleep-time edits land immediately.
             if self.dmn:

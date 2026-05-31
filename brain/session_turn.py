@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import os
 import re
 import time
 
@@ -217,6 +218,24 @@ class _TurnMixin:
                 features["speaker_name"] = _primary
                 features["_speaker_assumed_primary"] = True
 
+        # ── Input modality + text paralinguistics ─────────────────────────────
+        # Modality is derived from speaker detection: if the primary-user default
+        # was applied (_speaker_assumed_primary) or ears are off → text turn.
+        # This must run before hypothalamus.process() so the modality can be
+        # passed in features for channel calibration.
+        _is_text_input = features.get("_speaker_assumed_primary", False) or (
+            self.ears is None
+        )
+        _input_modality = "text" if _is_text_input else "voice"
+        features = dict(features)
+        features["input_modality"] = _input_modality
+
+        if _is_text_input and settings.get("enable_text_paralinguistics"):
+            from brain.clusters.text_paralinguistics import extract_text_paralinguistics
+
+            _text_para = extract_text_paralinguistics(user_input)
+            features["text_paralinguistics"] = _text_para.to_dict()
+
         # ── Hypothalamus + Thalamus: parallel ─────────────────────────────────
         await self._emit("hypothalamus", 0.6, "updating affect", turn_id)
         await self._emit("thalamus", 0.55, "routing attention", turn_id)
@@ -328,67 +347,19 @@ class _TurnMixin:
                     logger.info("[CloudExecutor] Pending write action cancelled by user")
             elif features.get("requires_action"):
                 await self._emit("motor_cortex", 0.85, "executing tool", turn_id)
-                self.motor.reset_turn(turn_id)
+                tool_result = None
                 if features.get("response_type") == "task":
+                    self.motor.reset_turn(turn_id)
                     memory["tool_result"] = "[task_queued]\nTask acknowledged — working on it now."
                     logger.info("[MotorCortex] Task mode — deferring planning to background")
                 else:
-                    tool_result = None
-                    try:
-                        tool_result = await self.motor.execute(features, turn_id)
-                        if tool_result:
-                            output = tool_result.get("output", "")
-                            tool_name = tool_result.get("tool", "tool")
-                            if tool_result.get("pending"):
-                                desc = output.replace("CONFIRMATION_NEEDED:", "").strip()
-                                memory["tool_result"] = (
-                                    f"[confirmation_needed]\n"
-                                    f"You are about to: {desc}\n"
-                                    "Ask the user to confirm before proceeding."
-                                )
-                            else:
-                                memory["tool_result"] = f"[{tool_name}]\n{output}"
-                            logger.info(
-                                "[MotorCortex] %s → %d chars (success=%s)",
-                                tool_name,
-                                len(output),
-                                tool_result.get("success"),
-                            )
-                    except Exception as _mc_err:
-                        logger.error("Motor cortex failed this turn: %s", _mc_err)
-                        # Unexpected tool failure is frustrating — GABA + NE spike.
-                        self.bus.neuromod.add("GABA", 0.10)
-                        self.bus.neuromod.add("NE", 0.08)
-                        _snap = self.bus.neuromod.snapshot()
-                        trace.neuromod_midturn.append(
-                            {"trigger": "tool_exception", "snapshot": _snap}
-                        )
-                        if self._emitter:
-                            await self._emitter.emit_neuromod(_snap)
+                    # Always deferred: don't block the turn on motor planning/execution.
+                    # Frontal produces an acknowledgment; result surfaces via proactive speech.
+                    memory["tool_result"] = "[task_queued]\nI'm working on this."
+                    asyncio.create_task(self._run_motor_reactive(features, turn_id))
+                    logger.info("[MotorCortex] Reactive — deferred to background")
                 await self._emit_end("motor_cortex", turn_id)
-                # Neuromod update from tool outcome.
-                if tool_result:
-                    if tool_result.get("success") is False:
-                        # Failed tool: frustration signal — GABA (threat/inhibition) + NE (alertness).
-                        self.bus.neuromod.add("GABA", 0.08)
-                        self.bus.neuromod.add("NE", 0.06)
-                        self.bus.neuromod.add("DA", -0.05)
-                        _snap = self.bus.neuromod.snapshot()
-                        trace.neuromod_midturn.append(
-                            {"trigger": "tool_failure", "snapshot": _snap}
-                        )
-                        if self._emitter:
-                            await self._emitter.emit_neuromod(_snap)
-                    elif tool_result.get("success"):
-                        # Successful tool: reward signal.
-                        self.bus.neuromod.add("DA", 0.07)
-                        self.bus.neuromod.add("Glu", 0.04)
-                        _snap = self.bus.neuromod.snapshot()
-                        trace.neuromod_midturn.append(
-                            {"trigger": "tool_success", "snapshot": _snap}
-                        )
-                        if self._emitter:
-                            await self._emitter.emit_neuromod(_snap)
+                # tool_result is always None in deferred mode; neuromod fires in _run_motor_reactive.
 
         parietal_context = self.parietal.recent_turns_text()
 
@@ -589,6 +560,18 @@ class _TurnMixin:
 
         await self._emit("parietal", 0.3, "updating context", turn_id)
         self.parietal.update(features, user_input, final)
+        # Update per-modality user style tracking (style synchrony feature)
+        if settings.get("enable_style_synchrony") and isinstance(features, dict):
+            _style_modality = features.get("input_modality", "text")
+            _style_alpha = (
+                float(settings.get("style_ema_alpha_voice"))
+                if _style_modality == "voice"
+                else float(settings.get("style_ema_alpha_text"))
+            )
+            _style_sentiment = float(features.get("sentiment", 0.0))
+            self.parietal.update_user_style(
+                user_input, _style_modality, _style_sentiment, _style_alpha
+            )
         await self._emit_end("parietal", turn_id)
         self.hypothalamus.decay_turn()
         turn_result = self.brainstem.end_turn()
@@ -686,6 +669,52 @@ class _TurnMixin:
         trace.prosody_energy = affect.get("prosody_energy", 0.0)
         trace.prosody_jitter = affect.get("prosody_jitter", 0.0)
         trace.prosody_shimmer = affect.get("prosody_shimmer", 0.0)
+        # Modality: SINGLE SOURCE OF TRUTH — use the value derived pre-hypothalamus
+        # that actually drove channel calibration (features["input_modality"]),
+        # not a second post-hoc derivation. Keeps logged modality == processed
+        # modality even on degraded turns (e.g. voice turn with no usable prosody).
+        trace.input_modality = (
+            features.get("input_modality", "text") if isinstance(features, dict) else "text"
+        )
+        trace.text_paralinguistics = features.get("text_paralinguistics", {})
+        # Relationship instrumentation: did OXT clear the "connected" threshold?
+        _hormonal = affect.get("hormonal") or {}
+        trace.oxt_connected_reached = bool(
+            _hormonal.get("OXT", 0.0) >= settings.get("hormonal_oxt_connected_threshold")
+        )
+        trace.user_sentiment = float(features.get("sentiment", 0.0)) if isinstance(features, dict) else 0.0
+        # Relationship STAGE snapshot — capture affection/tier AT TURN TIME. The
+        # schema is overwritten continuously, so this cannot be recovered later;
+        # without it no behaviour can be correlated against relationship depth.
+        try:
+            from brain.metacognition import relationship_stage_from_content
+
+            _user_model = (memory.get("core") or {}).get("user", "") if isinstance(memory, dict) else ""
+            _stage = relationship_stage_from_content(_user_model)
+            trace.affection = _stage.affection
+            trace.affection_label = _stage.affection_label
+            trace.familiarity_tier = _stage.tier
+            if not trace.bond:  # bond not set by a reunion boost this turn
+                trace.bond = round(_stage.bond, 1)
+        except Exception:
+            pass
+        # Hoist the selected draft's empathy score for easy aggregation.
+        try:
+            _sel = next(
+                (d for d in (trace.draft_scores or []) if d.get("selected")),
+                None,
+            )
+            if _sel:
+                trace.selected_empathy_score = float(_sel.get("empathy_score", 0.0) or 0.0)
+        except Exception:
+            pass
+        # Reciprocation proxy: resolve the PREVIOUS turn's disclosure one turn late.
+        # If the prior turn fired a self-disclosure, did the user's sentiment rise
+        # on this (the following) turn? A coarse but logged signal for §2.4 testing.
+        if self._session_traces_full:
+            _prev = self._session_traces_full[-1]
+            if getattr(_prev, "disclosure_fired", False) and _prev.disclosure_reciprocated is None:
+                _prev.disclosure_reciprocated = trace.user_sentiment > _prev.user_sentiment
         self.obs.record_turn(trace)
         self._session_traces_full.append(trace)
 
@@ -735,6 +764,8 @@ class _TurnMixin:
 
         if self._emotion_judge:
             self._emotion_judge.fire(trace)
+        if getattr(self, "_relationship_judge", None):
+            self._relationship_judge.fire(trace)  # no-op unless BRAIN_EVAL_RELATIONSHIP=true
         if self._learning_monitor:
             self._learning_monitor.record_turn(trace)
         if self._baseline_runner:
@@ -954,6 +985,76 @@ class _TurnMixin:
             await self.pns.emit(
                 spoken_summary, {"emotion": "lively" if summary.get("success") else "concerned"}
             )
+
+    async def _run_motor_reactive(self, features: dict, turn_id: str) -> None:
+        """Run a reactive motor action in the background.
+
+        The main turn already fired with a [task_queued] acknowledgment. This
+        runs the planner + tool dispatch, then surfaces the result via proactive
+        speech. Uses its own turn-id so a concurrent turn can't corrupt state.
+        """
+        bg_turn_id = f"bg_{turn_id}"
+        self.motor.reset_turn(bg_turn_id)
+        _timeout = float(os.environ.get("BRAIN_MOTOR_INTERACTIVE_TIMEOUT_S", "30"))
+        goal = features.get("raw_text") or features.get("topic_summary", "")
+        tool_result = None
+        try:
+            tool_result = await asyncio.wait_for(
+                self.motor.execute(features, bg_turn_id),
+                timeout=_timeout,
+            )
+        except Exception as _e:
+            logger.error("[MotorCortex] Background reactive failed: %s", _e)
+            self.bus.neuromod.add("GABA", 0.10)
+            self.bus.neuromod.add("NE", 0.08)
+            with contextlib.suppress(Exception):
+                if self._emitter:
+                    await self._emitter.emit_neuromod(self.bus.neuromod.snapshot())
+            return
+
+        if not tool_result:
+            return
+
+        output = tool_result.get("output", "")
+        tool_name = tool_result.get("tool", "tool")
+        success = tool_result.get("success")
+
+        # Neuromod update (deferred from main turn into background completion)
+        if success is False:
+            self.bus.neuromod.add("GABA", 0.08)
+            self.bus.neuromod.add("NE", 0.06)
+            self.bus.neuromod.add("DA", -0.05)
+        elif success:
+            self.bus.neuromod.add("DA", 0.07)
+            self.bus.neuromod.add("Glu", 0.04)
+        with contextlib.suppress(Exception):
+            if self._emitter:
+                await self._emitter.emit_neuromod(self.bus.neuromod.snapshot())
+
+        if tool_result.get("pending"):
+            # Confirmation needed — surface as a question via proactive speech
+            desc = output.replace("CONFIRMATION_NEEDED:", "").strip()
+            msg = f"I'm ready to: {desc}. Want me to go ahead?"
+        else:
+            self._recent_task_results.append(
+                {"goal": goal, "summary": output[:500], "success": bool(success), "ts": time.time()}
+            )
+            if len(self._recent_task_results) > 3:
+                self._recent_task_results.pop(0)
+            msg = output[:500] if output else ""
+
+        if not msg:
+            return
+
+        logger.info(
+            "[MotorCortex] Background reactive done: %s → %d chars (success=%s)",
+            tool_name, len(msg), success,
+        )
+        with contextlib.suppress(Exception):
+            if self._emitter:
+                await self._emitter.emit_proactive_speech(msg)
+        with contextlib.suppress(Exception):
+            await self.pns.emit(msg, {"emotion": "lively" if success else "concerned"})
 
 
 # ── Module-level helpers (used inside _process_turn_body) ─────────────────────

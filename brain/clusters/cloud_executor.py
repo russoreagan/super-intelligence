@@ -40,6 +40,7 @@ _EXTENSION_NAMES: dict[str, str] = {
     "ant.dir.gh.ableton.ableton-knowledge": "Ableton",
     "ant.dir.gh.adobe.react-aria": "Adobe/React Aria",
     "ant.dir.gh.elevenlabs.elevenlabs-player": "ElevenLabs Player",
+    "e6e0b098-dd18-42f4-a840-5205def659b7": "scite (scientific literature search)",
 }
 
 # Words that indicate user confirmation of a pending write action
@@ -243,6 +244,13 @@ class CloudExecutor:
         for d in self._trusted_dirs:
             add_dir_args.extend(["--add-dir", d])
 
+        # Build the allowed-tools list. Always include the standard built-ins;
+        # add mcp__* when connectors are enabled so Claude can reach scite,
+        # Gmail, Calendar, and any other connected MCP extension.
+        allowed_tools = "WebSearch,WebFetch,Bash,Read,Write,Edit,LS"
+        if self._connectors:
+            allowed_tools += ",mcp__*"
+
         try:
             proc = await asyncio.create_subprocess_exec(
                 self._claude_bin,
@@ -250,7 +258,7 @@ class CloudExecutor:
                 "--output-format",
                 "text",
                 "--allowedTools",
-                "WebSearch,WebFetch,Bash,Read,Write,Edit,LS",
+                allowed_tools,
                 *add_dir_args,
                 "--",  # separator so prompt isn't parsed as a flag
                 prompt,

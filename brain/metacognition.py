@@ -75,6 +75,112 @@ def read_familiarity(schema, speaker_name: str = "") -> str:
         return "new"
 
 
+def read_session_count(schema, speaker_name: str = "") -> int:
+    """Read the current interaction (session) count from a speaker's schema.
+    Returns 0 on any failure."""
+    if schema is None:
+        return 0
+    try:
+        import re
+
+        if speaker_name:
+            content = schema.read(schema.speaker_filename(speaker_name))
+        else:
+            content = schema.read("user.md")
+        m = re.search(r"- Interactions:\s*(\d+)", content)
+        return int(m.group(1)) if m else 0
+    except Exception:
+        return 0
+
+
+# Canonical affection tier bands — the SINGLE SOURCE OF TRUTH for label edges,
+# shared with hippocampus._AFFECTION_TIERS and frontal_prompts.AFFECTION_TIER_GUIDANCE.
+# Intent (from the drafter guidance): guarded <-25, cool -25..-11, neutral -10..4,
+# friendly 5..19, warm 20..39, close >=40. The `score < threshold` scan below
+# means the threshold is the EXCLUSIVE upper edge of each band.
+_AFFECTION_TIER_THRESHOLDS = [
+    (-25, "guarded"),   # score < -25
+    (-10, "cool"),      # score -25 to -11   (was -11: off-by-one vs hippocampus, fixed F6)
+    ( 5,  "neutral"),   # score -10 to 4
+    (20,  "friendly"),  # score 5 to 19
+    (40,  "warm"),      # score 20 to 39
+    (None, "close"),    # score >= 40
+]
+
+
+def affection_to_label(score: int) -> str:
+    """Convert a numeric affection score to its tier label string.
+    The single source of truth for affection tier labels across all clusters."""
+    for threshold, label in _AFFECTION_TIER_THRESHOLDS:
+        if threshold is None or score < threshold:
+            return label
+    return "close"
+
+
+from dataclasses import dataclass
+
+
+@dataclass
+class RelationshipStage:
+    """Snapshot of a speaker's relationship state, combining both tracking systems."""
+    tier: str           # familiarity tier: "new" | "acquainted" | "close"
+    affection: int      # raw affection score (-50 to +100)
+    affection_label: str  # tier label: "guarded"|"cool"|"neutral"|"friendly"|"warm"|"close"
+    session_count: int  # total interaction count
+    bond: float = 0.0   # latent closeness high-water mark (bond model)
+
+
+def relationship_stage_from_content(content: str) -> RelationshipStage:
+    """Parse a RelationshipStage from an already-loaded user-model string.
+
+    Single source of truth for the frontal drafter-prompt injection, which has
+    the schema content in hand (memory['core']['user']) but not the schema
+    store. Keeps the parse + labelling logic in ONE place so it can't drift."""
+    import re as _re
+
+    if not content:
+        return RelationshipStage("new", 0, "neutral", 0, 0.0)
+    m_score = _re.search(r"- Score:\s*(-?\d+)", content)
+    m_tier = _re.search(r"- Familiarity:\s*(\w+)", content)
+    m_count = _re.search(r"- Interactions:\s*(\d+)", content)
+    m_bond = _re.search(r"- Bond:\s*(-?\d+(?:\.\d+)?)", content)
+    affection = int(m_score.group(1)) if m_score else 0
+    return RelationshipStage(
+        tier=m_tier.group(1).lower() if m_tier else "new",
+        affection=affection,
+        affection_label=affection_to_label(affection),
+        session_count=int(m_count.group(1)) if m_count else 0,
+        bond=float(m_bond.group(1)) if m_bond else 0.0,
+    )
+
+
+def read_relationship_stage(schema, speaker_name: str = "") -> RelationshipStage:
+    """Read the full relationship stage for a speaker.
+    Combines affection score, familiarity tier, session count, and bond.
+    Safe to call without LLM — pure schema reads."""
+    affection = read_affection_score(schema, speaker_name)
+    tier = read_familiarity(schema, speaker_name)
+    count = read_session_count(schema, speaker_name)
+    label = affection_to_label(affection)
+    try:
+        import re as _re
+
+        content = schema.read(
+            schema.speaker_filename(speaker_name) if speaker_name else "user.md"
+        )
+        m_bond = _re.search(r"- Bond:\s*(-?\d+(?:\.\d+)?)", content or "")
+        bond = float(m_bond.group(1)) if m_bond else 0.0
+    except Exception:
+        bond = 0.0
+    return RelationshipStage(
+        tier=tier,
+        affection=affection,
+        affection_label=label,
+        session_count=count,
+        bond=bond,
+    )
+
+
 META_INTERVAL = float(os.environ.get("BRAIN_META_INTERVAL", "30"))  # seconds
 
 SELF_REFLECTION_SYSTEM = """You are the metacognitive layer of an AI brain — the part that

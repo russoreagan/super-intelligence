@@ -16,14 +16,15 @@ class _SetupMixin:
 
     @staticmethod
     def _bootstrap_eval_system(obs) -> tuple:
-        """Initialize eval subsystem. Returns 6-tuple, all None if eval unavailable."""
+        """Initialize eval subsystem. Returns 7-tuple, all None if eval unavailable."""
         eval_logger = baseline_runner = posthoc_scorer = None
-        emotion_judge = learning_monitor = learning_judge = None
+        emotion_judge = learning_monitor = learning_judge = relationship_judge = None
         try:
             from eval.baseline import BaselineRunner
             from eval.emotion_judge import EmotionJudge
             from eval.learning_judge import LearningJudge
             from eval.learning_monitor import LearningMonitor
+            from eval.relationship_judge import RelationshipJudge
             from eval.scorer import PostHocScorer
             from eval.turn_logger import EvalLogger
 
@@ -34,6 +35,8 @@ class _SetupMixin:
             emotion_judge = EmotionJudge(eval_logger)
             learning_monitor = LearningMonitor()
             learning_judge = LearningJudge(eval_logger)
+            # Built but DISABLED by default — opt in with BRAIN_EVAL_RELATIONSHIP=true.
+            relationship_judge = RelationshipJudge(eval_logger)
             logger.info("Eval: logging to %s", eval_logger._path)
         except Exception as _eval_err:
             logger.debug("Eval system unavailable: %s", _eval_err)
@@ -43,6 +46,7 @@ class _SetupMixin:
             emotion_judge,
             learning_monitor,
             learning_judge,
+            relationship_judge,
         ):
             if component is not None:
                 component._obs = obs
@@ -53,6 +57,7 @@ class _SetupMixin:
             emotion_judge,
             learning_monitor,
             learning_judge,
+            relationship_judge,
         )
 
     # ── Setup phases ──────────────────────────────────────────────────────────
@@ -78,6 +83,7 @@ class _SetupMixin:
             self._emotion_judge,
             self._learning_monitor,
             self._learning_judge,
+            self._relationship_judge,
         ) = self._bootstrap_eval_system(self.obs)
         self.obs._eval_logger = self._eval_logger
         self.router = ModelRouter(obs=self.obs)
@@ -143,6 +149,17 @@ class _SetupMixin:
             self.skill_selector = None
         self._core_context, recent_episodes = await self.hippocampus.boot(self.session_id)
         self.parietal.seed(recent_episodes)
+        # Bond model: apply absence decay for known speakers before any turns,
+        # so a long gap has cooled the relationship (and a warm reengagement can
+        # recover it fast). Refreshing of `Last seen` happens at consolidation.
+        await self.hippocampus.apply_relationship_decay_at_boot()
+        # Reload the user's learned style register so style synchrony resumes
+        # warm instead of needing 3 fresh turns to re-warm every session (F3).
+        try:
+            _primary = self.hippocampus._schema.primary_user_name()
+            self.parietal.load_style_from_schema(self.hippocampus._schema, _primary or "")
+        except Exception:
+            pass
         self._egress = PseudonymizationGateway()
         # Inject into the router so ALL cloud calls are pseudonymized at the
         # dispatch layer (R1 gateway backstop — catches motor, DMN, metacognition

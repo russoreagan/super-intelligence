@@ -165,32 +165,31 @@ class TestExecuteJobResume:
         """Without a resumable record, the strategic planner IS called (normal path)."""
         f = tmp_path / "f.txt"
         f.write_text("hi")
-        responses = [
-            json.dumps(
+        strategic_plan = {
+            "stories": [
                 {
-                    "stories": [
-                        {
-                            "id": "US-001",
-                            "description": "read it",
-                            "expected_tool": "read_file",
-                            "acceptance_criteria": [],
-                        }
-                    ],
-                    "success_criteria": "read",
-                    "complexity": "low",
+                    "id": "US-001",
+                    "description": "read it",
+                    "expected_tool": "read_file",
+                    "acceptance_criteria": [],
                 }
-            ),
-            json.dumps({"tool": "read_file", "args": {"path": str(f)}, "reason": "r"}),
-        ]
+            ],
+            "success_criteria": "read",
+            "complexity": "low",
+        }
+        tactical = [json.dumps({"tool": "read_file", "args": {"path": str(f)}, "reason": "r"})]
         seen = {"n": 0}
 
         class NormalRouter:
+            async def call_structured(self, model_key, system_prompt, messages, **kwargs):
+                return dict(strategic_plan)
+
             async def call(self, model_key, system_prompt, messages, **kwargs):
                 i = seen["n"]
                 seen["n"] += 1
                 return (
-                    responses[i]
-                    if i < len(responses)
+                    tactical[i]
+                    if i < len(tactical)
                     else json.dumps({"tool": "none", "args": {}, "reason": "done"})
                 )
 
@@ -228,6 +227,15 @@ class TestExecuteJobResume:
         warmups = {"n": 0}
 
         class R:
+            async def call_structured(self, model_key, system_prompt, messages, **kwargs):
+                return {
+                    "stories": [
+                        {"id": "US-001", "description": "x", "expected_tool": "?",
+                         "acceptance_criteria": []}
+                    ],
+                    "complexity": "low",
+                }
+
             async def call(self, model_key, system_prompt, messages, **kwargs):
                 return json.dumps({"tool": "none", "args": {}, "reason": "done"})
 
@@ -262,6 +270,15 @@ class TestExecuteJobResume:
         f.write_text("hi")
 
         class R:
+            async def call_structured(self, model_key, system_prompt, messages, **kwargs):
+                return {
+                    "stories": [
+                        {"id": "US-001", "description": "read f", "expected_tool": "read_file",
+                         "acceptance_criteria": []}
+                    ],
+                    "complexity": "low",
+                }
+
             async def call(self, model_key, system_prompt, messages, **kwargs):
                 return json.dumps({"tool": "read_file", "args": {"path": str(f)}, "reason": "r"})
 

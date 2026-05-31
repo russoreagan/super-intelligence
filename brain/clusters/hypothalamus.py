@@ -61,6 +61,34 @@ class HypothalamusCluster:
         # embarrassed, flirty, etc.) that pure neuromods can't produce.
         self._meta_override_inbox = bus.subscribe("meta.emotion_override")
 
+    # ── Channel calibration ───────────────────────────────────────────────────
+
+    def _calibrate_for_channel(
+        self, sentiment: float, hostility: float, modality: str
+    ) -> tuple[float, float]:
+        """Apply channel-specific weights to raw temporal signals.
+
+        Text and voice are different communication channels with different norms:
+        - Text tends toward brevity; short messages ≠ hostility or disengagement.
+        - Voice carries prosody; the text weight discounts hostility from brevity
+          while up-weighting explicit word-level sentiment (which IS the primary
+          signal in text, with no prosodic supplement).
+
+        Returns (calibrated_sentiment, calibrated_hostility).
+        """
+        if not settings.get("enable_channel_calibration"):
+            return sentiment, hostility
+
+        if modality == "text":
+            calibrated_hostility = hostility * settings.get("text_hostility_weight")
+            calibrated_sentiment = sentiment * settings.get("text_sentiment_weight")
+        else:
+            # Voice: prosody handles the rest; keep weights at nominal
+            calibrated_hostility = hostility
+            calibrated_sentiment = sentiment
+
+        return calibrated_sentiment, calibrated_hostility
+
     async def process(self, features: dict) -> dict:
         """Update neuromod levels from temporal features. Return affect summary."""
         nm = self._bus.neuromod
@@ -79,8 +107,10 @@ class HypothalamusCluster:
         )
         self._current_turns = turns
 
-        sentiment = features.get("sentiment", 0.0)
-        hostility = features.get("hostility", 0.0)
+        modality = features.get("input_modality", "text")
+        raw_sentiment = features.get("sentiment", 0.0)
+        raw_hostility = features.get("hostility", 0.0)
+        sentiment, hostility = self._calibrate_for_channel(raw_sentiment, raw_hostility, modality)
         salience = features.get("salience", 0.3)
         surprise = features.get("surprise_score", 0.0)
 
@@ -200,13 +230,46 @@ class HypothalamusCluster:
                 dynamics.get("hesitant"),
             )
 
+        # ── Text paralinguistics (text turns only; skipped when prosody arrived) ──
+        # Text has no acoustic channel, so emoji/laughter/warmth markers are the
+        # closest equivalent to prosody. Apply only when voice prosody is absent.
+        if not prosody_tone and settings.get("enable_text_paralinguistics"):
+            text_para = features.get("text_paralinguistics")
+            if text_para:
+                laughter = text_para.get("laughter", 0.0)
+                warmth = text_para.get("warmth", 0.0)
+                negativity = text_para.get("negativity", 0.0)
+                excitement = text_para.get("excitement", 0.0)
+
+                if laughter > 0.0:
+                    nm.add("DA", laughter * settings.get("text_para_laughter_DA"))
+                if warmth > 0.0:
+                    nm.add("DA", warmth * settings.get("text_para_warmth_DA"))
+                if negativity > 0.0:
+                    nm.add("GABA", negativity * settings.get("text_para_negativity_GABA"))
+                if excitement > 0.0:
+                    nm.add("Glu", excitement * settings.get("text_para_excitement_Glu"))
+                    nm.add("NE", excitement * settings.get("text_para_excitement_NE"))
+
+                if laughter > 0.1 or warmth > 0.1 or excitement > 0.1:
+                    logger.debug(
+                        "Hypothalamus text_para: laughter=%.2f warmth=%.2f "
+                        "negativity=%.2f excitement=%.2f",
+                        laughter, warmth, negativity, excitement,
+                    )
+
         snap = nm.snapshot()
 
         # ── Endocrine (hormonal) updates ──────────────────────────────────────
         hs = self._bus.hormonal
 
-        # OXT: build on warm positive exchange; drain under hostility
-        if sentiment > 0.3 and hostility < 0.2:
+        # OXT: build on warm positive exchange; drain under hostility.
+        # Gate lowered to sentiment>0.2 (was hardcoded 0.3): the old gate fired
+        # on only ~1.7% of turns, so OXT never reached the "connected" threshold.
+        # Ordinary warm exchanges (sentiment 0.2–0.3) now accrue bond. (F4)
+        if sentiment > settings.get("oxt_sentiment_gate") and hostility < settings.get(
+            "oxt_hostility_gate"
+        ):
             hs.add("OXT", settings.get("oxt_positive_increment") * turns)
         elif hostility > settings.get("hostility_GABA_threshold_high"):
             hs.add("OXT", -settings.get("oxt_hostility_drain") * turns)
@@ -335,12 +398,14 @@ class HypothalamusCluster:
         if not override_emotion and emotion == "neutral":
             user_emo = (features.get("user_emotion") or "").lower()
             fallback = None
-            if hostility > 0.55:
-                fallback = ("wary", f"hostility={hostility:.2f}")
-            elif sentiment < -0.45:
-                fallback = ("down", f"sentiment={sentiment:.2f}")
-            elif sentiment > 0.55:
-                fallback = ("content", f"sentiment={sentiment:.2f}")
+            # Use RAW signals for emotion detection (channel calibration reduces
+            # neuromod UPDATES but should not suppress hostile emotion recognition)
+            if raw_hostility > 0.55:
+                fallback = ("wary", f"hostility={raw_hostility:.2f}")
+            elif raw_sentiment < -0.45:
+                fallback = ("down", f"sentiment={raw_sentiment:.2f}")
+            elif raw_sentiment > 0.55:
+                fallback = ("content", f"sentiment={raw_sentiment:.2f}")
             elif user_emo in ("frustrated", "annoyed", "disappointed", "angry"):
                 fallback = ("irritated", f"user_emotion={user_emo}")
             elif user_emo in ("sad", "anxious", "distressed", "struggling", "tired"):

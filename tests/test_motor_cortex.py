@@ -1267,18 +1267,22 @@ class TestExecuteInternalJob:
     """Tests for the background multi-step job executor."""
 
     def _make_job_router(self, strategic_plan: dict, tactical_steps: list[dict]):
-        """Router that returns strategic_plan for first call, then cycles through steps."""
-        responses = [json.dumps(strategic_plan)] + [json.dumps(s) for s in tactical_steps]
+        """Router whose call_structured returns the strategic plan (matching the real
+        ModelRouter's native tool_use path), then call() cycles through tactical steps."""
+        tactical_responses = [json.dumps(s) for s in tactical_steps]
         call_count = {"n": 0}
 
         class JobRouter:
             _call_log: list[dict] = []
 
+            async def call_structured(self, model_key, system_prompt, messages, **kwargs):
+                return dict(strategic_plan)
+
             async def call(self, model_key, system_prompt, messages, **kwargs):
                 idx = call_count["n"]
                 call_count["n"] += 1
-                if idx < len(responses):
-                    return responses[idx]
+                if idx < len(tactical_responses):
+                    return tactical_responses[idx]
                 return json.dumps({"tool": "none", "args": {}, "reason": "done"})
 
             async def embed(self, text: str):
@@ -1374,10 +1378,11 @@ class TestExecuteInternalJob:
             def __init__(self):
                 self._n = 0
 
+            async def call_structured(self, model_key, system_prompt, messages, **kwargs):
+                return dict(strategic_plan)  # strategic plan via native tool_use
+
             async def call(self, model_key, system_prompt, messages, **kwargs):
                 self._n += 1
-                if self._n == 1:
-                    return json.dumps(strategic_plan)  # strategic plan
                 return ""  # tactical planner always fails
 
             async def embed(self, text: str):
@@ -2094,15 +2099,18 @@ class TestJobWallClockDeadline:
         """Reuse TestExecuteInternalJob's helper pattern."""
         import json as _json
 
-        responses = [_json.dumps(strategic_plan)] + [_json.dumps(s) for s in tactical_steps]
+        tactical_responses = [_json.dumps(s) for s in tactical_steps]
         call_count = {"n": 0}
 
         class JobRouter:
+            async def call_structured(self, model_key, system_prompt, messages, **kwargs):
+                return dict(strategic_plan)
+
             async def call(self, model_key, system_prompt, messages, **kwargs):
                 idx = call_count["n"]
                 call_count["n"] += 1
-                if idx < len(responses):
-                    return responses[idx]
+                if idx < len(tactical_responses):
+                    return tactical_responses[idx]
                 return _json.dumps({"tool": "none", "args": {}, "reason": "done"})
 
             async def embed(self, text):

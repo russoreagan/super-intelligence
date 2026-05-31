@@ -28,6 +28,13 @@ def reset_current_trace(token: contextvars.Token) -> None:
     current_turn_trace.reset(token)
 
 
+def get_current_trace():
+    """Return the TurnTrace bound to the current async context, or None.
+    Lets in-cluster code (e.g. frontal drafter-prompt assembly) record
+    instrumentation flags without threading the trace through call args."""
+    return current_turn_trace.get()
+
+
 def record_switch_fire(
     name: str,
     cluster: str,

@@ -704,7 +704,26 @@ class HippocampusCluster:
             content = self._schema.read(schema_file)
             m = re.search(r"- Score:\s*(-?\d+)", content)
             current = int(m.group(1)) if m else 0
-            new_score = max(-50, min(100, current + delta))
+            m_bond = re.search(r"- Bond:\s*(-?\d+(?:\.\d+)?)", content)
+            bond = float(m_bond.group(1)) if m_bond else float(max(0, current))
+
+            # ── Reunion recovery boost (bond model) ───────────────────────────
+            # A positive delta from a former-close friend whose affection decayed
+            # during an absence recovers fast: scale the delta by how far below
+            # the latent bond the live affection sits. Negative deltas unaffected.
+            boost = 1.0
+            if settings.get("enable_bond_model") and delta > 0 and bond > current:
+                from brain.relationship import reunion_boost
+
+                boost = reunion_boost(
+                    float(current), bond, float(settings.get("bond_reunion_gain"))
+                )
+            effective_delta = delta * boost
+            new_score = max(-50, min(100, round(current + effective_delta)))
+
+            # ── Bond high-water mark ──────────────────────────────────────────
+            new_bond = max(bond, float(new_score)) if settings.get("enable_bond_model") else bond
+
             tier_label = self._AFFECTION_TIERS[-1][1]
             for threshold, label in self._AFFECTION_TIERS:
                 if new_score >= threshold:
@@ -714,6 +733,13 @@ class HippocampusCluster:
                 content = content[: m.start()] + f"- Score: {new_score}" + content[m.end() :]
             else:
                 content += f"\n- Score: {new_score}"
+            # Persist bond (replace or append)
+            if settings.get("enable_bond_model"):
+                bond_line = f"- Bond: {new_bond:.1f}"
+                if m_bond:
+                    content = re.sub(r"- Bond:\s*-?\d+(?:\.\d+)?", bond_line, content)
+                else:
+                    content += f"\n{bond_line}"
             hist_line = f"- History: {tier_label} (last tone: {tone}, delta: {delta:+d})"
             content = re.sub(r"- History:.*", hist_line, content)
             if "- History:" not in content:
@@ -721,16 +747,31 @@ class HippocampusCluster:
             from brain.second_brain.store import SCHEMA_DIR
 
             self._schema._atomic_write(SCHEMA_DIR / schema_file, content)
+            # Record the boost on the trace for instrumentation (P5)
+            if boost != 1.0:
+                try:
+                    from brain.observability.firing_path import get_current_trace
+
+                    _tr = get_current_trace()
+                    if _tr is not None:
+                        _tr.reunion_boost_applied = round(boost, 3)
+                        _tr.bond = round(new_bond, 1)
+                except Exception:
+                    pass
             logger.debug(
-                "[Memory] Affection score [%s]: %d→%d (%s, tone=%s)",
+                "[Memory] Affection [%s]: %d→%d (%s, tone=%s, bond=%.1f, boost=%.2f)",
                 schema_file,
                 current,
                 new_score,
                 tier_label,
                 tone,
+                new_bond,
+                boost,
             )
 
-    # Familiarity tiers by interaction count (turns with this speaker)
+    # Legacy interaction-count tiers — retained as a FALLBACK only when the bond
+    # model is disabled. With the bond model on, familiarity is a pure function
+    # of bond (see brain/relationship.familiarity_from_bond).
     _FAMILIARITY_TIERS = [
         (30, "close"),
         (8, "acquainted"),
@@ -738,8 +779,14 @@ class HippocampusCluster:
     ]
 
     async def _maybe_promote_familiarity(self, schema_file: str) -> None:
-        """Increment per-speaker interaction count and promote familiarity tier
-        when thresholds are crossed. Familiarity only moves forward — never back."""
+        """Increment the per-speaker interaction count and set the familiarity
+        tier. With the bond model on (default), the tier is derived from the
+        latent bond (history depth), so a fight that drops affection does not
+        erase familiarity — only a long absence that decays the bond does.
+
+        Fixes the accretion bug (F9): the rewrite now matches the ENTIRE
+        `- Familiarity:` line (including any trailing `(interactions: N)` suffix)
+        and replaces it, instead of prepending a fresh suffix each session."""
         import re
 
         async with self._schema._lock:
@@ -747,33 +794,127 @@ class HippocampusCluster:
             # Read or initialise interaction count
             m_count = re.search(r"- Interactions:\s*(\d+)", content)
             count = int(m_count.group(1)) + 1 if m_count else 1
-            # Determine new tier
-            new_tier = "new"
-            for threshold, label in self._FAMILIARITY_TIERS:
-                if count >= threshold:
-                    new_tier = label
-                    break
-            # Read current tier (don't downgrade)
-            _tier_order = {"new": 0, "acquainted": 1, "close": 2}
-            m_fam = re.search(r"- Familiarity:\s*(\w+)", content)
-            current_tier = m_fam.group(1).lower() if m_fam else "new"
-            if _tier_order.get(new_tier, 0) <= _tier_order.get(current_tier, 0):
-                new_tier = current_tier  # never downgrade
-            # Write interaction count
+
+            if settings.get("enable_bond_model"):
+                from brain.relationship import familiarity_from_bond
+
+                m_bond = re.search(r"- Bond:\s*(-?\d+(?:\.\d+)?)", content)
+                bond = float(m_bond.group(1)) if m_bond else 0.0
+                new_tier = familiarity_from_bond(
+                    bond,
+                    float(settings.get("familiarity_close_bond")),
+                    float(settings.get("familiarity_acquainted_bond")),
+                )
+            else:
+                # Legacy count-based, monotonic (never downgrades)
+                new_tier = "new"
+                for threshold, label in self._FAMILIARITY_TIERS:
+                    if count >= threshold:
+                        new_tier = label
+                        break
+                _tier_order = {"new": 0, "acquainted": 1, "close": 2}
+                m_fam0 = re.search(r"- Familiarity:\s*(\w+)", content)
+                current_tier = m_fam0.group(1).lower() if m_fam0 else "new"
+                if _tier_order.get(new_tier, 0) <= _tier_order.get(current_tier, 0):
+                    new_tier = current_tier
+
+            # Write interaction count (whole-line replace)
             count_line = f"- Interactions: {count}"
             if m_count:
-                content = content[: m_count.start()] + count_line + content[m_count.end() :]
+                content = re.sub(r"- Interactions:[^\n]*", count_line, content, count=1)
             else:
                 content += f"\n{count_line}"
-            # Write familiarity tier
+            # Write familiarity tier — match the ENTIRE line to stop suffix accretion
             fam_line = f"- Familiarity: {new_tier} (interactions: {count})"
-            if m_fam:
-                content = content[: m_fam.start()] + fam_line + content[m_fam.end() :]
+            if re.search(r"- Familiarity:[^\n]*", content):
+                content = re.sub(r"- Familiarity:[^\n]*", fam_line, content, count=1)
             else:
                 content += f"\n{fam_line}"
             from brain.second_brain.store import SCHEMA_DIR
 
             self._schema._atomic_write(SCHEMA_DIR / schema_file, content)
+
+    async def apply_relationship_decay_at_boot(self) -> None:
+        """Apply the bond model's absence decay once at session boot.
+
+        Reads each speaker schema's `Last seen`, computes the elapsed gap, and
+        decays affection (fast, bond-protected) and bond (slow), then sets
+        familiarity from the decayed bond. Does NOT refresh `Last seen` — that
+        is stamped at consolidation (session end), so the gap measured here is
+        the true inter-session absence. Talking during the session then recovers
+        affection fast via the reunion boost.
+        """
+        if not settings.get("enable_bond_model"):
+            return
+        import re
+
+        from brain.relationship import apply_absence, familiarity_from_bond
+        from brain.second_brain.store import SCHEMA_DIR
+
+        now = time.time()
+        aff_base = float(settings.get("bond_aff_halflife_base_days"))
+        bond_base = float(settings.get("bond_bond_halflife_base_days"))
+        scale = float(settings.get("bond_halflife_scale"))
+        close_bond = float(settings.get("familiarity_close_bond"))
+        acq_bond = float(settings.get("familiarity_acquainted_bond"))
+
+        # Speaker schemas are user.md plus user_*.md (per-speaker profiles)
+        try:
+            files = [f for f in self._schema.list_files() if f == "user.md" or f.startswith("user_")]
+        except Exception:
+            files = ["user.md"]
+
+        for schema_file in files:
+            try:
+                async with self._schema._lock:
+                    content = self._schema.read(schema_file)
+                    if not content or "- Score:" not in content:
+                        continue
+                    m_seen = re.search(r"- Last seen:\s*(\d+(?:\.\d+)?)", content)
+                    if not m_seen:
+                        # First boot with the bond model: stamp now, nothing to decay yet.
+                        content += f"\n- Last seen: {now:.0f}"
+                        self._schema._atomic_write(SCHEMA_DIR / schema_file, content)
+                        continue
+                    last_seen = float(m_seen.group(1))
+                    elapsed_days = max(0.0, (now - last_seen) / 86400.0)
+                    if elapsed_days < 0.04:  # < ~1 hour — same-session reboot, skip
+                        continue
+
+                    m_aff = re.search(r"- Score:\s*(-?\d+)", content)
+                    affection = float(m_aff.group(1)) if m_aff else 0.0
+                    m_bond = re.search(r"- Bond:\s*(-?\d+(?:\.\d+)?)", content)
+                    bond = float(m_bond.group(1)) if m_bond else max(0.0, affection)
+
+                    new_aff, new_bond = apply_absence(
+                        affection, bond, elapsed_days,
+                        aff_base=aff_base, bond_base=bond_base, scale=scale,
+                    )
+                    new_tier = familiarity_from_bond(new_bond, close_bond, acq_bond)
+
+                    content = re.sub(r"- Score:\s*-?\d+", f"- Score: {round(new_aff)}", content, count=1)
+                    if re.search(r"- Bond:\s*-?\d+(?:\.\d+)?", content):
+                        content = re.sub(
+                            r"- Bond:\s*-?\d+(?:\.\d+)?", f"- Bond: {new_bond:.1f}", content, count=1
+                        )
+                    else:
+                        content += f"\n- Bond: {new_bond:.1f}"
+                    count_m = re.search(r"- Interactions:\s*(\d+)", content)
+                    count = int(count_m.group(1)) if count_m else 0
+                    fam_line = f"- Familiarity: {new_tier} (interactions: {count})"
+                    if re.search(r"- Familiarity:[^\n]*", content):
+                        content = re.sub(r"- Familiarity:[^\n]*", fam_line, content, count=1)
+                    else:
+                        content += f"\n{fam_line}"
+
+                    self._schema._atomic_write(SCHEMA_DIR / schema_file, content)
+                    logger.info(
+                        "[Relationship] Boot decay %s: %.1f d → affection %.0f→%.0f, "
+                        "bond %.1f→%.1f, familiarity=%s",
+                        schema_file, elapsed_days, affection, new_aff, bond, new_bond, new_tier,
+                    )
+            except Exception as exc:
+                logger.warning("[Relationship] Boot decay failed for %s: %s", schema_file, exc)
 
     def update_self_schema(self, updates: dict) -> None:
         """Write updates to self.md (called at sleep consolidation)."""

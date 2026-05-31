@@ -166,6 +166,10 @@ class SleepConsolidation:
         # 1b. Personality observation — per speaker, upsert Communication style.
         await self._observe_personality(session_id, session_traces)
 
+        # 1c. Relationship tier update — deterministic score+count gating.
+        if settings.get("enable_relationship_stage_progression"):
+            await self._update_familiarity_tiers(session_traces)
+
         # Reconstruct batch_text for the self-model update (uses all turns)
         batch_text = "\n".join(
             f"Turn {i + 1}: User: {t.get('user_input', '')[:200]} | "
@@ -503,6 +507,47 @@ class SleepConsolidation:
                 logger.debug(
                     "[Personality observer] No usable output for %s — skipping",
                     speaker or "primary",
+                )
+
+    # ── Relationship tier update ──────────────────────────────────────────────
+
+    async def _update_familiarity_tiers(self, session_traces: list[dict]) -> None:
+        """Stamp `Last seen` = now for every speaker seen this session.
+
+        This is the second half of the bond model's two-touchpoint design:
+        consolidation records WHEN we last interacted; the next session's BOOT
+        reads that timestamp, computes the absence gap, and applies the decay
+        (see hippocampus.apply_relationship_decay_at_boot). Decay must NOT run
+        here — doing so would decay the affection this very session just earned.
+        """
+        if not session_traces or not settings.get("enable_bond_model"):
+            return
+
+        now = time.time()
+        speakers = {t.get("speaker_name") or "" for t in session_traces}
+        from brain.second_brain.store import SCHEMA_DIR
+
+        for speaker in speakers:
+            try:
+                schema_file = (
+                    self._schema.ensure_speaker_schema(speaker) if speaker else "user.md"
+                )
+                content = self._schema.read(schema_file)
+                if not content:
+                    continue
+                seen_line = f"- Last seen: {now:.0f}"
+                if re.search(r"- Last seen:[^\n]*", content):
+                    content = re.sub(r"- Last seen:[^\n]*", seen_line, content, count=1)
+                else:
+                    content += f"\n{seen_line}"
+                # Clean up any legacy low-score-sessions counter from the old model
+                content = re.sub(r"\n?- Low score sessions:[^\n]*", "", content)
+                self._schema._atomic_write(SCHEMA_DIR / schema_file, content)
+            except Exception as exc:
+                logger.warning(
+                    "[Relationship] Last-seen stamp failed for speaker=%s: %s",
+                    speaker or "primary",
+                    exc,
                 )
 
     # ── Hebbian delegation (preserve public API for callers and tests) ────────

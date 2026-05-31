@@ -116,6 +116,42 @@ _DISPATCHABLE_TOOLS = frozenset(
     }
 )
 
+# JSON schema for the strategic planner's create_plan tool (native tool_use).
+_PLAN_SCHEMA: dict = {
+    "type": "object",
+    "required": ["stories", "complexity"],
+    "properties": {
+        "stories": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["id", "description"],
+                "properties": {
+                    "id": {"type": "string"},
+                    "description": {"type": "string"},
+                    "expected_tool": {
+                        "type": "string",
+                        "enum": [
+                            "list_files", "read_file", "search_files", "write_file",
+                            "run_command", "fetch_url", "cloud_action", "query_langfuse",
+                            "set_mood", "recall_memory", "analyze_image", "ask_user", "?",
+                        ],
+                    },
+                    "acceptance_criteria": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                },
+            },
+        },
+        "success_criteria": {"type": "string"},
+        "complexity": {
+            "type": "string",
+            "enum": ["low", "medium", "high"],
+        },
+    },
+}
+
 # Deterministic tool-appropriateness guard (no LLM). Targets the one observed
 # failure class: the observability tool picked for a non-observability goal.
 _OBSERVABILITY_KEYWORDS = (
@@ -606,15 +642,22 @@ class MotorCortexCluster:
             # the planner can calibrate both ambition and cognitive approach.
             # Select general-purpose skills for the goal and let the strategic planner
             # reason with them in context (planning-stage skills).
-            if self._task_skills.available:
-                self._strategic_planner.skills = await self._task_skills.select(goal, k=3)
             persona_hint = self._persona_planning_hint()
             plan_ctx = f"Goal: {goal}\nBrain state: {chem_ctx}"
             if persona_hint:
                 plan_ctx += f"\n{persona_hint}"
-            self._strategic_planner.reset_turn(job_id)
-            raw_plan = await self._strategic_planner.call([{"role": "user", "content": plan_ctx}])
-            plan = safe_json_parse(raw_plan) or {}
+            plan = await self._router.call_structured(
+                "sonnet",
+                _STRATEGIC_SYSTEM,
+                [{"role": "user", "content": plan_ctx}],
+                tool_name="create_plan",
+                tool_description="Return a structured multi-step execution plan for the given goal.",
+                tool_schema=_PLAN_SCHEMA,
+                cluster=CLUSTER,
+                cell="strategic_planner",
+                turn_id=job_id,
+                max_tokens=4096,
+            )
             # Support Ralph-style "stories" (with acceptance_criteria) and legacy "steps" format.
             stories_planned = (
                 plan.get("stories")

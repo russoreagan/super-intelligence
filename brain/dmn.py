@@ -405,6 +405,7 @@ class DefaultModeNetwork:
         self._obs = obs
         self._skill_selector = None  # wired by session_setup after instantiation
         self._running = False
+        self._skip_next_tick = False  # set by pause(); cleared after one tick is skipped
         self._last_context: str = ""
         self._thought_count = 0
         # Rolling window of recent thoughts — used both to show the LLM what
@@ -661,18 +662,16 @@ class DefaultModeNetwork:
         return [active.category]
 
     def pause(self) -> None:
-        """No-op in the continuous-thought design.
+        """Request that the next DMN tick be skipped.
 
-        Earlier versions paused the DMN at turn start so the inner monologue
-        was silent while a turn ran. We now let thoughts keep flowing during
-        turns — what gets gated is whether to SPEAK a thought, not whether to
-        have it. This method is kept for backward compatibility with call
-        sites in run.py."""
-        return
+        Called at turn start. The next tick that fires will skip its LLM work
+        and clear the flag — no resume() needed. If no tick fires before the
+        turn ends that's fine too; the flag is harmless and clears on the next tick.
+        """
+        self._skip_next_tick = True
 
     def resume(self) -> None:
-        """No-op in the continuous-thought design. See pause() for context."""
-        return
+        """No-op — the skip is self-clearing after one tick."""
 
     async def shutdown(self) -> None:
         """Cancel the background loop. Called at session shutdown."""
@@ -1356,6 +1355,10 @@ class DefaultModeNetwork:
                 await asyncio.sleep(self._current_interval())
                 if not self._running:
                     break
+                if self._skip_next_tick:
+                    self._skip_next_tick = False
+                    logger.debug("[Background reflection] Tick skipped — turn in progress")
+                    continue
                 # Idle decay runs FIRST, every loop iteration. If it only ran
                 # inside _tick, a skipped tick would never decay — meaning once
                 # ACh climbs high enough to suppress, it would stay high and

@@ -51,10 +51,6 @@ DEFAULTS: dict[str, float | int | str] = {
     "weight_min": 0.10,
     "weight_max": 3.00,
     "gaba_skip_threshold_high": 0.55,
-    # Hard cap on drafters per turn. 3 is the architectural max; default 2 avoids
-    # 3×(8k-token frontal call) on slow hardware blowing through the turn timeout.
-    # Raise to 3 if the model is fast enough or you want maximum response variety.
-    "max_drafter_count": 2,
     # ── Section 4: Default Mode Network ──────────────────────────────────────
     "dmn_interval": 8.0,  # active baseline — fires when any mouse/keyboard activity detected
     "dmn_idle_interval": 45.0,  # when fully away from computer (OS idle > 60s)
@@ -183,6 +179,11 @@ DEFAULTS: dict[str, float | int | str] = {
     # Update rates (added per turn when condition is met)
     "oxt_positive_increment": 0.008,  # OXT gain per warm/positive exchange (~50 turns to connected)
     "oxt_hostility_drain": 0.008,  # OXT drain per hostile exchange (symmetric)
+    # OXT accrual gate (F4): old hardcoded sentiment>0.3 fired ~1.7% of turns, so
+    # OXT plateaued ~0.52 and never crossed the 0.60 connected threshold. Lower
+    # the gate so ordinary warm exchanges build bond. Tune via re-measurement.
+    "oxt_sentiment_gate": 0.20,  # min sentiment to earn OXT (was 0.30 hardcoded)
+    "oxt_hostility_gate": 0.20,  # max hostility to earn OXT (was 0.20 hardcoded)
     "cort_threat_increment": 0.022,  # CORT gain when hostility > threshold
     "cort_hostility_threshold": 0.35,  # hostility score that triggers CORT build (text-based, not prosody)
     "sht_reward_increment": 0.003,  # 5HT gain per rewarding interaction
@@ -283,6 +284,16 @@ DEFAULTS: dict[str, float | int | str] = {
     # local_max_concurrent: max simultaneous Ollama inference calls.
     #   Prevents saturating CPU/GPU during multi-cell background work.
     "local_max_concurrent": 3,
+    # cloud_max_concurrent: max simultaneous Anthropic API calls from interactive turns.
+    #   Prevents burst fan-outs (parallel drafters, critic, skill selector) from
+    #   all firing at once and tripping RPM rate limits on the Standard tier.
+    #   3 keeps well under the 50 RPM ceiling while adding only ~1-2s to turns
+    #   that fan out 6+ calls.
+    "cloud_max_concurrent": 3,
+    # bg_cloud_max_concurrent: max simultaneous Anthropic calls from background tasks
+    #   (DMN ticks, metacognition, motor background). Separate pool from cloud_max_concurrent
+    #   so background work can never starve interactive-turn cells waiting for a slot.
+    "bg_cloud_max_concurrent": 2,
     # cloud_daily_usd_budget: hard ceiling on total cloud spend per calendar day
     #   (UTC). 0 = no cap. Persisted to second_brain/cloud_usage.json so it
     #   survives restarts. When hit, all cloud calls fall back to local for the
@@ -346,6 +357,54 @@ DEFAULTS: dict[str, float | int | str] = {
     "persona_voice_the_analyst": "",
     "persona_voice_the_poet": "",
     "persona_voice_the_sage": "",
+    # ── Section: Channel Calibration (text vs. voice) ─────────────────────────
+    # Text and voice are fundamentally different communication channels.
+    # These weights scale how temporal features feed into neuromod updates
+    # depending on which channel the input came from.
+    "enable_channel_calibration": 1,      # 1 = on, 0 = off
+    "enable_text_paralinguistics": 1,     # 1 = extract emoji/laughter/warmth markers for text
+    # Text channel calibration weights
+    "text_hostility_weight": 0.65,        # short/direct text ≠ hostile; discount this signal
+    "text_sentiment_weight": 1.10,        # word-level sentiment is primary; up-weight slightly
+    "text_length_signal_weight": 0.20,    # message brevity is normal; near-zero as signal
+    # Text paralinguistic → neuromod contribution weights
+    "text_para_laughter_DA": 0.10,        # lol/😂 → DA boost
+    "text_para_warmth_DA": 0.07,          # :)/❤️ → DA boost
+    "text_para_negativity_GABA": 0.08,    # :(/ 😡 → GABA
+    "text_para_excitement_Glu": 0.07,     # omg/🔥 → Glu
+    "text_para_excitement_NE": 0.04,      # omg/🔥 → NE
+    # ── Section: Relationship Stage Progression ───────────────────────────────
+    "enable_relationship_stage_progression": 1,   # 1 = auto-update familiarity tier at sleep
+    "familiarity_acquainted_min_sessions": 3,      # sessions needed to reach acquainted
+    "familiarity_acquainted_min_score": 0,         # affection score must be at least this
+    "familiarity_close_min_sessions": 10,          # sessions needed to reach close
+    "familiarity_close_min_score": 15,             # affection score must be at least this
+    # ── Section: Bond model (relational decay + reunion recovery) ─────────────
+    # Two quantities per speaker: affection (live warmth, injected into prompts)
+    # and bond (latent closeness high-water mark). Closeness creates a bond that
+    # decays slowly and recovers fast; a thin acquaintance fades to nothing over
+    # the same gap. Half-lives grow EXPONENTIALLY with bond so the closer the
+    # prior relationship the smaller the decline.
+    "enable_bond_model": 1,
+    "bond_aff_halflife_base_days": 25.0,    # affection half-life at bond=0 (days)
+    "bond_bond_halflife_base_days": 90.0,   # bond half-life at bond=0 (days, much slower)
+    "bond_halflife_scale": 23.0,            # exp denominator: HL = base * exp(bond/scale)
+    "bond_reunion_gain": 8.0,               # positive-delta multiplier slope on reengagement
+    "familiarity_close_bond": 35.0,         # bond ≥ this → "close"
+    "familiarity_acquainted_bond": 12.0,    # bond ≥ this → "acquainted", else "new"
+    # ── Section: Self-Disclosure Policy ──────────────────────────────────────
+    "enable_self_disclosure_policy": 1,             # 1 = inject disclosure opportunity into drafter
+    "self_disclosure_cooldown_turns": 8,            # min turns between disclosure prompts
+    "self_disclosure_min_affection": 5,             # affection score floor for voice disclosure
+    "self_disclosure_text_min_affection": 20,       # affection score floor for text disclosure
+    # ── Section: Style Synchrony ─────────────────────────────────────────────
+    "enable_style_synchrony": 1,                    # 1 = track and inject user style register
+    "style_ema_alpha_voice": 0.25,                  # EMA weight for voice style (per turn)
+    "style_ema_alpha_text": 0.20,                   # EMA weight for text style (slower — more variable)
+    "style_max_shift": 0.12,                        # max drift toward user per dimension per session
+    "style_entity_formality_baseline": 0.25,        # entity's natural formality (0=casual, 1=formal)
+    "style_entity_verbosity_baseline": 0.45,        # entity's natural verbosity (0=terse, 1=expansive)
+    "style_min_turns_for_injection": 3,             # turns tracked before injecting style note
 }
 
 
