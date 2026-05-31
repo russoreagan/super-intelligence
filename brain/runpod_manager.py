@@ -291,7 +291,7 @@ class RunPodManager:
                             if await self._wait_until_ready(pod_id):
                                 self._apply_host(pod_id)
                                 logger.info("[RunPod] Pod acquired mid-session — cells switching from local to RunPod")
-                                break
+                                return  # stop looking
                             await self._stop_pod(pod_id)
                             self._pod_id = None
                 else:
