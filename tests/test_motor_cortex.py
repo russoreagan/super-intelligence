@@ -695,6 +695,30 @@ class TestCloudConnectorDiscovery:
         exe = ce.CloudExecutor.__new__(ce.CloudExecutor)
         assert exe._discover_connectors() == {}
 
+    def test_mcp_allow_patterns_cover_both_namespaces(self, tmp_path, monkeypatch):
+        """An MCP server in ~/.claude.json must be granted under BOTH the CLI
+        name (mcp__scite) and the Claude-connected form (mcp__claude_ai_Scite),
+        replacing the no-op 'mcp__*' that granted nothing."""
+        import os
+
+        from brain.clusters.cloud_executor import CloudExecutor
+
+        cfg = tmp_path / ".claude.json"
+        cfg.write_text(
+            '{"mcpServers": {"scite": {"command": "x"}}, '
+            '"projects": {"/p": {"mcpServers": {"weather": {}}}}}'
+        )
+        monkeypatch.setattr(
+            os.path, "expanduser", lambda p: str(cfg) if p == "~/.claude.json" else p
+        )
+
+        exe = CloudExecutor.__new__(CloudExecutor)
+        pats = exe._mcp_allow_patterns()
+        assert "mcp__scite" in pats
+        assert "mcp__claude_ai_Scite" in pats  # capitalised Claude-connected form
+        assert "mcp__weather" in pats  # nested (per-project) servers caught too
+        assert "mcp__*" not in pats  # the old no-op glob is gone
+
     def test_connectors_summary_formats_list(self):
         exe = _make_cloud_executor()
         exe._connectors = {"a": "Gmail", "b": "Calendar"}

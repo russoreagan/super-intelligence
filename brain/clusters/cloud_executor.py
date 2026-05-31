@@ -231,6 +231,34 @@ class CloudExecutor:
 
         return enabled
 
+    def _mcp_allow_patterns(self) -> list[str]:
+        """Server-level --allowedTools grants for connected MCP servers.
+
+        Returns ["mcp__<server>", ...] — each covers all of that server's tools.
+        A server can surface under two naming conventions, so we grant both:
+          - CLI-config name (e.g. "scite" in ~/.claude.json -> mcp__scite__*)
+          - Claude-connected form (mcp__claude_ai_<Name>__*)
+        Read access by intent; writes are gated upstream by the motor cortex's
+        is_write confirmation path before cloud_action ever dispatches.
+        """
+        patterns: set[str] = set()
+        try:
+            data = json.loads(Path(os.path.expanduser("~/.claude.json")).read_text())
+
+            def _collect(obj: object) -> None:
+                if not isinstance(obj, dict):
+                    return
+                for name in obj.get("mcpServers", {}):
+                    patterns.add(f"mcp__{name}")
+                    patterns.add(f"mcp__claude_ai_{name[:1].upper()}{name[1:]}")
+                for v in obj.values():
+                    _collect(v)
+
+            _collect(data)
+        except Exception:
+            pass
+        return sorted(patterns)
+
     def _discover_trusted_dirs(self) -> list[str]:
         """Read project directories the user has granted Claude access to.
 
@@ -314,12 +342,21 @@ class CloudExecutor:
         for d in self._trusted_dirs:
             add_dir_args.extend(["--add-dir", d])
 
-        # Build the allowed-tools list. Always include the standard built-ins;
-        # add mcp__* when connectors are enabled so Claude can reach scite,
-        # Gmail, Calendar, and any other connected MCP extension.
+        # Build the allowed-tools list. Standard built-ins, plus an explicit
+        # server-level grant for each connected MCP server so the entity has
+        # read access to its tools (scite, etc.) without an interactive prompt
+        # it can't answer headlessly.
+        #
+        # NOTE: the old ",mcp__*" was a no-op — --allowedTools does NOT treat
+        # "mcp__*" as a wildcard, so MCP tool calls sat pending approval forever.
+        # We grant each server at "mcp__<server>" level (covers all its tools).
+        # This is READ access by intent; write actions are independently gated
+        # upstream by the motor cortex's is_write confirmation path before any
+        # cloud_action dispatches here.
         allowed_tools = "WebSearch,WebFetch,Bash,Read,Write,Edit,LS"
-        if self._connectors:
-            allowed_tools += ",mcp__*"
+        mcp_grants = self._mcp_allow_patterns()
+        if mcp_grants:
+            allowed_tools += "," + ",".join(mcp_grants)
 
         try:
             proc = await asyncio.create_subprocess_exec(
