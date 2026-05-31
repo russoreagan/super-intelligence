@@ -593,6 +593,59 @@ class HippocampusCluster:
         except Exception as e:
             logger.warning("[Memory] Deferred-question encoding failed: %s", e)
 
+    async def encode_conclusion(
+        self,
+        session_id: str,
+        text: str,
+        source: str = "dmn",
+        tags: list[str] | None = None,
+        embedding_fn=None,
+    ) -> None:
+        """Encode a settled conclusion ("something I now know / have figured out")
+        into episodic memory so it resurfaces through normal vector recall instead
+        of being re-derived. Fed brain-wide: DMN-concluded threads (source="dmn"),
+        sleep insights ("sleep"), successful jobs ("job"), notable turn learnings
+        ("turn"), and user-confirmed conclusions ("confirmed").
+
+        Stored as an episode tagged ["conclusion","knowledge",source,*tags] with
+        entity_response prefixed "[CONCLUDED]" and a high surprise_score so the
+        recall pipeline surfaces it readily and can present it distinctly.
+        """
+        if not text.strip():
+            return
+        topic_tags = ["conclusion", "knowledge", source] + [t for t in (tags or []) if t]
+        try:
+            vec = None
+            if embedding_fn:
+                try:
+                    vec = await embedding_fn(text)
+                except Exception as e:
+                    logger.debug("[Memory] Conclusion embed failed: %s", e)
+            turn_id = f"concl_{int(time.time())}_{uuid.uuid4().hex[:6]}"
+            episode = Episode(
+                session_id=session_id,
+                turn_id=turn_id,
+                ts=time.time(),
+                user_input="(idle — concluded)",
+                entity_response=f"[CONCLUDED] {text}",
+                topic_tags=topic_tags,
+                emotion_state="satisfied",
+                user_emotion="unknown",
+                entities=[],
+                neuromod_snapshot={"DA": 0.6, "GABA": 0.1, "ACh": 0.4, "Glu": 0.3},
+                surprise_score=0.7,
+                vector=vec,
+            )
+            self._episodic.encode(episode)
+            logger.info(
+                "[Memory] Conclusion encoded (source=%s, tags=%s): %r",
+                source,
+                tags,
+                text[:80],
+            )
+        except Exception as e:
+            logger.warning("[Memory] Conclusion encoding failed: %s", e)
+
     async def _store_episode(
         self,
         session_id: str,

@@ -668,7 +668,13 @@ class SleepConsolidation:
         await self._apply_thought_updates(result)
 
     async def _apply_thought_updates(self, result: dict) -> None:
-        """Write thought consolidation output into self.md."""
+        """Route thought-consolidation output to the unified stores.
+
+        Open questions → the single active ledger (open_questions.md ## Open
+        threads), NOT a separate self.md section (de-fragmentation, B3).
+        Insights → episodic memory as conclusions (B2 sleep feed), instead of
+        being logged-and-discarded. The inner-life digest still lands in self.md.
+        """
         preoccupations = result.get("preoccupations") or []
         cross_connections = result.get("cross_connections") or []
         insights = result.get("insights") or []
@@ -678,42 +684,23 @@ class SleepConsolidation:
         if not any([preoccupations, cross_connections, insights, open_questions, digest]):
             return
 
-        existing = self._schema.read("self.md")
-        if not existing:
-            return
-
-        updated = existing
-
-        # Append open questions to the "Open Questions" section (if present).
-        # These are questions the brain kept circling that were never resolved.
+        # Open questions kept circling but unresolved → open them as threads in the
+        # one active ledger so the DMN can pick them up and make progress.
         if open_questions:
-            oq_block = "\n".join(f"- {q}" for q in open_questions[:3])
-            # Try to append inside an existing Open Questions section
-            oq_pattern = r"(## Open [Qq]uestions\n)(.*?)(\n## |\Z)"
-            match = re.search(oq_pattern, updated, flags=re.DOTALL)
-            if match:
-                existing_content = match.group(2).rstrip()
-                new_content = f"{existing_content}\n{oq_block}" if existing_content else oq_block
-                updated = re.sub(
-                    oq_pattern,
-                    lambda m: m.group(1) + new_content + "\n" + m.group(3),
-                    updated,
-                    flags=re.DOTALL,
-                )
-            else:
-                # Append a new section at the end
-                updated = updated.rstrip() + f"\n\n## Open Questions\n{oq_block}\n"
+            await self._append_questions_to_ledger(open_questions[:3])
 
-        # Write the preoccupations digest as a fact into self.md.
-        # The sanitize_fact check prevents injection; aappend_fact handles
-        # dedup so repeated consolidations don't pile up identical lines.
+        # Insights are the closest thing to settled knowledge — persist them to
+        # memory (was previously logged to decisions and lost).
+        for ins in insights[:3]:
+            await self._encode_conclusion(str(ins), source="sleep")
+
+        # Inner-life digest still lands in self.md (identity-adjacent, not knowledge).
         if digest:
             fact = sanitize_fact(f"Session inner-life digest: {digest}")
             if fact:
                 await self._schema.aappend_fact("self.md", fact)
                 logger.info("[Memory consolidation] Thought digest: %s", digest[:120])
 
-        # Log the rest to decisions for observability without writing noise to schema.
         decisions.log(
             "thought_consolidation",
             preoccupations=preoccupations,
@@ -721,15 +708,71 @@ class SleepConsolidation:
             insights=insights,
             open_questions=open_questions,
         )
-
         if preoccupations:
             logger.info("[Memory consolidation] Preoccupations: %s", "; ".join(preoccupations[:3]))
         if insights:
             logger.info("[Memory consolidation] Insights: %s", "; ".join(insights[:2]))
 
-        # Write open-questions changes only if the content was restructured
-        if open_questions and updated != existing:
-            await self._schema.awrite("self.md", updated)
-            logger.debug("[Memory consolidation] Open Questions section updated")
+    async def _append_questions_to_ledger(self, questions: list[str]) -> None:
+        """Open sleep's unresolved questions as threads in open_questions.md,
+        skipping near-duplicates of threads already there."""
+        from brain import open_threads as ot
+
+        try:
+            text = self._schema.read(ot.LEDGER_FILE)
+            threads = ot.parse_threads(ot.extract_section(text))
+            existing_lc = [t.summary.lower() for t in threads]
+            added = False
+            for q in questions:
+                q = str(q).strip()
+                if not q:
+                    continue
+                ql = q.lower()
+                if any(ql in s or s in ql for s in existing_lc):
+                    continue  # already represented
+                threads, _ = ot.open_thread(threads, q, bearing="sleep-surfaced")
+                existing_lc.append(ql)
+                added = True
+            if added:
+                await self._schema.upsert_section(
+                    ot.LEDGER_FILE, ot.SECTION, ot.render_section_body(threads)
+                )
+                logger.info("[Memory consolidation] Opened sleep questions into the ledger")
+        except Exception as e:
+            logger.warning("[Memory consolidation] Could not append questions to ledger: %s", e)
+
+    async def _encode_conclusion(self, text: str, source: str = "sleep") -> None:
+        """Encode a settled insight into episodic memory as a [CONCLUDED] episode
+        (mirrors Hippocampus.encode_conclusion; sleep holds _episodic directly)."""
+        import uuid
+
+        from brain.second_brain.store import Episode
+
+        if not text.strip():
+            return
+        try:
+            vec = None
+            try:
+                vec = await self._router.embed(text)
+            except Exception:
+                vec = None
+            ep = Episode(
+                session_id="sleep",
+                turn_id=f"concl_{int(time.time())}_{uuid.uuid4().hex[:6]}",
+                ts=time.time(),
+                user_input="(sleep — concluded)",
+                entity_response=f"[CONCLUDED] {text}",
+                topic_tags=["conclusion", "knowledge", source],
+                emotion_state="satisfied",
+                user_emotion="unknown",
+                entities=[],
+                neuromod_snapshot={"DA": 0.6, "GABA": 0.1, "ACh": 0.4, "Glu": 0.3},
+                surprise_score=0.7,
+                vector=vec,
+            )
+            self._episodic.encode(ep)
+            logger.info("[Memory consolidation] Insight encoded as conclusion: %r", text[:80])
+        except Exception as e:
+            logger.warning("[Memory consolidation] Conclusion encoding failed: %s", e)
 
     # ── Hebbian pass ─────────────────────────────────────────────────────────

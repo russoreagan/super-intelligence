@@ -43,9 +43,16 @@ from brain.utils import get_idle_seconds
 
 DEFERRED_THOUGHTS_PATH = SECOND_BRAIN_ROOT / "deferred_thoughts.md"
 PROPOSALS_DIR = SECOND_BRAIN_ROOT / "proposals"
+
+# Open-threads ledger lives in the hand-maintained open_questions.md (the single
+# active ledger). The DMN reads AND writes its `## Open threads` section.
+from brain import open_threads as ot  # noqa: E402
 # Novelty memory persisted across sessions so a restart doesn't resurface the
 # same idea verbatim. Holds the recent thoughts + their angles (the dedup state).
 NOVELTY_STATE_PATH = SECOND_BRAIN_ROOT / "dmn_novelty.json"
+# Learned routing weights (B9): how strongly each `bearing` should be surfaced
+# into live work, reinforced from use/ignore signals. Decays toward 1.0, clamped.
+ROUTING_WEIGHTS_PATH = SECOND_BRAIN_ROOT / "dmn_routing_weights.json"
 
 # English function/stop words — filtered out before Jaccard overlap so that
 # common scaffolding ("the user has been...") doesn't make every thought look
@@ -575,6 +582,22 @@ class DefaultModeNetwork:
         # DMN knows what work is pre-authorized and can task/propose accordingly.
         self._last_projects: str = ""
 
+        # Open-threads ledger — the DMN's working memory of unfinished ideas,
+        # persisted to the `## Open threads` section of open_questions.md. Opened
+        # when a thought starts an unfinished idea, advanced as progress is made,
+        # resolved (→ memory) when concluded. In-memory mirror; reconciled to disk.
+        self._open_threads: list = []
+        # Conclusions reached this session — surfaced in the monologue prompt so a
+        # settled idea isn't re-derived. (Durable copies live in episodic memory.)
+        self._recent_conclusions: deque = deque(maxlen=5)
+        # B9 — learned routing weights (per bearing), and rolling user-state signals
+        # used to modulate the live-surfacing budget (read shift from baseline, not
+        # raw level). Threads routed this turn, for the close-the-loop pass.
+        self._routing_weights: dict = {}
+        self._last_routed_ids: list = []
+        self._user_msg_lens: deque = deque(maxlen=6)
+        self._user_topics: deque = deque(maxlen=6)
+
         # Idle-gate switch — gates DMN tick firing on the chemistry snapshot.
         # 5HT + OXT (relaxed/safe) lower the threshold → mind-wanders more
         # readily. NE (alertness) and GABA (defensive) raise it → suppress
@@ -606,6 +629,10 @@ class DefaultModeNetwork:
         self._running = True
         # Restore novelty memory so a restart doesn't resurface yesterday's ideas.
         self._load_novelty()
+        # Restore the open-threads ledger (and enforce wall-clock age-out).
+        await self._load_threads()
+        # Restore learned routing weights (decayed toward rest on load).
+        self._load_routing_weights()
         active = float(settings.get("dmn_interval") or DMN_INTERVAL)
         idle = float(settings.get("dmn_idle_interval") or active * 3)
         logger.info(
@@ -717,6 +744,92 @@ class DefaultModeNetwork:
             os.replace(tmp, NOVELTY_STATE_PATH)
         except Exception as e:
             logger.warning("[DMN] Could not persist novelty state: %s", e)
+
+    # ── Open-threads ledger (open_questions.md) ─────────────────────────────
+
+    def _schema_store(self):
+        """The SchemaStore that owns open_questions.md (reached via hippocampus).
+        Returns None in test skeletons that don't wire a hippocampus."""
+        hip = getattr(self, "_hippocampus", None)
+        return getattr(hip, "_schema", None) if hip is not None else None
+
+    async def _load_threads(self) -> None:
+        """Load the open-threads ledger from open_questions.md and enforce the
+        wall-clock age-out (the safety net for when ticks are suppressed under
+        load and the advance cap never fires)."""
+        schema = self._schema_store()
+        if schema is None:
+            return
+        try:
+            text = schema.read(ot.LEDGER_FILE)
+            threads = ot.parse_threads(ot.extract_section(text))
+            kept, retired = ot.reap_aged(threads)
+            for t in retired:
+                logger.info("[DMN] Open thread aged out (>%.0fh): %r",
+                            ot.THREAD_MAX_AGE_S / 3600, t.summary[:60])
+            self._open_threads = kept
+            if retired:
+                await self._save_threads()
+            logger.info("[DMN] Loaded %d open thread(s)", len(self._open_threads))
+        except Exception as e:
+            logger.warning("[DMN] Could not load open threads: %s", e)
+
+    async def migrate_legacy_open_questions(self) -> None:
+        """One-shot, idempotent: fold any legacy `## Open Questions` section in
+        self.md (written by older sleep passes) into the unified ledger, then
+        drop the section. No-op when the section is absent (the normal case)."""
+        schema = self._schema_store()
+        if schema is None:
+            return
+        try:
+            self_md = schema.read("self.md")
+            if not self_md:
+                return
+            m = re.search(r"(?m)^##[ \t]+Open [Qq]uestions[ \t]*\r?\n(.*?)(?=^##[ \t]|\Z)",
+                          self_md, re.DOTALL)
+            if not m:
+                return
+            bullets = [
+                ln.strip()[2:].strip()
+                for ln in m.group(1).splitlines()
+                if ln.strip().startswith("- ")
+            ]
+            if not bullets:
+                return
+            text = schema.read(ot.LEDGER_FILE)
+            threads = ot.parse_threads(ot.extract_section(text))
+            existing_lc = [t.summary.lower() for t in threads]
+            for q in bullets:
+                ql = q.lower()
+                if any(ql in s or s in ql for s in existing_lc):
+                    continue
+                threads, _ = ot.open_thread(threads, q, bearing="migrated-from-self")
+                existing_lc.append(ql)
+            await schema.upsert_section(ot.LEDGER_FILE, ot.SECTION, ot.render_section_body(threads))
+            # Remove the legacy section from self.md.
+            cleaned = re.sub(
+                r"(?m)^##[ \t]+Open [Qq]uestions[ \t]*\r?\n.*?(?=^##[ \t]|\Z)",
+                "", self_md, flags=re.DOTALL,
+            )
+            cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+            await schema.awrite("self.md", cleaned)
+            self._open_threads = threads
+            logger.info("[DMN] Migrated %d legacy open-question(s) from self.md into the ledger",
+                        len(bullets))
+        except Exception as e:
+            logger.warning("[DMN] Legacy open-questions migration failed: %s", e)
+
+    async def _save_threads(self) -> None:
+        """Persist the in-memory ledger back to the `## Open threads` section.
+        Section-scoped — never touches the hand-authored sections of the file."""
+        schema = self._schema_store()
+        if schema is None:
+            return
+        try:
+            body = ot.render_section_body(self._open_threads)
+            await schema.upsert_section(ot.LEDGER_FILE, ot.SECTION, body)
+        except Exception as e:
+            logger.warning("[DMN] Could not persist open threads: %s", e)
 
     def _load_novelty(self) -> None:
         """Restore recent-thought/angle dedup state from a previous session.
@@ -1469,6 +1582,18 @@ class DefaultModeNetwork:
         ):
             if not hasattr(self, attr):
                 setattr(self, attr, default)
+        if not hasattr(self, "_open_threads"):
+            self._open_threads = []
+        if not hasattr(self, "_recent_conclusions"):
+            self._recent_conclusions = deque(maxlen=5)
+        if not hasattr(self, "_routing_weights"):
+            self._routing_weights = {}
+        if not hasattr(self, "_last_routed_ids"):
+            self._last_routed_ids = []
+        if not hasattr(self, "_user_msg_lens"):
+            self._user_msg_lens = deque(maxlen=6)
+        if not hasattr(self, "_user_topics"):
+            self._user_topics = deque(maxlen=6)
         if not hasattr(self, "_skill_selector"):
             self._skill_selector = None
         if not hasattr(self, "_monologue_baseline_skills"):
@@ -1645,8 +1770,24 @@ class DefaultModeNetwork:
             return "ruminate", flavor, drive
         return "normal", flavor, drive
 
+    def _current_seed_thread(self):
+        """The open thread rumination should work on next: the least-advanced one
+        (tie-break oldest), so the loop deepens a tracked idea toward closure
+        rather than re-seeding off whatever was thought last. None if none open."""
+        open_threads = [
+            t for t in getattr(self, "_open_threads", []) if t.status == ot.STATUS_OPEN
+        ]
+        if not open_threads:
+            return None
+        return min(open_threads, key=lambda t: (t.advances, t.opened_ts))
+
     def _current_seed(self) -> str:
-        """The current preoccupation to ruminate on / vary skills around."""
+        """The current preoccupation to ruminate on / vary skills around. Prefers
+        an open thread (so rumination advances tracked work) over the last
+        thought, falling back to recent thoughts / context."""
+        seed_thread = self._current_seed_thread()
+        if seed_thread is not None:
+            return seed_thread.summary.strip()
         if self._recent_thoughts:
             return str(self._recent_thoughts[-1]).strip()
         return (self._last_context or "").strip()
@@ -1708,6 +1849,19 @@ class DefaultModeNetwork:
             "defer_tags": [],
             "chem_delta": {},
         }
+        # If this rumination is deepening a tracked open thread, route the synthesis
+        # back into the ledger: advance it each pass, and CONCLUDE it once the
+        # consecutive-rumination depth cap is reached — "make progress, then retire"
+        # so a thread can't be ruminated on forever.
+        seed_thread = self._current_seed_thread()
+        if seed_thread is not None and seed_thread.summary.strip() == seed:
+            cap = int(settings.get("dmn_rumination_max_consecutive") or 2)
+            if self._consecutive_ruminations >= cap:
+                metadata["conclude_thread_id"] = seed_thread.id
+                metadata["conclusion"] = final.strip()
+                metadata["conclusion_confidence"] = "confident"
+            else:
+                metadata["advance_thread_id"] = seed_thread.id
         await self._process_thought(
             final.strip(),
             metadata,
@@ -1839,6 +1993,27 @@ class DefaultModeNetwork:
                 f"\nPRE-AUTHORIZED PROJECTS (work within these scopes auto-runs — "
                 f"set `task` directly, no propose needed):\n{self._last_projects}"
             )
+        # OPEN THREADS — steer toward advancing/concluding unfinished ideas rather
+        # than always opening a new angle. This is the positive-progress signal
+        # that counters the pure-novelty bias of the rest of the prompt.
+        open_threads = [t for t in self._open_threads if t.status == ot.STATUS_OPEN]
+        if open_threads:
+            lines = []
+            for t in open_threads:
+                last = f" — last: {t.progress[-1][:80]}" if t.progress else ""
+                lines.append(f"- [{t.id}] {t.summary[:100]} (advances: {t.advances}){last}")
+            prompt_parts.append(
+                "\nOPEN THREADS (unfinished ideas you've started — prefer ADVANCING one "
+                "of these via `advance_thread_id`, or CONCLUDING it via `conclude_thread_id`, "
+                "over opening a brand-new angle):\n" + "\n".join(lines)
+            )
+        # ALREADY CONCLUDED — settled this session; don't re-derive these.
+        concluded = list(getattr(self, "_recent_conclusions", []))
+        if concluded:
+            prompt_parts.append(
+                "\nALREADY CONCLUDED (treat as settled — build on or move past these, "
+                "don't re-derive):\n" + "\n".join(f"- {c[:120]}" for c in concluded[-3:])
+            )
         if self._recent_thoughts:
             # Show only the last few verbatim — dumping the whole window primes the
             # model to continue its own pattern. The angle list below carries the
@@ -1907,6 +2082,16 @@ class DefaultModeNetwork:
             "defer_urgency": "high",
             "defer_tags": [],
             "chem_delta": {},
+            # Open-threads ledger fields (B6). A thought may advance/conclude a
+            # thread AND stay purely cognitive — these are independent of
+            # task/propose/plan.
+            "open_thread": False,
+            "advance_thread_id": "",
+            "conclude_thread_id": "",
+            "conclusion": "",
+            "conclusion_confidence": "confident",  # "confident" | "uncertain"
+            "bears_on": [],
+            "bearing": "",
         }
 
         parsed = self._parse_monologue_response(raw)
@@ -1944,6 +2129,20 @@ class DefaultModeNetwork:
                             chem_delta[ch] = max(-_CHEM_MAX_DELTA, min(_CHEM_MAX_DELTA, float(v)))
                 metadata["chem_delta"] = chem_delta
 
+            # Open-threads ledger fields (B6).
+            metadata["open_thread"] = bool(parsed.get("open_thread"))
+            metadata["advance_thread_id"] = (parsed.get("advance_thread_id") or "").strip()
+            metadata["conclude_thread_id"] = (parsed.get("conclude_thread_id") or "").strip()
+            metadata["conclusion"] = (parsed.get("conclusion") or "").strip()
+            conf = (parsed.get("conclusion_confidence") or "confident").strip().lower()
+            metadata["conclusion_confidence"] = (
+                "uncertain" if conf == "uncertain" else "confident"
+            )
+            metadata["bears_on"] = [
+                str(b).strip().lower() for b in (parsed.get("bears_on") or []) if str(b).strip()
+            ][:4]
+            metadata["bearing"] = (parsed.get("bearing") or "").strip().lower()
+
         return thought_clean, metadata
 
     async def _process_thought(
@@ -1972,6 +2171,18 @@ class DefaultModeNetwork:
         defer_tags = metadata["defer_tags"]
         chem_delta = metadata["chem_delta"]
 
+        # A thought that advances/concludes a TRACKED open thread is exempt from
+        # the angle-repeat and cluster-saturation gates: those gates exist to
+        # break UNtracked looping, but we WANT sustained depth on a thread we're
+        # deliberately working. Requires an explicit thread id match (not a
+        # heuristic) so the exemption can't silently reopen the loop.
+        _adv_id = metadata.get("advance_thread_id") or ""
+        _con_id = metadata.get("conclude_thread_id") or ""
+        advancing_thread = bool(
+            (_adv_id and ot.find(self._open_threads, _adv_id))
+            or (_con_id and ot.find(self._open_threads, _con_id))
+        )
+
         # ── Dedup gate ────────────────────────────────────────────────────
         # Word-overlap (cheap) is a pre-filter over the narrow window; semantic
         # cosine (the real gate) runs over the FULL window — it doesn't over-fire
@@ -1987,13 +2198,17 @@ class DefaultModeNetwork:
             o = _content_word_overlap(thought_clean, prior)
             if o > max_overlap:
                 max_overlap = o
-        if max_overlap > settings.get("dmn_overlap_threshold"):
+        # A thought that explicitly advances/concludes a tracked thread bypasses
+        # ALL dedup gates: the thread id is a stronger signal than textual novelty,
+        # and the action (advance/conclude) must happen even if the synthesis
+        # resembles a prior note. Bounded by the advance cap so it can't loop.
+        if not advancing_thread and max_overlap > settings.get("dmn_overlap_threshold"):
             is_dup, dup_reason = True, f"word-overlap {max_overlap:.2f}"
 
         # Semantic gate (best-effort — falls back to word-overlap if embedder down).
         new_emb = await self._safe_embed(thought_clean)
         max_cos = 0.0
-        if not is_dup and new_emb is not None:
+        if not is_dup and not advancing_thread and new_emb is not None:
             sem_thr = float(settings.get("dmn_semantic_dup_threshold") or 0.88)
             for prior, prior_emb in zip(
                 self._recent_thoughts, self._recent_embeddings, strict=False
@@ -2011,7 +2226,7 @@ class DefaultModeNetwork:
         # Angle hard-gate: a recently-used angle is blocked when the content is
         # also at least moderately similar (so a genuinely new take that happens
         # to reuse an angle label still passes).
-        if not is_dup and angle and angle in self._recent_angles:
+        if not is_dup and not advancing_thread and angle and angle in self._recent_angles:
             sem_thr = float(settings.get("dmn_semantic_dup_threshold") or 0.88)
             if (
                 max_overlap > float(settings.get("dmn_overlap_threshold")) * 0.6
@@ -2023,7 +2238,7 @@ class DefaultModeNetwork:
         # (e.g. 3x "craftsmanship-*"), the brain is stuck in a topic attractor.
         # Block new thoughts in the same cluster even when the suffix differs.
         _CLUSTER_SATURATION = int(os.environ.get("BRAIN_DMN_CLUSTER_SATURATION", "3"))
-        if not is_dup and angle and "-" in angle:
+        if not is_dup and not advancing_thread and angle and "-" in angle:
             cluster = angle.rsplit("-", 1)[0]
             cluster_count = sum(
                 1
@@ -2038,7 +2253,7 @@ class DefaultModeNetwork:
         # the word-overlap gate (different nouns) and the cosine gate (just under
         # threshold). Skipped for rumination output (intentionally deepens a seed).
         frame_sig = "" if exempt_seed is not None else _frame_signature(thought_clean)
-        if not is_dup and frame_sig:
+        if not is_dup and not advancing_thread and frame_sig:
             repeats = sum(1 for f in self._recent_frames if f == frame_sig)
             if repeats >= DMN_FRAME_REPEAT_MAX:
                 is_dup, dup_reason = True, f"repeated frame '{frame_sig}'"
@@ -2066,6 +2281,10 @@ class DefaultModeNetwork:
         direction = _classify_thought(thought_clean)
         neuromod_snapshot = self._bus.neuromod.snapshot()
 
+        # Open/advance/conclude an open thread (B1/B2). Returns the outcome so the
+        # trace records what this thought actually DID (follow-through visibility).
+        thread_outcome = await self._apply_thread_actions(thought_clean, metadata, turn_id)
+
         if self._obs:
             self._obs.record_thought(
                 thought=thought_clean,
@@ -2073,6 +2292,7 @@ class DefaultModeNetwork:
                 angle=angle,
                 count=self._thought_count,
                 neuromod=neuromod_snapshot,
+                outcome=thread_outcome,
             )
 
         da_level = float(neuromod_snapshot.get("DA", 0.5))
@@ -2164,6 +2384,406 @@ class DefaultModeNetwork:
 
         if is_plan and thought_clean:
             asyncio.create_task(self._run_planning_pass(thought_clean, turn_id))
+
+    async def _apply_thread_actions(
+        self, thought_clean: str, metadata: dict, turn_id: str
+    ) -> dict:
+        """Open / advance / conclude an open thread based on the monologue's
+        ledger fields. Non-motor by construction — mutates the ledger and (on a
+        confident conclusion) encodes to memory; never queues a task.
+
+        Returns an outcome dict describing the follow-through, for the trace."""
+        self._ensure_runtime_state()
+        open_new = bool(metadata.get("open_thread"))
+        advance_id = metadata.get("advance_thread_id") or ""
+        conclude_id = metadata.get("conclude_thread_id") or ""
+        conclusion = metadata.get("conclusion") or ""
+        confidence = metadata.get("conclusion_confidence") or "confident"
+        bears_on = metadata.get("bears_on") or []
+        bearing = metadata.get("bearing") or ""
+        angle = metadata.get("angle") or ""
+
+        # CONCLUDE takes priority over advance/open.
+        if conclude_id and ot.find(self._open_threads, conclude_id):
+            return await self._resolve_thread(
+                conclude_id, conclusion or thought_clean, confidence, bears_on
+            )
+
+        # ADVANCE an existing thread.
+        if advance_id and ot.find(self._open_threads, advance_id):
+            self._open_threads, t = ot.advance_thread(
+                self._open_threads, advance_id, thought_clean
+            )
+            await self._save_threads()
+            # Force closure when the advance cap is hit so a thread can't deepen
+            # forever (a different kind of loop). The last progress note becomes
+            # the conclusion if the model didn't supply one.
+            if t is not None and ot.should_retire_for_advances(t):
+                concl = conclusion or (t.progress[-1] if t.progress else t.summary)
+                return await self._resolve_thread(t.id, concl, "confident", t.bears_on or bears_on)
+            return {
+                "action": "advanced_thread",
+                "thread_id": getattr(t, "id", ""),
+                "thread_title": getattr(t, "summary", "")[:80],
+                "advances": getattr(t, "advances", 0),
+            }
+
+        # OPEN a new thread.
+        if open_new and thought_clean:
+            self._open_threads, t = ot.open_thread(
+                self._open_threads, thought_clean,
+                angle=angle, bears_on=bears_on, bearing=bearing,
+            )
+            await self._save_threads()
+            return {"action": "opened_thread", "thread_id": t.id, "thread_title": t.summary[:80]}
+
+        return {"action": "none"}
+
+    async def _resolve_thread(
+        self, thread_id: str, conclusion_text: str, confidence: str, bears_on: list
+    ) -> dict:
+        """Resolve a thread. Confident → commit the conclusion to episodic memory
+        and retire. Uncertain → route through the existing deferred-question
+        pipeline (ask the user first) and park the thread as pending_confirmation."""
+        t = ot.find(self._open_threads, thread_id)
+        if t is None:
+            return {"action": "none"}
+        sid = getattr(self, "_session_id", "unknown")
+        tags = list(dict.fromkeys([*(t.bears_on or []), *(bears_on or [])]))
+
+        if confidence == "uncertain":
+            # Not sure it's right — raise it with the user before treating it as
+            # known, via the same channel the brain already uses for deferred
+            # questions. The thread waits in pending_confirmation (B5 promotes it).
+            self._open_threads, pend = ot.mark_pending(self._open_threads, thread_id)
+            if pend is not None:
+                pend.pending_conclusion = conclusion_text
+            await self._save_threads()
+            question = (
+                f"I've been thinking this through and tentatively concluded: "
+                f"{conclusion_text} — does that match how you see it?"
+            )
+            self._append_deferred_thought(question, "high", tags)
+            if self._hippocampus is not None:
+                asyncio.create_task(
+                    self._hippocampus.encode_deferred_question(
+                        session_id=sid,
+                        text=question,
+                        urgency="high",
+                        tags=["pending_conclusion", thread_id, *tags],
+                        embedding_fn=self._router.embed,
+                    )
+                )
+            return {
+                "action": "deferred_conclusion",
+                "thread_id": thread_id,
+                "thread_title": t.summary[:80],
+            }
+
+        # Confident — commit to memory and retire the thread.
+        if self._hippocampus is not None:
+            asyncio.create_task(
+                self._hippocampus.encode_conclusion(
+                    session_id=sid,
+                    text=conclusion_text,
+                    source="dmn",
+                    tags=tags,
+                    embedding_fn=self._router.embed,
+                )
+            )
+        self._open_threads = ot.remove_thread(self._open_threads, thread_id)
+        self._recent_conclusions.append(conclusion_text)
+        await self._save_threads()
+        logger.info("[DMN] Concluded thread %s → memory: %r", thread_id, conclusion_text[:80])
+        return {"action": "concluded", "thread_id": thread_id, "thread_title": t.summary[:80]}
+
+    # ── Live-work routing + close-the-loop-on-use (B8/B9) ───────────────────
+
+    @staticmethod
+    def _thread_relevance(thread, activity_text: str) -> float:
+        """How relevant an open thread is to what the user is working on now.
+        Precise tag match (bears_on/bearing) dominates; summary word-overlap is
+        the fallback so routing isn't purely fuzzy."""
+        act = (activity_text or "").lower()
+        if not act:
+            return 0.0
+        score = 0.0
+        for tag in thread.bears_on:
+            if tag and tag.lower() in act:
+                score += 0.6
+        if thread.bearing and thread.bearing.lower() in act:
+            score += 0.2
+        if thread.angle and thread.angle.lower() in act:
+            score += 0.2
+        score += _content_word_overlap(thread.summary, act)
+        return score
+
+    def route_threads_for_turn(self, activity_text: str, budget: int = 2) -> list:
+        """Surface up to `budget` open threads relevant to the current activity,
+        so a relevant unfinished idea shows up while the user is working on the
+        thing it bears on. Ranked by relevance × learned routing weight (B9).
+        budget<=0 means the load gate decided to hold everything this turn."""
+        self._ensure_runtime_state()
+        if budget <= 0:
+            return []
+        open_threads = [t for t in self._open_threads if t.status == ot.STATUS_OPEN]
+        scored = []
+        for t in open_threads:
+            rel = self._thread_relevance(t, activity_text)
+            if rel <= 0:
+                continue
+            weight = self._routing_weight(t.bearing)
+            scored.append((rel * weight, t))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        routed = [t for score, t in scored[: max(0, budget)] if score >= 0.15]
+        self._last_routed_ids = [t.id for t in routed]
+        return routed
+
+    async def note_threads_used(self, routed: list, response_text: str) -> list[dict]:
+        """Close the loop. A routed thread that the response actually engaged
+        (textual overlap, not mere recall) is marked resolved-by-use: committed to
+        memory and retired. Threads that were surfaced but ignored weakly depress
+        their routing weight (B9). Returns events for observability."""
+        self._ensure_runtime_state()
+        events: list[dict] = []
+        resp = (response_text or "").lower()
+        sid = getattr(self, "_session_id", "unknown")
+        for t in routed:
+            used = bool(resp) and (
+                _content_word_overlap(t.summary, resp) >= 0.25
+                or any(tag and tag.lower() in resp for tag in t.bears_on)
+            )
+            self._reinforce_routing(t.bearing, used)
+            if not used:
+                continue
+            text = t.progress[-1] if t.progress else t.summary
+            if self._hippocampus is not None:
+                asyncio.create_task(
+                    self._hippocampus.encode_conclusion(
+                        session_id=sid, text=text, source="landed",
+                        tags=list(t.bears_on or []), embedding_fn=self._router.embed,
+                    )
+                )
+            self._open_threads = ot.remove_thread(self._open_threads, t.id)
+            self._recent_conclusions.append(text)
+            events.append({"action": "resolved_by_use", "thread_id": t.id})
+            logger.info("[DMN] Thread landed in a response → retired: %s", t.id)
+        if events:
+            await self._save_threads()
+        if routed:
+            self._persist_routing_weights()
+        return events
+
+    # ── B9: learned routing weights + load-aware budget ─────────────────────
+
+    _ROUTE_W_FLOOR = 0.25
+    _ROUTE_W_CEIL = 2.5
+    _ROUTE_W_LR = 0.15  # gentle learning rate
+
+    def _routing_weight(self, bearing: str) -> float:
+        if not bearing:
+            return 1.0
+        return float(self._routing_weights.get(bearing, 1.0))
+
+    def _reinforce_routing(self, bearing: str, used: bool) -> None:
+        """Hebbian-style update: a thread that landed potentiates its bearing's
+        routing weight; one surfaced-and-ignored gently depresses it. Clamped so
+        routing can never collapse to never/always-surface."""
+        if not bearing:
+            return
+        w = self._routing_weights.get(bearing, 1.0)
+        if used:
+            w += self._ROUTE_W_LR * (self._ROUTE_W_CEIL - w)
+        else:
+            w -= self._ROUTE_W_LR * (w - self._ROUTE_W_FLOOR)
+        self._routing_weights[bearing] = max(self._ROUTE_W_FLOOR, min(self._ROUTE_W_CEIL, w))
+
+    def _load_routing_weights(self) -> None:
+        try:
+            if not ROUTING_WEIGHTS_PATH.exists():
+                return
+            data = json.loads(ROUTING_WEIGHTS_PATH.read_text(encoding="utf-8"))
+            weights = data.get("weights") or {}
+            # Decay toward rest (1.0) on load so stale associations relax — the
+            # analog of Hebbian decay_toward_rest.
+            rate = 0.1
+            self._routing_weights = {
+                k: float(v) + (1.0 - float(v)) * rate for k, v in weights.items()
+            }
+        except Exception as e:
+            logger.warning("[DMN] Could not load routing weights: %s", e)
+
+    def _persist_routing_weights(self) -> None:
+        try:
+            ROUTING_WEIGHTS_PATH.parent.mkdir(parents=True, exist_ok=True)
+            tmp = ROUTING_WEIGHTS_PATH.with_suffix(".json.tmp")
+            tmp.write_text(
+                json.dumps({"weights": self._routing_weights, "ts": time.time()}, indent=2),
+                encoding="utf-8",
+            )
+            os.replace(tmp, ROUTING_WEIGHTS_PATH)
+        except Exception as e:
+            logger.warning("[DMN] Could not persist routing weights: %s", e)
+
+    def observe_user_turn(self, features: dict, user_input: str) -> None:
+        """Track rolling user-state signals for the load gate. We watch *shift
+        from baseline*, not raw level — a single curt message is noise."""
+        self._ensure_runtime_state()
+        self._user_msg_lens.append(len((user_input or "").split()))
+        topic = str((features or {}).get("topic_summary") or (features or {}).get("intent") or "")
+        self._user_topics.append(topic)
+
+    def _user_load_signals(self) -> tuple[float, float]:
+        """Return (verbosity_trend, topic_jump_rate).
+        verbosity_trend < 0 means the user has turned terser than their baseline
+        (a shift toward stretched). topic_jump_rate is the fraction of recent
+        turns that changed topic."""
+        lens = list(self._user_msg_lens)
+        verbosity_trend = 0.0
+        if len(lens) >= 4:
+            split = len(lens) // 2
+            base = sum(lens[:split]) / max(1, split)
+            recent = sum(lens[split:]) / max(1, len(lens) - split)
+            if base > 0:
+                verbosity_trend = (recent - base) / base  # negative = getting terser
+        topics = [t for t in self._user_topics if t]
+        topic_jump_rate = 0.0
+        if len(topics) >= 3:
+            changes = sum(1 for a, b in zip(topics, topics[1:], strict=False) if a != b)
+            topic_jump_rate = changes / (len(topics) - 1)
+        return verbosity_trend, topic_jump_rate
+
+    @staticmethod
+    def _routing_budget_from(
+        focus_ach: float, verbosity_trend: float, topic_jump_rate: float, base: int = 2
+    ) -> int:
+        """Pure: map (AI focus, user-state shift) → how many threads to surface.
+        Biased toward holding — a missed surface is quieter than interrupting a
+        stretched user."""
+        budget = base
+        if focus_ach >= 0.6:          # the AI itself is in deep focus
+            budget -= 1
+        if verbosity_trend <= -0.25:  # user turned markedly terser than baseline
+            budget -= 1
+        if topic_jump_rate >= 0.6:    # user is jumping between topics (scattered/stretched)
+            budget -= 1
+        return max(0, min(base, budget))
+
+    def compute_routing_budget(self) -> int:
+        """Gather live signals and decide the per-turn surfacing budget."""
+        self._ensure_runtime_state()
+        try:
+            ach = float(self._bus.neuromod.snapshot().get("ACh", 0.3))
+        except Exception:
+            ach = 0.3
+        verbosity_trend, topic_jump_rate = self._user_load_signals()
+        return self._routing_budget_from(ach, verbosity_trend, topic_jump_rate)
+
+    # ── Conversational ledger intents (B5) ──────────────────────────────────
+
+    async def process_user_message_for_ledger(self, user_input: str) -> dict | None:
+        """Apply conversational intents that touch the ledger, best-effort.
+
+        Priority: if a conclusion is awaiting confirmation, treat the reply as the
+        answer (affirm → commit to memory; reject → drop; correct → re-open with
+        the correction). Otherwise detect a manual project assignment. Returns a
+        small dict describing what happened (for the caller to acknowledge), or
+        None if nothing matched.
+        """
+        self._ensure_runtime_state()
+        from brain.clusters import ledger_intents as li
+
+        if not user_input or not user_input.strip():
+            return None
+
+        pending = [t for t in self._open_threads if t.status == ot.STATUS_PENDING]
+        if pending:
+            target = self._match_pending(user_input, pending)
+            if target is not None:
+                verdict = li.classify_confirmation(user_input)
+                return await self._resolve_pending_conclusion(target, verdict, user_input)
+
+        proj = li.detect_manual_project(user_input)
+        if proj:
+            await self.add_manual_project(proj["title"], proj["task"])
+            return {"action": "project_added", "title": proj["title"]}
+        return None
+
+    @staticmethod
+    def _match_pending(user_input: str, pending: list):
+        """Pick which pending-conclusion thread the user is answering. One
+        pending → that one. Several → the best word-overlap match (else None)."""
+        if len(pending) == 1:
+            return pending[0]
+        best, best_score = None, 0.0
+        for t in pending:
+            score = _content_word_overlap(user_input, f"{t.summary} {t.pending_conclusion}")
+            if score > best_score:
+                best, best_score = t, score
+        return best if best_score >= 0.15 else None
+
+    async def _resolve_pending_conclusion(self, thread, verdict: str, user_input: str) -> dict:
+        sid = getattr(self, "_session_id", "unknown")
+        tags = list(thread.bears_on or [])
+        if verdict == "affirm":
+            text = thread.pending_conclusion or thread.summary
+            if self._hippocampus is not None:
+                asyncio.create_task(
+                    self._hippocampus.encode_conclusion(
+                        session_id=sid, text=text, source="confirmed",
+                        tags=tags, embedding_fn=self._router.embed,
+                    )
+                )
+            self._open_threads = ot.remove_thread(self._open_threads, thread.id)
+            self._recent_conclusions.append(text)
+            await self._save_threads()
+            logger.info("[DMN] User confirmed conclusion → memory: %r", text[:80])
+            return {"action": "conclusion_confirmed", "thread_id": thread.id}
+        if verdict == "reject":
+            self._open_threads = ot.remove_thread(self._open_threads, thread.id)
+            await self._save_threads()
+            logger.info("[DMN] User rejected conclusion → thread dropped: %s", thread.id)
+            return {"action": "conclusion_rejected", "thread_id": thread.id}
+        # correction → re-open the thread with the correction as a fresh advance.
+        thread.status = ot.STATUS_OPEN
+        thread.pending_conclusion = ""
+        self._open_threads, _ = ot.advance_thread(
+            self._open_threads, thread.id, f"user correction: {user_input.strip()[:200]}"
+        )
+        await self._save_threads()
+        logger.info("[DMN] User corrected conclusion → thread re-opened: %s", thread.id)
+        return {"action": "conclusion_corrected", "thread_id": thread.id}
+
+    async def add_manual_project(self, title: str, task: str) -> bool:
+        """Append a user-assigned project to the `## Projects assigned by Russ`
+        section of open_questions.md, then refresh the DMN's projects context so
+        it's picked up immediately. Non-motor — it only records the assignment."""
+        schema = self._schema_store()
+        if schema is None:
+            return False
+        try:
+            text = schema.read(ot.LEDGER_FILE)
+            if not text:
+                return False
+            block = (
+                f"\n### {title.strip()}\n"
+                f"- **Task**: {task.strip()}\n"
+                f"- **Status**: Not started (assigned in conversation)\n"
+            )
+            header = "## Projects assigned by Russ"
+            if header in text:
+                # Insert right after the section header so it's prominent.
+                idx = text.index(header) + len(header)
+                new_text = text[:idx] + "\n" + block + text[idx:]
+            else:
+                new_text = text.rstrip() + f"\n\n{header}\n{block}"
+            await schema.awrite(ot.LEDGER_FILE, new_text)
+            self.set_projects_context(new_text)
+            logger.info("[DMN] Manual project added: %r", title[:80])
+            return True
+        except Exception as e:
+            logger.warning("[DMN] Could not add manual project: %s", e)
+            return False
 
     async def _run_simulation(self, turn_id: str) -> None:
         """Run the user-simulation cell and publish the predicted next input."""
