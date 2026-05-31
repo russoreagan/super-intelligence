@@ -54,14 +54,16 @@ def _make_dmn():
     return dmn
 
 
-def test_current_seed_prefers_least_advanced_open_thread():
+def test_current_seed_prefers_most_advanced_open_thread():
+    # Finish-out: deepen the thread closest to a conclusion before starting a
+    # less-formed one.
     dmn = _make_dmn()
     dmn._recent_thoughts.append("a stray last thought")
     dmn._open_threads, t1 = ot.open_thread([], "thread one", now=1.0)
     dmn._open_threads, t2 = ot.open_thread(dmn._open_threads, "thread two", now=2.0)
     dmn._open_threads, t1 = ot.advance_thread(dmn._open_threads, t1.id, "x", now=3.0)
-    # t2 is least-advanced (0 advances) → it's the seed.
-    assert dmn._current_seed() == "thread two"
+    # t1 is most-advanced (1 advance) → finish it out first.
+    assert dmn._current_seed() == "thread one"
 
 
 @pytest.mark.asyncio

@@ -581,6 +581,14 @@ class DefaultModeNetwork:
         # assigned by Russ" section. Injected into every monologue tick so the
         # DMN knows what work is pre-authorized and can task/propose accordingly.
         self._last_projects: str = ""
+        # Structured project manifest + scheduler state. Projects run as a track
+        # PARALLEL to rumination: one project step runs in the background while the
+        # thought stream continues; on completion we update its status and the next
+        # idle cycle starts the next eligible project (round-robin, PRIMARY first).
+        self._projects: list = []
+        self._project_in_flight: str | None = None
+        self._project_task_id: str | None = None
+        self._project_rotation_idx: int = 0
 
         # Open-threads ledger — the DMN's working memory of unfinished ideas,
         # persisted to the `## Open threads` section of open_questions.md. Opened
@@ -1175,53 +1183,181 @@ class DefaultModeNetwork:
             else:
                 self._last_familiarity = "new"
 
-    def set_projects_context(self, open_questions_text: str) -> None:
-        """Extract and store a compact project digest from open_questions.md.
-        Called at boot and whenever open_questions.md is rewritten.
-
-        Injects only project name + priority + one-line task description rather
-        than the full section (which includes a 100-line folder map). The DMN
-        has full file-read access via its `task` field when it needs details.
-        """
-        import re
-
+    @staticmethod
+    def _parse_projects(open_questions_text: str) -> list[dict]:
+        """Structured parse of the "Projects assigned by Russ" section.
+        Returns [{name, raw_name, priority, task, status}] — name is the clean
+        display name, raw_name is the exact `### ...` header (for status rewrites)."""
         projects_m = re.search(
             r"## Projects assigned by Russ(.*?)(?=\n## |\Z)",
             open_questions_text,
             re.DOTALL,
         )
         if not projects_m:
+            return []
+        section = projects_m.group(1)
+        out: list[dict] = []
+        for block_m in re.finditer(r"### (.+?)\n(.*?)(?=\n### |\Z)", section, re.DOTALL):
+            raw_name = block_m.group(1).strip()
+            body = block_m.group(2)
+            # Match "(PRIMARY)" and also "(PRIMARY — do this first)" — the marker
+            # need not be immediately followed by the closing paren.
+            priority_m = re.search(r"\(\s*(PRIMARY|secondary)\b", raw_name, re.I)
+            priority = priority_m.group(1).upper() if priority_m else ""
+            clean_name = re.sub(
+                r"\s*\([^)]*\)", "", raw_name
+            ).strip() if "(" in raw_name else raw_name
+            task_m = re.search(r"\*\*Task\*\*:\s*(.+?)(?:\n|$)", body)
+            task_line = task_m.group(1).strip() if task_m else ""
+            status_m = re.search(r"\*\*Status\*\*:\s*(.+?)(?:\n|$)", body)
+            status = status_m.group(1).strip() if status_m else ""
+            out.append(
+                {
+                    "name": clean_name,
+                    "raw_name": raw_name,
+                    "priority": priority,
+                    "task": task_line,
+                    "status": status,
+                }
+            )
+        return out
+
+    def set_projects_context(self, open_questions_text: str) -> None:
+        """Extract and store the project manifest from open_questions.md. Called
+        at boot and whenever open_questions.md is rewritten.
+
+        Stores both a compact display digest (`_last_projects`, injected into the
+        monologue prompt) and the structured list (`_projects`, used by the
+        project scheduler to start/advance work). The full section (incl. the
+        100-line folder map) is never injected — the DMN reads the file via its
+        `task` field when it needs the details.
+        """
+        self._ensure_runtime_state()
+        self._projects = self._parse_projects(open_questions_text)
+        if not self._projects:
             self._last_projects = ""
             return
-
-        section = projects_m.group(1)
         lines: list[str] = []
-
-        # Extract each ### project block and summarise to 2-3 lines
-        for block_m in re.finditer(r"### (.+?)\n(.*?)(?=\n### |\Z)", section, re.DOTALL):
-            name = block_m.group(1).strip()
-            body = block_m.group(2)
-
-            # Grab PRIMARY/secondary marker
-            priority_m = re.search(r"\((PRIMARY|secondary)\)", name, re.I)
-            priority = f" ({priority_m.group(1).upper()})" if priority_m else ""
-            # Strip priority tag from name for cleaner display
-            clean_name = re.sub(r"\s*\(PRIMARY\)|\s*\(secondary\)", "", name, flags=re.I).strip()
-
-            # Grab first **Task**: line as one-liner
-            task_m = re.search(r"\*\*Task\*\*:\s*(.+?)(?:\n|$)", body)
-            task_line = task_m.group(1).strip()[:120] if task_m else ""
-
-            # Grab Status line if present
-            status_m = re.search(r"\*\*Status\*\*:\s*(.+?)(?:\n|$)", body)
-            status = f" — {status_m.group(1).strip()}" if status_m else ""
-
-            entry = f"- **{clean_name}**{priority}{status}"
-            if task_line:
-                entry += f": {task_line}"
+        for p in self._projects:
+            priority = f" ({p['priority']})" if p["priority"] else ""
+            status = f" — {p['status']}" if p["status"] else ""
+            entry = f"- **{p['name']}**{priority}{status}"
+            if p["task"]:
+                entry += f": {p['task'][:120]}"
             lines.append(entry)
-
         self._last_projects = "\n".join(lines)
+
+    # ── Project scheduler (parallel track to rumination) ────────────────────
+
+    _PROJECT_DONE_WORDS = ("done", "complete", "finished", "shipped")
+    _PROJECT_BLOCKED_WORDS = ("blocked", "waiting on you", "waiting for you", "needs your")
+
+    def _project_eligible(self, p: dict) -> bool:
+        """A project is eligible to run if it has a task and isn't done or blocked
+        on the user. Ongoing projects (e.g. 'treat as ongoing') stay eligible."""
+        if not p.get("task"):
+            return False
+        s = (p.get("status") or "").lower()
+        if any(w in s for w in self._PROJECT_DONE_WORDS):
+            return False
+        if any(w in s for w in self._PROJECT_BLOCKED_WORDS):
+            return False
+        return True
+
+    def next_project_goal(self) -> tuple[str, str] | None:
+        """Pick the next project step to START, or None. Only one project runs at
+        a time (it executes in the background while rumination continues). PRIMARY
+        projects are preferred; secondary picked up only when no PRIMARY is
+        eligible. Round-robin within the chosen tier so work cycles fairly."""
+        self._ensure_runtime_state()
+        if self._project_in_flight:
+            return None  # one project at a time — let it finish, then check in
+        eligible = [p for p in self._projects if self._project_eligible(p)]
+        if not eligible:
+            return None
+        primaries = [p for p in eligible if p["priority"] == "PRIMARY"]
+        pool = primaries if primaries else eligible
+        p = pool[self._project_rotation_idx % len(pool)]
+        self._project_rotation_idx += 1
+        return (p["name"], p["task"])
+
+    def note_project_started(self, name: str, task_id: str) -> None:
+        self._ensure_runtime_state()
+        self._project_in_flight = name
+        self._project_task_id = task_id
+        logger.info("[DMN] Project step started in background: %r (task %s)", name, task_id)
+
+    def is_project_task(self, task_id: str) -> bool:
+        return bool(task_id) and getattr(self, "_project_task_id", None) == task_id
+
+    async def note_project_complete(self, task_id: str, success: bool, summary: str = "") -> None:
+        """Check-in: a project's background step finished. Update its status in
+        open_questions.md so progress is durable, clear the in-flight slot, and
+        let the next idle cycle start the next eligible project."""
+        self._ensure_runtime_state()
+        if not self.is_project_task(task_id):
+            return
+        name = self._project_in_flight
+        self._project_in_flight = None
+        self._project_task_id = None
+        if name:
+            stamp = time.strftime("%Y-%m-%d %H:%M")
+            note = (
+                f"In progress — last worked {stamp} "
+                f"({'ok' if success else 'failed'})"
+            )
+            if summary:
+                note += f": {summary.strip()[:120]}"
+            await self._update_project_status(name, note)
+            logger.info("[DMN] Project step complete → status updated: %r", name)
+
+    async def note_project_blocked(self, task_id: str, reason: str = "") -> None:
+        """A project step is blocked waiting on the user. Clear the in-flight slot
+        (so other projects can run) and mark the status blocked so it isn't
+        re-picked until the user unblocks it."""
+        self._ensure_runtime_state()
+        if not self.is_project_task(task_id):
+            return
+        name = self._project_in_flight
+        self._project_in_flight = None
+        self._project_task_id = None
+        if name:
+            note = "Blocked — waiting on you"
+            if reason:
+                note += f": {reason.strip()[:120]}"
+            await self._update_project_status(name, note)
+            logger.info("[DMN] Project step blocked on user: %r", name)
+
+    async def _update_project_status(self, name: str, new_status: str) -> None:
+        """Rewrite a single project's **Status** line in open_questions.md (or add
+        one), then refresh the projects context. Section-scoped to that project."""
+        schema = self._schema_store()
+        if schema is None:
+            return
+        try:
+            text = schema.read(ot.LEDGER_FILE)
+            if not text:
+                return
+            proj = next((p for p in self._projects if p["name"] == name), None)
+            raw_name = proj["raw_name"] if proj else name
+            block_re = re.compile(
+                r"(### " + re.escape(raw_name) + r"\n)(.*?)(?=\n### |\n## |\Z)", re.DOTALL
+            )
+            m = block_re.search(text)
+            if not m:
+                return
+            body = m.group(2)
+            if re.search(r"\*\*Status\*\*:", body):
+                new_body = re.sub(
+                    r"\*\*Status\*\*:[^\n]*", f"**Status**: {new_status}", body, count=1
+                )
+            else:
+                new_body = body.rstrip() + f"\n- **Status**: {new_status}\n"
+            new_text = text[: m.start(2)] + new_body + text[m.end(2):]
+            await schema.awrite(ot.LEDGER_FILE, new_text)
+            self.set_projects_context(new_text)
+        except Exception as e:
+            logger.warning("[DMN] Could not update project status for %r: %s", name, e)
 
     # ── Deferred thoughts ────────────────────────────────────────────────────
 
@@ -1586,6 +1722,15 @@ class DefaultModeNetwork:
             self._open_threads = []
         if not hasattr(self, "_recent_conclusions"):
             self._recent_conclusions = deque(maxlen=5)
+        for attr, default in (
+            ("_projects", []),
+            ("_project_in_flight", None),
+            ("_project_task_id", None),
+            ("_project_rotation_idx", 0),
+            ("_last_projects", ""),
+        ):
+            if not hasattr(self, attr):
+                setattr(self, attr, default)
         if not hasattr(self, "_routing_weights"):
             self._routing_weights = {}
         if not hasattr(self, "_last_routed_ids"):
@@ -1771,15 +1916,19 @@ class DefaultModeNetwork:
         return "normal", flavor, drive
 
     def _current_seed_thread(self):
-        """The open thread rumination should work on next: the least-advanced one
-        (tie-break oldest), so the loop deepens a tracked idea toward closure
-        rather than re-seeding off whatever was thought last. None if none open."""
+        """The open thread rumination should work on next: FINISH-OUT — the
+        most-advanced thread (closest to a conclusion), tie-broken by momentum
+        (most recently advanced). Finishing a thought before starting a new one is
+        preferable, and fixation is already bounded by the consecutive-rumination
+        cap (deepens the same seed at most N times in a row) and the advance cap
+        (auto-concludes at THREAD_MAX_ADVANCES) — so finish-out can't get stuck.
+        None if no threads are open."""
         open_threads = [
             t for t in getattr(self, "_open_threads", []) if t.status == ot.STATUS_OPEN
         ]
         if not open_threads:
             return None
-        return min(open_threads, key=lambda t: (t.advances, t.opened_ts))
+        return max(open_threads, key=lambda t: (t.advances, t.last_ts))
 
     def _current_seed(self) -> str:
         """The current preoccupation to ruminate on / vary skills around. Prefers
