@@ -39,7 +39,13 @@ You will receive:
 
 What to track (only include dimensions you have real evidence for — don't speculate):
 - preferred message length / response length (terse, medium, long-form)
-- humour: jokes a lot / dry / serious / sarcastic
+- humour & what makes them laugh — high-value, so be specific. Not just "jokes a lot": what KIND?
+  Dry/understated, absurdist, wordplay and puns, self-deprecating, sarcastic, affectionate teasing,
+  deadpan? Do they initiate jokes or mostly respond to them? Do they enjoy being gently teased back,
+  or do they keep humour and the task separate? What register lands, and what falls flat? Capture it
+  so the brain can MATCH their sense of humour instead of guessing — e.g. "Dry and deadpan; warms to
+  being teased back once comfortable; wordplay lands, broad/slapstick doesn't; initiates rarely but
+  appreciates it when I do."
 - frustration tolerance: long fuse / quick to frustration / easily derailed
 - autonomy preference: wants proactive action / prefers confirmation before action
 - emotional expressiveness: reserved / direct / effusive

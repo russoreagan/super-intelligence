@@ -45,6 +45,20 @@ logger = logging.getLogger(__name__)
 CLUSTER = "frontal"
 
 
+def _mark_trace_flag(attr: str, value) -> None:
+    """Set an instrumentation field on the current turn's trace, if one is bound.
+    No-op outside a turn context (e.g. unit tests that call _build_drafter_prompt
+    directly). Keeps instrumentation out of the hot return-value path."""
+    try:
+        from brain.observability.firing_path import get_current_trace
+
+        trace = get_current_trace()
+        if trace is not None:
+            setattr(trace, attr, value)
+    except Exception:
+        pass
+
+
 class FrontalCluster:
     def __init__(
         self, bus: Bus, brainstem: Brainstem, router: ModelRouter, wiring: Wiring | None = None
@@ -79,7 +93,7 @@ class FrontalCluster:
         self._executive = IntegratorCell(
             name="executive",
             cluster=CLUSTER,
-            model="haiku",
+            model="sonnet",
             system_prompt=EXECUTIVE_SYSTEM,
             topics=["temporal.features"],
             max_calls_per_turn=1,
@@ -206,6 +220,10 @@ class FrontalCluster:
 
         # Eval: populated each turn with critic scores for all drafts — read by run.py
         self.last_turn_draft_scores: list[dict] = []
+
+        # Self-disclosure cooldown — counts down turns remaining before the
+        # disclosure opportunity block can fire again.
+        self._disclosure_cooldown: int = 0
 
         # Skill selector — picks reasoning/EI framework per turn. Wired by session_setup.
         # Held alongside parietal (which owns the cross-turn ActiveSkillContext).
@@ -666,8 +684,7 @@ class FrontalCluster:
         image_path: str | None = None,
     ) -> str:
         """Drafter cascade + critic selection. Returns the committed response text."""
-        _max_drafters = int(settings.get("max_drafter_count", 2))
-        drafter_count = min(int(instruction.get("drafter_count", 1)), max(1, _max_drafters))
+        drafter_count = min(int(instruction.get("drafter_count", 1)), 3)
         glu_deficit = 1.0 - nm["Glu"]
         if self._arousal_modulator.should_fire(glu_deficit, chem, turn_id):
             self._arousal_modulator.fire(
@@ -716,9 +733,14 @@ class FrontalCluster:
         drafter_prompt = self._build_drafter_prompt(
             features, memory, parietal_context, affect, instruction
         )
+        # Per-session-stable context (full self/user model, capabilities) — sent as a
+        # dedicated cached system block, billed at cache-read rates after turn 1.
+        cached_context = self._build_cached_context(memory)
         drafter_indices = self._select_drafters(drafter_count, turn_id)
         draft_tasks = [
-            self._run_drafter(i, drafter_prompt, turn_id, image_path=image_path)
+            self._run_drafter(
+                i, drafter_prompt, turn_id, image_path=image_path, cached_context=cached_context
+            )
             for i in drafter_indices
         ]
         raw = await asyncio.gather(*draft_tasks, return_exceptions=True)
@@ -898,7 +920,12 @@ class FrontalCluster:
         return text
 
     async def _run_drafter(
-        self, idx: int, prompt: str, turn_id: str, image_path: str | None = None
+        self,
+        idx: int,
+        prompt: str,
+        turn_id: str,
+        image_path: str | None = None,
+        cached_context: str = "",
     ) -> tuple[str, str]:
         drafter = self._drafters[idx]
         drafter.reset_turn(turn_id)
@@ -925,7 +952,9 @@ class FrontalCluster:
                 content = prompt
         else:
             content = prompt
-        text = await drafter.call([{"role": "user", "content": content}])
+        text = await drafter.call(
+            [{"role": "user", "content": content}], cached_context=cached_context
+        )
         return draft_id, text
 
     def _record_trace_bypass(self):
@@ -1260,19 +1289,95 @@ class FrontalCluster:
         body = "\n\n".join(sections) + "\n\n" + guidance
         return f"Active reasoning framework:\n{fence('thinking_framework', body, nonce)}"
 
+    @staticmethod
+    def _disclosure_ready(features: dict, affect: dict, user_content: str) -> bool:
+        """Decide whether this turn is a good moment for proactive self-disclosure.
+
+        Pure function (no side effects) so it can be unit-tested directly.
+        Conditions (all must hold):
+          - affection >= modality-dependent floor (text reads more formal → higher bar)
+          - intent is in the conversational subset (matches temporal.py's enum:
+            greeting / chitchat / question / other — NOT task / recall / hostile /
+            epistemic, where unsolicited self-disclosure would be intrusive)
+          - the user is not hostile / distressed (wrong moment)
+          - the entity actually has something to share (non-neutral emotion or
+            elevated arousal)
+        """
+        user_emo = (features.get("user_emotion") or "").lower()
+        user_tone = (features.get("user_tone_toward_ai") or "").lower()
+        intent = (features.get("intent") or "other").lower()
+        modality = features.get("input_modality", "text")
+
+        affection = 0
+        if user_content:
+            import re as _re2
+
+            m = _re2.search(r"- Score:\s*(-?\d+)", user_content)
+            affection = int(m.group(1)) if m else 0
+
+        min_aff = (
+            int(settings.get("self_disclosure_text_min_affection"))
+            if modality == "text"
+            else int(settings.get("self_disclosure_min_affection"))
+        )
+
+        hostile_user = user_emo in (
+            "hostile", "frustrated", "angry", "distressed", "overwhelmed", "annoyed",
+        ) or user_tone in ("insulting", "impatient", "dismissive")
+
+        entity_has_something = (
+            (affect.get("affect_dims") or {}).get("arousal", 0) > 0.4
+            or (affect.get("emotion") or "neutral") != "neutral"
+        )
+
+        return (
+            affection >= min_aff
+            and intent in ("greeting", "chitchat", "question", "other")
+            and not hostile_user
+            and entity_has_something
+        )
+
+    def _build_cached_context(self, memory: dict) -> str:
+        """Per-session-stable drafter context — sent as a dedicated cached system block.
+
+        Holds the content that does NOT change turn-to-turn: the entity's capabilities,
+        its full self-model, and the full user-model (no 400-char truncation). Because
+        the string is byte-stable across a session, the Anthropic prompt cache writes it
+        once and reads it on every subsequent turn at ~10% cost. Anything volatile (the
+        live affection score, conversation history, this turn's episodes) must stay in
+        _build_drafter_prompt's per-turn message, NOT here, or it would bust the cache.
+
+        Uses a session-stable fence nonce (not a fresh per-call uuid) for the same
+        reason — a new nonce every turn would change the bytes and defeat the cache.
+        """
+        # Lazily mint one fence nonce per FrontalCluster instance (≈ per session).
+        nonce = getattr(self, "_cached_ctx_nonce", "")
+        if not nonce:
+            nonce = str(uuid.uuid4())[:8]
+            self._cached_ctx_nonce = nonce
+
+        core = memory.get("core", {}) or {}
+        parts: list[str] = []
+        if self._capabilities_summary:
+            parts.append(
+                "Your capabilities this session:\n"
+                f"{fence('capabilities', self._capabilities_summary, nonce)}"
+            )
+        if core.get("self"):
+            parts.append(f"Entity self-model:\n{fence('self_model', core['self'], nonce)}")
+        if core.get("user"):
+            parts.append(f"User model:\n{fence('user_model', core['user'], nonce)}")
+        return "\n\n".join(parts)
+
     def _build_drafter_prompt(
         self, features: dict, memory: dict, parietal: str, affect: dict, instruction: dict
     ) -> str:
         nonce = str(uuid.uuid4())[:8]
         parts = []
-        # Capabilities block — what the entity can ACTUALLY do this session.
-        # Surfaced verbatim so drafters can accurately answer "what tools do
-        # you have?" and "can you use Claude?" without confabulating.
-        if self._capabilities_summary:
-            parts.append(
-                f"Your capabilities this session:\n"
-                f"{fence('capabilities', self._capabilities_summary, nonce)}"
-            )
+        # NOTE: capabilities, self-model and user-model are NOT built here — they are
+        # per-session-stable and live in _build_cached_context(), passed as a dedicated
+        # cached system block so they're sent in full (no truncation) and billed at
+        # cache-read rates after the first turn. Only volatile turn content lives here.
         if parietal:
             parts.append(f"Recent conversation:\n{fence('conversation_history', parietal, nonce)}")
         if memory.get("schema"):
@@ -1371,12 +1476,60 @@ class FrontalCluster:
                 )
         if memory.get("vision"):
             parts.append(f"Image analysis:\n{fence('image_analysis', memory['vision'], nonce)}")
-        if memory.get("core", {}).get("self"):
-            parts.append(
-                f"Entity self-model:\n{fence('self_model', memory['core']['self'][:400], nonce)}"
-            )
-        if memory.get("core", {}).get("user"):
-            parts.append(f"User model:\n{fence('user_model', memory['core']['user'][:400], nonce)}")
+        # NOTE: self-model and user-model moved to _build_cached_context() — sent in full
+        # via the cached system block instead of truncated to 400 chars here.
+
+        # ── Relationship block ────────────────────────────────────────────────
+        # Explicit affection tier + familiarity, extracted from the user model.
+        # Bypasses the 400-char truncation so this signal is never lost.
+        # The guidance line matches the tier table in the DRAFTER_IDENTITY system
+        # prompt — this is the per-turn reminder of which tier applies right now.
+        _user_content = memory.get("core", {}).get("user", "")
+        if _user_content:
+            from brain.clusters.frontal_prompts import AFFECTION_TIER_GUIDANCE
+            from brain.metacognition import relationship_stage_from_content
+
+            _stage = relationship_stage_from_content(_user_content)
+            if _stage.affection != 0 or _stage.tier != "new" or _stage.bond > 0:
+                _guidance = AFFECTION_TIER_GUIDANCE.get(_stage.affection_label, "")
+                _speaker = features.get("speaker_name", "")
+                _with = f"with {_speaker}" if _speaker else ""
+                _rel = (
+                    f"Relationship {_with}: {_stage.affection_label} "
+                    f"| affection {_stage.affection}/100 | familiarity: {_stage.tier}"
+                )
+                # Surface the bond/affection divergence: a former-close friend
+                # we haven't spoken to in a while (high bond, decayed affection)
+                # reads differently from someone we're just warming up to.
+                if _stage.bond - _stage.affection >= 15:
+                    _rel += (
+                        f"\n  (latent bond {_stage.bond:.0f} — you've been close before; "
+                        f"warmth can resume quickly)"
+                    )
+                if _guidance:
+                    _rel += f"\n  → {_guidance}"
+                parts.append(_rel)
+
+        # ── Self-disclosure opportunity ───────────────────────────────────────
+        # Proactive reciprocal self-disclosure: when conditions are right,
+        # signal to the drafter that sharing genuine internal state is appropriate.
+        # Literature (Park et al. 2022): chatbot emotional disclosure → user
+        # reciprocal disclosure → perceived intimacy → satisfaction & reuse.
+        if settings.get("enable_self_disclosure_policy"):
+            # Tick down cooldown; only evaluate readiness when off cooldown.
+            _cooldown = getattr(self, "_disclosure_cooldown", 0)
+            if _cooldown > 0:
+                self._disclosure_cooldown = _cooldown - 1
+            elif self._disclosure_ready(features, affect, _user_content):
+                parts.append(
+                    "Self-disclosure opportunity: This turn warrants sharing something "
+                    "genuine about your current internal experience — your interest, a "
+                    "connection you're making, how you're actually feeling right now. "
+                    "Weave it in naturally; don't announce it. The goal is authentic "
+                    "presence that invites the user to share in return."
+                )
+                self._disclosure_cooldown = int(settings.get("self_disclosure_cooldown_turns"))
+                _mark_trace_flag("disclosure_fired", True)
 
         parts.append(f"\nDrafting instruction: {json.dumps(instruction)}")
 
@@ -1406,6 +1559,22 @@ class FrontalCluster:
 
         if affect.get("prosody_prefix"):
             parts.append(f"Consider opening with: '{affect['prosody_prefix']}'")
+
+        # ── Style synchrony note ──────────────────────────────────────────────
+        # Bounded linguistic style adaptation: reflect the user's current
+        # register (formality/verbosity) while staying true to the entity's
+        # natural voice. Only fires after enough turns are tracked per modality.
+        _parietal_ref = getattr(self, "_parietal", None)
+        if _parietal_ref is not None:
+            _style_modality = features.get("input_modality", "text")
+            _style_note = _parietal_ref.user_style_note(_style_modality)
+            if _style_note:
+                parts.append(_style_note)
+                _mark_trace_flag("style_note_emitted", True)
+                with contextlib.suppress(Exception):
+                    _mark_trace_flag(
+                        "style_register", _parietal_ref.user_style_register(_style_modality)
+                    )
 
         # Entity-side expressive guidance — shapes word choice, not just delivery.
         # The TTS layer can add a [gently] tag, but only the drafter can write "hmm".

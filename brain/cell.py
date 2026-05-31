@@ -45,7 +45,12 @@ class IntegratorCell:
     def _can_fire(self) -> bool:
         return self._calls_this_turn < self.max_calls_per_turn
 
-    async def call(self, messages: list[dict], extra_context: dict | None = None) -> str:
+    async def call(
+        self,
+        messages: list[dict],
+        extra_context: dict | None = None,
+        cached_context: str = "",
+    ) -> str:
         if not self._can_fire():
             logger.warning(
                 "[%s/%s] Per-turn call limit hit — skipping this call. "
@@ -84,6 +89,7 @@ class IntegratorCell:
                     max_tokens=self.max_tokens,
                     skills=self.skills,
                     temperature=self.temperature,
+                    cached_context=cached_context,
                 ),
                 timeout=self.timeout_seconds,
             )

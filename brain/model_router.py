@@ -93,6 +93,11 @@ class ModelRouter:
         self._bg_cloud_tokens_used: int = 0
         # Lazily-created semaphore; limits concurrent Ollama calls to protect device.
         self._local_semaphore: asyncio.Semaphore | None = None
+        # Interactive-turn semaphore: limits concurrent Anthropic calls from live turns.
+        self._cloud_semaphore: asyncio.Semaphore | None = None
+        # Background-task semaphore: separate pool so DMN/metacognition/motor background
+        # calls can never starve interactive-turn calls waiting for a slot.
+        self._bg_cloud_semaphore: asyncio.Semaphore | None = None
         # Daily cloud USD tracking — in-memory; loaded from disk lazily.
         self._cloud_usd_today: float = 0.0
         self._cloud_usd_date: str = ""  # "YYYY-MM-DD" (UTC)
@@ -205,6 +210,27 @@ class ModelRouter:
             self._local_semaphore = asyncio.Semaphore(limit)
         return self._local_semaphore
 
+    def _get_cloud_semaphore(self) -> asyncio.Semaphore:
+        """Concurrency limiter for interactive-turn Anthropic cloud calls.
+
+        Returns the background-specific semaphore when in bg_mode so DMN /
+        metacognition / motor background tasks draw from their own pool and
+        can never starve live-turn cells waiting for a slot.
+        """
+        if self._bg_mode:
+            if self._bg_cloud_semaphore is None:
+                from brain.settings import settings as _settings
+
+                limit = int(_settings.get("bg_cloud_max_concurrent") or 2)
+                self._bg_cloud_semaphore = asyncio.Semaphore(limit)
+            return self._bg_cloud_semaphore
+        if self._cloud_semaphore is None:
+            from brain.settings import settings as _settings
+
+            limit = int(_settings.get("cloud_max_concurrent") or 3)
+            self._cloud_semaphore = asyncio.Semaphore(limit)
+        return self._cloud_semaphore
+
     def _get_anthropic(self):
         if self._anthropic_client is None:
             import anthropic
@@ -296,6 +322,7 @@ class ModelRouter:
         max_tokens: int = 1024,
         skills: list[str] | None = None,
         temperature: float | None = None,
+        cached_context: str = "",
     ) -> str:
         from brain.settings import settings as _settings
 
@@ -387,6 +414,10 @@ class ModelRouter:
                 _egress_active = True
                 system_prompt, _n = self._egress.pseudonymize(system_prompt)
                 messages = self._pseudonymize_messages(messages)
+                if cached_context:
+                    # Pseudonymization is deterministic (same PII → same token), so the
+                    # tokenized context stays byte-stable across turns and still caches.
+                    cached_context, _ = self._egress.pseudonymize(cached_context)
                 if _n > 0:
                     logger.debug(
                         "[Egress] %s/%s: %d PII replacements in system_prompt", cluster, cell, _n
@@ -407,16 +438,26 @@ class ModelRouter:
             if skill_block:
                 system_prompt = f"{system_prompt}\n\n{skill_block}"
 
+        # Backends without prompt caching (Gemini, local) can't use a separate cached
+        # block — fold the per-session context into the system prompt so its content is
+        # never lost. Only the Anthropic path passes it as a dedicated cached block.
+        system_with_context = (
+            f"{system_prompt}\n\n{cached_context}" if cached_context else system_prompt
+        )
+
         cache_read = 0
         if model_id.startswith("claude"):
             try:
-                coro = self._call_anthropic(model_id, system_prompt, messages, max_tokens)
-                if bg_timeout:
-                    text, in_tok, out_tok, cache_read, cache_write = await asyncio.wait_for(
-                        coro, timeout=bg_timeout
+                async with self._get_cloud_semaphore():
+                    coro = self._call_anthropic(
+                        model_id, system_prompt, messages, max_tokens, cached_context=cached_context
                     )
-                else:
-                    text, in_tok, out_tok, cache_read, cache_write = await coro
+                    if bg_timeout:
+                        text, in_tok, out_tok, cache_read, cache_write = await asyncio.wait_for(
+                            coro, timeout=bg_timeout
+                        )
+                    else:
+                        text, in_tok, out_tok, cache_read, cache_write = await coro
             except TimeoutError:
                 logger.warning(
                     "[Resource] Background cloud call %s/%s timed out after %.0fs — falling back to local.",
@@ -424,7 +465,9 @@ class ModelRouter:
                     cell,
                     bg_timeout,
                 )
-                text, in_tok, out_tok = await self._call_local(system_prompt, messages, max_tokens)
+                text, in_tok, out_tok = await self._call_local(
+                    system_with_context, messages, max_tokens
+                )
                 cache_read = 0
             if self._bg_mode:
                 self._bg_cloud_tokens_used += in_tok + out_tok
@@ -457,7 +500,7 @@ class ModelRouter:
             )
         elif model_id.startswith("gemini"):
             try:
-                coro = self._call_google(model_id, system_prompt, messages, max_tokens)
+                coro = self._call_google(model_id, system_with_context, messages, max_tokens)
                 if bg_timeout:
                     text, in_tok, out_tok = await asyncio.wait_for(coro, timeout=bg_timeout)
                 else:
@@ -469,7 +512,9 @@ class ModelRouter:
                     cell,
                     bg_timeout,
                 )
-                text, in_tok, out_tok = await self._call_local(system_prompt, messages, max_tokens)
+                text, in_tok, out_tok = await self._call_local(
+                    system_with_context, messages, max_tokens
+                )
             if self._bg_mode:
                 self._bg_cloud_tokens_used += in_tok + out_tok
                 logger.debug("[Resource] BG cloud tokens used: %d/%d (this call: %d+%d)",
@@ -478,7 +523,7 @@ class ModelRouter:
         elif model_id in ("local", "local-free", "local-code", "local-general",
                           "runpod", "runpod-free", "runpod-code", "runpod-general"):
             text, in_tok, out_tok = await self._call_local(
-                system_prompt,
+                system_with_context,
                 messages,
                 max_tokens,
                 local_variant=model_id,
@@ -515,20 +560,148 @@ class ModelRouter:
                 logger.debug("obs.record_llm_call failed: %s", e)
         return text
 
+    async def call_structured(
+        self,
+        model_key: str,
+        system_prompt: str,
+        messages: list[dict],
+        tool_name: str,
+        tool_description: str,
+        tool_schema: dict,
+        *,
+        cluster: str = "",
+        cell: str = "",
+        turn_id: str = "",
+        max_tokens: int = 4096,
+    ) -> dict:
+        """Force Claude to return structured output via native tool_use.
+
+        Defines a single tool with the given schema and tool_choice forcing Claude
+        to call it. Returns the tool input dict directly — no JSON parsing needed.
+        Falls back to empty dict on any error.
+        """
+        from brain.settings import settings as _settings
+
+        _s = _settings.get
+        model_id = MODEL_MAP.get(model_key, model_key)
+        _is_cloud = model_id.startswith("claude") or model_id.startswith("gemini")
+
+        # Background mode: apply cloud budget check — if exhausted, fall back gracefully.
+        if self._bg_mode and _is_cloud:
+            budget = int(_s("bg_cloud_token_budget") or 50_000)
+            if self._bg_cloud_tokens_used >= budget:
+                logger.warning(
+                    "[Resource] Background cloud budget exhausted (%d/%d tokens used) "
+                    "— call_structured %s/%s falling back to empty dict.",
+                    self._bg_cloud_tokens_used,
+                    budget,
+                    cluster,
+                    cell,
+                )
+                return {}
+
+        try:
+            client = self._get_anthropic()
+            anthropic_msgs = [{"role": m["role"], "content": m["content"]} for m in messages]
+            tools = [
+                {
+                    "name": tool_name,
+                    "description": tool_description,
+                    "input_schema": tool_schema,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ]
+            async with self._get_cloud_semaphore():
+                response = await client.messages.create(
+                    model=model_id,
+                    max_tokens=max_tokens,
+                    system=[
+                        {
+                            "type": "text",
+                            "text": system_prompt,
+                            "cache_control": {"type": "ephemeral"},
+                        }
+                    ],
+                    messages=anthropic_msgs,
+                    tools=tools,
+                    tool_choice={"type": "tool", "name": tool_name},
+                )
+            usage = getattr(response, "usage", None)
+            in_tok = getattr(usage, "input_tokens", 0) if usage else 0
+            out_tok = getattr(usage, "output_tokens", 0) if usage else 0
+            cache_read = getattr(usage, "cache_read_input_tokens", 0) if usage else 0
+
+            if self._bg_mode:
+                self._bg_cloud_tokens_used += in_tok + out_tok
+                logger.debug(
+                    "[Resource] BG cloud tokens used: %d/%d (call_structured %s/%s: %d+%d)",
+                    self._bg_cloud_tokens_used,
+                    int(_s("bg_cloud_token_budget") or 50_000),
+                    cluster,
+                    cell,
+                    in_tok,
+                    out_tok,
+                )
+            self._charge_cloud_usd(model_id, in_tok, out_tok, cache_read)
+
+            for block in response.content:
+                if getattr(block, "type", None) == "tool_use":
+                    return block.input or {}
+            logger.warning("[ModelRouter] call_structured %s/%s: no tool_use block in response", cluster, cell)
+            return {}
+        except Exception as e:
+            logger.warning("[ModelRouter] call_structured %s/%s failed: %s", cluster, cell, e)
+            return {}
+
     async def _call_anthropic(
-        self, model_id: str, system_prompt: str, messages: list[dict], max_tokens: int = 1024
+        self,
+        model_id: str,
+        system_prompt: str,
+        messages: list[dict],
+        max_tokens: int = 1024,
+        cached_context: str = "",
     ) -> tuple[str, int, int, int, int]:
-        """Call Anthropic Claude. Returns (text, in_tok, out_tok, cache_read, cache_write)."""
+        """Call Anthropic Claude. Returns (text, in_tok, out_tok, cache_read, cache_write).
+
+        Prompt-cache layout (up to 4 breakpoints; we use 2–3):
+          1. system_prompt — global static identity, cached, shared across all users.
+          2. cached_context — per-session-stable context (full self-model + user-model,
+             capabilities), cached, no truncation. Stable within a session, so it's a
+             cache READ on every turn after the first. Omitted when empty.
+          3. last message — volatile turn content; cached so intra-turn drafter calls
+             (all 3 drafters in one turn) read after the first write.
+        The live affection score must NOT go in cached_context — it ticks each turn and
+        would bust the per-session cache. It stays in the volatile message tail.
+        """
         client = self._get_anthropic()
-        anthropic_msgs = [{"role": m["role"], "content": m["content"]} for m in messages]
+
+        # Build messages, marking the last message for caching so intra-turn calls
+        # (e.g. all 3 drafters within one turn) hit the cache after the first write.
+        anthropic_msgs = []
+        for i, m in enumerate(messages):
+            content = m["content"]
+            if i == len(messages) - 1:
+                if isinstance(content, str):
+                    content = [{"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}]
+                elif isinstance(content, list) and content:
+                    content = list(content)
+                    last = dict(content[-1])
+                    last["cache_control"] = {"type": "ephemeral"}
+                    content[-1] = last
+            anthropic_msgs.append({"role": m["role"], "content": content})
+
+        system_blocks = [
+            {"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}
+        ]
+        if cached_context:
+            system_blocks.append(
+                {"type": "text", "text": cached_context, "cache_control": {"type": "ephemeral"}}
+            )
 
         response = await client.messages.create(
             model=model_id,
             max_tokens=max_tokens,
-            cache_control={"type": "ephemeral"},
-            system=[
-                {"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}
-            ],
+            system=system_blocks,
             messages=anthropic_msgs,
         )
         usage = getattr(response, "usage", None)
