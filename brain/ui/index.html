@@ -3276,6 +3276,8 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
 .nm-node.expanded { transform: translate(-50%, -16%); z-index: 6; }
 
 </style>
+<!-- Redesigned settings page styles (scoped to #settings-page) -->
+<link rel="stylesheet" href="settings.css">
 </head>
 <body>
 
@@ -3682,830 +3684,50 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
   <!-- ====== SETTINGS PAGE ====== -->
   <div id="settings-page">
 
-    <div class="settings-topbar">
-      <button class="settings-back-btn" id="settings-back-btn">
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
-        Back
-      </button>
-      <div>
-        <div class="settings-title">Brain Settings</div>
-        <div class="settings-title-sub">Tune system parameters · Changes apply on restart</div>
-      </div>
-      <div class="settings-actions">
-        <button class="settings-restart-banner" id="settings-restart-banner">Restart required</button>
-        <button class="btn-reset" id="settings-reset-btn">Reset defaults</button>
-        <button class="btn-save" id="settings-save-btn">Save Settings</button>
-      </div>
-    </div>
-
-    <div class="settings-grid">
-
-      <style>
-        #sec-persona { grid-column: 1 / -1; }
-        .persona-cards { display: flex; gap: 10px; overflow-x: auto; padding: 4px 2px 10px; }
-        .persona-card {
-          flex: 0 0 168px; background: var(--bg-2); border: 1px solid var(--line);
-          border-radius: 10px; padding: 12px 12px 10px; cursor: pointer;
-          transition: border-color .15s, transform .1s; user-select: none;
-        }
-        .persona-card:hover { transform: translateY(-2px); }
-        .persona-card.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
-        .persona-card.active   { border-color: var(--accent); }
-        .persona-name { color: var(--accent); font-weight: 600; font-size: 13px; }
-        .persona-tag  { color: var(--fg-dim); font-size: 11px; margin: 2px 0 9px; line-height: 1.3; }
-        .persona-bar-row { display: flex; align-items: center; gap: 6px; margin: 3px 0; }
-        .persona-bar-row span { width: 30px; font-size: 9px; color: var(--fg-mute); text-align: right; }
-        .persona-bar { flex: 1; height: 5px; border-radius: 3px; background: var(--bg-3); overflow: hidden; }
-        .persona-bar > i { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
-        .persona-status { font-size: 12px; color: var(--fg-dim); margin: 4px 2px 10px; }
-        .persona-status b { color: var(--fg); }
-        .persona-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 4px; }
-        .persona-btn {
-          background: var(--accent); color: #07121f; border: none; border-radius: 7px;
-          padding: 7px 14px; font-size: 12px; font-weight: 600; cursor: pointer;
-        }
-        .persona-btn:disabled { opacity: .4; cursor: default; }
-        .persona-btn.ghost { background: transparent; color: var(--fg-dim); border: 1px solid var(--line); }
-        .persona-warn { color: #d9a23b; font-size: 11px; margin: 2px 2px; min-height: 14px; }
-        .persona-adv { margin-top: 12px; }
-        .persona-adv > summary { cursor: pointer; color: var(--fg-dim); font-size: 12px; padding: 4px 0; }
-        .persona-toggle { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; margin: 6px 0 12px; }
-        .persona-toggle button {
-          background: var(--bg-2); color: var(--fg-dim); border: none; padding: 6px 14px;
-          font-size: 12px; cursor: pointer;
-        }
-        .persona-toggle button.on { background: var(--accent); color: #07121f; font-weight: 600; }
-        .persona-adv-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 22px; }
-        .persona-adv h5 { margin: 6px 0 2px; font-size: 11px; color: var(--fg-mute); font-weight: 600; letter-spacing: .04em; }
-      </style>
-
-      <!-- S0: Persona -->
-      <div class="settings-section" id="sec-persona">
-        <div class="settings-section-head">
-          <span class="settings-section-num">00</span>
-          <div style="flex:1">
-            <div class="settings-section-title">Persona</div>
-            <div class="settings-section-desc">A starting chemistry. The brain learns and evolves from here — each persona keeps its own separate brain.</div>
-          </div>
-          <svg class="settings-section-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
-        </div>
-        <div class="settings-section-body">
-          <div class="persona-cards" id="persona-cards"></div>
-          <div class="persona-status" id="persona-status">Neutral (default chemistry)</div>
-          <div class="persona-actions">
-            <button class="persona-btn" id="persona-init-btn" disabled>Select a persona</button>
-            <button class="persona-btn ghost" id="persona-neutral-btn">Return to neutral</button>
-            <span class="ctrl-hint">Initializing sets the chemistry — then Save + Restart.</span>
-          </div>
-          <div class="persona-actions" style="margin-top:0;margin-bottom:8px">
-            <span class="ctrl-label" style="font-size:11px;color:var(--fg-dim)">Voice</span>
-            <select id="persona-voice-select" style="background:var(--bg-2);color:var(--fg);border:1px solid var(--line);border-radius:7px;padding:5px 8px;font-size:11px;font-family:var(--mono);cursor:pointer;flex:1;max-width:220px">
-              <option value="">— no voice preference —</option>
-            </select>
-            <span class="ctrl-hint">Saved with this persona. Overrides the header voice picker at boot.</span>
-          </div>
-          <div class="persona-warn" id="persona-warn"></div>
-
-          <details class="persona-adv">
-            <summary>Advanced — chemistry model &amp; per-channel sliders</summary>
-            <div style="margin-top:8px">
-              <div class="ctrl-label" style="font-size:12px">Decay model</div>
-              <div class="ctrl-hint" style="display:block;margin:2px 0 4px">How levels relax each turn. "Baseline" = gradual homeostatic recovery (recommended). "Floor" = legacy clamp (instant snap-up from below).</div>
-              <div class="persona-toggle" id="persona-decay-toggle">
-                <button data-model="baseline">Baseline</button>
-                <button data-model="floor">Floor (legacy)</button>
-              </div>
-            </div>
-            <div class="persona-adv-grid">
-              <div>
-                <h5>RESTING BASELINE (the trait)</h5>
-                <div class="ctrl-row"><div class="ctrl-header"><span class="ctrl-label">DA</span><span class="ctrl-value-display" id="val-chem_baseline_DA">0.30</span></div><input type="range" class="brain-slider" data-key="chem_baseline_DA" min="0" max="0.8" step="0.01" value="0.30"></div>
-                <div class="ctrl-row"><div class="ctrl-header"><span class="ctrl-label">ACh</span><span class="ctrl-value-display" id="val-chem_baseline_ACh">0.10</span></div><input type="range" class="brain-slider" data-key="chem_baseline_ACh" min="0" max="0.8" step="0.01" value="0.10"></div>
-                <div class="ctrl-row"><div class="ctrl-header"><span class="ctrl-label">GABA</span><span class="ctrl-value-display" id="val-chem_baseline_GABA">0.02</span></div><input type="range" class="brain-slider" data-key="chem_baseline_GABA" min="0" max="0.8" step="0.01" value="0.02"></div>
-                <div class="ctrl-row"><div class="ctrl-header"><span class="ctrl-label">Glu</span><span class="ctrl-value-display" id="val-chem_baseline_Glu">0.15</span></div><input type="range" class="brain-slider" data-key="chem_baseline_Glu" min="0" max="0.8" step="0.01" value="0.15"></div>
-                <div class="ctrl-row"><div class="ctrl-header"><span class="ctrl-label">NE</span><span class="ctrl-value-display" id="val-chem_baseline_NE">0.15</span></div><input type="range" class="brain-slider" data-key="chem_baseline_NE" min="0" max="0.8" step="0.01" value="0.15"></div>
-                <div class="ctrl-row"><div class="ctrl-header"><span class="ctrl-label">5HT</span><span class="ctrl-value-display" id="val-chem_baseline_5HT">0.20</span></div><input type="range" class="brain-slider" data-key="chem_baseline_5HT" min="0" max="0.8" step="0.01" value="0.20"></div>
-                <div class="ctrl-row"><div class="ctrl-header"><span class="ctrl-label">CORT</span><span class="ctrl-value-display" id="val-chem_baseline_CORT">0.02</span></div><input type="range" class="brain-slider" data-key="chem_baseline_CORT" min="0" max="0.8" step="0.01" value="0.02"></div>
-                <div class="ctrl-row"><div class="ctrl-header"><span class="ctrl-label">OXT</span><span class="ctrl-value-display" id="val-chem_baseline_OXT">0.15</span></div><input type="range" class="brain-slider" data-key="chem_baseline_OXT" min="0" max="0.8" step="0.01" value="0.15"></div>
-                <div class="ctrl-row"><div class="ctrl-header"><span class="ctrl-label">AEA</span><span class="ctrl-value-display" id="val-chem_baseline_AEA">0.10</span></div><input type="range" class="brain-slider" data-key="chem_baseline_AEA" min="0" max="0.8" step="0.01" value="0.10"></div>
-              </div>
-              <div>
-                <h5>STARTING LEVEL (value at boot)</h5>
-                <div class="ctrl-row"><div class="ctrl-header"><span class="ctrl-label">DA</span><span class="ctrl-value-display" id="val-chem_init_DA">0.50</span></div><input type="range" class="brain-slider" data-key="chem_init_DA" min="0" max="0.8" step="0.01" value="0.50"></div>
-                <div class="ctrl-row"><div class="ctrl-header"><span class="ctrl-label">ACh</span><span class="ctrl-value-display" id="val-chem_init_ACh">0.20</span></div><input type="range" class="brain-slider" data-key="chem_init_ACh" min="0" max="0.8" step="0.01" value="0.20"></div>
-                <div class="ctrl-row"><div class="ctrl-header"><span class="ctrl-label">GABA</span><span class="ctrl-value-display" id="val-chem_init_GABA">0.05</span></div><input type="range" class="brain-slider" data-key="chem_init_GABA" min="0" max="0.8" step="0.01" value="0.05"></div>
-                <div class="ctrl-row"><div class="ctrl-header"><span class="ctrl-label">Glu</span><span class="ctrl-value-display" id="val-chem_init_Glu">0.30</span></div><input type="range" class="brain-slider" data-key="chem_init_Glu" min="0" max="0.8" step="0.01" value="0.30"></div>
-                <div class="ctrl-row"><div class="ctrl-header"><span class="ctrl-label">NE</span><span class="ctrl-value-display" id="val-chem_init_NE">0.25</span></div><input type="range" class="brain-slider" data-key="chem_init_NE" min="0" max="0.8" step="0.01" value="0.25"></div>
-                <div class="ctrl-row"><div class="ctrl-header"><span class="ctrl-label">5HT</span><span class="ctrl-value-display" id="val-chem_init_5HT">0.50</span></div><input type="range" class="brain-slider" data-key="chem_init_5HT" min="0" max="0.8" step="0.01" value="0.50"></div>
-                <div class="ctrl-row"><div class="ctrl-header"><span class="ctrl-label">CORT</span><span class="ctrl-value-display" id="val-chem_init_CORT">0.05</span></div><input type="range" class="brain-slider" data-key="chem_init_CORT" min="0" max="0.8" step="0.01" value="0.05"></div>
-                <div class="ctrl-row"><div class="ctrl-header"><span class="ctrl-label">OXT</span><span class="ctrl-value-display" id="val-chem_init_OXT">0.30</span></div><input type="range" class="brain-slider" data-key="chem_init_OXT" min="0" max="0.8" step="0.01" value="0.30"></div>
-                <div class="ctrl-row"><div class="ctrl-header"><span class="ctrl-label">AEA</span><span class="ctrl-value-display" id="val-chem_init_AEA">0.30</span></div><input type="range" class="brain-slider" data-key="chem_init_AEA" min="0" max="0.8" step="0.01" value="0.30"></div>
-              </div>
-            </div>
-          </details>
-        </div>
+    <!-- ====================== LEFT RAIL ====================== -->
+    <aside class="set-rail">
+      <div class="rail-head">
+        <div class="rail-eyebrow"><span class="dot"></span> Brain · online</div>
+        <div class="rail-title">Settings</div>
+        <div class="rail-sub">Tune system parameters · applies on restart</div>
       </div>
 
-      <!-- S1: Emotional Reactivity -->
-      <div class="settings-section" id="sec-1">
-        <div class="settings-section-head">
-          <span class="settings-section-num">01</span>
-          <div style="flex:1">
-            <div class="settings-section-title">Emotional Reactivity</div>
-            <div class="settings-section-desc">How strongly sensory input drives neuromodulator changes</div>
-          </div>
-          <svg class="settings-section-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
-        </div>
-        <div class="settings-section-body">
-          <div class="ctrl-row ctrl-master">
-            <div class="ctrl-header">
-              <span class="ctrl-label">Emotional Reactivity</span>
-              <span class="ctrl-hint">MASTER — runtime multiplier on all input weights</span>
-              <span class="ctrl-value-display" id="val-emotional_reactivity_scale">1.00</span>
-            </div>
-            <input type="range" class="brain-slider" data-key="emotional_reactivity_scale" min="0.2" max="3.0" step="0.05" value="1.0">
-          </div>
-          <div class="ctrl-row child-row">
-            <div class="ctrl-header"><span class="ctrl-label">Sentiment → DA</span><span class="ctrl-value-display" id="val-sentiment_DA_weight">0.15</span></div>
-            <input type="range" class="brain-slider child-slider" data-key="sentiment_DA_weight" min="0.0" max="0.5" step="0.01" value="0.15">
-          </div>
-          <div class="ctrl-row child-row">
-            <div class="ctrl-header"><span class="ctrl-label">Surprise → ACh</span><span class="ctrl-value-display" id="val-surprise_ACh_weight">0.12</span></div>
-            <input type="range" class="brain-slider child-slider" data-key="surprise_ACh_weight" min="0.0" max="0.4" step="0.01" value="0.12">
-          </div>
-          <div class="ctrl-row child-row">
-            <div class="ctrl-header"><span class="ctrl-label">Salience → ACh</span><span class="ctrl-value-display" id="val-salience_ACh_weight">0.08</span></div>
-            <input type="range" class="brain-slider child-slider" data-key="salience_ACh_weight" min="0.0" max="0.3" step="0.01" value="0.08">
-          </div>
-          <div class="ctrl-row child-row">
-            <div class="ctrl-header"><span class="ctrl-label">Salience → Glu</span><span class="ctrl-value-display" id="val-salience_Glu_weight">0.08</span></div>
-            <input type="range" class="brain-slider child-slider" data-key="salience_Glu_weight" min="0.0" max="0.3" step="0.01" value="0.08">
-          </div>
-          <div class="ctrl-row">
-            <div class="ctrl-header"><span class="ctrl-label">Threat Sensitivity</span><span class="ctrl-hint">lower = responds to subtler hostility</span><span class="ctrl-value-display" id="val-hostility_GABA_threshold_high">0.50</span></div>
-            <input type="range" class="brain-slider" data-key="hostility_GABA_threshold_high" min="0.2" max="0.9" step="0.05" value="0.50">
-          </div>
-          <div class="ctrl-row">
-            <div class="ctrl-header"><span class="ctrl-label">Emotional Expression</span><span class="ctrl-hint">1 = AI can deliberately emulate emotions via set_mood</span><span class="ctrl-value-display" id="val-emotional_expression_enabled">1</span></div>
-            <input type="range" class="brain-slider" data-key="emotional_expression_enabled" min="0" max="1" step="1" value="1">
-          </div>
-        </div>
-      </div>
+      <nav class="rail-nav" id="rail-nav"></nav>
 
-      <!-- S2: Neuromodulator Homeostasis -->
-      <div class="settings-section" id="sec-2">
-        <div class="settings-section-head">
-          <span class="settings-section-num">02</span>
-          <div style="flex:1">
-            <div class="settings-section-title">Neuromodulator Homeostasis</div>
-            <div class="settings-section-desc">How quickly neuromodulator levels decay back to baseline</div>
-          </div>
-          <svg class="settings-section-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
-        </div>
-        <div class="settings-section-body">
-          <div class="ctrl-row ctrl-master">
-            <div class="ctrl-header">
-              <span class="ctrl-label">Homeostasis Speed</span>
-              <span class="ctrl-hint">MASTER — higher = slower return to rest</span>
-            </div>
-            <input type="range" class="brain-slider" id="master-homeostasis" min="0.5" max="0.99" step="0.01" value="0.876">
-          </div>
-          <div class="ctrl-row child-row">
-            <div class="ctrl-header"><span class="ctrl-label">DA decay</span><span class="ctrl-value-display" id="val-valence_to_DA_decay">0.85</span></div>
-            <input type="range" class="brain-slider child-slider" data-key="valence_to_DA_decay" min="0.5" max="0.99" step="0.01" value="0.85">
-          </div>
-          <div class="ctrl-row child-row">
-            <div class="ctrl-header"><span class="ctrl-label">GABA decay</span><span class="ctrl-value-display" id="val-threat_to_GABA_decay">0.80</span></div>
-            <input type="range" class="brain-slider child-slider" data-key="threat_to_GABA_decay" min="0.5" max="0.99" step="0.01" value="0.80">
-          </div>
-          <div class="ctrl-row child-row">
-            <div class="ctrl-header"><span class="ctrl-label">ACh decay</span><span class="ctrl-value-display" id="val-novelty_to_ACh_decay">0.90</span></div>
-            <input type="range" class="brain-slider child-slider" data-key="novelty_to_ACh_decay" min="0.5" max="0.99" step="0.01" value="0.90">
-          </div>
-          <div class="ctrl-row child-row">
-            <div class="ctrl-header"><span class="ctrl-label">Arousal decay</span><span class="ctrl-value-display" id="val-arousal_homeostat_decay">0.88</span></div>
-            <input type="range" class="brain-slider child-slider" data-key="arousal_homeostat_decay" min="0.5" max="0.99" step="0.01" value="0.88">
-          </div>
-          <div class="ctrl-row child-row">
-            <div class="ctrl-header"><span class="ctrl-label">Satiation decay</span><span class="ctrl-value-display" id="val-satiation_inhibitor_decay">0.95</span></div>
-            <input type="range" class="brain-slider child-slider" data-key="satiation_inhibitor_decay" min="0.5" max="0.99" step="0.01" value="0.95">
-          </div>
-          <div class="ctrl-row">
-            <div class="ctrl-header"><span class="ctrl-label">Satiation Threshold</span><span class="ctrl-hint">below this, interest desensitizes</span><span class="ctrl-value-display" id="val-salience_satiation_threshold">0.30</span></div>
-            <input type="range" class="brain-slider" data-key="salience_satiation_threshold" min="0.1" max="0.7" step="0.05" value="0.30">
-          </div>
-        </div>
+      <div class="rail-foot">
+        <button class="btn-reset-all" id="settings-reset-btn">
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+          Reset all to defaults
+        </button>
+        <div class="rail-legend"><span class="chip"></span> amber = unsaved change</div>
       </div>
+    </aside>
 
-      <!-- S3: Plasticity & Learning -->
-      <div class="settings-section" id="sec-3">
-        <div class="settings-section-head">
-          <span class="settings-section-num">03</span>
-          <div style="flex:1">
-            <div class="settings-section-title">Plasticity &amp; Learning</div>
-            <div class="settings-section-desc">Hebbian weight changes — learning rate and stability are linked</div>
-          </div>
-          <svg class="settings-section-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+    <!-- ====================== MAIN ====================== -->
+    <main class="set-main">
+      <header class="set-bar">
+        <button class="set-back" id="settings-back-btn" title="Back to brain">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+          Back
+        </button>
+        <div class="bar-head">
+          <div id="bar-title">Persona</div>
+          <div id="bar-blurb"></div>
         </div>
-        <div class="settings-section-body">
-          <div class="ctrl-row">
-            <div class="ctrl-header"><span class="ctrl-label">Learning Rate</span><span class="ctrl-hint">↑ this nudges ↓ Weight Stability</span><span class="ctrl-value-display" id="val-hebbian_delta">0.020</span></div>
-            <input type="range" class="brain-slider" data-key="hebbian_delta" min="0.001" max="0.1" step="0.001" value="0.02">
-          </div>
-          <div class="ctrl-row">
-            <div class="ctrl-header"><span class="ctrl-label">Sleep Learning Rate</span><span class="ctrl-hint">outcome × plasticity × this</span><span class="ctrl-value-display" id="val-hebbian_outcome_delta">0.020</span></div>
-            <input type="range" class="brain-slider" data-key="hebbian_outcome_delta" min="0.001" max="0.1" step="0.001" value="0.02">
-          </div>
-          <div class="ctrl-row">
-            <div class="ctrl-header"><span class="ctrl-label">Weight Stability</span><span class="ctrl-hint">↑ this nudges ↓ Learning Rate</span><span class="ctrl-value-display" id="val-decay_toward_rest_rate">0.010</span></div>
-            <input type="range" class="brain-slider" data-key="decay_toward_rest_rate" min="0.001" max="0.05" step="0.001" value="0.01">
-          </div>
-          <div class="ctrl-row">
-            <div class="ctrl-header"><span class="ctrl-label">Weight Floor</span><span class="ctrl-value-display" id="val-weight_min">0.10</span></div>
-            <input type="range" class="brain-slider" data-key="weight_min" min="0.01" max="0.5" step="0.01" value="0.10">
-          </div>
-          <div class="ctrl-row">
-            <div class="ctrl-header"><span class="ctrl-label">Weight Ceiling</span><span class="ctrl-value-display" id="val-weight_max">3.00</span></div>
-            <input type="range" class="brain-slider" data-key="weight_max" min="1.0" max="6.0" step="0.1" value="3.0">
-          </div>
-          <div class="ctrl-row">
-            <div class="ctrl-header"><span class="ctrl-label">High-Inhibition Learning Cutoff</span><span class="ctrl-hint">skip Hebbian when GABA &gt; this</span><span class="ctrl-value-display" id="val-gaba_skip_threshold_high">0.55</span></div>
-            <input type="range" class="brain-slider" data-key="gaba_skip_threshold_high" min="0.3" max="0.9" step="0.05" value="0.55">
-          </div>
+        <div class="bar-actions">
+          <div class="dirty-pill" id="dirty-pill"><span class="chip"></span><span id="dirty-text">0 unsaved</span></div>
+          <button class="restart-banner" id="settings-restart-banner">Restart required</button>
+          <button class="btn-save idle" id="settings-save-btn">Save Settings</button>
         </div>
+      </header>
+
+      <div class="set-scroll" id="scroll">
+        <div class="cat-wrap" id="cat-wrap"></div>
       </div>
+    </main>
 
-      <!-- S4: Default Mode Network -->
-      <div class="settings-section" id="sec-4">
-        <div class="settings-section-head">
-          <span class="settings-section-num">04</span>
-          <div style="flex:1">
-            <div class="settings-section-title">Default Mode Network</div>
-            <div class="settings-section-desc">Background thought generation when not responding</div>
-          </div>
-          <svg class="settings-section-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
-        </div>
-        <div class="settings-section-body">
-          <div class="ctrl-row">
-            <div class="ctrl-header"><span class="ctrl-label">Thought Frequency</span><span class="ctrl-hint">seconds between thought cycles</span><span class="ctrl-value-display" id="val-dmn_interval">15</span></div>
-            <input type="range" class="brain-slider" data-key="dmn_interval" min="5" max="120" step="5" value="15">
-          </div>
-          <div class="ctrl-row ctrl-master">
-            <div class="ctrl-header">
-              <span class="ctrl-label">Thought Suppression</span>
-              <span class="ctrl-hint">MASTER — how readily ACh/Glu suppress thoughts</span>
-            </div>
-            <input type="range" class="brain-slider" id="master-suppression" min="0.3" max="2.0" step="0.05" value="1.0">
-          </div>
-          <div class="ctrl-row child-row">
-            <div class="ctrl-header"><span class="ctrl-label">ACh suppression weight</span><span class="ctrl-value-display" id="val-ach_suppression_weight">1.00</span></div>
-            <input type="range" class="brain-slider child-slider" data-key="ach_suppression_weight" min="0.1" max="2.0" step="0.05" value="1.0">
-          </div>
-          <div class="ctrl-row child-row">
-            <div class="ctrl-header"><span class="ctrl-label">Glu suppression weight</span><span class="ctrl-value-display" id="val-glu_suppression_weight">0.30</span></div>
-            <input type="range" class="brain-slider child-slider" data-key="glu_suppression_weight" min="0.0" max="1.0" step="0.05" value="0.30">
-          </div>
-          <div class="ctrl-row">
-            <div class="ctrl-header"><span class="ctrl-label">Idle Thought Frequency</span><span class="ctrl-hint">seconds between cycles when user is inactive</span><span class="ctrl-value-display" id="val-dmn_idle_interval">25</span></div>
-            <input type="range" class="brain-slider" data-key="dmn_idle_interval" min="10" max="120" step="5" value="25">
-          </div>
-          <div class="ctrl-row">
-            <div class="ctrl-header"><span class="ctrl-label">Deduplication Strictness</span><span class="ctrl-hint">higher = more unique thoughts required</span><span class="ctrl-value-display" id="val-dmn_overlap_threshold">0.35</span></div>
-            <input type="range" class="brain-slider" data-key="dmn_overlap_threshold" min="0.1" max="0.8" step="0.05" value="0.35">
-          </div>
-          <div class="ctrl-row">
-            <div class="ctrl-header"><span class="ctrl-label">Speak Gate Poll Interval</span><span class="ctrl-hint">seconds between speak-gate evaluations</span><span class="ctrl-value-display" id="val-speak_gate_poll_interval">5.0</span></div>
-            <input type="range" class="brain-slider" data-key="speak_gate_poll_interval" min="1" max="30" step="1" value="5">
-          </div>
-          <div class="ctrl-row">
-            <div class="ctrl-header"><span class="ctrl-label">Speak Candidate Max Age</span><span class="ctrl-hint">drop unspoken candidates older than this (s)</span><span class="ctrl-value-display" id="val-speak_candidate_max_age_s">60</span></div>
-            <input type="range" class="brain-slider" data-key="speak_candidate_max_age_s" min="10" max="300" step="10" value="60">
-          </div>
-          <div class="ctrl-row">
-            <div class="ctrl-header"><span class="ctrl-label">Bridge Rewriter</span><span class="ctrl-hint">1 = rewrite topic-change interjections locally</span><span class="ctrl-value-display" id="val-speak_bridge_enabled">1</span></div>
-            <input type="range" class="brain-slider" data-key="speak_bridge_enabled" min="0" max="1" step="1" value="1">
-          </div>
-          <div class="ctrl-row">
-            <div class="ctrl-header"><span class="ctrl-label">Bridge Overlap Threshold</span><span class="ctrl-hint">topic overlap below this triggers rewrite</span><span class="ctrl-value-display" id="val-speak_bridge_overlap_threshold">0.20</span></div>
-            <input type="range" class="brain-slider" data-key="speak_bridge_overlap_threshold" min="0.0" max="0.8" step="0.05" value="0.20">
-          </div>
-        </div>
-      </div>
-
-      <!-- S5: Metacognition -->
-      <div class="settings-section" id="sec-5">
-        <div class="settings-section-head">
-          <span class="settings-section-num">05</span>
-          <div style="flex:1">
-            <div class="settings-section-title">Self-Reflection</div>
-            <div class="settings-section-desc">Periodic appraisal cycles and emotion override behavior</div>
-          </div>
-          <svg class="settings-section-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
-        </div>
-        <div class="settings-section-body">
-          <div class="ctrl-row">
-            <div class="ctrl-header"><span class="ctrl-label">Reflection Interval</span><span class="ctrl-hint">seconds between self-appraisals</span><span class="ctrl-value-display" id="val-meta_interval">30</span></div>
-            <input type="range" class="brain-slider" data-key="meta_interval" min="10" max="180" step="5" value="30">
-          </div>
-          <div class="ctrl-row">
-            <div class="ctrl-header"><span class="ctrl-label">Override Cooldown</span><span class="ctrl-hint">turns before same emotion override can repeat</span><span class="ctrl-value-display" id="val-meta_cooldown_turns">3</span></div>
-            <input type="range" class="brain-slider" data-key="meta_cooldown_turns" min="1" max="10" step="1" value="3">
-          </div>
-          <div class="ctrl-row">
-            <div class="ctrl-header"><span class="ctrl-label">DA "Disappointed" Threshold</span><span class="ctrl-hint">DA must be below this</span><span class="ctrl-value-display" id="val-da_threshold_disappointed">0.25</span></div>
-            <input type="range" class="brain-slider" data-key="da_threshold_disappointed" min="0.1" max="0.5" step="0.05" value="0.25">
-          </div>
-          <div class="ctrl-row">
-            <div class="ctrl-header"><span class="ctrl-label">GABA Drop → "Relieved"</span><span class="ctrl-hint">required GABA decline to trigger</span><span class="ctrl-value-display" id="val-gaba_drop_threshold">0.20</span></div>
-            <input type="range" class="brain-slider" data-key="gaba_drop_threshold" min="0.05" max="0.5" step="0.05" value="0.20">
-          </div>
-        </div>
-      </div>
-
-      <!-- S6: Prediction & Surprise -->
-      <div class="settings-section" id="sec-6">
-        <div class="settings-section-head">
-          <span class="settings-section-num">06</span>
-          <div style="flex:1">
-            <div class="settings-section-title">Prediction &amp; Surprise</div>
-            <div class="settings-section-desc">How much divergence from expectation triggers a surprise signal</div>
-          </div>
-          <svg class="settings-section-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
-        </div>
-        <div class="settings-section-body">
-          <div class="ctrl-row">
-            <div class="ctrl-header"><span class="ctrl-label">Surprise Sensitivity</span><span class="ctrl-hint">lower = more easily surprised</span><span class="ctrl-value-display" id="val-surprise_threshold">0.40</span></div>
-            <input type="range" class="brain-slider" data-key="surprise_threshold" min="0.1" max="0.9" step="0.05" value="0.40">
-          </div>
-          <div class="ctrl-row">
-            <div class="ctrl-header"><span class="ctrl-label">Confidence Skip Threshold</span><span class="ctrl-hint">above this, stop updating prediction</span><span class="ctrl-value-display" id="val-confidence_skip_threshold">0.70</span></div>
-            <input type="range" class="brain-slider" data-key="confidence_skip_threshold" min="0.3" max="1.0" step="0.05" value="0.70">
-          </div>
-          <div class="ctrl-row">
-            <div class="ctrl-header"><span class="ctrl-label">History Window</span><span class="ctrl-hint">turns tracked by predictor</span><span class="ctrl-value-display" id="val-predictor_window">8</span></div>
-            <input type="range" class="brain-slider" data-key="predictor_window" min="3" max="20" step="1" value="8">
-          </div>
-        </div>
-      </div>
-
-      <!-- S7: Voice Expressiveness -->
-      <div class="settings-section" id="sec-7">
-        <div class="settings-section-head">
-          <span class="settings-section-num">07</span>
-          <div style="flex:1">
-            <div class="settings-section-title">Voice Expressiveness</div>
-            <div class="settings-section-desc">Speech delivery — base voice and emotional modulation</div>
-          </div>
-          <svg class="settings-section-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
-        </div>
-        <div class="settings-section-body">
-          <div class="ctrl-row">
-            <div class="ctrl-header"><span class="ctrl-label">Base Stability</span><span class="ctrl-hint">voice consistency (higher = less varied)</span><span class="ctrl-value-display" id="val-voice_stability_default">0.45</span></div>
-            <input type="range" class="brain-slider" data-key="voice_stability_default" min="0.0" max="1.0" step="0.05" value="0.45">
-          </div>
-          <div class="ctrl-row">
-            <div class="ctrl-header"><span class="ctrl-label">Base Style</span><span class="ctrl-hint">character injection amount</span><span class="ctrl-value-display" id="val-voice_style_default">0.40</span></div>
-            <input type="range" class="brain-slider" data-key="voice_style_default" min="0.0" max="1.0" step="0.05" value="0.40">
-          </div>
-          <div class="ctrl-row">
-            <div class="ctrl-header"><span class="ctrl-label">Base Speed</span><span class="ctrl-hint">speech rate multiplier</span><span class="ctrl-value-display" id="val-voice_speed_default">1.00</span></div>
-            <input type="range" class="brain-slider" data-key="voice_speed_default" min="0.7" max="1.3" step="0.05" value="1.0">
-          </div>
-          <div class="ctrl-row ctrl-master">
-            <div class="ctrl-header">
-              <span class="ctrl-label">Expressiveness</span>
-              <span class="ctrl-hint">MASTER — scales deviation from base in emotional states</span>
-            </div>
-            <input type="range" class="brain-slider" id="master-expressiveness" min="0.3" max="2.0" step="0.05" value="1.0">
-          </div>
-          <div class="ctrl-row">
-            <div class="ctrl-header"><span class="ctrl-label">Breath Pauses (max)</span><span class="ctrl-value-display" id="val-breath_pause_count_max">2</span></div>
-            <input type="range" class="brain-slider" data-key="breath_pause_count_max" min="0" max="4" step="1" value="2">
-          </div>
-          <div class="ctrl-row">
-            <div class="ctrl-header"><span class="ctrl-label">Urgently Threshold (Glu)</span><span class="ctrl-hint">Glu above this → [urgently] tag</span><span class="ctrl-value-display" id="val-glu_urgently_threshold">0.55</span></div>
-            <input type="range" class="brain-slider" data-key="glu_urgently_threshold" min="0.3" max="0.9" step="0.05" value="0.55">
-          </div>
-        </div>
-      </div>
-
-      <!-- S8: Proactive Behavior -->
-      <div class="settings-section" id="sec-8">
-        <div class="settings-section-head">
-          <span class="settings-section-num">08</span>
-          <div style="flex:1">
-            <div class="settings-section-title">Proactive Behavior</div>
-            <div class="settings-section-desc">When the brain speaks unprompted after idle time</div>
-          </div>
-          <svg class="settings-section-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
-        </div>
-        <div class="settings-section-body">
-          <div class="ctrl-row">
-            <div class="ctrl-header"><span class="ctrl-label">Idle Threshold</span><span class="ctrl-hint">seconds of silence before proactive speech</span><span class="ctrl-value-display" id="val-proactive_idle_threshold">180</span></div>
-            <input type="range" class="brain-slider" data-key="proactive_idle_threshold" min="30" max="600" step="15" value="180">
-          </div>
-          <div class="ctrl-row">
-            <div class="ctrl-header"><span class="ctrl-label">Response Window</span><span class="ctrl-hint">seconds after speaking to withhold next proactive</span><span class="ctrl-value-display" id="val-proactive_response_window">8</span></div>
-            <input type="range" class="brain-slider" data-key="proactive_response_window" min="2" max="30" step="1" value="8">
-          </div>
-        </div>
-      </div>
-
-      <!-- S9: Attention & Routing -->
-      <div class="settings-section" id="sec-9">
-        <div class="settings-section-head">
-          <span class="settings-section-num">09</span>
-          <div style="flex:1">
-            <div class="settings-section-title">Attention &amp; Routing</div>
-            <div class="settings-section-desc">Thalamus priority weights for competing brain regions</div>
-          </div>
-          <svg class="settings-section-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
-        </div>
-        <div class="settings-section-body">
-          <div class="ctrl-row">
-            <div class="ctrl-header"><span class="ctrl-label">Memory (Hippocampus) Priority</span><span class="ctrl-value-display" id="val-hippocampus_priority_base">0.60</span></div>
-            <input type="range" class="brain-slider" data-key="hippocampus_priority_base" min="0.1" max="1.0" step="0.05" value="0.60">
-          </div>
-          <div class="ctrl-row">
-            <div class="ctrl-header"><span class="ctrl-label">Curiosity (Frontal ACh) Boost</span><span class="ctrl-value-display" id="val-frontal_ach_weight">0.20</span></div>
-            <input type="range" class="brain-slider" data-key="frontal_ach_weight" min="0.0" max="0.6" step="0.05" value="0.20">
-          </div>
-          <div class="ctrl-row">
-            <div class="ctrl-header"><span class="ctrl-label">Salience Workspace Threshold</span><span class="ctrl-hint">above this, topic enters global workspace</span><span class="ctrl-value-display" id="val-salience_workspace_threshold">0.60</span></div>
-            <input type="range" class="brain-slider" data-key="salience_workspace_threshold" min="0.2" max="0.9" step="0.05" value="0.60">
-          </div>
-          <div class="ctrl-row">
-            <div class="ctrl-header"><span class="ctrl-label">Topic Attention Decay</span><span class="ctrl-hint">per-tick decay of attention focus (lower = faster fade)</span><span class="ctrl-value-display" id="val-topic_activation_decay">0.70</span></div>
-            <input type="range" class="brain-slider" data-key="topic_activation_decay" min="0.3" max="0.95" step="0.05" value="0.70">
-          </div>
-        </div>
-      </div>
-
-      <!-- S10: Speaker Recognition -->
-      <div class="settings-section" id="sec-10">
-        <div class="settings-section-head">
-          <span class="settings-section-num">10</span>
-          <div style="flex:1">
-            <div class="settings-section-title">Speaker Recognition</div>
-            <div class="settings-section-desc">Voice similarity thresholds for identifying speakers</div>
-          </div>
-          <svg class="settings-section-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
-        </div>
-        <div class="settings-section-body">
-          <div class="ctrl-row">
-            <div class="ctrl-header"><span class="ctrl-label">Profile Store Threshold</span><span class="ctrl-hint">higher = pickier about saving voice profiles</span><span class="ctrl-value-display" id="val-speaker_store_threshold">0.70</span></div>
-            <input type="range" class="brain-slider" data-key="speaker_store_threshold" min="0.4" max="0.95" step="0.05" value="0.70">
-          </div>
-          <div class="ctrl-row">
-            <div class="ctrl-header"><span class="ctrl-label">Session Match Threshold</span><span class="ctrl-hint">lower = more permissive cross-turn matching</span><span class="ctrl-value-display" id="val-speaker_session_threshold">0.62</span></div>
-            <input type="range" class="brain-slider" data-key="speaker_session_threshold" min="0.3" max="0.90" step="0.05" value="0.62">
-          </div>
-          <div class="ctrl-row">
-            <div class="ctrl-header"><span class="ctrl-label">Min Audio Duration (s)</span><span class="ctrl-hint">minimum audio before attempting voice embed</span><span class="ctrl-value-display" id="val-speaker_min_audio_s">0.40</span></div>
-            <input type="range" class="brain-slider" data-key="speaker_min_audio_s" min="0.1" max="2.0" step="0.1" value="0.40">
-          </div>
-        </div>
-      </div>
-
-      <!-- S11: Vision / Video -->
-      <div class="settings-section" id="sec-11">
-        <div class="settings-section-head">
-          <span class="settings-section-num">11</span>
-          <div style="flex:1">
-            <div class="settings-section-title">Vision / Video</div>
-            <div class="settings-section-desc">Live video frame sampling and change detection for the occipital lobe</div>
-          </div>
-          <svg class="settings-section-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
-        </div>
-        <div class="settings-section-body">
-          <div class="ctrl-row">
-            <div class="ctrl-header"><span class="ctrl-label">Sample Interval (s)</span><span class="ctrl-hint">how often to grab a frame from the video stream</span><span class="ctrl-value-display" id="val-video_sample_interval">5.0</span></div>
-            <input type="range" class="brain-slider" data-key="video_sample_interval" min="1.0" max="30.0" step="0.5" value="5.0">
-          </div>
-          <div class="ctrl-row">
-            <div class="ctrl-header"><span class="ctrl-label">Max Frames per Call</span><span class="ctrl-hint">max frames batched into one Gemini vision call</span><span class="ctrl-value-display" id="val-video_max_frames">8</span></div>
-            <input type="range" class="brain-slider" data-key="video_max_frames" min="1" max="16" step="1" value="8">
-          </div>
-          <div class="ctrl-row">
-            <div class="ctrl-header"><span class="ctrl-label">Change Threshold (RMS)</span><span class="ctrl-hint">minimum pixel difference to treat a frame as new</span><span class="ctrl-value-display" id="val-video_change_threshold">8.0</span></div>
-            <input type="range" class="brain-slider" data-key="video_change_threshold" min="1.0" max="30.0" step="0.5" value="8.0">
-          </div>
-        </div>
-      </div>
-
-      <!-- S12: Endocrine / Hormonal System -->
-      <div class="settings-section" id="sec-12">
-        <div class="settings-section-head">
-          <span class="settings-section-num">12</span>
-          <div style="flex:1">
-            <div class="settings-section-title">Endocrine / Hormonal System</div>
-            <div class="settings-section-desc">Slow-acting hormones — OXT (bonding), CORT (stress), 5HT (mood) — and their cross-modulation</div>
-          </div>
-          <svg class="settings-section-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
-        </div>
-        <div class="settings-section-body">
-          <div class="ctrl-row ctrl-master">
-            <div class="ctrl-header"><span class="ctrl-label">OXT — Bonding</span><span class="ctrl-hint">oxytocin: builds from warm exchanges, drained by hostility</span></div>
-          </div>
-          <div class="ctrl-row child-row">
-            <div class="ctrl-header"><span class="ctrl-label">OXT gain / warm turn</span><span class="ctrl-value-display" id="val-oxt_positive_increment">0.008</span></div>
-            <input type="range" class="brain-slider child-slider" data-key="oxt_positive_increment" min="0.001" max="0.05" step="0.001" value="0.008">
-          </div>
-          <div class="ctrl-row child-row">
-            <div class="ctrl-header"><span class="ctrl-label">OXT drain / hostile turn</span><span class="ctrl-value-display" id="val-oxt_hostility_drain">0.008</span></div>
-            <input type="range" class="brain-slider child-slider" data-key="oxt_hostility_drain" min="0.001" max="0.05" step="0.001" value="0.008">
-          </div>
-          <div class="ctrl-row child-row">
-            <div class="ctrl-header"><span class="ctrl-label">OXT CORT buffer rate</span><span class="ctrl-hint">OXT × this drains CORT per turn</span><span class="ctrl-value-display" id="val-oxt_cort_buffer_rate">0.020</span></div>
-            <input type="range" class="brain-slider child-slider" data-key="oxt_cort_buffer_rate" min="0.001" max="0.08" step="0.001" value="0.020">
-          </div>
-          <div class="ctrl-row child-row">
-            <div class="ctrl-header"><span class="ctrl-label">OXT CORT buffer threshold</span><span class="ctrl-hint">OXT must exceed this to buffer CORT</span><span class="ctrl-value-display" id="val-oxt_cort_buffer_threshold">0.40</span></div>
-            <input type="range" class="brain-slider child-slider" data-key="oxt_cort_buffer_threshold" min="0.1" max="0.8" step="0.05" value="0.40">
-          </div>
-          <div class="ctrl-row child-row">
-            <div class="ctrl-header"><span class="ctrl-label">OXT → DA lift</span><span class="ctrl-value-display" id="val-oxt_da_lift">0.05</span></div>
-            <input type="range" class="brain-slider child-slider" data-key="oxt_da_lift" min="0.0" max="0.2" step="0.01" value="0.05">
-          </div>
-          <div class="ctrl-row child-row">
-            <div class="ctrl-header"><span class="ctrl-label">OXT "Connected" threshold</span><span class="ctrl-hint">OXT above this + positive base → connected</span><span class="ctrl-value-display" id="val-hormonal_oxt_connected_threshold">0.60</span></div>
-            <input type="range" class="brain-slider child-slider" data-key="hormonal_oxt_connected_threshold" min="0.3" max="0.9" step="0.05" value="0.60">
-          </div>
-          <div class="ctrl-row ctrl-master" style="margin-top:0.75rem">
-            <div class="ctrl-header"><span class="ctrl-label">CORT — Stress</span><span class="ctrl-hint">cortisol: builds under sustained hostility or threat</span></div>
-          </div>
-          <div class="ctrl-row child-row">
-            <div class="ctrl-header"><span class="ctrl-label">CORT gain / hostile turn</span><span class="ctrl-value-display" id="val-cort_threat_increment">0.022</span></div>
-            <input type="range" class="brain-slider child-slider" data-key="cort_threat_increment" min="0.005" max="0.08" step="0.001" value="0.022">
-          </div>
-          <div class="ctrl-row child-row">
-            <div class="ctrl-header"><span class="ctrl-label">CORT trigger threshold</span><span class="ctrl-hint">hostility score required to build CORT</span><span class="ctrl-value-display" id="val-cort_hostility_threshold">0.35</span></div>
-            <input type="range" class="brain-slider child-slider" data-key="cort_hostility_threshold" min="0.1" max="0.7" step="0.05" value="0.35">
-          </div>
-          <div class="ctrl-row child-row">
-            <div class="ctrl-header"><span class="ctrl-label">CORT → DA suppress</span><span class="ctrl-value-display" id="val-cort_da_suppress">0.08</span></div>
-            <input type="range" class="brain-slider child-slider" data-key="cort_da_suppress" min="0.0" max="0.3" step="0.01" value="0.08">
-          </div>
-          <div class="ctrl-row child-row">
-            <div class="ctrl-header"><span class="ctrl-label">CORT → GABA amplify</span><span class="ctrl-value-display" id="val-cort_gaba_amplify">0.30</span></div>
-            <input type="range" class="brain-slider child-slider" data-key="cort_gaba_amplify" min="0.0" max="0.6" step="0.05" value="0.30">
-          </div>
-          <div class="ctrl-row child-row">
-            <div class="ctrl-header"><span class="ctrl-label">CORT "Withdrawn" threshold</span><span class="ctrl-hint">CORT above this → withdrawn/guarded state</span><span class="ctrl-value-display" id="val-hormonal_cort_withdrawn_threshold">0.45</span></div>
-            <input type="range" class="brain-slider child-slider" data-key="hormonal_cort_withdrawn_threshold" min="0.2" max="0.8" step="0.05" value="0.45">
-          </div>
-          <div class="ctrl-row ctrl-master" style="margin-top:0.75rem">
-            <div class="ctrl-header"><span class="ctrl-label">5HT — Mood</span><span class="ctrl-hint">serotonin: slow mood baseline; low → dysphoric coloring</span></div>
-          </div>
-          <div class="ctrl-row child-row">
-            <div class="ctrl-header"><span class="ctrl-label">5HT gain / rewarding turn</span><span class="ctrl-value-display" id="val-sht_reward_increment">0.003</span></div>
-            <input type="range" class="brain-slider child-slider" data-key="sht_reward_increment" min="0.001" max="0.02" step="0.001" value="0.003">
-          </div>
-          <div class="ctrl-row child-row">
-            <div class="ctrl-header"><span class="ctrl-label">5HT reward sentiment min</span><span class="ctrl-hint">min sentiment score to earn 5HT</span><span class="ctrl-value-display" id="val-sht_reward_sentiment_min">0.40</span></div>
-            <input type="range" class="brain-slider child-slider" data-key="sht_reward_sentiment_min" min="0.1" max="0.8" step="0.05" value="0.40">
-          </div>
-          <div class="ctrl-row child-row">
-            <div class="ctrl-header"><span class="ctrl-label">5HT drain / hostile turn</span><span class="ctrl-value-display" id="val-sht_hostility_drain">0.004</span></div>
-            <input type="range" class="brain-slider child-slider" data-key="sht_hostility_drain" min="0.001" max="0.02" step="0.001" value="0.004">
-          </div>
-          <div class="ctrl-row child-row">
-            <div class="ctrl-header"><span class="ctrl-label">5HT → DA floor lift</span><span class="ctrl-value-display" id="val-sht_da_floor_lift">0.12</span></div>
-            <input type="range" class="brain-slider child-slider" data-key="sht_da_floor_lift" min="0.0" max="0.4" step="0.01" value="0.12">
-          </div>
-          <div class="ctrl-row child-row">
-            <div class="ctrl-header"><span class="ctrl-label">5HT "Dysphoric" threshold</span><span class="ctrl-hint">5HT below this → dysphoric coloring</span><span class="ctrl-value-display" id="val-hormonal_sht_dysphoric_threshold">0.25</span></div>
-            <input type="range" class="brain-slider child-slider" data-key="hormonal_sht_dysphoric_threshold" min="0.05" max="0.5" step="0.05" value="0.25">
-          </div>
-        </div>
-      </div>
-
-      <!-- S13: Norepinephrine (NE) -->
-      <div class="settings-section" id="sec-13">
-        <div class="settings-section-head">
-          <span class="settings-section-num">13</span>
-          <div style="flex:1">
-            <div class="settings-section-title">Norepinephrine (NE)</div>
-            <div class="settings-section-desc">Focused alertness — inverted-U curve; too high narrows and scatters attention</div>
-          </div>
-          <svg class="settings-section-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
-        </div>
-        <div class="settings-section-body">
-          <div class="ctrl-row">
-            <div class="ctrl-header"><span class="ctrl-label">NE ← Salience</span><span class="ctrl-value-display" id="val-ne_salience_weight">0.07</span></div>
-            <input type="range" class="brain-slider" data-key="ne_salience_weight" min="0.0" max="0.3" step="0.01" value="0.07">
-          </div>
-          <div class="ctrl-row">
-            <div class="ctrl-header"><span class="ctrl-label">NE ← Surprise</span><span class="ctrl-value-display" id="val-ne_surprise_weight">0.05</span></div>
-            <input type="range" class="brain-slider" data-key="ne_surprise_weight" min="0.0" max="0.3" step="0.01" value="0.05">
-          </div>
-          <div class="ctrl-row">
-            <div class="ctrl-header"><span class="ctrl-label">NE ← Hostility</span><span class="ctrl-value-display" id="val-ne_hostility_weight">0.10</span></div>
-            <input type="range" class="brain-slider" data-key="ne_hostility_weight" min="0.0" max="0.4" step="0.01" value="0.10">
-          </div>
-          <div class="ctrl-row">
-            <div class="ctrl-header"><span class="ctrl-label">NE ← Rushed prosody</span><span class="ctrl-value-display" id="val-ne_rush_increment">0.05</span></div>
-            <input type="range" class="brain-slider" data-key="ne_rush_increment" min="0.0" max="0.2" step="0.01" value="0.05">
-          </div>
-          <div class="ctrl-row">
-            <div class="ctrl-header"><span class="ctrl-label">High-NE threshold</span><span class="ctrl-hint">NE above this → heightened vigilance</span><span class="ctrl-value-display" id="val-ne_high_threshold">0.55</span></div>
-            <input type="range" class="brain-slider" data-key="ne_high_threshold" min="0.3" max="0.8" step="0.05" value="0.55">
-          </div>
-          <div class="ctrl-row">
-            <div class="ctrl-header"><span class="ctrl-label">NE scatter threshold</span><span class="ctrl-hint">NE above this → attention narrows and degrades</span><span class="ctrl-value-display" id="val-ne_scatter_threshold">0.82</span></div>
-            <input type="range" class="brain-slider" data-key="ne_scatter_threshold" min="0.5" max="0.99" step="0.05" value="0.82">
-          </div>
-        </div>
-      </div>
-
-      <!-- S14: Anandamide / AEA -->
-      <div class="settings-section" id="sec-14">
-        <div class="settings-section-head">
-          <span class="settings-section-num">14</span>
-          <div style="flex:1">
-            <div class="settings-section-title">Anandamide / AEA</div>
-            <div class="settings-section-desc">Endocannabinoid homeostatic buffer — rises under arousal, dampens NE/Glu, lifts DA (afterglow)</div>
-          </div>
-          <svg class="settings-section-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
-        </div>
-        <div class="settings-section-body">
-          <div class="ctrl-row">
-            <div class="ctrl-header"><span class="ctrl-label">Arousal trigger (Glu+NE)</span><span class="ctrl-hint">Glu+NE sum above this builds AEA homeostasis</span><span class="ctrl-value-display" id="val-aea_arousal_threshold">0.65</span></div>
-            <input type="range" class="brain-slider" data-key="aea_arousal_threshold" min="0.3" max="1.0" step="0.05" value="0.65">
-          </div>
-          <div class="ctrl-row">
-            <div class="ctrl-header"><span class="ctrl-label">AEA arousal gain / turn</span><span class="ctrl-value-display" id="val-aea_arousal_increment">0.018</span></div>
-            <input type="range" class="brain-slider" data-key="aea_arousal_increment" min="0.002" max="0.08" step="0.002" value="0.018">
-          </div>
-          <div class="ctrl-row">
-            <div class="ctrl-header"><span class="ctrl-label">AEA social afterglow / turn</span><span class="ctrl-value-display" id="val-aea_positive_increment">0.005</span></div>
-            <input type="range" class="brain-slider" data-key="aea_positive_increment" min="0.001" max="0.03" step="0.001" value="0.005">
-          </div>
-          <div class="ctrl-row">
-            <div class="ctrl-header"><span class="ctrl-label">AEA CORT drain / turn</span><span class="ctrl-hint">stress erodes AEA buffer</span><span class="ctrl-value-display" id="val-aea_cort_drain">0.004</span></div>
-            <input type="range" class="brain-slider" data-key="aea_cort_drain" min="0.001" max="0.02" step="0.001" value="0.004">
-          </div>
-          <div class="ctrl-row">
-            <div class="ctrl-header"><span class="ctrl-label">AEA → NE suppression</span><span class="ctrl-value-display" id="val-aea_ne_suppression">0.50</span></div>
-            <input type="range" class="brain-slider" data-key="aea_ne_suppression" min="0.0" max="1.0" step="0.05" value="0.50">
-          </div>
-          <div class="ctrl-row">
-            <div class="ctrl-header"><span class="ctrl-label">AEA → Glu suppression</span><span class="ctrl-value-display" id="val-aea_glu_suppression">0.35</span></div>
-            <input type="range" class="brain-slider" data-key="aea_glu_suppression" min="0.0" max="1.0" step="0.05" value="0.35">
-          </div>
-          <div class="ctrl-row">
-            <div class="ctrl-header"><span class="ctrl-label">AEA → DA lift</span><span class="ctrl-value-display" id="val-aea_da_lift">0.04</span></div>
-            <input type="range" class="brain-slider" data-key="aea_da_lift" min="0.0" max="0.2" step="0.01" value="0.04">
-          </div>
-          <div class="ctrl-row">
-            <div class="ctrl-header"><span class="ctrl-label">AEA "Eased" threshold</span><span class="ctrl-hint">elevated AEA + stress base → eased state</span><span class="ctrl-value-display" id="val-aea_eased_threshold">0.58</span></div>
-            <input type="range" class="brain-slider" data-key="aea_eased_threshold" min="0.3" max="0.9" step="0.05" value="0.58">
-          </div>
-        </div>
-      </div>
-
-      <!-- S15: Time-weighted Decay -->
-      <div class="settings-section" id="sec-15">
-        <div class="settings-section-head">
-          <span class="settings-section-num">15</span>
-          <div style="flex:1">
-            <div class="settings-section-title">Time-weighted Decay</div>
-            <div class="settings-section-desc">Emotional state decays proportional to real elapsed time, not message count</div>
-          </div>
-          <svg class="settings-section-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
-        </div>
-        <div class="settings-section-body">
-          <div class="ctrl-row">
-            <div class="ctrl-header"><span class="ctrl-label">Reference Interval (s)</span><span class="ctrl-hint">wall-clock seconds treated as "1 decay turn"</span><span class="ctrl-value-display" id="val-decay_reference_interval_s">60</span></div>
-            <input type="range" class="brain-slider" data-key="decay_reference_interval_s" min="10" max="300" step="10" value="60">
-          </div>
-          <div class="ctrl-row">
-            <div class="ctrl-header"><span class="ctrl-label">Decay Floor (turns)</span><span class="ctrl-hint">minimum decay even for instant replies</span><span class="ctrl-value-display" id="val-decay_min_turns">0.25</span></div>
-            <input type="range" class="brain-slider" data-key="decay_min_turns" min="0.05" max="1.0" step="0.05" value="0.25">
-          </div>
-          <div class="ctrl-row">
-            <div class="ctrl-header"><span class="ctrl-label">Decay Cap (turns)</span><span class="ctrl-hint">long silences treated as at most this many decay turns</span><span class="ctrl-value-display" id="val-decay_max_turns">10</span></div>
-            <input type="range" class="brain-slider" data-key="decay_max_turns" min="2" max="30" step="1" value="10">
-          </div>
-        </div>
-      </div>
-
-      <!-- S16: Switch Modulation & Resource Policy -->
-      <div class="settings-section" id="sec-16">
-        <div class="settings-section-head">
-          <span class="settings-section-num">16</span>
-          <div style="flex:1">
-            <div class="settings-section-title">Switch Modulation &amp; Resources</div>
-            <div class="settings-section-desc">Chemistry influence on gating + cloud/local compute budgets for background work</div>
-          </div>
-          <svg class="settings-section-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
-        </div>
-        <div class="settings-section-body">
-          <div class="ctrl-row ctrl-master">
-            <div class="ctrl-header">
-              <span class="ctrl-label">Chemistry Influence</span>
-              <span class="ctrl-hint">MASTER — scales all neuromod effects on switch gating (0 = pure logic, 1 = full chemistry)</span>
-              <span class="ctrl-value-display" id="val-modulation_gain">1.00</span>
-            </div>
-            <input type="range" class="brain-slider" data-key="modulation_gain" min="0.0" max="2.0" step="0.05" value="1.0">
-          </div>
-          <div class="ctrl-row" style="margin-top:0.75rem">
-            <div class="ctrl-header"><span class="ctrl-label">Cloud Token Budget</span><span class="ctrl-hint">max combined input+output tokens for background cloud calls per session</span><span class="ctrl-value-display" id="val-bg_cloud_token_budget">50000</span></div>
-            <input type="range" class="brain-slider" data-key="bg_cloud_token_budget" min="5000" max="200000" step="5000" value="50000">
-          </div>
-          <div class="ctrl-row">
-            <div class="ctrl-header"><span class="ctrl-label">Cloud Max Tokens / Call</span><span class="ctrl-hint">output token cap per background cloud call</span><span class="ctrl-value-display" id="val-bg_cloud_max_tokens_per_call">512</span></div>
-            <input type="range" class="brain-slider" data-key="bg_cloud_max_tokens_per_call" min="128" max="4096" step="128" value="512">
-          </div>
-          <div class="ctrl-row">
-            <div class="ctrl-header"><span class="ctrl-label">Cloud Timeout (s)</span><span class="ctrl-hint">background cloud call timeout; falls back to local on expiry</span><span class="ctrl-value-display" id="val-bg_cloud_timeout_s">20</span></div>
-            <input type="range" class="brain-slider" data-key="bg_cloud_timeout_s" min="5" max="60" step="5" value="20">
-          </div>
-          <div class="ctrl-row">
-            <div class="ctrl-header"><span class="ctrl-label">Local Concurrency</span><span class="ctrl-hint">max simultaneous Ollama calls for background work</span><span class="ctrl-value-display" id="val-local_max_concurrent">3</span></div>
-            <input type="range" class="brain-slider" data-key="local_max_concurrent" min="1" max="8" step="1" value="3">
-          </div>
-        </div>
-      </div>
-
-      <!-- S17: Motor Cortex / Autonomous Tasks -->
-      <div class="settings-section" id="sec-17">
-        <div class="settings-section-head">
-          <span class="settings-section-num">17</span>
-          <div style="flex:1">
-            <div class="settings-section-title">Motor Cortex / Autonomous Tasks</div>
-            <div class="settings-section-desc">Ralph-loop limits for self-directed background jobs</div>
-          </div>
-          <svg class="settings-section-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
-        </div>
-        <div class="settings-section-body">
-          <div class="ctrl-row">
-            <div class="ctrl-header">
-              <span class="ctrl-label">Ralph Max Total Attempts</span>
-              <span class="ctrl-hint">hard cap on tool dispatches across all stories + retries per job — prevents indefinite loops</span>
-              <span class="ctrl-value-display" id="val-ralph_max_total_attempts">12</span>
-            </div>
-            <input type="range" class="brain-slider" data-key="ralph_max_total_attempts" min="4" max="32" step="2" value="12">
-          </div>
-        </div>
-      </div>
-
-      <!-- S18: Sleep Consolidation -->
-      <div class="settings-section" id="sec-18">
-        <div class="settings-section-head">
-          <span class="settings-section-num">18</span>
-          <div style="flex:1">
-            <div class="settings-section-title">Sleep Consolidation</div>
-            <div class="settings-section-desc">In-process memory consolidation — extracts facts, updates self-model, observes personality &amp; mood-response patterns. Runs while the brain stays online.</div>
-          </div>
-          <svg class="settings-section-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
-        </div>
-        <div class="settings-section-body">
-          <div class="ctrl-row">
-            <div class="ctrl-header">
-              <span class="ctrl-label">Periodic Sleep Enabled</span>
-              <span class="ctrl-hint">1 = run consolidation in-process while the app is running; 0 = only at shutdown</span>
-              <span class="ctrl-value-display" id="val-sleep_periodic_enabled">1</span>
-            </div>
-            <input type="range" class="brain-slider" data-key="sleep_periodic_enabled" min="0" max="1" step="1" value="1">
-          </div>
-          <div class="ctrl-row">
-            <div class="ctrl-header">
-              <span class="ctrl-label">Check Interval</span>
-              <span class="ctrl-hint">how often the brainstem checks whether to run a sleep pass — applies on next tick, no restart</span>
-              <span class="ctrl-value-display" id="val-sleep_check_interval_s">30 min</span>
-            </div>
-            <input type="range" class="brain-slider" data-key="sleep_check_interval_s" data-display="minutes" min="60" max="7200" step="60" value="1800">
-          </div>
-          <div class="ctrl-row">
-            <div class="ctrl-header">
-              <span class="ctrl-label">Idle Threshold</span>
-              <span class="ctrl-hint">user must be idle this long since last turn before a pass fires</span>
-              <span class="ctrl-value-display" id="val-sleep_idle_threshold_s">2 h</span>
-            </div>
-            <input type="range" class="brain-slider" data-key="sleep_idle_threshold_s" data-display="hours" min="300" max="43200" step="300" value="7200">
-          </div>
-          <div class="ctrl-row">
-            <div class="ctrl-header">
-              <span class="ctrl-label">Hard Cap</span>
-              <span class="ctrl-hint">force a pass after this much wall-clock since the last one, even on a long active streak</span>
-              <span class="ctrl-value-display" id="val-sleep_hard_cap_s">6 h</span>
-            </div>
-            <input type="range" class="brain-slider" data-key="sleep_hard_cap_s" data-display="hours" min="3600" max="86400" step="1800" value="21600">
-          </div>
-          <div class="ctrl-row">
-            <div class="ctrl-header">
-              <span class="ctrl-label">Min Turns / Batch</span>
-              <span class="ctrl-hint">skip the pass if fewer than this many buffered turns — not worth the LLM calls</span>
-              <span class="ctrl-value-display" id="val-sleep_min_turns">5</span>
-            </div>
-            <input type="range" class="brain-slider" data-key="sleep_min_turns" min="2" max="40" step="1" value="5">
-          </div>
-        </div>
-      </div>
-
-    </div><!-- /.settings-grid -->
   </div><!-- /#settings-page -->
+
 
 </div>
 
@@ -6160,7 +5382,9 @@ function openSettings() {
   if (ticker) ticker.style.display = 'none';
   settingsPage.classList.add('visible');
   settingsBtn.classList.add('active');
-  loadSettingsFromServer();
+  // Redesigned settings engine (settings-ui.js) owns rendering + load/save.
+  // Refetch live values every time the page opens.
+  if (window.__settingsUI && window.__settingsUI.open) window.__settingsUI.open();
 }
 
 function closeSettings() {
@@ -6175,212 +5399,12 @@ settingsBtn.addEventListener('click', () => {
   if (settingsPage.classList.contains('visible')) closeSettings();
   else openSettings();
 });
-settingsBack.addEventListener('click', closeSettings);
+if (settingsBack) settingsBack.addEventListener('click', closeSettings);
 
-// ── Section collapse/expand ──────────────────────────────────────────
-document.querySelectorAll('.settings-section-head').forEach(head => {
-  head.addEventListener('click', () => {
-    head.closest('.settings-section').classList.toggle('collapsed');
-  });
-});
-
-// ── Slider value display sync ────────────────────────────────────────
-function syncDisplay(input) {
-  const key = input.dataset.key;
-  if (!key) return;
-  const disp = document.getElementById('val-' + key);
-  if (!disp) return;
-  const v = parseFloat(input.value);
-  // Optional unit conversion for display only — the underlying value is
-  // still stored in the slider's native units (seconds, etc.).
-  const unit = input.dataset.display;
-  if (unit === 'minutes') {
-    const m = v / 60;
-    disp.textContent = (m >= 10 ? m.toFixed(0) : m.toFixed(1)) + ' min';
-    return;
-  }
-  if (unit === 'hours') {
-    const h = v / 3600;
-    disp.textContent = (h >= 10 ? h.toFixed(0) : h.toFixed(1)) + ' h';
-    return;
-  }
-  // Format: integers as int, floats with 2-3 decimal places
-  disp.textContent = Number.isInteger(parseFloat(input.step)) && parseFloat(input.step) >= 1
-    ? Math.round(v).toString()
-    : v.toFixed(v < 0.1 ? 3 : 2);
-}
-
-document.querySelectorAll('input[data-key]').forEach(input => {
-  input.addEventListener('input', () => {
-    syncDisplay(input);
-    currentSettings[input.dataset.key] = parseFloat(input.value);
-  });
-});
-
-// ── Master sliders ───────────────────────────────────────────────────
-
-// Master: Homeostasis Speed — proportionally scales all 5 decay rates
-// Reference center = average of defaults: (0.85+0.80+0.90+0.88+0.95)/5 = 0.876
-const DECAY_DEFAULTS = {
-  valence_to_DA_decay:      0.85,
-  threat_to_GABA_decay:     0.80,
-  novelty_to_ACh_decay:     0.90,
-  arousal_homeostat_decay:  0.88,
-  satiation_inhibitor_decay: 0.95,
-};
-const DECAY_CENTER = 0.876;
-document.getElementById('master-homeostasis').addEventListener('input', function() {
-  const masterVal = parseFloat(this.value);
-  const offset = masterVal - DECAY_CENTER;
-  for (const [key, def] of Object.entries(DECAY_DEFAULTS)) {
-    const inp = document.querySelector(`input[data-key="${key}"]`);
-    if (inp) {
-      const newVal = Math.max(0.5, Math.min(0.99, def + offset));
-      inp.value = newVal.toFixed(3);
-      syncDisplay(inp);
-      currentSettings[key] = parseFloat(inp.value);
-    }
-  }
-});
-
-// Master: Thought Suppression — scales ACh + Glu suppression weights
-const SUPPRESSION_DEFAULTS = { ach_suppression_weight: 1.0, glu_suppression_weight: 0.3 };
-document.getElementById('master-suppression').addEventListener('input', function() {
-  const scale = parseFloat(this.value);
-  for (const [key, def] of Object.entries(SUPPRESSION_DEFAULTS)) {
-    const inp = document.querySelector(`input[data-key="${key}"]`);
-    if (inp) { inp.value = Math.min(inp.max, def * scale).toFixed(3); syncDisplay(inp); currentSettings[key] = parseFloat(inp.value); }
-  }
-});
-
-// Master: Voice Expressiveness — scales deviation between base and emotional overrides
-// Base defaults
-const VOICE_BASE = { stability: 0.45, style: 0.40, speed: 1.0 };
-// Override state deltas (override - base), at scale=1.0
-const VOICE_OVERRIDES = {
-  threat:    { voice_stability_threat:   0.65, voice_style_threat:   0.25, voice_speed_threat:   0.95 },
-  bright:    { voice_stability_bright:   0.35, voice_style_bright:   0.55, voice_speed_bright:   1.05 },
-  low_mood:  { voice_stability_low_mood: 0.55, voice_style_low_mood: 0.30, voice_speed_low_mood: 0.93 },
-};
-document.getElementById('master-expressiveness').addEventListener('input', function() {
-  const scale = parseFloat(this.value);
-  for (const [, overrideMap] of Object.entries(VOICE_OVERRIDES)) {
-    for (const [key, overrideVal] of Object.entries(overrideMap)) {
-      const baseKey = key.replace(/voice_(stability|style|speed)_.*/, 'voice_$1_default');
-      const baseVal = parseFloat(document.querySelector(`input[data-key="${baseKey}"]`)?.value || VOICE_BASE[key.match(/_(stability|style|speed)_/)?.[1]] || 0.5);
-      const delta = overrideVal - (VOICE_BASE[key.match(/_(stability|style|speed)_/)?.[1]] || baseVal);
-      const inp = document.querySelector(`input[data-key="${key}"]`);
-      if (inp) {
-        const newVal = Math.max(0, Math.min(1.5, baseVal + delta * scale));
-        inp.value = newVal.toFixed(2);
-        syncDisplay(inp);
-        currentSettings[key] = parseFloat(inp.value);
-      }
-    }
-  }
-});
-
-// Learning Rate ↔ Weight Stability inverse link (0.4 coupling)
-const lrInput   = document.querySelector('input[data-key="hebbian_delta"]');
-const wsInput   = document.querySelector('input[data-key="decay_toward_rest_rate"]');
-const LR_DEF    = 0.02;
-const WS_DEF    = 0.01;
-const LR_COUPLE = 0.4;
-lrInput.addEventListener('input', function() {
-  const ratio = parseFloat(this.value) / LR_DEF;
-  const newWs = Math.max(parseFloat(wsInput.min), Math.min(parseFloat(wsInput.max), WS_DEF / (ratio ** LR_COUPLE)));
-  wsInput.value = newWs.toFixed(3);
-  syncDisplay(wsInput);
-  currentSettings['decay_toward_rest_rate'] = parseFloat(wsInput.value);
-});
-wsInput.addEventListener('input', function() {
-  const ratio = WS_DEF / Math.max(0.001, parseFloat(this.value));
-  const newLr = Math.max(parseFloat(lrInput.min), Math.min(parseFloat(lrInput.max), LR_DEF * (ratio ** LR_COUPLE)));
-  lrInput.value = newLr.toFixed(3);
-  syncDisplay(lrInput);
-  currentSettings['hebbian_delta'] = parseFloat(lrInput.value);
-});
-
-// ── Load settings from server ────────────────────────────────────────
-async function loadSettingsFromServer() {
-  try {
-    const res = await fetch('/settings');
-    if (!res.ok) return;
-    const data = await res.json();
-    currentSettings = { ...data.settings };
-    defaultSettings = { ...data.defaults };
-    applySettingsToUI(currentSettings);
-    if (typeof _renderPersonaState === 'function') {
-      _renderPersonaState();
-      // Restore saved voice in the persona voice picker for the current persona
-      const activeName = currentSettings.persona_name || '';
-      if (activeName && typeof _populatePersonaVoiceSelect === 'function') {
-        _populatePersonaVoiceSelect(activeName);
-      }
-    }
-  } catch (e) {
-    console.warn('Settings: failed to load from server', e);
-  }
-}
-
-function applySettingsToUI(s) {
-  document.querySelectorAll('input[data-key]').forEach(inp => {
-    const key = inp.dataset.key;
-    if (key in s) {
-      inp.value = s[key];
-      syncDisplay(inp);
-    }
-  });
-  // Sync master homeostasis to average of decay values
-  const decayVals = Object.keys(DECAY_DEFAULTS).map(k => parseFloat(s[k] ?? DECAY_DEFAULTS[k]));
-  const avgDecay  = decayVals.reduce((a, b) => a + b, 0) / decayVals.length;
-  document.getElementById('master-homeostasis').value = avgDecay.toFixed(3);
-}
-
-// ── Save ─────────────────────────────────────────────────────────────
-settingsSave.addEventListener('click', async () => {
-  settingsSave.textContent = 'Saving…';
-  settingsSave.disabled = true;
-  try {
-    const res = await fetch('/settings', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(currentSettings),
-    });
-    if (res.ok) {
-      restartBanner.classList.add('visible');
-      settingsSave.textContent = 'Saved';
-      setTimeout(() => { settingsSave.textContent = 'Save Settings'; settingsSave.disabled = false; }, 1800);
-    } else {
-      const txt = await res.text().catch(() => '');
-      console.error('Settings save failed:', res.status, txt);
-      settingsSave.textContent = 'Error (' + res.status + ')';
-      setTimeout(() => { settingsSave.textContent = 'Save Settings'; settingsSave.disabled = false; }, 2500);
-    }
-  } catch (e) {
-    console.error('Settings save error:', e);
-    settingsSave.textContent = 'Error (no server)';
-    setTimeout(() => { settingsSave.textContent = 'Save Settings'; settingsSave.disabled = false; }, 2500);
-  }
-});
-
-// ── Reset to defaults ─────────────────────────────────────────────────
-settingsReset.addEventListener('click', async () => {
-  if (!confirm('Reset all settings to defaults?')) return;
-  try {
-    const res = await fetch('/settings/reset', { method: 'POST' });
-    if (res.ok) {
-      const data = await res.json();
-      currentSettings = { ...data.settings };
-      applySettingsToUI(currentSettings);
-      restartBanner.classList.add('visible');
-    }
-  } catch (e) {
-    console.warn('Settings: reset failed', e);
-  }
-});
-
-// ── Personas ─────────────────────────────────────────────────────────
+// ── Persona (HEADER badge + picker) ───────────────────────────────────
+// The settings PAGE persona UI lives in settings-ui.js. This block keeps the
+// HEADER persona badge + dropdown picker working — both read currentSettings
+// (loaded below) and switch persona via /settings + /restart.
 const PERSONAS = {
   "The Visionary": { tag: "Exploratory · optimistic · uninhibited",
     chem: { DA:0.62, ACh:0.45, GABA:0.04, Glu:0.40, NE:0.35, "5HT":0.55, CORT:0.05, OXT:0.45, AEA:0.20 } },
@@ -6393,152 +5417,23 @@ const PERSONAS = {
   "The Sage":      { tag: "Contemplative · unhurried · calm",
     chem: { DA:0.35, ACh:0.18, GABA:0.28, Glu:0.12, NE:0.12, "5HT":0.72, CORT:0.03, OXT:0.50, AEA:0.55 } },
 };
-const PERSONA_CHANNELS = ["DA","ACh","GABA","Glu","NE","5HT","CORT","OXT","AEA"];
-const PERSONA_BARS = ["DA","5HT","OXT","ACh","GABA"];
-const PERSONA_BAR_SCALE = 0.8; // slider max — bars fill relative to this
-let _selectedPersona = null;
 
-function _renderPersonaCards() {
-  const wrap = document.getElementById('persona-cards');
-  if (!wrap) return;
-  wrap.innerHTML = '';
-  for (const [name, p] of Object.entries(PERSONAS)) {
-    const card = document.createElement('div');
-    card.className = 'persona-card';
-    card.dataset.persona = name;
-    const bars = PERSONA_BARS.map(ch => {
-      const pct = Math.min(100, (p.chem[ch] / PERSONA_BAR_SCALE) * 100);
-      return `<div class="persona-bar-row"><span>${ch}</span><div class="persona-bar"><i style="width:${pct}%"></i></div></div>`;
-    }).join('');
-    card.innerHTML = `<div class="persona-name">${name}</div><div class="persona-tag">${p.tag}</div>${bars}`;
-    card.addEventListener('click', () => _selectPersona(name));
-    wrap.appendChild(card);
+function _renderPersonaState() {
+  // Header badge only — the settings page manages its own persona UI.
+  const name = currentSettings.persona_name || '';
+  const headerBadge = document.getElementById('persona-header-badge');
+  if (!headerBadge) return;
+  if (name) {
+    headerBadge.textContent = name.replace(/^The\s+/i, '');
+    headerBadge.classList.remove('neutral');
+  } else {
+    headerBadge.textContent = 'Default';
+    headerBadge.classList.add('neutral');
   }
-}
-
-function _chemMatchesPersona(name) {
-  const p = PERSONAS[name];
-  if (!p) return false;
-  return PERSONA_CHANNELS.every(ch =>
-    Math.abs(parseFloat(currentSettings['chem_baseline_' + ch] ?? -1) - p.chem[ch]) < 1e-6);
 }
 
 function _personaSlug(name) {
   return 'persona_voice_' + name.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
-}
-
-function _populatePersonaVoiceSelect(selectedPersonaName) {
-  // Mirror the header voice-select options into the persona voice picker.
-  const src = document.getElementById('voice-select');
-  const dst = document.getElementById('persona-voice-select');
-  if (!dst) return;
-  dst.innerHTML = '<option value="">— no voice preference —</option>';
-  if (src) {
-    [...src.options].forEach(o => {
-      if (!o.value) return;
-      const opt = document.createElement('option');
-      opt.value = o.value; opt.textContent = o.textContent;
-      dst.appendChild(opt);
-    });
-  }
-  // Restore the saved voice for this persona if one exists
-  if (selectedPersonaName) {
-    const saved = currentSettings[_personaSlug(selectedPersonaName)] || '';
-    dst.value = saved || '';
-  } else {
-    dst.value = '';
-  }
-}
-
-function _selectPersona(name) {
-  _selectedPersona = name;
-  document.querySelectorAll('.persona-card').forEach(c =>
-    c.classList.toggle('selected', c.dataset.persona === name));
-  const btn = document.getElementById('persona-init-btn');
-  btn.disabled = false;
-  btn.textContent = 'Begin as ' + name;
-  const warn = document.getElementById('persona-warn');
-  const born = (currentSettings.persona_name || '');
-  warn.textContent = (born && born !== name)
-    ? `Switches the active brain. ${name} resumes its own saved history; ${born}'s brain stays untouched.`
-    : '';
-  _populatePersonaVoiceSelect(name);
-}
-
-function _initializePersona() {
-  if (!_selectedPersona) return;
-  const p = PERSONAS[_selectedPersona];
-  for (const ch of PERSONA_CHANNELS) {
-    currentSettings['chem_baseline_' + ch] = p.chem[ch];
-    currentSettings['chem_init_' + ch] = p.chem[ch]; // start at rest
-  }
-  // Save selected voice for this persona and set it as the active voice
-  const voiceSel = document.getElementById('persona-voice-select');
-  const vid = voiceSel ? voiceSel.value : '';
-  currentSettings[_personaSlug(_selectedPersona)] = vid;
-  currentSettings['persona_voice_id'] = vid;
-  currentSettings['persona_name'] = _selectedPersona;
-  currentSettings['persona_born'] = new Date().toISOString();
-  applySettingsToUI(currentSettings);
-  _renderPersonaState();
-  restartBanner.classList.add('visible');
-  document.getElementById('persona-warn').textContent =
-    'Set. Click Save Settings, then Restart, to begin as ' + _selectedPersona + '.';
-}
-
-function _returnToNeutral() {
-  for (const ch of PERSONA_CHANNELS) {
-    currentSettings['chem_baseline_' + ch] = defaultSettings['chem_baseline_' + ch];
-    currentSettings['chem_init_' + ch] = defaultSettings['chem_init_' + ch];
-  }
-  currentSettings['persona_name'] = '';
-  currentSettings['persona_born'] = '';
-  currentSettings['persona_voice_id'] = '';
-  _selectedPersona = null;
-  applySettingsToUI(currentSettings);
-  _renderPersonaState();
-  restartBanner.classList.add('visible');
-  document.getElementById('persona-warn').textContent =
-    'Reset to neutral chemistry. Save + Restart to apply.';
-}
-
-function _renderPersonaState() {
-  const name = currentSettings.persona_name || '';
-  const statusEl = document.getElementById('persona-status');
-
-  // Header badge — always visible; accent when active, faint when neutral
-  const headerBadge = document.getElementById('persona-header-badge');
-  if (headerBadge) {
-    if (name) {
-      const short = name.replace(/^The\s+/i, '');
-      headerBadge.textContent = short;
-      headerBadge.classList.remove('neutral');
-    } else {
-      headerBadge.textContent = 'Default';
-      headerBadge.classList.add('neutral');
-    }
-  }
-
-  // Settings section state
-  document.querySelectorAll('.persona-card').forEach(c =>
-    c.classList.toggle('active', c.dataset.persona === name));
-  if (name) {
-    const custom = (name in PERSONAS) && !_chemMatchesPersona(name);
-    const born = currentSettings.persona_born ? new Date(currentSettings.persona_born).toLocaleDateString() : '';
-    const vid = currentSettings[_personaSlug(name)] || '';
-    const voiceName = vid ? (() => {
-      const sel = document.getElementById('voice-select');
-      const opt = sel ? [...sel.options].find(o => o.value === vid) : null;
-      return opt ? opt.textContent : vid.slice(0, 8) + '…';
-    })() : '';
-    statusEl.innerHTML = `Active: <b>${name}</b>${custom ? ' · customized' : ''}${born ? ' · since ' + born : ''}${voiceName ? ' · voice: ' + voiceName : ''}`;
-  } else {
-    statusEl.textContent = 'Default chemistry';
-  }
-  // Decay-model toggle reflect
-  const model = currentSettings.chem_decay_model || 'baseline';
-  document.querySelectorAll('#persona-decay-toggle button').forEach(b =>
-    b.classList.toggle('on', b.dataset.model === model));
 }
 
 // ── Persona header picker ─────────────────────────────────────────────
@@ -6547,8 +5442,6 @@ function _buildPersonaPicker() {
   if (!list) return;
   list.innerHTML = '';
   const current = currentSettings.persona_name || '';
-
-  // Five persona rows
   for (const [name, p] of Object.entries(PERSONAS)) {
     const row = document.createElement('div');
     row.className = 'persona-pick-item' + (name === current ? ' current' : '');
@@ -6560,8 +5453,6 @@ function _buildPersonaPicker() {
     row.addEventListener('click', () => _switchPersona(name, p));
     list.appendChild(row);
   }
-
-  // Divider + Neutral option
   const div = document.createElement('div');
   div.className = 'persona-pick-divider';
   list.appendChild(div);
@@ -6575,30 +5466,23 @@ function _buildPersonaPicker() {
 }
 
 async function _switchPersona(name, p) {
-  const label = name ? name : 'Default';
   const msg = name
     ? `Switch to ${name}? The brain will restart.`
     : `Return to Default chemistry? The brain will restart.`;
   if (!confirm(msg)) return;
 
-  // Show "switching…" state
-  document.getElementById('persona-pick-list').style.display = 'none';
-  document.getElementById('persona-pick-restarting').style.display = 'block';
-  document.getElementById('persona-pick-restarting').textContent =
-    name ? `switching to ${name.replace(/^The\s+/i, '').toLowerCase()}…` : 'returning to neutral…';
+  const pl = document.getElementById('persona-pick-list');
+  const pr = document.getElementById('persona-pick-restarting');
+  if (pl) pl.style.display = 'none';
+  if (pr) { pr.style.display = 'block';
+    pr.textContent = name ? `switching to ${name.replace(/^The\s+/i, '').toLowerCase()}…` : 'returning to neutral…'; }
 
-  // Build the settings patch
   const patch = { persona_name: name, persona_born: name ? new Date().toISOString() : '' };
   const channels = ['DA','ACh','GABA','Glu','NE','5HT','CORT','OXT','AEA'];
   if (name && p) {
-    for (const ch of channels) {
-      patch['chem_baseline_' + ch] = p.chem[ch];
-      patch['chem_init_' + ch] = p.chem[ch];
-    }
-    // Restore the saved voice for this persona (if one was set)
+    for (const ch of channels) { patch['chem_baseline_' + ch] = p.chem[ch]; patch['chem_init_' + ch] = p.chem[ch]; }
     patch['persona_voice_id'] = currentSettings[_personaSlug(name)] || '';
   } else {
-    // Neutral: restore defaults
     for (const ch of channels) {
       patch['chem_baseline_' + ch] = defaultSettings['chem_baseline_' + ch] ?? 0;
       patch['chem_init_' + ch] = defaultSettings['chem_init_' + ch] ?? 0;
@@ -6607,7 +5491,6 @@ async function _switchPersona(name, p) {
   }
 
   try {
-    // Write settings then restart — restart re-execs so settings are picked up
     await fetch('/settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -6615,36 +5498,36 @@ async function _switchPersona(name, p) {
     });
     await fetch('/restart', { method: 'POST' });
   } catch (e) {
-    // If the brain is offline (static preview etc.) just update local state
+    // Offline (static preview): update local state + badge only.
     Object.assign(currentSettings, patch);
-    applySettingsToUI(currentSettings);
     _renderPersonaState();
-    document.getElementById('persona-picker').classList.remove('open');
-    document.getElementById('persona-pick-list').style.display = '';
-    document.getElementById('persona-pick-restarting').style.display = 'none';
+    const picker = document.getElementById('persona-picker');
+    if (picker) picker.classList.remove('open');
+    if (pl) pl.style.display = '';
+    if (pr) pr.style.display = 'none';
   }
 }
 
-// Open/close the picker on badge click
 const _personaBadgeEl = document.getElementById('persona-header-badge');
 const _personaPickerEl = document.getElementById('persona-picker');
-_personaBadgeEl.addEventListener('click', (e) => {
-  e.stopPropagation();
-  const isOpen = _personaPickerEl.classList.contains('open');
-  if (!isOpen) _buildPersonaPicker();
-  _personaPickerEl.classList.toggle('open', !isOpen);
-});
-document.addEventListener('click', (e) => {
-  if (!_personaPickerEl.contains(e.target) && e.target !== _personaBadgeEl) {
-    _personaPickerEl.classList.remove('open');
-  }
-});
+if (_personaBadgeEl && _personaPickerEl) {
+  _personaBadgeEl.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const isOpen = _personaPickerEl.classList.contains('open');
+    if (!isOpen) _buildPersonaPicker();
+    _personaPickerEl.classList.toggle('open', !isOpen);
+  });
+  document.addEventListener('click', (e) => {
+    if (!_personaPickerEl.contains(e.target) && e.target !== _personaBadgeEl) {
+      _personaPickerEl.classList.remove('open');
+    }
+  });
+}
 
-_renderPersonaCards();
-_renderPersonaState(); // show badge immediately (uses empty currentSettings → "DEFAULT")
+_renderPersonaState(); // show badge immediately (empty currentSettings → "Default")
 
-// Fetch settings on page load so the badge reflects the real active persona
-// without requiring the user to open settings first.
+// Fetch settings on page load so the header badge reflects the real active
+// persona without requiring the user to open settings first.
 (async () => {
   try {
     const res = await fetch('/settings');
@@ -6653,35 +5536,9 @@ _renderPersonaState(); // show badge immediately (uses empty currentSettings →
     Object.assign(currentSettings, data.settings || {});
     Object.assign(defaultSettings, data.defaults || {});
     _renderPersonaState();
-  } catch (_) { /* brain offline or static preview — badge stays as DEFAULT */ }
+  } catch (_) { /* brain offline / static preview — badge stays "Default" */ }
 })();
 
-// Write voice preference to currentSettings immediately on change — not only
-// on Initialize — so Save Settings captures it even without re-clicking Initialize.
-document.getElementById('persona-voice-select').addEventListener('change', function() {
-  const vid = this.value;
-  currentSettings['persona_voice_id'] = vid;
-  // Also persist to the per-persona slot so switching back restores it.
-  const persona = currentSettings.persona_name || _selectedPersona || '';
-  if (persona) currentSettings[_personaSlug(persona)] = vid;
-});
-
-document.getElementById('persona-init-btn').addEventListener('click', _initializePersona);
-document.getElementById('persona-neutral-btn').addEventListener('click', () => {
-  if (confirm('Reset chemistry to neutral and clear the active persona?')) _returnToNeutral();
-});
-document.querySelectorAll('#persona-decay-toggle button').forEach(b => {
-  b.addEventListener('click', () => {
-    currentSettings.chem_decay_model = b.dataset.model;
-    _renderPersonaState();
-    restartBanner.classList.add('visible');
-  });
-});
-// Manually editing a chemistry slider drops the exact-match highlight (but keeps
-// the persona identity — you're customizing that persona's chemistry).
-document.querySelectorAll('input[data-key^="chem_baseline_"], input[data-key^="chem_init_"]').forEach(inp => {
-  inp.addEventListener('input', () => { _selectedPersona = null; _renderPersonaState(); });
-});
 
 // ---- Left panel tab switching ----
 (function initLeftTabs() {
@@ -7725,5 +6582,8 @@ enhFx.init();
 window.__enhFx = enhFx;
 
 </script>
+<!-- Redesigned settings page: schema + render engine (live-wired to /settings) -->
+<script src="settings-data.js"></script>
+<script src="settings-ui.js"></script>
 </body>
 </html>
