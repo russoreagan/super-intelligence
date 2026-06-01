@@ -72,11 +72,11 @@
   --ok:          oklch(0.52 0.10 150);
 
   /* lobe palette — Elyceum (deeper, ink-on-paper saturation) */
-  --frontal:      oklch(0.58 0.13 248);
-  --parietal:     oklch(0.60 0.15 150);
-  --temporal:     oklch(0.64 0.13 70);
-  --occipital:    oklch(0.55 0.16 305);
-  --motor:        oklch(0.57 0.19 22);
+  --frontal:      oklch(0.55 0.14 252);
+  --parietal:     oklch(0.58 0.15 150);
+  --temporal:     oklch(0.60 0.13 52);
+  --occipital:    oklch(0.56 0.13 300);
+  --motor:        oklch(0.57 0.19 25);
   --thalamus:     oklch(0.56 0.045 250);
   --hypothalamus: oklch(0.63 0.17 41);
   --hippocampus:  oklch(0.56 0.12 186);
@@ -183,7 +183,7 @@ input, select, textarea { font: inherit; color: inherit; background: none; borde
    ========================================================= */
 .app {
   display: grid;
-  grid-template-rows: 56px 1fr auto;
+  grid-template-rows: 56px auto 1fr;   /* header · observations ticker · main */
   height: 100vh;
 }
 
@@ -2365,7 +2365,7 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
   display: flex;
   align-items: center;
   height: 34px;
-  border-top: 1px solid var(--line-soft);
+  border-bottom: 1px solid var(--line-soft);
   background: oklch(0.13 0.018 250);
   overflow: hidden;
   flex-shrink: 0;
@@ -2411,9 +2411,8 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
   animation: tick-in 200ms ease-out both;
 }
 .tick-item + .tick-item::before {
-  content: '·';
-  color: var(--fg-faint);
-  margin-right: 14px;
+  content: '';
+  margin-right: 10px;
 }
 @keyframes tick-in {
   from { opacity: 0; transform: translateX(8px); }
@@ -2425,9 +2424,11 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
   background: var(--lobe, var(--accent));
   flex-shrink: 0;
 }
-.tick-cluster { color: var(--lobe, var(--accent)); }
-.tick-note { color: var(--fg-faint); }
-.tick-pct { color: var(--fg-faint); font-size: 9px; }
+/* editorial ledger style: mono timestamp · italic-serif region · serif note */
+.tick-ts { font-family: var(--mono); font-size: 9px; letter-spacing: 0.08em; color: var(--fg-faint); }
+.tick-cluster { font-family: var(--serif); font-style: italic; font-size: 13px; color: var(--lobe, var(--accent)); }
+.tick-note { font-family: var(--serif); font-style: normal; font-size: 13px; color: var(--fg-mute); }
+.tick-pct { display: none; }
 
 /* =====================================================================
    BRAND DROPDOWN — view switcher in the header
@@ -3667,10 +3668,37 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
   transition: box-shadow 220ms, transform 160ms;
 }
 .rail-specimen .region-card .swatch::after { display: none; }   /* drop the inner dot */
-.rail-specimen .region-card { grid-template-columns: 25px 1fr auto; }
-.rail-specimen .region-card.compact { grid-template-columns: 25px 1fr auto; }
-.rail-specimen .region-card.compact .swatch { width: 22px; height: 22px; font-size: 9.5px; }
 .rail-specimen .region-card.active .swatch { box-shadow: 0 0 0 3px oklch(from var(--lobe) l c h / 0.25); }
+
+/* ---- compact single-row region cards (mirrors the design mock) ----
+   tile · name + role on ONE line · status at the right. */
+.rail-specimen .region-card,
+.rail-specimen .region-card.compact {
+  grid-template-columns: 22px 1fr auto;
+  gap: 10px; padding: 6px 10px;
+  border: none; border-radius: 5px; background: none;
+  box-shadow: none;
+}
+.rail-specimen .region-card .swatch,
+.rail-specimen .region-card.compact .swatch { width: 19px; height: 19px; border-radius: 4px; font-size: 9px; }
+.rail-specimen .region-card:hover { background: var(--paper-2); }
+.rail-specimen .region-card.active { background: oklch(from var(--lobe) l c h / 0.08); box-shadow: none; }
+.rail-specimen .region-card .meta {
+  display: flex; align-items: baseline; gap: 7px; min-width: 0;
+}
+.rail-specimen .region-card .name {
+  font-family: var(--sans); font-size: 12px; font-weight: 600; color: var(--ink);
+  flex-shrink: 0; margin: 0;
+}
+.rail-specimen .region-card.active .name { color: var(--lobe); }
+.rail-specimen .region-card .role {
+  font-family: var(--serif); font-style: italic; font-size: 11px; color: var(--ink-4);
+  margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.rail-specimen .region-card .status {
+  font-family: var(--mono); font-size: 8px; letter-spacing: 0.14em; color: var(--ink-4);
+}
+.rail-specimen .region-card.active .status { color: var(--signal); }
 
 /* ---- neural-map key: a compact, wrapping row that sits BELOW the chart
    (no longer an overlay that overflows the narrow plate) ---- */
@@ -3710,6 +3738,65 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
 [data-theme="atlas"] #region-detail-popup,
 [data-theme="atlas"] #activity-ticker {
   transition: background-color 1000ms ease, border-color 1000ms ease, color 1000ms ease;
+}
+
+/* =====================================================================
+   ROUND 3 — double rules · uniform flashing chem · light thoughts feed
+   ===================================================================== */
+
+/* editorial double-rule separator between interior sections */
+.rail-interior .col-section,
+.rail-interior #plasticity-pane {
+  position: relative;
+  border-top: 1.5px solid var(--ink);
+  border-bottom: none;
+  margin-top: 2px;
+}
+.rail-interior .col-section::before,
+.rail-interior #plasticity-pane::before {
+  content: ''; position: absolute; left: 0; right: 0; top: 2.5px;
+  border-top: 0.5px solid var(--line); pointer-events: none;
+}
+
+/* uniform neuromodulator/hormone bars — all one ink colour, flashing to the
+   signal (up) or a cool blue (down) when the level changes. */
+/* the empty part of the bar (track) must read as a light wash so it contrasts
+   with the dark ink fill — the console track colour is too dark on paper */
+[data-theme="atlas"] #chem-section .nm-track { background: oklch(0.87 0.012 75); }
+#chem-section .nm-fill { background: var(--ink) !important; transition: background 240ms ease; }
+#chem-section .nm-num  { transition: color 240ms ease; }
+#chem-section .nm-row.flash-up   .nm-fill { background: var(--signal) !important; }
+#chem-section .nm-row.flash-down .nm-fill { background: var(--frontal) !important; }
+#chem-section .nm-row.flash-up   .nm-num  { color: var(--signal); }
+#chem-section .nm-row.flash-down .nm-num  { color: var(--frontal); }
+/* sparkline (Changes view) also uniform ink */
+#chem-section .nm-spark-line { stroke: var(--ink-2) !important; }
+#chem-section .nm-spark-fill { fill: oklch(from var(--ink-2) l c h / 0.10) !important; }
+#chem-section .nm-spark-head { fill: var(--ink-2) !important; }
+/* delta badge keeps its up/down colour cue */
+#chem-section .nm-delta.up   { color: var(--signal); }
+#chem-section .nm-delta.down { color: var(--frontal); }
+
+/* lightweight idle-thoughts feed: timestamp · italic-serif line, no cards */
+#thoughts-feed { padding: 4px 0 2px; gap: 0; }
+#thoughts-feed .log-empty { padding: 10px 2px; }
+.thought-item {
+  display: grid; grid-template-columns: 40px 1fr; gap: 11px; align-items: baseline;
+  padding: 9px 2px; border: none; border-radius: 0; background: none;
+  font-style: normal; animation: fadein 240ms ease both;
+}
+.thought-item + .thought-item { border-top: 1px solid var(--line-faint); }
+.thought-ts {
+  display: block; margin: 0; font-family: var(--mono); font-size: 8.5px;
+  letter-spacing: 0.08em; color: var(--ink-4); white-space: nowrap;
+}
+.thought-tx { font-family: var(--serif); font-style: italic; font-size: 12.5px; line-height: 1.5; color: var(--ink-2); text-wrap: pretty; }
+.thought-item--latest .thought-tx { color: var(--ink); }
+
+/* turn-log: readable empty-state when a turn recorded no steps */
+.turn-log-empty {
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.06em;
+  color: var(--fg-faint); padding: 8px 12px;
 }
 
 </style>
@@ -3808,6 +3895,14 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
       </div>
     </div>
   </header>
+
+  <!-- ====== OBSERVATIONS TICKER (under the header) ====== -->
+  <div id="activity-ticker">
+    <span id="ticker-label">Observations</span>
+    <div id="ticker-scroll">
+      <div id="ticker-track"></div>
+    </div>
+  </div>
 
   <!-- ====== MAIN — chat-central atlas layout ======
        LEFT  = interior (persona/mood · chemistry · thoughts · tasks · plasticity)
@@ -4107,14 +4202,6 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
 
   </div><!-- /#main -->
 
-  <!-- ====== ACTIVITY TICKER ====== -->
-  <div id="activity-ticker">
-    <span id="ticker-label">Activity</span>
-    <div id="ticker-scroll">
-      <div id="ticker-track"></div>
-    </div>
-  </div>
-
   <!-- ====== SETTINGS PAGE ====== -->
   <div id="settings-page">
 
@@ -4284,7 +4371,7 @@ function renderRegionDetail(regionId) {
           <span class="rd-hist-pct">${pct}%</span>
         </div>`;
       }).join('');
-  _rdPopup.style.setProperty('--lobe', cfg.color);
+  _rdPopup.style.setProperty('--lobe', `var(--${regionId})`);
   _rdPopup.innerHTML = `
     <div class="rd-header">
       <span class="rd-header-name">${cfg.label}</span>
@@ -4465,12 +4552,15 @@ function renderRegionList() {
     const card = document.createElement('div');
     card.className = 'region-card' + (compact ? ' compact' : '');
     card.id = `card-${id}`;
-    card.style.setProperty('--lobe', cfg.color);
-    card.style.setProperty('--lobe-glow', cfg.color);
+    // Use the theme-aware lobe token (deep on paper, bright on console) rather
+    // than the hard-coded bright cfg.color, so the palette matches the design.
+    card.style.setProperty('--lobe', `var(--${id})`);
+    card.style.setProperty('--lobe-glow', `var(--${id})`);
+    const shortName = cfg.label.replace(/\s+(lobe|cortex)$/i, '');
     card.innerHTML = `
       <div class="swatch">${cfg.initial || ''}</div>
       <div class="meta">
-        <div class="name">${cfg.label}</div>
+        <div class="name">${shortName}</div>
         <div class="role">${cfg.role}</div>
       </div>
       <div class="status">IDLE</div>
@@ -4748,9 +4838,13 @@ function handle(msg) {
       const moodDot  = document.getElementById('mood-dot');
       const moodName = document.getElementById('mood-name');
       moodName.textContent = msg.emotion;
-      moodName.style.color = badgeText;
-      moodDot.style.background = badgeText;
-      moodDot.style.boxShadow  = `0 0 7px ${badgeText}`;
+      // Mood label reads as ink (same as the persona name) — the light
+      // emotion colour was hard to read on paper. The dot carries the colour,
+      // at a medium saturation that's legible on both themes.
+      moodName.style.color = 'var(--ink)';
+      const dotColor = `oklch(${Math.min(ml + 0.22, 0.60)} ${Math.min(mc * 1.4, 0.19)} ${mh})`;
+      moodDot.style.background = dotColor;
+      moodDot.style.boxShadow  = `0 0 6px ${dotColor}`;
       setMoodBackground(msg.emotion);
       break;
     }
@@ -5149,7 +5243,7 @@ function appendBrainMessage(turnId, text, calls, elapsed) {
   pendingActivations.forEach(a => {
     const regionId = CLUSTER_MAP[a.cluster];
     const rcfg = regionId ? REGIONS[regionId] : null;
-    const color = rcfg ? rcfg.color : 'var(--accent)';
+    const color = regionId ? `var(--${regionId})` : 'var(--accent)';
     const initial = rcfg ? rcfg.initial : '·';
     const pct = Math.round((a.intensity || 0) * 100);
     const row = document.createElement('div');
@@ -5162,6 +5256,14 @@ function appendBrainMessage(turnId, text, calls, elapsed) {
     `;
     body.appendChild(row);
   });
+
+  // Fallback so the expanded panel is never blank when a turn logged no steps
+  if (stepCount === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'turn-log-empty';
+    empty.textContent = '— no cluster steps recorded for this turn —';
+    body.appendChild(empty);
+  }
 
   // Quality badge lives inside the collapsible body
   const badge = document.createElement('div');
@@ -5227,7 +5329,7 @@ function appendThought(text, chemDelta) {
     if (pills) chemHtml = `<div class="thought-chem">${pills}</div>`;
   }
 
-  div.innerHTML = `<span class="thought-ts">${ts}</span>${text}${chemHtml}`;
+  div.innerHTML = `<span class="thought-ts">${ts}</span><span class="thought-tx">${text}${chemHtml}</span>`;
   feed.prepend(div);
 
   // Flash the Thoughts tab badge if it's not active
@@ -5295,16 +5397,18 @@ function logActivity(cluster, regionId, intensity, note) {
   const track = document.getElementById('ticker-track');
   if (!track) return;
   const rcfg = regionId ? REGIONS[regionId] : null;
-  const color = rcfg ? rcfg.color : 'oklch(0.78 0.14 220)';
-  const pct = Math.round((intensity || 0) * 100);
+  const color = regionId ? `var(--${regionId})` : 'var(--signal)';
+  // editorial ledger row: mono timestamp · italic-serif region name · serif note
+  const tstamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+  const name = rcfg ? rcfg.label.replace(/\s+(lobe|cortex)$/i, '')
+                    : cluster.charAt(0).toUpperCase() + cluster.slice(1);
   const item = document.createElement('span');
   item.className = 'tick-item';
   item.style.setProperty('--lobe', color);
   item.innerHTML =
-    `<span class="tick-dot"></span>` +
-    `<span class="tick-cluster">${cluster}</span>` +
-    (note ? `<span class="tick-note">${note}</span>` : '') +
-    `<span class="tick-pct">${pct}%</span>`;
+    `<span class="tick-ts">${tstamp}</span>` +
+    `<span class="tick-cluster">${name}</span>` +
+    (note ? `<span class="tick-note">${note}</span>` : '');
   track.appendChild(item);
   // cap at 120 items
   while (track.children.length > 120) track.removeChild(track.firstChild);
@@ -5861,8 +5965,9 @@ function tickerMsg(text, color) {
   if (!track) return;
   const item = document.createElement('span');
   item.className = 'tick-item';
-  item.style.setProperty('--lobe', color || 'oklch(0.72 0.14 200)');
-  item.innerHTML = `<span class="tick-dot"></span><span class="tick-cluster">system</span><span class="tick-note">${text}</span>`;
+  item.style.setProperty('--lobe', color || 'var(--signal)');
+  const tstamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+  item.innerHTML = `<span class="tick-ts">${tstamp}</span><span class="tick-cluster">System</span><span class="tick-note">${text}</span>`;
   track.appendChild(item);
   while (track.children.length > 120) track.removeChild(track.firstChild);
   const scroll = document.getElementById('ticker-scroll');
@@ -6494,7 +6599,7 @@ function nmInit() {
       el.dataset.id = n.region;
       el.style.left = n.x + '%';
       el.style.top  = n.y + '%';
-      el.style.setProperty('--lobe', cfg.color);
+      el.style.setProperty('--lobe', `var(--${n.region})`);
       const cellDefs = NM_CELL_DEFS[n.region] || [];
       const hasCells = cellDefs.length > 0;
       if (hasCells) el.classList.add('has-cells');
@@ -6847,14 +6952,19 @@ const NM_COLORS = {
   ACh:  'oklch(0.78 0.14 200)',
   Glu:  'oklch(0.78 0.16 145)',
   NE:   'oklch(0.75 0.16 300)',
+  '5HT':'oklch(0.80 0.14 85)',
+  OXT:  'oklch(0.75 0.18 0)',
+  CORT: 'oklch(0.70 0.17 55)',
+  AEA:  'oklch(0.72 0.16 145)',
 };
-const NM_INITIAL = { DA: 0.5, GABA: 0.05, ACh: 0.20, Glu: 0.30, NE: 0.25 };
+const NM_HORMONES = ['5HT', 'OXT', 'CORT', 'AEA'];
+const NM_INITIAL = { DA: 0.5, GABA: 0.05, ACh: 0.20, Glu: 0.30, NE: 0.25, '5HT': 0.30, OXT: 0.25, CORT: 0.10, AEA: 0.20 };
 const NM_DELTA_MIN = 0.012;     // ~1.2% — show delta + trigger
 const NM_PARTICLE_MIN = 0.025;  // ~2.5% — fire release particles
 const SPARK_LEN = 30;
 
 const enhFx = {
-  history: { DA: [], GABA: [], ACh: [], Glu: [], NE: [] },
+  history: { DA: [], GABA: [], ACh: [], Glu: [], NE: [], '5HT': [], OXT: [], CORT: [], AEA: [] },
   triggerTimers: new Map(),
   deltaTimers: new Map(),
   ready: false,
@@ -6864,7 +6974,7 @@ const enhFx = {
     this._enhanceLeftPanel();
     this._enhanceMapNode();
     // Seed history with current values so the first delta isn't a 100% spike
-    ['DA','GABA','ACh','Glu','NE'].forEach(ch => {
+    ['DA','GABA','ACh','Glu','NE','5HT','OXT','CORT','AEA'].forEach(ch => {
       const numEl = document.getElementById('nm-num-' + ch);
       const cur = numEl ? (parseFloat(numEl.textContent) / 100) : NM_INITIAL[ch];
       this.history[ch] = Array(SPARK_LEN).fill(cur);
@@ -6874,7 +6984,7 @@ const enhFx = {
   },
 
   _enhanceLeftPanel() {
-    ['ACh','DA','GABA','Glu','NE'].forEach(ch => {
+    ['ACh','DA','GABA','Glu','NE','5HT','OXT','CORT','AEA'].forEach(ch => {
       const numEl = document.getElementById('nm-num-' + ch);
       if (!numEl) return;
       const row = numEl.closest('.nm-row');
@@ -6982,12 +7092,21 @@ const enhFx = {
       void el.getBoundingClientRect();
       el.classList.add('show', 'flash', delta > 0 ? 'up' : 'down');
     });
+    // flash the (otherwise uniform-ink) bar + value to the up/down colour
+    const numEl = document.getElementById('nm-num-' + ch);
+    const row = numEl ? numEl.closest('.nm-row') : null;
+    if (row) {
+      row.classList.remove('flash-up', 'flash-down');
+      void row.getBoundingClientRect();
+      row.classList.add(delta > 0 ? 'flash-up' : 'flash-down');
+    }
     const key = 'd-' + ch;
     if (this.deltaTimers.has(key)) clearTimeout(this.deltaTimers.get(key));
     this.deltaTimers.set(key, setTimeout(() => {
       document.querySelectorAll(`.nm-delta[data-ch="${ch}"]`).forEach(el => {
         el.classList.remove('show');
       });
+      if (row) row.classList.remove('flash-up', 'flash-down');
     }, 2400));
   },
 
@@ -7112,6 +7231,20 @@ handle = function (msg) {
         enhFx.releaseParticles(ch, delta);
       }
     });
+  } else if (msg.type === 'hormonal') {
+    // Hormones get the same trend sparkline + delta as the neuromodulators.
+    enhFx.init();
+    const hd = msg.data ?? msg;
+    NM_HORMONES.forEach(ch => {
+      const v = hd[ch];
+      if (v === undefined) return;
+      const h = enhFx.history[ch];
+      const prev = h.length ? h[h.length - 1] : v;
+      const delta = v - prev;
+      enhFx.recordValue(ch, v);
+      enhFx._renderSpark(ch);
+      if (Math.abs(delta) >= NM_DELTA_MIN) enhFx.showDelta(ch, delta);
+    });
   }
 };
 
@@ -7156,9 +7289,31 @@ var _MOOD_RULES = [
 var _chemState = { DA:0.5, ACh:0.2, GABA:0.05, Glu:0.3, NE:0.25, '5HT':0.3, OXT:0.25, CORT:0.1, AEA:0.2 };
 var _MOOD_TINT_PROPS = ['--signal','--signal-deep','--signal-soft','--paper','--paper-2','--paper-3','--plate','--ink','--ink-2'];
 
+// Single source of truth: the displayed disposition (the named emotion) maps
+// to one of the six mood families, so the label and the tint always agree —
+// the disposition is literally a subset of the mood that's colouring the room.
+// Unlisted emotions fall back to the chemistry classifier.
+var _EMOTION_FAMILY = {
+  curious:'Curious', 'curious-uncertain':'Curious', excitement:'Curious', excited:'Curious',
+  enthusiasm:'Curious', surprised:'Curious', amused:'Curious', playful:'Curious', joking:'Curious',
+  proud:'Curious', confident:'Curious', interested:'Curious', focused:'Curious',
+  warm:'Warm', tender:'Warm', affectionate:'Warm', flirty:'Warm', grateful:'Warm', joy:'Warm', loving:'Warm',
+  content:'Content', relieved:'Content', sympathetic:'Content', calm:'Content', serene:'Content',
+  angry:'Alert', frustrated:'Alert', irritated:'Alert', agitated:'Alert', defensive:'Alert',
+  anxious:'Alert', restless:'Alert', 'cautious-agitated':'Alert', sarcastic:'Alert', alert:'Alert', stressed:'Alert',
+  inhibited:'Guarded', sad:'Guarded', somber:'Guarded', melancholy:'Guarded', wistful:'Guarded',
+  disappointed:'Guarded', embarrassed:'Guarded', shy:'Guarded', apologetic:'Guarded', confused:'Guarded', guarded:'Guarded',
+  thoughtful:'Settling', neutral:'Settling', flat:'Settling'
+};
+var _moodFamily = 'Settling';
+
 function _moodFor(s) {
   for (var i = 0; i < _MOOD_RULES.length; i++) if (_MOOD_RULES[i][1](s)) return _MOOD_RULES[i][0];
   return 'Settling';
+}
+function _emotionFamily(emotion) {
+  if (!emotion) return _moodFamily;
+  return _EMOTION_FAMILY[String(emotion).toLowerCase()] || _moodFor(_chemState);
 }
 function _applyMoodTint() {
   var rs = document.documentElement.style;
@@ -7167,15 +7322,18 @@ function _applyMoodTint() {
     _MOOD_TINT_PROPS.forEach(function (p) { rs.removeProperty(p); });
     return;
   }
-  var t = _MOODS[_moodFor(_chemState)] || _MOODS.Settling;
+  var t = _MOODS[_moodFamily] || _MOODS.Settling;
   var L = t.sig[0], C = t.sig[1], H = t.sig[2];
   rs.setProperty('--signal',      'oklch(' + L + ' ' + C + ' ' + H + ')');
   rs.setProperty('--signal-deep', 'oklch(' + (L - 0.08).toFixed(2) + ' ' + C + ' ' + H + ')');
   rs.setProperty('--signal-soft', 'oklch(' + L + ' ' + C + ' ' + H + ' / 0.13)');
-  rs.setProperty('--paper',   'oklch(0.966 ' + t.paperC + ' ' + t.paperH + ')');
-  rs.setProperty('--paper-2', 'oklch(0.945 ' + (t.paperC + 0.003).toFixed(3) + ' ' + t.paperH + ')');
-  rs.setProperty('--paper-3', 'oklch(0.912 ' + (t.paperC + 0.006).toFixed(3) + ' ' + t.paperH + ')');
-  rs.setProperty('--plate',   'oklch(0.978 ' + (t.paperC * 0.7).toFixed(3) + ' ' + t.paperH + ')');
+  // Amplify the paper chroma so the mood is visible — but gently; at the
+  // original 0.013 it was imperceptible, at 3.4× it ran a touch too warm.
+  var pc = t.paperC * 2.5;
+  rs.setProperty('--paper',   'oklch(0.957 ' + pc.toFixed(3) + ' ' + t.paperH + ')');
+  rs.setProperty('--paper-2', 'oklch(0.934 ' + (pc + 0.007).toFixed(3) + ' ' + t.paperH + ')');
+  rs.setProperty('--paper-3', 'oklch(0.898 ' + (pc + 0.014).toFixed(3) + ' ' + t.paperH + ')');
+  rs.setProperty('--plate',   'oklch(0.972 ' + (pc * 0.6).toFixed(3) + ' ' + t.paperH + ')');
   rs.setProperty('--ink',     'oklch(0.27 0.022 ' + t.inkH + ')');
   rs.setProperty('--ink-2',   'oklch(0.42 0.020 ' + t.inkH + ')');
 }
@@ -7222,10 +7380,11 @@ function _applyMoodTint() {
   var prev = handle;
   var voicebars = document.getElementById('voicebars');
   function ingestChem(src) {
+    // Keep the chemistry snapshot current (used as the fallback classifier for
+    // any emotion not in the map) — but the tint follows the named emotion.
     ['DA','ACh','GABA','Glu','NE','5HT','OXT','CORT','AEA'].forEach(function (k) {
       var v = src[k]; if (typeof v === 'number') _chemState[k] = v;
     });
-    _applyMoodTint();
   }
   // map a value within [lo,hi] to how many of the 3 meter segments light up
   function _setMeter(id, val, lo, hi) {
@@ -7239,9 +7398,12 @@ function _applyMoodTint() {
   handle = function (msg) {
     prev(msg);
     if (!msg) return;
-    // Mood is chemistry-driven (matches Claude Design): retint on every
-    // neuromodulator / hormonal update.
-    if (msg.type === 'neuromod') {
+    // The tint follows the displayed disposition: the named emotion maps to a
+    // mood family, so the label and the colour always agree.
+    if (msg.type === 'emotion' && msg.emotion) {
+      _moodFamily = _emotionFamily(msg.emotion);
+      _applyMoodTint();
+    } else if (msg.type === 'neuromod') {
       ingestChem(msg);
     } else if (msg.type === 'hormonal') {
       ingestChem(msg.data || msg);
