@@ -1534,7 +1534,7 @@ class DefaultModeNetwork:
     def _parse_monologue_response(self, raw: str) -> dict | None:
         """Parse JSON from the monologue cell. Retries once after stripping invalid +N syntax."""
         if not isinstance(raw, str):
-            return raw if isinstance(raw, dict) else None
+            return None
         candidate = raw.strip()
         candidate = re.sub(r"^```(?:json)?\s*", "", candidate)
         candidate = re.sub(r"\s*```$", "", candidate).strip()
@@ -2289,30 +2289,36 @@ class DefaultModeNetwork:
             "bearing": "",
         }
 
+        def _s(val, default: str = "") -> str:
+            """Safely coerce a parsed JSON value to str — guards against the model
+            returning a nested dict/list where a string field is expected."""
+            return val if isinstance(val, str) else default
+
         parsed = self._parse_monologue_response(raw)
         if parsed is None:
             thought_clean = raw.strip() if isinstance(raw, str) else ""
         else:
-            thought_clean = (parsed.get("thought") or "").strip()
-            metadata["angle"] = (parsed.get("angle") or "").strip().lower() or None
+            thought_clean = _s(parsed.get("thought")).strip()
+            metadata["angle"] = _s(parsed.get("angle")).strip().lower() or None
             metadata["is_propose"] = bool(parsed.get("propose"))
             metadata["is_plan"] = bool(parsed.get("plan"))
             raw_defer = parsed.get("defer")
             if isinstance(raw_defer, dict):
-                metadata["defer_text"] = (raw_defer.get("text") or "").strip()
-                defer_urgency = (raw_defer.get("urgency") or "high").strip().lower()
+                metadata["defer_text"] = _s(raw_defer.get("text")).strip()
+                defer_urgency = _s(raw_defer.get("urgency"), "high").strip().lower()
                 if defer_urgency not in ("immediate", "high", "normal", "low"):
                     defer_urgency = "high"
                 metadata["defer_urgency"] = defer_urgency
                 metadata["defer_tags"] = [str(t) for t in (raw_defer.get("topic_tags") or [])][:5]
-            if parsed.get("speak") and parsed.get("spoken"):
-                metadata["spoken_form"] = parsed["spoken"].strip()
+            spoken = parsed.get("spoken")
+            if parsed.get("speak") and isinstance(spoken, str) and spoken:
+                metadata["spoken_form"] = spoken.strip()
             if (
                 not metadata["is_propose"]
                 and not metadata["is_plan"]
                 and not metadata["defer_text"]
             ):
-                raw_task = (parsed.get("task") or "").strip()
+                raw_task = _s(parsed.get("task")).strip()
                 if raw_task:
                     metadata["task_goal"] = raw_task
             raw_delta = parsed.get("chem_delta") or {}
@@ -2326,17 +2332,17 @@ class DefaultModeNetwork:
 
             # Open-threads ledger fields (B6).
             metadata["open_thread"] = bool(parsed.get("open_thread"))
-            metadata["advance_thread_id"] = (parsed.get("advance_thread_id") or "").strip()
-            metadata["conclude_thread_id"] = (parsed.get("conclude_thread_id") or "").strip()
-            metadata["conclusion"] = (parsed.get("conclusion") or "").strip()
-            conf = (parsed.get("conclusion_confidence") or "confident").strip().lower()
+            metadata["advance_thread_id"] = _s(parsed.get("advance_thread_id")).strip()
+            metadata["conclude_thread_id"] = _s(parsed.get("conclude_thread_id")).strip()
+            metadata["conclusion"] = _s(parsed.get("conclusion")).strip()
+            conf = _s(parsed.get("conclusion_confidence"), "confident").strip().lower()
             metadata["conclusion_confidence"] = (
                 "uncertain" if conf == "uncertain" else "confident"
             )
             metadata["bears_on"] = [
                 str(b).strip().lower() for b in (parsed.get("bears_on") or []) if str(b).strip()
             ][:4]
-            metadata["bearing"] = (parsed.get("bearing") or "").strip().lower()
+            metadata["bearing"] = _s(parsed.get("bearing")).strip().lower()
 
         return thought_clean, metadata
 
