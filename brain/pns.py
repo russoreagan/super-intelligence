@@ -618,7 +618,10 @@ class PNS:
             )
 
             params = self._voice_params_from_affect(affect or {})
-            model_id = os.environ.get("ELEVENLABS_MODEL_ID", "eleven_v3").strip() or "eleven_v3"
+            model_id = (
+                os.environ.get("ELEVENLABS_MODEL_ID", "eleven_flash_v2_5").strip()
+                or "eleven_flash_v2_5"
+            )
 
             if model_id == "eleven_v3":
                 # v3 honours stability (snapped to its discrete Creative/Natural/

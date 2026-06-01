@@ -519,23 +519,7 @@
 
     const sp = document.createElement('div'); sp.className = 'spacer'; bar.appendChild(sp);
 
-    // decay model (chem_decay_model: baseline | floor)
-    const decayField = document.createElement('div'); decayField.className = 'persona-field';
-    decayField.innerHTML = `<label>Decay</label>`;
-    const seg = document.createElement('div'); seg.className = 'seg';
-    ['baseline','floor'].forEach(model => {
-      const b = document.createElement('button');
-      b.textContent = model === 'baseline' ? 'Baseline' : 'Floor';
-      b.classList.toggle('on', (values.chem_decay_model || 'baseline') === model);
-      b.addEventListener('click', () => {
-        values.chem_decay_model = model;
-        seg.querySelectorAll('button').forEach((x, i) => x.classList.toggle('on', (['baseline','floor'][i]) === model));
-        refreshDirty();
-      });
-      seg.appendChild(b);
-    });
-    decayField.appendChild(seg);
-    bar.appendChild(decayField);
+    // (Floor-decay mode was removed — chemistry always decays toward baseline.)
 
     // voice (real catalog, mirrored from header)
     const voiceField = document.createElement('div'); voiceField.className = 'persona-field';

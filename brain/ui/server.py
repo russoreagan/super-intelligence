@@ -195,7 +195,10 @@ class UIServer:
             api_key = os.environ.get("ELEVENLABS_API_KEY", "")
             if not api_key:
                 return {"voices": [], "message": "ELEVENLABS_API_KEY not set"}
-            model_id = os.environ.get("ELEVENLABS_MODEL_ID", "eleven_v3").strip() or "eleven_v3"
+            model_id = (
+                os.environ.get("ELEVENLABS_MODEL_ID", "eleven_flash_v2_5").strip()
+                or "eleven_flash_v2_5"
+            )
             try:
                 async with httpx.AsyncClient(timeout=8) as client:
                     # Fetch both in parallel — model capabilities + voice list
