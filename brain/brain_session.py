@@ -27,8 +27,11 @@ logger = logging.getLogger("brain.run")
 
 
 class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
-    def __init__(self, args) -> None:
+    def __init__(self, args, user_id: str | None = None, shared_ui_server=None) -> None:
         self.args = args
+
+        # Multi-tenant identity: user_id scopes all storage; None = local single-user mode
+        self.user_id = user_id
 
         # Core session identity
         self.session_id = str(uuid.uuid4())[:8]
@@ -37,6 +40,10 @@ class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
         from brain.settings import settings as _settings
 
         self.persona_name = str(_settings.get("persona_name", ""))
+
+        # Shared UIServer instance (multi-tenant mode) — if set, _setup_ui skips
+        # creating a new FastAPI server and attaches this session to the shared one.
+        self._shared_ui_server = shared_ui_server
         self.bus = None
         self.obs = None
         self.router = None

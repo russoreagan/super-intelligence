@@ -47,8 +47,14 @@ class Edge:
         return self.weight if self.polarity == "excitatory" else -self.weight
 
 
+_WIRING_STORAGE = os.environ.get("BRAIN_STORAGE_BACKEND", "local").lower()
+
+
 class Wiring:
-    def __init__(self) -> None:
+    def __init__(self, user_id: str | None = None, persona: str = "") -> None:
+        self._user_id = user_id
+        self._persona = persona
+        self._use_supabase = _WIRING_STORAGE == "supabase"
         self._edges: dict[tuple[str, str], Edge] = {}
         # Snapshot of weights at session boot — used for session-delta reports
         self._session_baseline: dict[tuple[str, str], float] = {}
@@ -59,6 +65,21 @@ class Wiring:
         self._trail: dict[tuple[str, str], float] = {}
         self._trail_decay_ts: float | None = None
         self._load()
+
+    def _sb(self):
+        from brain.second_brain.supabase_client import get_client
+        return get_client()
+
+    def _uid(self) -> str:
+        if self._user_id:
+            return self._user_id
+        from brain.second_brain.supabase_client import get_user_id
+        return get_user_id()
+
+    def _persona_name(self) -> str:
+        if self._persona:
+            return self._persona
+        return os.environ.get("BRAIN_PERSONA_NAME", "default")
 
     def add(
         self, source: str, target: str, weight: float = 1.0, polarity: str = "excitatory"
@@ -220,6 +241,9 @@ class Wiring:
         return len(self._edges)
 
     def save(self) -> None:
+        if self._use_supabase:
+            self._sb_save()
+            return
         WIRING_PATH.parent.mkdir(parents=True, exist_ok=True)
         data = [
             {"src": e.source, "tgt": e.target, "w": e.weight, "pol": e.polarity}
@@ -227,12 +251,36 @@ class Wiring:
         ]
         WIRING_PATH.write_text(json.dumps(data))
 
+    def _sb_save(self) -> None:
+        try:
+            sb = self._sb()
+            uid = self._uid()
+            persona = self._persona_name()
+            rows = [
+                {
+                    "user_id": uid,
+                    "persona": persona,
+                    "source": e.source,
+                    "target": e.target,
+                    "weight": e.weight,
+                    "polarity": e.polarity,
+                    "updated_at": "now()",
+                }
+                for e in self._edges.values()
+            ]
+            if rows:
+                sb.table("wiring_edges").upsert(
+                    rows, on_conflict="user_id,persona,source,target"
+                ).execute()
+        except Exception as e:
+            logger.warning("Supabase wiring save failed: %s", e)
+
     _MAX_HISTORY_SNAPSHOTS = 100
 
     def snapshot_to_history(self, session_id: str) -> Path | None:
-        """Write a copy of the wiring graph to wiring_history/{session_id}.json
-        for later evolution charting. Prunes oldest files beyond _MAX_HISTORY_SNAPSHOTS.
-        Returns the path written, or None on failure."""
+        """Archive wiring snapshot for evolution charting."""
+        if self._use_supabase:
+            return self._sb_snapshot(session_id)
         try:
             WIRING_HISTORY_DIR.mkdir(parents=True, exist_ok=True)
             path = WIRING_HISTORY_DIR / f"{session_id}.json"
@@ -257,7 +305,40 @@ class Wiring:
             logger.warning("Could not snapshot wiring history: %s", e)
             return None
 
+    def _sb_snapshot(self, session_id: str) -> None:
+        try:
+            sb = self._sb()
+            uid = self._uid()
+            persona = self._persona_name()
+            edges = [
+                {"src": e.source, "tgt": e.target, "w": e.weight, "pol": e.polarity}
+                for e in self._edges.values()
+            ]
+            sb.table("wiring_snapshots").insert({
+                "user_id": uid,
+                "persona": persona,
+                "session_id": session_id,
+                "ts": time.time(),
+                "edges": edges,
+            }).execute()
+            # Prune to last 100 snapshots
+            res = (sb.table("wiring_snapshots")
+                   .select("id")
+                   .eq("user_id", uid)
+                   .eq("persona", persona)
+                   .order("ts", desc=True)
+                   .execute())
+            ids = [r["id"] for r in (res.data or [])]
+            if len(ids) > self._MAX_HISTORY_SNAPSHOTS:
+                old_ids = ids[self._MAX_HISTORY_SNAPSHOTS:]
+                sb.table("wiring_snapshots").delete().in_("id", old_ids).execute()
+        except Exception as e:
+            logger.warning("Supabase wiring snapshot failed: %s", e)
+
     def _load(self) -> None:
+        if self._use_supabase:
+            self._sb_load()
+            return
         if not WIRING_PATH.exists():
             return
         try:
@@ -268,3 +349,20 @@ class Wiring:
                 )
         except Exception as e:
             logger.warning("Could not load wiring.json: %s", e)
+
+    def _sb_load(self) -> None:
+        try:
+            sb = self._sb()
+            uid = self._uid()
+            res = (sb.table("wiring_edges")
+                   .select("source,target,weight,polarity")
+                   .eq("user_id", uid)
+                   .eq("persona", self._persona_name())
+                   .execute())
+            for item in (res.data or []):
+                self._edges[(item["source"], item["target"])] = Edge(
+                    item["source"], item["target"], item["weight"], item["polarity"]
+                )
+            logger.debug("[Wiring] Loaded %d edges from Supabase", len(self._edges))
+        except Exception as e:
+            logger.warning("Could not load wiring from Supabase: %s", e)

@@ -19,6 +19,11 @@ logger = logging.getLogger(__name__)
 
 VOICE_MODE = os.environ.get("BRAIN_VOICE_MODE", "false").lower() == "true"
 
+# When set to "browser", TTS chunks are sent over WebSocket instead of sounddevice.
+# Set BRAIN_AUDIO_OUTPUT_DEVICE=browser in Railway env.
+_AUDIO_OUTPUT_DEVICE_RAW = os.environ.get("BRAIN_AUDIO_OUTPUT_DEVICE", "").strip()
+BROWSER_AUDIO_MODE = _AUDIO_OUTPUT_DEVICE_RAW.lower() == "browser"
+
 # Watchdog: if no audio chunk arrives within this many seconds, the ElevenLabs
 # call is considered hung and TTS is aborted so _speaking resets to False.
 _TTS_CHUNK_TIMEOUT_S: float = float(os.environ.get("BRAIN_TTS_CHUNK_TIMEOUT", "30"))
@@ -97,8 +102,6 @@ class PNS:
         self._elevenlabs_client = None
         # interruption_switch (PLAN.md): set while TTS is streaming so a
         # concurrent mic detector can flip self._interrupt_event to cut it off.
-        # Trigger side (continuous mic VAD during playback) is a TODO — the
-        # current mic_listen() is press-to-talk, not streaming.
         self._speaking: bool = False
         self._speaking_text: str = ""  # what TTS is currently saying
         self._speak_started_at: float = 0.0
@@ -107,6 +110,10 @@ class PNS:
         self._on_speaking_change = on_speaking_change  # Callable[[bool], None] | None
         # Deliberate mood: set_mood tool publishes here; consumed once per _speak() call.
         self._deliberate_emotion_inbox = bus.subscribe("meta.deliberate_emotion")
+        # Browser audio mode: TTS chunks are queued here instead of (or alongside)
+        # sounddevice. UIServer drains this queue and sends binary WebSocket frames.
+        # Set by session_setup when BRAIN_AUDIO_OUTPUT_DEVICE=browser.
+        self._tts_ws_queue: asyncio.Queue | None = None
 
     async def receive_text(self, text: str, image_path: str | None = None) -> None:
         """Post user input to the bus."""
@@ -581,6 +588,10 @@ class PNS:
             return
         logger.info("[I/O] Interruption requested — cutting off TTS")
         self._interrupt_event.set()
+        # Signal browser to stop playback immediately
+        if self._tts_ws_queue is not None:
+            with contextlib.suppress(asyncio.QueueFull):
+                self._tts_ws_queue.put_nowait(b"\xff")
 
     async def _speak(self, text: str, affect: dict | None = None) -> None:
         """
@@ -940,9 +951,15 @@ class PNS:
                                     model_id,
                                     len(chunked),
                                 )
-                            await asyncio.get_running_loop().run_in_executor(
-                                None, stream.write, chunk
-                            )
+                            # Route to browser WebSocket queue if enabled
+                            if self._tts_ws_queue is not None:
+                                with contextlib.suppress(asyncio.QueueFull):
+                                    self._tts_ws_queue.put_nowait(chunk)
+                            # Route to local sounddevice if not in browser-only mode
+                            if not BROWSER_AUDIO_MODE:
+                                await asyncio.get_running_loop().run_in_executor(
+                                    None, stream.write, chunk
+                                )
                     finally:
                         producer_task.cancel()
                         try:

@@ -101,6 +101,10 @@ class UIServer:
 
         from fastapi.responses import FileResponse
 
+        @app.get("/health")
+        async def health():
+            return {"status": "ok"}
+
         @app.get("/")
         async def index():
             html = HTML_PATH.read_text(encoding="utf-8")
@@ -617,6 +621,59 @@ class UIServer:
             with contextlib.suppress(Exception):
                 await dg_conn.finish()
 
+    def attach_tts_queue(self, pns) -> None:
+        """Wire PNS TTS queue into this server's broadcast loop.
+
+        Called by session_setup after PNS and UIServer are both ready.
+        pns._tts_ws_queue is set here; the _tts_broadcast_loop drains it.
+        """
+        import asyncio
+        pns._tts_ws_queue = asyncio.Queue(maxsize=256)
+        asyncio.create_task(self._tts_broadcast_loop(pns._tts_ws_queue, pns))
+
+    async def _tts_broadcast_loop(self, queue: asyncio.Queue, pns) -> None:
+        """Drain TTS PCM chunks and broadcast as binary WebSocket frames.
+
+        Frame format: 1-byte type prefix (0x01=audio, 0xFF=interrupt) + PCM bytes.
+        Browser detects interrupts by the 0xFF frame and stops playback immediately.
+        """
+        while True:
+            try:
+                chunk = await asyncio.wait_for(queue.get(), timeout=0.1)
+            except TimeoutError:
+                continue
+
+            if chunk is None:
+                # Sentinel: TTS stream ended — send tts_end event
+                if self._clients:
+                    payload = json.dumps({"type": "tts_end"})
+                    dead = set()
+                    for client in list(self._clients):
+                        with contextlib.suppress(Exception):
+                            await client.send_text(payload)
+                continue
+
+            if chunk == b"\xff":
+                # Interrupt sentinel
+                if self._clients:
+                    payload = json.dumps({"type": "tts_interrupt"})
+                    dead = set()
+                    for client in list(self._clients):
+                        with contextlib.suppress(Exception):
+                            await client.send_text(payload)
+                continue
+
+            # Binary PCM chunk — prefix with 0x01 so browser can distinguish
+            frame = b"\x01" + chunk
+            if self._clients:
+                dead = set()
+                for client in list(self._clients):
+                    try:
+                        await client.send_bytes(frame)
+                    except Exception:
+                        dead.add(client)
+                self._clients -= dead
+
     async def _broadcast_loop(self) -> None:
         """Drain emitter queue and broadcast to all connected clients."""
         while True:
@@ -666,8 +723,12 @@ class UIServer:
             except TimeoutError:
                 await asyncio.sleep(0.01)
 
-    async def start(self, host: str = "127.0.0.1", port: int = 8765) -> None:
+    async def start(self, host: str | None = None, port: int | None = None) -> None:
         import uvicorn
+
+        # Railway sets PORT env var; default to 0.0.0.0 in production
+        _port = port or int(os.environ.get("PORT", "8765"))
+        _host = host or ("0.0.0.0" if os.environ.get("RAILWAY_ENVIRONMENT") else "127.0.0.1")
 
         self._app = self._build_app()
 
@@ -676,12 +737,12 @@ class UIServer:
 
         config = uvicorn.Config(
             self._app,
-            host=host,
-            port=port,
+            host=_host,
+            port=_port,
             log_level="warning",
             access_log=False,
         )
         server = uvicorn.Server(config)
-        logger.info("UI server starting at http://%s:%d", host, port)
+        logger.info("UI server starting at http://%s:%d", _host, _port)
         print(f"\nBrain UI: http://{host}:{port}\n")
         await server.serve()

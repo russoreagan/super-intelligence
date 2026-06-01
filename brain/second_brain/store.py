@@ -1,9 +1,12 @@
 """
-Second brain store — episodic (LanceDB) + schema (Markdown).
+Second brain store — episodic (LanceDB or Supabase pgvector) + schema (Markdown or Supabase).
 ONLY imported by brain/clusters/hippocampus.py. No other cluster touches this file.
 
 Design: encode every substantive turn. Storage is free; retrieval is the intelligence.
 The hippocampus indexes, not gatekeeps.
+
+Backend selection: BRAIN_STORAGE_BACKEND=local (default) | supabase
+When supabase, brain.second_brain.supabase_client must have user_id + persona set.
 """
 
 from __future__ import annotations
@@ -24,6 +27,8 @@ SECOND_BRAIN_ROOT = Path(
 )
 EPISODES_DIR = SECOND_BRAIN_ROOT / "episodes"
 SCHEMA_DIR = SECOND_BRAIN_ROOT / "schema"
+
+_STORAGE_BACKEND = os.environ.get("BRAIN_STORAGE_BACKEND", "local").lower()
 
 # Must match brain.model_router.EMBEDDING_DIM. nomic-embed-text and
 # gemini-embedding-001 both produce 768-dim vectors.
@@ -47,12 +52,32 @@ class Episode:
 
 
 class EpisodicStore:
-    """LanceDB-backed episodic memory. Encodes all substantive turns."""
+    """Episodic memory. Backend: LanceDB (local) or Supabase pgvector (cloud).
 
-    def __init__(self) -> None:
+    Set BRAIN_STORAGE_BACKEND=supabase to use Supabase. The supabase_client
+    module must have user_id and persona set before any call.
+    """
+
+    def __init__(self, persona: str = "") -> None:
+        self._persona = persona
+        # Local LanceDB state
         self._db = None
         self._table = None
         self._ready = False
+        # Supabase state
+        self._use_supabase = _STORAGE_BACKEND == "supabase"
+
+    # ── Supabase helpers ──────────────────────────────────────────────────────
+
+    def _sb(self):
+        from brain.second_brain.supabase_client import get_client, get_user_id
+        return get_client(), get_user_id()
+
+    def _sb_persona(self) -> str:
+        """Active persona — falls back to env var so callers don't have to pass it."""
+        if self._persona:
+            return self._persona
+        return os.environ.get("BRAIN_PERSONA_NAME", "default")
 
     def _ensure_ready(self) -> bool:
         if self._ready:
@@ -93,6 +118,9 @@ class EpisodicStore:
             return False
 
     def encode(self, episode: Episode) -> None:
+        if self._use_supabase:
+            self._sb_encode(episode)
+            return
         if not self._ensure_ready():
             return
         try:
@@ -116,8 +144,34 @@ class EpisodicStore:
                 "[Episode DB] Failed to save episode — this turn's memory will be lost: %s", e
             )
 
+    def _sb_encode(self, episode: Episode) -> None:
+        try:
+            sb, uid = self._sb()
+            persona = self._sb_persona()
+            vec = episode.vector or ([0.0] * EMBEDDING_DIM)
+            sb.table("episodes").insert({
+                "user_id": uid,
+                "persona": persona,
+                "session_id": episode.session_id,
+                "turn_id": episode.turn_id,
+                "ts": episode.ts,
+                "user_input": episode.user_input,
+                "entity_response": episode.entity_response,
+                "topic_tags": episode.topic_tags,
+                "emotion_state": episode.emotion_state,
+                "user_emotion": episode.user_emotion,
+                "entities": episode.entities,
+                "neuromod_snapshot": episode.neuromod_snapshot,
+                "surprise_score": episode.surprise_score,
+                "vector": f"[{','.join(str(v) for v in vec)}]",
+            }).execute()
+        except Exception as e:
+            logger.error("[Episode DB] Supabase encode failed: %s", e)
+
     def recall_recent(self, limit: int = 6) -> list[dict]:
         """Return the most recent episodes by timestamp (for session bridging at boot)."""
+        if self._use_supabase:
+            return self._sb_recall_recent(limit)
         if not self._ensure_ready():
             return []
         try:
@@ -138,13 +192,25 @@ class EpisodicStore:
             logger.error("[Episode DB] Recent recall failed: %s", e)
             return []
 
-    def sample_random(self, n: int = 1) -> list[dict]:
-        """Return up to n episodes chosen uniformly at random from the whole store.
+    def _sb_recall_recent(self, limit: int) -> list[dict]:
+        try:
+            sb, uid = self._sb()
+            res = (sb.table("episodes")
+                   .select("*")
+                   .eq("user_id", uid)
+                   .eq("persona", self._sb_persona())
+                   .order("ts", desc=True)
+                   .limit(limit)
+                   .execute())
+            return self._parse_rows(res.data or [])
+        except Exception as e:
+            logger.error("[Episode DB] Supabase recall_recent failed: %s", e)
+            return []
 
-        Used by the DMN to surface an old memory into the idle thought stream so
-        the monologue has something concrete to associate from, rather than
-        defaulting to generic meta-thoughts. Cheap: episode counts are modest and
-        this runs at most once every few ticks."""
+    def sample_random(self, n: int = 1) -> list[dict]:
+        """Return up to n episodes chosen uniformly at random from the whole store."""
+        if self._use_supabase:
+            return self._sb_sample_random(n)
         import random
 
         if not self._ensure_ready():
@@ -159,13 +225,31 @@ class EpisodicStore:
             logger.error("[Episode DB] Random sample failed: %s", e)
             return []
 
+    def _sb_sample_random(self, n: int) -> list[dict]:
+        try:
+            sb, uid = self._sb()
+            # Supabase doesn't have ORDER BY RANDOM() directly — use rpc or a large limit+slice
+            res = (sb.table("episodes")
+                   .select("*")
+                   .eq("user_id", uid)
+                   .eq("persona", self._sb_persona())
+                   .limit(200)
+                   .execute())
+            rows = res.data or []
+            if not rows:
+                return []
+            import random
+            return self._parse_rows(random.sample(rows, min(n, len(rows))))
+        except Exception as e:
+            logger.error("[Episode DB] Supabase sample_random failed: %s", e)
+            return []
+
     def recall(
         self, query_vector: list[float], limit: int = 5, exclude_tags: list[str] | None = None
     ) -> list[dict]:
-        """Vector search over all episodes, optionally excluding those that
-        contain any of the given tags. Used by the main recall path so that
-        deferred questions (which have their own search path) don't compete
-        with conversation memories for top-k slots."""
+        """Vector search over all episodes."""
+        if self._use_supabase:
+            return self._sb_recall(query_vector, limit, exclude_tags)
         if not self._ensure_ready():
             return []
         try:
@@ -179,10 +263,32 @@ class EpisodicStore:
             logger.error("[Episode DB] Memory search failed: %s", e)
             return []
 
+    def _sb_recall(
+        self, query_vector: list[float], limit: int, exclude_tags: list[str] | None
+    ) -> list[dict]:
+        try:
+            sb, uid = self._sb()
+            persona = self._sb_persona()
+            vec_str = f"[{','.join(str(v) for v in query_vector)}]"
+            # Use Supabase RPC for pgvector cosine similarity search
+            params = {
+                "query_vector": vec_str,
+                "user_id_param": uid,
+                "persona_param": persona,
+                "match_count": limit,
+            }
+            if exclude_tags:
+                params["exclude_tags"] = exclude_tags
+            res = sb.rpc("match_episodes", params).execute()
+            return self._parse_rows(res.data or [])
+        except Exception as e:
+            logger.error("[Episode DB] Supabase recall failed: %s", e)
+            return []
+
     def recall_by_tag(self, query_vector: list[float], tag: str, limit: int = 3) -> list[dict]:
-        """Vector search scoped to episodes that contain the given tag.
-        Used to give deferred questions their own retrieval budget, separate
-        from conversation memories."""
+        """Vector search scoped to episodes that contain the given tag."""
+        if self._use_supabase:
+            return self._sb_recall_by_tag(query_vector, tag, limit)
         if not self._ensure_ready():
             return []
         try:
@@ -195,6 +301,22 @@ class EpisodicStore:
             return self._parse_rows(results)
         except Exception as e:
             logger.error("[Episode DB] Tag-scoped recall failed (tag=%r): %s", tag, e)
+            return []
+
+    def _sb_recall_by_tag(self, query_vector: list[float], tag: str, limit: int) -> list[dict]:
+        try:
+            sb, uid = self._sb()
+            vec_str = f"[{','.join(str(v) for v in query_vector)}]"
+            res = sb.rpc("match_episodes_by_tag", {
+                "query_vector": vec_str,
+                "user_id_param": uid,
+                "persona_param": self._sb_persona(),
+                "tag_param": tag,
+                "match_count": limit,
+            }).execute()
+            return self._parse_rows(res.data or [])
+        except Exception as e:
+            logger.error("[Episode DB] Supabase tag-recall failed: %s", e)
             return []
 
     def _parse_rows(self, rows: list[dict]) -> list[dict]:
@@ -210,16 +332,27 @@ class EpisodicStore:
     _SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
     def recall_by_session(self, session_id: str) -> list[dict]:
-        if not self._ensure_ready():
-            return []
         if not self._SESSION_ID_RE.match(session_id):
             logger.warning(
                 "[Episode DB] [Security] Blocked unsafe session ID in memory query: %r", session_id
             )
             return []
+        if self._use_supabase:
+            try:
+                sb, uid = self._sb()
+                res = (sb.table("episodes")
+                       .select("*")
+                       .eq("user_id", uid)
+                       .eq("persona", self._sb_persona())
+                       .eq("session_id", session_id)
+                       .execute())
+                return self._parse_rows(res.data or [])
+            except Exception as e:
+                logger.error("[Episode DB] Supabase session recall failed: %s", e)
+                return []
+        if not self._ensure_ready():
+            return []
         try:
-            # Safety: session_id is validated by _SESSION_ID_RE above; that regex
-            # must stay in place to prevent SQL injection through this f-string.
             results = self._table.search().where(f"session_id = '{session_id}'").to_list()
             return results
         except Exception as e:
@@ -229,9 +362,9 @@ class EpisodicStore:
 
 class SchemaStore:
     """
-    Markdown-based schema layer. Human-readable, hand-editable.
-    One file per topic/entity. Fast grep-based lookup.
+    Schema layer: Markdown files (local) or Supabase brain_schemas table (cloud).
 
+    Backend selection: BRAIN_STORAGE_BACKEND=local (default) | supabase
     Writes are serialized with an asyncio.Lock and use temp-file-then-rename
     so concurrent encode + sleep-consolidation cannot corrupt the schema.
     Sync write/append remain for boot-time (no event loop) use.
@@ -239,9 +372,21 @@ class SchemaStore:
 
     _FILENAME_RE = re.compile(r"^[A-Za-z0-9_-]+\.md$")
 
-    def __init__(self) -> None:
-        SCHEMA_DIR.mkdir(parents=True, exist_ok=True)
+    def __init__(self, persona: str = "") -> None:
+        self._use_supabase = _STORAGE_BACKEND == "supabase"
+        self._persona = persona
+        if not self._use_supabase:
+            SCHEMA_DIR.mkdir(parents=True, exist_ok=True)
         self._lock = asyncio.Lock()
+
+    def _sb(self):
+        from brain.second_brain.supabase_client import get_client, get_user_id
+        return get_client(), get_user_id()
+
+    def _sb_persona(self) -> str:
+        if self._persona:
+            return self._persona
+        return os.environ.get("BRAIN_PERSONA_NAME", "default")
 
     def _validate_filename(self, filename: str) -> bool:
         """Return True if filename is safe; log a warning and return False otherwise."""
@@ -263,6 +408,20 @@ class SchemaStore:
     def read(self, filename: str) -> str:
         if not self._validate_filename(filename):
             return ""
+        if self._use_supabase:
+            try:
+                sb, uid = self._sb()
+                res = (sb.table("brain_schemas")
+                       .select("content")
+                       .eq("user_id", uid)
+                       .eq("persona", self._sb_persona())
+                       .eq("filename", filename)
+                       .maybe_single()
+                       .execute())
+                return (res.data or {}).get("content", "")
+            except Exception as e:
+                logger.error("[Schema DB] Supabase read failed (%s): %s", filename, e)
+                return ""
         path = SCHEMA_DIR / filename
         if path.exists():
             return path.read_text()
@@ -273,9 +432,25 @@ class SchemaStore:
         tmp.write_text(content)
         os.replace(tmp, path)
 
+    def _sb_write(self, filename: str, content: str) -> None:
+        try:
+            sb, uid = self._sb()
+            sb.table("brain_schemas").upsert({
+                "user_id": uid,
+                "persona": self._sb_persona(),
+                "filename": filename,
+                "content": content,
+                "updated_at": "now()",
+            }, on_conflict="user_id,persona,filename").execute()
+        except Exception as e:
+            logger.error("[Schema DB] Supabase write failed (%s): %s", filename, e)
+
     def write(self, filename: str, content: str) -> None:
         """Sync write — only safe at boot / outside event loop."""
         if not self._validate_filename(filename):
+            return
+        if self._use_supabase:
+            self._sb_write(filename, content)
             return
         self._atomic_write(SCHEMA_DIR / filename, content)
 
@@ -283,27 +458,40 @@ class SchemaStore:
         """Sync append — only safe at boot / outside event loop."""
         if not self._validate_filename(filename):
             return
-        path = SCHEMA_DIR / filename
-        existing = path.read_text() if path.exists() else ""
         fact = fact.strip()
-        if fact and fact not in existing:
-            self._atomic_write(path, existing + f"\n- {fact}")
+        if not fact:
+            return
+        existing = self.read(filename)
+        if fact not in existing:
+            self.write(filename, existing + f"\n- {fact}")
 
     async def awrite(self, filename: str, content: str) -> None:
         if not self._validate_filename(filename):
             return
         async with self._lock:
-            self._atomic_write(SCHEMA_DIR / filename, content)
+            if self._use_supabase:
+                await asyncio.get_running_loop().run_in_executor(
+                    None, self._sb_write, filename, content
+                )
+            else:
+                self._atomic_write(SCHEMA_DIR / filename, content)
 
     async def aappend_fact(self, filename: str, fact: str) -> None:
         if not self._validate_filename(filename):
             return
+        fact = fact.strip()
+        if not fact:
+            return
         async with self._lock:
-            path = SCHEMA_DIR / filename
-            existing = path.read_text() if path.exists() else ""
-            fact = fact.strip()
-            if fact and fact not in existing:
-                self._atomic_write(path, existing + f"\n- {fact}")
+            existing = self.read(filename)
+            if fact not in existing:
+                new_content = existing + f"\n- {fact}"
+                if self._use_supabase:
+                    await asyncio.get_running_loop().run_in_executor(
+                        None, self._sb_write, filename, new_content
+                    )
+                else:
+                    self._atomic_write(SCHEMA_DIR / filename, new_content)
 
     @staticmethod
     def _replace_section_body(content: str, section: str, new_body: str) -> str:
@@ -330,40 +518,69 @@ class SchemaStore:
         return new_content
 
     def ensure_section(self, filename: str, section: str, default_body: str) -> None:
-        """Sync: add the section to filename if it isn't already present.
-        Used at boot to migrate older schema files into newer templates."""
+        """Sync: add the section to filename if it isn't already present."""
         if not self._validate_filename(filename):
             return
-        path = SCHEMA_DIR / filename
-        if not path.exists():
+        content = self.read(filename)
+        if not content:
             return
-        content = path.read_text()
         if re.search(r"(?m)^##[ \t]+" + re.escape(section) + r"[ \t]*$", content):
             return
         new_content = self._replace_section_body(content, section, default_body)
-        self._atomic_write(path, new_content)
+        self.write(filename, new_content)
 
     async def upsert_section(self, filename: str, section: str, body: str) -> None:
-        """Async upsert: replace (or create) the body of ## <section> in filename.
-        Use this for the personality / communication-style pass — the section's
-        whole content should be rewritten each consolidation rather than
-        appended to."""
+        """Async upsert: replace (or create) the body of ## <section> in filename."""
         if not self._validate_filename(filename):
             return
         async with self._lock:
-            path = SCHEMA_DIR / filename
-            if not path.exists():
+            content = self.read(filename)
+            if not content:
                 return
-            content = path.read_text()
             new_content = self._replace_section_body(content, section, body)
             if new_content != content:
-                self._atomic_write(path, new_content)
+                if self._use_supabase:
+                    await asyncio.get_running_loop().run_in_executor(
+                        None, self._sb_write, filename, new_content
+                    )
+                else:
+                    self._atomic_write(SCHEMA_DIR / filename, new_content)
 
     def list_files(self) -> list[str]:
+        if self._use_supabase:
+            try:
+                sb, uid = self._sb()
+                res = (sb.table("brain_schemas")
+                       .select("filename")
+                       .eq("user_id", uid)
+                       .eq("persona", self._sb_persona())
+                       .execute())
+                return [r["filename"] for r in (res.data or [])]
+            except Exception as e:
+                logger.error("[Schema DB] Supabase list_files failed: %s", e)
+                return []
         return [p.name for p in SCHEMA_DIR.glob("*.md")]
 
     def grep(self, keyword: str) -> list[tuple[str, str]]:
         """Return (filename, matching_line) pairs."""
+        if self._use_supabase:
+            try:
+                sb, uid = self._sb()
+                res = (sb.table("brain_schemas")
+                       .select("filename,content")
+                       .eq("user_id", uid)
+                       .eq("persona", self._sb_persona())
+                       .ilike("content", f"%{keyword}%")
+                       .execute())
+                hits = []
+                for row in (res.data or []):
+                    for line in row["content"].splitlines():
+                        if keyword.lower() in line.lower():
+                            hits.append((row["filename"], line.strip()))
+                return hits
+            except Exception as e:
+                logger.error("[Schema DB] Supabase grep failed: %s", e)
+                return []
         hits = []
         for path in SCHEMA_DIR.glob("*.md"):
             for line in path.read_text().splitlines():
@@ -386,7 +603,7 @@ class SchemaStore:
         }
 
     def ensure_self_schema(self) -> None:
-        if not (SCHEMA_DIR / "self.md").exists():
+        if not self.read("self.md"):
             self.write(
                 "self.md",
                 "# Entity Self-Model\n\n"
@@ -399,7 +616,7 @@ class SchemaStore:
             )
 
     def ensure_user_schema(self, user_name: str = "User") -> None:
-        if not (SCHEMA_DIR / "user.md").exists():
+        if not self.read("user.md"):
             self.write(
                 "user.md",
                 f"# User: {user_name}\n\n"
@@ -430,7 +647,7 @@ class SchemaStore:
     def ensure_speaker_schema(self, name: str) -> str:
         """Ensure a per-speaker schema file exists. Returns the filename."""
         filename = self.speaker_filename(name)
-        if not (SCHEMA_DIR / filename).exists():
+        if not self.read(filename):
             self.write(
                 filename,
                 f"# User: {name}\n\n"
@@ -457,31 +674,41 @@ class SchemaStore:
         return self.read(filename)
 
     async def migrate_placeholder(self, placeholder_filename: str, target_filename: str) -> None:
-        """Append facts from a placeholder schema (e.g. user_spk_0.md) into the real one,
-        then delete the placeholder. Called when an unknown speaker is enrolled."""
+        """Append facts from a placeholder schema into the real one, then delete placeholder."""
         if not self._validate_filename(placeholder_filename):
             return
         if not self._validate_filename(target_filename):
             return
-        placeholder_path = SCHEMA_DIR / placeholder_filename
-        if not placeholder_path.exists():
+        src = self.read(placeholder_filename)
+        if not src:
             return
         async with self._lock:
-            src = placeholder_path.read_text()
-            dst = (
-                (SCHEMA_DIR / target_filename).read_text()
-                if (SCHEMA_DIR / target_filename).exists()
-                else ""
-            )
-            # Extract bullet-point facts from the placeholder (skip header/section lines)
+            dst = self.read(target_filename)
             facts = [
                 ln.strip()
                 for ln in src.splitlines()
                 if ln.strip().startswith("- ") and ln.strip() not in dst
             ]
             if facts:
-                self._atomic_write(SCHEMA_DIR / target_filename, dst + "\n" + "\n".join(facts))
-            placeholder_path.unlink(missing_ok=True)
+                new_content = dst + "\n" + "\n".join(facts)
+                if self._use_supabase:
+                    await asyncio.get_running_loop().run_in_executor(
+                        None, self._sb_write, target_filename, new_content
+                    )
+                    # Delete placeholder from Supabase
+                    try:
+                        sb, uid = self._sb()
+                        (sb.table("brain_schemas")
+                         .delete()
+                         .eq("user_id", uid)
+                         .eq("persona", self._sb_persona())
+                         .eq("filename", placeholder_filename)
+                         .execute())
+                    except Exception as e:
+                        logger.warning("[Schema] Supabase placeholder delete failed: %s", e)
+                else:
+                    self._atomic_write(SCHEMA_DIR / target_filename, new_content)
+                    (SCHEMA_DIR / placeholder_filename).unlink(missing_ok=True)
             logger.info(
                 "[Schema] Migrated placeholder %s → %s (%d facts)",
                 placeholder_filename,

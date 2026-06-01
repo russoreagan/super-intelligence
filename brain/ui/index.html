@@ -1,13 +1,24 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="atlas">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Super Intelligence</title>
+<!-- Theme init — runs before paint so there's no flash of the wrong skin.
+     Additive only; the toggle UI lives in Settings. -->
+<script>
+  (function () {
+    try {
+      var t = localStorage.getItem('brain_theme');
+      if (t !== 'atlas' && t !== 'console') t = 'atlas';
+      document.documentElement.setAttribute('data-theme', t);
+    } catch (e) {}
+  })();
+</script>
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400;1,6..72,500;1,6..72,600&family=Hanken+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
 
 <style>
 /* =====================================================================
@@ -17,7 +28,74 @@
    to open within 1.5s, an offline simulation runs so the UI is alive.
    ===================================================================== */
 
+/* =====================================================================
+   DUAL THEME — tokens are theme-switched so the entire existing
+   stylesheet reskins by remapping the SAME variable names.
+     · default (:root)        = "atlas"   — warm Elyceum paper skin
+     · [data-theme="console"] = the original dark telemetry skin
+   Every rule below references these tokens, so switching the data-theme
+   attribute on <html> swaps the whole look with no per-rule edits.
+   ===================================================================== */
 :root {
+  /* ---------- ATLAS (Elyceum paper) — default ---------- */
+  --paper:    oklch(0.966 0.013 84);
+  --paper-2:  oklch(0.945 0.016 83);
+  --paper-3:  oklch(0.912 0.019 82);
+  --plate:    oklch(0.978 0.010 85);
+
+  --ink:      oklch(0.27 0.022 54);
+  --ink-2:    oklch(0.42 0.022 54);
+  --ink-3:    oklch(0.55 0.020 56);
+  --ink-4:    oklch(0.68 0.016 60);
+
+  /* console-era aliases mapped onto the paper palette so legacy rules
+     (which still say var(--bg-0) / var(--fg) …) pick up the new skin */
+  --bg-0:        var(--paper);
+  --bg-1:        var(--paper-2);
+  --bg-2:        var(--paper-3);
+  --bg-3:        oklch(0.90 0.020 82);
+  --line:        oklch(0.30 0.02 54 / 0.24);
+  --line-soft:   oklch(0.30 0.02 54 / 0.12);
+  --line-faint:  oklch(0.30 0.02 54 / 0.07);
+
+  --fg:          var(--ink);
+  --fg-dim:      var(--ink-2);
+  --fg-mute:     var(--ink-3);
+  --fg-faint:    var(--ink-4);
+
+  --signal:      oklch(0.56 0.185 33);
+  --signal-deep: oklch(0.48 0.17 32);
+  --signal-soft: oklch(0.56 0.185 33 / 0.13);
+  --accent:      var(--signal);
+  --accent-soft: var(--signal-soft);
+  --danger:      oklch(0.55 0.20 28);
+  --ok:          oklch(0.52 0.10 150);
+
+  /* lobe palette — Elyceum (deeper, ink-on-paper saturation) */
+  --frontal:      oklch(0.58 0.13 248);
+  --parietal:     oklch(0.60 0.15 150);
+  --temporal:     oklch(0.64 0.13 70);
+  --occipital:    oklch(0.55 0.16 305);
+  --motor:        oklch(0.57 0.19 22);
+  --thalamus:     oklch(0.56 0.045 250);
+  --hypothalamus: oklch(0.63 0.17 41);
+  --hippocampus:  oklch(0.56 0.12 186);
+  --brainstem:    oklch(0.55 0.12 46);
+  --cerebellum:   oklch(0.58 0.12 205);
+
+  --r-1: 6px;
+  --r-2: 10px;
+  --r-3: 14px;
+
+  /* three-voice type system */
+  --serif: 'Newsreader', Georgia, serif;
+  --sans:  'Hanken Grotesk', system-ui, -apple-system, sans-serif;
+  --ui:    var(--sans);
+  --mono:  'JetBrains Mono', ui-monospace, monospace;
+}
+
+[data-theme="console"] {
+  /* ---------- CONSOLE (original dark telemetry) ---------- */
   --bg-0:        oklch(0.13 0.018 250);
   --bg-1:        oklch(0.17 0.020 250);
   --bg-2:        oklch(0.21 0.022 250);
@@ -33,10 +111,13 @@
 
   --accent:      oklch(0.78 0.140 220);
   --accent-soft: oklch(0.78 0.140 220 / 0.18);
+  --signal:      oklch(0.78 0.140 220);
+  --signal-deep: oklch(0.55 0.13 220);
+  --signal-soft: oklch(0.78 0.140 220 / 0.18);
   --danger:      oklch(0.70 0.180 25);
   --ok:          oklch(0.78 0.16 145);
 
-  /* lobe palette — refined from reference, saturated for the dark canvas */
+  /* lobe palette — saturated for the dark canvas */
   --frontal:      oklch(0.72 0.13 235);
   --motor:        oklch(0.66 0.20 15);
   --parietal:     oklch(0.78 0.16 145);
@@ -44,16 +125,13 @@
   --occipital:    oklch(0.70 0.16 300);
   --hippocampus:  oklch(0.78 0.16 175);
   --thalamus:     oklch(0.90 0.02 250);
-  --hypothalamus: oklch(0.75 0.20 40);   /* coral/orange — distinct from thalamus */
+  --hypothalamus: oklch(0.75 0.20 40);
   --brainstem:    oklch(0.70 0.15 40);
   --cerebellum:   oklch(0.78 0.14 200);
 
-  --r-1: 6px;
-  --r-2: 10px;
-  --r-3: 14px;
-
-  --ui:   'Space Grotesk', system-ui, -apple-system, sans-serif;
-  --mono: 'JetBrains Mono', ui-monospace, monospace;
+  --serif: 'Space Grotesk', system-ui, sans-serif;
+  --sans:  'Space Grotesk', system-ui, -apple-system, sans-serif;
+  --ui:    var(--sans);
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -68,7 +146,14 @@ html, body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* atlas: warm paper with a faint inked dot-grain.  console: dark radial vignette. */
 body {
+  background: var(--paper);
+  background-image: radial-gradient(oklch(0.30 0.02 54 / 0.025) 0.5px, transparent 0.6px);
+  background-size: 4px 4px;
+  transition: background-color 600ms ease, color 600ms ease;
+}
+[data-theme="console"] body {
   background:
     radial-gradient(ellipse 80% 60% at 50% 35%, oklch(0.18 0.025 250) 0%, var(--bg-0) 70%),
     var(--bg-0);
@@ -3275,6 +3360,110 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
 /* Expanded node anchor to top so it grows downward */
 .nm-node.expanded { transform: translate(-50%, -16%); z-index: 6; }
 
+/* =====================================================================
+   ATLAS CHAT-CENTRAL LAYOUT
+   Restyles the three rails into: interior (left) · conversation (center) ·
+   specimen (right). All ids preserved; this is layout + skin only.
+   ===================================================================== */
+#main { grid-template-columns: 320px 1fr 384px; }
+@media (min-width: 1500px) { #main { grid-template-columns: 348px 1fr 420px; } }
+@media (min-width: 1800px) { #main { grid-template-columns: 380px 1fr 448px; } }
+
+.rail-interior, .rail-specimen {
+  overflow-y: auto; overflow-x: hidden;
+  display: flex; flex-direction: column;
+  min-height: 0;
+}
+.rail-interior { border-right: 1px solid var(--line-soft); }
+.rail-specimen { border-left: 1px solid var(--line-soft); }
+
+/* ---- header: token-driven so it reskins with the theme ---- */
+.header { background: linear-gradient(180deg, var(--paper-2), var(--paper)); }
+[data-theme="console"] .header { background: linear-gradient(180deg, oklch(0.16 0.022 250) 0%, var(--bg-0) 100%); }
+
+/* ---- persona block ---- */
+.iv-persona { padding: 16px 18px 13px; position: relative; }
+.iv-eyebrow { font-family: var(--mono); font-size: 9px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--fg-faint); }
+.iv-persona-name { font-family: var(--serif); font-size: 22px; font-weight: 600; letter-spacing: -0.01em; color: var(--fg); margin-top: 4px; line-height: 1.1; }
+.iv-persona-tag { font-family: var(--mono); font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--fg-mute); margin-top: 6px; }
+.voicebars { position: absolute; top: 18px; right: 18px; display: inline-flex; align-items: center; gap: 2.5px; height: 28px; }
+.voicebars i { width: 2.5px; border-radius: 2px; background: var(--fg-faint); transform-origin: center; transition: background 0.22s; }
+.voicebars i:nth-child(1){height:6px}.voicebars i:nth-child(2){height:11px}.voicebars i:nth-child(3){height:7px}.voicebars i:nth-child(4){height:14px}.voicebars i:nth-child(5){height:9px}.voicebars i:nth-child(6){height:12px}.voicebars i:nth-child(7){height:6px}
+.voicebars.speaking i { background: var(--signal); animation: vbar 0.72s ease-in-out infinite; }
+.voicebars.speaking i:nth-child(2){animation-delay:.09s}.voicebars.speaking i:nth-child(3){animation-delay:.18s}.voicebars.speaking i:nth-child(4){animation-delay:.05s}.voicebars.speaking i:nth-child(5){animation-delay:.22s}.voicebars.speaking i:nth-child(6){animation-delay:.13s}.voicebars.speaking i:nth-child(7){animation-delay:.27s}
+@keyframes vbar { 0%,100% { transform: scaleY(0.45); } 50% { transform: scaleY(1.9); } }
+
+/* ---- disposition / mood ---- */
+.iv-mood { display: flex; align-items: center; gap: 10px; margin-top: 2px; }
+.iv-mood-name { font-family: var(--serif); font-size: 26px; font-weight: 500; letter-spacing: -0.015em; color: var(--fg); text-transform: capitalize; line-height: 1.05; }
+.mood-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--fg-faint); flex-shrink: 0; transition: background 0.6s, box-shadow 0.6s; }
+
+/* ---- conversation (center) ---- */
+.convo { display: flex; flex-direction: column; min-height: 0; min-width: 0; position: relative; }
+.convo-head { display: flex; align-items: baseline; justify-content: space-between; gap: 14px; padding: 15px 26px 13px; border-bottom: 1px solid var(--line-soft); flex-shrink: 0; }
+.convo-title { font-family: var(--serif); font-size: 18px; font-weight: 600; letter-spacing: -0.01em; color: var(--fg); }
+.convo #messages-wrap { flex: 1; min-height: 0; }
+[data-theme="atlas"] .convo-head .voice-pill { color: var(--fg-mute); }
+
+/* atlas: the brain's spoken lines are set in the serif "voice" */
+[data-theme="atlas"] .msg-brain .body { font-family: var(--serif); font-size: 15px; line-height: 1.62; }
+
+/* ---- specimen plates (FIG. 1 / FIG. 2) ---- */
+.spec-plate { margin: 16px 16px 6px; background: var(--plate); border: 1px solid var(--line); padding: 12px; position: relative; }
+[data-theme="atlas"] .spec-plate { box-shadow: 0 1px 0 var(--paper-3), 0 14px 32px -26px oklch(0.30 0.02 54 / 0.5); }
+[data-theme="atlas"] .spec-plate::after { content: ''; position: absolute; inset: 6px; border: 0.5px solid var(--line-soft); pointer-events: none; }
+.spec-plate-top { display: flex; align-items: baseline; justify-content: space-between; padding: 1px 3px 9px; position: relative; z-index: 1; }
+.spec-fig { font-family: var(--mono); font-size: 9px; letter-spacing: 0.13em; color: var(--fg-mute); text-transform: uppercase; }
+.spec-fig b { color: var(--fg); font-weight: 600; }
+.spec-aspect { font-family: var(--mono); font-size: 9px; color: var(--fg-faint); font-variant-numeric: tabular-nums; }
+.spec-cap { font-family: var(--serif); font-style: italic; font-size: 11px; line-height: 1.45; color: var(--fg-mute); padding: 9px 4px 1px; position: relative; z-index: 1; }
+.spec-readout { display: block; font-style: normal; font-family: var(--mono); font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--fg-faint); margin-top: 4px; }
+.spec-readout strong { color: var(--signal); font-weight: 600; }
+
+/* brain stage contained inside the plate (not full-height like the old center) */
+.rail-specimen .brain-stage { position: relative; width: 100%; height: auto; padding: 0; display: block; overflow: visible; isolation: auto; }
+.rail-specimen .brain-stage::before, .rail-specimen .brain-stage::after { display: none; }
+.rail-specimen .brain-figure { position: relative; width: 100%; height: auto; max-width: 100%; max-height: none; margin: 0; }
+.rail-specimen #mood-bg { border-radius: 0; }
+
+/* neural map rendered statically inside FIG. 2 (was an absolute overlay) */
+.rail-specimen #neural-map { position: relative; inset: auto; display: block; opacity: 1; height: 250px; background: none; }
+.rail-specimen .nm-wrap { position: relative; width: 100%; height: 100%; }
+
+/* ---- region index ---- */
+.idx-sub { font-family: var(--mono); font-size: 8.5px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--fg-faint); padding: 12px 0 7px; display: flex; align-items: center; gap: 9px; }
+.idx-sub::after { content: ''; flex: 1; border-top: 1px solid var(--line-faint); }
+.idx-sub:first-child { padding-top: 4px; }
+
+/* ---- neural map (FIG. 2) inside the specimen rail ----
+   The full center-stage map packs node cards with cell-lists and switch chips;
+   in the narrow rail we simplify to a clean node + edge diagram (the detail is
+   decorative here). All ids/classes preserved — display:none only. */
+.rail-specimen #neural-map { height: 320px; }
+.rail-specimen .nm-meta,
+.rail-specimen .nm-cell-list,
+.rail-specimen .nm-switches,
+.rail-specimen .nm-node-role,
+.rail-specimen .nm-node-mods { display: none; }
+.rail-specimen .nm-node {
+  min-width: 0; width: auto; max-width: 96px;
+  padding: 4px 7px 5px; border-radius: 7px;
+}
+.rail-specimen .nm-node-head { margin-bottom: 0; }
+.rail-specimen .nm-node-meter { margin-top: 4px; }
+.rail-specimen .nm-io { width: 46px; height: 46px; }
+.rail-specimen .nm-legend { transform: scale(0.82); transform-origin: bottom left; }
+
+/* atlas: paper-tone the map chrome (console keeps its dark node panels) */
+[data-theme="atlas"] .rail-specimen .nm-node {
+  background: var(--plate);
+  border-color: var(--line);
+  box-shadow: 0 1px 4px -2px oklch(0.30 0.02 54 / 0.4);
+}
+[data-theme="atlas"] .rail-specimen .nm-node-name { color: var(--ink-2); }
+[data-theme="atlas"] .rail-specimen .nm-node-init { color: var(--plate); }
+[data-theme="atlas"] .rail-specimen .nm-node.firing .nm-node-name { color: var(--ink); }
+
 </style>
 <!-- Redesigned settings page styles (scoped to #settings-page) -->
 <link rel="stylesheet" href="settings.css">
@@ -3372,48 +3561,58 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
     </div>
   </header>
 
-  <!-- ====== MAIN ====== -->
+  <!-- ====== MAIN — chat-central atlas layout ======
+       LEFT  = interior (persona/mood · chemistry · thoughts · tasks · plasticity)
+       MID   = conversation (the chat, now central)
+       RIGHT = specimen (brain anatomy · neural map · region index)
+       Class names col-left / col-mid / col-right are preserved because the
+       collapse + region-popup JS walks them; only their *contents* moved. -->
   <div id="main">
 
-    <!-- ----- LEFT: brain components + thoughts tabs ----- -->
-    <aside class="col col-left">
+    <!-- ===================== LEFT: interior ===================== -->
+    <aside class="col col-left rail-interior" id="rail-interior">
 
-      <!-- Tab nav -->
-      <div class="left-tabs">
-        <button class="left-tab active" data-tab="brain">Brain</button>
-        <button class="left-tab" data-tab="thoughts">Thoughts</button>
+      <!-- Persona -->
+      <div class="iv-persona">
+        <div class="iv-eyebrow">Persona</div>
+        <div class="iv-persona-name" id="persona-name-display">The Visionary</div>
+        <div class="iv-persona-tag" id="persona-tag-display">Exploratory · optimistic</div>
+        <div class="voicebars" id="voicebars" title="Voice"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
       </div>
 
-      <!-- Brain tab -->
-      <div class="left-tab-content" id="tab-brain">
-        <section class="col-section">
-          <div class="section-label">Neuromodulators</div>
-          <div class="nm-grid">
-            <div class="nm-row">
-              <div class="nm-head"><span class="nm-name">ACh</span><span class="nm-num" id="nm-num-ACh">0%</span></div>
-              <div class="nm-track"><div class="nm-fill" id="nm-ACh" style="background: oklch(0.78 0.14 200); width: 20%"></div></div>
-            </div>
-            <div class="nm-row">
-              <div class="nm-head"><span class="nm-name">DA</span><span class="nm-num" id="nm-num-DA">50%</span></div>
-              <div class="nm-track"><div class="nm-fill" id="nm-DA" style="background: oklch(0.80 0.16 85); width: 50%"></div></div>
-            </div>
-            <div class="nm-row">
-              <div class="nm-head"><span class="nm-name">GABA</span><span class="nm-num" id="nm-num-GABA">5%</span></div>
-              <div class="nm-track"><div class="nm-fill" id="nm-GABA" style="background: oklch(0.70 0.18 25); width: 5%"></div></div>
-            </div>
-            <div class="nm-row">
-              <div class="nm-head"><span class="nm-name">Glu</span><span class="nm-num" id="nm-num-Glu">30%</span></div>
-              <div class="nm-track"><div class="nm-fill" id="nm-Glu" style="background: oklch(0.78 0.16 145); width: 30%"></div></div>
-            </div>
-            <div class="nm-row">
-              <div class="nm-head"><span class="nm-name">NE</span><span class="nm-num" id="nm-num-NE">25%</span></div>
-              <div class="nm-track"><div class="nm-fill" id="nm-NE" style="background: oklch(0.75 0.16 300); width: 25%"></div></div>
-            </div>
-          </div>
-        </section>
+      <!-- Disposition / mood -->
+      <section class="col-section">
+        <div class="section-label">Disposition</div>
+        <div class="iv-mood">
+          <span class="mood-dot" id="mood-dot"></span>
+          <span class="iv-mood-name" id="mood-name">settling</span>
+        </div>
+      </section>
 
-        <section class="panel-section">
-          <h3 class="panel-label">Hormonal</h3>
+      <!-- Neuromodulators -->
+      <section class="col-section">
+        <div class="section-label">Neuromodulators</div>
+        <div class="nm-grid">
+          <div class="nm-row">
+            <div class="nm-head"><span class="nm-name">ACh</span><span class="nm-num" id="nm-num-ACh">0%</span></div>
+            <div class="nm-track"><div class="nm-fill" id="nm-ACh" style="background: oklch(0.78 0.14 200); width: 20%"></div></div>
+          </div>
+          <div class="nm-row">
+            <div class="nm-head"><span class="nm-name">DA</span><span class="nm-num" id="nm-num-DA">50%</span></div>
+            <div class="nm-track"><div class="nm-fill" id="nm-DA" style="background: oklch(0.80 0.16 85); width: 50%"></div></div>
+          </div>
+          <div class="nm-row">
+            <div class="nm-head"><span class="nm-name">GABA</span><span class="nm-num" id="nm-num-GABA">5%</span></div>
+            <div class="nm-track"><div class="nm-fill" id="nm-GABA" style="background: oklch(0.70 0.18 25); width: 5%"></div></div>
+          </div>
+          <div class="nm-row">
+            <div class="nm-head"><span class="nm-name">Glu</span><span class="nm-num" id="nm-num-Glu">30%</span></div>
+            <div class="nm-track"><div class="nm-fill" id="nm-Glu" style="background: oklch(0.78 0.16 145); width: 30%"></div></div>
+          </div>
+          <div class="nm-row">
+            <div class="nm-head"><span class="nm-name">NE</span><span class="nm-num" id="nm-num-NE">25%</span></div>
+            <div class="nm-track"><div class="nm-fill" id="nm-NE" style="background: oklch(0.75 0.16 300); width: 25%"></div></div>
+          </div>
           <div class="nm-row">
             <div class="nm-head"><span class="nm-name">5HT</span><span class="nm-num" id="nm-num-5HT">30%</span></div>
             <div class="nm-track"><div class="nm-fill" id="nm-5HT" style="background: oklch(0.80 0.14 85); width: 30%"></div></div>
@@ -3430,102 +3629,197 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
             <div class="nm-head"><span class="nm-name">AEA</span><span class="nm-num" id="nm-num-AEA">20%</span></div>
             <div class="nm-track"><div class="nm-fill" id="nm-AEA" style="background: oklch(0.72 0.16 145); width: 20%"></div></div>
           </div>
-        </section>
+        </div>
+      </section>
 
-        <section class="col-section">
-          <div class="section-label">Cortical Lobes <span class="count">5</span></div>
-          <div class="region-list" id="region-list-cortical"></div>
-        </section>
-
-        <section class="col-section">
-          <div class="section-label">Subcortical <span class="count">3</span></div>
-          <div class="region-list" id="region-list-subcortical"></div>
-        </section>
-
-        <section class="col-section">
-          <div class="section-label">Brainstem · Cerebellum <span class="count">2</span></div>
-          <div class="region-list" id="region-list-passive"></div>
-        </section>
-
-        <section class="pane log-pane" id="plasticity-pane">
-          <header class="pane-head">
-            <h3>Plasticity <span id="frozen-tag" style="display:none;color:#f9c46b;font-size:0.7em;margin-left:6px;">[FROZEN]</span></h3>
-          </header>
-          <div class="pane-body">
-            <div class="plast-stats">
-              <div class="plast-stat">
-                <div class="plast-stat-val" id="predictor-accuracy">—</div>
-                <div class="plast-stat-label">Predictor</div>
-              </div>
-              <div class="plast-stat">
-                <div class="plast-stat-val" id="plasticity-meter">1.00</div>
-                <div class="plast-stat-label">Plasticity</div>
-              </div>
-              <div class="plast-stat">
-                <div class="plast-stat-val" id="predictor-saved">0</div>
-                <div class="plast-stat-label">LLM saved</div>
-              </div>
-            </div>
-            <div class="plast-sub-label">Weight changes this session</div>
-            <div id="wiring-edges"></div>
-            <div class="plast-sub-label" style="margin-top:10px;">Decisions</div>
-            <div id="decisions-log">
-              <div class="log-empty">— no decisions yet —</div>
-            </div>
-          </div>
-        </section>
-      </div><!-- /#tab-brain -->
-
-      <!-- Thoughts tab -->
-      <div class="left-tab-content hidden" id="tab-thoughts">
+      <!-- Idle thoughts -->
+      <section class="col-section">
+        <div class="section-label">Idle thoughts <span class="count">default mode</span></div>
         <div id="thoughts-feed">
           <div class="log-empty">No thoughts yet…</div>
         </div>
-      </div>
+      </section>
+
+      <!-- Self-directed work -->
+      <section class="col-section">
+        <div class="section-label">Self-directed work
+          <span class="count"><span id="tasks-badge" class="right-tab-badge hidden">0</span>
+          <button id="tasks-clear-btn" class="btn-reset" style="font-size:9px;padding:2px 7px;margin-left:6px;" title="Clear completed jobs">Clear</button></span>
+        </div>
+        <div id="tasks-list">
+          <div class="tasks-empty">No active jobs.<br/>The brain will create one when it commits to an action.</div>
+        </div>
+      </section>
+
+      <!-- Plasticity -->
+      <section class="pane log-pane" id="plasticity-pane">
+        <header class="pane-head">
+          <h3>Plasticity <span id="frozen-tag" style="display:none;color:var(--signal);font-size:0.7em;margin-left:6px;">[FROZEN]</span></h3>
+        </header>
+        <div class="pane-body">
+          <div class="plast-stats">
+            <div class="plast-stat">
+              <div class="plast-stat-val" id="predictor-accuracy">—</div>
+              <div class="plast-stat-label">Predictor</div>
+            </div>
+            <div class="plast-stat">
+              <div class="plast-stat-val" id="plasticity-meter">1.00</div>
+              <div class="plast-stat-label">Plasticity</div>
+            </div>
+            <div class="plast-stat">
+              <div class="plast-stat-val" id="predictor-saved">0</div>
+              <div class="plast-stat-label">LLM saved</div>
+            </div>
+          </div>
+          <div class="plast-sub-label">Weight changes this session</div>
+          <div id="wiring-edges"></div>
+          <div class="plast-sub-label" style="margin-top:10px;">Decisions</div>
+          <div id="decisions-log">
+            <div class="log-empty">— no decisions yet —</div>
+          </div>
+        </div>
+      </section>
 
     </aside>
 
-    <!-- ----- CENTER: brain stage ----- -->
-    <main class="col col-mid">
-      <div class="brain-stage" id="brain-stage" data-view="anatomy">
-        <div id="mood-bg" aria-hidden="true"></div>
-        <div class="readout tl">
-          Cluster firing
-          <strong id="readout-cluster">—</strong>
+    <!-- ===================== CENTER: conversation ===================== -->
+    <main class="col col-mid convo">
+      <header class="convo-head">
+        <h2 class="convo-title">Conversation</h2>
+        <div class="head-meta">
+          <label class="voice-pill" title="ElevenLabs voice">
+            <span class="v-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 10v4"/><path d="M7 6v12"/><path d="M11 3v18"/><path d="M15 7v10"/><path d="M19 10v4"/>
+              </svg>
+            </span>
+            <span class="v-meta">
+              <span class="v-name" id="voice-name">Loading…</span>
+            </span>
+            <span class="v-chev">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+            </span>
+            <select id="voice-select" title="AI voice">
+              <option value="">— voice —</option>
+            </select>
+          </label>
         </div>
-        <div class="readout tr">
-          Active regions
-          <strong id="readout-active-count">0 / 10</strong>
+      </header>
+
+      <div class="pane-body" id="messages-wrap">
+        <div id="messages">
+          <div class="msg msg-system">Brain online</div>
         </div>
-        <div class="readout bl">
-          Turn id
-          <strong id="readout-turn">—</strong>
-        </div>
-        <div class="readout br">
-          Quality
-          <strong id="readout-quality">—</strong>
+        <div id="typing"><span>thinking</span><span class="dots"><span></span><span></span><span></span></span></div>
+      </div>
+
+      <!-- transcript bar — shown above input when mic is active -->
+      <div id="transcript-bar">
+        <span class="tx-label">Listening</span>
+        <span class="tx-text"></span>
+      </div>
+
+      <!-- input bar -->
+      <div id="control-bar">
+        <div id="input-mode-bar">
+          <button id="interrupt-btn" title="Stop AI speaking" aria-label="Interrupt">
+            <svg viewBox="0 0 24 24" fill="currentColor" stroke="none">
+              <rect x="5" y="5" width="14" height="14" rx="2"/>
+            </svg>
+            Stop
+          </button>
+          <button id="mic-btn" class="muted" title="Press Space to talk" aria-label="Input mode">
+            <div class="mode-thumb"></div>
+            <span class="mode-side mode-mic">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="9" y="2" width="6" height="12" rx="3"/>
+                <path d="M5 10v2a7 7 0 0 0 14 0v-2"/>
+                <line x1="12" y1="19" x2="12" y2="22"/>
+              </svg>
+              Mic
+            </span>
+            <span class="mode-side mode-kbd">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="2" y="6" width="20" height="12" rx="2"/>
+                <path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8"/>
+              </svg>
+              Text
+            </span>
+          </button>
+          <div id="user-mood-wrap">
+            <span id="user-mood-label">you seem</span>
+            <span id="user-emotion-badge">neutral</span>
+          </div>
         </div>
 
-        <div class="brain-figure">
-          <img src="brain-anatomy.png" class="brain-base" alt="Brain anatomy" />
-          <img id="region-frontal"    class="region lobe-overlay" src="brain-frontal.png"    alt="" style="--lobe: var(--frontal);    --lobe-glow: oklch(0.72 0.13 235);" />
-          <img id="region-motor"      class="region lobe-overlay" src="brain-motor.png"      alt="" style="--lobe: var(--motor);      --lobe-glow: oklch(0.66 0.20 15);" />
-          <img id="region-parietal"   class="region lobe-overlay" src="brain-parietal.png"   alt="" style="--lobe: var(--parietal);   --lobe-glow: oklch(0.78 0.16 145);" />
-          <img id="region-occipital"  class="region lobe-overlay" src="brain-occipital.png"  alt="" style="--lobe: var(--occipital);  --lobe-glow: oklch(0.70 0.16 300);" />
-          <img id="region-temporal"   class="region lobe-overlay" src="brain-temporal.png"   alt="" style="--lobe: var(--temporal);   --lobe-glow: oklch(0.80 0.14 75);" />
-          <img id="region-cerebellum" class="region lobe-overlay" src="brain-cerebellum.png" alt="" style="--lobe: var(--cerebellum); --lobe-glow: oklch(0.78 0.14 200);" />
-          <img id="region-brainstem"  class="region lobe-overlay" src="brain-brainstem.png"  alt="" style="--lobe: var(--brainstem);  --lobe-glow: oklch(0.70 0.15 40);" />
-
-          <img id="region-thalamus"      class="region lobe-overlay masked-key-color" src="brain-thalamus.png"      alt="" style="--lobe: var(--thalamus);     --lobe-glow: oklch(0.9 0.02 250);" />
-          <img id="region-hypothalamus" class="inner-always-visible lobe-overlay masked-key-color always-keyed" src="brain-hypothalamus.png" alt="" style="--lobe: var(--hypothalamus); --lobe-glow: oklch(0.75 0.20 40);" />
-          <img id="region-hippocampus"  class="region lobe-overlay masked-key-color" src="brain-hippocampus.png"  alt="" style="--lobe: var(--hippocampus);  --lobe-glow: oklch(0.78 0.16 175);" />
-
-          <svg class="brain-subcortical" viewBox="0 0 942 867" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">
-            <!-- No remaining SVG subcortical shapes — all are now PNG images -->
-          </svg>
+        <div class="input-wrap">
+          <label id="img-attach-btn" for="img-file-input" title="Attach image">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+              <circle cx="8.5" cy="8.5" r="1.5"/>
+              <polyline points="21 15 16 10 5 21"/>
+            </svg>
+          </label>
+          <input type="file" id="img-file-input" accept="image/*" style="display:none">
+          <div id="img-preview-chip">
+            <img id="img-preview-thumb" alt="attached image">
+            <button id="img-remove-btn" title="Remove image">×</button>
+          </div>
+          <textarea id="msg-input" rows="4" placeholder="Speak, or write a line…"></textarea>
+          <button id="send-btn" disabled title="Send (Enter)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+          </button>
         </div>
+      </div>
 
-        <!-- ===== NEURAL MAP — alternate view ===== -->
+      <!-- collapse toggles — sit on the edges of the central column -->
+      <button class="col-toggle col-toggle-left"  id="toggle-left"  title="Toggle left panel"  aria-label="Toggle left panel">
+        <svg id="icon-left" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="6,2 3,5 6,8"/></svg>
+      </button>
+      <button class="col-toggle col-toggle-right" id="toggle-right" title="Toggle right panel" aria-label="Toggle right panel">
+        <svg id="icon-right" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="4,2 7,5 4,8"/></svg>
+      </button>
+    </main>
+
+    <!-- ===================== RIGHT: specimen ===================== -->
+    <aside class="col col-right rail-specimen" id="rail-specimen">
+
+      <!-- FIG. 1 — anatomy plate -->
+      <div class="spec-plate">
+        <div class="spec-plate-top">
+          <span class="spec-fig"><b>FIG. 1</b> — anatomy</span>
+          <span class="spec-aspect" id="readout-active-count">0 / 10</span>
+        </div>
+        <div class="brain-stage" id="brain-stage" data-view="anatomy">
+          <div id="mood-bg" aria-hidden="true"></div>
+          <div class="brain-figure">
+            <img src="brain-anatomy.png" class="brain-base" alt="Brain anatomy" />
+            <img id="region-frontal"    class="region lobe-overlay" src="brain-frontal.png"    alt="" style="--lobe: var(--frontal);    --lobe-glow: var(--frontal);" />
+            <img id="region-motor"      class="region lobe-overlay" src="brain-motor.png"      alt="" style="--lobe: var(--motor);      --lobe-glow: var(--motor);" />
+            <img id="region-parietal"   class="region lobe-overlay" src="brain-parietal.png"   alt="" style="--lobe: var(--parietal);   --lobe-glow: var(--parietal);" />
+            <img id="region-occipital"  class="region lobe-overlay" src="brain-occipital.png"  alt="" style="--lobe: var(--occipital);  --lobe-glow: var(--occipital);" />
+            <img id="region-temporal"   class="region lobe-overlay" src="brain-temporal.png"   alt="" style="--lobe: var(--temporal);   --lobe-glow: var(--temporal);" />
+            <img id="region-cerebellum" class="region lobe-overlay" src="brain-cerebellum.png" alt="" style="--lobe: var(--cerebellum); --lobe-glow: var(--cerebellum);" />
+            <img id="region-brainstem"  class="region lobe-overlay" src="brain-brainstem.png"  alt="" style="--lobe: var(--brainstem);  --lobe-glow: var(--brainstem);" />
+
+            <img id="region-thalamus"      class="region lobe-overlay masked-key-color" src="brain-thalamus.png"      alt="" style="--lobe: var(--thalamus);     --lobe-glow: var(--thalamus);" />
+            <img id="region-hypothalamus" class="inner-always-visible lobe-overlay masked-key-color always-keyed" src="brain-hypothalamus.png" alt="" style="--lobe: var(--hypothalamus); --lobe-glow: var(--hypothalamus);" />
+            <img id="region-hippocampus"  class="region lobe-overlay masked-key-color" src="brain-hippocampus.png"  alt="" style="--lobe: var(--hippocampus);  --lobe-glow: var(--hippocampus);" />
+
+            <svg class="brain-subcortical" viewBox="0 0 942 867" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg"></svg>
+          </div>
+        </div>
+        <div class="spec-cap">
+          Shaded by functional cluster; colour saturates with live activation.
+          <span class="spec-readout"><span class="spec-readout-k">firing</span> <strong id="readout-cluster">—</strong></span>
+        </div>
+      </div>
+
+      <!-- FIG. 2 — neural map (signal schematic) -->
+      <div class="spec-plate">
+        <div class="spec-plate-top">
+          <span class="spec-fig"><b>FIG. 2</b> — schematic</span>
+        </div>
         <div id="neural-map" aria-label="Neural process-flow map">
           <div class="nm-wrap" id="nm-wrap">
             <div class="nm-meta">
@@ -3545,129 +3839,24 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
             </div>
           </div>
         </div>
-
-        <button class="col-toggle col-toggle-left"  id="toggle-left"  title="Toggle left panel"  aria-label="Toggle left panel">
-          <svg id="icon-left" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="6,2 3,5 6,8"/></svg>
-        </button>
-        <button class="col-toggle col-toggle-right" id="toggle-right" title="Toggle right panel" aria-label="Toggle right panel">
-          <svg id="icon-right" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="4,2 7,5 4,8"/></svg>
-        </button>
-      </div>
-    </main>
-
-    <!-- ----- RIGHT: response + input ----- -->
-    <aside class="col col-right">
-      <!-- Tab nav -->
-      <div class="right-tabs">
-        <button class="right-tab active" data-tab="chat">Chat</button>
-        <button class="right-tab" data-tab="tasks">Tasks<span class="right-tab-badge hidden" id="tasks-badge">0</span></button>
+        <div class="spec-cap">Signal flow between clusters; firing paths pulse in the region's colour.</div>
       </div>
 
-      <!-- Chat tab content (existing pane intact) -->
-      <div class="right-tab-content" id="right-tab-chat">
-      <div class="right-stack">
-        <section class="pane" style="flex:1;min-height:0;">
-          <header class="pane-head">
-            <h3>AI Response</h3>
-            <div class="head-meta">
-              <label class="voice-pill" title="ElevenLabs voice">
-                <span class="v-icon">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M3 10v4"/><path d="M7 6v12"/><path d="M11 3v18"/><path d="M15 7v10"/><path d="M19 10v4"/>
-                  </svg>
-                </span>
-                <span class="v-meta">
-                  <span class="v-name" id="voice-name">Loading…</span>
-                </span>
-                <span class="v-chev">
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
-                </span>
-                <select id="voice-select" title="AI voice">
-                  <option value="">— voice —</option>
-                </select>
-              </label>
-            </div>
-          </header>
-          <div class="pane-body" id="messages-wrap">
-            <div id="messages">
-              <div class="msg msg-system">Brain online</div>
-            </div>
-            <div id="typing"><span>thinking</span><span class="dots"><span></span><span></span><span></span></span></div>
-          </div>
-          <!-- transcript bar — shown above input when mic is active -->
-          <div id="transcript-bar">
-            <span class="tx-label">Listening</span>
-            <span class="tx-text"></span>
-          </div>
-          <!-- input bar — now part of the right panel -->
-          <div id="control-bar">
-            <div id="input-mode-bar">
-              <button id="interrupt-btn" title="Stop AI speaking" aria-label="Interrupt">
-                <svg viewBox="0 0 24 24" fill="currentColor" stroke="none">
-                  <rect x="5" y="5" width="14" height="14" rx="2"/>
-                </svg>
-                Stop
-              </button>
-              <button id="mic-btn" class="muted" title="Press Space to talk" aria-label="Input mode">
-                <div class="mode-thumb"></div>
-                <span class="mode-side mode-mic">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <rect x="9" y="2" width="6" height="12" rx="3"/>
-                    <path d="M5 10v2a7 7 0 0 0 14 0v-2"/>
-                    <line x1="12" y1="19" x2="12" y2="22"/>
-                  </svg>
-                  Mic
-                </span>
-                <span class="mode-side mode-kbd">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <rect x="2" y="6" width="20" height="12" rx="2"/>
-                    <path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8"/>
-                  </svg>
-                  Text
-                </span>
-              </button>
-              <div id="user-mood-wrap">
-                <span id="user-mood-label">you seem</span>
-                <span id="user-emotion-badge">neutral</span>
-              </div>
-            </div>
+      <!-- Region index -->
+      <section class="col-section">
+        <div class="section-label">Regions <span class="count">№ 10</span></div>
+        <div class="idx-sub">Cortical lobes</div>
+        <div class="region-list" id="region-list-cortical"></div>
+        <div class="idx-sub">Subcortical</div>
+        <div class="region-list" id="region-list-subcortical"></div>
+        <div class="idx-sub">Brainstem · Cerebellum</div>
+        <div class="region-list" id="region-list-passive"></div>
+      </section>
 
-            <div class="input-wrap">
-              <label id="img-attach-btn" for="img-file-input" title="Attach image">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
-                  <circle cx="8.5" cy="8.5" r="1.5"/>
-                  <polyline points="21 15 16 10 5 21"/>
-                </svg>
-              </label>
-              <input type="file" id="img-file-input" accept="image/*" style="display:none">
-              <div id="img-preview-chip">
-                <img id="img-preview-thumb" alt="attached image">
-                <button id="img-remove-btn" title="Remove image">×</button>
-              </div>
-              <textarea id="msg-input" rows="4" placeholder="Type a message, or press Space to speak…"></textarea>
-              <button id="send-btn" disabled title="Send (Enter)">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
-              </button>
-            </div>
-          </div>
-        </section>
-      </div>
-      </div><!-- /#right-tab-chat -->
-
-      <!-- Tasks tab content -->
-      <div class="right-tab-content hidden" id="right-tab-tasks">
-        <section class="pane" style="flex:1;min-height:0;">
-          <header class="pane-head">
-            <h3>Tasks</h3>
-            <div class="head-meta">
-              <button id="tasks-clear-btn" class="btn-reset" style="font-size:10px;padding:3px 8px;" title="Clear completed jobs">Clear done</button>
-            </div>
-          </header>
-          <div class="pane-body" id="tasks-list">
-            <div class="tasks-empty">No active jobs.<br/>The brain will create one when it commits to an action.</div>
-          </div>
-        </section>
+      <!-- hidden readouts kept for JS (turn id + quality still written) -->
+      <div style="display:none">
+        <span id="readout-turn">—</span>
+        <span id="readout-quality">—</span>
       </div>
     </aside>
 
@@ -4137,9 +4326,73 @@ function connect() {
 
   ws.onerror = () => ws && ws.close();
   ws.onmessage = (ev) => {
+    if (ev.data instanceof ArrayBuffer) {
+      handleBinaryAudio(ev.data);
+      return;
+    }
+    if (ev.data instanceof Blob) {
+      ev.data.arrayBuffer().then(handleBinaryAudio);
+      return;
+    }
     try { handle(JSON.parse(ev.data)); }
     catch (e) { /* ignore */ }
   };
+  ws.binaryType = 'arraybuffer';
+}
+
+// ── Browser TTS audio playback (BRAIN_AUDIO_OUTPUT_DEVICE=browser) ───────────
+let _audioCtx = null;
+let _audioScheduledUntil = 0;  // AudioContext.currentTime when next chunk should start
+const AUDIO_SAMPLE_RATE = 22050;
+
+function _getAudioCtx() {
+  if (!_audioCtx || _audioCtx.state === 'closed') {
+    _audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: AUDIO_SAMPLE_RATE });
+    _audioScheduledUntil = 0;
+  }
+  if (_audioCtx.state === 'suspended') _audioCtx.resume();
+  return _audioCtx;
+}
+
+function handleBinaryAudio(buf) {
+  if (buf.byteLength < 2) return;
+  const view = new Uint8Array(buf);
+  const frameType = view[0];
+
+  if (frameType === 0xff) {
+    // Interrupt: stop all scheduled audio immediately
+    if (_audioCtx) {
+      _audioCtx.close();
+      _audioCtx = null;
+      _audioScheduledUntil = 0;
+    }
+    return;
+  }
+
+  if (frameType !== 0x01) return;  // unknown frame type
+
+  // PCM int16 LE, 22050 Hz, mono — skip the 1-byte prefix
+  const pcmBytes = buf.slice(1);
+  if (pcmBytes.byteLength === 0) return;
+
+  const ctx = _getAudioCtx();
+  const numSamples = pcmBytes.byteLength / 2;
+  const audioBuffer = ctx.createBuffer(1, numSamples, AUDIO_SAMPLE_RATE);
+  const channelData = audioBuffer.getChannelData(0);
+  const int16 = new Int16Array(pcmBytes);
+  for (let i = 0; i < numSamples; i++) {
+    channelData[i] = int16[i] / 32768.0;
+  }
+
+  const source = ctx.createBufferSource();
+  source.buffer = audioBuffer;
+  source.connect(ctx.destination);
+
+  // Schedule gaplessly: start at the end of the last scheduled chunk
+  const now = ctx.currentTime;
+  const startAt = Math.max(now, _audioScheduledUntil);
+  source.start(startAt);
+  _audioScheduledUntil = startAt + audioBuffer.duration;
 }
 
 function sendMessage(text) {
@@ -4332,6 +4585,15 @@ function handle(msg) {
     case 'transcript':       handleTranscriptEvent(msg); break;
     case 'transcript_error': handleTranscriptError(msg); break;
     case 'tts_error':        handleTtsError(msg); break;
+    case 'tts_interrupt': {
+      // Hard stop — discard all buffered audio immediately
+      if (_audioCtx) { _audioCtx.close(); _audioCtx = null; _audioScheduledUntil = 0; }
+      break;
+    }
+    case 'tts_end': {
+      // TTS stream finished naturally — audio will drain on its own schedule
+      break;
+    }
     case 'mic_state':        handleMicState(msg.status); break;
     case 'decision':         handleDecisionEvent(msg); break;
     case 'wiring_status': {

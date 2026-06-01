@@ -213,9 +213,16 @@ class _SetupMixin:
         )
         ui_server.set_wiring_frozen(self._wiring_frozen)
         self.brainstem.register_loop(
-            "ui_server", lambda: ui_server.start(port=8765), restart_on_crash=False
+            "ui_server", lambda: ui_server.start(), restart_on_crash=False
         )
         self._ui_server = ui_server
+
+        # Wire TTS chunks to the browser when in browser audio mode
+        from brain.pns import BROWSER_AUDIO_MODE
+        if BROWSER_AUDIO_MODE:
+            ui_server.attach_tts_queue(self.pns)
+            logger.info("TTS audio routed to browser WebSocket")
+
         await asyncio.sleep(0.3)
 
         # Emit initial chemistry + emotion so the UI shows the correct resting
