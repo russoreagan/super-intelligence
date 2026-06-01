@@ -647,10 +647,11 @@ class PNS:
                             for i, sentence in enumerate(sentences):
                                 if self._interrupt_event.is_set():
                                     break
-                                # Request stitching: tell v3 what came right before
-                                # and after this chunk so prosody/emotion carries
-                                # across the chunk boundaries instead of resetting.
-                                convert_kwargs = {
+                                # Use the streaming endpoint (/stream) — it properly
+                                # supports previous_text/next_text for prosody stitching
+                                # across chunk boundaries (the non-streaming /convert
+                                # endpoint rejects those params on eleven_v3).
+                                stream_kwargs = {
                                     "text": sentence,
                                     "voice_id": voice_id,
                                     "model_id": model_id,
@@ -658,21 +659,37 @@ class PNS:
                                     "voice_settings": voice_settings,
                                 }
                                 if i > 0:
-                                    convert_kwargs["previous_text"] = sentences[i - 1]
+                                    stream_kwargs["previous_text"] = sentences[i - 1]
                                 if i + 1 < len(sentences):
-                                    convert_kwargs["next_text"] = sentences[i + 1]
+                                    stream_kwargs["next_text"] = sentences[i + 1]
+                                audio_iter = None
                                 try:
-                                    audio_iter = client.text_to_speech.convert(**convert_kwargs)
-                                except TypeError:
-                                    # Older SDK without previous_text/next_text — retry plain.
-                                    convert_kwargs.pop("previous_text", None)
-                                    convert_kwargs.pop("next_text", None)
-                                    audio_iter = client.text_to_speech.convert(**convert_kwargs)
-                                async for chunk in audio_iter:
-                                    if self._interrupt_event.is_set():
-                                        break
-                                    if chunk:
-                                        await audio_queue.put(chunk)
+                                    try:
+                                        audio_iter = client.text_to_speech.stream(**stream_kwargs)
+                                    except TypeError:
+                                        stream_kwargs.pop("previous_text", None)
+                                        stream_kwargs.pop("next_text", None)
+                                        audio_iter = client.text_to_speech.stream(**stream_kwargs)
+                                    async for chunk in audio_iter:
+                                        if self._interrupt_event.is_set():
+                                            break
+                                        if chunk:
+                                            await audio_queue.put(chunk)
+                                except Exception as _sent_err:
+                                    logger.error(
+                                        "[I/O] TTS sentence %d/%d failed (%s: %s) — skipping",
+                                        i + 1, len(sentences),
+                                        type(_sent_err).__name__, _sent_err,
+                                    )
+                                    self._emit_tts_error(
+                                        f"Sentence {i+1} failed: {type(_sent_err).__name__}"
+                                    )
+                                finally:
+                                    # Release the async generator's HTTP connection even
+                                    # if we broke out early (interrupt or exception).
+                                    if audio_iter is not None:
+                                        with contextlib.suppress(Exception):
+                                            await audio_iter.aclose()
                         finally:
                             await audio_queue.put(None)  # sentinel — playback done
 
@@ -707,13 +724,20 @@ class PNS:
                                     model_id,
                                     len(sentences),
                                 )
-                            await asyncio.get_event_loop().run_in_executor(
+                            await asyncio.get_running_loop().run_in_executor(
                                 None, stream.write, chunk
                             )
                     finally:
                         producer_task.cancel()
-                        with contextlib.suppress(asyncio.CancelledError, Exception):
+                        try:
                             await producer_task
+                        except asyncio.CancelledError:
+                            pass
+                        except Exception as _prod_err:
+                            logger.warning(
+                                "[I/O] TTS producer exited with error: %s: %s",
+                                type(_prod_err).__name__, _prod_err,
+                            )
                         if self._interrupt_event.is_set():
                             stream.abort()  # drop the buffer immediately
                         else:
