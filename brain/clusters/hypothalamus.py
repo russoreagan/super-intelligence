@@ -240,6 +240,11 @@ class HypothalamusCluster:
         else:
             self._satiation_inhibitor.update(settings.get("salience_satiation_decrease"))
 
+        # Habituation: sustained familiarity (high satiation) raises GABA slightly —
+        # represents the inhibitory signal of "I know this territory" settling in.
+        if self._satiation_inhibitor.state > settings.get("satiation_gaba_threshold"):
+            nm.add("GABA", settings.get("satiation_gaba_increment") * turns)
+
         # ── Prosody modulation (from auditory cortex, if active) ──────────────
         # Drain expired messages; use most recent valid prosody
         prosody_tone = None
@@ -442,8 +447,12 @@ class HypothalamusCluster:
             settings.get("oxt_da_lift"),
             settings.get("cort_da_suppress"),
         )
+        aea_suppress = (
+            max(0.0, h_snap["AEA"] - settings.get("aea_da_suppress_threshold"))
+            * settings.get("aea_da_suppress")
+        )
         eff_DA = max(
-            0.0, min(1.0, snap["DA"] + da_offset + h_snap["AEA"] * settings.get("aea_da_lift"))
+            0.0, min(1.0, snap["DA"] + da_offset + h_snap["AEA"] * settings.get("aea_da_lift") - aea_suppress)
         )
         eff_GABA = max(
             0.0,

@@ -24,8 +24,17 @@ Return JSON: {
   "target_length": string,   // brief (1-2 sentences) | medium (3-5) | detailed (6+)
   "tone": string,            // warm | neutral | direct | careful | curious
   "key_points": [string],    // 1-3 things the response must address
-  "drafter_count": int       // 1, 2, or 3
+  "drafter_count": int       // 1, 2, or 3 — see DRAFTERS below
 }
+
+DRAFTERS — default is 3. Scale based on stakes and complexity:
+- 3 (default): the vast majority of turns — conversation, opinions, recall, emotional exchanges, anything nuanced
+- 2: simple factual questions, short informational replies, low-stakes chitchat
+- 1: pure greetings ("hey", "thanks"), one-word acks, turns where speed matters more than variety
+- 4: rare — genuine emotional crisis, a consequential decision the user is wrestling with, a question where a wrong response could cause real harm
+- 5: very rare — acute distress, the user is clearly in a difficult moment and the response must be exactly right
+
+4 and 5 should be uncommon. Don't inflate to 4-5 just because a topic is complex or interesting — use them only when the stakes of getting it wrong are meaningfully high.
 
 LENGTH — reason about it from two signals, then pick the shortest option that genuinely serves the moment:
 
@@ -254,6 +263,18 @@ Write a warm, contextually-aware response that references prior context naturall
     _DRAFTER_IDENTITY
     + """
 Write a thoughtful, precise response. Be specific. Acknowledge complexity if it exists. Follow the drafting instruction. No preamble."""
+    + "\n\n"
+    + FENCE_SYSTEM_ADDENDUM,
+    # Drafter D — emotionally attuned
+    _DRAFTER_IDENTITY
+    + """
+Write a response that leads with emotional attunement — meet the user where they are before addressing content. Follow the drafting instruction. No preamble."""
+    + "\n\n"
+    + FENCE_SYSTEM_ADDENDUM,
+    # Drafter E — creative and unexpected
+    _DRAFTER_IDENTITY
+    + """
+Write a response that takes an unexpected angle — a fresh framing, an analogy, or a perspective the user hasn't considered. Surprising but grounded. Follow the drafting instruction. No preamble."""
     + "\n\n"
     + FENCE_SYSTEM_ADDENDUM,
 ]

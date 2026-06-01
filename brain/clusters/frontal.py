@@ -112,7 +112,7 @@ class FrontalCluster:
                 locality="cloud",
                 max_tokens=768,
             )
-            for i in range(3)
+            for i in range(5)
         ]
         for d in self._drafters:
             d.set_router(router)
@@ -683,7 +683,7 @@ class FrontalCluster:
         image_path: str | None = None,
     ) -> str:
         """Drafter cascade + critic selection. Returns the committed response text."""
-        drafter_count = min(int(instruction.get("drafter_count", 1)), 3)
+        drafter_count = min(int(instruction.get("drafter_count", 3)), 5)
         glu_deficit = 1.0 - nm["Glu"]
         if self._arousal_modulator.should_fire(glu_deficit, chem, turn_id):
             self._arousal_modulator.fire(

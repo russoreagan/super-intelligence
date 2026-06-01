@@ -73,8 +73,10 @@ class Neuromodulators:
             not just general activation)
     """
 
-    DECAY = 0.85  # per-turn decay multiplier
     CHANNELS = ("ACh", "DA", "GABA", "Glu", "NE")
+    # Per-channel decay multipliers. ACh decays faster (attention novelty is
+    # transient); others keep the original 0.85. Configurable via settings.
+    _DEF_DECAY = {"ACh": 0.78, "DA": 0.85, "GABA": 0.85, "Glu": 0.85, "NE": 0.85}
     # Absolute safety bounds — values can never sit below these regardless of
     # baseline. Distinct from the resting baseline (which is the homeostatic
     # setpoint and is persona-configurable). Rarely binding.
@@ -93,6 +95,9 @@ class Neuromodulators:
         }
         self._levels: dict[str, float] = {
             ch: float(_s.get(f"chem_init_{ch}", self._DEF_INIT[ch])) for ch in self.CHANNELS
+        }
+        self._decay: dict[str, float] = {
+            ch: float(_s.get(f"chem_decay_{ch}", self._DEF_DECAY[ch])) for ch in self.CHANNELS
         }
         self._model: str = str(_s.get("chem_decay_model", "baseline"))
         # ── flock_dynamics: per-turn trajectory (derivative) of each channel ──
@@ -133,8 +138,8 @@ class Neuromodulators:
             one settles gradually. "floor": legacy clamp that snaps anything
             below baseline back up in a single turn (kept for regression/rollback).
         """
-        rate = self.DECAY**turns
         for ch in self.CHANNELS:
+            rate = self._decay[ch] ** turns
             b = self._baseline[ch]
             if self._model == "floor":
                 lvl = max(b, self._levels[ch] * rate)

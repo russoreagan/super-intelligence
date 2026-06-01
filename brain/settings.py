@@ -22,7 +22,7 @@ SETTINGS_PATH = Path(__file__).parent / "settings.json"
 DEFAULTS: dict[str, float | int | str] = {
     # ── Section 1: Emotional Reactivity ──────────────────────────────────────
     "emotional_reactivity_scale": 1.00,
-    "sentiment_DA_weight": 0.15,
+    "sentiment_DA_weight": 0.10,
     "hostility_DA_weight": 0.10,
     "surprise_ACh_weight": 0.12,
     "salience_ACh_weight": 0.08,
@@ -236,8 +236,14 @@ DEFAULTS: dict[str, float | int | str] = {
     "aea_glu_suppression": 0.35,  # excess AEA × this reduces effective Glu scale
     # AEA → DA lift ("afterglow": elevated AEA adds mild positive valence)
     "aea_da_lift": 0.04,  # AEA × this added to effective DA
+    # AEA → DA suppress (plateau effect: sustained high AEA caps excitement)
+    "aea_da_suppress_threshold": 0.50,  # AEA above this starts capping effective DA
+    "aea_da_suppress": 0.15,  # (AEA - threshold) × this subtracted from effective DA
     # AEA color threshold (when elevated AEA buffers a stress state → "eased")
     "aea_eased_threshold": 0.58,  # AEA > this + stress base emotion → eased
+    # Satiation → GABA habituation trickle (familiarity/boredom inhibitory signal)
+    "satiation_gaba_threshold": 0.60,  # satiation state above this triggers GABA trickle
+    "satiation_gaba_increment": 0.015,  # GABA added per turn when saturated with familiar topics
     # ── Section: Switch Modulation ────────────────────────────────────────────
     # Single gain that scales every SwitchNeuron's modulator coefficient.
     # 0.0 = chemistry has no effect on switches (pure deterministic gating).
