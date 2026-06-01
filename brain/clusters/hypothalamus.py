@@ -60,6 +60,7 @@ class HypothalamusCluster:
         # Auditory prosody input (published by auditory cortex when --ears active)
         self._prosody_inbox = bus.subscribe("auditory.prosody")
         self._dynamics_inbox = bus.subscribe("auditory.speech_dynamics")
+        self._music_inbox = bus.subscribe("auditory.music")
         # Metacognition's per-turn appraisal can override the neuromod-derived
         # emotion label for context-driven emotions (apologetic, grateful,
         # embarrassed, flirty, etc.) that pure neuromods can't produce.
@@ -299,6 +300,39 @@ class HypothalamusCluster:
                 pace,
                 dynamics.get("long_pause_count", 0),
                 dynamics.get("hesitant"),
+            )
+
+        # ── Music features (background audio — softer deltas than speech) ────────
+        music: dict | None = None
+        while True:
+            try:
+                m_msg = self._music_inbox.get_nowait()
+                if not m_msg.expired:
+                    music = m_msg.payload
+            except asyncio.QueueEmpty:
+                break
+
+        if music:
+            mood = music.get("mood_label", "calm")
+            if mood == "energetic":
+                nm.add("Glu", 0.05)
+                nm.add("DA", 0.04)
+            elif mood == "bright":
+                nm.add("DA", 0.05)
+                nm.add("ACh", 0.02)
+            elif mood == "tense":
+                nm.add("GABA", 0.04)
+                nm.add("NE", 0.03)
+            elif mood == "melancholic":
+                nm.add("DA", -0.03)
+            elif mood == "calm":
+                nm.add("Glu", -0.02)
+            logger.debug(
+                "Hypothalamus: music mood=%s bpm=%.0f key=%s%s",
+                mood,
+                music.get("bpm", 0),
+                music.get("key", "?"),
+                music.get("mode", ""),
             )
 
         # ── Text paralinguistics (text turns only; skipped when prosody arrived) ──

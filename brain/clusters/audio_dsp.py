@@ -457,6 +457,129 @@ def label_prosody_tone(features: dict, baseline: dict | None = None) -> str:
         return "calm"
 
 
+# ── Music feature extraction ───────────────────────────────────────────────────
+
+_NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+
+
+def extract_music_features(audio: np.ndarray, sr: int) -> dict:
+    """Extract music-domain features from a raw PCM buffer.
+
+    Runs entirely in librosa — no additional deps beyond what prosody already
+    needs. Returns auditory.music payload dict.
+
+    Features:
+      bpm                  Estimated tempo in beats per minute
+      bpm_confidence       Beat strength 0–1
+      key                  Most likely tonic: 'C', 'C#', … 'B'
+      mode                 'major' | 'minor'
+      spectral_centroid    Mean spectral centroid in Hz (brightness)
+      spectral_rolloff     Mean 85% rolloff in Hz (spectral weight)
+      rms_mean             Mean RMS energy
+      rms_std              RMS standard deviation (dynamic range)
+      onset_rate           Onsets per second (rhythmic density)
+      mfcc_mean            First 13 MFCCs (timbre fingerprint)
+      mood_label           energetic | bright | tense | melancholic | calm
+    """
+    base: dict = {
+        "bpm": 0.0,
+        "bpm_confidence": 0.0,
+        "key": "C",
+        "mode": "major",
+        "spectral_centroid": 0.0,
+        "spectral_rolloff": 0.0,
+        "rms_mean": float(np.sqrt(np.mean(audio ** 2))),
+        "rms_std": 0.0,
+        "onset_rate": 0.0,
+        "mfcc_mean": [],
+        "mood_label": "calm",
+    }
+
+    if base["rms_mean"] < SILENCE_RMS:
+        return base
+
+    try:
+        import librosa
+
+        # ── Tempo / BPM ──
+        # onset_envelope gives a smoother tempo estimate than raw beat_track on
+        # short clips; pulse strength from the autocorrelation peak is confidence.
+        onset_env = librosa.onset.onset_strength(y=audio, sr=sr)
+        tempo_arr, beats = librosa.beat.beat_track(onset_envelope=onset_env, sr=sr)
+        bpm = float(np.atleast_1d(tempo_arr)[0])
+        conf = float(np.mean(onset_env[beats]) / (np.max(onset_env) + 1e-9)) if len(beats) > 1 else 0.0
+        base["bpm"] = bpm
+        base["bpm_confidence"] = round(conf, 3)
+
+        # ── Key + Mode via chroma ──
+        # CQT chroma is more key-stable than STFT chroma on short clips.
+        chroma = librosa.feature.chroma_cqt(y=audio, sr=sr)
+        chroma_mean = chroma.mean(axis=1)          # (12,) — C through B
+        key_idx = int(np.argmax(chroma_mean))
+        base["key"] = _NOTE_NAMES[key_idx]
+        # Major vs minor: compare energy of major 3rd (4 semitones) vs minor 3rd (3 semitones)
+        major_3rd = float(chroma_mean[(key_idx + 4) % 12])
+        minor_3rd = float(chroma_mean[(key_idx + 3) % 12])
+        base["mode"] = "major" if major_3rd >= minor_3rd else "minor"
+
+        # ── Spectral shape ──
+        sc = librosa.feature.spectral_centroid(y=audio, sr=sr)[0]
+        base["spectral_centroid"] = float(np.mean(sc))
+        ro = librosa.feature.spectral_rolloff(y=audio, sr=sr, roll_percent=0.85)[0]
+        base["spectral_rolloff"] = float(np.mean(ro))
+
+        # ── Energy dynamics ──
+        rms_frames = librosa.feature.rms(y=audio, hop_length=512)[0]
+        base["rms_mean"] = float(np.mean(rms_frames))
+        base["rms_std"] = float(np.std(rms_frames))
+
+        # ── Rhythmic density ──
+        duration = len(audio) / max(sr, 1)
+        onsets = librosa.onset.onset_detect(onset_envelope=onset_env, sr=sr, units="time")
+        base["onset_rate"] = float(len(onsets) / max(duration, 0.001))
+
+        # ── Timbre (MFCCs 1–13) ──
+        mfccs = librosa.feature.mfcc(y=audio, sr=sr, n_mfcc=13)
+        base["mfcc_mean"] = [round(float(v), 3) for v in mfccs.mean(axis=1)]
+
+        base["mood_label"] = _label_music_mood(base)
+
+    except ImportError:
+        pass
+    except Exception as e:
+        logger.debug("Auditory DSP: music feature extraction error: %s", e)
+
+    return base
+
+
+def _label_music_mood(f: dict) -> str:
+    """Map music features to a mood label.
+
+    BPM and mode are the primary signals; spectral centroid refines within each
+    quadrant. Deliberately coarse — intended as a soft neuromod hint, not a
+    music-theory classifier.
+    """
+    bpm = f.get("bpm", 0.0)
+    mode = f.get("mode", "major")
+    energy = f.get("rms_mean", 0.0)
+    centroid = f.get("spectral_centroid", 0.0)
+
+    if energy < SILENCE_RMS * 10:
+        return "calm"
+
+    if mode == "minor":
+        if bpm > 100 or centroid > 3000:
+            return "tense"
+        return "melancholic"
+
+    # major
+    if bpm > 120 and energy > 0.05:
+        return "energetic"
+    if centroid > 3500 or bpm > 100:
+        return "bright"
+    return "calm"
+
+
 # Threshold (seconds) above which an inter-word gap counts as a "long pause"
 _LONG_PAUSE_S = 0.5
 

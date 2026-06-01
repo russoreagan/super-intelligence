@@ -42,6 +42,7 @@ from brain.clusters.audio_dsp import (
     compute_speech_dynamics,
     decode_audio,
     extract_identity_name,
+    extract_music_features,
     extract_prosody,
     extract_speaker_audio_segments,
     extract_speaker_embedding,
@@ -338,9 +339,10 @@ class AuditoryCluster:
         loop = asyncio.get_event_loop()
         fp_db, songs = self._fp_db, self._songs
 
-        fp_result, pros_result = await asyncio.gather(
+        fp_result, pros_result, music_result = await asyncio.gather(
             loop.run_in_executor(None, match_fingerprint, audio, sr, fp_db),
             loop.run_in_executor(None, extract_prosody, audio, sr),
+            loop.run_in_executor(None, extract_music_features, audio, sr),
             return_exceptions=True,
         )
 
@@ -377,6 +379,17 @@ class AuditoryCluster:
                 pros_result.get("voiced_fraction", 0),
             )
             await self._bus.publish_dict("auditory.prosody", pros_result, source=CLUSTER)
+
+        if not isinstance(music_result, BaseException) and music_result.get("bpm", 0) > 0:
+            logger.debug(
+                "Auditory: music bpm=%.0f key=%s%s mood=%s centroid=%.0f",
+                music_result.get("bpm", 0),
+                music_result.get("key", "?"),
+                music_result.get("mode", ""),
+                music_result.get("mood_label"),
+                music_result.get("spectral_centroid", 0),
+            )
+            await self._bus.publish_dict("auditory.music", music_result, source=CLUSTER)
 
     # ── Diarized audio loop: per-speaker ID + enrollment ──────────────────
 
