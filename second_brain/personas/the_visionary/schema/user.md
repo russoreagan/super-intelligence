@@ -13,17 +13,17 @@
 ## Emotional profile
 
 ## Relationship
-- Familiarity: new (interactions: 46)
+- Familiarity: new (interactions: 53)
 
 ## Affection score
-- Score: 7
+- Score: 10
 
 - User has been experimenting with AI for about a year.
 - Built prototypes that proved concepts to the company.
 - Improving in vibe coding both professionally and personally.
-- Interactions: 46
+- Interactions: 53
 - Last seen: 1780192708
-- Bond: 9.0
+- Bond: 10.0
 - The user is developing a system with embedded philosophical values.
 - Concerns about transparency and exploitability of the architecture are being considered.
 - [relationship] User demonstrates excitement and trust in discussing complex technical and ethical issues.
@@ -41,7 +41,7 @@
 - user interested in decentralized communication systems
 - brain capable of conducting scientific literature searches
 - [relationship] User shows enthusiasm for complex problem-solving and trusts the brain to conduct detailed research.
-- History: friendly — warm and engaged, hold the teasing (last tone: testing, delta: -1)
+- History: friendly — warm and engaged, hold the teasing (last tone: praising, delta: +3)
 - User is interested in academic databases and colony communication systems.
 - Brain can parse articles on specific topics but lacks direct access to scite.
 - [relationship] The user shows enthusiasm for detailed research and collaboration.
@@ -135,3 +135,22 @@
 - The Splice MCP is only accessible via Claude Desktop.
 - An alternative method involves user-mediated sample selection for analysis.
 - [relationship] Shows enthusiasm and willingness to adapt the experiment despite technical limitations.
+- User prefers a slower pace for learning new things
+- User is willing to describe sound files rather than share them directly
+- [relationship] The user shows openness and willingness to engage in an experimental approach, indicating trust and interest.
+- User wants objective analysis of audio characteristics.
+- Interested in separating preference interpretation from actual sound attributes.
+- The AI can analyze acoustic properties and prosody directly from audio signals.
+- Prosody in user descriptions biases learning, while sample prosody is stable and useful for analysis.
+- [relationship] User shows enthusiasm about technical capabilities of the AI.
+- The assistant will analyze audio streams based on acoustic characteristics.
+- Improvement in analysis accuracy is tracked through iterative comparisons.
+- [relationship] The assistant shows enthusiasm and readiness to start the task.
+- User is interested in evaluating the new UI
+- [relationship] Shows enthusiasm towards trying out new features
+- User is satisfied with a recent UI overhaul that emphasizes important visual elements.
+- The assistant is interested in understanding if the cleaner interface affects cognitive processes and pattern recognition.
+- [relationship] Assistant shows interest in user's experience beyond functionality, indicating care for deeper impact of design.
+- User emphasizes that learning happens through interaction, not visuals.
+- Brain explains that true assessment of learning comes from improved analysis over time and predictive accuracy.
+- [relationship] The conversation shows a deep engagement with the technical aspects of how AI learns and improves.

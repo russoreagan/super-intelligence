@@ -1533,6 +1533,8 @@ class DefaultModeNetwork:
 
     def _parse_monologue_response(self, raw: str) -> dict | None:
         """Parse JSON from the monologue cell. Retries once after stripping invalid +N syntax."""
+        if not isinstance(raw, str):
+            return raw if isinstance(raw, dict) else None
         candidate = raw.strip()
         candidate = re.sub(r"^```(?:json)?\s*", "", candidate)
         candidate = re.sub(r"\s*```$", "", candidate).strip()
