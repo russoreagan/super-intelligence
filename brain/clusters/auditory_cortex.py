@@ -30,6 +30,7 @@ import asyncio
 import dataclasses
 import json
 import logging
+import os
 import time
 from collections import defaultdict
 from pathlib import Path
@@ -339,12 +340,19 @@ class AuditoryCluster:
         loop = asyncio.get_event_loop()
         fp_db, songs = self._fp_db, self._songs
 
-        fp_result, pros_result, music_result = await asyncio.gather(
+        _music_mode = os.environ.get("BRAIN_MUSIC_MODE", "false").lower() == "true"
+
+        gather_coros = [
             loop.run_in_executor(None, match_fingerprint, audio, sr, fp_db),
             loop.run_in_executor(None, extract_prosody, audio, sr),
-            loop.run_in_executor(None, extract_music_features, audio, sr),
-            return_exceptions=True,
-        )
+        ]
+        if _music_mode:
+            gather_coros.append(loop.run_in_executor(None, extract_music_features, audio, sr))
+
+        gather_results = await asyncio.gather(*gather_coros, return_exceptions=True)
+        fp_result = gather_results[0]
+        pros_result = gather_results[1]
+        music_result = gather_results[2] if _music_mode else None
 
         if not isinstance(fp_result, BaseException):
             best_id = fp_result.pop("_best_song_id", None)
@@ -380,7 +388,7 @@ class AuditoryCluster:
             )
             await self._bus.publish_dict("auditory.prosody", pros_result, source=CLUSTER)
 
-        if not isinstance(music_result, BaseException) and music_result.get("bpm", 0) > 0:
+        if music_result is not None and not isinstance(music_result, BaseException) and music_result.get("bpm", 0) > 0:
             logger.debug(
                 "Auditory: music bpm=%.0f key=%s%s mood=%s centroid=%.0f",
                 music_result.get("bpm", 0),
