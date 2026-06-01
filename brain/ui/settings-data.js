@@ -36,7 +36,7 @@ window.SETTINGS = {
       sections: [
         {
           id: 'sec-persona', num: '00', title: 'Resting Chemistry', custom: 'personaChem',
-          desc: 'The trait baseline and boot levels for all nine neurochemicals.',
+          desc: 'The resting chemistry the brain holds and relaxes toward, for all nine neurochemicals.',
           rows: [], advanced: [
             { type: 'group', label: 'Resting baseline — the trait the brain relaxes toward' },
             { type: 'range', key: 'chem_baseline_DA',   label: 'DA baseline',   min: 0, max: 0.8, step: 0.01, def: 0.30 },

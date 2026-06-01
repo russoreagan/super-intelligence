@@ -354,6 +354,20 @@ input[type=range].r::-moz-range-thumb {
 }
 .adv-body { display: none; flex-direction: column; gap: 15px; padding: 6px 0 4px; }
 .adv.open .adv-body { display: flex; }
+
+/* consolidated resting-chemistry: boot-levels sub-disclosure */
+.chem-boot { margin-top: 14px; border-top: 1px dashed var(--line-faint); padding-top: 4px; }
+.chem-boot-toggle {
+  display: flex; align-items: center; gap: 8px;
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--fg-mute); padding: 7px 0; width: 100%; text-align: left;
+}
+.chem-boot-toggle:hover { color: var(--fg-dim); }
+.chem-boot-toggle .chev { width: 12px; height: 12px; transition: transform 200ms; }
+.chem-boot.open .chem-boot-toggle .chev { transform: rotate(90deg); }
+.chem-boot-body { display: none; flex-direction: column; gap: 13px; padding: 4px 0 4px; }
+.chem-boot.open .chem-boot-body { display: flex; }
+.chem-boot-note { font-size: 11.5px; line-height: 1.5; color: var(--fg-faint); text-wrap: pretty; }
 .adv-changed { width: 6px; height: 6px; border-radius: 50%; background: var(--warn); opacity: 0; }
 .adv-changed.on { opacity: 1; }
 

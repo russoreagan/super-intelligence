@@ -436,15 +436,64 @@
   }
 
   function renderChemCols(container, rows) {
-    const wrap = document.createElement('div'); wrap.className = 'chem-cols'; let col = null;
-    rows.forEach(r => {
-      if (r.type === 'group') {
-        col = document.createElement('div');
-        const h = document.createElement('div'); h.className = 'crow-group'; h.innerHTML = `<span class="g-label">${r.label}</span>`;
-        col.appendChild(h); wrap.appendChild(col);
-      } else if (col) { col.appendChild(makeRow(r)); }
+    // Consolidated view: one set of "resting chemistry" sliders (the baseline
+    // trait). Boot levels follow the baseline by default; the rare case of a
+    // different at-boot value lives behind a sub-disclosure.
+    const baseRows = rows.filter(r => r.key && r.key.indexOf('chem_baseline_') === 0);
+    const initRows = rows.filter(r => r.key && r.key.indexOf('chem_init_') === 0);
+
+    // Start in "follow" mode unless the saved boot values already differ.
+    let followBaseline = baseRows.every(r => {
+      const ch = r.key.slice('chem_baseline_'.length);
+      return +values['chem_init_' + ch] === +values['chem_baseline_' + ch];
     });
+
+    const wrap = document.createElement('div'); wrap.className = 'chem-cols';
+    const col = document.createElement('div');
+    const h = document.createElement('div'); h.className = 'crow-group';
+    h.innerHTML = `<span class="g-label">Resting chemistry — the trait the brain holds and relaxes toward</span>`;
+    col.appendChild(h);
+    baseRows.forEach(r => {
+      const rowEl = makeRow(r);
+      const input = rowEl.querySelector('input.r');
+      if (input) {
+        const ch = r.key.slice('chem_baseline_'.length);
+        input.addEventListener('input', () => {
+          if (followBaseline) setValue('chem_init_' + ch, parseFloat(input.value));
+        });
+      }
+      col.appendChild(rowEl);
+    });
+    wrap.appendChild(col);
     container.appendChild(wrap);
+
+    if (!initRows.length) return;
+
+    // Sub-disclosure: independent at-boot levels.
+    const advWrap = document.createElement('div'); advWrap.className = 'chem-boot';
+    const tog = document.createElement('button'); tog.className = 'chem-boot-toggle';
+    tog.innerHTML = `<span class="chev">${svg(ICONS.chev, 2.2)}</span><span>Set boot levels separately</span>`;
+    const bootBody = document.createElement('div'); bootBody.className = 'chem-boot-body';
+    const note = document.createElement('div'); note.className = 'chem-boot-note';
+    note.textContent = 'By default the brain boots at its resting baseline. Set different at-boot values here for a brain that starts elevated (or low) and settles.';
+    bootBody.appendChild(note);
+    initRows.forEach(r => bootBody.appendChild(makeRow(r)));
+    advWrap.appendChild(tog); advWrap.appendChild(bootBody);
+
+    if (!followBaseline) advWrap.classList.add('open');
+    tog.addEventListener('click', () => {
+      const willOpen = !advWrap.classList.contains('open');
+      advWrap.classList.toggle('open', willOpen);
+      followBaseline = !willOpen;
+      // when re-following, snap boot back to the resting baseline
+      if (followBaseline) {
+        baseRows.forEach(r => {
+          const ch = r.key.slice('chem_baseline_'.length);
+          setValue('chem_init_' + ch, +values['chem_baseline_' + ch]);
+        });
+      }
+    });
+    container.appendChild(advWrap);
   }
 
   function resetSection(sec) {
