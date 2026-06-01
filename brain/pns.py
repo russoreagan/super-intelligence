@@ -895,6 +895,17 @@ class PNS:
                                     if audio_iter is not None:
                                         with contextlib.suppress(Exception):
                                             await audio_iter.aclose()
+                                # Tiny inter-chunk silence so consecutive sentences don't
+                                # run together. 22050 Hz int16 mono: 2 bytes/sample.
+                                # Default 20 ms; tune via BRAIN_TTS_CHUNK_GAP_MS=0 to disable.
+                                _gap_ms = int(os.environ.get("BRAIN_TTS_CHUNK_GAP_MS", "20"))
+                                if (
+                                    _gap_ms > 0
+                                    and not self._interrupt_event.is_set()
+                                    and i < len(chunked) - 1
+                                ):
+                                    _silence = b"\x00" * (22050 * 2 * _gap_ms // 1000)
+                                    await audio_queue.put(_silence)
                         finally:
                             await audio_queue.put(None)  # sentinel — playback done
 

@@ -1155,6 +1155,7 @@ class FrontalCluster:
             "arousal": round(dims.get("arousal", 0.25), 2),
             "dominance": round(dims.get("dominance", 0.46), 2),
             "user_emotion": features.get("user_emotion"),
+            "msg_length": features.get("msg_length", "short"),
             "DA": round(nm["DA"], 2),
             "GABA": round(nm["GABA"], 2),
             "ACh": round(nm["ACh"], 2),

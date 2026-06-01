@@ -206,15 +206,11 @@ class UIServer:
                 voices_resp.raise_for_status()
                 models_resp.raise_for_status()
                 voices_raw = voices_resp.json().get("voices", [])
-                models_raw = models_resp.json()
 
-                # Look up the configured model's capabilities
-                model_caps = next((m for m in models_raw if m.get("model_id") == model_id), {})
-                # Default False: if the model lookup fails or the field is missing,
-                # assume pro voices are NOT served (safe). Allowing them through
-                # when uncertain causes eleven_v3 to silently substitute its own
-                # default voice, which is the exact bug we're guarding against.
-                serves_pro = bool(model_caps.get("serves_pro_voices", False))
+                # eleven_v3 silently substitutes its own default voice when given
+                # a Professional Voice Clone voice_id — hide them to prevent that.
+                # All other models (flash, turbo, multilingual) work fine with PVCs.
+                is_v3 = model_id == "eleven_v3"
 
                 # Categorize the user's voices
                 pro_voices = [v for v in voices_raw if v.get("category") == "professional"]
@@ -223,12 +219,12 @@ class UIServer:
                 ]
                 premade_voices = [v for v in voices_raw if v.get("category") == "premade"]
 
-                if serves_pro:
-                    candidates = custom_voices + pro_voices
-                    excluded_pro = 0
-                else:
+                if is_v3:
                     candidates = custom_voices
                     excluded_pro = len(pro_voices)
+                else:
+                    candidates = custom_voices + pro_voices
+                    excluded_pro = 0
 
                 message = ""
                 if not candidates:
@@ -238,13 +234,12 @@ class UIServer:
                         message = (
                             f"{excluded_pro} of your voices are Professional Voice Clones, "
                             f"which {model_id} does not serve. Showing premade voices instead. "
-                            "Set ELEVENLABS_MODEL_ID to eleven_turbo_v2_5 (or another model "
-                            "that supports professional voices) to access them."
+                            "Switch to eleven_flash_v2_5 or another non-v3 model to access them."
                         )
                 elif excluded_pro:
                     message = (
                         f"Hiding {excluded_pro} Professional Voice Clones — "
-                        f"{model_id} does not serve them."
+                        f"{model_id} does not support them."
                     )
 
                 voices = [{"voice_id": v["voice_id"], "name": v["name"]} for v in candidates]

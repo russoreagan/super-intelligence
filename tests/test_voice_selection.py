@@ -135,24 +135,26 @@ class TestVoiceIdStorage:
 # ---------------------------------------------------------------------------
 
 
-def _run_filter(voices_raw, models_raw, model_id="eleven_v3"):
+def _run_filter(voices_raw, model_id="eleven_v3"):
     """
     Replicate the /voices filtering logic from server.py so we can unit-test
     it without spinning up the full FastAPI app.
+
+    eleven_v3 silently substitutes its own voice when given a PVC voice_id,
+    so professional voices are hidden for v3 only. All other models work fine.
     """
-    model_caps = next((m for m in models_raw if m.get("model_id") == model_id), {})
-    serves_pro = bool(model_caps.get("serves_pro_voices", False))
+    is_v3 = model_id == "eleven_v3"
 
     pro_voices = [v for v in voices_raw if v.get("category") == "professional"]
     custom_voices = [v for v in voices_raw if v.get("category") not in ("premade", "professional")]
     premade_voices = [v for v in voices_raw if v.get("category") == "premade"]
 
-    if serves_pro:
-        candidates = custom_voices + pro_voices
-        excluded_pro = 0
-    else:
+    if is_v3:
         candidates = custom_voices
         excluded_pro = len(pro_voices)
+    else:
+        candidates = custom_voices + pro_voices
+        excluded_pro = 0
 
     message = ""
     if not candidates:
@@ -170,77 +172,64 @@ def _run_filter(voices_raw, models_raw, model_id="eleven_v3"):
 
 
 class TestVoicesEndpointFiltering:
-    def test_pro_voices_excluded_when_serves_pro_false(self):
-        """eleven_v3 reports serves_pro_voices=False → pro voices must not appear."""
+    def test_pro_voices_excluded_for_v3(self):
+        """eleven_v3 silently substitutes voices → pro voices must not appear."""
         voices = _fake_voices(custom=1, pro=2, premade=1)
-        models = _fake_models("eleven_v3", serves_pro=False)
-        result = _run_filter(voices, models, "eleven_v3")
+        result = _run_filter(voices, "eleven_v3")
         ids = {v["voice_id"] for v in result["voices"]}
-        assert not any(vid.startswith("pro_") for vid in ids), (
-            "Professional voice clones must be excluded when serves_pro_voices=False"
-        )
+        assert not any(vid.startswith("pro_") for vid in ids)
         assert ids == {"custom_0"}
 
-    def test_pro_voices_excluded_when_model_not_found(self):
-        """If the model isn't in the API response, safe default excludes pro voices.
-
-        This is the regression: the old default was True (unsafe), which let
-        professional voice clones through to eleven_v3, causing silent voice
-        substitution by ElevenLabs.
-        """
+    def test_pro_voices_included_for_flash(self):
+        """Flash 2.5 and other non-v3 models should show professional voices."""
         voices = _fake_voices(custom=1, pro=2, premade=1)
-        models = []  # empty — model lookup will fail, model_caps = {}
-        result = _run_filter(voices, models, "eleven_v3")
-        ids = {v["voice_id"] for v in result["voices"]}
-        assert not any(vid.startswith("pro_") for vid in ids), (
-            "Safe default must exclude pro voices when model is not found in API response"
-        )
-
-    def test_pro_voices_excluded_when_serves_pro_field_missing(self):
-        """If the serves_pro_voices field is absent from model caps, treat as False."""
-        voices = _fake_voices(custom=1, pro=1, premade=1)
-        models = [{"model_id": "eleven_v3"}]  # field missing from model entry
-        result = _run_filter(voices, models, "eleven_v3")
-        ids = {v["voice_id"] for v in result["voices"]}
-        assert "pro_0" not in ids
-
-    def test_pro_voices_included_when_serves_pro_true(self):
-        """A model that does serve pro voices should show them."""
-        voices = _fake_voices(custom=1, pro=2, premade=1)
-        models = _fake_models("eleven_turbo_v2_5", serves_pro=True)
-        result = _run_filter(voices, models, "eleven_turbo_v2_5")
+        result = _run_filter(voices, "eleven_flash_v2_5")
         ids = {v["voice_id"] for v in result["voices"]}
         assert "pro_0" in ids and "pro_1" in ids
+        assert "custom_0" in ids
 
-    def test_premade_fallback_when_no_custom_or_pro(self):
-        """If custom+pro are all filtered out, fall back to premade voices."""
+    def test_pro_voices_included_for_turbo(self):
+        """eleven_turbo_v2_5 should also show professional voices."""
+        voices = _fake_voices(custom=0, pro=3, premade=1)
+        result = _run_filter(voices, "eleven_turbo_v2_5")
+        ids = {v["voice_id"] for v in result["voices"]}
+        assert len(ids) == 3
+        assert all(vid.startswith("pro_") for vid in ids)
+
+    def test_only_pro_voices_with_v3_falls_back_to_premade(self):
+        """If user has only pro voices and model is v3, fall back to premade."""
         voices = [
             {"voice_id": "pro_0", "name": "Pro", "category": "professional"},
             {"voice_id": "pre_0", "name": "Premade", "category": "premade"},
         ]
-        models = _fake_models("eleven_v3", serves_pro=False)
-        result = _run_filter(voices, models, "eleven_v3")
+        result = _run_filter(voices, "eleven_v3")
         assert len(result["voices"]) == 1
         assert result["voices"][0]["voice_id"] == "pre_0"
+        assert "1" in result["message"] or "hidden" in result["message"].lower()
 
-    def test_premade_excluded_when_custom_available(self):
+    def test_premade_excluded_when_user_voices_available(self):
         """Premade voices should not appear when the user has their own voices."""
         voices = _fake_voices(custom=2, pro=0, premade=3)
-        models = _fake_models("eleven_v3", serves_pro=False)
-        result = _run_filter(voices, models, "eleven_v3")
+        result = _run_filter(voices, "eleven_v3")
         ids = {v["voice_id"] for v in result["voices"]}
         assert not any(vid.startswith("premade_") for vid in ids)
 
-    def test_message_warns_about_hidden_pro_voices(self):
+    def test_premade_excluded_when_pro_voices_available_non_v3(self):
+        """With Flash 2.5, pro voices are shown and premade stays hidden."""
+        voices = _fake_voices(custom=0, pro=2, premade=3)
+        result = _run_filter(voices, "eleven_flash_v2_5")
+        ids = {v["voice_id"] for v in result["voices"]}
+        assert not any(vid.startswith("premade_") for vid in ids)
+        assert len(ids) == 2
+
+    def test_message_warns_about_hidden_pro_voices_on_v3(self):
         voices = _fake_voices(custom=1, pro=2, premade=0)
-        models = _fake_models("eleven_v3", serves_pro=False)
-        result = _run_filter(voices, models, "eleven_v3")
+        result = _run_filter(voices, "eleven_v3")
         assert "2" in result["message"] or "Pro" in result["message"]
 
     def test_no_message_when_nothing_filtered(self):
         voices = _fake_voices(custom=2, pro=0, premade=1)
-        models = _fake_models("eleven_v3", serves_pro=False)
-        result = _run_filter(voices, models, "eleven_v3")
+        result = _run_filter(voices, "eleven_v3")
         assert result["message"] == ""
 
 
