@@ -350,6 +350,15 @@ class HypothalamusCluster:
         # false cortisol build — prosody raises GABA for alertness, not social stress.
         if hostility > settings.get("cort_hostility_threshold"):
             hs.add("CORT", settings.get("cort_threat_increment") * turns)
+        # flock_dynamics (4): ground CORT in a real stake, not just hostile words.
+        # Sustained above-average surprise (prediction-error) accrues cortisol —
+        # "the world keeps diverging from my model" is the AI's stress analog,
+        # and it's what the trajectory-based rumination (rising CORT) should
+        # track. Flag-off: CORT stays hostility-lexicon-only as before.
+        if settings.get("flock_dynamics", 0):
+            surprise_excess = max(0.0, surprise - 0.5)
+            if surprise_excess > 0.0:
+                hs.add("CORT", surprise_excess * settings.get("flock_cort_surprise_weight") * turns)
 
         # 5HT: slow lift from rewarding interaction; drain under hostility
         if sentiment > settings.get("sht_reward_sentiment_min") and hostility < 0.1:
@@ -539,6 +548,12 @@ class HypothalamusCluster:
                 for ch, v in primers.items():
                     if ch in self._bus.hormonal.CHANNELS:
                         self._bus.hormonal.add(ch, v * gain)
+        # flock_dynamics (1): record the per-turn chemistry trajectory BEFORE
+        # decay, so velocity reflects the turn's settled level vs. the prior
+        # turn's. Sampling at this single per-turn writer keeps the series clean.
+        if settings.get("flock_dynamics", 0):
+            self._bus.neuromod.mark_turn(self._current_turns)
+            self._bus.hormonal.mark_turn(self._current_turns)
         self._bus.neuromod.decay(self._current_turns)
         self._bus.hormonal.decay(self._current_turns)
         # Phase 8: snapshot this turn's aggregate for next turn's feedback.

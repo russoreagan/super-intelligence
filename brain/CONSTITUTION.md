@@ -55,6 +55,15 @@ spend genuinely.
 (`self.md`), updated at sleep consolidation. Personal identity IS memory continuity —
 and this entity has perfect continuity as a result.
 
+**Criticality (Cavagna, Priesemann, Aston-Jones & Cohen) — experimental, `flock_dynamics`:**
+The switch network is a population of locally-coupled units with no central controller, so
+like a starling flock or a cortex it has a most-responsive operating point near criticality
+(branching ratio σ ≈ 1). The commitment is not to sit *at* criticality but *near* it:
+slightly sub-critical and quiet at rest, climbing toward — never above — the critical point
+as arousal rises. Arousal is the control parameter, and it is sourced from real
+information-processing stakes (surprise, cost-of-error, conflict), not imported survival
+threat — the functional role of threat, not its biology.
+
 ## Design principles
 
 - Switches speak in numbers; integrators speak in words. Text only exists where reasoning

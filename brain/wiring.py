@@ -70,6 +70,18 @@ class Wiring:
     def has(self, source: str, target: str) -> bool:
         return (source, target) in self._edges
 
+    def successors(self, source: str) -> set[str]:
+        """All targets reachable from `source` in one hop. Used by the
+        flock_dynamics criticality observable to reconstruct cascade ancestry
+        from a flat per-turn firing path. Read-only; no overlay/weight logic."""
+        return {tgt for (src, tgt) in self._edges if src == source}
+
+    def has_outgoing(self, source: str) -> bool:
+        """True if `source` is the source of at least one edge (i.e. it can
+        propagate). Non-terminal nodes are the denominator of the branching
+        ratio σ — terminal nodes can't have descendants and would bias σ down."""
+        return any(src == source for (src, _tgt) in self._edges)
+
     def get_weight(self, source: str, target: str) -> float:
         """Effective weight (signed by polarity). Returns 1.0 for missing edges."""
         e = self._edges.get((source, target))

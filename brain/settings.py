@@ -499,6 +499,42 @@ DEFAULTS: dict[str, float | int | str] = {
     "colony_trail_gain": 0.05,                      # per-turn trail bump scale (× outcome)
     "colony_trail_clamp": 0.50,                     # max |overlay| added to any edge's persisted weight
     "colony_trail_half_life_s": 120.0,              # trail overlay decay half-life within a session
+    # ── Section: Flock dynamics — criticality + chemistry trajectory ─────────
+    # Murmuration-derived collective-dynamics layer (sibling to colony_features,
+    # but kept on its OWN flag so criticality control can be run without the
+    # colony layer and vice-versa). 0 = every path below is a strict no-op and
+    # the brain behaves exactly as before. Three parts, all flag-gated:
+    #   (1) chemistry trajectory/velocity — per-turn derivative of neuromod +
+    #       hormonal channels, fed to DMN gating (rising CORT ruminates harder
+    #       than steady-high CORT). Learning stays keyed to LEVEL (asymmetry).
+    #   (2) criticality observable — branching ratio σ + avalanche-size stats
+    #       from the per-turn firing path (reconstructed via the wiring graph).
+    #   (3) closed loop — arousal sets a criticality setpoint σ* and the σ-error
+    #       drives the global modulation_gain toward it (never super-critical).
+    "flock_dynamics": 0,                            # 1 = enable flock/criticality layer; 0 = off (no-op)
+    # (1) chemistry trajectory — DMN rumination velocity weights
+    "flock_rum_w_cort_vel": 0.60,                   # positive CORT velocity (rising stress) → extra worry drive
+    "flock_rum_w_ne_vel": 0.40,                     # positive NE velocity (rising alertness) → extra worry drive
+    "flock_rum_w_da_vel": 0.30,                     # positive DA velocity (rising interest) → extra engaged drive
+    "flock_idle_gate_vel_nudge": 0.10,              # rising worry-velocity lowers the idle-gate threshold by up to this
+    # (4) ground arousal's triggers — CORT was driven ONLY by a hostility
+    # lexicon (vestigial threat semantics). When flock_dynamics is on, ABOVE-
+    # average surprise (sustained prediction-error — the world diverging from
+    # the model) also accrues cortisol, so the stress signal that feeds
+    # trajectory-based rumination reflects a real information-processing stake,
+    # not just hostile words. Only the >0.5 (above-average) surprise contributes.
+    "flock_cort_surprise_weight": 0.05,             # surprise-excess → cortisol accrual (per turn)
+    # (2) criticality observable — measurement window + heavy-tail heuristic
+    "flock_sigma_window": 12,                       # turns of firing-path history used to smooth σ / build the distribution
+    "flock_sigma_min_nodes": 4,                     # fewer fired internal nodes than this → σ undefined for the turn (skip)
+    # (3) closed loop — arousal-modulated setpoint + conservative controller
+    "flock_sigma_target_low": 0.90,                 # σ* at low arousal (sub-critical: efficient, quiet at rest)
+    "flock_sigma_target_high": 1.00,               # σ* at high arousal (critical: hard cap — never steer super-critical)
+    "flock_gain_kp": -0.30,                          # proportional constant: Δgain = kp·(σ − σ*). SIGN IS EMPIRICAL —
+                                                    # validated in verification; negative is the starting guess.
+    "flock_gain_min": 0.50,                          # clamp band on the driven modulation_gain (lower rail)
+    "flock_gain_max": 1.80,                          # clamp band on the driven modulation_gain (upper rail)
+    "flock_gain_ema_alpha": 0.25,                    # EMA smoothing on the gain so it can't thrash turn-to-turn
 }
 
 

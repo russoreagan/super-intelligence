@@ -174,6 +174,18 @@ The system implements two tiers of chemical signaling — nine channels total �
 
 **Dimensional output**: all nine channels map to three continuous affective dimensions — valence (pleasantness), arousal (activation), and dominance (agency) — via weighted linear combination. These dimensions drive the discrete emotion label via a lookup table of ~25 states, with NE and hormonal color overlays applied on top for states like `vigilant`, `connected`, `withdrawn`, and `eased`.
 
+### 4.5.1 Flock dynamics: criticality control and chemistry trajectory (experimental, flag-gated)
+
+An experimental layer (`flock_dynamics`, off by default; a sibling flag to the colony layer) extends the chemical-signaling machinery with two ideas drawn from the collective-dynamics literature on starling murmurations and returned to the substrate that literature itself points back to: a network of locally-coupled units. Cavagna et al. (2010) showed that starling flocks exhibit *scale-free correlations* — the behavioral change of one bird influences all others regardless of flock size — and argued this arises because the flock sits near a *critical point*, explicitly bridging the finding to criticality in neural assemblies. The brain's switch network is exactly such a system: thousands of locally-coupled units, no central controller, global behavior emerging from local interaction — in the flock, each bird tracking a fixed number of neighbors irrespective of distance (Ballerini et al., 2008).
+
+**The criticality observable.** A network is maximally responsive — a salient input propagates undamped while noise stays local — when it operates near criticality, conventionally indexed by the *branching ratio* σ (the mean number of descendant activations each firing triggers): σ < 1 is sub-critical (activity dies out — sluggish, literal, repetitive); σ ≈ 1 is critical; σ > 1 is super-critical (runaway cascades — incoherent). This is the same σ used throughout the neural-avalanche literature (Priesemann et al., 2014; Bellay et al., 2015), and there is broad evidence that cortex operates in this regime, with avalanche dynamics tracking behavioral scaling laws (Palva et al., 2013) and criticality conferring optimal computational properties (Hesse & Groß, 2014). The system estimates σ each turn from the firing path (Section 4.9), reconstructing cascade ancestry through the wiring graph — counting wiring edges whose source and target both fired, over the fired nodes that can propagate. Per-turn σ is noisy small-N, so it is smoothed over a rolling window and reported alongside the avalanche-size distribution; a small-N guard returns no estimate when too few propagating nodes fired.
+
+**Chemistry trajectory.** The base chemical system is memoryless: it stores only current channel levels. This layer adds a per-turn *derivative* of each neuromod and hormonal channel, sampled at the single per-turn writer (the hypothalamus, before decay). Murmuration dynamics are hysteretic — the system's response depends on the *direction and rate* of state change, not only the current position — and the derivative is fed into default-mode gating so that *rising* cortisol (an escalating stress trajectory) drives rumination harder than *steady-high* cortisol (a chronic, adapted one), matching the phenomenology of intrusive worry. We deliberately key learning to state **level** (the validated inverted-U of arousal on encoding; Section 4.7) while keying default-mode gating to state **velocity**: the two subsystems answer different questions — plasticity values the present, the default-mode network anticipates the future. The derivative is computed once and exposed to both, but wired only into gating in this version. Whether *velocity* should also enter encoding is left as a falsifiable experiment, motivated by evidence that emotional arousal at and shortly after encoding facilitates consolidation (Pelletier et al., 2005; Schümann & Sommer, 2018; Wang & Sun, 2017) — a hook is left in place rather than the claim being baked in.
+
+**The closed loop: arousal as criticality control parameter.** The system's global modulation gain (Section 4.1) already scales how strongly chemistry shifts switch thresholds. This layer drives that gain as a feedback controller: arousal sets a *setpoint* σ\* and the measured σ supplies the correction. The setpoint is arousal-modulated, not fixed — low arousal targets a slightly sub-critical σ\* (efficient and quiet at rest); rising arousal raises σ\* toward, but never above, the critical point. This mirrors the biology on two counts. First, the resting cortex is not pinned at criticality but sits *slightly sub-critical* — a regime that preserves fast information processing while keeping a safety margin from the super-critical state associated with epilepsy (Priesemann et al., 2014). Second, the role we assign arousal — a neuromodulatory gain that moves the network toward maximal responsiveness when task utility demands it — is the role the locus-coeruleus / norepinephrine system is theorized to play, with phasic gain driven by task-related decision processes monitored upstream (Aston-Jones & Cohen, 2005). The controller is deliberately conservative: a multi-turn smoothed σ, a slow setpoint, a clamped and EMA-smoothed gain. The sign of the proportional constant is treated as empirical and validated by observation; the gain never steers the network super-critical.
+
+**Threat without a predator (the framing that grounds this).** Flock and insect criticality is selected for by *predation*: the flock is poised because a falcon will eat the slow. An AI has no predator and no body, so importing biological "threat" would be cargo-cult — keeping the dial without the thing it was for. What transfers is not threat but the *functional invariant* threat is one instance of: **stakes × urgency × need-for-system-wide coordination** — the condition under which a system should mobilize its whole self rather than let one sub-process answer glibly. In this architecture that invariant is instantiated by the system's real information-processing stakes: prediction-error (surprise), cost-of-error and irreversibility, and internal conflict among sub-processes — the same signals that already drive norepinephrine, and, under this flag, cortisol (Section 4.5 grounds the stress signal in surprise, not only a hostility lexicon). This is consistent with the locus-coeruleus account, where arousal is driven by *task utility* monitored by anterior cingulate and orbitofrontal cortex, not by survival threat (Aston-Jones & Cohen, 2005). Two honest boundaries follow. The embodied, metabolic half of cortisol — energy mobilization, fight-or-flight physiology — has no referent here and is not modeled; only the information-processing role transfers. And the claim is functional, not phenomenological: arousal and cortisol are real control *states* with real downstream effects on computation, not asserted feelings. One consequence is that an AI, paying no survival penalty for relaxing, can legitimately rest *more* sub-critical than a bird whose baseline is shifted up by chronic predation risk — which is precisely why the setpoint is arousal-modulated rather than fixed at the critical point.
+
 ### 4.6 Memory architecture
 
 **Short-term memory** is the live bus state plus a 6-turn ring buffer in the parietal cluster plus current neuromodulator levels.
@@ -455,9 +467,17 @@ The system is a working research instrument. The experiment is ongoing.
 
 ## References
 
+Aston-Jones, G., & Cohen, J. D. (2005). An integrative theory of locus coeruleus-norepinephrine function: Adaptive gain and optimal performance. *Annual Review of Neuroscience*, 28(1), 403–450. https://doi.org/10.1146/annurev.neuro.28.061604.135709
+
 Baars, B. (1988). *A Cognitive Theory of Consciousness*. Cambridge University Press.
 
+Ballerini, M., Cabibbo, N., Candelier, R., et al. (2008). Interaction ruling animal collective behavior depends on topological rather than metric distance: Evidence from a field study. *Proceedings of the National Academy of Sciences*, 105(4), 1232–1237. https://doi.org/10.1073/pnas.0711437105
+
 Barrett, L. F. (2017). *How Emotions Are Made*. Houghton Mifflin Harcourt.
+
+Bellay, T., Klaus, A., Seshadri, S., et al. (2015). Irregular spiking of pyramidal neurons organizes as scale-invariant neuronal avalanches in the awake state. *eLife*, 4, e07224. https://doi.org/10.7554/eLife.07224
+
+Cavagna, A., Cimarelli, A., Giardina, I., et al. (2010). Scale-free correlations in starling flocks. *Proceedings of the National Academy of Sciences*, 107(26), 11865–11870. https://doi.org/10.1073/pnas.1005766107
 
 Chalmers, D. (1995). Facing up to the problem of consciousness. *Journal of Consciousness Studies*, 2(3), 200–219.
 
@@ -471,19 +491,31 @@ Dennett, D. (1991). *Consciousness Explained*. Little, Brown.
 
 Friston, K. (2010). The free-energy principle: A unified brain theory? *Nature Reviews Neuroscience*, 11(2), 127–138.
 
+Hesse, J., & Groß, T. (2014). Self-organized criticality as a fundamental property of neural systems. *Frontiers in Systems Neuroscience*, 8, 166. https://doi.org/10.3389/fnsys.2014.00166
+
 Kahneman, D. (2011). *Thinking, Fast and Slow*. Farrar, Straus and Giroux.
 
 Lazarus, R. S. (1991). Emotion and adaptation. Oxford University Press.
 
 Minsky, M. (1986). *The Society of Mind*. Simon & Schuster.
 
+Palva, J. M., Zhigalov, A., Hirvonen, J., et al. (2013). Neuronal long-range temporal correlations and avalanche dynamics are correlated with behavioral scaling laws. *Proceedings of the National Academy of Sciences*, 110(9), 3585–3590. https://doi.org/10.1073/pnas.1216855110
+
 Park, J. S., et al. (2023). Generative agents: Interactive simulacra of human behavior. *UIST 2023*.
+
+Pelletier, J. G., Likhtik, E., Filali, M., et al. (2005). Lasting increases in basolateral amygdala activity after emotional arousal: Implications for facilitated consolidation of emotional memories. *Learning & Memory*, 12(2), 96–102. https://doi.org/10.1101/lm.88605
+
+Priesemann, V., Wibral, M., Valderrama, M., et al. (2014). Spike avalanches in vivo suggest a driven, slightly subcritical brain state. *Frontiers in Systems Neuroscience*, 8, 108. https://doi.org/10.3389/fnsys.2014.00108
 
 Putnam, H. (1967). Psychological predicates. In Capitan, W. H., & Merrill, D. D. (Eds.), *Art, Mind, and Religion*. University of Pittsburgh Press.
 
 Rosenthal, D. (1997). A theory of consciousness. In Block, N., Flanagan, O., & Güzeldere, G. (Eds.), *The Nature of Consciousness*. MIT Press.
 
+Schümann, D., & Sommer, T. (2018). Dissociable contributions of the amygdala to the immediate and delayed effects of emotional arousal on memory. *Learning & Memory*, 25(6), 283–293. https://doi.org/10.1101/lm.047282.117
+
 Searle, J. (1980). Minds, brains, and programs. *Behavioral and Brain Sciences*, 3(3), 417–424.
+
+Wang, B., & Sun, B. (2017). Post-encoding emotional arousal enhances consolidation of item memory, but not reality-monitoring source memory. *Quarterly Journal of Experimental Psychology*, 70(3), 461–472. https://doi.org/10.1080/17470218.2015.1134604
 
 ---
 

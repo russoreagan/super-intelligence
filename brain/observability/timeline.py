@@ -114,6 +114,13 @@ class TurnTrace:
     modulated_switch_count: int = 0  # switches where |mod_delta| > 0.01
     suppressed_switch_count: int = 0  # near-misses: level >= base but < effective
 
+    # ── flock_dynamics: criticality telemetry (all None/0 when flag off) ──────
+    branching_sigma: "float | None" = None       # this turn's σ (None if small-N guard tripped)
+    sigma_smoothed: "float | None" = None         # window-mean σ the controller steers on
+    avalanche_size: int = 0                        # number of fires this turn (avalanche size)
+    criticality_setpoint: "float | None" = None   # arousal-modulated σ* target
+    modulation_gain_applied: "float | None" = None  # gain the controller drove this turn
+
     # ── Deliberate emotion expression (set_mood tool + inline markup) ─────────
     # Each entry: {"emotion": str, "source": "tool"|"inline", "preview": str}
     # Empty list means purely reactive emotional state this turn.

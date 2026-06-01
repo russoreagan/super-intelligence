@@ -262,5 +262,19 @@
   "colony_trail_apply": 0,
   "colony_trail_gain": 0.05,
   "colony_trail_clamp": 0.5,
-  "colony_trail_half_life_s": 120.0
+  "colony_trail_half_life_s": 120.0,
+  "flock_dynamics": 0,
+  "flock_rum_w_cort_vel": 0.6,
+  "flock_rum_w_ne_vel": 0.4,
+  "flock_rum_w_da_vel": 0.3,
+  "flock_idle_gate_vel_nudge": 0.1,
+  "flock_cort_surprise_weight": 0.05,
+  "flock_sigma_window": 12,
+  "flock_sigma_min_nodes": 4,
+  "flock_sigma_target_low": 0.9,
+  "flock_sigma_target_high": 1.0,
+  "flock_gain_kp": -0.3,
+  "flock_gain_min": 0.5,
+  "flock_gain_max": 1.8,
+  "flock_gain_ema_alpha": 0.25
 }

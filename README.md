@@ -97,6 +97,8 @@ Hormonal channels decay on a time-weighted wall-clock schedule, not per-turn. OX
 
 Hypothalamus maps the neuromodulator state to continuous **valence** and **arousal** dimensions before naming an emotion. This separates the two axes of Russell's circumplex model and prevents the emotion label from being the only signal downstream clusters receive.
 
+**Flock dynamics** (`flock_dynamics`, experimental, off by default): a murmuration-derived criticality layer. It tracks a per-turn *trajectory* (derivative) of each chemical channel — fed into DMN gating so rising stress ruminates harder than steady-high stress — and measures the network's **branching ratio σ** from the firing path (surfaced in observability), then drives the global `modulation_gain` as a feedback controller toward an arousal-modulated criticality setpoint (slightly sub-critical at rest, toward — never above — critical under arousal). See PAPER.md §4.5.1.
+
 ## Predict-and-surprise gating
 
 Active Inference applied at cluster level: each integrator has a predictor that fires first. If surprise is low, the integrator stays asleep.

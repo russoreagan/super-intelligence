@@ -95,12 +95,32 @@ class Neuromodulators:
             ch: float(_s.get(f"chem_init_{ch}", self._DEF_INIT[ch])) for ch in self.CHANNELS
         }
         self._model: str = str(_s.get("chem_decay_model", "baseline"))
+        # ── flock_dynamics: per-turn trajectory (derivative) of each channel ──
+        # Inert unless mark_turn() is called (only the hypothalamus calls it, and
+        # only when flock_dynamics is on), so flag-off behaviour is unchanged.
+        self._velocity: dict[str, float] = {ch: 0.0 for ch in self.CHANNELS}
+        self._prev_levels: dict[str, float] | None = None
 
     def add(self, channel: str, delta: float) -> None:
         self._levels[channel] = max(0.0, min(1.0, self._levels[channel] + delta))
 
     def get(self, channel: str) -> float:
         return self._levels[channel]
+
+    def mark_turn(self, turns: float = 1.0) -> None:
+        """Record the per-turn derivative of each channel (flock_dynamics).
+
+        Call once per turn at a consistent sampling point (the hypothalamus does
+        this in decay_turn, just before decay) so velocity is the turn-over-turn
+        change of the settled level. First call seeds prev with no velocity."""
+        t = max(1e-6, float(turns))
+        if self._prev_levels is not None:
+            for ch in self.CHANNELS:
+                self._velocity[ch] = (self._levels[ch] - self._prev_levels[ch]) / t
+        self._prev_levels = dict(self._levels)
+
+    def velocity(self) -> dict[str, float]:
+        return dict(self._velocity)
 
     def decay(self, turns: float = 1.0) -> None:
         """Relax all channels toward their resting baselines.
@@ -161,12 +181,28 @@ class HormonalState:
             ch: float(_s.get(f"chem_init_{ch}", self._DEF_INIT[ch])) for ch in self.CHANNELS
         }
         self._model: str = str(_s.get("chem_decay_model", "baseline"))
+        # ── flock_dynamics: per-turn trajectory (derivative) of each channel ──
+        # See Neuromodulators.mark_turn — inert until called by the hypothalamus.
+        self._velocity: dict[str, float] = {ch: 0.0 for ch in self.CHANNELS}
+        self._prev_levels: dict[str, float] | None = None
 
     def add(self, channel: str, delta: float) -> None:
         self._levels[channel] = max(0.0, min(1.0, self._levels[channel] + delta))
 
     def get(self, channel: str) -> float:
         return self._levels[channel]
+
+    def mark_turn(self, turns: float = 1.0) -> None:
+        """Record the per-turn derivative of each hormonal channel
+        (flock_dynamics). See Neuromodulators.mark_turn."""
+        t = max(1e-6, float(turns))
+        if self._prev_levels is not None:
+            for ch in self.CHANNELS:
+                self._velocity[ch] = (self._levels[ch] - self._prev_levels[ch]) / t
+        self._prev_levels = dict(self._levels)
+
+    def velocity(self) -> dict[str, float]:
+        return dict(self._velocity)
 
     def decay(self, turns: float = 1.0) -> None:
         """Relax all channels toward their resting baselines at each channel's

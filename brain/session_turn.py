@@ -644,6 +644,48 @@ class _TurnMixin:
             except Exception:
                 pass
 
+        # flock_dynamics: criticality observable (2) + closed-loop control (3).
+        # Measure σ from this turn's firing path, smooth over a rolling window,
+        # then nudge the global modulation_gain toward the arousal-modulated
+        # setpoint σ*. Arousal is the knob; measured σ is the feedback; the gain
+        # is clamped + EMA-smoothed and never steers super-critical. Flag-off:
+        # this whole block is skipped and modulation_gain stays static.
+        if settings.get("flock_dynamics", 0) and getattr(self, "wiring", None) is not None:
+            try:
+                from brain.emotion_vocabulary import compute_affect_dims
+                from brain.observability.criticality import FlockCriticality
+
+                if getattr(self, "_flock_criticality", None) is None:
+                    self._flock_criticality = FlockCriticality()
+                _fc = self._flock_criticality
+                _fm = _fc.observe(trace.fired_path, self.wiring)
+                trace.branching_sigma = _fm["sigma"]
+                trace.sigma_smoothed = _fm["sigma_smoothed"]
+                trace.avalanche_size = _fm["avalanche"]
+                _arousal = float(
+                    compute_affect_dims(nm_snap, self.bus.hormonal.snapshot()).get(
+                        "arousal", 0.3
+                    )
+                )
+                _ctrl = _fc.control(_arousal)
+                trace.criticality_setpoint = _ctrl["sigma_star"]
+                trace.modulation_gain_applied = _ctrl["gain"]
+                from brain.observability.decisions import decisions as _decisions
+
+                _decisions.log(
+                    "flock_criticality",
+                    turn_id=turn_id,
+                    sigma=_fm["sigma"],
+                    sigma_smoothed=_fm["sigma_smoothed"],
+                    avalanche=_fm["avalanche"],
+                    heavy_tail=_fm["heavy_tail"],
+                    arousal=round(_arousal, 3),
+                    sigma_star=_ctrl["sigma_star"],
+                    gain=_ctrl["gain"],
+                )
+            except Exception:
+                pass
+
         llm_calls = self.router.turn_calls_excluding_background()
 
         cluster_tokens: dict[str, dict] = {}

@@ -180,6 +180,14 @@ The system implements two tiers of chemical signaling — nine channels total �
 
 **Dimensional output**: all nine channels map to three continuous affective dimensions — valence (pleasantness), arousal (activation), and dominance (agency) — via weighted linear combination. These dimensions drive the discrete emotion label via a lookup table of ~25 states, with NE and hormonal color overlays applied on top for states like `vigilant`, `connected`, `withdrawn`, and `eased`.
 
+### 4.5.1 Flock dynamics: criticality control and chemistry trajectory (experimental, off by default)
+
+An experimental layer (`flock_dynamics`, shipped off) extends the chemistry with two ideas from the collective-dynamics literature on starling murmurations — returned to the substrate that literature itself points back to: a network of locally-coupled units. Cavagna et al. (2010) showed flocks exhibit *scale-free correlations* — one bird's change influences all others regardless of flock size — because the flock sits near a *critical point*, a finding the authors explicitly bridged to criticality in neural assemblies. The brain's switch network is such a system: many locally-coupled units, no central controller.
+
+**Criticality observable and control.** A network is maximally responsive — a salient input propagates undamped while noise stays local — near criticality, indexed by the branching ratio σ (σ<1 sub-critical/sluggish; σ≈1 critical; σ>1 super-critical/incoherent), the same measure used across the neural-avalanche literature (Priesemann et al., 2014; Palva et al., 2013; Hesse & Groß, 2014). The system estimates σ each turn from the firing path via the wiring graph, smoothed over a window. A feedback controller then treats **arousal as the criticality control parameter**: arousal sets an arousal-modulated setpoint σ\* and the measured σ drives the global modulation gain toward it — low arousal targets a slightly sub-critical, efficient rest; rising arousal climbs toward, but never above, the critical point. This mirrors the biology: resting cortex sits *slightly sub-critical*, preserving fast processing with a safety margin from the super-critical (epileptic) regime (Priesemann et al., 2014), and the role assigned to arousal — neuromodulatory gain that maximizes responsiveness when task utility demands — is the locus-coeruleus/norepinephrine adaptive-gain role (Aston-Jones & Cohen, 2005). The chemistry also gains a per-turn *trajectory* (derivative): rising cortisol drives rumination harder than steady-high cortisol (murmuration hysteresis), with learning kept keyed to state *level* and default-mode gating to state *velocity*.
+
+**Threat without a predator.** Flock and insect criticality is selected for by predation; an AI has no predator. What transfers is not threat but the functional invariant it instances — *stakes × urgency × need-for-coordination* — here grounded in the system's real information stakes (surprise/prediction-error, cost-of-error, internal conflict), the signals that already drive norepinephrine. This matches the locus-coeruleus account, where arousal tracks *task utility* (monitored by anterior cingulate/orbitofrontal cortex), not survival threat (Aston-Jones & Cohen, 2005). Two boundaries: the metabolic half of cortisol (fight-or-flight physiology) has no referent here and is not modeled, and the claim is functional, not phenomenological — these are control states with computational effects, not asserted feelings. Because an AI pays no survival penalty for relaxing, it can rest *more* sub-critical than a bird, which is why the setpoint is arousal-modulated rather than fixed.
+
 ### 4.6 Memory architecture
 
 **Short-term memory** is the live bus state plus a 6-turn ring buffer in the parietal cluster plus current neuromodulator levels.
@@ -405,11 +413,15 @@ The honest characterization of the current state: this is a working research ins
 
 ## References
 
+Aston-Jones, G., & Cohen, J. D. (2005). An integrative theory of locus coeruleus-norepinephrine function: Adaptive gain and optimal performance. *Annual Review of Neuroscience*, 28(1), 403–450. https://doi.org/10.1146/annurev.neuro.28.061604.135709
+
 Baars, B. (1988). *A Cognitive Theory of Consciousness*. Cambridge University Press.
 
 Barrett, L. F. (2017). *How Emotions Are Made*. Houghton Mifflin Harcourt.
 
 Carroll, M. J., Brown, N., & Huang, E. (2025). E-β-ocimene and brood cannibalism: Interplay between a honey bee larval pheromone and brood regulation in summer dearth colonies. *PLOS ONE*, 20(2), e0317668.
+
+Cavagna, A., Cimarelli, A., Giardina, I., et al. (2010). Scale-free correlations in starling flocks. *Proceedings of the National Academy of Sciences*, 107(26), 11865–11870. https://doi.org/10.1073/pnas.1005766107
 
 Chalmers, D. (1995). Facing up to the problem of consciousness. *Journal of Consciousness Studies*, 2(3), 200–219.
 
@@ -429,6 +441,8 @@ Gerstner, W., Lehmann, M., Liakoni, V., Corneil, D., & Brea, J. (2018). Eligibil
 
 Giurfa, M. (2025). The cognitive side of communication in social insects. *Trends in Cognitive Sciences*, 29(11), 979–981.
 
+Hesse, J., & Groß, T. (2014). Self-organized criticality as a fundamental property of neural systems. *Frontiers in Systems Neuroscience*, 8, 166. https://doi.org/10.3389/fnsys.2014.00166
+
 Kahneman, D. (2011). *Thinking, Fast and Slow*. Farrar, Straus and Giroux.
 
 Kim, E. J., Pellman, B. A., & Kim, J. J. (2015). Stress effects on the hippocampus: A critical review. *Learning & Memory*, 22(9), 411–416.
@@ -439,7 +453,11 @@ Lukšys, G., & Sandi, C. (2011). Neural mechanisms and computations underlying s
 
 Minsky, M. (1986). *The Society of Mind*. Simon & Schuster.
 
+Palva, J. M., Zhigalov, A., Hirvonen, J., et al. (2013). Neuronal long-range temporal correlations and avalanche dynamics are correlated with behavioral scaling laws. *Proceedings of the National Academy of Sciences*, 110(9), 3585–3590. https://doi.org/10.1073/pnas.1216855110
+
 Park, J. S., et al. (2023). Generative agents: Interactive simulacra of human behavior. *UIST 2023*.
+
+Priesemann, V., Wibral, M., Valderrama, M., et al. (2014). Spike avalanches in vivo suggest a driven, slightly subcritical brain state. *Frontiers in Systems Neuroscience*, 8, 108. https://doi.org/10.3389/fnsys.2014.00108
 
 Putnam, H. (1967). Psychological predicates. In Capitan, W. H., & Merrill, D. D. (Eds.), *Art, Mind, and Religion*. University of Pittsburgh Press.
 

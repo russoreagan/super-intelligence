@@ -1570,7 +1570,13 @@ class DefaultModeNetwork:
         return min(settings.get("suppression_skip_prob_max"), suppression)
 
     def _chem_snapshot(self) -> dict[str, float]:
-        """Merged neuromod + hormonal snapshot for switch modulation."""
+        """Merged neuromod + hormonal snapshot for switch modulation.
+
+        When flock_dynamics is on, also carries the per-turn trajectory of each
+        channel under `vel_<CH>` keys (e.g. `vel_CORT`). These are 0-centred
+        derivatives, NOT 0.5-centred levels, so they are consumed by explicit
+        velocity-aware logic (rumination drive, idle gate) rather than the
+        generic 0.5-centred SwitchNeuron modulator path."""
         try:
             nm = self._bus.neuromod.snapshot()
         except Exception:
@@ -1579,7 +1585,16 @@ class DefaultModeNetwork:
             hs = self._bus.hormonal.snapshot()
         except Exception:
             hs = {}
-        return {**nm, **hs}
+        snap = {**nm, **hs}
+        if settings.get("flock_dynamics", 0):
+            try:
+                for ch, v in self._bus.neuromod.velocity().items():
+                    snap[f"vel_{ch}"] = v
+                for ch, v in self._bus.hormonal.velocity().items():
+                    snap[f"vel_{ch}"] = v
+            except Exception:
+                pass
+        return snap
 
     def _current_interval(self) -> float:
         """Adaptive tick interval: faster when there's a live conversation,
@@ -1617,7 +1632,20 @@ class DefaultModeNetwork:
                 # Chemistry idle-gate: hard block when chemistry says the
                 # brain shouldn't be mind-wandering (alert/defensive states).
                 chem = self._chem_snapshot()
-                if not self._idle_gate.should_fire(0.6, chem, turn_id=f"dmn_{self._thought_count}"):
+                # flock_dynamics (1): a sharply RISING worry trajectory (CORT/NE
+                # climbing) boosts the gate input — equivalent to lowering the
+                # gate threshold — so escalating stress can intrude on otherwise
+                # quiet idle states. Steady-high stress (velocity ≈ 0) does not.
+                gate_level = 0.6
+                if settings.get("flock_dynamics", 0):
+                    worry_vel = max(0.0, float(chem.get("vel_CORT", 0.0))) + max(
+                        0.0, float(chem.get("vel_NE", 0.0))
+                    )
+                    gate_level += min(
+                        float(settings.get("flock_idle_gate_vel_nudge", 0.0)),
+                        float(settings.get("flock_idle_gate_vel_nudge", 0.0)) * worry_vel,
+                    )
+                if not self._idle_gate.should_fire(gate_level, chem, turn_id=f"dmn_{self._thought_count}"):
                     logger.debug(
                         "[Background reflection] Tick suppressed by idle_gate "
                         "(NE=%.2f GABA=%.2f 5HT=%.2f OXT=%.2f)",
@@ -1882,6 +1910,17 @@ class DefaultModeNetwork:
             + settings.get("rum_w_ach") * ach
             - settings.get("rum_w_5ht") * sht
         )
+        # flock_dynamics (1): trajectory term — *rising* stress/interest drives
+        # rumination harder than a steady-high level (murmuration hysteresis:
+        # an escalating threat warrants fresh vigilant rumination; a chronic,
+        # adapted one should habituate). Only positive (rising) velocity counts;
+        # falling chemistry does not suppress below the level-based drive.
+        if settings.get("flock_dynamics", 0):
+            drive += (
+                float(settings.get("flock_rum_w_cort_vel", 0.0)) * max(0.0, float(chem.get("vel_CORT", 0.0)))
+                + float(settings.get("flock_rum_w_ne_vel", 0.0)) * max(0.0, float(chem.get("vel_NE", 0.0)))
+                + float(settings.get("flock_rum_w_da_vel", 0.0)) * max(0.0, float(chem.get("vel_DA", 0.0)))
+            )
         flavor = "anxious" if (cort + ne_raw) > (da_raw + ach_raw) else "engaged"
         return max(0.0, drive), flavor
 
