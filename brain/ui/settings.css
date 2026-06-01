@@ -15,8 +15,12 @@
 /* SPA integration: hidden by default, shown when .visible. Flex direction is
    left to the design default (row) and its responsive @media (column), so the
    left rail collapses to a top bar on narrow screens exactly as designed. */
-#settings-page { display: none; height: 100vh; }
-#settings-page.visible { display: flex; }
+/* NOTE: index.html's pre-redesign inline CSS still sets
+   `#settings-page { flex-direction: column; overflow-y: auto }`. The .visible
+   rules below carry higher specificity (id+class) so the redesign's row layout
+   and inner-scroll win. Height accounts for the app's 56px header. */
+#settings-page { display: none; height: calc(100vh - 56px); }
+#settings-page.visible { display: flex; flex-direction: row; overflow: hidden; }
 
 /* ---------- LEFT RAIL ---------- */
 .set-rail {
@@ -416,7 +420,8 @@ input[type=range].r::-moz-range-thumb {
 /* responsive: rail → top bar */
 @media (max-width: 820px) {
   body { overflow: auto; }
-  #settings-page { flex-direction: column; height: auto; }
+  /* .visible specificity (id+class) to override the base row rule above */
+  #settings-page.visible { flex-direction: column; height: auto; overflow: visible; }
   .set-rail { width: 100%; border-right: none; border-bottom: 1px solid var(--line-soft); }
   .rail-nav { flex-direction: row; overflow-x: auto; gap: 6px; padding: 10px 14px; }
   .nav-item { flex-direction: column; gap: 5px; min-width: 88px; text-align: center; padding: 9px 8px; }
