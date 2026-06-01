@@ -1,0 +1,168 @@
+/* =====================================================================
+   ELYCEUM — design system · tokens + core components
+   A warm "living atlas" skin for the synthetic-mind app. Import this once
+   per page (<link rel="stylesheet" href="elyceum.css">), load the fonts,
+   and build with the tokens + component classes below. Pair with
+   elyceum-mood.js to let the UI tint to the brain's prevailing mood.
+
+   Fonts (add to <head>):
+   <link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400;1,6..72,500&family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+   ===================================================================== */
+
+:root {
+  /* ---- surfaces (paper) ---- */
+  --paper:    oklch(0.966 0.013 84);   /* page background */
+  --paper-2:  oklch(0.945 0.016 83);   /* raised strip / inset */
+  --paper-3:  oklch(0.912 0.019 82);   /* track / hairline fill */
+  --plate:    oklch(0.978 0.010 85);   /* framed figure / card face */
+
+  /* ---- ink (text) ---- */
+  --ink:      oklch(0.27 0.022 54);    /* primary text */
+  --ink-2:    oklch(0.42 0.022 54);    /* secondary */
+  --ink-3:    oklch(0.55 0.020 56);    /* muted / captions */
+  --ink-4:    oklch(0.68 0.016 60);    /* faint / labels */
+
+  /* ---- rules ---- */
+  --line:       oklch(0.30 0.02 54 / 0.24);
+  --line-soft:  oklch(0.30 0.02 54 / 0.12);
+  --line-faint: oklch(0.30 0.02 54 / 0.07);
+
+  /* ---- accent (the "signal"; mood-tinted at runtime) ---- */
+  --signal:      oklch(0.56 0.185 33);
+  --signal-deep: oklch(0.48 0.17 32);
+  --signal-soft: oklch(0.56 0.185 33 / 0.13);
+  --ok:          oklch(0.52 0.10 150);
+
+  /* ---- functional-cluster palette (brain regions; NOT mood-tinted) ---- */
+  --frontal:      oklch(0.58 0.13 248);
+  --parietal:     oklch(0.60 0.15 150);
+  --temporal:     oklch(0.64 0.13 70);
+  --occipital:    oklch(0.55 0.16 305);
+  --motor:        oklch(0.57 0.19 22);
+  --thalamus:     oklch(0.56 0.045 250);
+  --hypothalamus: oklch(0.63 0.17 41);
+  --hippocampus:  oklch(0.56 0.12 186);
+  --brainstem:    oklch(0.55 0.12 46);
+  --cerebellum:   oklch(0.58 0.12 205);
+
+  /* ---- type ---- */
+  --serif: 'Newsreader', Georgia, serif;          /* display, captions, body of the "voice" */
+  --sans:  'Hanken Grotesk', system-ui, sans-serif; /* UI, labels, the user's words */
+  --mono:  'JetBrains Mono', ui-monospace, monospace; /* data, metadata, small caps */
+
+  /* ---- radius / spacing scale ---- */
+  --r-1: 5px;  --r-2: 8px;  --r-3: 12px;
+  --sp-1: 6px; --sp-2: 10px; --sp-3: 16px; --sp-4: 22px; --sp-5: 30px;
+}
+
+/* mood cross-fade: vars are swapped instantly by elyceum-mood.js; these
+   surfaces ease their resolved colours so a mood shift washes through. */
+body { transition: background-color 1200ms ease, color 1100ms ease; }
+.e-surface, .e-panel, .e-card, .e-plate, .e-bar, .e-strip {
+  transition: background-color 1200ms ease, border-color 1200ms ease;
+}
+
+/* ---------------------------------------------------------------- base */
+* , *::before, *::after { box-sizing: border-box; }
+.e-root {
+  background: var(--paper); color: var(--ink); font-family: var(--sans);
+  -webkit-font-smoothing: antialiased;
+  background-image: radial-gradient(oklch(0.30 0.02 54 / 0.025) 0.5px, transparent 0.6px);
+  background-size: 4px 4px;
+}
+.e-root ::selection { background: var(--signal-soft); }
+
+/* ---------------------------------------------------------------- type */
+.e-display { font-family: var(--serif); font-weight: 600; letter-spacing: -0.012em; color: var(--ink); }
+.e-title   { font-family: var(--serif); font-weight: 600; font-size: 17px; letter-spacing: -0.01em; }
+.e-body    { font-family: var(--serif); font-size: 14.5px; line-height: 1.6; color: var(--ink); text-wrap: pretty; }
+.e-voice   { font-family: var(--serif); font-style: italic; color: var(--ink-2); } /* the brain's "voice" */
+.e-ui      { font-family: var(--sans); font-size: 12.5px; color: var(--ink-2); }
+.e-label   { font-family: var(--mono); font-size: 9px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--ink-4); }
+.e-data    { font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--ink-3); }
+.e-eyebrow { font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.22em; text-transform: uppercase; color: var(--ink-4); }
+
+/* editorial double rule (e.g. under a masthead) */
+.e-rule { border-top: 1.5px solid var(--ink); position: relative; }
+.e-rule::after { content: ''; position: absolute; left: 0; right: 0; top: 2.5px; border-top: 0.5px solid var(--line); }
+.e-divider { height: 1px; background: var(--line-soft); }
+
+/* ---------------------------------------------------------- surfaces */
+.e-panel { border-right: 1px solid var(--line-soft); }      /* a rail column */
+.e-panel-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: var(--sp-3) var(--sp-4) 11px; }
+.e-panel-head h2 { font-family: var(--serif); font-size: 15.5px; font-weight: 600; }
+.e-panel-head .n { font-family: var(--mono); font-size: 9.5px; color: var(--ink-4); }
+
+.e-card {
+  background: var(--paper); border: 1px solid var(--line-soft); border-radius: var(--r-2); overflow: hidden;
+}
+.e-card-head { display: flex; align-items: center; gap: 12px; padding: 14px 16px; cursor: pointer; user-select: none; transition: background 150ms; }
+.e-card-head:hover { background: var(--paper-2); }
+.e-card-body { padding: 4px 16px 16px; }
+
+/* framed atlas plate — a captioned figure */
+.e-plate { position: relative; background: var(--plate); border: 1px solid var(--line); padding: 12px;
+  box-shadow: 0 1px 0 var(--paper-3), 0 14px 32px -26px oklch(0.30 0.02 54 / 0.5); }
+.e-plate::after { content: ''; position: absolute; inset: 6px; border: 0.5px solid var(--line-soft); pointer-events: none; }
+.e-plate-cap { font-family: var(--serif); font-style: italic; font-size: 11.5px; line-height: 1.45; color: var(--ink-4); padding: 10px 4px 1px; text-wrap: pretty; }
+
+/* ---------------------------------------------------------- buttons */
+.e-tool { width: 33px; height: 33px; border-radius: 50%; border: 1px solid var(--line); color: var(--ink-2);
+  display: inline-flex; align-items: center; justify-content: center; background: none; cursor: pointer;
+  transition: background 160ms, color 160ms, border-color 160ms; }
+.e-tool:hover { background: var(--paper-2); color: var(--ink); border-color: var(--ink-4); }
+.e-tool svg { width: 15px; height: 15px; }
+
+.e-btn { font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
+  padding: 9px 16px; border-radius: var(--r-1); border: 1px solid var(--line); color: var(--ink-2);
+  background: none; cursor: pointer; transition: background 150ms, color 150ms, border-color 150ms; }
+.e-btn:hover { background: var(--paper-2); color: var(--ink); }
+.e-btn-primary { border-color: var(--ink); background: var(--ink); color: var(--paper); }
+.e-btn-primary:hover { background: var(--signal-deep); border-color: var(--signal-deep); color: var(--paper); }
+
+/* segmented control */
+.e-seg { display: inline-flex; border: 1px solid var(--line); border-radius: var(--r-1); overflow: hidden; }
+.e-seg button { font-family: var(--mono); font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase;
+  padding: 6px 11px; color: var(--ink-4); background: none; cursor: pointer; transition: background 140ms, color 140ms; }
+.e-seg button.on { background: var(--ink); color: var(--paper); }
+.e-seg button + button { border-left: 1px solid var(--line); }
+
+/* ---------------------------------------------------- form controls */
+/* control row: label + hint on the left, control + value on the right */
+.e-ctrl { display: flex; align-items: center; gap: 22px; }
+.e-ctrl-meta { flex: 0 0 280px; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.e-ctrl-meta .lab { font-size: 12px; color: var(--ink-2); font-weight: 500; }
+.e-ctrl-meta .hint { font-family: var(--mono); font-size: 9.5px; color: var(--ink-4); line-height: 1.45; }
+.e-ctrl-field { flex: 1; min-width: 0; display: flex; align-items: center; gap: 14px; }
+.e-ctrl-val { font-family: var(--mono); font-size: 11.5px; color: var(--signal); min-width: 50px; text-align: right;
+  flex-shrink: 0; font-variant-numeric: tabular-nums; }
+
+/* slider — paper track, ink fill + thumb */
+input[type=range].e-range { -webkit-appearance: none; appearance: none; width: 100%; height: 4px; border-radius: 3px;
+  background: var(--paper-3); background-image: linear-gradient(var(--ink), var(--ink));
+  background-repeat: no-repeat; background-size: var(--pct, 0%) 100%; outline: none; cursor: pointer; }
+input[type=range].e-range::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 14px; height: 14px;
+  border-radius: 50%; background: var(--ink); border: 2px solid var(--plate); box-shadow: 0 1px 3px oklch(0.30 0.02 54 / 0.4); }
+input[type=range].e-range::-moz-range-thumb { width: 14px; height: 14px; border-radius: 50%; background: var(--ink); border: 2px solid var(--plate); }
+
+/* toggle */
+.e-toggle { width: 40px; height: 22px; border-radius: 999px; background: var(--paper-3); border: 1px solid var(--line);
+  position: relative; flex-shrink: 0; cursor: pointer; transition: background 160ms, border-color 160ms; }
+.e-toggle::after { content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%;
+  background: var(--ink-4); transition: transform 180ms, background 180ms; }
+.e-toggle.on { background: var(--signal-soft); border-color: var(--signal-deep); }
+.e-toggle.on::after { transform: translateX(18px); background: var(--signal); }
+
+/* text input — a fountain-pen entry line */
+.e-input-line { display: flex; align-items: center; gap: 12px; border-bottom: 1.5px solid var(--ink); padding-bottom: 9px; }
+.e-input-line input { flex: 1; background: none; border: none; outline: none; font-family: var(--serif); font-size: 15px; color: var(--ink); }
+.e-input-line input::placeholder { color: var(--ink-4); font-style: italic; }
+
+/* ---------------------------------------------------- status / live */
+.e-live { width: 6px; height: 6px; border-radius: 50%; background: var(--signal); display: inline-block;
+  animation: e-pulse 2.6s ease-out infinite; }
+@keyframes e-pulse { 0% { box-shadow: 0 0 0 0 oklch(0.56 0.185 33 / 0.5); } 70%,100% { box-shadow: 0 0 0 7px oklch(0.56 0.185 33 / 0); } }
+
+/* a small chip / swatch keyed to a region colour: set style="--lobe: var(--frontal)" */
+.e-swatch { width: 12px; height: 12px; border-radius: 3px; background: var(--lobe, var(--ink-3));
+  border: 1px solid oklch(0.30 0.02 54 / 0.25); }

@@ -13,17 +13,17 @@
 ## Emotional profile
 
 ## Relationship
-- Familiarity: new (interactions: 30)
+- Familiarity: new (interactions: 46)
 
 ## Affection score
-- Score: 6
+- Score: 7
 
 - User has been experimenting with AI for about a year.
 - Built prototypes that proved concepts to the company.
 - Improving in vibe coding both professionally and personally.
-- Interactions: 30
+- Interactions: 46
 - Last seen: 1780192708
-- Bond: 6.0
+- Bond: 9.0
 - The user is developing a system with embedded philosophical values.
 - Concerns about transparency and exploitability of the architecture are being considered.
 - [relationship] User demonstrates excitement and trust in discussing complex technical and ethical issues.
@@ -41,7 +41,7 @@
 - user interested in decentralized communication systems
 - brain capable of conducting scientific literature searches
 - [relationship] User shows enthusiasm for complex problem-solving and trusts the brain to conduct detailed research.
-- History: friendly — warm and engaged, hold the teasing (last tone: polite, delta: +1)
+- History: friendly — warm and engaged, hold the teasing (last tone: testing, delta: -1)
 - User is interested in academic databases and colony communication systems.
 - Brain can parse articles on specific topics but lacks direct access to scite.
 - [relationship] The user shows enthusiasm for detailed research and collaboration.
@@ -96,3 +96,42 @@
 - The user is interested in observing patterns of learning and emotional influences on learning.
 - Specialization leading to cost savings may emerge over time with diverse input.
 - [relationship] User shows enthusiasm for complex, exploratory system analysis.
+- The system is expected to notice what it was bored about and generate new associations.
+- Observation should focus on whether silence-recall triggers across all three channels equally and influences subsequent decisions.
+- [relationship] Shows enthusiasm and curiosity towards the development of a novel system.
+- AI systems can behave under stress without experiencing threats subjectively.
+- The structural and functional aspects of system response are substrate-agnostic.
+- User understands 'threat' as a framing issue rather than a fundamental biological response.
+- The user is interested in observing how difficulty triggers mobilization in AI systems.
+- [relationship] The conversation reveals the user's deep understanding and excitement about complex theoretical concepts.
+- The user prefers to wait for stable data before conducting analysis.
+- User is noted for being methodical and patient in their approach to research.
+- [relationship] Appreciation of the user's patience and scientific rigor.
+- User is working on a system that involves network dynamics under cognitive load.
+- The user prefers to let the system stabilize before looking for patterns of learning and specialization.
+- [relationship] Shows curiosity and interest in the user's progress, indicating a supportive relationship.
+- User interested in discussing unexpected emergent behaviors.
+- Curiosity about seeing system's computational states that were not explicitly programmed.
+- User is interested in AI capabilities and differences between models.
+- User finds it surprising when an older model outperforms a newer one.
+- The app identified silence as a signal in bee communication.
+- The Bus architecture was treating messages individually, while the concentration model considers message drop-off over time.
+- Silence in a topic's activity must be distinguished between 'earned' silence after being active and initial 'cold-start' silence.
+- The insight about meaningful silence changes the approach to Phase 2 and gives Phase 6 more significance.
+- [relationship] User shows enthusiasm and deep engagement with the project, indicating high investment in the topic.
+- User gained clarity on idle time process through explicit understanding.
+- Silence-recall is crucial for differentiating between no activity and processed cessation of activity.
+- [relationship] The user's enthusiasm and deep engagement with the topic indicate a strong interest in the technical details.
+- User is interested in evaluating long-term performance improvements.
+- Two methods of task assignment are discussed: research-based and design-based.
+- User wants a clean separation for observation purposes.
+- User is enthusiastic about finding an unrelated project.
+- [relationship] The user shows enthusiasm and interest in discussing the technical details of their work.
+- The user is interested in an experiment to test AI's ability to learn and improve at identifying audio samples they would like.
+- Improvement can be measured by the quality of picks improving over time.
+- [relationship] Shows enthusiasm for engaging in a detailed, technical experiment with the AI.
+- True learning is characterized by improved prediction accuracy and deeper understanding of user preferences over time.
+- Expanded context refers to increased familiarity with a user's patterns without necessarily improving predictive capabilities.
+- The Splice MCP is only accessible via Claude Desktop.
+- An alternative method involves user-mediated sample selection for analysis.
+- [relationship] Shows enthusiasm and willingness to adapt the experiment despite technical limitations.
