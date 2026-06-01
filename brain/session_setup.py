@@ -75,16 +75,30 @@ class _SetupMixin:
         from brain.pns import PNS
 
         self.bus = Bus()
-        # Phase 2 (colony features): prototype concentration tracking on ONE
-        # high-stakes channel — threat — using the GABA dimension of affect.state
-        # (subtract a baseline so only genuinely elevated threat accumulates).
+        # Colony features: concentration tracking. Threat was the first channel
+        # (prototype); the same principle — a decaying summed-concentration field
+        # with quorum, slope, and silence-as-signal — now applies to several
+        # channels. Each magnitude_fn returns the per-message contribution; a
+        # baseline subtraction keeps only genuinely-elevated signal accumulating.
+        # Silence-triggered recall (DMN) auto-generalizes across every tracked
+        # topic, so a thread going quiet on ANY of these cues a reflective recall.
         from brain.settings import settings as _colony_s
 
         if _colony_s.get("colony_features", 0):
+            # Threat — GABA dimension of affect.state.
             self.bus.track_concentration(
                 "affect.state",
                 lambda p: max(0.0, float((p.get("neuromod") or {}).get("GABA", 0.0)) - 0.2),
             )
+            # Salience / engagement — how much the live conversation "matters".
+            # temporal.features carries entities, so silence-recall gets real cues
+            # (the entities that were hot before the thread went quiet).
+            self.bus.track_concentration(
+                "temporal.features",
+                lambda p: max(0.0, float(p.get("salience", 0.0)) - 0.3),
+            )
+            # Memory demand — recall requests building up over a memory-heavy stretch.
+            self.bus.track_concentration("mem.recall", lambda p: 1.0)
         self.obs = ObservabilityLayer(self.session_id)
         (
             self._eval_logger,

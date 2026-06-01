@@ -699,17 +699,20 @@ class FrontalCluster:
             salience = float(features.get("salience") or 0.0)
             base_need = max(0.0, (drafter_count - 1) / 2.0)  # planner ask 1..3 → 0..1
             frontal_need = max(base_need, salience)
-            # N2: competing needs share a bounded recruitment budget via softmax —
-            # frontal (query difficulty), hippocampus (memory-heavy turn → deeper
-            # recall), and caution (threat quorum). Allocation replaces the prior
-            # single-cluster recruit() so mobilization is proportional and competitive.
+            # N2: competing needs share a bounded recruitment budget via softmax,
+            # over clusters that ACTUALLY CONSUME recruitment — frontal (query
+            # difficulty → more drafters) and hippocampus (memory-heavy turn →
+            # deeper recall). Only consuming clusters are listed: a non-consumer
+            # would steal softmax share (the budget shares sum to 1) and silently
+            # dilute the clusters that do respond. The threat response is NOT a
+            # recruitment target — under threat the system should commit, not
+            # mobilize more; that is handled by the N4 quorum→commit phase-shift
+            # below, not here.
             hippo_need = 0.6 if features.get("requires_memory") else 0.1 * salience
-            caution_need = 0.8 if self._bus.quorum("affect.state") else 0.0
             self._bus.allocate_recruitment(
                 {
                     "frontal": frontal_need,
                     "hippocampus": hippo_need,
-                    "caution": caution_need,
                 }
             )
             recruit_lvl = self._bus.recruitment_level("frontal")
