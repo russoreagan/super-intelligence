@@ -21,6 +21,7 @@ from brain.observability.decisions import decisions
 from brain.second_brain.store import EpisodicStore, SchemaStore
 from brain.security import sanitize_fact
 from brain.sleep_prompts import (
+    ANGLE_SYNONYM_SYSTEM,
     EPISODE_SYNTHESIS_SYSTEM,
     PERSONALITY_OBSERVATION_SYSTEM,
     SELF_UPDATE_SYSTEM,
@@ -92,6 +93,18 @@ class SleepConsolidation:
             sensitivity="sensitive",
         )
         self._personality_observer.set_router(router)
+
+        self._angle_synonym_cell = IntegratorCell(
+            name="angle_synonym_clusterer",
+            cluster="sleep",
+            model="runpod-general",
+            system_prompt=ANGLE_SYNONYM_SYSTEM,
+            topics=[],
+            max_calls_per_turn=1,
+            locality="local",
+            sensitivity="low",
+        )
+        self._angle_synonym_cell.set_router(router)
 
     async def consolidate(
         self,
@@ -200,6 +213,9 @@ class SleepConsolidation:
                 session_thoughts=session_thoughts,
                 topic_clusters=all_topic_clusters,
             )
+
+        # 4. Angle synonym pass — infrequent; gates on history size + time since last run.
+        await self.angle_synonym_pass(session_id)
 
         elapsed = time.time() - start
         logger.info("[Memory consolidation] Done in %.2fs", elapsed)
@@ -774,5 +790,125 @@ class SleepConsolidation:
             logger.info("[Memory consolidation] Insight encoded as conclusion: %r", text[:80])
         except Exception as e:
             logger.warning("[Memory consolidation] Conclusion encoding failed: %s", e)
+
+    # ── Angle synonym pass ───────────────────────────────────────────────────
+
+    _SYNONYM_MIN_HISTORY = 50       # angles recorded before first pass
+    _SYNONYM_MIN_INTERVAL_DAYS = 7  # minimum days between passes
+
+    async def angle_synonym_pass(self, session_id: str) -> None:
+        """Cluster semantically similar angle labels and write angle_synonyms.json.
+
+        Only runs when the angle history is large enough to be meaningful and
+        enough time has passed since the last run. Reads/writes
+        second_brain/sequence_weights.json for history + timestamp bookkeeping,
+        and second_brain/angle_synonyms.json for the output mapping.
+        """
+        import os
+
+        from brain.sequence_predictor import _SYNONYMS_PATH, _WEIGHTS_PATH, _normalize
+
+        weights_path = os.path.abspath(_WEIGHTS_PATH)
+        synonyms_path = os.path.abspath(_SYNONYMS_PATH)
+
+        # Load weights file — need history + last-run timestamp.
+        try:
+            if not os.path.exists(weights_path):
+                logger.debug("[AngleSynonyms] No sequence_weights.json yet — skipping")
+                return
+            with open(weights_path) as f:
+                weights_data: dict = json.load(f)
+        except Exception as e:
+            logger.warning("[AngleSynonyms] Could not read sequence_weights.json: %s", e)
+            return
+
+        history: list[str] = weights_data.get("history", [])
+        last_ts: float = float(weights_data.get("last_synonym_pass_ts", 0))
+        now = time.time()
+
+        if len(history) < self._SYNONYM_MIN_HISTORY:
+            logger.debug(
+                "[AngleSynonyms] Not enough history (%d/%d) — skipping",
+                len(history), self._SYNONYM_MIN_HISTORY,
+            )
+            return
+
+        if now - last_ts < self._SYNONYM_MIN_INTERVAL_DAYS * 86400:
+            logger.debug("[AngleSynonyms] Last pass was %.1f days ago — skipping",
+                         (now - last_ts) / 86400)
+            return
+
+        # Build angle frequency table from bigrams (each appearance as src or dst counts).
+        sep = "\x1f"
+        bigrams: dict = weights_data.get("bigrams", {})
+        freq: Counter = Counter()
+        for key, count in bigrams.items():
+            parts = key.split(sep, 1)
+            for p in parts:
+                if p:
+                    freq[p] += count
+        # Also count raw history entries.
+        for a in history:
+            if a:
+                freq[a] += 1
+
+        # Build sorted list of (angle, count) for the LLM — most frequent first.
+        angle_list = sorted(freq.items(), key=lambda x: -x[1])
+
+        lines = ["Observed angles (label: frequency):"]
+        for angle, count in angle_list[:120]:  # cap to keep prompt manageable
+            lines.append(f"  {angle}: {count}")
+        prompt = "\n".join(lines)
+
+        logger.info(
+            "[AngleSynonyms] Running synonym pass: %d unique angles from %d history entries",
+            len(angle_list), len(history),
+        )
+
+        self._angle_synonym_cell.reset_turn(f"sleep_{session_id}_synonyms")
+        raw = await self._angle_synonym_cell.call([{"role": "user", "content": prompt}])
+        result: dict = safe_json_parse(raw) or {}
+
+        mappings: list[dict] = result.get("mappings") or []
+        if not mappings:
+            logger.info("[AngleSynonyms] No synonym groups found — vocabulary may be consistent")
+        else:
+            # Build flat {variant: canonical} dict; load existing to merge.
+            existing: dict = {}
+            try:
+                if os.path.exists(synonyms_path):
+                    with open(synonyms_path) as f:
+                        existing = json.load(f)
+            except Exception:
+                pass
+
+            for group in mappings:
+                canonical = str(group.get("canonical", "")).strip().lower()
+                variants = [str(v).strip().lower() for v in (group.get("variants") or [])]
+                if not canonical or not variants:
+                    continue
+                for v in variants:
+                    norm = _normalize(v)
+                    if norm and norm != canonical:
+                        existing[norm] = canonical
+
+            tmp = synonyms_path + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(existing, f, indent=2)
+            os.replace(tmp, synonyms_path)
+            logger.info(
+                "[AngleSynonyms] Wrote %d synonym mappings (%d groups) to angle_synonyms.json",
+                len(existing), len(mappings),
+            )
+
+        # Stamp the run time back into sequence_weights.json.
+        try:
+            weights_data["last_synonym_pass_ts"] = now
+            tmp = weights_path + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(weights_data, f, indent=2)
+            os.replace(tmp, weights_path)
+        except Exception as e:
+            logger.warning("[AngleSynonyms] Could not update sequence_weights.json timestamp: %s", e)
 
     # ── Hebbian pass ─────────────────────────────────────────────────────────

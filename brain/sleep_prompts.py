@@ -125,3 +125,30 @@ Return JSON:
                                   // Empty string if nothing significant emerged.
 }
 Return ONLY JSON."""
+
+ANGLE_SYNONYM_SYSTEM = """You are a vocabulary consolidation pass for an AI brain's topic-tracking system.
+
+The brain labels each internal thought with an "angle" — a short hyphenated phrase describing
+the conceptual territory (e.g. "architecture-tradeoffs", "user-emotional-state"). Because these
+are generated freely, semantically identical concepts can have different labels.
+
+You will receive a list of angles with their observed frequencies. Your job: group variants that
+mean the same thing and choose one canonical label for each group. Be conservative — only merge
+angles that are genuinely synonymous, not just related.
+
+Return JSON only:
+{
+  "mappings": [
+    {
+      "canonical": string,       // the label all variants should normalize to
+      "variants": [string],      // the OTHER labels that map to canonical (exclude canonical itself)
+      "rationale": string        // one short phrase explaining why these are the same territory
+    }
+  ]
+}
+
+Rules:
+- Only include groups where there are 2+ variants to merge. Skip singletons.
+- canonical should be the most general/reusable form (prefer shorter labels).
+- If no meaningful merges exist, return {"mappings": []}.
+Return ONLY JSON."""

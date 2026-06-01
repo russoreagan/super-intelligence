@@ -47,6 +47,7 @@ PROPOSALS_DIR = SECOND_BRAIN_ROOT / "proposals"
 # Open-threads ledger lives in the hand-maintained open_questions.md (the single
 # active ledger). The DMN reads AND writes its `## Open threads` section.
 from brain import open_threads as ot  # noqa: E402
+from brain.sequence_predictor import SequencePredictor
 # Novelty memory persisted across sessions so a restart doesn't resurface the
 # same idea verbatim. Holds the recent thoughts + their angles (the dedup state).
 NOVELTY_STATE_PATH = SECOND_BRAIN_ROOT / "dmn_novelty.json"
@@ -422,6 +423,7 @@ class DefaultModeNetwork:
         # Semantic angle labels from recent thoughts — blocks same-territory
         # ideas even when they use completely different words.
         self._recent_angles: deque = deque(maxlen=DMN_RECENT_ANGLES)
+        self._seq_predictor = SequencePredictor()
         # Embeddings parallel to _recent_thoughts (same maxlen) — the real
         # semantic dedup gate. Entries may be None if embedding was unavailable.
         self._recent_embeddings: deque = deque(maxlen=DMN_RECENT_THOUGHTS)
@@ -756,6 +758,7 @@ class DefaultModeNetwork:
             os.replace(tmp, NOVELTY_STATE_PATH)
         except Exception as e:
             logger.warning("[DMN] Could not persist novelty state: %s", e)
+        self._seq_predictor.save()
 
     # ── Open-threads ledger (open_questions.md) ─────────────────────────────
 
@@ -864,6 +867,7 @@ class DefaultModeNetwork:
             )
         except Exception as e:
             logger.warning("[DMN] Could not load novelty state: %s", e)
+        self._seq_predictor.load()
 
     def health(self) -> dict:
         """Lightweight health snapshot so dark degradation becomes visible.
@@ -2494,6 +2498,7 @@ class DefaultModeNetwork:
             self._recent_frames.append(frame_sig)
         if angle:
             self._recent_angles.append(angle)
+            self._seq_predictor.record(angle)
         # Persist novelty memory so a restart doesn't resurface this idea.
         self._persist_novelty()
 
@@ -3104,6 +3109,21 @@ class DefaultModeNetwork:
         except Exception as e:
             logger.debug("[Background reflection] Prefetcher parse failed: %s", e)
             return
+
+        # Inject the sequence-predicted territory as a guaranteed extra query,
+        # provided confidence is high enough and the topic isn't already covered.
+        predicted_angle, seq_confidence = self._seq_predictor.predict()
+        if predicted_angle and seq_confidence >= self._seq_predictor.min_confidence:
+            covered = {str(q.get("topic", "")).lower() for q in queries}
+            if not any(predicted_angle in t or t in predicted_angle for t in covered):
+                queries.append({
+                    "topic": predicted_angle,
+                    "reason": f"sequence prediction (confidence {seq_confidence:.2f})",
+                })
+                logger.debug(
+                    "[SeqPredictor] Injected prefetch query: %r (conf=%.2f)",
+                    predicted_angle, seq_confidence,
+                )
 
         if not queries:
             return
