@@ -4260,6 +4260,12 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
           </div>
           <div class="theme-toggle-hint">Warm paper, or dark console. Saved on this device.</div>
         </div>
+        <!-- Mood intensity — how strongly the brain's mood tints the background -->
+        <div class="theme-toggle-block">
+          <div class="theme-toggle-label">Mood intensity <span id="mood-intensity-val">50%</span></div>
+          <input type="range" class="r mood-intensity-range" id="mood-intensity-slider" min="0" max="100" step="5" value="50">
+          <div class="theme-toggle-hint">How strongly the prevailing mood washes into the background paper.</div>
+        </div>
         <button class="btn-reset-all" id="settings-reset-btn">
           <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
           Reset all to defaults
@@ -7307,6 +7313,12 @@ var _MOOD_RULES = [
 ];
 var _chemState = { DA:0.5, ACh:0.2, GABA:0.05, Glu:0.3, NE:0.25, '5HT':0.3, OXT:0.25, CORT:0.1, AEA:0.2 };
 var _MOOD_TINT_PROPS = ['--signal','--signal-deep','--signal-soft','--paper','--paper-2','--paper-3','--plate','--ink','--ink-2'];
+// Background mood-tint strength (0–100, tunable in Settings). 50 = the previous
+// fixed 1.8x; the slider maps 0→none … 100→3.6x of each mood's paper chroma.
+var _moodIntensity = (function () {
+  try { var v = parseInt(localStorage.getItem('brain_mood_intensity'), 10); return isNaN(v) ? 50 : v; }
+  catch (e) { return 50; }
+})();
 
 // Single source of truth: the displayed disposition (the named emotion) maps
 // to one of the six mood families, so the label and the tint always agree —
@@ -7348,7 +7360,7 @@ function _applyMoodTint() {
   rs.setProperty('--signal-soft', 'oklch(' + L + ' ' + C + ' ' + H + ' / 0.13)');
   // Amplify the paper chroma so the mood is visible — but gently; at the
   // original 0.013 it was imperceptible, at 3.4× it ran a touch too warm.
-  var pc = t.paperC * 1.8;
+  var pc = t.paperC * (_moodIntensity / 100 * 3.6);
   rs.setProperty('--paper',   'oklch(0.957 ' + pc.toFixed(3) + ' ' + t.paperH + ')');
   rs.setProperty('--paper-2', 'oklch(0.934 ' + (pc + 0.007).toFixed(3) + ' ' + t.paperH + ')');
   rs.setProperty('--paper-3', 'oklch(0.898 ' + (pc + 0.014).toFixed(3) + ' ' + t.paperH + ')');
@@ -7389,6 +7401,21 @@ function _applyMoodTint() {
     clearTimeout(t);
     t = setTimeout(function () { el.classList.remove('is-scrolling'); }, 900);
   }, true); // capture phase catches scroll from every nested container
+})();
+
+// Mood-intensity slider (Settings → Appearance) — tunes the background tint.
+(function () {
+  var slider = document.getElementById('mood-intensity-slider');
+  var label = document.getElementById('mood-intensity-val');
+  if (label) label.textContent = _moodIntensity + '%';
+  if (!slider) return;
+  slider.value = _moodIntensity;
+  slider.addEventListener('input', function () {
+    _moodIntensity = parseInt(slider.value, 10) || 0;
+    try { localStorage.setItem('brain_mood_intensity', String(_moodIntensity)); } catch (e) {}
+    if (label) label.textContent = _moodIntensity + '%';
+    _applyMoodTint();
+  });
 })();
 
 // neuromodulator Levels / Changes view toggle.
