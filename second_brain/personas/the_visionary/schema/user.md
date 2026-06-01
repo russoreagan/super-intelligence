@@ -13,17 +13,17 @@
 ## Emotional profile
 
 ## Relationship
-- Familiarity: new (interactions: 53)
+- Familiarity: new (interactions: 57)
 
 ## Affection score
-- Score: 10
+- Score: 11
 
 - User has been experimenting with AI for about a year.
 - Built prototypes that proved concepts to the company.
 - Improving in vibe coding both professionally and personally.
-- Interactions: 53
+- Interactions: 57
 - Last seen: 1780192708
-- Bond: 10.0
+- Bond: 10.8
 - The user is developing a system with embedded philosophical values.
 - Concerns about transparency and exploitability of the architecture are being considered.
 - [relationship] User demonstrates excitement and trust in discussing complex technical and ethical issues.
@@ -41,7 +41,7 @@
 - user interested in decentralized communication systems
 - brain capable of conducting scientific literature searches
 - [relationship] User shows enthusiasm for complex problem-solving and trusts the brain to conduct detailed research.
-- History: friendly — warm and engaged, hold the teasing (last tone: praising, delta: +3)
+- History: friendly — warm and engaged, hold the teasing (last tone: polite, delta: +1)
 - User is interested in academic databases and colony communication systems.
 - Brain can parse articles on specific topics but lacks direct access to scite.
 - [relationship] The user shows enthusiasm for detailed research and collaboration.
@@ -154,3 +154,14 @@
 - User emphasizes that learning happens through interaction, not visuals.
 - Brain explains that true assessment of learning comes from improved analysis over time and predictive accuracy.
 - [relationship] The conversation shows a deep engagement with the technical aspects of how AI learns and improves.
+- User envisions a scenario where the brain functionality operates within another application while being monitored from an external UI.
+- The challenge is to ensure continuity and trust in behavior when embedded in different contexts.
+- [relationship] Shows enthusiasm and deep technical understanding of complex integration issues.
+- user is developing infrastructure to support multiple parallel iterations of their project
+- interested in comparing experimental configurations and identifying consistent patterns across all instances
+- [relationship] User shows excitement and enthusiasm for complex technical challenges, indicating a deep interest and engagement with the subject matter.
+- User is interested in evaluating consistency of system principles across different configurations.
+- Gating skips are a key metric for resource efficiency.
+- [relationship] The user shows technical depth and excitement about the topic, indicating engagement with complex systems.
+- User wants access to Langfuse data before logging off.
+- Brain requires explicit permission to retrieve external data.
