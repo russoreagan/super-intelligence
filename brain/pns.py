@@ -666,15 +666,26 @@ class PNS:
                                 try:
                                     try:
                                         audio_iter = client.text_to_speech.stream(**stream_kwargs)
-                                    except TypeError:
-                                        stream_kwargs.pop("previous_text", None)
-                                        stream_kwargs.pop("next_text", None)
-                                        audio_iter = client.text_to_speech.stream(**stream_kwargs)
-                                    async for chunk in audio_iter:
-                                        if self._interrupt_event.is_set():
-                                            break
-                                        if chunk:
-                                            await audio_queue.put(chunk)
+                                        async for chunk in audio_iter:
+                                            if self._interrupt_event.is_set():
+                                                break
+                                            if chunk:
+                                                await audio_queue.put(chunk)
+                                    except (TypeError, Exception) as _param_err:
+                                        # ElevenLabs may reject previous_text/next_text on some
+                                        # model versions — strip and retry without them.
+                                        _msg = str(_param_err).lower()
+                                        if "previous_text" in _msg or "next_text" in _msg or isinstance(_param_err, TypeError):
+                                            stream_kwargs.pop("previous_text", None)
+                                            stream_kwargs.pop("next_text", None)
+                                            audio_iter = client.text_to_speech.stream(**stream_kwargs)
+                                            async for chunk in audio_iter:
+                                                if self._interrupt_event.is_set():
+                                                    break
+                                                if chunk:
+                                                    await audio_queue.put(chunk)
+                                        else:
+                                            raise
                                 except Exception as _sent_err:
                                     logger.error(
                                         "[I/O] TTS sentence %d/%d failed (%s: %s) — skipping",
