@@ -198,9 +198,10 @@ class _LoopsMixin:
             thought = msg.payload.get("thought", "") if not msg.expired else ""
             chem_delta = msg.payload.get("chem_delta", {}) if not msg.expired else {}
             proactive = bool(msg.payload.get("proactive", False)) if not msg.expired else False
+            ts = msg.payload.get("ts") if not msg.expired else None
             if thought:
                 await self._emitter.emit_stream_thought(
-                    thought, chem_delta=chem_delta, proactive=proactive
+                    thought, chem_delta=chem_delta, proactive=proactive, ts=ts
                 )
 
     async def _heartbeat_with_ui(self) -> None:
