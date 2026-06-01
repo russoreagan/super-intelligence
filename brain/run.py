@@ -278,6 +278,7 @@ def _seed_persona_self_md(root, persona: str, settings_data: dict) -> None:
         logger.warning("[Persona] self.md seed failed for %s: %s", persona, e)
 
 
+
 def _route_persona_state() -> None:
     """Route per-persona learned state into second_brain/personas/<slug>/.
 

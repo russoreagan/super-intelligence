@@ -1,0 +1,37 @@
+{
+  "job_id": "job_t_warm",
+  "task_id": null,
+  "goal": "do nothing",
+  "success": false,
+  "done": true,
+  "source": "user",
+  "ralph_mode": false,
+  "total_attempts": 1,
+  "steps": [
+    {
+      "tool": "none",
+      "args": {},
+      "reason": "done"
+    }
+  ],
+  "results": [
+    ""
+  ],
+  "written_files": [],
+  "plan_steps": [
+    {
+      "description": "do nothing",
+      "expected_tool": "?",
+      "acceptance_criteria": [],
+      "id": "US-001"
+    }
+  ],
+  "stories_completed": 0,
+  "productive_steps": 0,
+  "unverified_stories": [],
+  "success_criteria": "",
+  "complexity": "",
+  "spoken_summary": null,
+  "created_at": "2026-05-29T15:13:26.794462+00:00",
+  "completed_at": "2026-05-29T15:13:26.794464+00:00"
+}

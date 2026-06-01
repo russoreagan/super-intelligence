@@ -31,6 +31,14 @@ BASELINE_SYSTEM = "You are a helpful AI assistant. Answer the user's message cle
 # the baseline didn't." Toggle with BRAIN_EVAL_BASELINE_FAIR (default on).
 _FAIR_PREAMBLE = "\n\nNotes from prior conversations with this user (use where relevant):\n{ctx}"
 
+# When fair-comparison mode is on, the baseline is given the SAME long-term memory
+# context the brain had. This isolates the architecture's contribution from mere
+# information access — otherwise "value-add" just measures "the brain had memory and
+# the baseline didn't." Toggle with BRAIN_EVAL_BASELINE_FAIR (default on).
+_FAIR_PREAMBLE = (
+    "\n\nNotes from prior conversations with this user (use where relevant):\n{ctx}"
+)
+
 
 class BaselineRunner:
     def __init__(self, eval_logger: EvalLogger, obs: ObservabilityLayer | None = None) -> None:

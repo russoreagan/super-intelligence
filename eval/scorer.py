@@ -518,3 +518,29 @@ class PostHocScorer:
             scores.get("faithfulness"),
             scores.get("unsupported_claims"),
         )
+
+    async def _run_faithfulness(self, turn_id: str, brain_response: str,
+                                memory_context: str) -> None:
+        prompt = (
+            f"Background notes (recalled long-term memory):\n{memory_context[:1500]}\n\n"
+            f"AI response:\n{brain_response}\n\n"
+            "Check the response for faithfulness to the notes."
+        )
+        raw = await self._router.call(
+            "haiku", _FAITHFULNESS_JUDGE_SYSTEM,
+            [{"role": "user", "content": prompt}],
+            cluster="scorer", cell="faithfulness_judge", turn_id="",
+        )
+        scores = safe_json_parse(raw)
+        if not scores:
+            logger.warning("PostHocScorer: faithfulness judge parse failed for turn %s", turn_id)
+            return
+        self._eval_logger.patch_turn(turn_id, faithfulness_scores=scores)
+        if self._obs:
+            lf = {f"faithfulness.{k}": v for k, v in scores.items()
+                  if k != "reasoning" and isinstance(v, (int, float))}
+            self._obs.record_scores(turn_id, lf, comment=scores.get("reasoning", ""))
+        logger.debug(
+            "PostHocScorer faithfulness: turn=%s faithful=%s unsupported=%s",
+            turn_id, scores.get("faithfulness"), scores.get("unsupported_claims"),
+        )
