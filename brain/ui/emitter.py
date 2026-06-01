@@ -47,6 +47,15 @@ class ActivationEmitter:
         with contextlib.suppress(asyncio.QueueFull):
             self._queue.put_nowait({"type": "user_emotion", "emotion": emotion})
 
+    async def emit_user_prosody(self, energy: float, pace: float) -> None:
+        """Raw user-speech prosody for the 'reading the speaker' meters.
+        energy = RMS loudness, pace = speech rate (onsets/sec). The UI
+        normalizes these to its segmented bars."""
+        with contextlib.suppress(asyncio.QueueFull):
+            self._queue.put_nowait(
+                {"type": "user_prosody", "energy": round(energy, 4), "pace": round(pace, 3)}
+            )
+
     async def emit_turn_start(self, turn_id: str, user_input: str, session_id: str = "") -> None:
         with contextlib.suppress(asyncio.QueueFull):
             self._queue.put_nowait(

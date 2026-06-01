@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Super Intelligence</title>
+<title>Elyceum</title>
 <!-- Theme init — runs before paint so there's no flash of the wrong skin.
      Additive only; the toggle UI lives in Settings. -->
 <script>
@@ -109,6 +109,17 @@
   --fg-mute:     oklch(0.55 0.018 250);
   --fg-faint:    oklch(0.42 0.020 250);
 
+  /* paper/ink/plate aliases mapped onto the dark palette so Elyceum-era
+     components (spec plates, etc.) reskin to dark in console too */
+  --paper:    var(--bg-0);
+  --paper-2:  var(--bg-1);
+  --paper-3:  var(--bg-2);
+  --plate:    var(--bg-1);
+  --ink:      var(--fg);
+  --ink-2:    var(--fg-dim);
+  --ink-3:    var(--fg-mute);
+  --ink-4:    var(--fg-faint);
+
   --accent:      oklch(0.78 0.140 220);
   --accent-soft: oklch(0.78 0.140 220 / 0.18);
   --signal:      oklch(0.78 0.140 220);
@@ -192,32 +203,50 @@ input, select, textarea { font: inherit; color: inherit; background: none; borde
   align-items: center;
   gap: 12px;
 }
+/* circular monogram seal — no glow, theme-aware ink ring */
 .brand-mark {
-  width: 28px; height: 28px;
-  border-radius: 8px;
-  background:
-    radial-gradient(circle at 30% 30%, oklch(1 0 0 / 0.45), transparent 55%),
-    linear-gradient(135deg, var(--accent), oklch(0.55 0.13 285));
-  box-shadow:
-    0 0 18px oklch(0.78 0.14 220 / 0.45),
-    inset 0 0 0 1px oklch(1 0 0 / 0.18);
+  position: relative;
+  width: 34px; height: 34px;
+  border-radius: 50%;
+  border: 1.5px solid var(--fg);
+  background: none;
+  box-shadow: none;
+  color: var(--fg);
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--serif); font-size: 18px; font-weight: 600; line-height: 1;
+  flex-shrink: 0;
+  transition: color 1000ms ease, border-color 1000ms ease;
+}
+.brand-mark::after {
+  content: '';
+  position: absolute; inset: 3px;
+  border-radius: 50%;
+  border: 0.5px solid var(--line);
 }
 .brand-title {
-  font-size: 12px;
+  font-family: var(--serif);
+  font-size: 19px;
   font-weight: 600;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
+  letter-spacing: -0.01em;
+  text-transform: none;
   white-space: nowrap;
+  line-height: 1;
+  color: var(--fg);
 }
 .brand-sub {
   display: block;
   font-family: var(--mono);
-  font-size: 9px;
+  font-size: 8.5px;
   color: var(--fg-mute);
-  letter-spacing: 0.14em;
-  margin-top: 2px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  margin-top: 4px;
   white-space: nowrap;
 }
+/* view-switcher dropdown is vestigial now that both FIG plates always show */
+.brand-chev { display: none; }
+#brand-menu { display: none !important; }
+.brand-btn { cursor: default; }
 
 .header-divider {
   width: 1px;
@@ -3365,9 +3394,9 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
    Restyles the three rails into: interior (left) · conversation (center) ·
    specimen (right). All ids preserved; this is layout + skin only.
    ===================================================================== */
-#main { grid-template-columns: 320px 1fr 384px; }
-@media (min-width: 1500px) { #main { grid-template-columns: 348px 1fr 420px; } }
-@media (min-width: 1800px) { #main { grid-template-columns: 380px 1fr 448px; } }
+#main { grid-template-columns: 408px 1fr 372px; }
+@media (min-width: 1500px) { #main { grid-template-columns: 440px 1fr 400px; } }
+@media (min-width: 1800px) { #main { grid-template-columns: 480px 1fr 424px; } }
 
 .rail-interior, .rail-specimen {
   overflow-y: auto; overflow-x: hidden;
@@ -3464,6 +3493,225 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
 [data-theme="atlas"] .rail-specimen .nm-node-init { color: var(--plate); }
 [data-theme="atlas"] .rail-specimen .nm-node.firing .nm-node-name { color: var(--ink); }
 
+/* atlas: paper-tone the remaining hardcoded-dark map + ticker chrome */
+[data-theme="atlas"] .nm-io {
+  background: radial-gradient(circle at center, var(--plate) 0%, var(--paper-2) 100%);
+  border-color: var(--line);
+}
+[data-theme="atlas"] .nm-io-glyph { color: var(--ink-3); }
+[data-theme="atlas"] .nm-io-label { color: var(--ink-4); }
+[data-theme="atlas"] .nm-legend { background: var(--plate); border-color: var(--line); }
+[data-theme="atlas"] #activity-ticker {
+  background: var(--paper-2);
+  color: var(--ink-3);
+}
+
+/* ---- Appearance theme toggle (settings rail) ---- */
+.theme-toggle-block { padding: 4px 2px 14px; margin-bottom: 12px; border-bottom: 1px solid var(--line-soft); }
+.theme-toggle-label { font-family: var(--mono); font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--fg-faint); margin-bottom: 8px; }
+.theme-seg { display: inline-flex; border: 1px solid var(--line); border-radius: var(--r-1); overflow: hidden; }
+.theme-seg-btn { font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.1em; text-transform: uppercase; padding: 7px 14px; color: var(--fg-mute); background: none; cursor: pointer; transition: background 140ms, color 140ms; }
+.theme-seg-btn + .theme-seg-btn { border-left: 1px solid var(--line); }
+.theme-seg-btn:hover { color: var(--fg-dim); }
+.theme-seg-btn.active { background: var(--signal); color: var(--paper); }
+[data-theme="console"] .theme-seg-btn.active { color: var(--bg-0); }
+.theme-toggle-hint { font-family: var(--mono); font-size: 9px; line-height: 1.5; color: var(--fg-faint); margin-top: 8px; }
+
+/* =====================================================================
+   CHEMISTRY — compact horizontal rows + Levels/Changes toggle
+   Default (Levels) is the collapsed bar+value view. The toggle reveals the
+   per-channel sparkline + trigger "change" detail (added by enhFx). All
+   ids/classes preserved — this is layout + show/hide only.
+   ===================================================================== */
+/* Every column except the bar is a FIXED width, so the bar/sparkline is always
+   the same length on every row — neuromodulators and hormones alike. The delta
+   badge gets its own reserved slot; hormone rows (no delta) pad the same width
+   so their bars line up too. */
+#chem-section { --chem-delta-slot: 36px; }
+#chem-section .nm-grid { display: flex; flex-direction: column; gap: 8px; }
+#chem-section .nm-row { display: flex; flex-direction: row; align-items: center; gap: 9px; margin: 0; min-height: 19px; }
+#chem-section .nm-head { display: contents; }
+#chem-section .nm-name { order: 1; flex: 0 0 34px; min-width: 0; font-family: var(--mono); font-size: 10.5px; font-weight: 600; color: var(--fg-dim); }
+#chem-section .nm-track { order: 2; flex: 1 1 0; min-width: 0; height: 4px; }
+#chem-section .nm-num { order: 3; flex: 0 0 34px; min-width: 0; text-align: right; font-family: var(--mono); font-size: 10px; color: var(--fg-mute); }
+#chem-section .nm-delta { order: 4; flex: 0 0 var(--chem-delta-slot); min-width: 0; overflow: hidden; text-align: right; margin-left: 0; justify-content: flex-end; }
+/* Sparkline rides in the SAME middle slot as the level bar (order 2), so the
+   row stays one line — name · bar/spark · value — at a constant height in both
+   views. The verbose trigger label is dropped to keep heights identical. */
+#chem-section .nm-spark { order: 2; flex: 1 1 0; min-width: 0; height: 15px; display: none; }
+#chem-section .nm-trigger { display: none; }
+/* hormone rows have no delta — reserve the same width so their bars align */
+#chem-section .nm-row:not(:has(.nm-spark)) { padding-right: calc(var(--chem-delta-slot) + 9px); }
+/* Levels (default): level bar + value; the delta badge flashes on change
+   (its own .show class drives that — don't display:none it). */
+/* Changes: swap the static bar for the live sparkline in place. Only rows that
+   carry a sparkline swap; hormonal rows (no trend data) keep their bar. */
+#chem-section.show-changes .nm-row:has(.nm-spark) .nm-track { display: none; }
+#chem-section.show-changes .nm-row:has(.nm-spark) .nm-spark { display: block; }
+
+.chem-toggle { display: inline-flex; margin-top: 12px; border: 1px solid var(--line); border-radius: var(--r-1); overflow: hidden; }
+.chem-toggle-btn { font-family: var(--mono); font-size: 8.5px; letter-spacing: 0.1em; text-transform: uppercase; padding: 5px 12px; color: var(--fg-mute); background: none; cursor: pointer; transition: background 140ms, color 140ms; }
+.chem-toggle-btn + .chem-toggle-btn { border-left: 1px solid var(--line); }
+.chem-toggle-btn:hover { color: var(--fg-dim); }
+.chem-toggle-btn.active { background: var(--signal); color: var(--paper); }
+[data-theme="console"] .chem-toggle-btn.active { color: var(--bg-0); }
+
+/* =====================================================================
+   ATLAS CHAT + INPUT colour corrections (console keeps its dark values)
+   ===================================================================== */
+[data-theme="atlas"] .msg-user {
+  background: var(--paper-3);
+  border-color: var(--line);
+  color: var(--ink);
+}
+[data-theme="atlas"] .turn-log { background: var(--paper-2); }
+[data-theme="atlas"] .msg-brain .who::before { box-shadow: none; }
+[data-theme="atlas"] .input-wrap { background: var(--plate); }
+[data-theme="atlas"] .input-wrap:focus-within { box-shadow: 0 0 0 3px var(--signal-soft); }
+[data-theme="atlas"] #send-btn { color: var(--paper); }
+[data-theme="atlas"] #user-emotion-badge { background: var(--paper-3); color: var(--ink-2); border-color: var(--line); }
+
+/* mic / text toggle */
+[data-theme="atlas"] #mic-btn { background: var(--paper-3); border-color: var(--line); }
+[data-theme="atlas"] .mode-thumb { background: var(--ink-2); border-color: var(--ink-3); }
+[data-theme="atlas"] #mic-btn.muted .mode-thumb { background: var(--ink-2); border-color: var(--ink-3); }
+[data-theme="atlas"] .mode-side { color: var(--ink-4); }
+[data-theme="atlas"] #mic-btn:not(.muted) .mode-mic { color: var(--paper); }
+[data-theme="atlas"] #mic-btn.muted .mode-kbd { color: var(--paper); }
+
+/* header centre badges (persona / emotion / active region) */
+[data-theme="atlas"] #persona-header-badge { background: var(--paper-3); color: var(--signal); border-color: var(--line); }
+[data-theme="atlas"] #persona-header-badge.neutral { background: var(--paper-2); color: var(--ink-4); border-color: var(--line-soft); }
+[data-theme="atlas"] #emotion-badge { background: var(--paper-3); color: var(--ink-2); border-color: var(--line); }
+[data-theme="atlas"] #active-label { background: var(--paper-3); border-color: var(--line); }
+
+/* =====================================================================
+   ROUND 2 — header cleanup, reading bar, neural-map abbreviations, modal
+   ===================================================================== */
+
+/* redundant top-centre labels removed (persona is in the left rail now,
+   mood in disposition, firing region in the FIG. 1 caption). Kept in the
+   DOM (JS still writes to them) but hidden. */
+.header-center { display: none !important; }
+
+.convo-sub { font-family: var(--mono); font-size: 9px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--fg-faint); }
+
+/* ---- reading-the-speaker bar (above the chat box) ---- */
+#read-bar {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  padding: 9px 4px 11px;
+  border-top: 1px solid var(--line);
+  margin-bottom: 2px;
+}
+.rb-read { font-family: var(--mono); font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--fg-faint); }
+.rb-read b { color: var(--fg-mute); font-weight: 600; }
+.rb-mood { display: inline-flex; align-items: center; gap: 7px; }
+.rb-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--signal); flex-shrink: 0; transition: background 0.4s, box-shadow 0.4s; }
+/* the user_emotion handler writes dark-theme inline bg/border/colour onto this
+   badge (built for the old pill); in the reading bar we want plain ink text, so
+   override the inline styles with !important. The coloured dot carries accent. */
+#read-bar #user-emotion-badge {
+  padding: 0 !important; border: none !important; background: none !important; border-radius: 0 !important;
+  font-family: var(--serif); font-style: normal; font-size: 14px; letter-spacing: 0;
+  text-transform: none; color: var(--fg) !important; font-weight: 500;
+}
+.rb-gloss { font-family: var(--serif); font-style: italic; font-size: 11.5px; color: var(--fg-mute); }
+.rb-meters { margin-left: auto; display: inline-flex; gap: 18px; align-items: center; }
+.rb-meter { display: inline-flex; align-items: center; gap: 7px; }
+.rb-mlbl { font-family: var(--mono); font-size: 8px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--fg-faint); }
+.rb-bars { display: inline-flex; gap: 2px; }
+.rb-bars i { width: 5px; height: 9px; border-radius: 1px; background: var(--paper-3); transition: background 0.3s; }
+[data-theme="console"] .rb-bars i { background: var(--bg-2); }
+.rb-bars i.on { background: var(--fg-mute); }
+/* mic/text toggle + interrupt now ride at the right of the reading bar */
+#read-bar #input-mode-bar { margin-left: 14px; padding: 0; gap: 8px; }
+
+.entry-hint { font-family: var(--mono); font-size: 8.5px; letter-spacing: 0.06em; color: var(--fg-faint); margin-top: 8px; padding: 0 2px; }
+
+/* ---- voice pill inside the settings rail footer ---- */
+.rail-foot .voice-pill { display: inline-flex; align-items: center; gap: 8px; position: relative; padding: 7px 12px; border: 1px solid var(--line); border-radius: var(--r-1); cursor: pointer; color: var(--fg-mute); width: 100%; }
+.rail-foot .voice-pill:hover { border-color: var(--fg-faint); }
+.rail-foot .voice-pill .v-icon svg { width: 14px; height: 14px; display: block; }
+.rail-foot .voice-pill .v-name { font-family: var(--mono); font-size: 11px; color: var(--fg-dim); }
+.rail-foot .voice-pill .v-chev { margin-left: auto; }
+.rail-foot .voice-pill select { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+
+/* ---- neural map: colour boxes with periodic-table-style abbreviations ----
+   Names removed (the region index below already names them); each node is
+   just its coloured initial. Click opens the (wider) region modal. */
+.rail-specimen .nm-node-name { display: none; }
+.rail-specimen .nm-node-head { gap: 0; justify-content: center; }
+.rail-specimen .nm-node-dot { display: none; }
+.rail-specimen .nm-node-chevron { display: none; }
+.rail-specimen .nm-node {
+  min-width: 0; width: auto; max-width: none;
+  padding: 0; border: none; background: none; box-shadow: none;
+}
+[data-theme="atlas"] .rail-specimen .nm-node { background: none; box-shadow: none; }
+.rail-specimen .nm-node-init {
+  width: 26px; height: 26px; font-size: 11px; border-radius: 6px;
+  box-shadow: 0 1px 3px -1px oklch(0.30 0.02 54 / 0.45);
+}
+.rail-specimen .nm-node-meter { display: none; }
+/* give the vertical schematic plenty of room so nodes breathe */
+.rail-specimen #neural-map { height: 460px; }
+
+/* ---- region index as periodic-table tiles (mirrors the neural-map nodes) ---- */
+.rail-specimen .region-card .swatch {
+  display: grid; place-items: center;
+  width: 25px; height: 25px; border-radius: 6px;
+  background: var(--lobe); border: none;
+  color: var(--plate);
+  font-family: var(--mono); font-weight: 700; font-size: 10.5px; line-height: 1;
+  box-shadow: 0 1px 3px -1px oklch(0.30 0.02 54 / 0.4);
+  transition: box-shadow 220ms, transform 160ms;
+}
+.rail-specimen .region-card .swatch::after { display: none; }   /* drop the inner dot */
+.rail-specimen .region-card { grid-template-columns: 25px 1fr auto; }
+.rail-specimen .region-card.compact { grid-template-columns: 25px 1fr auto; }
+.rail-specimen .region-card.compact .swatch { width: 22px; height: 22px; font-size: 9.5px; }
+.rail-specimen .region-card.active .swatch { box-shadow: 0 0 0 3px oklch(from var(--lobe) l c h / 0.25); }
+
+/* ---- neural-map key: a compact, wrapping row that sits BELOW the chart
+   (no longer an overlay that overflows the narrow plate) ---- */
+.rail-specimen .nm-legend {
+  position: static; transform: none;
+  display: flex; flex-wrap: wrap; gap: 6px 12px;
+  margin-top: 8px; padding: 8px 2px 0;
+  border-top: 1px solid var(--line-faint);
+  background: none; border-radius: 0;
+}
+.rail-specimen .nm-legend .nm-legend-key { font-size: 8px; }
+.rail-specimen #nm-switches-toggle { display: none; }  /* switches hidden in the rail */
+
+/* ---- region detail modal — wider so it reads comfortably ---- */
+#region-detail-popup { width: 360px; }
+.rd-hist-row { grid-template-columns: 54px 1fr auto auto; }
+[data-theme="atlas"] .rd-switch-row { background: var(--paper-3); }
+/* modal colored text — the defaults use high-lightness (dark-theme) colours
+   that wash out on the light paper modal. Darken them for atlas readability. */
+[data-theme="atlas"] #region-detail-popup .rd-header-name { color: oklch(from var(--lobe) 0.46 0.16 h); }
+[data-theme="atlas"] .rd-hist-cluster { color: oklch(from var(--lobe) 0.46 0.16 h); }
+[data-theme="atlas"] .rd-switch-name { color: var(--ink); }
+[data-theme="atlas"] .rd-switch-row.inhibitory .rd-switch-name { color: oklch(0.52 0.20 28); }
+[data-theme="atlas"] .rd-switch-desc { color: var(--ink-3); }
+[data-theme="atlas"] #region-detail-popup .rd-header { background: oklch(from var(--lobe) 0.93 0.05 h); }
+
+/* mood cross-fade — major atlas surfaces ease their resolved colours so a
+   mood shift washes through the whole room over ~1s */
+[data-theme="atlas"] .header,
+[data-theme="atlas"] .rail-interior,
+[data-theme="atlas"] .rail-specimen,
+[data-theme="atlas"] .convo,
+[data-theme="atlas"] .convo-head,
+[data-theme="atlas"] .spec-plate,
+[data-theme="atlas"] .input-wrap,
+[data-theme="atlas"] #control-bar,
+[data-theme="atlas"] #region-detail-popup,
+[data-theme="atlas"] #activity-ticker {
+  transition: background-color 1000ms ease, border-color 1000ms ease, color 1000ms ease;
+}
+
 </style>
 <!-- Redesigned settings page styles (scoped to #settings-page) -->
 <link rel="stylesheet" href="settings.css">
@@ -3476,10 +3724,10 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
   <header class="header">
     <div class="brand">
       <button class="brand-btn" id="brand-btn" type="button" aria-haspopup="menu" aria-expanded="false">
-        <div class="brand-mark" aria-hidden="true"></div>
+        <div class="brand-mark" aria-hidden="true">E</div>
         <div class="brand-text">
-          <div class="brand-title">Super Intelligence</div>
-          <span class="brand-sub" id="brand-sub">NEURAL CONTROL · v0.4</span>
+          <div class="brand-title">Elyceum</div>
+          <span class="brand-sub" id="brand-sub">Artificial Emotional Intelligence</span>
         </div>
         <svg class="brand-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
       </button>
@@ -3590,7 +3838,7 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
       </section>
 
       <!-- Neuromodulators -->
-      <section class="col-section">
+      <section class="col-section" id="chem-section">
         <div class="section-label">Neuromodulators</div>
         <div class="nm-grid">
           <div class="nm-row">
@@ -3629,6 +3877,10 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
             <div class="nm-head"><span class="nm-name">AEA</span><span class="nm-num" id="nm-num-AEA">20%</span></div>
             <div class="nm-track"><div class="nm-fill" id="nm-AEA" style="background: oklch(0.72 0.16 145); width: 20%"></div></div>
           </div>
+        </div>
+        <div class="chem-toggle" role="group" aria-label="Neuromodulator view">
+          <button type="button" class="chem-toggle-btn active" data-chem-view="levels">Levels</button>
+          <button type="button" class="chem-toggle-btn" data-chem-view="changes">Changes</button>
         </div>
       </section>
 
@@ -3687,22 +3939,7 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
       <header class="convo-head">
         <h2 class="convo-title">Conversation</h2>
         <div class="head-meta">
-          <label class="voice-pill" title="ElevenLabs voice">
-            <span class="v-icon">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M3 10v4"/><path d="M7 6v12"/><path d="M11 3v18"/><path d="M15 7v10"/><path d="M19 10v4"/>
-              </svg>
-            </span>
-            <span class="v-meta">
-              <span class="v-name" id="voice-name">Loading…</span>
-            </span>
-            <span class="v-chev">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
-            </span>
-            <select id="voice-select" title="AI voice">
-              <option value="">— voice —</option>
-            </select>
-          </label>
+          <span class="convo-sub">Voice · text · transcribed</span>
         </div>
       </header>
 
@@ -3721,34 +3958,40 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
 
       <!-- input bar -->
       <div id="control-bar">
-        <div id="input-mode-bar">
-          <button id="interrupt-btn" title="Stop AI speaking" aria-label="Interrupt">
-            <svg viewBox="0 0 24 24" fill="currentColor" stroke="none">
-              <rect x="5" y="5" width="14" height="14" rx="2"/>
-            </svg>
-            Stop
-          </button>
-          <button id="mic-btn" class="muted" title="Press Space to talk" aria-label="Input mode">
-            <div class="mode-thumb"></div>
-            <span class="mode-side mode-mic">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="9" y="2" width="6" height="12" rx="3"/>
-                <path d="M5 10v2a7 7 0 0 0 14 0v-2"/>
-                <line x1="12" y1="19" x2="12" y2="22"/>
+        <!-- reading-the-speaker bar (sits just above the chat box) -->
+        <div id="read-bar">
+          <span class="rb-read">Reading <b>the speaker</b></span>
+          <span class="rb-mood"><span class="rb-dot" id="user-mood-dot"></span><span id="user-emotion-badge">at ease</span></span>
+          <span class="rb-gloss" id="user-gloss">even, attentive tone</span>
+          <span class="rb-meters">
+            <span class="rb-meter"><span class="rb-mlbl">energy</span><span class="rb-bars" id="m-energy"><i></i><i></i><i></i></span></span>
+            <span class="rb-meter"><span class="rb-mlbl">pace</span><span class="rb-bars" id="m-pace"><i></i><i></i><i></i></span></span>
+          </span>
+          <div id="input-mode-bar">
+            <button id="interrupt-btn" title="Stop AI speaking" aria-label="Interrupt">
+              <svg viewBox="0 0 24 24" fill="currentColor" stroke="none">
+                <rect x="5" y="5" width="14" height="14" rx="2"/>
               </svg>
-              Mic
-            </span>
-            <span class="mode-side mode-kbd">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="2" y="6" width="20" height="12" rx="2"/>
-                <path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8"/>
-              </svg>
-              Text
-            </span>
-          </button>
-          <div id="user-mood-wrap">
-            <span id="user-mood-label">you seem</span>
-            <span id="user-emotion-badge">neutral</span>
+              Stop
+            </button>
+            <button id="mic-btn" class="muted" title="Press Space to talk" aria-label="Input mode">
+              <div class="mode-thumb"></div>
+              <span class="mode-side mode-mic">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="9" y="2" width="6" height="12" rx="3"/>
+                  <path d="M5 10v2a7 7 0 0 0 14 0v-2"/>
+                  <line x1="12" y1="19" x2="12" y2="22"/>
+                </svg>
+                Mic
+              </span>
+              <span class="mode-side mode-kbd">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="2" y="6" width="20" height="12" rx="2"/>
+                  <path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8"/>
+                </svg>
+                Text
+              </span>
+            </button>
           </div>
         </div>
 
@@ -3770,6 +4013,7 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
           </button>
         </div>
+        <div class="entry-hint">Enter to send · hold the mic to speak · she may also speak unprompted</div>
       </div>
 
       <!-- collapse toggles — sit on the edges of the central column -->
@@ -3828,16 +4072,17 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
             </div>
             <svg class="nm-svg" id="nm-svg" viewBox="0 0 100 100" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg"></svg>
             <div class="nm-nodes" id="nm-nodes"></div>
-            <div class="nm-legend">
-              <span class="nm-legend-key"><span class="nm-legend-line"></span>Excitatory</span>
-              <span class="nm-legend-key dim"><span class="nm-legend-line modulatory"></span>Modulatory</span>
-              <span class="nm-legend-key"><span class="nm-legend-dot" style="background:var(--danger);box-shadow:0 0 6px var(--danger);"></span>Inhibit ⊘</span>
-              <span class="nm-legend-key"><span class="nm-legend-dot"></span>Active node</span>
-              <button class="nm-legend-toggle active" id="nm-switches-toggle" type="button" title="Show / hide switch names">
-                <span class="lt-dot"></span>Switch names
-              </button>
-            </div>
           </div>
+        </div>
+        <!-- key sits below the chart so it never overlaps the diagram -->
+        <div class="nm-legend">
+          <span class="nm-legend-key"><span class="nm-legend-line"></span>Excitatory</span>
+          <span class="nm-legend-key dim"><span class="nm-legend-line modulatory"></span>Modulatory</span>
+          <span class="nm-legend-key"><span class="nm-legend-dot" style="background:var(--danger);box-shadow:0 0 6px var(--danger);"></span>Inhibit ⊘</span>
+          <span class="nm-legend-key"><span class="nm-legend-dot"></span>Active node</span>
+          <button class="nm-legend-toggle active" id="nm-switches-toggle" type="button" title="Show / hide switch names">
+            <span class="lt-dot"></span>Switch names
+          </button>
         </div>
         <div class="spec-cap">Signal flow between clusters; firing paths pulse in the region's colour.</div>
       </div>
@@ -3884,6 +4129,33 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
       <nav class="rail-nav" id="rail-nav"></nav>
 
       <div class="rail-foot">
+        <!-- Voice (ElevenLabs) — moved here from the conversation header -->
+        <div class="theme-toggle-block">
+          <div class="theme-toggle-label">Voice</div>
+          <label class="voice-pill" title="ElevenLabs voice">
+            <span class="v-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 10v4"/><path d="M7 6v12"/><path d="M11 3v18"/><path d="M15 7v10"/><path d="M19 10v4"/>
+              </svg>
+            </span>
+            <span class="v-meta"><span class="v-name" id="voice-name">Loading…</span></span>
+            <span class="v-chev">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+            </span>
+            <select id="voice-select" title="AI voice">
+              <option value="">— voice —</option>
+            </select>
+          </label>
+        </div>
+        <!-- Appearance theme toggle — local UI preference, no restart -->
+        <div class="theme-toggle-block">
+          <div class="theme-toggle-label">Appearance</div>
+          <div class="theme-seg" id="theme-seg" role="group" aria-label="Theme">
+            <button type="button" class="theme-seg-btn" data-theme-choice="atlas">Atlas</button>
+            <button type="button" class="theme-seg-btn" data-theme-choice="console">Console</button>
+          </div>
+          <div class="theme-toggle-hint">Warm paper, or dark console. Saved on this device.</div>
+        </div>
         <button class="btn-reset-all" id="settings-reset-btn">
           <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
           Reset all to defaults
@@ -4041,16 +4313,15 @@ function renderRegionDetail(regionId) {
 }
 
 function _positionPopup(regionId) {
-  const card    = document.getElementById(`card-${regionId}`);
-  const colLeft = document.querySelector('.col-left');
-  if (!card || !colLeft) return;
-  const colRect  = colLeft.getBoundingClientRect();
-  const cardRect = card.getBoundingClientRect();
-  const popupW   = 288;
-  _rdPopup.style.left = (colRect.right + 8) + 'px';
-  // Align top with the card, clamped so it doesn't overflow viewport
-  const maxTop = window.innerHeight - _rdPopup.offsetHeight - 12;
-  _rdPopup.style.top = Math.max(8, Math.min(cardRect.top, maxTop || cardRect.top)) + 'px';
+  // The region index + neural map now both live in the narrow right rail, so
+  // anchoring beside a small node is unreliable. Centre the (wider) modal in
+  // the viewport — always on-screen and comfortably readable.
+  const popupW = _rdPopup.offsetWidth || 360;
+  const popupH = _rdPopup.offsetHeight || 320;
+  const left = Math.max(8, (window.innerWidth - popupW) / 2);
+  const top  = Math.max(8, (window.innerHeight - popupH) / 2);
+  _rdPopup.style.left = left + 'px';
+  _rdPopup.style.top  = top + 'px';
 }
 
 function closeRegionDetail() {
@@ -4072,8 +4343,9 @@ function toggleRegionDetail(regionId) {
   card.classList.add('expanded');
   renderRegionDetail(regionId);
   _rdPopup.classList.add('open');
-  // Position after display so offsetHeight is known
-  requestAnimationFrame(() => _positionPopup(regionId));
+  // Position now (reading offsetHeight forces the needed layout); rAF is
+  // throttled when the tab isn't painting, so don't depend on it.
+  _positionPopup(regionId);
 }
 
 // Close popup when clicking outside
@@ -4196,7 +4468,7 @@ function renderRegionList() {
     card.style.setProperty('--lobe', cfg.color);
     card.style.setProperty('--lobe-glow', cfg.color);
     card.innerHTML = `
-      <div class="swatch"></div>
+      <div class="swatch">${cfg.initial || ''}</div>
       <div class="meta">
         <div class="name">${cfg.label}</div>
         <div class="role">${cfg.role}</div>
@@ -5678,17 +5950,23 @@ const PERSONAS = {
 };
 
 function _renderPersonaState() {
-  // Header badge only — the settings page manages its own persona UI.
   const name = currentSettings.persona_name || '';
   const headerBadge = document.getElementById('persona-header-badge');
-  if (!headerBadge) return;
-  if (name) {
-    headerBadge.textContent = name.replace(/^The\s+/i, '');
-    headerBadge.classList.remove('neutral');
-  } else {
-    headerBadge.textContent = 'Default';
-    headerBadge.classList.add('neutral');
+  if (headerBadge) {
+    if (name) {
+      headerBadge.textContent = name.replace(/^The\s+/i, '');
+      headerBadge.classList.remove('neutral');
+    } else {
+      headerBadge.textContent = 'Default';
+      headerBadge.classList.add('neutral');
+    }
   }
+  // Left-rail persona identity (interior column)
+  const nameEl = document.getElementById('persona-name-display');
+  const tagEl  = document.getElementById('persona-tag-display');
+  const pcfg   = name ? PERSONAS[name] : null;
+  if (nameEl) nameEl.textContent = name || 'Default';
+  if (tagEl)  tagEl.textContent  = pcfg ? pcfg.tag : (name ? '' : 'Neutral baseline chemistry');
 }
 
 function _personaSlug(name) {
@@ -6019,20 +6297,22 @@ setTimeout(() => {
    existing activateRegion / handle() pipeline so the same WS events that
    light the anatomical view also light the map.
    ===================================================================== */
+// Vertical flow: Prompt at the top → Response at the bottom (fits the tall,
+// narrow specimen plate far better than the old left→right layout).
 const NM_NODES = {
-  input:        { x: 9,  y: 50, type: 'io', label: 'Prompt',
-    glyph: '<polyline points="13 17 18 12 13 7"/><line x1="6" y1="12" x2="18" y2="12"/>' },
-  occipital:    { x: 24, y: 15, type: 'node', region: 'occipital'  },
-  temporal:     { x: 24, y: 50, type: 'node', region: 'temporal'   },
-  thalamus:     { x: 41, y: 15, type: 'node', region: 'thalamus'   },
-  hippocampus:  { x: 41, y: 50, type: 'node', region: 'hippocampus' },
-  hypothalamus: { x: 41, y: 80, type: 'node', region: 'hypothalamus' },
-  parietal:     { x: 58, y: 15, type: 'node', region: 'parietal'   },
-  frontal:      { x: 58, y: 50, type: 'node', region: 'frontal'    },
-  cerebellum:   { x: 58, y: 80, type: 'node', region: 'cerebellum' },
-  motor:        { x: 75, y: 28, type: 'node', region: 'motor'      },
-  brainstem:    { x: 75, y: 72, type: 'node', region: 'brainstem'  },
-  output:       { x: 90, y: 50, type: 'io', label: 'Response',
+  input:        { x: 50, y: 8,  type: 'io', label: 'Prompt',
+    glyph: '<polyline points="7 13 12 18 17 13"/><line x1="12" y1="6" x2="12" y2="18"/>' },
+  occipital:    { x: 15, y: 24, type: 'node', region: 'occipital'  },
+  temporal:     { x: 50, y: 24, type: 'node', region: 'temporal'   },
+  thalamus:     { x: 15, y: 41, type: 'node', region: 'thalamus'   },
+  hippocampus:  { x: 50, y: 41, type: 'node', region: 'hippocampus' },
+  hypothalamus: { x: 82, y: 41, type: 'node', region: 'hypothalamus' },
+  parietal:     { x: 15, y: 58, type: 'node', region: 'parietal'   },
+  frontal:      { x: 50, y: 58, type: 'node', region: 'frontal'    },
+  cerebellum:   { x: 82, y: 58, type: 'node', region: 'cerebellum' },
+  motor:        { x: 30, y: 76, type: 'node', region: 'motor'      },
+  brainstem:    { x: 70, y: 76, type: 'node', region: 'brainstem'  },
+  output:       { x: 50, y: 92, type: 'io', label: 'Response',
     glyph: '<path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>' },
 };
 
@@ -6166,11 +6446,11 @@ const NM_RECENT_MS  = 2400;
 const NM_NS         = 'http://www.w3.org/2000/svg';
 
 function _nmPathD(A, B) {
-  // Smooth horizontal-bias cubic between two coordinates (in 0–100 viewBox space).
-  const dx = B.x - A.x;
-  const cx1 = A.x + dx * 0.5;
-  const cx2 = B.x - dx * 0.5;
-  return `M ${A.x} ${A.y} C ${cx1} ${A.y}, ${cx2} ${B.y}, ${B.x} ${B.y}`;
+  // Smooth vertical-bias cubic (the flow now runs top→bottom).
+  const dy = B.y - A.y;
+  const cy1 = A.y + dy * 0.5;
+  const cy2 = B.y - dy * 0.5;
+  return `M ${A.x} ${A.y} C ${A.x} ${cy1}, ${B.x} ${cy2}, ${B.x} ${B.y}`;
 }
 
 function nmInit() {
@@ -6277,11 +6557,13 @@ function nmInit() {
       }
 
       el.addEventListener('click', (e) => {
-        if (hasCells) {
-          el.classList.toggle('expanded');
-        } else {
-          if (typeof renderRegionDetail === 'function') renderRegionDetail(n.region);
-        }
+        // Nodes are now compact colour-letter boxes; clicking opens the full
+        // (wider) region modal rather than expanding inline cell lists.
+        // stopPropagation so the document "click outside" handler doesn't
+        // immediately re-close the popup we just opened.
+        e.stopPropagation();
+        if (typeof toggleRegionDetail === 'function') toggleRegionDetail(n.region);
+        else if (typeof renderRegionDetail === 'function') renderRegionDetail(n.region);
       });
       nodes.appendChild(el);
     }
@@ -6489,8 +6771,8 @@ function nmSetView(view) {
     b.classList.toggle('active', active);
     b.setAttribute('aria-checked', active ? 'true' : 'false');
   });
-  const sub = document.getElementById('brand-sub');
-  if (sub) sub.textContent = (view === 'map' ? 'NEURAL MAP · v0.4' : 'NEURAL CONTROL · v0.4');
+  // brand-sub is now a fixed wordmark subtitle; the view switcher is vestigial
+  // (both FIG plates always show) so we no longer overwrite it here.
   try { localStorage.setItem('si-view', view); } catch (e) {}
 }
 
@@ -6840,6 +7122,143 @@ enhFx.init();
 // Expose for debugging
 window.__enhFx = enhFx;
 
+</script>
+<!-- Additive UI wiring: theme toggle · chem view · mood tint · voicebars.
+     Self-contained; reads existing globals, does not alter render fns. -->
+<script>
+/* ---- mood-driven accent tint (Elyceum signature) ----
+   In atlas, the single "signal" accent shifts hue to the prevailing mood, so
+   the whole chrome breathes with feeling. Console keeps its fixed cyan. The
+   tint is written as inline custom-props on :root; we clear them in console
+   so the stylesheet value wins. */
+/* Mood engine — the curated Elyceum palette (matches Claude Design's
+   elyceum-mood.js). The brain's prevailing mood is derived from its
+   *chemistry*, and the whole atlas chrome cross-fades to that mood: a
+   saturated "signal" accent plus a faint, tasteful wash through paper + ink.
+   Each mood is a hand-tuned hue family — NOT a raw emotion hue — so the paper
+   never goes garish. Region colours are never tinted. */
+var _MOODS = {
+  Settling: { sig: [0.56, 0.185, 33],  paperH: 84,  paperC: 0.013, inkH: 54 },
+  Curious:  { sig: [0.62, 0.150, 75],  paperH: 82,  paperC: 0.016, inkH: 70 },
+  Warm:     { sig: [0.60, 0.170, 40],  paperH: 60,  paperC: 0.019, inkH: 46 },
+  Content:  { sig: [0.55, 0.130, 150], paperH: 124, paperC: 0.015, inkH: 140 },
+  Alert:    { sig: [0.58, 0.190, 25],  paperH: 42,  paperC: 0.019, inkH: 36 },
+  Guarded:  { sig: [0.55, 0.115, 250], paperH: 250, paperC: 0.013, inkH: 250 }
+};
+var _MOOD_RULES = [
+  ['Curious',  function (s) { return s.DA > 0.55 && s.ACh > 0.35; }],
+  ['Warm',     function (s) { return s.OXT > 0.55; }],
+  ['Content',  function (s) { return s['5HT'] > 0.6 && s.GABA < 0.3; }],
+  ['Alert',    function (s) { return s.NE > 0.5; }],
+  ['Guarded',  function (s) { return s.GABA > 0.45; }],
+  ['Settling', function () { return true; }]
+];
+var _chemState = { DA:0.5, ACh:0.2, GABA:0.05, Glu:0.3, NE:0.25, '5HT':0.3, OXT:0.25, CORT:0.1, AEA:0.2 };
+var _MOOD_TINT_PROPS = ['--signal','--signal-deep','--signal-soft','--paper','--paper-2','--paper-3','--plate','--ink','--ink-2'];
+
+function _moodFor(s) {
+  for (var i = 0; i < _MOOD_RULES.length; i++) if (_MOOD_RULES[i][1](s)) return _MOOD_RULES[i][0];
+  return 'Settling';
+}
+function _applyMoodTint() {
+  var rs = document.documentElement.style;
+  // Console keeps its fixed cyan/dark palette — clear any inline mood tint.
+  if (document.documentElement.getAttribute('data-theme') !== 'atlas') {
+    _MOOD_TINT_PROPS.forEach(function (p) { rs.removeProperty(p); });
+    return;
+  }
+  var t = _MOODS[_moodFor(_chemState)] || _MOODS.Settling;
+  var L = t.sig[0], C = t.sig[1], H = t.sig[2];
+  rs.setProperty('--signal',      'oklch(' + L + ' ' + C + ' ' + H + ')');
+  rs.setProperty('--signal-deep', 'oklch(' + (L - 0.08).toFixed(2) + ' ' + C + ' ' + H + ')');
+  rs.setProperty('--signal-soft', 'oklch(' + L + ' ' + C + ' ' + H + ' / 0.13)');
+  rs.setProperty('--paper',   'oklch(0.966 ' + t.paperC + ' ' + t.paperH + ')');
+  rs.setProperty('--paper-2', 'oklch(0.945 ' + (t.paperC + 0.003).toFixed(3) + ' ' + t.paperH + ')');
+  rs.setProperty('--paper-3', 'oklch(0.912 ' + (t.paperC + 0.006).toFixed(3) + ' ' + t.paperH + ')');
+  rs.setProperty('--plate',   'oklch(0.978 ' + (t.paperC * 0.7).toFixed(3) + ' ' + t.paperH + ')');
+  rs.setProperty('--ink',     'oklch(0.27 0.022 ' + t.inkH + ')');
+  rs.setProperty('--ink-2',   'oklch(0.42 0.020 ' + t.inkH + ')');
+}
+
+(function () {
+  var KEY = 'brain_theme';
+  var seg = document.getElementById('theme-seg');
+  var btns = seg ? seg.querySelectorAll('.theme-seg-btn') : [];
+  function current() {
+    return document.documentElement.getAttribute('data-theme') === 'console' ? 'console' : 'atlas';
+  }
+  function reflect() {
+    var cur = current();
+    btns.forEach(function (b) { b.classList.toggle('active', b.dataset.themeChoice === cur); });
+  }
+  function setTheme(t) {
+    document.documentElement.setAttribute('data-theme', t);
+    try { localStorage.setItem(KEY, t); } catch (e) {}
+    _applyMoodTint();   // re-tint (atlas) or clear (console)
+    reflect();
+  }
+  btns.forEach(function (b) {
+    b.addEventListener('click', function () { setTheme(b.dataset.themeChoice); });
+  });
+  reflect();
+})();
+
+// neuromodulator Levels / Changes view toggle.
+(function () {
+  var sec = document.getElementById('chem-section');
+  if (!sec) return;
+  var btns = sec.querySelectorAll('.chem-toggle-btn');
+  btns.forEach(function (b) {
+    b.addEventListener('click', function () {
+      sec.classList.toggle('show-changes', b.dataset.chemView === 'changes');
+      btns.forEach(function (x) { x.classList.toggle('active', x === b); });
+    });
+  });
+})();
+
+// Hook the live event stream (additively) for mood tint + voicebars speaking.
+(function () {
+  if (typeof handle !== 'function') return;
+  var prev = handle;
+  var voicebars = document.getElementById('voicebars');
+  function ingestChem(src) {
+    ['DA','ACh','GABA','Glu','NE','5HT','OXT','CORT','AEA'].forEach(function (k) {
+      var v = src[k]; if (typeof v === 'number') _chemState[k] = v;
+    });
+    _applyMoodTint();
+  }
+  // map a value within [lo,hi] to how many of the 3 meter segments light up
+  function _setMeter(id, val, lo, hi) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    var n = Math.max(0, Math.min(3, Math.round((val - lo) / (hi - lo) * 3)));
+    [].forEach.call(el.querySelectorAll('i'), function (seg, idx) {
+      seg.classList.toggle('on', idx < n);
+    });
+  }
+  handle = function (msg) {
+    prev(msg);
+    if (!msg) return;
+    // Mood is chemistry-driven (matches Claude Design): retint on every
+    // neuromodulator / hormonal update.
+    if (msg.type === 'neuromod') {
+      ingestChem(msg);
+    } else if (msg.type === 'hormonal') {
+      ingestChem(msg.data || msg);
+    } else if (msg.type === 'user_prosody') {
+      // energy = RMS loudness (~0.02–0.20); pace = onsets/sec (~1.5–5.5)
+      _setMeter('m-energy', msg.energy || 0, 0.02, 0.20);
+      _setMeter('m-pace',   msg.pace   || 0, 1.5, 5.5);
+    } else if (msg.type === 'speaking' && voicebars) {
+      voicebars.classList.toggle('speaking', !!msg.active);
+    } else if (msg.type === 'proactive_speech' && voicebars) {
+      // brief flourish when she speaks unprompted (no explicit speaking event)
+      voicebars.classList.add('speaking');
+      setTimeout(function () { voicebars.classList.remove('speaking'); }, 2600);
+    }
+  };
+  _applyMoodTint(); // initial baseline tint
+})();
 </script>
 <!-- Redesigned settings page: schema + render engine (live-wired to /settings) -->
 <script src="settings-data.js"></script>

@@ -271,6 +271,11 @@ class _TurnMixin:
             user_tone = affect.get("vocal_tone") or features.get("user_tone_toward_ai") or ""
             if user_tone:
                 await self._emitter.emit_user_emotion(user_tone)
+            # Numeric prosody for the "reading the speaker" energy/pace meters.
+            energy = affect.get("prosody_energy", 0.0)
+            pace = affect.get("prosody_speech_rate", 0.0)
+            if energy or pace:
+                await self._emitter.emit_user_prosody(energy, pace)
 
         # ── Occipital: vision ─────────────────────────────────────────────────
         vision_features = None

@@ -552,6 +552,7 @@ class HypothalamusCluster:
             "prosody_energy": round((prosody_features or {}).get("energy_mean", 0.0), 4),
             "prosody_jitter": round((prosody_features or {}).get("jitter", 0.0), 4),
             "prosody_shimmer": round((prosody_features or {}).get("shimmer", 0.0), 4),
+            "prosody_speech_rate": round((prosody_features or {}).get("speech_rate_hz", 0.0), 2),
             "pace_label": (dynamics or {}).get("pace_label"),
             "hesitant_speech": bool((dynamics or {}).get("hesitant")),
             "emotion_source": "metacognition" if override_emotion else "neuromod",
