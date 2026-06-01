@@ -55,7 +55,7 @@ class RunPodManager:
         self._pod_id: str | None = None
         self._current_price: float | None = None
         self._watcher_task: asyncio.Task | None = None
-        self._http: "httpx.AsyncClient | None" = None
+        self._http = None  # httpx.AsyncClient, created lazily in _get_http()
 
     # ── HTTP / GraphQL ────────────────────────────────────────────────────────
 
@@ -156,10 +156,25 @@ class RunPodManager:
                 }""", {"id": pod_id})
                 pod = data.get("pod") or {}
                 if pod.get("runtime"):
-                    logger.info("[RunPod] Pod %s ready (%.0fs)", pod_id, elapsed)
-                    return True
-                logger.debug("[RunPod] Waiting for pod %s — %s (%.0fs)",
-                             pod_id, pod.get("desiredStatus"), elapsed)
+                    # GraphQL uptime ≠ Ollama serving. Probe the actual endpoint so we
+                    # don't apply the host (and let cells start hitting it) before the
+                    # server answers — the gap that made resumed pods fail their first
+                    # inference calls.
+                    host = self._pod_host(pod_id)
+                    try:
+                        r = await self._get_http().get(f"{host}/api/tags", timeout=10.0)
+                        if r.status_code == 200:
+                            logger.info("[RunPod] Pod %s ready + Ollama serving (%.0fs)",
+                                        pod_id, elapsed)
+                            return True
+                        logger.debug("[RunPod] Pod %s up; Ollama HTTP %s (%.0fs)",
+                                     pod_id, r.status_code, elapsed)
+                    except Exception:
+                        logger.debug("[RunPod] Pod %s up; Ollama not serving yet (%.0fs)",
+                                     pod_id, elapsed)
+                else:
+                    logger.debug("[RunPod] Waiting for pod %s — %s (%.0fs)",
+                                 pod_id, pod.get("desiredStatus"), elapsed)
             except Exception as e:
                 logger.debug("[RunPod] Poll error: %s", e)
         logger.warning("[RunPod] Pod %s not ready after %.0fs", pod_id, _READY_TIMEOUT_S)

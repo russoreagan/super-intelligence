@@ -326,6 +326,12 @@ DEFAULTS: dict[str, float | int | str] = {
     # alive for this many hours. Resets continuously while the brain is running.
     # Acts as a backstop against runaway costs after a crash/force-kill.
     "max_runpod_hours": 8.0,
+    # runpod_stream_retries: extra attempts (beyond the first) for a RunPod /api/chat
+    # stream before falling back to a non-streaming POST. Each retry drops the pooled
+    # httpx client first, so a stale keep-alive socket left by a pod restart is
+    # replaced with a fresh connection — this is what makes inference reconnect after
+    # a restart instead of returning empty. 0 = single attempt + POST fallback.
+    "runpod_stream_retries": 2,
     # ── Section: Chemistry model & Personas ──────────────────────────────────
     # chem_decay_model controls how neuromodulator/hormone levels relax each turn:
     #   "baseline" — homeostatic setpoint; gradual two-way relaxation toward the

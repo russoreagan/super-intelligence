@@ -7,6 +7,7 @@ This class decides the actual API call. Swap providers here, nowhere else.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import re
@@ -286,12 +287,29 @@ class ModelRouter:
         return self._google_client
 
     def _get_http(self):
-        """Lazily-created persistent httpx client; avoids a new TCP connection per Ollama call."""
+        """Lazily-created persistent httpx client; avoids a new TCP connection per Ollama call.
+
+        Configured with a SHORT keepalive expiry: a RunPod pod that restarts keeps the
+        same proxy URL, so without this the pool would reuse dead keep-alive sockets to
+        a restarted backend and inference would stop reconnecting. A short expiry drops
+        idle sockets quickly; _reset_http() force-rebuilds the pool after a hard failure."""
         if self._http_client is None:
             import httpx
 
-            self._http_client = httpx.AsyncClient()
+            self._http_client = httpx.AsyncClient(
+                limits=httpx.Limits(max_keepalive_connections=8, keepalive_expiry=15.0),
+            )
         return self._http_client
+
+    async def _reset_http(self) -> None:
+        """Drop and close the pooled httpx client so the next call builds fresh
+        connections. Called after a connection-class failure — e.g. a RunPod pod
+        restart leaving stale keep-alive sockets to the same proxy URL."""
+        client = self._http_client
+        self._http_client = None
+        if client is not None:
+            with contextlib.suppress(Exception):
+                await client.aclose()
 
     @staticmethod
     def _resolve_local_model(model_key: str) -> str | None:
@@ -878,28 +896,64 @@ class ModelRouter:
             payload["format"] = "json"
         if is_runpod:
             import json as _json
-            text_parts: list[str] = []
-            in_tok = out_tok = 0
+
+            # Bounded retry-with-reconnect. After a pod restart the first attempt
+            # typically fails on a stale keep-alive socket; we drop the pooled client
+            # (_reset_http) and retry on a fresh connection, then fall back to a single
+            # non-streaming POST. This is what makes inference RECONNECT after a restart
+            # instead of silently returning "" forever.
+            attempts = int(_s.get("runpod_stream_retries", 2)) + 1
+            for attempt in range(attempts):
+                text_parts: list[str] = []
+                in_tok = out_tok = 0
+                got_done = False
+                try:
+                    async with self._get_http().stream("POST", f"{host}/api/chat",
+                                                       json=payload, timeout=http_timeout) as resp:
+                        resp.raise_for_status()
+                        async for line in resp.aiter_lines():
+                            if not line:
+                                continue
+                            try:
+                                chunk = _json.loads(line)
+                                delta = (chunk.get("message") or {}).get("content", "")
+                                if delta:
+                                    text_parts.append(delta)
+                                if chunk.get("done"):
+                                    got_done = True
+                                    in_tok = int(chunk.get("prompt_eval_count", 0))
+                                    out_tok = int(chunk.get("eval_count", 0))
+                            except Exception:
+                                pass
+                    if text_parts or got_done:
+                        return _strip_chatml("".join(text_parts)), in_tok, out_tok
+                    # Connected but produced nothing — treat as a soft failure and retry.
+                    logger.warning("[RunPod] stream produced no content (attempt %d/%d)",
+                                   attempt + 1, attempts)
+                except Exception as e:
+                    logger.warning("[RunPod] stream error (attempt %d/%d): %s",
+                                   attempt + 1, attempts, e)
+                    await self._reset_http()  # drop stale sockets before retrying
+                if attempt < attempts - 1:
+                    await asyncio.sleep(min(2.0, 0.5 * (attempt + 1)))
+
+            # All stream attempts failed — last-resort non-streaming POST on a fresh
+            # connection. Degrades gracefully rather than returning empty.
             try:
-                async with self._get_http().stream("POST", f"{host}/api/chat",
-                                                   json=payload, timeout=http_timeout) as resp:
-                    resp.raise_for_status()
-                    async for line in resp.aiter_lines():
-                        if not line:
-                            continue
-                        try:
-                            chunk = _json.loads(line)
-                            delta = (chunk.get("message") or {}).get("content", "")
-                            if delta:
-                                text_parts.append(delta)
-                            if chunk.get("done"):
-                                in_tok = int(chunk.get("prompt_eval_count", 0))
-                                out_tok = int(chunk.get("eval_count", 0))
-                        except Exception:
-                            pass
+                await self._reset_http()
+                async with self._get_local_semaphore():
+                    r = await self._get_http().post(f"{host}/api/chat",
+                                                    json={**payload, "stream": False},
+                                                    timeout=http_timeout)
+                r.raise_for_status()
+                data = r.json()
+                return (_strip_chatml(data["message"]["content"]),
+                        int(data.get("prompt_eval_count", 0)),
+                        int(data.get("eval_count", 0)))
             except Exception as e:
-                logger.warning("[RunPod] stream error: %s", e)
-            return _strip_chatml("".join(text_parts)), in_tok, out_tok
+                logger.warning("[RunPod] post fallback failed after %d stream attempts: %s",
+                               attempts, e)
+                return "", 0, 0
         else:
             async with self._get_local_semaphore():
                 r = await self._get_http().post(f"{host}/api/chat", json=payload,
