@@ -24,6 +24,35 @@ err()     { echo -e "${RED}[brain]${NC} $*" >&2; }
 
 # ── CONFIG ────────────────────────────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Deliver the Ollama tuning vars from .env to the `ollama serve` we spawn below.
+# Without this the serve falls back to OLLAMA_NUM_PARALLEL=1 and foreground +
+# background LLM calls serialise through a single slot, timing out (the brain
+# itself reads .env via load_dotenv, so it assumes the .env value — the mismatch
+# is the bug). We do NOT `source` .env: it contains unquoted paths with spaces
+# (BRAIN_MOTOR_PATHS) that a naive source would choke on. Read only these
+# simple, known-safe scalar keys; .env wins when present, else keep any value
+# already exported in the shell.
+if [[ -f "$SCRIPT_DIR/.env" ]]; then
+    _env_get() {
+        # Echo the value of KEY from .env, stripping inline '# comment' and quotes.
+        local key="$1" line
+        line=$(grep -E "^[[:space:]]*${key}=" "$SCRIPT_DIR/.env" 2>/dev/null | tail -1) || return 0
+        line="${line#*=}"            # drop KEY=
+        line="${line%%#*}"           # drop trailing inline comment
+        line="${line//\"/}"          # drop quotes
+        # trim surrounding whitespace
+        line="${line#"${line%%[![:space:]]*}"}"
+        line="${line%"${line##*[![:space:]]}"}"
+        printf '%s' "$line"
+    }
+    for _k in OLLAMA_NUM_PARALLEL OLLAMA_MAX_LOADED_MODELS OLLAMA_KEEP_ALIVE; do
+        _v="$(_env_get "$_k")"
+        [[ -n "$_v" ]] && export "$_k=$_v"
+    done
+    unset _k _v
+fi
+
 BRAIN_PORT="${BRAIN_PORT:-8765}"
 OLLAMA_PORT="${OLLAMA_PORT:-11434}"
 OLLAMA_MODELS=("qwen2.5:14b" "qwen2.5-coder:14b" "nomic-embed-text")

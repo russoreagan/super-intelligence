@@ -96,7 +96,11 @@ class FollowThrough:
             system_prompt=SYSTEM,
             topics=[],
             max_calls_per_turn=1,
-            timeout_seconds=8.0,
+            # Runs fire-and-forget after the turn (never blocks the response), and
+            # a timeout here silently drops a follow-through task — so give it the
+            # same generous budget as other cloud cells rather than a tight 8s that
+            # clips under momentary load/cold-start.
+            timeout_seconds=20.0,
             locality="cloud",
             max_tokens=200,
         )
