@@ -173,10 +173,26 @@ body {
 button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
 input, select, textarea { font: inherit; color: inherit; background: none; border: none; outline: none; }
 
-::-webkit-scrollbar { width: 8px; height: 8px; }
+/* Auto-hiding scrollbars — the thumb is invisible until you hover the scroll
+   area or are actively scrolling (incl. arrow-key / wheel), then fades back. */
+::-webkit-scrollbar { width: 11px; height: 11px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--line); border-radius: 4px; }
-::-webkit-scrollbar-thumb:hover { background: var(--bg-3); }
+::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 6px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+  transition: background 280ms ease;
+}
+*:hover::-webkit-scrollbar-thumb,
+.is-scrolling ::-webkit-scrollbar-thumb {
+  background: var(--line);
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--fg-faint); background-clip: padding-box; }
+/* Firefox */
+* { scrollbar-width: thin; scrollbar-color: transparent transparent; }
+*:hover, .is-scrolling * { scrollbar-color: var(--line) transparent; }
 
 /* =========================================================
    APP SHELL
@@ -3789,6 +3805,7 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
 .thought-ts {
   display: block; margin: 0; font-family: var(--mono); font-size: 8.5px;
   letter-spacing: 0.08em; color: var(--ink-4); white-space: nowrap;
+  min-width: 0; overflow: hidden; text-overflow: clip;
 }
 .thought-tx { font-family: var(--serif); font-style: italic; font-size: 12.5px; line-height: 1.5; color: var(--ink-2); text-wrap: pretty; }
 .thought-item--latest .thought-tx { color: var(--ink); }
@@ -5311,7 +5328,7 @@ function appendThought(text, chemDelta) {
   if (empty) empty.remove();
 
   const now = new Date();
-  const ts = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const ts = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
   const div = document.createElement('div');
   const prev = feed.querySelector('.thought-item--latest');
   if (prev) prev.classList.remove('thought-item--latest');
@@ -7359,6 +7376,17 @@ function _applyMoodTint() {
     b.addEventListener('click', function () { setTheme(b.dataset.themeChoice); });
   });
   reflect();
+})();
+
+// Reveal scrollbars only while actively scrolling (then fade them out). Hover
+// reveal is handled in CSS; this covers wheel / arrow-key / programmatic scroll.
+(function () {
+  var el = document.documentElement, t;
+  window.addEventListener('scroll', function () {
+    el.classList.add('is-scrolling');
+    clearTimeout(t);
+    t = setTimeout(function () { el.classList.remove('is-scrolling'); }, 900);
+  }, true); // capture phase catches scroll from every nested container
 })();
 
 // neuromodulator Levels / Changes view toggle.
