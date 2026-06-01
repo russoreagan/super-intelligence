@@ -272,7 +272,9 @@ class RunPodManager:
                 pod_id = running[0]["id"]
                 logger.info("[RunPod] Pod %s already running", pod_id)
                 self._pod_id = pod_id
-                await self._pull_models(self._pod_host(pod_id))
+                host = self._pod_host(pod_id)
+                await self._pull_models(host)
+                await self._warmup_model(host)
                 self._apply_host(pod_id)
                 self._watcher_task = asyncio.create_task(self._watch())
                 return True

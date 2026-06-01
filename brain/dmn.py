@@ -460,7 +460,7 @@ class DefaultModeNetwork:
             system_prompt=MONOLOGUE_SYSTEM,
             topics=["stream.thought"],
             max_calls_per_turn=1,
-            timeout_seconds=60.0,
+            timeout_seconds=120.0,
             # Run hot: idle thought is divergent ideation, not structured reasoning.
             # Low temp (0.3) was collapsing the stream into one repeated template.
             temperature=float(os.environ.get("BRAIN_DMN_MONOLOGUE_TEMP", "0.85")),
@@ -474,7 +474,7 @@ class DefaultModeNetwork:
             system_prompt=SIMULATION_SYSTEM,
             topics=["stream.prediction"],
             max_calls_per_turn=1,
-            timeout_seconds=60.0,
+            timeout_seconds=120.0,
         )
         self._simulation_cell.set_router(router)
 
@@ -485,7 +485,7 @@ class DefaultModeNetwork:
             system_prompt=ANTICIPATOR_SYSTEM,
             topics=["stream.anticipation"],
             max_calls_per_turn=1,
-            timeout_seconds=60.0,
+            timeout_seconds=120.0,
         )
         self._anticipator_cell.set_router(router)
 
@@ -496,7 +496,7 @@ class DefaultModeNetwork:
             system_prompt=PREFETCHER_SYSTEM,
             topics=["stream.prefetch"],
             max_calls_per_turn=1,
-            timeout_seconds=60.0,
+            timeout_seconds=120.0,
         )
         self._prefetcher_cell.set_router(router)
 

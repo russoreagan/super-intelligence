@@ -856,7 +856,8 @@ class ModelRouter:
             # local — hippocampus + all DMN JSON cells; format:json ensures valid structure
             # while temp=0.3 keeps content focused without killing variety in thought fields
             options["temperature"] = 0.3
-            options["num_ctx"] = 16384
+            # RunPod: cap at 8192 — prefill for 16k context on 32B exceeds cell timeouts
+            options["num_ctx"] = 8192 if is_runpod else 16384
             use_json_format = True
 
         # Per-cell override (e.g. the DMN monologue runs hot for divergent ideation).
@@ -869,24 +870,45 @@ class ModelRouter:
         payload: dict = {
             "model": model_name,
             "messages": [{"role": "system", "content": system_prompt}] + flat_messages,
-            "stream": False,
+            "stream": is_runpod,  # stream=true for RunPod — keeps proxy alive during long prefill
             "options": options,
             "keep_alive": keep_alive,
         }
         if use_json_format:
             payload["format"] = "json"
         if is_runpod:
-            r = await self._get_http().post(f"{host}/api/chat", json=payload,
-                                            timeout=http_timeout)
+            import json as _json
+            text_parts: list[str] = []
+            in_tok = out_tok = 0
+            try:
+                async with self._get_http().stream("POST", f"{host}/api/chat",
+                                                   json=payload, timeout=http_timeout) as resp:
+                    resp.raise_for_status()
+                    async for line in resp.aiter_lines():
+                        if not line:
+                            continue
+                        try:
+                            chunk = _json.loads(line)
+                            delta = (chunk.get("message") or {}).get("content", "")
+                            if delta:
+                                text_parts.append(delta)
+                            if chunk.get("done"):
+                                in_tok = int(chunk.get("prompt_eval_count", 0))
+                                out_tok = int(chunk.get("eval_count", 0))
+                        except Exception:
+                            pass
+            except Exception as e:
+                logger.warning("[RunPod] stream error: %s", e)
+            return _strip_chatml("".join(text_parts)), in_tok, out_tok
         else:
             async with self._get_local_semaphore():
                 r = await self._get_http().post(f"{host}/api/chat", json=payload,
                                                 timeout=http_timeout)
-        r.raise_for_status()
-        data = r.json()
-        in_tok = int(data.get("prompt_eval_count", 0))
-        out_tok = int(data.get("eval_count", 0))
-        return _strip_chatml(data["message"]["content"]), in_tok, out_tok
+            r.raise_for_status()
+            data = r.json()
+            in_tok = int(data.get("prompt_eval_count", 0))
+            out_tok = int(data.get("eval_count", 0))
+            return _strip_chatml(data["message"]["content"]), in_tok, out_tok
 
     async def embed(self, text: str) -> list[float] | None:
         """
