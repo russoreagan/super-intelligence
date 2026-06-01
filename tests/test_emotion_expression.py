@@ -15,6 +15,19 @@ Coverage:
     - no markup → passthrough (display == tts)
     - base_tag=None → no reset injected after segment
 
+  PNS Flash 2.5 helpers
+    - _strip_all_tags: removes mood markup, bare tags, reaction tags
+    - _strip_all_tags: no-op on plain text
+    - _extract_mood_map: returns spans in clean-text coordinates
+    - _extract_mood_map: no markup → empty list
+    - _voice_settings_from_emotion: known emotions map to correct buckets
+    - _voice_settings_from_emotion: None emotion uses base_params
+    - _voice_settings_from_emotion: unknown emotion uses base_params
+    - _make_flash_chunks: plain text produces same chunks as _split_sentences
+    - _make_flash_chunks: mood markup drives per-chunk VoiceSettings
+    - _make_flash_chunks: chunk count unchanged by mood boundaries
+    - _FLASH_EMOTION_CLUSTERS: covers all 4 buckets
+
   MotorCortexCluster._set_mood (via _dispatch)
     - disabled by settings → [blocked]
     - unknown emotion → [error]
@@ -366,3 +379,227 @@ class TestMoodExpressionDrain:
 
         trace = TurnTrace(turn_id="t2", session_id="s1", user_input="test")
         assert trace.deliberate_emotions == []
+
+
+# ---------------------------------------------------------------------------
+# Flash 2.5 helpers
+# ---------------------------------------------------------------------------
+
+# Minimal VoiceSettings stand-in so tests don't require the ElevenLabs SDK.
+class _VS:
+    def __init__(self, stability, similarity_boost, style, use_speaker_boost, speed=None):
+        self.stability = stability
+        self.similarity_boost = similarity_boost
+        self.style = style
+        self.use_speaker_boost = use_speaker_boost
+        self.speed = speed
+
+
+class TestStripAllTags:
+    def _strip(self, text):
+        from brain.pns import PNS
+        return PNS._strip_all_tags(text)
+
+    def test_removes_mood_markup_keeps_inner_text(self):
+        result = self._strip("Hello. [mood:sad] I miss you. [/mood] Goodbye.")
+        assert "[mood:" not in result
+        assert "[/mood]" not in result
+        assert "I miss you." in result
+        assert "Hello." in result
+        assert "Goodbye." in result
+
+    def test_removes_bare_bracket_tags(self):
+        result = self._strip("Sure. [gently] That works. [curious] Right?")
+        assert "[gently]" not in result
+        assert "[curious]" not in result
+        assert "Sure." in result
+        assert "That works." in result
+
+    def test_removes_reaction_tags(self):
+        result = self._strip("Wait. [sighs] Okay then.")
+        assert "[sighs]" not in result
+        assert "Okay then." in result
+
+    def test_plain_text_unchanged(self):
+        text = "This is just plain text with no tags at all."
+        assert self._strip(text) == text
+
+    def test_nested_strip(self):
+        text = "[mood:excited] Wow! [laughs] Great! [/mood] Done."
+        result = self._strip(text)
+        assert "[mood:" not in result
+        assert "[laughs]" not in result
+        assert "Wow!" in result
+        assert "Great!" in result
+        assert "Done." in result
+
+
+class TestExtractMoodMap:
+    def _extract(self, text):
+        from brain.pns import PNS
+        return PNS._extract_mood_map(text)
+
+    def test_no_markup_returns_empty(self):
+        spans = self._extract("Just plain text here.")
+        assert spans == []
+
+    def test_single_span_found(self):
+        text = "Before. [mood:sad] I miss you. [/mood] After."
+        spans = self._extract(text)
+        assert len(spans) == 1
+        start, end, mood = spans[0]
+        assert mood == "sad"
+        assert start >= 0
+        assert end > start
+
+    def test_inner_text_in_clean_coords(self):
+        text = "[mood:happy] Great news! [/mood] Moving on."
+        spans = self._extract(text)
+        assert len(spans) == 1
+        start, end, mood = spans[0]
+        assert mood == "happy"
+        # In clean text "Great news! Moving on.", the span should start at 0
+        assert start == 0
+
+    def test_multiple_spans_ordered(self):
+        text = "[mood:sad] First. [/mood] Middle. [mood:excited] Second! [/mood] End."
+        spans = self._extract(text)
+        assert len(spans) == 2
+        assert spans[0][2] == "sad"
+        assert spans[1][2] == "excited"
+        assert spans[0][0] < spans[1][0]  # ordered by position in clean text
+
+
+class TestVoiceSettingsFromEmotion:
+    BASE = {"stability": 0.45, "style": 0.40, "speed": 1.00}
+
+    def _vs(self, emotion):
+        from brain.pns import PNS
+        return PNS._voice_settings_from_emotion(emotion, self.BASE, VoiceSettings=_VS)
+
+    def test_none_emotion_uses_base_params(self):
+        vs = self._vs(None)
+        assert vs.stability == 0.45
+        assert vs.style == 0.40
+
+    def test_unknown_emotion_uses_base_params(self):
+        vs = self._vs("totally_unknown_xyz")
+        assert vs.stability == 0.45
+        assert vs.style == 0.40
+
+    def test_bright_bucket(self):
+        vs = self._vs("excited")
+        assert vs.stability == 0.35
+        assert vs.style == 0.55
+
+    def test_calm_bucket(self):
+        vs = self._vs("sad")
+        assert vs.stability == 0.55
+        assert vs.style == 0.25
+
+    def test_warm_bucket(self):
+        vs = self._vs("warmly")
+        assert vs.stability == 0.50
+        assert vs.style == 0.35
+
+    def test_tense_bucket(self):
+        vs = self._vs("angry")
+        assert vs.stability == 0.65
+        assert vs.style == 0.25
+
+    def test_hierarchy_fallback(self):
+        # "joy" is a parent of many leaf emotions; should hit bright bucket
+        vs = self._vs("joy")
+        assert vs.stability == 0.35
+
+    def test_similarity_boost_always_080(self):
+        for emotion in [None, "sad", "excited", "angry"]:
+            vs = self._vs(emotion)
+            assert vs.similarity_boost == 0.80
+
+
+class TestMakeFlashChunks:
+    BASE = {"stability": 0.45, "style": 0.40, "speed": 1.00}
+
+    def _chunks(self, text):
+        from brain.pns import PNS
+        return PNS._make_flash_chunks(PNS, text, self.BASE, VoiceSettings=_VS)
+
+    def test_plain_text_same_chunk_count_as_split_sentences(self):
+        from brain.pns import PNS
+        text = "Short text."
+        chunks = self._chunks(text)
+        sentences = PNS._split_sentences(text)
+        assert len(chunks) == len(sentences)
+
+    def test_returns_list_of_tuples(self):
+        chunks = self._chunks("Hello world.")
+        assert isinstance(chunks, list)
+        for item in chunks:
+            assert len(item) == 2
+            assert isinstance(item[0], str)
+
+    def test_no_markup_all_chunks_get_base_params(self):
+        text = "Plain sentence. Another one. And more."
+        chunks = self._chunks(text)
+        for _, vs in chunks:
+            assert vs.stability == self.BASE["stability"]
+            assert vs.style == self.BASE["style"]
+
+    def test_mood_markup_stripped_from_chunk_text(self):
+        text = "Normal. [mood:sad] Sad part. [/mood] Back to normal."
+        chunks = self._chunks(text)
+        combined = " ".join(t for t, _ in chunks)
+        assert "[mood:" not in combined
+        assert "[/mood]" not in combined
+        assert "Sad part." in combined
+        assert "Normal." in combined
+
+    def test_mood_changes_voice_settings_for_covered_chunk(self):
+        # Intro must exceed the 120-char first-chunk threshold so it flushes as its own chunk.
+        # Then the sad section starts the second chunk, which should get calm params.
+        intro = (
+            "Everything has been going really well lately, I have to say, "
+            "and I feel genuinely optimistic about the direction things are heading. "
+        )  # ~131 chars — forces a flush before the sad section
+        sad = "[mood:sad] I deeply miss the old days and feel heavy about it all. [/mood] "
+        outro = "But we move forward regardless."
+        text = intro + sad + outro
+        chunks = self._chunks(text)
+        assert len(chunks) >= 2, f"Expected ≥2 chunks, got {len(chunks)}: {[t[:40] for t, _ in chunks]}"
+        # At least one chunk should have calm (sad) params (stability=0.55, style=0.25)
+        settings = [(vs.stability, vs.style) for _, vs in chunks]
+        assert any(s == (0.55, 0.25) for s in settings), f"No calm chunk found: {settings}"
+
+    def test_chunk_count_not_inflated_by_mood_boundaries(self):
+        from brain.pns import PNS
+        text = (
+            "Normal intro sentence. "
+            "[mood:sad] This is the sad part in the middle. [/mood] "
+            "And back to normal here."
+        )
+        chunks = self._chunks(text)
+        clean = PNS._strip_all_tags(text)
+        sentences = PNS._split_sentences(clean)
+        assert len(chunks) == len(sentences)
+
+
+class TestFlashEmotionClusters:
+    def test_all_four_buckets_represented(self):
+        from brain.pns import PNS
+        buckets = set(PNS._FLASH_EMOTION_CLUSTERS.values())
+        assert buckets == {"bright", "warm", "calm", "tense"}
+
+    def test_no_stray_values(self):
+        from brain.pns import PNS
+        valid = {"bright", "warm", "calm", "tense"}
+        for emotion, bucket in PNS._FLASH_EMOTION_CLUSTERS.items():
+            assert bucket in valid, f"{emotion!r} → invalid bucket {bucket!r}"
+
+    def test_core_emotion_coverage(self):
+        from brain.pns import PNS
+        clusters = PNS._FLASH_EMOTION_CLUSTERS
+        assert clusters.get("excited") == "bright"
+        assert clusters.get("sad") == "calm"
+        assert clusters.get("angry") == "tense"
+        assert clusters.get("warmly") == "warm"

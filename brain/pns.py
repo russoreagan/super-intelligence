@@ -141,6 +141,35 @@ class PNS:
     # the existing PNS._V3_TAG_BY_EMOTION references below.
     _V3_TAG_BY_EMOTION: dict[str, str] = EMOTION_TAG_MAP
 
+    # Flash 2.5 can't use audio tags — instead mood markup drives per-chunk
+    # VoiceSettings (stability/style/speed). Emotions cluster into 4 buckets.
+    _FLASH_EMOTION_CLUSTERS: dict[str, str] = {
+        # bright — animated, fast
+        "joy": "bright", "excitement": "bright", "enthusiasm": "bright",
+        "excited": "bright", "enthusiastic": "bright", "playful": "bright",
+        "amused": "bright", "joking": "bright", "confident": "bright",
+        "proud": "bright", "surprised": "bright", "surprise": "bright",
+        "curious": "bright", "curious-uncertain": "bright",
+        "happy": "bright", "joyful": "bright",
+        # warm — gentle, present
+        "warm": "warm", "warmly": "warm", "affectionate": "warm",
+        "grateful": "warm", "loving": "warm", "tender": "warm",
+        "sympathetic": "warm", "flirty": "warm",
+        # calm — subdued, slower
+        "sad": "calm", "softly": "calm", "gently": "calm",
+        "apologetic": "calm", "resigned": "calm", "somber": "calm",
+        "melancholy": "calm", "disappointed": "calm", "wistful": "calm",
+        "flat": "calm", "inhibited": "calm", "relieved": "calm",
+        "thoughtful": "calm", "shy": "calm", "embarrassed": "calm",
+        "bashfully": "calm", "lonely": "calm", "peaceful": "calm",
+        # tense — measured, controlled intensity
+        "anxious": "tense", "agitated": "tense", "angry": "tense",
+        "anger": "tense", "restless": "tense", "cautious-agitated": "tense",
+        "defensive": "tense", "frustrated": "tense", "irritated": "tense",
+        "mad": "tense", "fear": "tense", "urgently": "tense",
+        "sarcastic": "tense", "deadpan": "tense", "dry": "tense",
+    }
+
     @staticmethod
     def _v3_audio_tag_from_affect(affect: dict) -> str | None:
         """eleven_v3 audio-tag selector: ONE leading tag that shapes the whole
@@ -406,6 +435,116 @@ class PNS:
             return 1.0  # Robust — most stable (threat / de-escalation)
         return 0.5  # Natural
 
+    @staticmethod
+    def _extract_mood_map(text: str) -> list[tuple[int, int, str]]:
+        """Return (clean_start, clean_end, mood_name) spans in clean-text coordinates.
+        'Clean' means text with mood markup stripped. Used by _make_flash_chunks."""
+        import re
+
+        pattern = re.compile(r"\[mood:([^\]]+)\](.*?)\[/mood\]", re.DOTALL | re.IGNORECASE)
+        # Build clean text once (same stripping as _strip_all_tags but without reaction tags,
+        # so we can locate inner-content positions accurately).
+        clean = re.sub(
+            r"\[mood:[^\]]+\](.*?)\[/mood\]",
+            lambda m: m.group(1).strip(),
+            text,
+            flags=re.DOTALL | re.IGNORECASE,
+        )
+        clean = re.sub(r"\[[^\]]{1,40}\]", "", clean).strip()
+
+        spans: list[tuple[int, int, str]] = []
+        search_pos = 0
+        for m in pattern.finditer(text):
+            mood_name = m.group(1).strip().lower()
+            inner = re.sub(r"\[[^\]]{1,40}\]", "", m.group(2)).strip()
+            if not inner:
+                continue
+            anchor = inner[:40]
+            idx = clean.find(anchor, search_pos)
+            if idx >= 0:
+                spans.append((idx, idx + len(inner), mood_name))
+                search_pos = idx + len(inner)
+        return spans
+
+    @staticmethod
+    def _strip_all_tags(text: str) -> str:
+        """Strip mood markup and bare audio tags so Flash 2.5 never reads them aloud."""
+        import re
+
+        # [mood:X]...[/mood] → inner text only
+        text = re.sub(
+            r"\[mood:[^\]]+\](.*?)\[/mood\]",
+            lambda m: m.group(1).strip(),
+            text,
+            flags=re.DOTALL | re.IGNORECASE,
+        )
+        # Remaining bare [word] bracket tags (1–40 chars, no nested brackets)
+        text = re.sub(r"\[[^\]]{1,40}\]", "", text)
+        return strip_reaction_tags(text).strip()
+
+    @staticmethod
+    def _voice_settings_from_emotion(
+        emotion: str | None,
+        base_params: dict,
+        *,
+        VoiceSettings,
+    ):
+        """Map an emotion name to VoiceSettings for Flash 2.5.
+        Falls back to base_params when emotion is None or unrecognised."""
+        from brain.emotion_hierarchy import lookup_with_inheritance
+
+        cluster = None
+        if emotion:
+            cluster = PNS._FLASH_EMOTION_CLUSTERS.get(emotion)
+            if cluster is None:
+                cluster = lookup_with_inheritance(emotion, PNS._FLASH_EMOTION_CLUSTERS)
+
+        _BUCKETS = {
+            "bright": {"stability": 0.35, "style": 0.55, "speed": 1.05},
+            "warm":   {"stability": 0.50, "style": 0.35, "speed": 1.00},
+            "calm":   {"stability": 0.55, "style": 0.25, "speed": 0.93},
+            "tense":  {"stability": 0.65, "style": 0.25, "speed": 0.97},
+        }
+        p = _BUCKETS.get(cluster or "", base_params)
+        vs_kwargs = {
+            "stability": p["stability"],
+            "similarity_boost": 0.80,
+            "style": p["style"],
+            "use_speaker_boost": True,
+        }
+        try:
+            return VoiceSettings(**vs_kwargs, speed=p["speed"])
+        except TypeError:
+            return VoiceSettings(**vs_kwargs)
+
+    def _make_flash_chunks(
+        self, text: str, base_params: dict, *, VoiceSettings
+    ) -> list[tuple[str, object]]:
+        """Build (chunk_text, VoiceSettings) pairs for Flash 2.5.
+        Chunking is identical to _split_sentences() (fast first chunk, larger subsequent).
+        [mood:X] spans drive per-chunk VoiceSettings; chunk count stays the same."""
+        clean = self._strip_all_tags(text)
+        mood_spans = self._extract_mood_map(text)  # in clean-text coordinates
+        sentences = self._split_sentences(clean)
+
+        def _mood_at(pos: int) -> str | None:
+            for start, end, mood in mood_spans:
+                if start <= pos < end:
+                    return mood
+            return None
+
+        result: list[tuple[str, object]] = []
+        pos = 0
+        for chunk in sentences:
+            anchor = chunk[:30]
+            found = clean.find(anchor, pos)
+            chunk_pos = found if found >= 0 else pos
+            mood = _mood_at(chunk_pos)
+            vs = self._voice_settings_from_emotion(mood, base_params, VoiceSettings=VoiceSettings)
+            result.append((chunk, vs))
+            pos = chunk_pos + len(chunk)
+        return result
+
     def _emit_tts_error(self, detail: str) -> None:
         """Surface a TTS failure to the UI so it isn't silently disguised as a
         normal text reply. Best-effort — never raises."""
@@ -500,8 +639,9 @@ class PNS:
             deliberate_emotion = self._drain_deliberate_emotion()
             has_inline_mood = False
 
-            # Only shape the text for v3 (audio tags). Other models would
-            # literally read "[gently]" out loud.
+            # Shape text and build chunked: list[tuple[str, VoiceSettings]].
+            # Each chunk is one ElevenLabs streaming call with its own settings.
+            _is_flash = model_id.startswith("eleven_flash")
             if model_id == "eleven_v3":
                 # Step 1: resolve the base (reactive) tag from affect.
                 base_tag = self._v3_audio_tag_from_affect(affect or {})
@@ -551,12 +691,62 @@ class PNS:
                 tag_preview = (
                     shaped_text[: shaped_text.find("]") + 1] if shaped_text.startswith("[") else "—"
                 )
+                chunked = [(s, voice_settings) for s in self._split_sentences(shaped_text)]
+
+            elif _is_flash:
+                # Flash 2.5 doesn't support audio tags — [mood:X] markup drives
+                # per-chunk VoiceSettings (stability/style/speed) instead.
+                display_text = self._strip_all_tags(text)
+
+                # Publish mood_expression events for Langfuse traces (same as v3 path).
+                import re as _re
+
+                for _m in _re.finditer(
+                    r"\[mood:([^\]]+)\](.*?)\[/mood\]", text, _re.DOTALL | _re.IGNORECASE
+                ):
+                    _emotion = _m.group(1).strip().lower()
+                    _preview = _m.group(2).strip()[:80]
+                    import asyncio as _asyncio
+
+                    _asyncio.get_event_loop().call_soon(
+                        lambda e=_emotion, p=_preview: _asyncio.ensure_future(
+                            self._bus.publish_dict(
+                                "meta.mood_expression",
+                                {"emotion": e, "source": "inline_flash", "preview": p},
+                                source="pns",
+                            )
+                        )
+                    )
+
+                # If set_mood() was called with no inline markup, override base params.
+                flash_base = params.copy()
+                if deliberate_emotion:
+                    import re as _re2
+                    _has_inline = bool(_re2.search(r"\[mood:[^\]]+\]", text, _re2.IGNORECASE))
+                    if not _has_inline:
+                        # Map the deliberate emotion to a cluster and use its params.
+                        _cluster = PNS._FLASH_EMOTION_CLUSTERS.get(deliberate_emotion)
+                        _BUCKETS = {
+                            "bright": {"stability": 0.35, "style": 0.55, "speed": 1.05},
+                            "warm":   {"stability": 0.50, "style": 0.35, "speed": 1.00},
+                            "calm":   {"stability": 0.55, "style": 0.25, "speed": 0.93},
+                            "tense":  {"stability": 0.65, "style": 0.25, "speed": 0.97},
+                        }
+                        if _cluster in _BUCKETS:
+                            flash_base = _BUCKETS[_cluster]
+
+                chunked = self._make_flash_chunks(text, flash_base, VoiceSettings=VoiceSettings)
+                tag_preview = "—"
+                has_inline_mood = bool(chunked and any(
+                    c[1] != voice_settings for c in chunked
+                ))
+
             else:
-                # Non-v3: strip [mood:X] markup AND bare reaction tags so none of
-                # them get read aloud literally (those tags are v3-only).
+                # Other non-v3 models: strip all markup so tags aren't read aloud.
                 display_text, _ = self._parse_mood_markup(text, None)
                 shaped_text = strip_reaction_tags(display_text)
                 tag_preview = "—"
+                chunked = [(s, voice_settings) for s in self._split_sentences(shaped_text)]
 
             if model_id == "eleven_v3":
                 logger.info(
@@ -570,23 +760,31 @@ class PNS:
                     deliberate_emotion or "—",
                     has_inline_mood,
                 )
-            else:
+            elif _is_flash:
                 logger.info(
-                    "[I/O] TTS: voice=%s model=%s stability=%.2f style=%.2f speed=%.2f emotion=%s tag=%s",
+                    "[I/O] TTS: voice=%s model=%s stability=%.2f style=%.2f speed=%.2f "
+                    "emotion=%s mood_chunks=%d deliberate=%s",
                     voice_id,
                     model_id,
                     params["stability"],
                     params["style"],
                     params["speed"],
                     (affect or {}).get("emotion"),
-                    tag_preview,
+                    sum(1 for _, vs in chunked if vs is not voice_settings),
+                    deliberate_emotion or "—",
+                )
+            else:
+                logger.info(
+                    "[I/O] TTS: voice=%s model=%s stability=%.2f style=%.2f speed=%.2f emotion=%s",
+                    voice_id,
+                    model_id,
+                    params["stability"],
+                    params["style"],
+                    params["speed"],
+                    (affect or {}).get("emotion"),
                 )
 
-            # Split into sentence-sized chunks so ElevenLabs starts generating
-            # audio for the first sentence immediately, while subsequent
-            # sentences are fetched concurrently with playback.
-            sentences = self._split_sentences(shaped_text)
-            logger.debug("[I/O] TTS: %d sentence chunk(s) for streaming", len(sentences))
+            logger.debug("[I/O] TTS: %d chunk(s) for streaming", len(chunked))
 
             self._interrupt_event.clear()
             import time as _time
@@ -644,7 +842,7 @@ class PNS:
 
                     async def _producer() -> None:
                         try:
-                            for i, sentence in enumerate(sentences):
+                            for i, (sentence, chunk_vs) in enumerate(chunked):
                                 if self._interrupt_event.is_set():
                                     break
                                 # Use the streaming endpoint (/stream) — it properly
@@ -656,14 +854,14 @@ class PNS:
                                     "voice_id": voice_id,
                                     "model_id": model_id,
                                     "output_format": "pcm_22050",
-                                    "voice_settings": voice_settings,
+                                    "voice_settings": chunk_vs,
                                 }
                                 # eleven_v3 does not support previous_text/next_text
                                 if model_id != "eleven_v3":
                                     if i > 0:
-                                        stream_kwargs["previous_text"] = sentences[i - 1]
-                                    if i + 1 < len(sentences):
-                                        stream_kwargs["next_text"] = sentences[i + 1]
+                                        stream_kwargs["previous_text"] = chunked[i - 1][0]
+                                    if i + 1 < len(chunked):
+                                        stream_kwargs["next_text"] = chunked[i + 1][0]
                                 audio_iter = None
                                 try:
                                     try:
@@ -684,12 +882,12 @@ class PNS:
                                                 await audio_queue.put(chunk)
                                 except Exception as _sent_err:
                                     logger.error(
-                                        "[I/O] TTS sentence %d/%d failed (%s: %s) — skipping",
-                                        i + 1, len(sentences),
+                                        "[I/O] TTS chunk %d/%d failed (%s: %s) — skipping",
+                                        i + 1, len(chunked),
                                         type(_sent_err).__name__, _sent_err,
                                     )
                                     self._emit_tts_error(
-                                        f"Sentence {i+1} failed: {type(_sent_err).__name__}"
+                                        f"Chunk {i+1} failed: {type(_sent_err).__name__}"
                                     )
                                 finally:
                                     # Release the async generator's HTTP connection even
@@ -729,7 +927,7 @@ class PNS:
                                     "[I/O] TTS first audio chunk in %.2fs (model=%s, chunks=%d)",
                                     first_chunk_ts - self._speak_started_at,
                                     model_id,
-                                    len(sentences),
+                                    len(chunked),
                                 )
                             await asyncio.get_running_loop().run_in_executor(
                                 None, stream.write, chunk
@@ -759,7 +957,7 @@ class PNS:
                     from elevenlabs.play import play
 
                     audio_bytes = b""
-                    for sentence in sentences:
+                    for sentence, chunk_vs in chunked:
                         if self._interrupt_event.is_set():
                             break
                         async for chunk in client.text_to_speech.convert(
@@ -767,7 +965,7 @@ class PNS:
                             voice_id=voice_id,
                             model_id=model_id,
                             output_format="pcm_22050",
-                            voice_settings=voice_settings,
+                            voice_settings=chunk_vs,
                         ):
                             audio_bytes += chunk
                     if not self._interrupt_event.is_set():
