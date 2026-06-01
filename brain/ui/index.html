@@ -7348,7 +7348,7 @@ function _applyMoodTint() {
   rs.setProperty('--signal-soft', 'oklch(' + L + ' ' + C + ' ' + H + ' / 0.13)');
   // Amplify the paper chroma so the mood is visible — but gently; at the
   // original 0.013 it was imperceptible, at 3.4× it ran a touch too warm.
-  var pc = t.paperC * 2.5;
+  var pc = t.paperC * 1.8;
   rs.setProperty('--paper',   'oklch(0.957 ' + pc.toFixed(3) + ' ' + t.paperH + ')');
   rs.setProperty('--paper-2', 'oklch(0.934 ' + (pc + 0.007).toFixed(3) + ' ' + t.paperH + ')');
   rs.setProperty('--paper-3', 'oklch(0.898 ' + (pc + 0.014).toFixed(3) + ' ' + t.paperH + ')');
