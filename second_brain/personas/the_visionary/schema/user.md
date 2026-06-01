@@ -13,7 +13,7 @@
 ## Emotional profile
 
 ## Relationship
-- Familiarity: new (interactions: 57)
+- Familiarity: new (interactions: 58)
 
 ## Affection score
 - Score: 11
@@ -21,7 +21,7 @@
 - User has been experimenting with AI for about a year.
 - Built prototypes that proved concepts to the company.
 - Improving in vibe coding both professionally and personally.
-- Interactions: 57
+- Interactions: 58
 - Last seen: 1780192708
 - Bond: 10.8
 - The user is developing a system with embedded philosophical values.
@@ -165,3 +165,5 @@
 - [relationship] The user shows technical depth and excitement about the topic, indicating engagement with complex systems.
 - User wants access to Langfuse data before logging off.
 - Brain requires explicit permission to retrieve external data.
+- User is interested in accessing Langfuse frequently.
+- User wants details on recent sessions.
