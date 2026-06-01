@@ -3608,7 +3608,7 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
                 </svg>
                 Stop
               </button>
-              <button id="mic-btn" class="muted" title="Hold Space to talk" aria-label="Input mode">
+              <button id="mic-btn" class="muted" title="Press Space to talk" aria-label="Input mode">
                 <div class="mode-thumb"></div>
                 <span class="mode-side mode-mic">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -3645,7 +3645,7 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
                 <img id="img-preview-thumb" alt="attached image">
                 <button id="img-remove-btn" title="Remove image">×</button>
               </div>
-              <textarea id="msg-input" rows="4" placeholder="Type a message, or hold Space to speak…"></textarea>
+              <textarea id="msg-input" rows="4" placeholder="Type a message, or press Space to speak…"></textarea>
               <button id="send-btn" disabled title="Send (Enter)">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
               </button>
@@ -4873,16 +4873,20 @@ let finalTranscript = '';
 let autoSendTimer = null;
 const AUTO_SEND_DELAY_MS = 1500;
 
-// Force text mode on every load — mic is off until user holds Space.
+// Force text mode on every load — mic is off until user presses Space.
 micBtn.classList.remove('listening');
 micBtn.classList.add('muted');
-micBtn.title = 'Hold Space to talk';
+micBtn.title = 'Press Space to talk';
 
 // Single source of truth for mic state: 'off' | 'muted' | 'active'
 // 'off'    = no Python voice mode (browser press-to-talk only)
 // 'muted'  = Python voice active, mic silenced
 // 'active' = Python voice active, mic listening
 let micState = 'off';
+
+// Push-to-talk toggle state: true = mic is open, false = closed.
+// One Space press opens, the next closes and sends. No holding required.
+let pttActive = false;
 
 // Tracks whether the brain is currently speaking (TTS active).
 let brainIsSpeaking = false;
@@ -4895,15 +4899,16 @@ function handleMicState(status) {
   if (micState === 'active') {
     micBtn.classList.remove('muted');
     micBtn.classList.add('listening');
-    micBtn.title = 'Listening (Space held) — release to send';
+    micBtn.title = 'Listening… press Space to send';
     msgInput.classList.add('voice-listening');
-    msgInput.placeholder = '🎙  Listening — release Space to send…';
+    msgInput.placeholder = '🎙  Listening… press Space to send';
   } else if (micState === 'muted') {
     micBtn.classList.remove('listening');
     micBtn.classList.add('muted');
-    micBtn.title = 'Hold Space to talk';
+    micBtn.title = 'Press Space to talk';
     msgInput.classList.remove('voice-listening');
-    msgInput.placeholder = 'Hold Space to talk… or type a message';
+    msgInput.placeholder = 'Press Space to talk… or type a message';
+    pttActive = false;  // mic was closed externally (e.g. TTS started) — reset toggle
   }
   // 'off' — leave button in its default press-to-talk state (set at page load)
 }
@@ -4912,7 +4917,8 @@ function _micReset() {
   micActive = false;
   micBtn.classList.remove('listening');
   micBtn.classList.add('muted');
-  micBtn.title = 'Hold Space to talk';
+  micBtn.title = 'Press Space to talk';
+  pttActive = false;
   msgInput.classList.remove('voice-listening');
   transcriptBar.classList.remove('visible');
   transcriptText.textContent = '';
@@ -4967,9 +4973,9 @@ async function startListening() {
   micActive = true;
   micBtn.classList.remove('muted');
   micBtn.classList.add('listening');
-  micBtn.title = 'Listening… release Space or click to send';
+  micBtn.title = 'Listening… press Space or click to send';
   msgInput.classList.add('voice-listening');
-  transcriptText.textContent = 'Listening… release Space to send';
+  transcriptText.textContent = 'Listening… press Space to send';
   transcriptBar.classList.add('visible');
 }
 
@@ -5091,24 +5097,15 @@ document.addEventListener('keydown', (e) => {
   if (e.code === 'Space' && document.activeElement !== msgInput && !e.repeat) {
     e.preventDefault();
     if (micState !== 'off') {
-      // Python voice mode: hold-to-talk. Go live while Space is held.
+      // Python voice mode: push-to-talk toggle.
+      // First press opens the mic; second press closes and sends.
+      pttActive = !pttActive;
       if (ws && ws.readyState === WebSocket.OPEN)
-        ws.send(JSON.stringify({ type: 'mic_ptt', down: true }));
+        ws.send(JSON.stringify({ type: 'mic_ptt', down: pttActive }));
       return;
     }
     if (!micActive) startListening();
-  }
-});
-
-document.addEventListener('keyup', (e) => {
-  if (e.code === 'Space' && document.activeElement !== msgInput) {
-    if (micState !== 'off') {
-      // Release: flush the held phrase and re-mute.
-      if (ws && ws.readyState === WebSocket.OPEN)
-        ws.send(JSON.stringify({ type: 'mic_ptt', down: false }));
-      return;
-    }
-    if (micActive) stopListening(true);
+    else stopListening(true);
   }
 });
 
