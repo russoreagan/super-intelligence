@@ -17,6 +17,34 @@ from brain.settings import settings
 # Strip [mood:X]...[/mood] markup from display text — TTS handles its own expansion.
 _MOOD_MARKUP_RE = re.compile(r"\[mood:[^\]]+\](.*?)\[/mood\]", re.DOTALL | re.IGNORECASE)
 
+# Strip hallucinated tool-call markup. A drafter may emit a pseudo tool call as
+# prose ("<cloud_action>...</cloud_action>") when a tool was needed but motor
+# cortex didn't run — e.g. when LLM feature-extraction falls back under a cloud
+# outage and requires_action collapses to false. These XML action blocks are NOT
+# the real motor protocol (that's JSON, dispatched before drafting); any
+# angle-bracket action block in spoken prose is a confabulation and must never
+# reach display or TTS. First regex removes balanced blocks; second mops up an
+# unclosed/truncated opener through end-of-text.
+_TOOL_TAGS = "cloud_action|tool_call|tool|action_block"
+_TOOL_MARKUP_RE = re.compile(
+    rf"<({_TOOL_TAGS})\b[^>]*>.*?</\1\s*>", re.DOTALL | re.IGNORECASE
+)
+_TOOL_MARKUP_DANGLING_RE = re.compile(
+    rf"<(?:{_TOOL_TAGS})\b[^>]*>.*\Z", re.DOTALL | re.IGNORECASE
+)
+
+
+def _scrub_tool_markup(text: str) -> tuple[str, bool]:
+    """Remove hallucinated tool-call markup. Returns (cleaned, stripped_anything)."""
+    cleaned = _TOOL_MARKUP_RE.sub("", text)
+    cleaned = _TOOL_MARKUP_DANGLING_RE.sub("", cleaned)
+    if cleaned == text:
+        return text, False
+    # Collapse the whitespace the removed block left behind.
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+    return cleaned, True
+
+
 logger = logging.getLogger("brain.run")
 
 _CANCEL_WORDS = frozenset(
@@ -592,6 +620,17 @@ class _TurnMixin:
             self.brainstem.add_draft(f"final_{turn_id}", response, 0.9)
             self.brainstem.endorse(f"final_{turn_id}")
         final = await self.brainstem.articulation_gate(turn)
+        # Belt-and-braces: strip any hallucinated tool-call markup before it can
+        # reach TTS (raw_final) or display (final). Scrub raw_final first so both
+        # derived forms are clean. If anything was stripped, the routing safety
+        # net missed a tool request — log it so the gap is visible.
+        final, _stripped_markup = _scrub_tool_markup(final)
+        if _stripped_markup:
+            logger.warning(
+                "[Articulation] Stripped hallucinated tool-call markup from response "
+                "(turn %s) — a tool request likely failed to route to motor cortex.",
+                turn_id,
+            )
         # Split raw (for PNS TTS — needs [mood:X] + bare reaction tags) from
         # display (for chat/memory/traces — must have all audio tags removed).
         raw_final = final

@@ -127,6 +127,10 @@ _TOOL_REQUEST_PATTERNS = [
     "browser",
     "adobe",
     "react aria",
+    "langfuse",
+    "observability",
+    "trace",
+    "traces",
     # Imperative tool verbs
     "ask claude",
     "use claude",
@@ -162,6 +166,22 @@ _TOOL_REQUEST_PATTERNS = [
     "investigate",
     "browse",
     "explore",
+    # Data-retrieval verbs (the motor planner still gets final say — it can
+    # return tool:none — so a liberal net here is safe).
+    "pull up",
+    "pull the",
+    "pull that",
+    "pull my",
+    "pull our",
+    "fetch",
+    "retrieve",
+    "query ",
+    "grab the",
+    "grab my",
+    "load the",
+    "load up",
+    "show me the",
+    "show me my",
     "directory",
     "folder",
     # Generic "do X" patterns
