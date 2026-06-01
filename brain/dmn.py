@@ -429,6 +429,10 @@ class DefaultModeNetwork:
         # catches template collapse (same opening shape, swapped topic noun).
         self._recent_frames: deque = deque(maxlen=DMN_RECENT_FRAMES)
         self._suppressed_count = 0
+        # Consecutive suppressions since the last thought that got through.
+        # When this exceeds BRAIN_DMN_SUPPRESS_ESCAPE, the dedup memory is
+        # partially cleared so the model can break out of a topic attractor.
+        self._consec_suppressed: int = 0
 
         # A fragment pulled from long-term memory and surfaced into the monologue
         # prompt every N idle ticks, to give the thought something concrete to bite
@@ -1737,6 +1741,7 @@ class DefaultModeNetwork:
         for attr, default in (
             ("_memory_seed", ""),
             ("_consec_errors", 0),
+            ("_consec_suppressed", 0),
             ("_backoff_mult", 1.0),
             ("_last_tick_latency", 0.0),
             ("_last_tick_failed", False),
@@ -2284,7 +2289,7 @@ class DefaultModeNetwork:
 
         parsed = self._parse_monologue_response(raw)
         if parsed is None:
-            thought_clean = raw.strip()
+            thought_clean = raw.strip() if isinstance(raw, str) else ""
         else:
             thought_clean = (parsed.get("thought") or "").strip()
             metadata["angle"] = (parsed.get("angle") or "").strip().lower() or None
@@ -2448,15 +2453,33 @@ class DefaultModeNetwork:
 
         if is_dup:
             self._suppressed_count += 1
+            self._consec_suppressed += 1
             logger.info(
                 "[Background reflection] Suppressed redundant thought "
-                "(%s, total suppressed=%d): %r",
+                "(%s, total suppressed=%d, consec=%d): %r",
                 dup_reason,
                 self._suppressed_count,
+                self._consec_suppressed,
                 thought_clean[:60],
             )
+            # Escape hatch: if the model has been stuck in a topic attractor for
+            # too long, clear the text/embedding/frame dedup memory so it can
+            # break free. Angles are kept — they're the soft territory signal, not
+            # a hard block. Without this the model can suppress indefinitely.
+            _escape = int(os.environ.get("BRAIN_DMN_SUPPRESS_ESCAPE", "5"))
+            if self._consec_suppressed >= _escape:
+                logger.info(
+                    "[Background reflection] Dedup escape: clearing thought memory "
+                    "after %d consecutive suppressions (topic attractor detected)",
+                    self._consec_suppressed,
+                )
+                self._recent_thoughts.clear()
+                self._recent_embeddings.clear()
+                self._recent_frames.clear()
+                self._consec_suppressed = 0
             return
 
+        self._consec_suppressed = 0  # reset on success
         self._recent_thoughts.append(thought_clean)
         self._recent_embeddings.append(new_emb)
         if frame_sig:
