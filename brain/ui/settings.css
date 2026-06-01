@@ -270,7 +270,7 @@
 
 /* master row */
 .crow.master {
-  background: linear-gradient(180deg, var(--bg-2), oklch(0.195 0.022 250));
+  background: linear-gradient(180deg, var(--bg-2), var(--bg-1));
   border: 1px solid var(--line-soft);
   border-radius: var(--r-1);
   padding: 13px 15px;
@@ -381,7 +381,7 @@ input[type=range].r::-moz-range-thumb {
   padding: 16px; text-align: left; transition: border-color 160ms, background 160ms, transform 160ms;
   position: relative; overflow: hidden;
 }
-.pcard:hover { border-color: var(--line); background: oklch(0.185 0.021 250); transform: translateY(-2px); }
+.pcard:hover { border-color: var(--line); background: var(--bg-2); transform: translateY(-2px); }
 .pcard.sel { border-color: oklch(0.6 0.10 220 / 0.6); background: var(--accent-soft); }
 .pcard.sel::after {
   content: ''; position: absolute; top: 13px; right: 13px;
