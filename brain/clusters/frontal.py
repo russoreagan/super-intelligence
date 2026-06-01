@@ -36,7 +36,6 @@ from brain.predictor import (
 )
 from brain.security import fence
 from brain.settings import settings
-from brain.skill_loader import SkillLoader
 from brain.utils import safe_json_parse
 from brain.wiring import Wiring
 
@@ -1326,42 +1325,6 @@ class FrontalCluster:
             )
         return None
 
-    def _render_skill_block(self, nonce: str) -> str:
-        """Render the active skill bundle for the drafter prompt, or empty string."""
-        bundle = getattr(self, "_current_skill_bundle", None)
-        if bundle is None or getattr(self, "_skill_selector", None) is None:
-            return ""
-        loader = SkillLoader  # lazy reference
-        sections: list[str] = []
-
-        baseline = []
-        for name in bundle.tier1:
-            text = loader.load(name)
-            if text:
-                baseline.append(text)
-        if baseline:
-            sections.append(
-                "THINKING FOUNDATIONS — habits to apply on any deliberate response:\n"
-                + "\n\n".join(baseline)
-            )
-
-        for name in bundle.chosen:
-            text = loader.load(name)
-            if text:
-                sections.append(f"SITUATIONAL FRAMEWORK ({name}):\n{text}")
-
-        if not sections:
-            return ""
-
-        guidance = "Use these as habits of thought, not scripts to recite. Don't announce them.\n"
-        if bundle.needs_guided_question:
-            guidance += (
-                "The user's request is broad. Surface 2-3 specific angles you could take "
-                "and ask which they want, in natural conversational tone. Don't enumerate "
-                "skill names; describe the work.\n"
-            )
-        body = "\n\n".join(sections) + "\n\n" + guidance
-        return f"Active reasoning framework:\n{fence('thinking_framework', body, nonce)}"
 
     @staticmethod
     def _disclosure_ready(features: dict, affect: dict, user_content: str) -> bool:
@@ -1542,12 +1505,11 @@ class FrontalCluster:
                 f"Tool execution result:\n{fence('tool_result', str(memory['tool_result']), nonce)}"
             )
 
-        # Thinking/EI framework block — injected by the SkillSelector. Renders Tier 1
-        # baseline plus any chosen leaf for this turn. Drafters apply these as habits
-        # of thought, not scripts to recite.
-        skill_block = self._render_skill_block(nonce)
-        if skill_block:
-            parts.append(skill_block)
+        # NOTE: skill/framework text is deliberately NOT injected into the drafter
+        # prompt — the drafters run on Claude, which already has these reasoning/EI
+        # frameworks natively, so injecting local copies is redundant bloat. Skill
+        # SELECTION still runs (_select_skills_for_turn) to seed parietal.active_skill_
+        # context, which the Ollama/RunPod-backed DMN inherits and genuinely needs.
 
         if memory.get("recent_task_results"):
             parts.append(

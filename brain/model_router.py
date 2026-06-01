@@ -484,10 +484,13 @@ class ModelRouter:
             float(_s("bg_cloud_timeout_s") or 20.0) if (self._bg_mode and _is_cloud) else None
         )
 
-        # Inject skill text into system prompt before dispatch — applies to all backends
-        # (Haiku, Gemini, local). Previously this was scoped to local-only, which silently
-        # dropped skills passed to cloud cells like frontal drafters.
-        if skills:
+        # Inject skill text into the system prompt — LOCAL/RunPod backends ONLY.
+        # Cloud models (Claude, Gemini) already have these reasoning/skill frameworks
+        # natively, so injecting local skill copies is redundant prompt bloat (and cost).
+        # Gating on the resolved route (_is_cloud) means this adapts automatically as
+        # cells are moved between local and cloud models — the DMN and other Ollama/
+        # RunPod cells keep their skills; anything routed to Claude does not.
+        if skills and not _is_cloud:
             from brain.skill_loader import SkillLoader
 
             skill_block = SkillLoader.load_many(skills)
