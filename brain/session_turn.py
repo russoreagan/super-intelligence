@@ -814,7 +814,10 @@ class _TurnMixin:
         trace.cluster_tokens = cluster_tokens
         trace.memory_recalled = memory_recalled
         trace.memory_hit_count = memory_hit_count
-        trace.user_emotion = features.get("user_emotion", "") if isinstance(features, dict) else ""
+        trace.user_emotion = (
+            affect.get("user_emotion", "") or
+            (features.get("user_emotion", "") if isinstance(features, dict) else "")
+        )
         trace.speaker_name = features.get("speaker_name", "")
         trace.speaker_score = features.get("_speaker_match_score", 0.0)
         trace.prosody_tone = affect.get("vocal_tone") or ""
@@ -1163,6 +1166,46 @@ class _TurnMixin:
                 spoken_summary, {"emotion": "lively" if summary.get("success") else "concerned"}
             )
 
+    async def _synthesize_lobe_result(self, tool_name: str, output: str, turn_id: str) -> str:
+        """Synthesize a natural spoken utterance from a lobe tool's raw context output.
+
+        recall_memory and analyze_image return LLM-context-formatted text, not speech.
+        This pass turns the full retrieved content into 1-2 conversational sentences that
+        reference the memory/observation naturally in the context of the current exchange.
+        """
+        parietal_ctx = self.parietal.recent_turns_text(n=3)
+        if tool_name == "recall_memory":
+            directive = (
+                "A memory just surfaced. Speak it naturally in 1–2 sentences — "
+                "as if you just thought of it, not as a readout. Connect it to what's "
+                "being discussed. Don't say 'I recall' or 'I found'. Just say the thing."
+            )
+        else:
+            directive = (
+                "You just looked at something. Describe what's relevant in 1–2 sentences, "
+                "connecting it to the current conversation."
+            )
+        prompt = (
+            f"{directive}\n\n"
+            f"Current conversation:\n{parietal_ctx}\n\n"
+            f"Retrieved content:\n{output}"
+        )
+        try:
+            result = await self.router.call(
+                "haiku",
+                "You are speaking your own thought aloud — a memory or observation that "
+                "surfaced naturally while talking. First person, conversational, brief.",
+                [{"role": "user", "content": prompt}],
+                cluster="hippocampus",
+                cell="recall_synthesizer",
+                turn_id=turn_id + "_rs",
+                max_tokens=200,
+            )
+            return (result or "").strip()
+        except Exception as e:
+            logger.warning("[MotorCortex] Lobe synthesis failed (%s): %s", tool_name, e)
+            return ""
+
     async def _run_motor_reactive(self, features: dict, turn_id: str) -> None:
         """Run a reactive motor action in the background.
 
@@ -1208,10 +1251,22 @@ class _TurnMixin:
             if self._emitter:
                 await self._emitter.emit_neuromod(self.bus.neuromod.snapshot())
 
+        # Lobe tools (recall_memory, analyze_image) return LLM-context strings, not
+        # human-readable output. Raw recall text must be synthesized into natural
+        # speech before surfacing — never dump it directly or store it as a task result.
+        _LOBE_TOOLS = {"recall_memory", "analyze_image"}
+        is_lobe_tool = tool_name in _LOBE_TOOLS
+
         if tool_result.get("pending"):
             # Confirmation needed — surface as a question via proactive speech
             desc = output.replace("CONFIRMATION_NEEDED:", "").strip()
             msg = f"I'm ready to: {desc}. Want me to go ahead?"
+        elif is_lobe_tool:
+            if not output or output.startswith("[error]") or output.startswith("[no"):
+                return
+            msg = await self._synthesize_lobe_result(tool_name, output, turn_id)
+            if not msg:
+                return
         else:
             self._recent_task_results.append(
                 {"goal": goal, "summary": output[:500], "success": bool(success), "ts": time.time()}

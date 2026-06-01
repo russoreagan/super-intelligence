@@ -491,14 +491,20 @@ class FrontalCluster:
                 trace.gating_bypassed_count += 1
         else:
             predicted, confidence = self._exec_predictor.predict(exec_sig)
-            if predicted and self._exec_predictor.should_skip_integrator(predicted, confidence):
+            exec_avg = self._exec_predictor.avg_recent_outcome(exec_sig)
+            if (
+                predicted
+                and self._exec_predictor.should_skip_integrator(predicted, confidence)
+                and exec_avg is not None
+                and exec_avg > 0.7
+            ):
                 response_type, target_length, tone = predicted
                 instruction = {
                     "response_type": response_type,
                     "target_length": target_length,
                     "tone": tone,
                     "key_points": [],
-                    "drafter_count": 1,
+                    "drafter_count": 3,
                 }
                 trace = self._record_trace_bypass()
                 if trace is not None:

@@ -164,12 +164,20 @@ class CompositePredictor:
         miss = 1.0 - match_frac
         return min(1.0, 0.4 + miss * 0.5 + (1.0 - confidence) * 0.1)
 
-    def should_skip_integrator(self, predicted: tuple | None, confidence: float) -> bool:
-        """Stronger gate than should_wake_integrator: requires both low expected
-        surprise AND high confidence before we actually skip the LLM."""
+    def should_skip_integrator(
+        self, predicted: tuple | None, confidence: float, recent_surprise: float | None = None
+    ) -> bool:
+        """Skip the LLM only when confidence is high AND recent predictions for
+        this signature have been reliable (low surprise). Callers that have a
+        recent surprise estimate should pass it; without one the gate falls back
+        to confidence-only (conservative)."""
         if predicted is None:
             return False
-        return confidence >= self.confidence_skip_threshold
+        if confidence < self.confidence_skip_threshold:
+            return False
+        if recent_surprise is not None and recent_surprise > self.surprise_threshold:
+            return False
+        return True
 
     def avg_recent_outcome(self, sig: tuple[Hashable, ...]) -> float | None:
         """Mean recent quality score for a signature, or None if no data."""
