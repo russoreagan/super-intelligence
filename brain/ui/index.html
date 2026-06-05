@@ -4947,6 +4947,13 @@ function handleBinaryAudio(buf) {
   source.buffer = audioBuffer;
   source.connect(_getAnalyser(ctx));
 
+  // The speaking event fires before the first PCM chunk, so _startVbarLoop()
+  // exits early (no AudioContext yet). Kick it now that one exists.
+  const _vb = document.querySelector('.voicebars');
+  if (_vb && _vb.classList.contains('speaking') && !_vb.classList.contains('live')) {
+    _startVbarLoop();
+  }
+
   // Schedule gaplessly: start at the end of the last scheduled chunk
   const now = ctx.currentTime;
   const startAt = Math.max(now, _audioScheduledUntil);
@@ -5902,6 +5909,9 @@ const _speechPulse = {
   stop() {
     this.timers.forEach(t => clearTimeout(t));
     this.timers = [];
+    // Deactivate immediately rather than waiting for the 1.8s auto-timeout
+    // that activateRegion set — otherwise regions stay lit after speech ends.
+    ['motor', 'brainstem', 'frontal'].forEach(r => deactivateRegion(r));
   },
 };
 // Timer used to reopen Deepgram after a turn when no TTS fires (text-only mode).
@@ -6451,7 +6461,7 @@ const PERSONAS = {
   "The Empath":    { tag: "Warm · patient · attuned",
     chem: { DA:0.45, ACh:0.18, GABA:0.12, Glu:0.18, NE:0.15, "5HT":0.70, CORT:0.03, OXT:0.70, AEA:0.45 } },
   "The Analyst":   { tag: "Methodical · precise · vigilant",
-    chem: { DA:0.40, ACh:0.55, GABA:0.18, Glu:0.25, NE:0.40, "5HT":0.55, CORT:0.14, OXT:0.22, AEA:0.30 } },
+    chem: { DA:0.35, ACh:0.35, GABA:0.30, Glu:0.25, NE:0.25, "5HT":0.55, CORT:0.14, OXT:0.22, AEA:0.30 } },
   "The Poet":      { tag: "Intense · ruminative · unfiltered",
     chem: { DA:0.32, ACh:0.55, GABA:0.08, Glu:0.38, NE:0.42, "5HT":0.28, CORT:0.15, OXT:0.22, AEA:0.38 } },
   "The Sage":      { tag: "Contemplative · unhurried · calm",
