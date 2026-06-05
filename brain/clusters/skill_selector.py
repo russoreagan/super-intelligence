@@ -282,6 +282,32 @@ class SkillSelector:
             self._index.inject_native(entry)
             logger.debug("warm_native_skills: injected %s", name)
 
+    def capability_manifest(self) -> str:
+        """Compact skill manifest for the executive context.
+
+        Returns a plain-text listing of native operational skills (full detail)
+        and category-level humanity routers (brief) so the executive LLM can
+        pick a relevant skill inline on each turn.
+        """
+        lines: list[str] = []
+
+        native = [s for s in self._index.skills if s.get("_native")]
+        if native:
+            lines.append("Operational capabilities:")
+            for s in native:
+                lines.append(f"  {s['name']}: {s['description'][:140]}")
+
+        routers = sorted(
+            [s for s in self._index.skills if s.get("is_router") and not s.get("_native")],
+            key=lambda x: x["name"],
+        )
+        if routers:
+            lines.append("Reasoning frameworks (use category name as skill):")
+            for s in routers:
+                lines.append(f"  {s['name']}: {s['description'][:100]}")
+
+        return "\n".join(lines)
+
     @property
     def tier1_names(self) -> list[str]:
         return list(self._index.tier1_names)

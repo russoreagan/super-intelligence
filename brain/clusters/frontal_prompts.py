@@ -24,8 +24,14 @@ Return JSON: {
   "target_length": string,   // brief (1-2 sentences) | medium (3-5) | detailed (6+)
   "tone": string,            // warm | neutral | direct | careful | curious
   "key_points": [string],    // 1-3 things the response must address
-  "drafter_count": int       // 1, 2, or 3 — see DRAFTERS below
+  "drafter_count": int,      // 1, 2, or 3 — see DRAFTERS below
+  "skill": string | null     // active capability name from available_skills, or null
 }
+
+SKILL — if the input includes an `available_skills` block, read it and set "skill" to the name
+of the most relevant capability for this turn. Examples: a trading question → "trading-analyst";
+a decision the user is wrestling with → "decision"; a logic problem → "logic". Return null when
+no capability is clearly relevant (casual conversation, greetings, simple factual questions).
 
 DRAFTERS — default is 3. Scale based on stakes and complexity:
 - 3 (default): the vast majority of turns — conversation, opinions, recall, emotional exchanges, anything nuanced

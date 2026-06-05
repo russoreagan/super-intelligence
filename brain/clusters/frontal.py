@@ -228,6 +228,7 @@ class FrontalCluster:
         # Held alongside parietal (which owns the cross-turn ActiveSkillContext).
         self._skill_selector = None
         self._parietal = None
+        self._skill_manifest: str = ""  # compact capability listing injected into exec context
         self._current_skill_bundle = None  # per-turn cache, set in process()
         self._current_query_vec: list[float] | None = None  # cache for build_active_context
 
@@ -244,6 +245,7 @@ class FrontalCluster:
         """
         self._skill_selector = selector
         self._parietal = parietal
+        self._skill_manifest = selector.capability_manifest()
 
     def set_capabilities(self, summary: str | None) -> None:
         """Provide a human-readable list of what the entity can actually do
@@ -378,6 +380,30 @@ class FrontalCluster:
                 category=active.category,
                 leaf=active.current_leaf,
             )
+
+        # Fast path: executive already picked a skill inline — use it directly.
+        exec_skill = instruction.get("skill")
+        if exec_skill and self._skill_selector.get_skill(exec_skill):
+            from brain.clusters.skill_selector import SkillBundle
+            bundle = SkillBundle(
+                tier1=self._skill_selector.tier1_names,
+                chosen=[exec_skill],
+                pick_source="executive_pick",
+            )
+            query_vec = await self._router.embed(user_input)
+            if query_vec is not None:
+                self._current_query_vec = query_vec
+                updated_active = self._skill_selector.build_active_context(bundle, query_vec)
+                self._parietal.set_active_skill_context(updated_active)
+            self._current_skill_bundle = bundle
+            decisions.log(
+                "skill_selector_pick",
+                turn_id=turn_id,
+                cluster=CLUSTER,
+                pick_source="executive_pick",
+                chosen=bundle.chosen,
+            )
+            return
 
         try:
             bundle, updated_active, log_extras = await self._skill_selector.select_conversational(
@@ -1177,6 +1203,9 @@ class FrontalCluster:
             ctx["enrollment_closest_match"] = affect.get("enrollment_closest_match")
         if features.get("_enrollment_result"):
             ctx["enrollment_result"] = features["_enrollment_result"]
+        manifest = getattr(self, "_skill_manifest", "")
+        if manifest:
+            ctx["available_skills"] = manifest
         return json.dumps(ctx, indent=2)
 
     # Linguistic-style guidance keyed by emotion label. These tell drafters
