@@ -97,12 +97,67 @@ async def test_client_blocks_unknown_tool():
 # ── 2. prompt governance ──────────────────────────────────────────────────────
 
 
-def test_all_prompts_configured():
-    """All analytical prompts are now active (populated from prompts_draft.md)."""
-    for p in (prompts.REFLECTION_SYSTEM, prompts.BULL_SYSTEM, prompts.BEAR_SYSTEM,
-              prompts.RISK_SYSTEM, prompts.SYNTHESIS_SYSTEM, prompts.MISPRICING_SYSTEM,
-              prompts.CONDENSATION_SYSTEM):
-        assert prompts.is_configured(p), f"{p[:30]!r} not configured"
+def test_prompts_have_no_automated_write_path():
+    """No code in brain/ can automatically write to prompts.py or assign to a
+    prompt constant.
+
+    External context must always go to a local document first (reviewed by Russ),
+    then be referenced as context — never injected directly into a prompt constant.
+    The before_plan injection is also checked: it may only pull from the local
+    journal (the brain's own generated data from Russ's trades), not from any
+    external network call, fetch, or websocket stream.
+    """
+    from pathlib import Path
+
+    brain_root = Path("brain")
+    trading_dir = brain_root / "clusters" / "trading"
+    prompts_file = trading_dir / "prompts.py"
+
+    prompt_constants = (
+        "REFLECTION_SYSTEM",
+        "BULL_SYSTEM",
+        "BEAR_SYSTEM",
+        "RISK_SYSTEM",
+        "SYNTHESIS_SYSTEM",
+        "MISPRICING_SYSTEM",
+        "CONDENSATION_SYSTEM",
+    )
+    external_sources = ("fetch_url", "requests.", "httpx.", "websocket", "urllib")
+
+    violations = []
+
+    for py_file in brain_root.rglob("*.py"):
+        if py_file.resolve() == prompts_file.resolve():
+            continue  # prompts.py itself is the only allowed source of truth
+
+        try:
+            source = py_file.read_text(encoding="utf-8")
+        except OSError:
+            continue
+
+        # No automated assignment to prompt constants from any other file
+        for const in prompt_constants:
+            if f"prompts.{const} =" in source:
+                violations.append(f"{py_file}: assigns to prompts.{const}")
+
+        # No code opens prompts.py for writing
+        if "prompts.py" in source and "open(" in source and (
+            '"w"' in source or "'w'" in source or '"a"' in source or "'a'" in source
+        ):
+            violations.append(f"{py_file}: opens prompts.py for writing")
+
+    # before_plan specifically: must not pull from external network sources —
+    # only from the local journal (brain's own data from Russ's resolved trades)
+    subsystem_source = (trading_dir / "subsystem.py").read_text(encoding="utf-8")
+    for src in external_sources:
+        if src in subsystem_source:
+            violations.append(f"subsystem.py before_plan contains external source: {src!r}")
+
+    assert not violations, (
+        "Automated write path into prompts.py detected — "
+        "external context must go through a local reviewed document first:\n"
+        + "\n".join(f"  • {v}" for v in violations)
+    )
 
 
 async def test_stress_test_runs_when_prompts_configured(monkeypatch):

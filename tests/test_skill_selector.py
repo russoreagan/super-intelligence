@@ -17,6 +17,29 @@ from brain.clusters.skill_selector import (
     SkillSelector,
 )
 
+# ── Index integrity guard ─────────────────────────────────────────────────────
+# Catches accidental wipes of _humanity_index.json. The file can be silently
+# cleared to {"skills": []} if _import_humanity.py is run when .claude/skills/
+# is missing or empty. This test must be the first thing that fails in that case.
+
+
+def test_skill_index_is_populated():
+    """The humanity skill index must have a substantial number of entries.
+
+    If this fails, _humanity_index.json was likely wiped accidentally.
+    Restore: git checkout HEAD -- brain/skills/_humanity_index.json
+    Rebuild: python -m brain.skills._import_humanity --force
+    """
+    import json
+
+    data = json.loads(INDEX_PATH.read_text(encoding="utf-8"))
+    skills = data.get("skills", [])
+    assert len(skills) > 100, (
+        f"Skill index has only {len(skills)} entries — likely wiped. "
+        f"Restore with: git checkout HEAD -- brain/skills/_humanity_index.json"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

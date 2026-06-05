@@ -9,9 +9,12 @@ For each <name>/SKILL.md:
   - compute embedding via router.embed()
   - record in _humanity_index.json
 
-One-shot but kept in repo so re-runs are easy after `npx` updates.
+⚠️  DESTRUCTIVE — this script OVERWRITES _humanity_index.json.
+    If the existing index has more entries than the new run would produce,
+    the script aborts and requires --force to proceed. This prevents accidental
+    wipes when .claude/skills/ is missing, empty, or partially populated.
 
-Run:  python -m brain.skills._import_humanity
+Run:  python -m brain.skills._import_humanity [--force]
 """
 
 from __future__ import annotations
@@ -121,7 +124,7 @@ def tier_of(name: str, category: str) -> int:
     return 2
 
 
-async def main() -> None:
+async def main(force: bool = False) -> None:
     if not SOURCE_DIR.exists():
         print(
             f"[!] {SOURCE_DIR} does not exist — run `npx @human-avatar/skills-for-humanity --scope project` first."
@@ -132,6 +135,25 @@ async def main() -> None:
 
     skill_dirs = sorted(p for p in SOURCE_DIR.iterdir() if p.is_dir())
     print(f"Found {len(skill_dirs)} skills in {SOURCE_DIR}")
+
+    # Safety check: if the existing index is larger than what we're about to
+    # produce, refuse to overwrite without --force. This prevents accidental
+    # wipes when .claude/skills/ is missing content or partially populated.
+    existing_count = 0
+    if INDEX_PATH.exists():
+        try:
+            existing_count = len(json.loads(INDEX_PATH.read_text()).get("skills", []))
+        except Exception:
+            pass
+    if existing_count > 0 and len(skill_dirs) < existing_count * 0.5 and not force:
+        print(
+            f"\n⛔  ABORTED — would reduce skill index from {existing_count} entries "
+            f"to at most {len(skill_dirs)} (< 50% of current).\n"
+            f"   This usually means .claude/skills/ is missing content.\n"
+            f"   Run with --force to override: python -m brain.skills._import_humanity --force\n"
+            f"   Or restore the index: git checkout HEAD -- brain/skills/_humanity_index.json"
+        )
+        sys.exit(1)
 
     router = ModelRouter()
 
@@ -226,4 +248,4 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(main(force="--force" in sys.argv))
