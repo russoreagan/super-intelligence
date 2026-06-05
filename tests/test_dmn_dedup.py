@@ -170,12 +170,16 @@ def test_suppressed_thought_does_not_join_recent():
     assert dmn._suppressed_count == 1
 
 
-def test_memory_seed_injected_when_idle_and_on_interval():
-    """Every Nth idle tick, a random episode is surfaced into _memory_seed."""
+def test_memory_seed_injected_when_idle_and_relevant():
+    """Every Nth idle tick, a sampled episode RELATED to the live context is
+    surfaced into _memory_seed."""
     import brain.dmn as dmn_mod
 
     dmn = _make_dmn()
     dmn._memory_seed = ""
+    # Context shares content words with the episode below, so it clears the
+    # relevance floor and gets surfaced.
+    dmn._last_context = "Recent: working on pitch detection for the karaoke module"
     dmn._hippocampus = MagicMock()
     dmn._hippocampus._episodic.sample_random = MagicMock(
         return_value=[
@@ -196,6 +200,35 @@ def test_memory_seed_injected_when_idle_and_on_interval():
         dmn_mod.get_idle_seconds = orig
     assert "pitch detection" in dmn._memory_seed
     assert "karaoke-hero" in dmn._memory_seed
+
+
+def test_memory_seed_skipped_when_irrelevant():
+    """A sampled episode with no overlap with the live context is NOT surfaced —
+    this is the relevance gate that keeps proactive thoughts grounded in the
+    moment instead of drifting onto unrelated old material."""
+    import brain.dmn as dmn_mod
+
+    dmn = _make_dmn()
+    dmn._memory_seed = ""
+    dmn._last_context = "Recent: debugging the audio output device selection"
+    dmn._hippocampus = MagicMock()
+    dmn._hippocampus._episodic.sample_random = MagicMock(
+        return_value=[
+            {
+                "user_input": "what's your favorite kind of poem?",
+                "entity_response": "I'm partial to a tight little haiku.",
+                "topic_tags": ["poetry", "haiku"],
+            }
+        ]
+    )
+    dmn._thought_count = dmn_mod.DMN_MEMORY_SEED_EVERY
+    orig = dmn_mod.get_idle_seconds
+    dmn_mod.get_idle_seconds = lambda: 999.0
+    try:
+        dmn._maybe_inject_memory_seed()
+    finally:
+        dmn_mod.get_idle_seconds = orig
+    assert dmn._memory_seed == ""
 
 
 def test_memory_seed_skipped_when_user_active():

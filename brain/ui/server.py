@@ -132,7 +132,43 @@ class UIServer:
 
             body = await request.json()
             try:
+                prior_persona = str(settings.get("persona_name", ""))
                 settings.save(body)
+                # A persona SWITCH posts the new persona's chem_baseline/chem_init
+                # (= its resting profile) wholesale. Don't treat that as a slider
+                # edit — it would overwrite the incoming persona's saved evolved
+                # state with its baseline. Boot re-materializes chem from the
+                # persona's own file (resting from the table, current preserved).
+                is_switch = "persona_name" in body and str(
+                    settings.get("persona_name", "")
+                ) != prior_persona
+                # If the user edited resting/boot chemistry sliders, persist them
+                # to the ACTIVE persona's own file so the edit sticks per-persona
+                # instead of leaking through global settings on the next switch.
+                edited_resting = not is_switch and any(k.startswith("chem_baseline_") for k in body)
+                edited_boot = not is_switch and any(k.startswith("chem_init_") for k in body)
+                if edited_resting or edited_boot:
+                    persona = str(settings.get("persona_name", ""))
+                    if persona:
+                        from brain import persona_chem
+
+                        if edited_resting:
+                            persona_chem.save_resting(
+                                persona,
+                                {
+                                    ch: float(settings.get(f"chem_baseline_{ch}"))
+                                    for ch in persona_chem.CHANNELS
+                                },
+                            )
+                        if edited_boot:
+                            persona_chem.save_current(
+                                persona,
+                                {
+                                    ch: float(settings.get(f"chem_init_{ch}"))
+                                    for ch in persona_chem.CHANNELS
+                                },
+                                {},
+                            )
                 return {"ok": True}
             except Exception as e:
                 from fastapi.responses import JSONResponse

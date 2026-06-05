@@ -121,7 +121,18 @@ class _SetupMixin:
         self.pns = PNS(self.bus, on_speaking_change=self._on_speaking_change)
         # Apply the active persona's saved voice ID at boot so the voice follows
         # the persona across restarts without requiring manual re-selection.
-        _persona_vid = str(_brain_settings.get("persona_voice_id", "")).strip()
+        # Prefer the persona-specific voice (persona_voice_<slug>); fall back to
+        # the generic persona_voice_id only when this persona has none set.
+        _persona_name = str(_brain_settings.get("persona_name", "")).strip()
+        _persona_vid = ""
+        if _persona_name:
+            from brain.persona_chem import _slug
+
+            _persona_vid = str(
+                _brain_settings.get(f"persona_voice_{_slug(_persona_name)}", "")
+            ).strip()
+        if not _persona_vid:
+            _persona_vid = str(_brain_settings.get("persona_voice_id", "")).strip()
         if _persona_vid:
             self.pns.set_voice_id(_persona_vid)
 
@@ -323,6 +334,34 @@ class _SetupMixin:
         self._lobe_bridge.register("analyze_image", self._analyze_image)
         self.motor.set_lobe_bridge(self._lobe_bridge)
         self.motor.set_observability(self.obs)
+
+        # ── Advise-only day-trading layer (dark unless trading_enabled) ──────────
+        from brain.settings import settings as _bsettings
+
+        if int(_bsettings.get("trading_enabled") or 0):
+            try:
+                from brain.clusters.trading.alpaca_mcp_client import AlpacaMCPClient
+                from brain.clusters.trading.subsystem import TradingSubsystem
+                from brain.clusters.trading.tools import TradingTools
+
+                _alpaca = AlpacaMCPClient(
+                    cache_ttl_s=float(_bsettings.get("trading_cache_ttl_s") or 30.0)
+                )
+                _trading = TradingTools(
+                    alpaca_client=_alpaca,
+                    router=self.router,
+                    hippocampus=self.hippocampus,
+                )
+                self.motor.set_trading_tools(_trading)
+                self.motor.register_subsystem(
+                    TradingSubsystem(market_data=_trading._md, hippocampus=self.hippocampus)
+                )
+                logger.info(
+                    "Trading layer ENABLED (advise-only, read-only; alpaca available=%s)",
+                    _alpaca.available,
+                )
+            except Exception as e:
+                logger.warning("Trading layer failed to initialize: %s", e)
 
         cap_lines = ["Tool use is ENABLED via the motor cortex. You can:"]
         if _motor_paths:

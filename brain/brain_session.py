@@ -361,6 +361,20 @@ class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
     # ── Shutdown ──────────────────────────────────────────────────────────────
 
     async def _shutdown(self) -> None:
+        # Capture the active persona's final chemistry on a graceful exit.
+        try:
+            from brain.settings import settings as _settings
+
+            _persona = str(_settings.get("persona_name", ""))
+            if _persona and self.bus is not None:
+                from brain import persona_chem
+
+                persona_chem.save_current(
+                    _persona, self.bus.neuromod.snapshot(), self.bus.hormonal.snapshot()
+                )
+        except Exception as _e:
+            logger.debug("persona chemistry shutdown save error: %s", _e)
+
         self.brainstem.cancel_all_loops()
 
         if self._streaming_mic is not None:

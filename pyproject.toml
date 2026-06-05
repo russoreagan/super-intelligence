@@ -23,6 +23,11 @@ dependencies = [
     "torchaudio>=2.0.0",
     "opensmile>=2.5.0",
     "supabase>=2.0.0",
+    # Day-trading capability (advise-only). `mcp` is the stdio client for the
+    # official Alpaca MCP server (launched via `uvx alpaca-mcp-server`); `yfinance`
+    # is the keyless market-data fallback when no Alpaca key is configured.
+    "mcp>=1.0.0",
+    "yfinance>=0.2.40",
 ]
 
 [dependency-groups]

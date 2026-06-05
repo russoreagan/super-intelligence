@@ -120,6 +120,33 @@ class ActivationEmitter:
                 }
             )
 
+    async def emit_table(
+        self, turn_id: str, title: str, columns: list[str], rows: list[list], note: str = ""
+    ) -> None:
+        """Emit a structured data table (trading layer). Rendered as an HTML <table>."""
+        with contextlib.suppress(asyncio.QueueFull):
+            self._queue.put_nowait(
+                {
+                    "type": "data_table",
+                    "turn_id": turn_id,
+                    "title": title,
+                    "columns": columns,
+                    "rows": rows,
+                    "note": note,
+                    "ts": time.time(),
+                }
+            )
+
+    async def emit_chart(self, turn_id: str, spec: dict) -> None:
+        """Emit a chart spec (trading layer). Rendered via lightweight-charts.
+
+        spec: {title, kind:"candlestick"|"line", series:[...], overlays:[...], markers:[...]}
+        """
+        with contextlib.suppress(asyncio.QueueFull):
+            self._queue.put_nowait(
+                {"type": "chart", "turn_id": turn_id, **spec, "ts": time.time()}
+            )
+
     async def emit_event(self, event: dict) -> None:
         """Emit an arbitrary event dict to the UI WebSocket."""
         with contextlib.suppress(asyncio.QueueFull):
