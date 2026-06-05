@@ -232,16 +232,44 @@ class SkillSelector:
     async def warm_native_skills(self) -> None:
         """Scan brain/skills/*.md for native operational skill files and inject into the index.
 
-        Any .md file with YAML frontmatter and a 'name:' field that isn't already in
-        _humanity_index.json is treated as a native skill. This covers motor cortex
-        capability guides (e.g. trading-analyst) that are written directly rather than
-        imported through _import_humanity.py.
+        Also checks whether any new skills have appeared in .claude/skills/ that aren't
+        yet in the humanity index and runs _import_humanity if so, keeping the index
+        current without requiring a manual re-import step.
+
+        Any brain/skills/*.md file with YAML frontmatter and a 'name:' field that still
+        isn't in the index after the sync is treated as a native skill and injected
+        in-memory only.
         """
         try:
             import yaml
         except ImportError:
             logger.warning("warm_native_skills: PyYAML not installed, skipping")
             return
+
+        # --- Humanity index freshness check -----------------------------------
+        # If .claude/skills/ has skill directories not yet in the index, trigger
+        # a re-import so the index stays current automatically.
+        try:
+            from brain.skills._import_humanity import SOURCE_DIR, main as _import_main
+
+            if SOURCE_DIR.exists():
+                source_names = {
+                    sd.name
+                    for sd in SOURCE_DIR.iterdir()
+                    if sd.is_dir() and (sd / "SKILL.md").exists()
+                }
+                new_skills = source_names - set(self._index._by_name.keys())
+                if new_skills:
+                    logger.info(
+                        "warm_native_skills: %d new skill(s) detected — syncing index: %s",
+                        len(new_skills),
+                        sorted(new_skills),
+                    )
+                    await _import_main()
+                    self._index = _Index()  # reload from updated JSON
+        except Exception as _sync_err:
+            logger.warning("warm_native_skills: index sync failed: %s", _sync_err)
+        # ----------------------------------------------------------------------
 
         skills_dir = INDEX_PATH.parent
         for md_path in sorted(skills_dir.glob("*.md")):
