@@ -132,6 +132,9 @@ _DISPATCHABLE_TOOLS = frozenset(
         "check_contradictions",
         "stress_test_thesis",
         "find_mispricing",
+        "sync_account",
+        "start_watchlist_stream",
+        "stop_watchlist_stream",
     }
 )
 
@@ -411,7 +414,10 @@ class MotorCortexCluster:
             "  review_journal(symbol, status, limit) — past predictions, outcomes, lessons (table)\n"
             "  check_contradictions()             — flag held positions past their stop/target, stale theses\n"
             "  stress_test_thesis(symbol, thesis_text) — bull/bear/risk debate → rating (if prompts configured)\n"
-            "  find_mispricing(symbol)            — gap between price action and the data (if prompt configured)"
+            "  find_mispricing(symbol)            — gap between price action and the data (if prompt configured)\n"
+            "  sync_account()                     — pull live holdings + fills from the broker into local data files\n"
+            "  start_watchlist_stream()           — start real-time watchlist alerts (websocket, runs until stopped)\n"
+            "  stop_watchlist_stream()            — stop the real-time alert stream"
         )
         # Rebuild the reactive planner prompt so it knows the trading tools exist.
         self._planner.system_prompt = _PLANNER_SYSTEM_BASE.format(

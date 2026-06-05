@@ -45,7 +45,7 @@ class AlpacaProvider:
         return bool(self._client and self._client.available)
 
     async def quote(self, symbol: str) -> dict:
-        res = await self._client.call("get_stock_snapshot", {"symbol_or_symbols": symbol})
+        res = await self._client.call("get_stock_snapshot", {"symbols": symbol})
         if isinstance(res, dict) and "error" not in res:
             snap = res.get(symbol) or res.get("snapshot") or res
             latest = (snap or {}).get("latestTrade") or (snap or {}).get("latest_trade") or {}
@@ -69,7 +69,7 @@ class AlpacaProvider:
     async def history(self, symbol: str, days: int) -> list[dict]:
         res = await self._client.call(
             "get_stock_bars",
-            {"symbol_or_symbols": symbol, "timeframe": "1Day", "limit": days},
+            {"symbols": symbol, "timeframe": "1Day", "limit": days},
         )
         return _parse_alpaca_bars(res, symbol)
 

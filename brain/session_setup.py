@@ -344,11 +344,32 @@ class _SetupMixin:
                 from brain.clusters.trading.subsystem import TradingSubsystem
                 from brain.clusters.trading.tools import TradingTools
 
-                _alpaca = AlpacaMCPClient(
-                    cache_ttl_s=float(_bsettings.get("trading_cache_ttl_s") or 30.0)
-                )
+                _ttl = float(_bsettings.get("trading_cache_ttl_s") or 30.0)
+
+                # Market-data client: paper key — fetches quotes/bars/indicators.
+                # This key never authenticates against the real account.
+                _alpaca_data = AlpacaMCPClient(cache_ttl_s=_ttl)
+
+                # Account-sync client: live read-only key, if configured.
+                # Used ONLY by account_sync (positions, fills, portfolio history).
+                # Falls back to the paper client if live keys aren't set yet.
+                _live_key = os.environ.get("ALPACA_LIVE_API_KEY", "").strip()
+                _live_secret = os.environ.get("ALPACA_LIVE_SECRET_KEY", "").strip()
+                if _live_key and _live_secret:
+                    _alpaca_account = AlpacaMCPClient(
+                        api_key=_live_key,
+                        secret_key=_live_secret,
+                        paper=False,
+                        cache_ttl_s=_ttl,
+                    )
+                    logger.info("Trading: live account client configured (read-only)")
+                else:
+                    _alpaca_account = _alpaca_data  # same paper client until live keys arrive
+                    logger.info("Trading: live keys not set — account sync uses paper client")
+
                 _trading = TradingTools(
-                    alpaca_client=_alpaca,
+                    alpaca_client=_alpaca_data,
+                    alpaca_account_client=_alpaca_account,
                     router=self.router,
                     hippocampus=self.hippocampus,
                 )
@@ -356,9 +377,25 @@ class _SetupMixin:
                 self.motor.register_subsystem(
                     TradingSubsystem(market_data=_trading._md, hippocampus=self.hippocampus)
                 )
+
+                # Watchlist stream — constructed but NOT started.
+                # Start it explicitly via the start_watchlist_stream tool.
+                from brain.clusters.trading.stream import WatchlistStream
+                from brain.ui.emitter import emitter as _ui_emitter
+
+                self._trading_stream = WatchlistStream(
+                    api_key=os.environ.get("ALPACA_API_KEY"),
+                    secret_key=os.environ.get("ALPACA_SECRET_KEY"),
+                    market_data=_trading._md,
+                    emitter=_ui_emitter,
+                )
+                _trading.set_stream(self._trading_stream)
+
                 logger.info(
-                    "Trading layer ENABLED (advise-only, read-only; alpaca available=%s)",
-                    _alpaca.available,
+                    "Trading layer ENABLED (advise-only; data=%s live_account=%s — "
+                    "stream ready, use start_watchlist_stream to activate)",
+                    _alpaca_data.available,
+                    _alpaca_account.available,
                 )
             except Exception as e:
                 logger.warning("Trading layer failed to initialize: %s", e)

@@ -383,6 +383,12 @@ class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
             except Exception as _e:
                 logger.debug("streaming mic shutdown error: %s", _e)
 
+        if getattr(self, "_trading_stream", None) is not None:
+            try:
+                await self._trading_stream.stop()
+            except Exception as _e:
+                logger.debug("trading stream shutdown error: %s", _e)
+
         if getattr(self, "_runpod", None) is not None:
             try:
                 await self._runpod.stop()

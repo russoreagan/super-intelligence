@@ -262,7 +262,7 @@
   "colony_quorum_slope_threshold": 0.2,
   "colony_recruit_budget": 1.0,
   "colony_recruit_softmax_temp": 0.5,
-  "colony_sensory_filter": 0,
+  "colony_sensory_filter": 1,
   "colony_sensory_gain_span": 0.3,
   "colony_trail_apply": 0,
   "colony_trail_gain": 0.05,
@@ -290,5 +290,7 @@
   "trading_journal_max_resolved": 200,
   "trading_journal_max_era_summaries": 50,
   "trading_compaction_batch_size": 20,
-  "trading_journal_md_max_kb": 512
+  "trading_journal_md_max_kb": 512,
+  "trading_stream_enabled": 0,
+  "trading_alert_cooldown_min": 30
 }

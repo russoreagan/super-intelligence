@@ -41,12 +41,28 @@ class TradingTools:
         "check_contradictions",
         "stress_test_thesis",
         "find_mispricing",
+        "sync_account",
+        "start_watchlist_stream",
+        "stop_watchlist_stream",
     )
 
-    def __init__(self, *, alpaca_client=None, router=None, hippocampus=None) -> None:
+    def __init__(
+        self,
+        *,
+        alpaca_client=None,         # paper key — market data only
+        alpaca_account_client=None,  # live read-only key — account sync only
+        router=None,
+        hippocampus=None,
+    ) -> None:
         self._md = MarketData(alpaca_client=alpaca_client)
+        self._account_client = alpaca_account_client if alpaca_account_client is not None else alpaca_client
         self._router = router
         self._hippocampus = hippocampus
+        self._stream = None  # set via set_stream() after construction
+
+    def set_stream(self, stream) -> None:
+        """Wire in the WatchlistStream instance (constructed but not started)."""
+        self._stream = stream
 
     async def dispatch(self, tool: str, args: dict, turn_id: str = "") -> str:
         fn = getattr(self, f"_{tool}", None)
@@ -252,3 +268,37 @@ class TradingTools:
         if result.get("status") == "blocked":
             return f"{result['message']} (author MISPRICING_SYSTEM in trading/prompts.py)"
         return f"[success] {result.get('symbol')} mispricing: {result.get('analysis')}"
+
+    async def _start_watchlist_stream(self, args: dict, turn_id: str) -> str:
+        if self._stream is None:
+            return "[error] stream not available (trading layer not fully initialised)"
+        if self._stream._running:
+            subscribed = sorted(self._stream._subscribed)
+            return f"[success] stream already running — watching {subscribed}"
+        if not self._stream.available:
+            return "[error] no Alpaca keys configured"
+        await self._stream.start()
+        return "[success] watchlist stream started — real-time alerts active"
+
+    async def _stop_watchlist_stream(self, args: dict, turn_id: str) -> str:
+        if self._stream is None or not self._stream._running:
+            return "[success] stream is not running"
+        await self._stream.stop()
+        return "[success] watchlist stream stopped"
+
+    async def _sync_account(self, args: dict, turn_id: str) -> str:
+        """Pull live holdings + fills from the broker into the local data files.
+
+        Uses the dedicated live account client (read-only key) — never the
+        market-data client — so the paper key is never sent to account endpoints.
+        """
+        from . import account_sync
+
+        if self._account_client is None or not self._account_client.available:
+            return "[error] account client unavailable — set ALPACA_LIVE_API_KEY / ALPACA_LIVE_SECRET_KEY"
+        portfolio = await account_sync.sync_portfolio(self._account_client)
+        if "error" in portfolio:
+            return f"[error] portfolio sync failed: {portfolio['error']}"
+        added = await account_sync.sync_executions(self._account_client)
+        holdings = len(portfolio.get("holdings", []))
+        return f"[success] account synced: {holdings} positions, {added} new fills added"

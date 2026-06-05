@@ -556,6 +556,9 @@ DEFAULTS: dict[str, float | int | str] = {
     "trading_journal_max_era_summaries": 50,          # compact oldest depth-1 summaries when this is exceeded
     "trading_compaction_batch_size": 20,              # records condensed per compaction pass
     "trading_journal_md_max_kb": 512,                 # journal.md: condense oldest section when exceeded
+    # real-time websocket stream
+    "trading_stream_enabled": 0,                      # no longer used for auto-start (stream is manually triggered)
+    "trading_alert_cooldown_min": 30,                 # min minutes before same trigger can re-fire
 }
 
 

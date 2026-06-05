@@ -5113,6 +5113,11 @@ function handle(msg) {
       appendChart(msg);
       break;
     }
+    case 'trading_alert': {
+      // The alert card arrives as a data_table event; this structured event
+      // is a hook for future notification UI (badge, sound, etc).
+      break;
+    }
     case 'quality_score': {
       turnQualityScores[msg.turn_id] = msg;
       const badge = document.querySelector(`.quality-badge[data-turn-id="${msg.turn_id}"]`);
