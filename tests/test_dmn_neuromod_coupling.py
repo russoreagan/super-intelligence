@@ -13,6 +13,7 @@ from collections import deque
 from unittest.mock import AsyncMock, MagicMock
 
 from brain.dmn import _INWARD_DELTA, _OUTWARD_DELTA, DefaultModeNetwork, _classify_thought
+from brain.sequence_predictor import SequencePredictor
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -20,6 +21,7 @@ from brain.dmn import _INWARD_DELTA, _OUTWARD_DELTA, DefaultModeNetwork, _classi
 def _make_dmn(neuromod_snapshot: dict | None = None):
     """Build a DefaultModeNetwork skeleton bypassing __init__."""
     dmn = DefaultModeNetwork.__new__(DefaultModeNetwork)
+    dmn._seq_predictor = SequencePredictor()
 
     nm = MagicMock()
     nm.snapshot.return_value = neuromod_snapshot or {

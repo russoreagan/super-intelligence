@@ -52,6 +52,10 @@ def _normalize(angle: str) -> str:
 class SequencePredictor:
     """N-gram frequency predictor over normalized DMN thought angles."""
 
+    # Minimum confidence before a prediction is worth acting on. Exposed as an
+    # instance attribute so callers (e.g. the prefetcher) can gate on it.
+    min_confidence: float = _MIN_CONFIDENCE
+
     def __init__(self) -> None:
         self._history: deque[str] = deque(maxlen=_MAX_HISTORY)
         self._bigrams: Counter = Counter()

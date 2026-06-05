@@ -19,10 +19,12 @@ from unittest.mock import AsyncMock, MagicMock
 import brain.dmn as D
 from brain.dmn import DefaultModeNetwork, _cosine
 from brain.settings import settings
+from brain.sequence_predictor import SequencePredictor
 
 
 def _make_dmn():
     dmn = DefaultModeNetwork.__new__(DefaultModeNetwork)
+    dmn._seq_predictor = SequencePredictor()
     dmn._bus = MagicMock()
     dmn._bus.publish_dict = AsyncMock()
     dmn._bus.neuromod = MagicMock()

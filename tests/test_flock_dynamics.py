@@ -18,6 +18,7 @@ from brain.bus import HormonalState, Neuromodulators
 from brain.dmn import DefaultModeNetwork
 from brain.observability.criticality import FlockCriticality, branching_ratio
 from brain.settings import settings
+from brain.sequence_predictor import SequencePredictor
 
 
 @pytest.fixture
@@ -81,6 +82,7 @@ def test_velocity_scales_by_turns():
 
 def _rum_drive(chem):
     dmn = DefaultModeNetwork.__new__(DefaultModeNetwork)  # _rumination_drive is pure in (chem, settings)
+    dmn._seq_predictor = SequencePredictor()
     return dmn._rumination_drive(chem)[0]
 
 

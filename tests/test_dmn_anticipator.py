@@ -11,6 +11,7 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 from brain.clusters.frontal import FrontalCluster
+from brain.sequence_predictor import SequencePredictor
 
 # ── note_last_response heuristic ─────────────────────────────────────────
 
@@ -19,6 +20,7 @@ def _make_dmn():
     from brain.dmn import DefaultModeNetwork
 
     dmn = DefaultModeNetwork.__new__(DefaultModeNetwork)
+    dmn._seq_predictor = SequencePredictor()
     dmn._bus = MagicMock()
     dmn._bus.publish_dict = AsyncMock()
     dmn._anticipator_cell = MagicMock()

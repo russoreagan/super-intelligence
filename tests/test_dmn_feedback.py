@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections import deque
 
 from brain.clusters.frontal import FrontalCluster
+from brain.sequence_predictor import SequencePredictor
 
 # ── DMN.recent_thoughts() accessor ────────────────────────────────────────
 
@@ -18,6 +19,7 @@ def test_dmn_recent_thoughts_returns_list():
     from brain.dmn import DefaultModeNetwork
 
     dmn = DefaultModeNetwork.__new__(DefaultModeNetwork)
+    dmn._seq_predictor = SequencePredictor()
     dmn._recent_thoughts = deque(["a", "b", "c"], maxlen=5)
     assert dmn.recent_thoughts() == ["a", "b", "c"]
 
@@ -26,6 +28,7 @@ def test_dmn_recent_thoughts_caps_at_n():
     from brain.dmn import DefaultModeNetwork
 
     dmn = DefaultModeNetwork.__new__(DefaultModeNetwork)
+    dmn._seq_predictor = SequencePredictor()
     dmn._recent_thoughts = deque(["1", "2", "3", "4", "5"], maxlen=5)
     assert dmn.recent_thoughts(n=2) == ["4", "5"]
     assert dmn.recent_thoughts(n=10) == ["1", "2", "3", "4", "5"]
@@ -35,6 +38,7 @@ def test_dmn_recent_thoughts_empty():
     from brain.dmn import DefaultModeNetwork
 
     dmn = DefaultModeNetwork.__new__(DefaultModeNetwork)
+    dmn._seq_predictor = SequencePredictor()
     dmn._recent_thoughts = deque(maxlen=5)
     assert dmn.recent_thoughts() == []
 

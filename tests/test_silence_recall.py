@@ -9,6 +9,7 @@ import pytest
 import brain.dmn as dmn_mod
 from brain.bus import Bus, Message
 from brain.settings import settings
+from brain.sequence_predictor import SequencePredictor
 
 
 @pytest.fixture
@@ -24,6 +25,7 @@ def colony_on(monkeypatch):
 
 def _make_dmn(bus):
     dmn = dmn_mod.DefaultModeNetwork.__new__(dmn_mod.DefaultModeNetwork)
+    dmn._seq_predictor = SequencePredictor()
     dmn._bus = bus
     dmn._router = MagicMock()
     dmn._router.embed = AsyncMock(return_value=[0.0] * 16)

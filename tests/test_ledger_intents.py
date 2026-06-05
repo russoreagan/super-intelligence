@@ -17,6 +17,7 @@ import pytest
 import brain.open_threads as ot
 from brain.clusters import ledger_intents as li
 from brain.dmn import DefaultModeNetwork
+from brain.sequence_predictor import SequencePredictor
 
 
 # ── pure detector ────────────────────────────────────────────────────────────
@@ -48,6 +49,7 @@ def test_classify_confirmation():
 
 def _make_dmn():
     dmn = DefaultModeNetwork.__new__(DefaultModeNetwork)
+    dmn._seq_predictor = SequencePredictor()
     dmn._router = MagicMock()
     dmn._router.embed = AsyncMock(return_value=None)
     hip = MagicMock()

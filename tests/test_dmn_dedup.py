@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
+from brain.sequence_predictor import SequencePredictor
 
 
 def _make_dmn():
@@ -18,6 +19,7 @@ def _make_dmn():
     from brain.dmn import DefaultModeNetwork
 
     dmn = DefaultModeNetwork.__new__(DefaultModeNetwork)
+    dmn._seq_predictor = SequencePredictor()
     dmn._bus = MagicMock()
     dmn._bus.publish_dict = AsyncMock()
     dmn._router = MagicMock()

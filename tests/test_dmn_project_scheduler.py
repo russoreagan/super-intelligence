@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from brain.dmn import DefaultModeNetwork
+from brain.sequence_predictor import SequencePredictor
 
 _OQ = """# Open Questions & Projects
 
@@ -39,6 +40,7 @@ _OQ = """# Open Questions & Projects
 
 def _make_dmn(oq_text=_OQ):
     dmn = DefaultModeNetwork.__new__(DefaultModeNetwork)
+    dmn._seq_predictor = SequencePredictor()
     schema = MagicMock()
     schema.read = MagicMock(return_value=oq_text)
     schema.awrite = AsyncMock()

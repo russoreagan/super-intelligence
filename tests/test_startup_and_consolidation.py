@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 from collections import deque
 from unittest.mock import AsyncMock, MagicMock
+from brain.sequence_predictor import SequencePredictor
 
 # ---------------------------------------------------------------------------
 # Shared DMN skeleton
@@ -37,6 +38,7 @@ def _make_dmn(monologue_response: str = ""):
     from brain.dmn import DefaultModeNetwork
 
     dmn = DefaultModeNetwork.__new__(DefaultModeNetwork)
+    dmn._seq_predictor = SequencePredictor()
     dmn._bus = MagicMock()
     dmn._bus.publish_dict = AsyncMock()
     dmn._bus.neuromod.snapshot.return_value = {

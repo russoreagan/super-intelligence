@@ -17,6 +17,7 @@ import pytest
 
 import brain.open_threads as ot
 from brain.dmn import DefaultModeNetwork
+from brain.sequence_predictor import SequencePredictor
 
 
 def _meta(**over) -> dict:
@@ -44,6 +45,7 @@ def _meta(**over) -> dict:
 
 def _make_dmn():
     dmn = DefaultModeNetwork.__new__(DefaultModeNetwork)
+    dmn._seq_predictor = SequencePredictor()
     dmn._bus = MagicMock()
     dmn._bus.publish_dict = AsyncMock()
     dmn._bus.neuromod.snapshot = MagicMock(return_value={"DA": 0.5})
