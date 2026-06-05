@@ -118,6 +118,20 @@ _DISPATCHABLE_TOOLS = frozenset(
         "analyze_image",
         "ask_user",
         "none",
+        # Advise-only day-trading tools (reachable only when the trading layer is
+        # wired in via set_trading_tools(); names here just keep them from being
+        # neutralized as hallucinations). NONE of these place an order.
+        "get_quote",
+        "get_history",
+        "get_indicators",
+        "get_option_chain",
+        "scan_watchlist",
+        "log_decision",
+        "resolve_decision",
+        "review_journal",
+        "check_contradictions",
+        "stress_test_thesis",
+        "find_mispricing",
     }
 )
 
@@ -203,6 +217,8 @@ class MotorCortexCluster:
         self._cloud = cloud_executor
         self._pending_task = None  # set post-init via set_pending_task()
         self._lobe_bridge = None  # set post-init via set_lobe_bridge()
+        self._trading = None  # set post-init via set_trading_tools() (advise-only)
+        self._trading_hint = ""  # planner doc block for trading tools, when enabled
         self._obs = None  # set post-init via set_observability()
         self.job_store = JobStore()
         self._subsystems: list[MotorSubsystem] = []
@@ -222,6 +238,7 @@ class MotorCortexCluster:
             path_hint=self._build_path_hint(),
             cloud_connector_hint=self._cloud_hint,
             lobe_hint="Lobe capabilities (recall_memory, analyze_image) not yet configured.",
+            trading_hint=self._trading_hint,
         )
 
         # Planner: local Ollama — tool decisions stay on-device.
@@ -370,8 +387,44 @@ class MotorCortexCluster:
             path_hint=self._build_path_hint(),
             cloud_connector_hint=self._cloud_hint,
             lobe_hint=lobe_hint,
+            trading_hint=self._trading_hint,
         )
         logger.info("[MotorCortex] Lobe bridge registered: %s", caps)
+
+    def set_trading_tools(self, trading) -> None:
+        """Wire the advise-only trading layer and document its tools to the planner.
+
+        ``trading`` is a brain.clusters.trading.tools.TradingTools instance. All of
+        its tools are READ-ONLY analysis — none place orders.
+        """
+        self._trading = trading
+        self._trading_hint = (
+            "Day-trading tools (ADVISE-ONLY — never place orders; US stocks/ETFs + options):\n"
+            "  get_quote(symbol)                  — latest price + % change\n"
+            "  get_history(symbol, days)          — daily OHLC bars (renders a chart)\n"
+            "  get_indicators(symbol)             — RSI/MACD/SMA/Bollinger/ROC snapshot (table)\n"
+            "  get_option_chain(symbol, expiration) — options chain summary\n"
+            "  scan_watchlist()                   — fire alerts where watch_indicators hit + prior hit-rate\n"
+            "  log_decision(symbol, direction, prediction, rationale, confidence, entry_threshold, benchmark)\n"
+            "                                     — record a prediction + reasoning to the journal\n"
+            "  resolve_decision(decision_id)      — close a prediction; scores return/alpha + writes a lesson\n"
+            "  review_journal(symbol, status, limit) — past predictions, outcomes, lessons (table)\n"
+            "  check_contradictions()             — flag held positions past their stop/target, stale theses\n"
+            "  stress_test_thesis(symbol, thesis_text) — bull/bear/risk debate → rating (if prompts configured)\n"
+            "  find_mispricing(symbol)            — gap between price action and the data (if prompt configured)"
+        )
+        # Rebuild the reactive planner prompt so it knows the trading tools exist.
+        self._planner.system_prompt = _PLANNER_SYSTEM_BASE.format(
+            path_hint=self._build_path_hint(),
+            cloud_connector_hint=self._cloud_hint,
+            lobe_hint=(
+                f"Active lobe capabilities: {', '.join(self._lobe_bridge.capabilities)}."
+                if self._lobe_bridge
+                else "No lobe capabilities registered."
+            ),
+            trading_hint=self._trading_hint,
+        )
+        logger.info("[MotorCortex] Trading tools registered (advise-only).")
 
     def register_subsystem(self, subsystem: MotorSubsystem) -> None:
         self._subsystems.append(subsystem)
@@ -1728,6 +1781,11 @@ class MotorCortexCluster:
                 )
             elif tool == "set_mood":
                 return await self._set_mood(args.get("emotion", ""))
+            elif self._trading is not None and tool in self._trading.TOOL_NAMES:
+                # Advise-only trading tools — read-only analysis, never orders.
+                return await self._trading.dispatch(
+                    tool, args, getattr(self, "_current_turn_id", "")
+                )
             else:
                 return f"[error] Unknown tool: {tool}"
         except Exception as e:

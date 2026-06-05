@@ -693,6 +693,23 @@ class _TurnMixin:
 
         nm_snap = self.bus.neuromod.snapshot()
 
+        # Persist the active persona's evolved chemistry so a restart / persona
+        # switch resumes from here instead of snapping back to the resting
+        # profile. Throttled (>=5s) and best-effort: a single ~300-byte file per
+        # persona, overwritten in place — never a growing log. /restart does a
+        # raw os.execv that skips _shutdown, so per-turn saving is what survives.
+        try:
+            _persona = str(settings.get("persona_name", ""))
+            if _persona:
+                _now = time.monotonic()
+                if _now - getattr(self, "_last_chem_save_ts", 0.0) >= 5.0:
+                    from brain import persona_chem
+
+                    persona_chem.save_current(_persona, nm_snap, self.bus.hormonal.snapshot())
+                    self._last_chem_save_ts = _now
+        except Exception:
+            pass
+
         # N1 (colony-features-ii): live trail reinforcement. Reinforce the edges this
         # turn actually fired, scaled by a lightweight outcome (per-turn DA delta —
         # the dopaminergic "did this pay off" signal). Fast within-session plasticity

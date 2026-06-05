@@ -541,6 +541,21 @@ DEFAULTS: dict[str, float | int | str] = {
     "flock_gain_min": 0.50,                          # clamp band on the driven modulation_gain (lower rail)
     "flock_gain_max": 1.80,                          # clamp band on the driven modulation_gain (upper rail)
     "flock_gain_ema_alpha": 0.25,                    # EMA smoothing on the gain so it can't thrash turn-to-turn
+    # ── Day-trading capability (advise-only; dark by default) ────────────────
+    # When 0, the trading tools are not documented to the planner and the layer
+    # is never constructed. Even when 1, the layer is READ-ONLY: it never places
+    # an order (read-only Alpaca key + per-tool allow-list + ALPACA_TOOLSETS).
+    "trading_enabled": 0,
+    "trading_cache_ttl_s": 30.0,                      # market-data cache TTL (seconds)
+    "trading_max_scan_symbols": 50,                   # cap on watchlist symbols scanned per pass
+    "trading_default_benchmark": "QQQ",              # benchmark for alpha when none specified
+    # growth management
+    "trading_execlog_max_days": 365,                  # execution_log: hard-delete fills older than N days
+    # journal compaction — progressive summarization cascade (see compaction.py)
+    "trading_journal_max_resolved": 200,              # compact oldest batch when resolved count exceeds this
+    "trading_journal_max_era_summaries": 50,          # compact oldest depth-1 summaries when this is exceeded
+    "trading_compaction_batch_size": 20,              # records condensed per compaction pass
+    "trading_journal_md_max_kb": 512,                 # journal.md: condense oldest section when exceeded
 }
 
 

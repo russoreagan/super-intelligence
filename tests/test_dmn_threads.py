@@ -141,7 +141,8 @@ async def test_confident_conclusion_encodes_and_retires():
     kwargs = dmn._hippocampus.encode_conclusion.await_args.kwargs
     assert kwargs["source"] == "dmn"
     assert "efficiency" in kwargs["tags"]
-    assert "Emotional gating" in (dmn._recent_conclusions[-1])
+    # _recent_conclusions entries are (ts, text) tuples for age-decay.
+    assert "Emotional gating" in dmn._recent_conclusions[-1][1]
     outcome = dmn._obs.record_thought.call_args.kwargs["outcome"]
     assert outcome["action"] == "concluded"
 

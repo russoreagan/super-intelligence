@@ -332,6 +332,18 @@ DMN_FRAME_REPEAT_MAX = int(os.environ.get("BRAIN_DMN_FRAME_REPEAT_MAX", "2"))
 # collapsing into generic meta-thoughts. 0 disables.
 DMN_MEMORY_SEED_EVERY = int(os.environ.get("BRAIN_DMN_MEMORY_SEED_EVERY", "3"))
 
+# How long a settled conclusion stays in the monologue prompt as "already
+# concluded." Past this it's dropped so the brain stops citing old conclusions as
+# if they're current. Default 30 min.
+CONCLUSION_FRESH_S = float(os.environ.get("BRAIN_DMN_CONCLUSION_FRESH_S", "1800"))
+
+# Minimum content-word overlap a randomly-sampled memory must share with the live
+# context before it's injected as associative fuel. Below this the seed is
+# skipped — keeps surfaced memories connected to the moment instead of random.
+DMN_MEMORY_SEED_MIN_OVERLAP = float(
+    os.environ.get("BRAIN_DMN_MEMORY_SEED_MIN_OVERLAP", "0.04")
+)
+
 # Words that signal a thought is turning inward (self-referential / introspective).
 # Inward thoughts apply a small GABA bump — self-monitoring has a cost, which
 # makes extended self-reflection naturally self-limiting via neuromod decay.
@@ -1030,7 +1042,8 @@ class DefaultModeNetwork:
             "CANDIDATE TO REWRITE (the thing the brain wants to say next):",
             original,
             "",
-            "Return ONLY the rewritten utterance (one or two short sentences).",
+            "Return ONLY the rewritten utterance — keep ALL of the candidate's "
+            "content, just add a brief bridge opener. Do not shorten it.",
         ]
         bridge_turn_id = f"bridge_{int(time.time() * 1000)}"
         self._bridge_cell.reset_turn(bridge_turn_id)
@@ -1049,14 +1062,31 @@ class DefaultModeNetwork:
         if rewritten.startswith('"') and rewritten.endswith('"') and len(rewritten) > 2:
             rewritten = rewritten[1:-1].strip()
 
-        # Validate: must be a sensible single utterance, not JSON, not empty,
-        # not absurdly long. If anything looks off, keep the original.
+        # Validate: must be a sensible utterance, not JSON, not empty, not
+        # absurdly long. If anything looks off, keep the original.
         if not rewritten:
             return original
-        if len(rewritten) < 5 or len(rewritten) > 300:
+        # Ceiling is relative to the candidate (the bridge should ADD a short
+        # opener, not balloon the text). The old fixed 300-char cap silently
+        # discarded faithful long rewrites — anything past it fell back to the
+        # original, which is fine for length but masked the real failure mode.
+        ceiling = max(400, len(original) * 2)
+        if len(rewritten) < 5 or len(rewritten) > ceiling:
             logger.info(
-                "[Speak gate] Bridge output rejected (length=%d): %r",
+                "[Speak gate] Bridge output rejected (length=%d, ceiling=%d): %r",
                 len(rewritten),
+                ceiling,
+                rewritten[:80],
+            )
+            return original
+        # The real cut-off cause: the local model COMPRESSES the candidate into a
+        # one-line summary instead of bridging it. A rewrite that lost a large
+        # fraction of the original's length dropped content — keep the original.
+        if len(rewritten) < 0.6 * len(original):
+            logger.info(
+                "[Speak gate] Bridge dropped content (len %d < 60%% of %d) — keeping original: %r",
+                len(rewritten),
+                len(original),
                 rewritten[:80],
             )
             return original
@@ -2147,17 +2177,52 @@ class DefaultModeNetwork:
                 return
         except Exception:
             pass
+        # Sample a handful and prefer the one most connected to the live context,
+        # rather than injecting a single uniformly-random (often irrelevant) memory.
+        # A pure-random seed was the main reason proactive thoughts drifted onto
+        # "things from before" that have nothing to do with the current moment.
         try:
-            episodes = self._hippocampus._episodic.sample_random(1)
+            episodes = self._hippocampus._episodic.sample_random(6)
         except Exception as e:  # noqa: BLE001
             logger.debug("[Background reflection] Memory-seed sample failed: %s", e)
             return
         if not episodes:
             return
-        ep = episodes[0]
-        user = (ep.get("user_input") or "").strip().replace("\n", " ")[:160]
-        resp = (ep.get("entity_response") or "").strip().replace("\n", " ")[:160]
-        tags = ep.get("topic_tags") or []
+
+        ctx = self._last_context or ""
+
+        def _ep_text(e: dict) -> tuple[str, str, list]:
+            u = (e.get("user_input") or "").strip().replace("\n", " ")[:160]
+            r = (e.get("entity_response") or "").strip().replace("\n", " ")[:160]
+            return u, r, (e.get("topic_tags") or [])
+
+        if ctx.strip():
+            scored = []
+            for e in episodes:
+                u, r, tg = _ep_text(e)
+                if not (u or r):
+                    continue
+                blob = " ".join([u, r, " ".join(str(t) for t in tg)])
+                scored.append((_content_word_overlap(blob, ctx), e))
+            if not scored:
+                return
+            best_overlap, ep = max(scored, key=lambda x: x[0])
+            # Below the floor nothing in the sample connects to the moment — skip
+            # this cycle rather than surface an unrelated memory.
+            if best_overlap < DMN_MEMORY_SEED_MIN_OVERLAP:
+                logger.debug(
+                    "[Background reflection] Memory seed skipped — no relevant "
+                    "episode in sample (best overlap=%.3f < %.3f)",
+                    best_overlap,
+                    DMN_MEMORY_SEED_MIN_OVERLAP,
+                )
+                return
+        else:
+            # No live context yet (e.g. fresh session) — keep the old behaviour
+            # and just take the first sampled episode as associative fuel.
+            ep = episodes[0]
+
+        user, resp, tags = _ep_text(ep)
         if not (user or resp):
             return
         tag_str = f" [{', '.join(tags[:3])}]" if tags else ""
@@ -2181,11 +2246,26 @@ class DefaultModeNetwork:
         """
         self._monologue_cell.reset_turn(turn_id)
 
-        context_label = (
-            f"Recent context:\n{self._last_context}"
-            if self._last_context
-            else "Recent context: none"
-        )
+        # Frame the context by how live it is. During idle there are no new turns,
+        # so _last_context is a snapshot from minutes ago — labelling it "Recent
+        # context" made the brain treat stale material as the current topic. Mark
+        # the age so it frames old conversation as "earlier," not "now."
+        if not self._last_context:
+            context_label = "Recent context: none"
+        else:
+            try:
+                idle_s = get_idle_seconds()
+            except Exception:
+                idle_s = 0.0
+            if idle_s > 90:
+                mins = int(idle_s // 60)
+                context_label = (
+                    f"Earlier conversation (the user went quiet ~{mins} min ago — "
+                    f"you're mind-wandering now; this is NOT a live exchange, so don't "
+                    f"reply to it as if it's the current topic):\n{self._last_context}"
+                )
+            else:
+                context_label = f"Recent context:\n{self._last_context}"
         prompt_parts = [context_label, self._build_situation_block(chem)]
         if self._last_projects:
             prompt_parts.append(
@@ -2196,6 +2276,13 @@ class DefaultModeNetwork:
         # than always opening a new angle. This is the positive-progress signal
         # that counters the pure-novelty bias of the rest of the prompt.
         open_threads = [t for t in self._open_threads if t.status == ot.STATUS_OPEN]
+        # Surface the most RECENTLY-touched threads, not the most-advanced ones.
+        # Sorting by advances (the old insertion-order behaviour) let old, deeply
+        # explored threads keep bubbling up over what's actually live, which read
+        # as the brain "talking about things from before." Cap at 3 so a stale
+        # backlog can't crowd the prompt.
+        open_threads.sort(key=lambda t: (t.last_ts or t.opened_ts or 0.0), reverse=True)
+        open_threads = open_threads[:3]
         if open_threads:
             lines = []
             for t in open_threads:
@@ -2206,8 +2293,19 @@ class DefaultModeNetwork:
                 "of these via `advance_thread_id`, or CONCLUDING it via `conclude_thread_id`, "
                 "over opening a brand-new angle):\n" + "\n".join(lines)
             )
-        # ALREADY CONCLUDED — settled this session; don't re-derive these.
-        concluded = list(getattr(self, "_recent_conclusions", []))
+        # ALREADY CONCLUDED — settled recently; don't re-derive these. Age-decayed:
+        # a conclusion older than CONCLUSION_FRESH_S is dropped from the prompt so
+        # the brain stops referencing things it settled long ago as if they're
+        # current. Entries are (ts, text) tuples; tolerate legacy bare strings.
+        now_ts = time.time()
+        concluded = []
+        for c in getattr(self, "_recent_conclusions", []):
+            if isinstance(c, tuple):
+                ts, txt = c
+                if now_ts - ts <= CONCLUSION_FRESH_S:
+                    concluded.append(txt)
+            elif isinstance(c, str):
+                concluded.append(c)
         if concluded:
             prompt_parts.append(
                 "\nALREADY CONCLUDED (treat as settled — build on or move past these, "
@@ -2716,7 +2814,7 @@ class DefaultModeNetwork:
                 )
             )
         self._open_threads = ot.remove_thread(self._open_threads, thread_id)
-        self._recent_conclusions.append(conclusion_text)
+        self._recent_conclusions.append((time.time(), conclusion_text))
         await self._save_threads()
         logger.info("[DMN] Concluded thread %s → memory: %r", thread_id, conclusion_text[:80])
         return {"action": "concluded", "thread_id": thread_id, "thread_title": t.summary[:80]}
@@ -2789,7 +2887,7 @@ class DefaultModeNetwork:
                     )
                 )
             self._open_threads = ot.remove_thread(self._open_threads, t.id)
-            self._recent_conclusions.append(text)
+            self._recent_conclusions.append((time.time(), text))
             events.append({"action": "resolved_by_use", "thread_id": t.id})
             logger.info("[DMN] Thread landed in a response → retired: %s", t.id)
         if events:
@@ -2959,7 +3057,7 @@ class DefaultModeNetwork:
                     )
                 )
             self._open_threads = ot.remove_thread(self._open_threads, thread.id)
-            self._recent_conclusions.append(text)
+            self._recent_conclusions.append((time.time(), text))
             await self._save_threads()
             logger.info("[DMN] User confirmed conclusion → memory: %r", text[:80])
             return {"action": "conclusion_confirmed", "thread_id": thread.id}

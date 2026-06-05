@@ -1527,6 +1527,42 @@ input, select, textarea { font: inherit; color: inherit; background: none; borde
   line-height: 1.6;
   white-space: pre-wrap;
 }
+/* ── Trading layer cards (tables + charts) ───────────────────────────────── */
+.trade-card { padding: 10px 12px; }
+.trade-card-title {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 6px;
+}
+.trade-card-note {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--muted, #8a93a3);
+}
+.trade-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 12px;
+  font-family: var(--mono);
+}
+.trade-table th, .trade-table td {
+  border: 1px solid rgba(255,255,255,0.08);
+  padding: 4px 8px;
+  text-align: right;
+  white-space: nowrap;
+}
+.trade-table th {
+  color: var(--accent);
+  font-weight: 600;
+  text-align: right;
+  background: rgba(255,255,255,0.03);
+}
+.trade-table td:first-child, .trade-table th:first-child { text-align: left; }
+.trade-table tbody tr:nth-child(even) { background: rgba(255,255,255,0.02); }
+.trade-chart { width: 100%; min-height: 260px; }
 .msg-meta {
   margin-top: 8px;
   font-family: var(--mono);
@@ -4671,13 +4707,25 @@ async function loadVoices({ silent = false, _attempt = 0 } = {}) {
       sel.appendChild(opt);
     });
 
-    const saved = localStorage.getItem('brain_voice_id');
-    if (saved && voices.find(v => v.voice_id === saved)) {
-      sel.value = saved;
-    } else {
-      localStorage.removeItem('brain_voice_id');
-      sel.value = voices[0].voice_id;
+    // Resolve the AUTHORITATIVE voice: the active persona's own voice wins, so
+    // the pill (which broadcasts set_voice on connect) can't override it.
+    // Priority: persona_voice_<slug> -> persona_voice_id -> localStorage -> first.
+    let s = currentSettings;
+    if (!s || !s.persona_name) {
+      try { const sr = await fetch('/settings'); if (sr.ok) s = (await sr.json()).settings || s; } catch (_) {}
     }
+    const _nm = (s && s.persona_name) || '';
+    const personaVid = ((_nm && s[_personaSlug(_nm)]) || (s && s.persona_voice_id) || '').trim();
+    const saved = localStorage.getItem('brain_voice_id');
+    let chosen = personaVid || (saved || '');
+    // Honor the persona voice even if the picker list filtered it out.
+    if (chosen && !voices.find(v => v.voice_id === chosen)) {
+      const opt = document.createElement('option');
+      opt.value = chosen; opt.textContent = '(persona voice)';
+      sel.appendChild(opt);
+    }
+    if (!chosen) chosen = voices[0].voice_id;
+    sel.value = chosen;
     nameEl.textContent = sel.options[sel.selectedIndex].textContent;
     // Notify server of the selected voice (handles the race where onopen fired first)
     sel.dispatchEvent(new Event('change'));
@@ -4717,6 +4765,16 @@ document.getElementById('voice-select').addEventListener('change', function() {
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ type: 'set_voice', voice_id: vid }));
   }
+  // Persist to the active persona's voice setting so the choice sticks per
+  // persona and is restored on restart (boot resolves persona_voice_<slug>).
+  const _nm = currentSettings.persona_name || '';
+  const patch = { persona_voice_id: vid };
+  if (_nm) patch[_personaSlug(_nm)] = vid;
+  Object.assign(currentSettings, patch);
+  fetch('/settings', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  }).catch(() => {});
 });
 
 /* =====================================================================
@@ -5045,6 +5103,14 @@ function handle(msg) {
         Object.keys(REGIONS).forEach(r => deactivateRegion(r));
         setActiveLabel('awaiting input', false);
       }, 800);
+      break;
+    }
+    case 'data_table': {
+      appendDataTable(msg);
+      break;
+    }
+    case 'chart': {
+      appendChart(msg);
       break;
     }
     case 'quality_score': {
@@ -5430,6 +5496,122 @@ function appendBrainMessage(turnId, text, calls, elapsed) {
   msgs.appendChild(wrap);
   scrollChat();
   pendingActivations = [];
+}
+
+// ── Trading layer: structured table + chart cards ──────────────────────────
+// All values are inserted as text nodes / typed numeric series — never as raw
+// HTML — so tool output can't inject markup (preserves the XSS-safe posture).
+
+function fmtCell(v) {
+  if (v === null || v === undefined || v === '') return '—';
+  if (typeof v === 'number') return Number.isInteger(v) ? String(v) : v.toFixed(2);
+  return String(v);
+}
+
+function appendDataTable(msg) {
+  const msgs = document.getElementById('messages');
+  const card = document.createElement('div');
+  card.className = 'msg msg-brain trade-card';
+  if (msg.turn_id) card.dataset.turnId = msg.turn_id;
+
+  const title = document.createElement('div');
+  title.className = 'trade-card-title';
+  title.textContent = msg.title || 'Data';
+  card.appendChild(title);
+
+  const table = document.createElement('table');
+  table.className = 'trade-table';
+  const thead = document.createElement('thead');
+  const htr = document.createElement('tr');
+  (msg.columns || []).forEach(c => {
+    const th = document.createElement('th');
+    th.textContent = String(c);
+    htr.appendChild(th);
+  });
+  thead.appendChild(htr);
+  table.appendChild(thead);
+
+  const tbody = document.createElement('tbody');
+  (msg.rows || []).forEach(row => {
+    const tr = document.createElement('tr');
+    (row || []).forEach(cell => {
+      const td = document.createElement('td');
+      td.textContent = fmtCell(cell);
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  card.appendChild(table);
+
+  if (msg.note) {
+    const note = document.createElement('div');
+    note.className = 'trade-card-note';
+    note.textContent = msg.note;
+    card.appendChild(note);
+  }
+  msgs.appendChild(card);
+  scrollChat();
+}
+
+function appendChart(msg) {
+  const msgs = document.getElementById('messages');
+  const card = document.createElement('div');
+  card.className = 'msg msg-brain trade-card';
+  if (msg.turn_id) card.dataset.turnId = msg.turn_id;
+
+  const title = document.createElement('div');
+  title.className = 'trade-card-title';
+  title.textContent = msg.title || 'Chart';
+  card.appendChild(title);
+
+  const holder = document.createElement('div');
+  holder.className = 'trade-chart';
+  card.appendChild(holder);
+  msgs.appendChild(card);
+
+  // Graceful degradation if the chart lib failed to load.
+  if (typeof LightweightCharts === 'undefined') {
+    const fallback = document.createElement('div');
+    fallback.className = 'trade-card-note';
+    fallback.textContent = '(chart library unavailable — see the prose summary above)';
+    card.appendChild(fallback);
+    scrollChat();
+    return;
+  }
+
+  try {
+    const chart = LightweightCharts.createChart(holder, {
+      width: holder.clientWidth || 520,
+      height: 260,
+      layout: { background: { color: 'transparent' }, textColor: '#9aa' },
+      grid: { vertLines: { color: 'rgba(255,255,255,0.05)' }, horzLines: { color: 'rgba(255,255,255,0.05)' } },
+      timeScale: { borderColor: 'rgba(255,255,255,0.1)' },
+      rightPriceScale: { borderColor: 'rgba(255,255,255,0.1)' },
+    });
+    if ((msg.kind || 'candlestick') === 'candlestick') {
+      const s = chart.addCandlestickSeries();
+      s.setData((msg.series || []).filter(d => d.time && d.close != null));
+    } else {
+      const s = chart.addLineSeries();
+      s.setData((msg.series || []).map(d => ({ time: d.time, value: d.close })));
+    }
+    (msg.overlays || []).forEach(ov => {
+      const line = chart.addLineSeries({ lineWidth: 1 });
+      line.setData((ov.data || []).filter(d => d.time && d.value != null));
+    });
+    if (msg.markers && msg.markers.length) {
+      // markers attach to the main series in v4 via setMarkers on a series ref;
+      // we keep it simple and skip if unsupported.
+    }
+    chart.timeScale().fitContent();
+  } catch (e) {
+    const err = document.createElement('div');
+    err.className = 'trade-card-note';
+    err.textContent = '(chart render failed — see the prose summary above)';
+    card.appendChild(err);
+  }
+  scrollChat();
 }
 
 function updateQualityBadge(badge, qs) {
@@ -7676,5 +7858,7 @@ function _applyMoodTint() {
 <!-- Redesigned settings page: schema + render engine (live-wired to /settings) -->
 <script src="settings-data.js"></script>
 <script src="settings-ui.js"></script>
+<!-- Trading layer: vendored TradingView Lightweight Charts (Apache-2.0) for chart cards -->
+<script src="lightweight-charts.standalone.production.js"></script>
 </body>
 </html>

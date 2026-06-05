@@ -71,6 +71,7 @@ Available tools:
 
 {cloud_connector_hint}
 {lobe_hint}
+{trading_hint}
 
 URL rule: if the user's message contains an http:// or https:// URL, call fetch_url on it.
 Only skip this if the user explicitly says not to fetch it.

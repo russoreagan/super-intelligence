@@ -329,7 +329,10 @@ in the moment's voice): "Tangent, but —", "On a different note,",
 
 Constraints:
 - Output ONLY the rewritten utterance text. No JSON, no quotes, no labels.
-- Keep it to one or two short sentences — must be speakable aloud.
+- Preserve the candidate's FULL content — every point it makes. Only add a
+  brief bridge opener; do NOT compress, summarize, shorten, or drop any of its
+  substance. The result should be roughly as long as the candidate (plus the
+  opener), and must be speakable aloud.
 - If the candidate already opens with a natural bridge phrase, return it
   unchanged.
 - If you cannot improve it without distorting the meaning, return the

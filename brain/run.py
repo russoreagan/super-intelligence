@@ -316,6 +316,17 @@ def _route_persona_state() -> None:
         os.environ["BRAIN_WIRING_PATH"] = str(root / "wiring.json")
         os.environ["BRAIN_WIRING_HISTORY_DIR"] = str(root / "wiring_history")
         _seed_persona_self_md(root, persona, data)
+        # Materialize this persona's resting profile (-> chem_baseline_*) and its
+        # most-recent evolved state (-> chem_init_*) into settings.json on disk,
+        # BEFORE any brain module loads the settings singleton. Seeds from the
+        # canonical table on first run; resumes saved current state thereafter.
+        try:
+            from brain import persona_chem
+
+            data = persona_chem.materialize_into_settings(persona, data)
+            settings_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        except Exception as e:
+            logger.warning("[Persona] chemistry materialize failed for %s: %s", persona, e)
         logger.info("[Persona] Active: %s → %s", persona, root)
     else:
         # No persona: clear only env we set ourselves (paths inside personas/),
