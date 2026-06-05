@@ -21,12 +21,15 @@ from collections import Counter, deque
 
 logger = logging.getLogger(__name__)
 
-_WEIGHTS_PATH = os.path.join(
-    os.path.dirname(__file__), "..", "second_brain", "sequence_weights.json"
+# Honor the active persona's namespaced second-brain root (set in run.py
+# _route_persona_state before this module imports), so each persona learns its
+# own DMN thought-transition patterns instead of sharing one global memory.
+# Falls back to the shared second_brain/ for the neutral (no-persona) brain.
+_SECOND_BRAIN_ROOT = os.environ.get(
+    "SECOND_BRAIN_PATH", os.path.join(os.path.dirname(__file__), "..", "second_brain")
 )
-_SYNONYMS_PATH = os.path.join(
-    os.path.dirname(__file__), "..", "second_brain", "angle_synonyms.json"
-)
+_WEIGHTS_PATH = os.path.join(_SECOND_BRAIN_ROOT, "sequence_weights.json")
+_SYNONYMS_PATH = os.path.join(_SECOND_BRAIN_ROOT, "angle_synonyms.json")
 _MAX_HISTORY = 200
 _MIN_CONFIDENCE = 0.35
 _MIN_OBSERVATIONS = 2  # require at least this many observations before predicting

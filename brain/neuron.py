@@ -261,7 +261,13 @@ def sensory_gain(persona_seed: str, category: str) -> float:
         span = float(_settings.get("colony_sensory_gain_span", 0.30))
     except Exception:
         return 1.0
-    lean = _PERSONA_SENSORY_LEANS.get(persona_seed, {}).get(category, 0.0)
+    # Callers pass settings["persona_name"], the DISPLAY name ("The Analyst"),
+    # but the lean table is keyed by slug ("the_analyst"). Normalize so the
+    # lookup actually matches instead of silently falling through to neutral.
+    import re
+
+    key = re.sub(r"[^a-z0-9]+", "_", str(persona_seed).lower()).strip("_")
+    lean = _PERSONA_SENSORY_LEANS.get(key, {}).get(category, 0.0)
     return max(0.1, 1.0 + lean * span)
 
 
