@@ -94,24 +94,35 @@ async def test_client_blocks_unknown_tool():
         await c.call("totally_made_up_tool", {})
 
 
-# ── 2. prompt governance (inert until authored) ───────────────────────────────
+# ── 2. prompt governance ──────────────────────────────────────────────────────
 
 
-async def test_stress_test_inert_when_prompts_empty():
-    res = await capabilities.stress_test_thesis("TSLA", "thesis", md=None, router=FakeRouter())
-    assert res["status"] == "blocked"
-    assert res["message"] == prompts.BLOCKED_MSG
+def test_all_prompts_configured():
+    """All analytical prompts are now active (populated from prompts_draft.md)."""
+    for p in (prompts.REFLECTION_SYSTEM, prompts.BULL_SYSTEM, prompts.BEAR_SYSTEM,
+              prompts.RISK_SYSTEM, prompts.SYNTHESIS_SYSTEM, prompts.MISPRICING_SYSTEM,
+              prompts.CONDENSATION_SYSTEM):
+        assert prompts.is_configured(p), f"{p[:30]!r} not configured"
 
 
-async def test_find_mispricing_inert_when_prompt_empty():
+async def test_stress_test_runs_when_prompts_configured(monkeypatch):
+    """stress_test_thesis returns ok (not blocked) when all role prompts are set."""
+    res = await capabilities.stress_test_thesis("TSLA", "test thesis", md=None, router=FakeRouter())
+    assert res["status"] == "ok"
+    assert res["rating"] == "Hold"
+
+
+async def test_find_mispricing_runs_when_prompt_configured():
+    """find_mispricing returns ok (not blocked) when prompt is set."""
+    res = await capabilities.find_mispricing("TSLA", md=None, router=FakeRouter())
+    assert res["status"] == "ok"
+
+
+async def test_blocked_when_prompt_cleared(monkeypatch):
+    """Features still return blocked if their specific prompt is cleared."""
+    monkeypatch.setattr(prompts, "MISPRICING_SYSTEM", "")
     res = await capabilities.find_mispricing("TSLA", md=None, router=FakeRouter())
     assert res["status"] == "blocked"
-
-
-def test_prompts_ship_empty():
-    for p in (prompts.REFLECTION_SYSTEM, prompts.BULL_SYSTEM, prompts.BEAR_SYSTEM,
-              prompts.RISK_SYSTEM, prompts.SYNTHESIS_SYSTEM, prompts.MISPRICING_SYSTEM):
-        assert not prompts.is_configured(p)
 
 
 # ── 3. indicator math ─────────────────────────────────────────────────────────
@@ -149,10 +160,10 @@ def test_compute_all_keys():
 # ── 4. gating ─────────────────────────────────────────────────────────────────
 
 
-def test_trading_disabled_by_default():
+def test_trading_enabled():
     from brain.settings import settings
 
-    assert int(settings.get("trading_enabled") or 0) == 0
+    assert int(settings.get("trading_enabled") or 0) == 1
 
 
 # ── 5. journal lifecycle ──────────────────────────────────────────────────────
