@@ -2272,6 +2272,22 @@ class DefaultModeNetwork:
                 f"\nPRE-AUTHORIZED PROJECTS (work within these scopes auto-runs — "
                 f"set `task` directly, no propose needed):\n{self._last_projects}"
             )
+        # Operational capabilities — built-in tools the brain can already invoke
+        # directly (e.g. trading get_quote/scan_watchlist). Without this the DMN
+        # treats them as external things to "find/load" and generates goals like
+        # "inventory the trading skill module" instead of just using them.
+        if self._skill_selector is not None:
+            try:
+                _caps = self._skill_selector.capability_manifest()
+            except Exception:
+                _caps = ""
+            if _caps:
+                prompt_parts.append(
+                    "\nOPERATIONAL CAPABILITIES — built-in tools you can invoke directly "
+                    "right now. Do NOT plan to 'find', 'load', or 'inventory' these; they "
+                    "already exist. If a thought calls for one, set `task` to use it:\n"
+                    f"{_caps}"
+                )
         # OPEN THREADS — steer toward advancing/concluding unfinished ideas rather
         # than always opening a new angle. This is the positive-progress signal
         # that counters the pure-novelty bias of the rest of the prompt.

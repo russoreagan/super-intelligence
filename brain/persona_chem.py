@@ -41,7 +41,7 @@ PERSONA_CHEMISTRY: dict[str, dict[str, float]] = {
                       "5HT": 0.55, "CORT": 0.05, "OXT": 0.45, "AEA": 0.20},
     "The Empath": {"DA": 0.45, "ACh": 0.18, "GABA": 0.12, "Glu": 0.18, "NE": 0.15,
                    "5HT": 0.70, "CORT": 0.03, "OXT": 0.70, "AEA": 0.45},
-    "The Analyst": {"DA": 0.40, "ACh": 0.55, "GABA": 0.18, "Glu": 0.25, "NE": 0.40,
+    "The Analyst": {"DA": 0.35, "ACh": 0.35, "GABA": 0.30, "Glu": 0.25, "NE": 0.25,
                     "5HT": 0.55, "CORT": 0.14, "OXT": 0.22, "AEA": 0.30},
     "The Poet": {"DA": 0.32, "ACh": 0.55, "GABA": 0.08, "Glu": 0.38, "NE": 0.42,
                  "5HT": 0.28, "CORT": 0.15, "OXT": 0.22, "AEA": 0.38},

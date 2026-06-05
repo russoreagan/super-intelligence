@@ -169,6 +169,20 @@ class UIServer:
                                 },
                                 {},
                             )
+                # Apply a voice change LIVE so the settings-page Voice dropdown
+                # (which only writes the setting) takes effect immediately, just
+                # like the header pill's set_voice — no restart required.
+                if self._on_voice_change and any(k.startswith("persona_voice_") for k in body):
+                    from brain.persona_chem import _slug
+
+                    persona = str(settings.get("persona_name", ""))
+                    vid = ""
+                    if persona:
+                        vid = str(settings.get(f"persona_voice_{_slug(persona)}", "")).strip()
+                    if not vid:
+                        vid = str(settings.get("persona_voice_id", "")).strip()
+                    if vid:
+                        self._on_voice_change(vid)
                 return {"ok": True}
             except Exception as e:
                 from fastapi.responses import JSONResponse

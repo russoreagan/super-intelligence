@@ -1541,11 +1541,25 @@ class FrontalCluster:
                 f"Tool execution result:\n{fence('tool_result', str(memory['tool_result']), nonce)}"
             )
 
-        # NOTE: skill/framework text is deliberately NOT injected into the drafter
-        # prompt — the drafters run on Claude, which already has these reasoning/EI
-        # frameworks natively, so injecting local copies is redundant bloat. Skill
-        # SELECTION still runs (_select_skills_for_turn) to seed parietal.active_skill_
-        # context, which the Ollama/RunPod-backed DMN inherits and genuinely needs.
+        # Reasoning/EI FRAMEWORK text is deliberately NOT injected — the drafters
+        # run on Claude, which has those natively, so local copies are bloat. Skill
+        # SELECTION still seeds parietal.active_skill_context for the DMN.
+        # BUT operational NATIVE skills (brain/skills/*.md like trading-analyst) ARE
+        # injected: Claude has no native knowledge of the app's own tools/data files,
+        # so when one is the active skill its body must reach the drafter — otherwise
+        # the brain "has" the tool but never learns how/when to use it.
+        _sel = getattr(self, "_skill_selector", None)
+        _bundle = getattr(self, "_current_skill_bundle", None)
+        if _sel is not None and _bundle is not None:
+            for _sk in _bundle.chosen or []:
+                _body = _sel.native_skill_body(_sk)
+                if _body:
+                    parts.append(
+                        "Active operational skill — follow this guide. The tools it names "
+                        "are REAL and callable directly via the motor cortex (do not look for "
+                        "a file or 'module' to load; just use them):\n"
+                        f"{fence('active_skill', _body[:6000], nonce)}"
+                    )
 
         if memory.get("recent_task_results"):
             parts.append(

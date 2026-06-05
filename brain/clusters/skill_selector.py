@@ -184,6 +184,7 @@ class SkillSelector:
     def __init__(self, router: ModelRouter):
         self._router = router
         self._index = _Index()
+        self._native_body_cache: dict[str, str] = {}
 
         # Lightweight Haiku selector for the conversational path
         self._conversational_cell = IntegratorCell(
@@ -342,6 +343,35 @@ class SkillSelector:
 
     def get_skill(self, name: str) -> dict | None:
         return self._index.get(name)
+
+    def native_skill_body(self, name: str) -> str:
+        """Operational guide (markdown body, frontmatter stripped) of a NATIVE skill.
+
+        Returns "" for humanity reasoning frameworks (Claude knows those natively,
+        so injecting them is bloat) and for unknown skills. Only native operational
+        skills — brain/skills/<name>.md with a 'name:' frontmatter not in the
+        humanity index, e.g. trading-analyst — return a body, because the model has
+        no other way to learn the app-specific tools/data files they describe. Cached."""
+        entry = self._index.get(name)
+        if not entry or not entry.get("_native"):
+            return ""
+        if name in self._native_body_cache:
+            return self._native_body_cache[name]
+        body = ""
+        try:
+            path = INDEX_PATH.parent / f"{name}.md"
+            if path.exists():
+                raw = path.read_text(encoding="utf-8")
+                if raw.startswith("---"):
+                    try:
+                        raw = raw[raw.index("---", 3) + 3 :]
+                    except ValueError:
+                        pass
+                body = raw.strip()
+        except Exception:
+            body = ""
+        self._native_body_cache[name] = body
+        return body
 
     def gate_conversational(
         self,

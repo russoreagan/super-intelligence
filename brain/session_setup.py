@@ -420,6 +420,17 @@ class _SetupMixin:
                 "'send a message to Y', etc., the brain dispatches a cloud_action and "
                 "you get the result back as 'Tool execution result' in your context."
             )
+        # Advise-only trading tools: advertise to the drafters so the brain knows
+        # in conversation that it already HAS these (reusing the motor's own hint
+        # as the single source of truth). The explicit note stops it from hunting
+        # for a "trading skill module" file instead of just calling the tools.
+        if getattr(self.motor, "_trading", None) is not None:
+            cap_lines.append(
+                "- Day-trading analysis is AVAILABLE right now as DIRECT, built-in tools "
+                "(advise-only — read-only, never places orders). Call them directly; do NOT "
+                "look for a 'trading skill module' file or load anything first:\n"
+                + getattr(self.motor, "_trading_hint", "")
+            )
         self.frontal.set_capabilities("\n".join(cap_lines))
 
     async def _setup_dmn(self) -> None:
