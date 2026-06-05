@@ -1,3 +1,12 @@
+---
+name: trading-analyst
+description: Advise-only day-trading capability. Use for market data, watchlist scanning, indicator analysis, journal logging, and portfolio review. Never places orders.
+category: trading
+tier: 2
+is_router: false
+keywords: [trading, trade, stock, watchlist, portfolio, indicators, journal, quote, signal]
+---
+
 # Trading Analyst
 
 Operational guide for the brain's advise-only day-trading capability. Covers when to use each tool, how the data files connect, indicator interpretation, and the workflow for a typical trading session. **Never place orders. Never move money. All tools are read-only analysis.**

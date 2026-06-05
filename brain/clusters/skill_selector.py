@@ -98,6 +98,23 @@ class _Index:
     def leaves_in_category(self, cat: str) -> list[dict]:
         return [s for s in self.skills if s["category"] == cat and not s["is_router"]]
 
+    def inject_native(self, entry: dict) -> None:
+        """Add a native (non-humanity) skill to the in-memory index."""
+        if entry["name"] not in self._by_name:
+            self.skills.append(entry)
+            self._by_name[entry["name"]] = entry
+
+    def keyword_match(self, user_input: str) -> dict | None:
+        """Return a native skill if any of its name tokens or keywords appear in user_input."""
+        lowered = user_input.lower()
+        for s in self.skills:
+            if s.get("_native"):
+                tokens = s["name"].replace("-", " ").split()
+                tokens += [str(k) for k in s.get("keywords", [])]
+                if any(tok in lowered for tok in tokens):
+                    return s
+        return None
+
     @staticmethod
     def cosine(a: list[float], b: list[float]) -> float:
         if not a or not b or len(a) != len(b):
@@ -212,6 +229,59 @@ class SkillSelector:
 
     # ----- public API --------------------------------------------------
 
+    async def warm_native_skills(self) -> None:
+        """Scan brain/skills/*.md for native operational skill files and inject into the index.
+
+        Any .md file with YAML frontmatter and a 'name:' field that isn't already in
+        _humanity_index.json is treated as a native skill. This covers motor cortex
+        capability guides (e.g. trading-analyst) that are written directly rather than
+        imported through _import_humanity.py.
+        """
+        try:
+            import yaml
+        except ImportError:
+            logger.warning("warm_native_skills: PyYAML not installed, skipping")
+            return
+
+        skills_dir = INDEX_PATH.parent
+        for md_path in sorted(skills_dir.glob("*.md")):
+            raw = md_path.read_text(encoding="utf-8")
+            if not raw.startswith("---"):
+                continue
+            try:
+                end = raw.index("---", 3)
+            except ValueError:
+                continue
+            fm_text = raw[3:end]
+            try:
+                fm = yaml.safe_load(fm_text)
+            except Exception:
+                continue
+            if not isinstance(fm, dict):
+                continue
+            name = fm.get("name")
+            if not name or name in self._index._by_name:
+                continue
+            desc = fm.get("description", "")
+            keywords = fm.get("keywords", [])
+            embed_text = f"{name} {desc} {' '.join(str(k) for k in keywords)}"
+            vec = await self._router.embed(embed_text)
+            if vec is None:
+                logger.warning("warm_native_skills: embed failed for %s", name)
+                vec = []
+            entry = {
+                "name": name,
+                "description": desc,
+                "category": fm.get("category", "native"),
+                "tier": fm.get("tier", 2),
+                "is_router": fm.get("is_router", False),
+                "keywords": keywords,
+                "embedding": vec,
+                "_native": True,
+            }
+            self._index.inject_native(entry)
+            logger.debug("warm_native_skills: injected %s", name)
+
     @property
     def tier1_names(self) -> list[str]:
         return list(self._index.tier1_names)
@@ -254,6 +324,24 @@ class SkillSelector:
         bundle is None when the turn is gated out (no skill block injected at all).
         """
         log_extras: dict[str, Any] = {}
+
+        # Direct-name pre-pass: if the user explicitly references a native skill by
+        # keyword (e.g. "trading tool", "check my watchlist"), short-circuit straight
+        # to that skill without going through the embedding/LLM path.
+        _direct = self._index.keyword_match(user_input)
+        if _direct is not None:
+            log_extras["pick_path"] = "direct_name_match"
+            log_extras["direct_match"] = _direct["name"]
+            return (
+                SkillBundle(
+                    tier1=self.tier1_names,
+                    chosen=[_direct["name"]],
+                    pick_source="direct_name_match",
+                ),
+                active,
+                log_extras,
+            )
+
         response_type = executive_out.get("response_type", "")
         key_points = executive_out.get("key_points", [])
 

@@ -173,6 +173,7 @@ class _SetupMixin:
             from brain.clusters.skill_selector import SkillSelector
 
             self.skill_selector = SkillSelector(self.router)
+            await self.skill_selector.warm_native_skills()
             self.frontal.set_skill_selector(self.skill_selector, self.parietal)
         except FileNotFoundError as e:
             import logging as _logging
