@@ -44,3 +44,7 @@
 ## 2026-06-04 20:02 ✓
 **Task:** Search the web for current AI trading capability landscape. Focus on: (1) Signal generation techniques in algorithmic trading; (2) Risk management and portfolio optimization approaches; (3) Trade execution algorithms and market microstructure; (4) Regulatory compliance frameworks for automated trading; (5) Leading platforms and frameworks (QuantConnect, Alpaca, Lean, reinforcement learning approaches); (6) Known capability gaps and open challenges in AI-assisted trading systems. Return a comprehensive summary with at least 3-5 named frameworks, platforms, or published methodologies, organized by component (signals, risk, execution, compliance).
 **Result:** <data label="cloud_result" nonce="1c7f166a"> The file write needs your approval (it's pending permission). Here's the concise summary regardless — and the full findings will land at `second_brain/rese...
+
+## 2026-06-04 22:42 ✓
+**Task:** Read and summarize key points from the trading skill module about using market data effectively.
+**Result:** <data label="cloud_result" nonce="bfc9f090"> This is a markdown file (no HTML markup to strip). Here's my summary of its key points on **using market data effectively**:  ## Trading Analyst skill — ke...
