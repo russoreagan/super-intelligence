@@ -207,6 +207,7 @@ class _SetupMixin:
             on_mic_toggle=self._on_mic_toggle,
             on_mic_ptt=self._on_mic_ptt,
             is_muted_fn=self._is_mic_muted,
+            mic_status_fn=self._mic_status,
             on_interrupt=self.pns.interrupt,
             wiring=self.wiring,
             bus=self.bus,
@@ -437,7 +438,10 @@ class _SetupMixin:
         self.brainstem.register_loop("ears", self.ears.run)
 
     async def _setup_streaming_mic(self) -> None:
-        if not (self.args.voice or os.environ.get("BRAIN_VOICE_MODE", "false").lower() == "true"):
+        if not self._voice_requested:
+            # No server-side capture requested → leave _streaming_mic None and let
+            # the UI report "off" so the browser captures audio itself.
+            self._mic_setup_done = True
             return
         from brain.streaming_mic import StreamingMicSession
 
@@ -449,8 +453,12 @@ class _SetupMixin:
         try:
             await self._streaming_mic.start()
         except Exception as e:
+            # Hosted servers have no audio input device — start() raises here.
+            # Drop to None so the UI reports "off" and the browser self-captures.
             logger.error("[I/O] Streaming mic failed to start — voice input is offline: %s", e)
             self._streaming_mic = None
+        finally:
+            self._mic_setup_done = True
 
     def _setup_speak_gate(self) -> None:
         if self.dmn is not None:

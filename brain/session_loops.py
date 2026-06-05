@@ -70,6 +70,26 @@ class _LoopsMixin:
         self._tts_did_mute = False
         self._emit_mic_state()
 
+    def _mic_status(self) -> str:
+        """Single source of truth for the mic status string the UI consumes:
+        'off' | 'muted' | 'active'.
+
+        'off'  → no server-side mic (browser should capture audio itself via
+                 MediaRecorder). This is the hosted case: no audio input device,
+                 so StreamingMicSession.start() failed and _streaming_mic is None.
+        'muted'/'active' → a server-side mic exists; reflect its live state.
+
+        While the mic is still starting up (voice requested but setup not yet
+        complete) report 'muted' so the browser doesn't transiently self-capture
+        before the server mic comes online.
+        """
+        mic = self._streaming_mic
+        if mic is not None:
+            return "muted" if mic.is_muted else "active"
+        if self._voice_requested and not self._mic_setup_done:
+            return "muted"
+        return "off"
+
     def _emit_mic_state(self) -> None:
         """Broadcast the settled mic status so the button reflects reality."""
         if not self._emitter or self._streaming_mic is None:

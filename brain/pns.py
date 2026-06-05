@@ -974,12 +974,15 @@ class PNS:
                                 "[I/O] TTS producer exited with error: %s: %s",
                                 type(_prod_err).__name__, _prod_err,
                             )
-                        if self._interrupt_event.is_set():
-                            stream.abort()  # drop the buffer immediately
-                        else:
-                            await asyncio.sleep(0.3)  # let buffer drain
-                            stream.stop()
-                        stream.close()
+                        try:
+                            if self._interrupt_event.is_set():
+                                stream.abort()  # drop the buffer immediately
+                            else:
+                                await asyncio.sleep(0.3)  # let buffer drain
+                                stream.stop()
+                            stream.close()
+                        except Exception as _sd_err:
+                            logger.warning("[I/O] sounddevice cleanup error (ignored): %s", _sd_err)
                 except ImportError:
                     # sounddevice not installed — fall back to buffered play()
                     logger.debug(

@@ -12,6 +12,7 @@ This file contains only __init__, run(), the three run-mode coroutines, and shut
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import re
@@ -68,6 +69,7 @@ class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
         self._proactive_response_window: float = 8.0
         self._last_brain_spoke_ts: float = 0.0
         self._last_turn_ts: float = time.time()
+        self._last_speaker_name: str | None = None
 
         # Wiring
         self.wiring = None
@@ -123,6 +125,22 @@ class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
 
         # Voice / mic
         self._streaming_mic = None
+        # Whether server-side mic capture was requested for this process. When it
+        # was NOT requested — or it was but the mic failed to initialise (e.g. a
+        # hosted server with no audio input device) — the UI reports mic status
+        # "off" so the browser falls back to capturing audio itself
+        # (MediaRecorder → per-client Deepgram). Without this, a hosted server
+        # reports "muted" and the browser sends server-side PTT control messages
+        # to a non-existent mic, so push-to-talk silently does nothing.
+        self._voice_requested = bool(
+            getattr(self.args, "voice", False)
+            or os.environ.get("BRAIN_VOICE_MODE", "false").lower() == "true"
+        )
+        # Set True once _setup_streaming_mic has run (success OR failure). Lets the
+        # status function distinguish "mic still starting" (report muted, so the
+        # browser doesn't briefly self-capture) from "mic unavailable" (report off
+        # → browser self-captures).
+        self._mic_setup_done = False
         self._barge_in_words = None
         self._pending_during_tts: list[str] = []
         self._pending_lock: asyncio.Lock | None = None
@@ -264,13 +282,24 @@ class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
                     image_path = m.group(1).strip()
                     user_input = user_input.replace(m.group(0), "").strip()
 
-            response, affect = await self.process_turn(user_input, image_path)
-            await self._emit("motor", 0.7, "articulating", "speak")
-            await self._emit("brainstem", 0.35, "speaking", "speak")
-            await self.pns.emit(response, affect)
-            self._last_brain_spoke_ts = time.time()
-            await self._emit_end("motor", "speak")
-            await self._emit_end("brainstem", "speak")
+            try:
+                response, affect = await self.process_turn(user_input, image_path)
+                await self._emit("motor", 0.7, "articulating", "speak")
+                await self._emit("brainstem", 0.35, "speaking", "speak")
+                await self.pns.emit(response, affect)
+                self._last_brain_spoke_ts = time.time()
+            except asyncio.CancelledError:
+                raise  # propagate shutdown signal
+            except Exception as _loop_err:
+                logger.error("[UI loop] Turn failed, recovering: %s", _loop_err, exc_info=True)
+                with contextlib.suppress(Exception):
+                    if self._emitter:
+                        await self._emitter.emit_event({"type": "speaking", "active": False})
+                    self.pns._speaking = False
+            finally:
+                with contextlib.suppress(Exception):
+                    await self._emit_end("motor", "speak")
+                    await self._emit_end("brainstem", "speak")
 
     async def _run_cli_loop(self) -> None:
         print("Brain online. Type your message, or 'quit' to exit.\n")

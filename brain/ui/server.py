@@ -51,6 +51,7 @@ class UIServer:
         on_mic_toggle: Callable[[], bool] | None = None,
         on_mic_ptt: Callable[[bool], None] | None = None,
         is_muted_fn: Callable[[], bool] | None = None,
+        mic_status_fn: Callable[[], str] | None = None,
         on_interrupt: Callable[[], None] | None = None,
         wiring=None,
         bus=None,
@@ -62,6 +63,10 @@ class UIServer:
         self._on_mic_toggle = on_mic_toggle  # () -> is_muted (bool) — toggles
         self._on_mic_ptt = on_mic_ptt  # (down: bool) -> None — push-to-talk hold
         self._is_muted_fn = is_muted_fn  # () -> is_muted (bool) — read-only; None = no Python voice
+        # () -> 'off'|'muted'|'active'. Authoritative status that knows whether a
+        # server-side mic exists at all. 'off' tells the browser to self-capture
+        # (hosted, no audio device). Preferred over _is_muted_fn when provided.
+        self._mic_status_fn = mic_status_fn
         self._on_interrupt = on_interrupt
         self._clients: set = set()
         self._last_neuromod: dict = {}
@@ -85,7 +90,12 @@ class UIServer:
 
     def _mic_status(self) -> str:
         """Single status string for the mic: 'off' | 'muted' | 'active'.
-        'off' means no Python voice mode. 'muted'/'active' reflect current state."""
+        'off' means no server-side mic (browser self-captures). 'muted'/'active'
+        reflect a present server-side mic's live state."""
+        if self._mic_status_fn is not None:
+            return self._mic_status_fn()
+        # Legacy fallback: bool-only predicate can't express "off", so it always
+        # reported "muted"/"active" even with no mic — the bug this replaces.
         if self._is_muted_fn is None:
             return "off"
         return "muted" if self._is_muted_fn() else "active"

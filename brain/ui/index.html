@@ -1955,6 +1955,51 @@ details[open].turn-log summary::before { transform: rotate(90deg); }
   transition: background 600ms ease-out;
 }
 
+/* ---- Push-to-talk button (shown when input mode = mic) ---- */
+#ptt-btn {
+  display: none;
+  flex: 1;
+  align-self: stretch;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 64px;
+  border-radius: 10px;
+  border: 1.5px dashed oklch(0.38 0.04 250);
+  background: transparent;
+  color: var(--fg-faint);
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+  transition: border-color 150ms, background 150ms, color 150ms;
+}
+#ptt-btn svg { width: 18px; height: 18px; flex-shrink: 0; }
+#ptt-btn:hover { border-color: oklch(0.52 0.06 250); color: var(--fg-dim); }
+#ptt-btn.recording {
+  border-style: solid;
+  border-color: oklch(from var(--danger) l c h / 0.70);
+  background: oklch(from var(--danger) l c h / 0.07);
+  color: oklch(0.80 0.14 25);
+  animation: ptt-pulse 1.6s ease-in-out infinite;
+}
+@keyframes ptt-pulse {
+  0%, 100% { box-shadow: 0 0 0 0   oklch(from var(--danger) l c h / 0.15); }
+  50%       { box-shadow: 0 0 0 6px oklch(from var(--danger) l c h / 0); }
+}
+
+/* Mic input mode: swap textarea+send for PTT button */
+.input-wrap.mic-mode #msg-input { display: none; }
+.input-wrap.mic-mode #send-btn  { display: none; }
+.input-wrap.mic-mode #ptt-btn   { display: flex; }
+[data-theme="atlas"] #ptt-btn { border-color: var(--line); color: var(--ink-4); }
+[data-theme="atlas"] #ptt-btn:hover { border-color: var(--ink-3); color: var(--ink-2); }
+[data-theme="atlas"] #ptt-btn.recording { border-color: oklch(from var(--danger) l c h / 0.70); color: oklch(0.80 0.14 25); }
+
 .voice-pill {
   position: relative;
   height: 48px;
@@ -3438,6 +3483,8 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
 .voicebars.speaking i { background: var(--signal); animation: vbar 0.72s ease-in-out infinite; }
 .voicebars.speaking i:nth-child(2){animation-delay:.09s}.voicebars.speaking i:nth-child(3){animation-delay:.18s}.voicebars.speaking i:nth-child(4){animation-delay:.05s}.voicebars.speaking i:nth-child(5){animation-delay:.22s}.voicebars.speaking i:nth-child(6){animation-delay:.13s}.voicebars.speaking i:nth-child(7){animation-delay:.27s}
 @keyframes vbar { 0%,100% { transform: scaleY(0.45); } 50% { transform: scaleY(1.9); } }
+/* When analyser is driving bar heights directly, suppress the CSS animation */
+.voicebars.live i { animation: none; }
 
 /* ---- disposition / mood ---- */
 .iv-mood { display: flex; align-items: center; gap: 10px; margin-top: 2px; }
@@ -4086,7 +4133,7 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
               </svg>
               Stop
             </button>
-            <button id="mic-btn" class="muted" title="Press Space to talk" aria-label="Input mode">
+            <button id="mic-btn" class="muted" title="Switch to mic mode" aria-label="Input mode">
               <div class="mode-thumb"></div>
               <span class="mode-side mode-mic">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -4120,12 +4167,20 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
             <img id="img-preview-thumb" alt="attached image">
             <button id="img-remove-btn" title="Remove image">×</button>
           </div>
+          <button id="ptt-btn" type="button" aria-label="Hold to talk">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="9" y="2" width="6" height="12" rx="3"/>
+              <path d="M5 10v2a7 7 0 0 0 14 0v-2"/>
+              <line x1="12" y1="19" x2="12" y2="22"/>
+            </svg>
+            <span id="ptt-label">Push to Talk</span>
+          </button>
           <textarea id="msg-input" rows="4" placeholder="Speak, or write a line…"></textarea>
           <button id="send-btn" disabled title="Send (Enter)">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
           </button>
         </div>
-        <div class="entry-hint">Enter to send · hold the mic to speak · she may also speak unprompted</div>
+        <div class="entry-hint">Enter to send · toggle mic mode to use push-to-talk · she may also speak unprompted</div>
       </div>
 
       <!-- collapse toggles — sit on the edges of the central column -->
@@ -4730,13 +4785,74 @@ let _audioCtx = null;
 let _audioScheduledUntil = 0;  // AudioContext.currentTime when next chunk should start
 const AUDIO_SAMPLE_RATE = 22050;
 
+// Analyser for driving voicebar heights from real audio amplitude
+let _analyser = null;
+let _analyserData = null;
+let _vbarRafId = null;
+
+// 7 frequency bands across the speech range (fftSize=256 → 128 bins, bin width ≈ 86 Hz)
+// [lo, hi) bin indices: ~86-258 Hz, 258-516, 516-1032, 1032-1892, 1892-2924, 2924-4472, 4472-6536
+const _VBAR_BANDS = [[1,3],[3,6],[6,12],[12,22],[22,34],[34,52],[52,76]];
+
 function _getAudioCtx() {
   if (!_audioCtx || _audioCtx.state === 'closed') {
     _audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: AUDIO_SAMPLE_RATE });
     _audioScheduledUntil = 0;
+    _analyser = null; // force recreate on new context
   }
   if (_audioCtx.state === 'suspended') _audioCtx.resume();
   return _audioCtx;
+}
+
+function _getAnalyser(ctx) {
+  if (!_analyser) {
+    _analyser = ctx.createAnalyser();
+    _analyser.fftSize = 256;
+    _analyser.smoothingTimeConstant = 0.78;
+    _analyser.connect(ctx.destination);
+    _analyserData = new Uint8Array(_analyser.frequencyBinCount);
+  }
+  return _analyser;
+}
+
+function _startVbarLoop() {
+  const vb = document.querySelector('.voicebars');
+  if (!vb) return;
+  // Only drive bars from audio data if an AudioContext actually exists.
+  // In text-only mode there's no audio, so keep the CSS fallback animation.
+  if (!_audioCtx || _audioCtx.state === 'closed') return;
+  vb.classList.add('live');
+  function tick() {
+    if (!vb.classList.contains('speaking')) {
+      vb.classList.remove('live');
+      vb.querySelectorAll('i').forEach(b => b.style.transform = '');
+      _vbarRafId = null;
+      return;
+    }
+    if (_analyser && _analyserData) {
+      _analyser.getByteFrequencyData(_analyserData);
+      const bars = vb.querySelectorAll('i');
+      bars.forEach((bar, i) => {
+        const [lo, hi] = _VBAR_BANDS[i] || [0, 1];
+        let sum = 0;
+        for (let b = lo; b < hi; b++) sum += _analyserData[b];
+        const avg = sum / (hi - lo);
+        const scale = 0.45 + (avg / 255) * 1.55;
+        bar.style.transform = `scaleY(${scale.toFixed(3)})`;
+      });
+    }
+    _vbarRafId = requestAnimationFrame(tick);
+  }
+  _vbarRafId = requestAnimationFrame(tick);
+}
+
+function _stopVbarLoop() {
+  if (_vbarRafId) { cancelAnimationFrame(_vbarRafId); _vbarRafId = null; }
+  const vb = document.querySelector('.voicebars');
+  if (vb) {
+    vb.classList.remove('live');
+    vb.querySelectorAll('i').forEach(b => b.style.transform = '');
+  }
 }
 
 function handleBinaryAudio(buf) {
@@ -4771,7 +4887,7 @@ function handleBinaryAudio(buf) {
 
   const source = ctx.createBufferSource();
   source.buffer = audioBuffer;
-  source.connect(ctx.destination);
+  source.connect(_getAnalyser(ctx));
 
   // Schedule gaplessly: start at the end of the last scheduled chunk
   const now = ctx.currentTime;
@@ -4951,6 +5067,8 @@ function handle(msg) {
       const btn = document.getElementById('interrupt-btn');
       brainIsSpeaking = !!msg.active;
       btn.classList.toggle('visible', brainIsSpeaking);
+      if (brainIsSpeaking) _speechPulse.start();
+      else                  _speechPulse.stop();
       if (micState === 'off' && micActive) {
         clearTimeout(voiceRestartTimer);
         if (brainIsSpeaking) {
@@ -5357,6 +5475,10 @@ function appendThought(text, chemDelta, tsEpoch) {
   div.innerHTML = `<span class="thought-ts">${ts}</span><span class="thought-tx">${text}${chemHtml}</span>`;
   feed.prepend(div);
 
+  // Keep only the 5 most recent thoughts
+  const items = feed.querySelectorAll('.thought-item');
+  for (let i = 5; i < items.length; i++) items[i].remove();
+
   // Flash the Thoughts tab badge if it's not active
   const thoughtsTab = document.querySelector('.left-tab[data-tab="thoughts"]');
   if (thoughtsTab && !thoughtsTab.classList.contains('active')) {
@@ -5536,23 +5658,65 @@ let finalTranscript = '';
 let autoSendTimer = null;
 const AUTO_SEND_DELAY_MS = 1500;
 
-// Force text mode on every load — mic is off until user presses Space.
-micBtn.classList.remove('listening');
-micBtn.classList.add('muted');
-micBtn.title = 'Press Space to talk';
-
 // Single source of truth for mic state: 'off' | 'muted' | 'active'
 // 'off'    = no Python voice mode (browser press-to-talk only)
 // 'muted'  = Python voice active, mic silenced
 // 'active' = Python voice active, mic listening
 let micState = 'off';
 
-// Push-to-talk toggle state: true = mic is open, false = closed.
-// One Space press opens, the next closes and sends. No holding required.
+// Push-to-talk toggle state: true = mic is open, false = closed (Python voice mode).
 let pttActive = false;
+
+// Input mode: 'text' (textarea) | 'mic' (PTT button). Persisted in localStorage.
+let inputMode = localStorage.getItem('brain_input_mode') || 'text';
+
+const pttBtn   = document.getElementById('ptt-btn');
+const pttLabel = document.getElementById('ptt-label');
+
+function setInputMode(mode) {
+  inputMode = mode;
+  localStorage.setItem('brain_input_mode', mode);
+  document.querySelector('.input-wrap').classList.toggle('mic-mode', mode === 'mic');
+  if (mode === 'text') {
+    micBtn.classList.add('muted');
+    micBtn.title = 'Switch to mic mode';
+    if (micActive) stopListening(false);
+  } else {
+    micBtn.classList.remove('muted');
+    micBtn.title = 'Switch to text mode';
+  }
+}
+
+// Apply saved mode on load.
+setInputMode(inputMode);
 
 // Tracks whether the brain is currently speaking (TTS active).
 let brainIsSpeaking = false;
+
+// Speech-output firing loop — pulses motor cortex, brainstem, and frontal
+// (Broca's) while TTS is active to match biological speech-output activity.
+const _speechPulse = {
+  timers: [],
+  start() {
+    this.stop();
+    const pulse = (regionId, intensity, interval, jitter) => {
+      const fire = () => {
+        if (!brainIsSpeaking) return;
+        activateRegion(regionId, intensity, 'speech');
+        const next = interval + (Math.random() * jitter * 2 - jitter);
+        this.timers.push(setTimeout(fire, next));
+      };
+      this.timers.push(setTimeout(fire, Math.random() * interval));
+    };
+    pulse('motor',    0.72, 700,  120);   // articulation — steady
+    pulse('brainstem', 0.55, 900, 180);   // vocal output gate — slightly slower
+    pulse('frontal',   0.38, 1500, 300);  // Broca's area — lighter, slowest
+  },
+  stop() {
+    this.timers.forEach(t => clearTimeout(t));
+    this.timers = [];
+  },
+};
 // Timer used to reopen Deepgram after a turn when no TTS fires (text-only mode).
 let voiceRestartTimer = null;
 
@@ -5562,29 +5726,32 @@ function handleMicState(status) {
   if (micState === 'active') {
     micBtn.classList.remove('muted');
     micBtn.classList.add('listening');
-    micBtn.title = 'Listening… press Space to send';
+    micBtn.title = 'Listening…';
     msgInput.classList.add('voice-listening');
-    msgInput.placeholder = '🎙  Listening… press Space to send';
   } else if (micState === 'muted') {
     micBtn.classList.remove('listening');
-    micBtn.classList.add('muted');
-    micBtn.title = 'Press Space to talk';
+    // Restore mic-btn visual to match current inputMode
+    if (inputMode === 'text') micBtn.classList.add('muted');
+    micBtn.title = inputMode === 'mic' ? 'Switch to text mode' : 'Switch to mic mode';
     msgInput.classList.remove('voice-listening');
-    msgInput.placeholder = 'Press Space to talk… or type a message';
-    pttActive = false;  // mic was closed externally (e.g. TTS started) — reset toggle
+    pttActive = false;
+  } else {
+    // 'off' — restore to inputMode state
+    setInputMode(inputMode);
   }
-  // 'off' — leave button in its default press-to-talk state (set at page load)
 }
 
 function _micReset() {
   micActive = false;
   micBtn.classList.remove('listening');
-  micBtn.classList.add('muted');
-  micBtn.title = 'Press Space to talk';
+  if (inputMode === 'text') micBtn.classList.add('muted');
   pttActive = false;
   msgInput.classList.remove('voice-listening');
   transcriptBar.classList.remove('visible');
   transcriptText.textContent = '';
+  pttRecording = false;
+  pttBtn.classList.remove('recording');
+  pttLabel.textContent = 'Push to Talk';
 }
 
 async function startListening() {
@@ -5636,9 +5803,9 @@ async function startListening() {
   micActive = true;
   micBtn.classList.remove('muted');
   micBtn.classList.add('listening');
-  micBtn.title = 'Listening… press Space or click to send';
+  micBtn.title = 'Listening…';
   msgInput.classList.add('voice-listening');
-  transcriptText.textContent = 'Listening… press Space to send';
+  transcriptText.textContent = 'Listening…';
   transcriptBar.classList.add('visible');
 }
 
@@ -5740,14 +5907,42 @@ function handleTranscriptError(msg) {
 }
 
 micBtn.addEventListener('click', () => {
-  if (micState !== 'off') {
-    if (ws && ws.readyState === WebSocket.OPEN)
-      ws.send(JSON.stringify({ type: 'mic_toggle' }));
-    return;
-  }
-  if (micActive) stopListening(true);
-  else startListening();
+  if (micBtn.classList.contains('unsupported')) return;
+  // Always toggle input mode — server-side mic state is managed by the PTT button
+  setInputMode(inputMode === 'mic' ? 'text' : 'mic');
 });
+
+// PTT button — click to start recording, click again to stop and send.
+let pttRecording = false;
+
+function pttToggle() {
+  if (!pttRecording) {
+    // Start
+    pttRecording = true;
+    pttBtn.classList.add('recording');
+    pttLabel.textContent = 'Tap to Send';
+    if (micState !== 'off') {
+      pttActive = true;
+      if (ws && ws.readyState === WebSocket.OPEN)
+        ws.send(JSON.stringify({ type: 'mic_ptt', down: true }));
+    } else {
+      startListening();
+    }
+  } else {
+    // Stop + send
+    pttRecording = false;
+    pttBtn.classList.remove('recording');
+    pttLabel.textContent = 'Push to Talk';
+    if (micState !== 'off') {
+      pttActive = false;
+      if (ws && ws.readyState === WebSocket.OPEN)
+        ws.send(JSON.stringify({ type: 'mic_ptt', down: false }));
+    } else {
+      stopListening(true);
+    }
+  }
+}
+pttBtn.addEventListener('click', pttToggle);
 
 const interruptBtn = document.getElementById('interrupt-btn');
 interruptBtn.addEventListener('click', () => {
@@ -5758,17 +5953,14 @@ interruptBtn.addEventListener('click', () => {
 
 document.addEventListener('keydown', (e) => {
   if (e.code === 'Space' && document.activeElement !== msgInput && !e.repeat) {
-    e.preventDefault();
     if (micState !== 'off') {
-      // Python voice mode: push-to-talk toggle.
-      // First press opens the mic; second press closes and sends.
+      // Python voice mode: spacebar toggles the server-side mic.
+      e.preventDefault();
       pttActive = !pttActive;
       if (ws && ws.readyState === WebSocket.OPEN)
         ws.send(JSON.stringify({ type: 'mic_ptt', down: pttActive }));
-      return;
     }
-    if (!micActive) startListening();
-    else stopListening(true);
+    // Browser mic is PTT-button only — no spacebar shortcut.
   }
 });
 
@@ -7470,10 +7662,12 @@ function _applyMoodTint() {
       _setMeter('m-pace',   msg.pace   || 0, 1.5, 5.5);
     } else if (msg.type === 'speaking' && voicebars) {
       voicebars.classList.toggle('speaking', !!msg.active);
+      if (msg.active) _startVbarLoop(); else _stopVbarLoop();
     } else if (msg.type === 'proactive_speech' && voicebars) {
       // brief flourish when she speaks unprompted (no explicit speaking event)
       voicebars.classList.add('speaking');
-      setTimeout(function () { voicebars.classList.remove('speaking'); }, 2600);
+      _startVbarLoop();
+      setTimeout(function () { voicebars.classList.remove('speaking'); _stopVbarLoop(); }, 2600);
     }
   };
   _applyMoodTint(); // initial baseline tint

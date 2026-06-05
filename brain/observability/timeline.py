@@ -523,6 +523,17 @@ class ObservabilityLayer:
                         },
                     )
 
+                # Post gating efficiency as chartable scores
+                _total_possible = trace.llm_calls + trace.llm_calls_saved
+                _gating_scores: dict[str, Any] = {
+                    "gating.bypassed_count": trace.gating_bypassed_count,
+                }
+                if _total_possible > 0:
+                    _gating_scores["gating.efficiency"] = (
+                        trace.llm_calls_saved / _total_possible
+                    )
+                self._post_scores(trace.turn_id, _gating_scores)
+
                 # Trim old trace_ids to avoid unbounded growth in long sessions
                 if len(self._trace_ids) > 200:
                     oldest = list(self._trace_ids.keys())[:50]

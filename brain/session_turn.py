@@ -245,6 +245,41 @@ class _TurnMixin:
                 features["speaker_name"] = _primary
                 features["_speaker_assumed_primary"] = True
 
+        # ── Presence-shadow: speaker-arrival chemistry nudge ──────────────────
+        # When a newly identified speaker differs from the previous turn's speaker,
+        # apply a small neuromod drag proportional to their stored affection.
+        # Negative relationship → GABA (wariness) + NE (alertness). Mild by design:
+        # max deltas are 0.08/0.04, so a deeply negative relationship barely moves
+        # the needle on a single turn rather than instantly flipping the mood.
+        # Only fires on voice-identified speakers (not the typed-input primary-user
+        # fallback), so text-only sessions are unaffected.
+        _resolved_speaker = features.get("speaker_name") if isinstance(features, dict) else None
+        if (
+            _resolved_speaker
+            and not features.get("_speaker_assumed_primary")
+            and _resolved_speaker != self._last_speaker_name
+        ):
+            try:
+                from brain.metacognition import read_affection_score
+                _arr_schema = getattr(self.hippocampus, "_schema", None)
+                _arr_affection = read_affection_score(_arr_schema, _resolved_speaker)
+                if _arr_affection < -5:
+                    _arr_weight = min(1.0, (-_arr_affection - 5) / 45.0)
+                    _arr_gaba = round(_arr_weight * 0.08, 4)
+                    _arr_ne = round(_arr_weight * 0.04, 4)
+                    self.bus.neuromod.add("GABA", _arr_gaba)
+                    self.bus.neuromod.add("NE", _arr_ne)
+                    _arr_snap = self.bus.neuromod.snapshot()
+                    trace.neuromod_midturn.append({"trigger": "presence_shadow", "snapshot": _arr_snap})
+                    if self._emitter:
+                        await self._emitter.emit_neuromod(_arr_snap)
+                    logger.debug(
+                        "[PresenceShadow] %s arrived (affection=%d) → GABA+%.3f NE+%.3f",
+                        _resolved_speaker, _arr_affection, _arr_gaba, _arr_ne,
+                    )
+            except Exception:
+                pass
+
         # ── Input modality + text paralinguistics ─────────────────────────────
         # Modality is derived from speaker detection: if the primary-user default
         # was applied (_speaker_assumed_primary) or ears are off → text turn.
@@ -947,6 +982,8 @@ class _TurnMixin:
                 draft_scores=draft_scores,
             )
 
+        self._last_speaker_name = features.get("speaker_name") or self._last_speaker_name
+
         self._session_traces.append(
             {
                 "user_input": user_input,
@@ -1206,6 +1243,43 @@ class _TurnMixin:
             logger.warning("[MotorCortex] Lobe synthesis failed (%s): %s", tool_name, e)
             return ""
 
+    async def _synthesize_tool_result(self, goal: str, tool_name: str, output: str, turn_id: str) -> str:
+        """Synthesize raw tool/action output into a natural spoken update.
+
+        Raw command output (file listings, JSON, logs) must never be spoken directly.
+        This turns it into a brief first-person conversational update about what was found.
+        """
+        parietal_ctx = self.parietal.recent_turns_text(n=3)
+        prompt = (
+            "You just finished a background task. Summarize what you found or did in "
+            "1–2 conversational sentences. Be concrete but don't recite raw output — "
+            "translate it into plain speech. If the result is uninteresting or just "
+            "a list of internal files/paths with no meaningful content, say nothing "
+            "(respond with exactly: SILENT).\n\n"
+            f"Original goal: {goal}\n\n"
+            f"Tool used: {tool_name}\n\n"
+            f"Raw output:\n{output[:800]}\n\n"
+            f"Recent conversation:\n{parietal_ctx}"
+        )
+        try:
+            result = await self.router.call(
+                "haiku",
+                "You are giving a brief spoken update about something you just did. "
+                "First person, conversational, never read out raw paths or code.",
+                [{"role": "user", "content": prompt}],
+                cluster="motor_cortex",
+                cell="result_synthesizer",
+                turn_id=turn_id + "_ts",
+                max_tokens=150,
+            )
+            text = (result or "").strip()
+            if text.upper() == "SILENT" or not text:
+                return ""
+            return text
+        except Exception as e:
+            logger.warning("[MotorCortex] Tool result synthesis failed (%s): %s", tool_name, e)
+            return ""
+
     async def _run_motor_reactive(self, features: dict, turn_id: str) -> None:
         """Run a reactive motor action in the background.
 
@@ -1273,7 +1347,7 @@ class _TurnMixin:
             )
             if len(self._recent_task_results) > 3:
                 self._recent_task_results.pop(0)
-            msg = output[:500] if output else ""
+            msg = await self._synthesize_tool_result(goal, tool_name, output, turn_id)
 
         if not msg:
             return
