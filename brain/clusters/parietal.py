@@ -28,6 +28,7 @@ class UserStyleVector:
     verbosity: 0=terse, 1=expansive
     sentiment: -1 to +1 (tracking user's emotional tone in text)
     """
+
     formality: float = 0.5
     verbosity: float = 0.5
     sentiment: float = 0.0
@@ -39,14 +40,16 @@ class ModalityStyleState:
     """Separate style vectors per input channel.
     Text and voice have different norms — they must not cross-contaminate.
     """
+
     voice: UserStyleVector = field(default_factory=UserStyleVector)
     text: UserStyleVector = field(default_factory=UserStyleVector)
 
     def get(self, modality: str) -> UserStyleVector:
         return self.voice if modality == "voice" else self.text
 
-    def update(self, modality: str, formality: float, verbosity: float,
-               sentiment: float, alpha: float) -> None:
+    def update(
+        self, modality: str, formality: float, verbosity: float, sentiment: float, alpha: float
+    ) -> None:
         """EMA update for the given modality's style vector."""
         vec = self.get(modality)
         if vec.turns_tracked == 0:
@@ -223,9 +226,7 @@ class ParietalCluster:
             }
             line = f"- vectors: {json.dumps(payload)}"
             schema_file = (
-                schema_store.ensure_speaker_schema(speaker_name)
-                if speaker_name
-                else "user.md"
+                schema_store.ensure_speaker_schema(speaker_name) if speaker_name else "user.md"
             )
             await schema_store.upsert_section(schema_file, "Style register", line)
         except Exception:
@@ -237,11 +238,7 @@ class ParietalCluster:
         import re
 
         try:
-            schema_file = (
-                schema_store.speaker_filename(speaker_name)
-                if speaker_name
-                else "user.md"
-            )
+            schema_file = schema_store.speaker_filename(speaker_name) if speaker_name else "user.md"
             content = schema_store.read(schema_file)
             if not content:
                 return
@@ -294,13 +291,17 @@ class ParietalCluster:
         the note's prose, not by clamping the description."""
         vec = self.get_user_style(modality)
         formality_label = (
-            "formally" if vec.formality > 0.60
-            else "casually" if vec.formality < 0.30
+            "formally"
+            if vec.formality > 0.60
+            else "casually"
+            if vec.formality < 0.30
             else "neutrally"
         )
         verbosity_label = (
-            "expansively" if vec.verbosity > 0.60
-            else "tersely" if vec.verbosity < 0.32
+            "expansively"
+            if vec.verbosity > 0.60
+            else "tersely"
+            if vec.verbosity < 0.32
             else "concisely"
         )
         return formality_label, verbosity_label

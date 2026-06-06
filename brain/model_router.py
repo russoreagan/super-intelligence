@@ -24,10 +24,10 @@ MODEL_MAP = {
     "local-free": "local-free",  # same model as local, plain-text output (no JSON grammar)
     "local-code": "local-code",  # routes to OLLAMA_CODE_MODEL (defaults to qwen2.5:14b — the hot model)
     "local-general": "local-general",  # routes to OLLAMA_GENERAL_MODEL (qwen2.5:14b)
-    "runpod": "runpod",               # RunPod remote Ollama — same options as local
-    "runpod-free": "runpod-free",     # RunPod plain-text output (no JSON grammar)
-    "runpod-code": "runpod-code",     # RunPod code/JSON settings (temp=0.1, ctx=8192)
-    "runpod-general": "runpod-general", # RunPod general settings (temp=0.3, ctx=8192)
+    "runpod": "runpod",  # RunPod remote Ollama — same options as local
+    "runpod-free": "runpod-free",  # RunPod plain-text output (no JSON grammar)
+    "runpod-code": "runpod-code",  # RunPod code/JSON settings (temp=0.1, ctx=8192)
+    "runpod-general": "runpod-general",  # RunPod general settings (temp=0.3, ctx=8192)
 }
 
 # Embedding dim must match EpisodicStore table schema (see brain/second_brain/store.py).
@@ -116,7 +116,13 @@ class ModelRouter:
         # Cloud calls in this mode are budgeted and capped to prevent bill creep.
         self._bg_mode: bool = False
         # Session-level token counter for background cloud usage (in + out combined).
+        # Kept for diagnostics/logging; the rate gate uses the token bucket below.
         self._bg_cloud_tokens_used: int = 0
+        # Token bucket for per-hour rate limiting.  Starts full (one hour's allowance).
+        # Refills at bg_cloud_token_rate tokens/hour; can go negative (borrows from
+        # the next hour).  A call is blocked only when the bucket is at or below 0.
+        self._bg_cloud_bucket: float = 100_000.0
+        self._bg_cloud_bucket_ts: float = time.monotonic()
         # Lazily-created semaphore; limits concurrent Ollama calls to protect device.
         self._local_semaphore: asyncio.Semaphore | None = None
         # Interactive-turn semaphore: limits concurrent Anthropic calls from live turns.
@@ -219,12 +225,21 @@ class ModelRouter:
 
     @property
     def bg_cloud_budget_remaining(self) -> int:
-        """How many background cloud tokens are left before fallback to local."""
+        """Current token-bucket level (can be negative when borrowed from next hour)."""
+        self._refill_bg_bucket()
+        return int(self._bg_cloud_bucket)
+
+    def _refill_bg_bucket(self) -> None:
+        """Drip tokens into the bucket based on elapsed wall-clock time."""
         from brain.settings import settings as _settings
 
-        _s = _settings.get
-        budget = int(_s("bg_cloud_token_budget") or 50_000)
-        return max(0, budget - self._bg_cloud_tokens_used)
+        now = time.monotonic()
+        elapsed = now - self._bg_cloud_bucket_ts
+        self._bg_cloud_bucket_ts = now
+        rate_per_hr = float(_settings.get("bg_cloud_token_rate") or 100_000)
+        refill = elapsed * rate_per_hr / 3600.0
+        # Cap at one full hour's worth so idle time doesn't accumulate indefinitely.
+        self._bg_cloud_bucket = min(rate_per_hr, self._bg_cloud_bucket + refill)
 
     def _get_local_semaphore(self) -> asyncio.Semaphore:
         """Lazily-created concurrency limiter for Ollama calls."""
@@ -342,6 +357,7 @@ class ModelRouter:
         is_runpod = model_key.startswith("runpod")
         if is_runpod:
             from brain.settings import settings as _s
+
             host = str(_s.get("runpod_host") or "") or RUNPOD_HOST
             keep_alive = RUNPOD_KEEP_ALIVE
         else:
@@ -405,16 +421,19 @@ class ModelRouter:
             model_id = model_key
             _is_cloud = False
 
-        # Background mode: apply cloud budget + per-call caps to protect against
-        # runaway spend on autonomous work.
+        # Background mode: apply per-hour rate limit + per-call caps to protect
+        # against runaway spend on autonomous work.
         if self._bg_mode and _is_cloud:
-            budget = int(_s("bg_cloud_token_budget") or 50_000)
-            if self._bg_cloud_tokens_used >= budget:
+            self._refill_bg_bucket()
+            rate_per_hr = float(_s("bg_cloud_token_rate") or 100_000)
+            if self._bg_cloud_bucket <= 0:
                 logger.warning(
-                    "[Resource] Background cloud budget exhausted (%d/%d tokens used) "
+                    "[Resource] Background rate-limited (bucket: %d tokens, "
+                    "refilling at %.0f/hr, session total: %d) "
                     "— routing %s/%s to local for this call.",
+                    int(self._bg_cloud_bucket),
+                    rate_per_hr,
                     self._bg_cloud_tokens_used,
-                    budget,
                     cluster,
                     cell,
                 )
@@ -529,18 +548,20 @@ class ModelRouter:
                 )
                 cache_read = 0
             if self._bg_mode:
-                self._bg_cloud_tokens_used += in_tok + out_tok
+                spent = in_tok + out_tok
+                self._bg_cloud_tokens_used += spent
+                self._bg_cloud_bucket -= spent
                 logger.debug(
-                    "[Resource] BG cloud tokens used: %d/%d (this call: %d+%d)",
-                    self._bg_cloud_tokens_used,
-                    int(_s("bg_cloud_token_budget") or 50_000),
+                    "[Resource] BG cloud bucket: %d tokens remaining (this call: %d+%d, session: %d)",
+                    int(self._bg_cloud_bucket),
                     in_tok,
                     out_tok,
+                    self._bg_cloud_tokens_used,
                 )
             # USD tracking + logging
             usd = self._charge_cloud_usd(model_id, in_tok, out_tok, cache_read)
             if cache_read > 0:
-                logger.debug(
+                logger.info(
                     "[Cache] %s/%s: %d cache-read tokens (%.4f¢ saved vs uncached)",
                     cluster,
                     cell,
@@ -575,12 +596,26 @@ class ModelRouter:
                     system_with_context, messages, max_tokens
                 )
             if self._bg_mode:
-                self._bg_cloud_tokens_used += in_tok + out_tok
-                logger.debug("[Resource] BG cloud tokens used: %d/%d (this call: %d+%d)",
-                             self._bg_cloud_tokens_used,
-                             int(_s("bg_cloud_token_budget") or 50_000), in_tok, out_tok)
-        elif model_id in ("local", "local-free", "local-code", "local-general",
-                          "runpod", "runpod-free", "runpod-code", "runpod-general"):
+                spent = in_tok + out_tok
+                self._bg_cloud_tokens_used += spent
+                self._bg_cloud_bucket -= spent
+                logger.debug(
+                    "[Resource] BG cloud bucket: %d tokens remaining (this call: %d+%d, session: %d)",
+                    int(self._bg_cloud_bucket),
+                    in_tok,
+                    out_tok,
+                    self._bg_cloud_tokens_used,
+                )
+        elif model_id in (
+            "local",
+            "local-free",
+            "local-code",
+            "local-general",
+            "runpod",
+            "runpod-free",
+            "runpod-code",
+            "runpod-general",
+        ):
             text, in_tok, out_tok = await self._call_local(
                 system_with_context,
                 messages,
@@ -600,8 +635,14 @@ class ModelRouter:
 
         latency = time.time() - start
         self._log_call(
-            model_id, messages, in_tok, out_tok, latency,
-            cluster=cluster or "", cell=cell or "", skills=skills or [],
+            model_id,
+            messages,
+            in_tok,
+            out_tok,
+            latency,
+            cluster=cluster or "",
+            cell=cell or "",
+            skills=skills or [],
         )
         if self._obs and turn_id:
             try:
@@ -645,15 +686,18 @@ class ModelRouter:
         model_id = MODEL_MAP.get(model_key, model_key)
         _is_cloud = model_id.startswith("claude") or model_id.startswith("gemini")
 
-        # Background mode: apply cloud budget check — if exhausted, fall back gracefully.
+        # Background mode: apply per-hour rate limit — if exhausted, fall back gracefully.
         if self._bg_mode and _is_cloud:
-            budget = int(_s("bg_cloud_token_budget") or 50_000)
-            if self._bg_cloud_tokens_used >= budget:
+            self._refill_bg_bucket()
+            rate_per_hr = float(_s("bg_cloud_token_rate") or 100_000)
+            if self._bg_cloud_bucket <= 0:
                 logger.warning(
-                    "[Resource] Background cloud budget exhausted (%d/%d tokens used) "
+                    "[Resource] Background rate-limited (bucket: %d tokens, "
+                    "refilling at %.0f/hr, session total: %d) "
                     "— call_structured %s/%s falling back to empty dict.",
+                    int(self._bg_cloud_bucket),
+                    rate_per_hr,
                     self._bg_cloud_tokens_used,
-                    budget,
                     cluster,
                     cell,
                 )
@@ -698,22 +742,34 @@ class ModelRouter:
             cache_read = getattr(usage, "cache_read_input_tokens", 0) if usage else 0
 
             if self._bg_mode:
-                self._bg_cloud_tokens_used += in_tok + out_tok
+                spent = in_tok + out_tok
+                self._bg_cloud_tokens_used += spent
+                self._bg_cloud_bucket -= spent
                 logger.debug(
-                    "[Resource] BG cloud tokens used: %d/%d (call_structured %s/%s: %d+%d)",
-                    self._bg_cloud_tokens_used,
-                    int(_s("bg_cloud_token_budget") or 50_000),
+                    "[Resource] BG cloud bucket: %d tokens remaining (call_structured %s/%s: %d+%d, session: %d)",
+                    int(self._bg_cloud_bucket),
                     cluster,
                     cell,
                     in_tok,
                     out_tok,
+                    self._bg_cloud_tokens_used,
                 )
             self._charge_cloud_usd(model_id, in_tok, out_tok, cache_read)
+            if cache_read > 0:
+                logger.info(
+                    "[Cache] %s/%s: %d cache-read tokens (%.4f¢ saved vs uncached)",
+                    cluster,
+                    cell,
+                    cache_read,
+                    cache_read * 0.27 / 10_000,
+                )
 
             for block in response.content:
                 if getattr(block, "type", None) == "tool_use":
                     return block.input or {}
-            logger.warning("[ModelRouter] call_structured %s/%s: no tool_use block in response", cluster, cell)
+            logger.warning(
+                "[ModelRouter] call_structured %s/%s: no tool_use block in response", cluster, cell
+            )
             return {}
         except Exception as e:
             logger.warning("[ModelRouter] call_structured %s/%s failed: %s", cluster, cell, e)
@@ -748,7 +804,9 @@ class ModelRouter:
             content = m["content"]
             if i == len(messages) - 1:
                 if isinstance(content, str):
-                    content = [{"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}]
+                    content = [
+                        {"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}
+                    ]
                 elif isinstance(content, list) and content:
                     content = list(content)
                     last = dict(content[-1])
@@ -827,16 +885,23 @@ class ModelRouter:
             )
         return content or ""
 
-    async def _call_local(self, system_prompt: str,
-                          messages: list[dict], max_tokens: int = 1024,
-                          local_variant: str = "local",
-                          temperature: float | None = None) -> tuple[str, int, int]:
-        flat_messages = [{"role": m["role"], "content": self._flatten_content(m["content"])} for m in messages]
+    async def _call_local(
+        self,
+        system_prompt: str,
+        messages: list[dict],
+        max_tokens: int = 1024,
+        local_variant: str = "local",
+        temperature: float | None = None,
+    ) -> tuple[str, int, int]:
+        flat_messages = [
+            {"role": m["role"], "content": self._flatten_content(m["content"])} for m in messages
+        ]
         is_runpod = local_variant.startswith("runpod")
         # For runpod variants, normalise to the equivalent local variant for options lookup
         options_variant = local_variant.replace("runpod", "local") if is_runpod else local_variant
         if is_runpod:
             from brain.settings import settings as _s
+
             host = str(_s.get("runpod_host") or "") or RUNPOD_HOST
             http_timeout = RUNPOD_HTTP_TIMEOUT
             keep_alive = RUNPOD_KEEP_ALIVE
@@ -847,6 +912,7 @@ class ModelRouter:
         base_model = os.environ.get("OLLAMA_MODEL", "qwen2.5:14b")
         if is_runpod:
             from brain.settings import settings as _s
+
             model_name = str(_s.get("runpod_model") or "") or RUNPOD_MODEL
         elif options_variant == "local-code":
             model_name = OLLAMA_CODE_MODEL
@@ -911,8 +977,9 @@ class ModelRouter:
                 in_tok = out_tok = 0
                 got_done = False
                 try:
-                    async with self._get_http().stream("POST", f"{host}/api/chat",
-                                                       json=payload, timeout=http_timeout) as resp:
+                    async with self._get_http().stream(
+                        "POST", f"{host}/api/chat", json=payload, timeout=http_timeout
+                    ) as resp:
                         resp.raise_for_status()
                         async for line in resp.aiter_lines():
                             if not line:
@@ -931,11 +998,13 @@ class ModelRouter:
                     if text_parts or got_done:
                         return _strip_chatml("".join(text_parts)), in_tok, out_tok
                     # Connected but produced nothing — treat as a soft failure and retry.
-                    logger.warning("[RunPod] stream produced no content (attempt %d/%d)",
-                                   attempt + 1, attempts)
+                    logger.warning(
+                        "[RunPod] stream produced no content (attempt %d/%d)", attempt + 1, attempts
+                    )
                 except Exception as e:
-                    logger.warning("[RunPod] stream error (attempt %d/%d): %s",
-                                   attempt + 1, attempts, e)
+                    logger.warning(
+                        "[RunPod] stream error (attempt %d/%d): %s", attempt + 1, attempts, e
+                    )
                     await self._reset_http()  # drop stale sockets before retrying
                 if attempt < attempts - 1:
                     await asyncio.sleep(min(2.0, 0.5 * (attempt + 1)))
@@ -945,22 +1014,26 @@ class ModelRouter:
             try:
                 await self._reset_http()
                 async with self._get_local_semaphore():
-                    r = await self._get_http().post(f"{host}/api/chat",
-                                                    json={**payload, "stream": False},
-                                                    timeout=http_timeout)
+                    r = await self._get_http().post(
+                        f"{host}/api/chat", json={**payload, "stream": False}, timeout=http_timeout
+                    )
                 r.raise_for_status()
                 data = r.json()
-                return (_strip_chatml(data["message"]["content"]),
-                        int(data.get("prompt_eval_count", 0)),
-                        int(data.get("eval_count", 0)))
+                return (
+                    _strip_chatml(data["message"]["content"]),
+                    int(data.get("prompt_eval_count", 0)),
+                    int(data.get("eval_count", 0)),
+                )
             except Exception as e:
-                logger.warning("[RunPod] post fallback failed after %d stream attempts: %s",
-                               attempts, e)
+                logger.warning(
+                    "[RunPod] post fallback failed after %d stream attempts: %s", attempts, e
+                )
                 return "", 0, 0
         else:
             async with self._get_local_semaphore():
-                r = await self._get_http().post(f"{host}/api/chat", json=payload,
-                                                timeout=http_timeout)
+                r = await self._get_http().post(
+                    f"{host}/api/chat", json=payload, timeout=http_timeout
+                )
             r.raise_for_status()
             data = r.json()
             in_tok = int(data.get("prompt_eval_count", 0))

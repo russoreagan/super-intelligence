@@ -113,13 +113,19 @@ class TurnTrace:
     # Modulation counters (incremented by SwitchNeuron.fire / should_fire)
     modulated_switch_count: int = 0  # switches where |mod_delta| > 0.01
     suppressed_switch_count: int = 0  # near-misses: level >= base but < effective
+    # Continuous inhibitory-pressure interoception: summed upward threshold shift
+    # (Σ max(0, effective − base)) chemistry applied across modulated gate
+    # evaluations this turn. Unlike suppressed_switch_count (a rare discrete
+    # near-miss event), this is graded and always-on — the biologically faithful
+    # "how hard is gain control inhibiting" signal the hypothalamus reads.
+    suppression_pressure: float = 0.0
 
     # ── flock_dynamics: criticality telemetry (all None/0 when flag off) ──────
-    branching_sigma: "float | None" = None       # this turn's σ (None if small-N guard tripped)
-    sigma_smoothed: "float | None" = None         # window-mean σ the controller steers on
-    avalanche_size: int = 0                        # number of fires this turn (avalanche size)
-    criticality_setpoint: "float | None" = None   # arousal-modulated σ* target
-    modulation_gain_applied: "float | None" = None  # gain the controller drove this turn
+    branching_sigma: float | None = None  # this turn's σ (None if small-N guard tripped)
+    sigma_smoothed: float | None = None  # window-mean σ the controller steers on
+    avalanche_size: int = 0  # number of fires this turn (avalanche size)
+    criticality_setpoint: float | None = None  # arousal-modulated σ* target
+    modulation_gain_applied: float | None = None  # gain the controller drove this turn
 
     # ── Deliberate emotion expression (set_mood tool + inline markup) ─────────
     # Each entry: {"emotion": str, "source": "tool"|"inline", "preview": str}
@@ -148,22 +154,22 @@ class TurnTrace:
     # Per-turn signals that make the §2.4 research bets falsifiable. Without
     # these, a feature that never fires is indistinguishable from one that fires
     # and has no effect.
-    disclosure_fired: bool = False           # self-disclosure opportunity injected this turn
-    style_note_emitted: bool = False         # bounded style-synchrony note injected this turn
-    oxt_connected_reached: bool = False      # OXT cleared the "connected" threshold this turn
-    bond: float = 0.0                        # latent closeness high-water mark for this speaker
-    reunion_boost_applied: float = 1.0       # affection-delta multiplier on reengagement (1.0 = none)
-    user_sentiment: float = 0.0              # user's detected sentiment this turn (for reciprocation proxy)
+    disclosure_fired: bool = False  # self-disclosure opportunity injected this turn
+    style_note_emitted: bool = False  # bounded style-synchrony note injected this turn
+    oxt_connected_reached: bool = False  # OXT cleared the "connected" threshold this turn
+    bond: float = 0.0  # latent closeness high-water mark for this speaker
+    reunion_boost_applied: float = 1.0  # affection-delta multiplier on reengagement (1.0 = none)
+    user_sentiment: float = 0.0  # user's detected sentiment this turn (for reciprocation proxy)
     # Reciprocation proxy: did the user's sentiment rise on the turn AFTER a
     # disclosure? Populated one turn late by the session loop (None until known).
-    disclosure_reciprocated: "bool | None" = None
+    disclosure_reciprocated: bool | None = None
     # ── Relationship STAGE snapshot (irrecoverable post-hoc) ──────────────────
     # The schema (user.md) is continuously overwritten, so the relationship state
     # AT THE TIME OF THE TURN cannot be reconstructed later. Captured here so
     # every behavioural signal can be correlated against relationship depth.
-    affection: int = 0                       # live affection score at turn time (-50..100)
-    affection_label: str = ""                # guarded|cool|neutral|friendly|warm|close
-    familiarity_tier: str = ""               # new|acquainted|close
+    affection: int = 0  # live affection score at turn time (-50..100)
+    affection_label: str = ""  # guarded|cool|neutral|friendly|warm|close
+    familiarity_tier: str = ""  # new|acquainted|close
     # Selected draft's empathy score, hoisted from draft_scores for easy aggregation.
     selected_empathy_score: float = 0.0
     # The user's detected register this turn ("casual/terse" etc.) when style
@@ -388,6 +394,7 @@ class ObservabilityLayer:
                             "switches_fired": switches_fired,
                             "modulated_switch_count": trace.modulated_switch_count,
                             "suppressed_switch_count": trace.suppressed_switch_count,
+                            "suppression_pressure": round(trace.suppression_pressure, 4),
                             "modulation_gain": _gain,
                             # ── predict-and-surprise / wiring ─────────────
                             **(
@@ -440,17 +447,13 @@ class ObservabilityLayer:
                                 else {}
                             ),
                             **({"bond": trace.bond} if trace.bond else {}),
+                            **({"disclosure_fired": True} if trace.disclosure_fired else {}),
+                            **({"style_note_emitted": True} if trace.style_note_emitted else {}),
                             **(
-                                {"disclosure_fired": True}
-                                if trace.disclosure_fired
+                                {"style_register": trace.style_register}
+                                if trace.style_register
                                 else {}
                             ),
-                            **(
-                                {"style_note_emitted": True}
-                                if trace.style_note_emitted
-                                else {}
-                            ),
-                            **({"style_register": trace.style_register} if trace.style_register else {}),
                             **(
                                 {"performed_emotion_offered": trace.performed_emotion_offered}
                                 if trace.performed_emotion_offered
@@ -529,9 +532,7 @@ class ObservabilityLayer:
                     "gating.bypassed_count": trace.gating_bypassed_count,
                 }
                 if _total_possible > 0:
-                    _gating_scores["gating.efficiency"] = (
-                        trace.llm_calls_saved / _total_possible
-                    )
+                    _gating_scores["gating.efficiency"] = trace.llm_calls_saved / _total_possible
                 self._post_scores(trace.turn_id, _gating_scores)
 
                 # Trim old trace_ids to avoid unbounded growth in long sessions
@@ -881,9 +882,10 @@ class ObservabilityLayer:
             }
             # Also include key structural metrics as scores for charting
             for key in (
-                "predictor_accuracy_trend",
+                "predictor_accuracy_trend",  # strict exact-match (kept for continuity)
+                "predictor_match_frac_trend",  # graded prediction-error reduction — the primary signal
                 "gating_efficiency_trend",
-                "surprise_trend",
+                "surprise_trend",  # avg surprise falling = active-inference learning
                 "wiring_delta_magnitude",
                 "cross_session_drift",
             ):

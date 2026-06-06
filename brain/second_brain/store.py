@@ -58,6 +58,10 @@ class EpisodicStore:
     module must have user_id and persona set before any call.
     """
 
+    # Class-level default so instances built via __new__ (e.g. test doubles that
+    # bypass __init__) still answer the backend branch as local.
+    _use_supabase = False
+
     def __init__(self, persona: str = "") -> None:
         self._persona = persona
         # Local LanceDB state
@@ -71,6 +75,7 @@ class EpisodicStore:
 
     def _sb(self):
         from brain.second_brain.supabase_client import get_client, get_user_id
+
         return get_client(), get_user_id()
 
     def _sb_persona(self) -> str:
@@ -149,22 +154,24 @@ class EpisodicStore:
             sb, uid = self._sb()
             persona = self._sb_persona()
             vec = episode.vector or ([0.0] * EMBEDDING_DIM)
-            sb.table("episodes").insert({
-                "user_id": uid,
-                "persona": persona,
-                "session_id": episode.session_id,
-                "turn_id": episode.turn_id,
-                "ts": episode.ts,
-                "user_input": episode.user_input,
-                "entity_response": episode.entity_response,
-                "topic_tags": episode.topic_tags,
-                "emotion_state": episode.emotion_state,
-                "user_emotion": episode.user_emotion,
-                "entities": episode.entities,
-                "neuromod_snapshot": episode.neuromod_snapshot,
-                "surprise_score": episode.surprise_score,
-                "vector": f"[{','.join(str(v) for v in vec)}]",
-            }).execute()
+            sb.table("episodes").insert(
+                {
+                    "user_id": uid,
+                    "persona": persona,
+                    "session_id": episode.session_id,
+                    "turn_id": episode.turn_id,
+                    "ts": episode.ts,
+                    "user_input": episode.user_input,
+                    "entity_response": episode.entity_response,
+                    "topic_tags": episode.topic_tags,
+                    "emotion_state": episode.emotion_state,
+                    "user_emotion": episode.user_emotion,
+                    "entities": episode.entities,
+                    "neuromod_snapshot": episode.neuromod_snapshot,
+                    "surprise_score": episode.surprise_score,
+                    "vector": f"[{','.join(str(v) for v in vec)}]",
+                }
+            ).execute()
         except Exception as e:
             logger.error("[Episode DB] Supabase encode failed: %s", e)
 
@@ -195,13 +202,15 @@ class EpisodicStore:
     def _sb_recall_recent(self, limit: int) -> list[dict]:
         try:
             sb, uid = self._sb()
-            res = (sb.table("episodes")
-                   .select("*")
-                   .eq("user_id", uid)
-                   .eq("persona", self._sb_persona())
-                   .order("ts", desc=True)
-                   .limit(limit)
-                   .execute())
+            res = (
+                sb.table("episodes")
+                .select("*")
+                .eq("user_id", uid)
+                .eq("persona", self._sb_persona())
+                .order("ts", desc=True)
+                .limit(limit)
+                .execute()
+            )
             return self._parse_rows(res.data or [])
         except Exception as e:
             logger.error("[Episode DB] Supabase recall_recent failed: %s", e)
@@ -229,16 +238,19 @@ class EpisodicStore:
         try:
             sb, uid = self._sb()
             # Supabase doesn't have ORDER BY RANDOM() directly — use rpc or a large limit+slice
-            res = (sb.table("episodes")
-                   .select("*")
-                   .eq("user_id", uid)
-                   .eq("persona", self._sb_persona())
-                   .limit(200)
-                   .execute())
+            res = (
+                sb.table("episodes")
+                .select("*")
+                .eq("user_id", uid)
+                .eq("persona", self._sb_persona())
+                .limit(200)
+                .execute()
+            )
             rows = res.data or []
             if not rows:
                 return []
             import random
+
             return self._parse_rows(random.sample(rows, min(n, len(rows))))
         except Exception as e:
             logger.error("[Episode DB] Supabase sample_random failed: %s", e)
@@ -307,13 +319,16 @@ class EpisodicStore:
         try:
             sb, uid = self._sb()
             vec_str = f"[{','.join(str(v) for v in query_vector)}]"
-            res = sb.rpc("match_episodes_by_tag", {
-                "query_vector": vec_str,
-                "user_id_param": uid,
-                "persona_param": self._sb_persona(),
-                "tag_param": tag,
-                "match_count": limit,
-            }).execute()
+            res = sb.rpc(
+                "match_episodes_by_tag",
+                {
+                    "query_vector": vec_str,
+                    "user_id_param": uid,
+                    "persona_param": self._sb_persona(),
+                    "tag_param": tag,
+                    "match_count": limit,
+                },
+            ).execute()
             return self._parse_rows(res.data or [])
         except Exception as e:
             logger.error("[Episode DB] Supabase tag-recall failed: %s", e)
@@ -340,12 +355,14 @@ class EpisodicStore:
         if self._use_supabase:
             try:
                 sb, uid = self._sb()
-                res = (sb.table("episodes")
-                       .select("*")
-                       .eq("user_id", uid)
-                       .eq("persona", self._sb_persona())
-                       .eq("session_id", session_id)
-                       .execute())
+                res = (
+                    sb.table("episodes")
+                    .select("*")
+                    .eq("user_id", uid)
+                    .eq("persona", self._sb_persona())
+                    .eq("session_id", session_id)
+                    .execute()
+                )
                 return self._parse_rows(res.data or [])
             except Exception as e:
                 logger.error("[Episode DB] Supabase session recall failed: %s", e)
@@ -371,6 +388,8 @@ class SchemaStore:
     """
 
     _FILENAME_RE = re.compile(r"^[A-Za-z0-9_-]+\.md$")
+    # Class-level default so __new__-built instances (test doubles) stay local.
+    _use_supabase = False
 
     def __init__(self, persona: str = "") -> None:
         self._use_supabase = _STORAGE_BACKEND == "supabase"
@@ -381,6 +400,7 @@ class SchemaStore:
 
     def _sb(self):
         from brain.second_brain.supabase_client import get_client, get_user_id
+
         return get_client(), get_user_id()
 
     def _sb_persona(self) -> str:
@@ -411,13 +431,15 @@ class SchemaStore:
         if self._use_supabase:
             try:
                 sb, uid = self._sb()
-                res = (sb.table("brain_schemas")
-                       .select("content")
-                       .eq("user_id", uid)
-                       .eq("persona", self._sb_persona())
-                       .eq("filename", filename)
-                       .maybe_single()
-                       .execute())
+                res = (
+                    sb.table("brain_schemas")
+                    .select("content")
+                    .eq("user_id", uid)
+                    .eq("persona", self._sb_persona())
+                    .eq("filename", filename)
+                    .maybe_single()
+                    .execute()
+                )
                 return (res.data or {}).get("content", "")
             except Exception as e:
                 logger.error("[Schema DB] Supabase read failed (%s): %s", filename, e)
@@ -435,13 +457,16 @@ class SchemaStore:
     def _sb_write(self, filename: str, content: str) -> None:
         try:
             sb, uid = self._sb()
-            sb.table("brain_schemas").upsert({
-                "user_id": uid,
-                "persona": self._sb_persona(),
-                "filename": filename,
-                "content": content,
-                "updated_at": "now()",
-            }, on_conflict="user_id,persona,filename").execute()
+            sb.table("brain_schemas").upsert(
+                {
+                    "user_id": uid,
+                    "persona": self._sb_persona(),
+                    "filename": filename,
+                    "content": content,
+                    "updated_at": "now()",
+                },
+                on_conflict="user_id,persona,filename",
+            ).execute()
         except Exception as e:
             logger.error("[Schema DB] Supabase write failed (%s): %s", filename, e)
 
@@ -550,11 +575,13 @@ class SchemaStore:
         if self._use_supabase:
             try:
                 sb, uid = self._sb()
-                res = (sb.table("brain_schemas")
-                       .select("filename")
-                       .eq("user_id", uid)
-                       .eq("persona", self._sb_persona())
-                       .execute())
+                res = (
+                    sb.table("brain_schemas")
+                    .select("filename")
+                    .eq("user_id", uid)
+                    .eq("persona", self._sb_persona())
+                    .execute()
+                )
                 return [r["filename"] for r in (res.data or [])]
             except Exception as e:
                 logger.error("[Schema DB] Supabase list_files failed: %s", e)
@@ -566,14 +593,16 @@ class SchemaStore:
         if self._use_supabase:
             try:
                 sb, uid = self._sb()
-                res = (sb.table("brain_schemas")
-                       .select("filename,content")
-                       .eq("user_id", uid)
-                       .eq("persona", self._sb_persona())
-                       .ilike("content", f"%{keyword}%")
-                       .execute())
+                res = (
+                    sb.table("brain_schemas")
+                    .select("filename,content")
+                    .eq("user_id", uid)
+                    .eq("persona", self._sb_persona())
+                    .ilike("content", f"%{keyword}%")
+                    .execute()
+                )
                 hits = []
-                for row in (res.data or []):
+                for row in res.data or []:
                     for line in row["content"].splitlines():
                         if keyword.lower() in line.lower():
                             hits.append((row["filename"], line.strip()))
@@ -698,12 +727,14 @@ class SchemaStore:
                     # Delete placeholder from Supabase
                     try:
                         sb, uid = self._sb()
-                        (sb.table("brain_schemas")
-                         .delete()
-                         .eq("user_id", uid)
-                         .eq("persona", self._sb_persona())
-                         .eq("filename", placeholder_filename)
-                         .execute())
+                        (
+                            sb.table("brain_schemas")
+                            .delete()
+                            .eq("user_id", uid)
+                            .eq("persona", self._sb_persona())
+                            .eq("filename", placeholder_filename)
+                            .execute()
+                        )
                     except Exception as e:
                         logger.warning("[Schema] Supabase placeholder delete failed: %s", e)
                 else:

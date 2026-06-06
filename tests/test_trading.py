@@ -59,8 +59,9 @@ class FakeRouter:
         self.system_prompts.append(system_prompt)
         return f"text[{kw.get('cell')}]"
 
-    async def call_structured(self, model_key, system_prompt, messages, tool_name,
-                              tool_description, tool_schema, **kw):
+    async def call_structured(
+        self, model_key, system_prompt, messages, tool_name, tool_description, tool_schema, **kw
+    ):
         self.system_prompts.append(system_prompt)
         return {"rating": "Hold", "breaks_story": "macro regime flips", "hedge": "protective put"}
 
@@ -141,8 +142,10 @@ def test_prompts_have_no_automated_write_path():
                 violations.append(f"{py_file}: assigns to prompts.{const}")
 
         # No code opens prompts.py for writing
-        if "prompts.py" in source and "open(" in source and (
-            '"w"' in source or "'w'" in source or '"a"' in source or "'a'" in source
+        if (
+            "prompts.py" in source
+            and "open(" in source
+            and ('"w"' in source or "'w'" in source or '"a"' in source or "'a'" in source)
         ):
             violations.append(f"{py_file}: opens prompts.py for writing")
 
@@ -226,16 +229,25 @@ def test_trading_enabled():
 
 def test_journal_open_and_resolve(trading_dir):
     did = journal.log_decision(
-        "tsla", "long", "bounce to 185", "RSI 28 + reclaim SMA50", 0.62,
+        "tsla",
+        "long",
+        "bounce to 185",
+        "RSI 28 + reclaim SMA50",
+        0.62,
         indicators_at_open={"price": 172.4, "rsi_14": 28.1},
         entry_threshold={"stop_below": 150, "exit_above": 240},
-        benchmark="QQQ", benchmark_at_open=478.10,
+        benchmark="QQQ",
+        benchmark_at_open=478.10,
     )
     opens = journal.get_records(status="open")
     assert len(opens) == 1 and opens[0]["symbol"] == "TSLA"
 
-    res = journal.resolve_decision(did, price_at_resolve=168.0, benchmark_at_resolve=489.0,
-                                   lesson="oversold alone isn't a bottom")
+    res = journal.resolve_decision(
+        did,
+        price_at_resolve=168.0,
+        benchmark_at_resolve=489.0,
+        lesson="oversold alone isn't a bottom",
+    )
     assert res["raw_return_pct"] == pytest.approx(-2.55, abs=0.01)
     assert res["alpha_vs_benchmark_pct"] == pytest.approx(-4.83, abs=0.05)
     assert res["outcome_label"] == "miss"
@@ -244,8 +256,12 @@ def test_journal_open_and_resolve(trading_dir):
 
 
 def test_metrics_short_direction(trading_dir):
-    rec = {"direction": "short", "indicators_at_open": {"price": 100.0},
-           "entry_threshold": {}, "benchmark_at_open": None}
+    rec = {
+        "direction": "short",
+        "indicators_at_open": {"price": 100.0},
+        "entry_threshold": {},
+        "benchmark_at_open": None,
+    }
     m = journal.compute_metrics(rec, price_at_resolve=90.0, benchmark_at_resolve=None)
     assert m["raw_return_pct"] == pytest.approx(10.0)  # short profits when price falls
 
@@ -257,11 +273,13 @@ async def test_before_plan_reinjects_lesson(trading_dir):
     from brain.clusters.trading.subsystem import TradingSubsystem
 
     # one resolved call (carries the lesson) + one open call so it's surfaced
-    did = journal.log_decision("TSLA", "long", "old call", "old", 0.5,
-                               indicators_at_open={"price": 100})
+    did = journal.log_decision(
+        "TSLA", "long", "old call", "old", 0.5, indicators_at_open={"price": 100}
+    )
     journal.resolve_decision(did, price_at_resolve=110, lesson="watch the macro tape")
-    journal.log_decision("TSLA", "long", "new call", "RSI low", 0.6,
-                         indicators_at_open={"price": 95})
+    journal.log_decision(
+        "TSLA", "long", "new call", "RSI low", 0.6, indicators_at_open={"price": 95}
+    )
 
     sub = TradingSubsystem(market_data=FakeMarketData())
     ctx = await sub.before_plan("analyze TSLA setup", None)
@@ -279,9 +297,10 @@ async def test_before_plan_silent_for_non_trading(trading_dir):
 
 
 async def test_contradiction_stop_breached_still_held(trading_dir):
-    store.save_portfolio({"cash": 0, "holdings": [{"symbol": "TSLA", "shares": 100, "avg_cost": 170}]})
-    journal.log_decision("TSLA", "long", "hold", "thesis", 0.6,
-                         entry_threshold={"stop_below": 150})
+    store.save_portfolio(
+        {"cash": 0, "holdings": [{"symbol": "TSLA", "shares": 100, "avg_cost": 170}]}
+    )
+    journal.log_decision("TSLA", "long", "hold", "thesis", 0.6, entry_threshold={"stop_below": 150})
     md = FakeMarketData(price=145.0)  # below the stop
     items = await capabilities.check_contradictions(md)
     kinds = {i["kind"] for i in items}
@@ -335,8 +354,9 @@ async def test_compact_journal_creates_era_summary(trading_dir, monkeypatch):
 
     # Write 6 resolved + 1 open — triggers compaction
     for i in range(6):
-        did = journal.log_decision(f"SYM{i}", "long", f"p{i}", "r", 0.5,
-                                   indicators_at_open={"price": 100})
+        did = journal.log_decision(
+            f"SYM{i}", "long", f"p{i}", "r", 0.5, indicators_at_open={"price": 100}
+        )
         journal.resolve_decision(did, price_at_resolve=110)
     journal.log_decision("OPEN", "long", "live thesis", "r", 0.5)
 
@@ -384,7 +404,7 @@ async def test_compact_journal_md_condenses(trading_dir, monkeypatch):
     monkeypatch.setitem(_s._data, "trading_journal_md_max_kb", 1)
 
     # Build a file that clearly exceeds 1 KB (1024 bytes)
-    old_part = "old call detail " * 80          # 16 * 80 = 1280 bytes
+    old_part = "old call detail " * 80  # 16 * 80 = 1280 bytes
     new_part = "recent call detail\n"
     content = old_part + "\n---\n\n" + new_part
     s.JOURNAL_MD_PATH.write_text(content, encoding="utf-8")
@@ -408,8 +428,9 @@ async def test_era_summaries_appear_in_before_plan(trading_dir, monkeypatch):
     monkeypatch.setitem(_s._data, "trading_compaction_batch_size", 3)
 
     for i in range(5):
-        did = journal.log_decision("TSLA", "long", f"call {i}", "r", 0.5,
-                                   indicators_at_open={"price": 100})
+        did = journal.log_decision(
+            "TSLA", "long", f"call {i}", "r", 0.5, indicators_at_open={"price": 100}
+        )
         journal.resolve_decision(did, price_at_resolve=105)
     journal.log_decision("TSLA", "long", "active thesis", "r", 0.6)
 

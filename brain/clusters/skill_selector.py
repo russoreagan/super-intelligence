@@ -20,6 +20,7 @@ Two modes:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import math
@@ -251,7 +252,8 @@ class SkillSelector:
         # If .claude/skills/ has skill directories not yet in the index, trigger
         # a re-import so the index stays current automatically.
         try:
-            from brain.skills._import_humanity import SOURCE_DIR, main as _import_main
+            from brain.skills._import_humanity import SOURCE_DIR
+            from brain.skills._import_humanity import main as _import_main
 
             if SOURCE_DIR.exists():
                 source_names = {
@@ -363,10 +365,8 @@ class SkillSelector:
             if path.exists():
                 raw = path.read_text(encoding="utf-8")
                 if raw.startswith("---"):
-                    try:
+                    with contextlib.suppress(ValueError):
                         raw = raw[raw.index("---", 3) + 3 :]
-                    except ValueError:
-                        pass
                 body = raw.strip()
         except Exception:
             body = ""

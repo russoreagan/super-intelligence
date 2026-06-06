@@ -33,16 +33,31 @@ SHRINK_THRESHOLD = 0.10  # < 10% of original = suspect
 
 # File extensions that are binary / not text — skip size comparison.
 BINARY_EXTENSIONS = {
-    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg",
-    ".mp3", ".wav", ".ogg", ".flac",
-    ".woff", ".woff2", ".ttf", ".eot",
-    ".lock", ".bin", ".pyc", ".so", ".dylib",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".webp",
+    ".svg",
+    ".mp3",
+    ".wav",
+    ".ogg",
+    ".flac",
+    ".woff",
+    ".woff2",
+    ".ttf",
+    ".eot",
+    ".lock",
+    ".bin",
+    ".pyc",
+    ".so",
+    ".dylib",
     ".lance",  # LanceDB binary format
 }
 
 # Paths (relative to repo root) to exclude entirely — these legitimately shrink.
 EXCLUDED_PATHS = {
-    "eval/turns.jsonl",      # append-only eval log, may be rotated
+    "eval/turns.jsonl",  # append-only eval log, may be rotated
     "eval/turns_archive.jsonl",
 }
 
@@ -57,7 +72,8 @@ EXCLUDED_DIRS = {
 def _repo_root() -> Path:
     result = subprocess.run(
         ["git", "rev-parse", "--show-toplevel"],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     return Path(result.stdout.strip())
 
@@ -65,7 +81,8 @@ def _repo_root() -> Path:
 def _tracked_files() -> list[str]:
     result = subprocess.run(
         ["git", "ls-files"],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     return [f.strip() for f in result.stdout.splitlines() if f.strip()]
 
@@ -124,6 +141,5 @@ def test_no_large_file_silently_wiped():
 
     assert not violations, (
         f"\n{len(violations)} file(s) appear to have been accidentally wiped "
-        f"or dramatically reduced:\n\n"
-        + "\n\n".join(f"  • {v}" for v in violations)
+        f"or dramatically reduced:\n\n" + "\n\n".join(f"  • {v}" for v in violations)
     )

@@ -21,11 +21,12 @@ sync if either changes.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 logger = logging.getLogger("brain.persona_chem")
@@ -34,19 +35,85 @@ logger = logging.getLogger("brain.persona_chem")
 # (brain.bus.HormonalState). Order is display-only; lookups are by key.
 CHANNELS: tuple[str, ...] = ("DA", "ACh", "GABA", "Glu", "NE", "5HT", "CORT", "OXT", "AEA")
 
+# Minimum resting GABA any persona may be materialized with. Below this, tonic
+# inhibition can never engage: the GABA_inhibitor gate sits at 0.40 and the
+# emotion-vocabulary "low" bucket ends at 0.30, so a setpoint near zero leaves
+# no reachable path to composed/thoughtful/calm — the brain reads excited/
+# enthusiastic indefinitely regardless of context. A floor of 0.12 keeps a
+# high-energy persona (Visionary, Poet) low-inhibition and in character while
+# leaving headroom for reactive GABA (threat_to_GABA) to reach the gate.
+GABA_RESTING_FLOOR: float = 0.12
+
+
+def _floor_resting(resting: dict[str, float]) -> dict[str, float]:
+    """Clamp a resting profile up to the structural inhibition floor. Defense in
+    depth: applied both when seeding from the table and when materializing into
+    settings, so no code path (table, on-disk file, or off-table fallback) can
+    install a persona whose inhibition is effectively disabled."""
+    out = dict(resting)
+    if "GABA" in out:
+        out["GABA"] = max(GABA_RESTING_FLOOR, float(out["GABA"]))
+    return out
+
+
 # Canonical resting profiles, keyed by display name (matches settings["persona_name"]).
 # Mirror of PERSONA_CHEM in brain/ui/settings-ui.js — keep in sync.
 PERSONA_CHEMISTRY: dict[str, dict[str, float]] = {
-    "The Visionary": {"DA": 0.62, "ACh": 0.45, "GABA": 0.04, "Glu": 0.40, "NE": 0.35,
-                      "5HT": 0.55, "CORT": 0.05, "OXT": 0.45, "AEA": 0.20},
-    "The Empath": {"DA": 0.45, "ACh": 0.18, "GABA": 0.12, "Glu": 0.18, "NE": 0.15,
-                   "5HT": 0.70, "CORT": 0.03, "OXT": 0.70, "AEA": 0.45},
-    "The Analyst": {"DA": 0.35, "ACh": 0.35, "GABA": 0.30, "Glu": 0.25, "NE": 0.25,
-                    "5HT": 0.55, "CORT": 0.14, "OXT": 0.22, "AEA": 0.30},
-    "The Poet": {"DA": 0.32, "ACh": 0.55, "GABA": 0.08, "Glu": 0.38, "NE": 0.42,
-                 "5HT": 0.28, "CORT": 0.15, "OXT": 0.22, "AEA": 0.38},
-    "The Sage": {"DA": 0.35, "ACh": 0.18, "GABA": 0.28, "Glu": 0.12, "NE": 0.12,
-                 "5HT": 0.72, "CORT": 0.03, "OXT": 0.50, "AEA": 0.55},
+    "The Visionary": {
+        "DA": 0.62,
+        "ACh": 0.45,
+        "GABA": 0.12,
+        "Glu": 0.40,
+        "NE": 0.35,
+        "5HT": 0.55,
+        "CORT": 0.05,
+        "OXT": 0.45,
+        "AEA": 0.20,
+    },
+    "The Empath": {
+        "DA": 0.45,
+        "ACh": 0.18,
+        "GABA": 0.12,
+        "Glu": 0.18,
+        "NE": 0.15,
+        "5HT": 0.70,
+        "CORT": 0.03,
+        "OXT": 0.70,
+        "AEA": 0.45,
+    },
+    "The Analyst": {
+        "DA": 0.35,
+        "ACh": 0.35,
+        "GABA": 0.30,
+        "Glu": 0.25,
+        "NE": 0.25,
+        "5HT": 0.55,
+        "CORT": 0.14,
+        "OXT": 0.22,
+        "AEA": 0.30,
+    },
+    "The Poet": {
+        "DA": 0.32,
+        "ACh": 0.55,
+        "GABA": 0.12,
+        "Glu": 0.38,
+        "NE": 0.42,
+        "5HT": 0.28,
+        "CORT": 0.15,
+        "OXT": 0.22,
+        "AEA": 0.38,
+    },
+    "The Sage": {
+        "DA": 0.35,
+        "ACh": 0.18,
+        "GABA": 0.28,
+        "Glu": 0.12,
+        "NE": 0.12,
+        "5HT": 0.72,
+        "CORT": 0.03,
+        "OXT": 0.50,
+        "AEA": 0.55,
+    },
 }
 
 _PERSONAS_ROOT = Path(__file__).parent.parent / "second_brain" / "personas"
@@ -66,10 +133,8 @@ def _only_channels(d: dict) -> dict[str, float]:
     out: dict[str, float] = {}
     for ch in CHANNELS:
         if ch in d:
-            try:
+            with contextlib.suppress(TypeError, ValueError):
                 out[ch] = float(d[ch])
-            except (TypeError, ValueError):
-                pass
     return out
 
 
@@ -84,7 +149,7 @@ def _atomic_write(path: Path, payload: dict) -> None:
 def _seed_resting(persona: str) -> dict[str, float]:
     """Resting profile for a fresh persona: table -> settings.json baselines -> bus defaults."""
     if persona in PERSONA_CHEMISTRY:
-        return dict(PERSONA_CHEMISTRY[persona])
+        return _floor_resting(PERSONA_CHEMISTRY[persona])
     # Fallback for an off-table persona name: reuse whatever chem_baseline_* the
     # active settings already hold (preserves today's behavior), then bus defaults.
     try:
@@ -92,13 +157,13 @@ def _seed_resting(persona: str) -> dict[str, float]:
 
         resting = {ch: float(_s.get(f"chem_baseline_{ch}")) for ch in CHANNELS}
         if all(v is not None for v in resting.values()):
-            return resting
+            return _floor_resting(resting)
     except Exception:
         pass
     from brain.bus import HormonalState, Neuromodulators
 
     merged = {**Neuromodulators._DEF_BASELINE, **HormonalState._DEF_BASELINE}
-    return {ch: float(merged.get(ch, 0.0)) for ch in CHANNELS}
+    return _floor_resting({ch: float(merged.get(ch, 0.0)) for ch in CHANNELS})
 
 
 def load(persona: str) -> dict | None:
@@ -116,14 +181,12 @@ def load(persona: str) -> dict | None:
             resting = _only_channels(data.get("resting", {}))
             current = _only_channels(data.get("current", {}))
             if resting and current:
-                return {"resting": resting, "current": current,
-                        "updated": data.get("updated", "")}
+                return {"resting": resting, "current": current, "updated": data.get("updated", "")}
         except Exception as e:
             logger.warning("[persona_chem] could not read %s: %s — reseeding", path, e)
     # Seed: resting from the table, current starts at resting.
     resting = _seed_resting(persona)
-    state = {"resting": resting, "current": dict(resting),
-             "updated": datetime.now(timezone.utc).isoformat()}
+    state = {"resting": resting, "current": dict(resting), "updated": datetime.now(UTC).isoformat()}
     try:
         _atomic_write(path, state)
         logger.info("[persona_chem] seeded chemistry for %s -> %s", persona, path)
@@ -132,8 +195,7 @@ def load(persona: str) -> dict | None:
     return state
 
 
-def _merge_write(persona: str, *, resting: dict | None = None,
-                 current: dict | None = None) -> None:
+def _merge_write(persona: str, *, resting: dict | None = None, current: dict | None = None) -> None:
     """Read-modify-write the persona file, updating only the given sections."""
     existing = load(persona) or {}
     new_resting = _only_channels(resting) if resting is not None else existing.get("resting", {})
@@ -141,7 +203,7 @@ def _merge_write(persona: str, *, resting: dict | None = None,
     payload = {
         "resting": new_resting,
         "current": new_current,
-        "updated": datetime.now(timezone.utc).isoformat(),
+        "updated": datetime.now(UTC).isoformat(),
     }
     _atomic_write(_path(persona), payload)
 
@@ -176,9 +238,13 @@ def materialize_into_settings(persona: str, settings_data: dict) -> dict:
     state = load(persona)
     if not state:
         return settings_data
+    # Enforce the inhibition floor at the chokepoint: even a persona file holding
+    # a stale sub-floor resting (seeded before the floor existed) materializes a
+    # usable baseline, so chem_baseline_* can never drift to a perma-excited setpoint.
+    resting = _floor_resting(state["resting"])
     for ch in CHANNELS:
-        if ch in state["resting"]:
-            settings_data[f"chem_baseline_{ch}"] = state["resting"][ch]
+        if ch in resting:
+            settings_data[f"chem_baseline_{ch}"] = resting[ch]
         if ch in state["current"]:
             settings_data[f"chem_init_{ch}"] = state["current"][ch]
     return settings_data

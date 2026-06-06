@@ -51,7 +51,9 @@ def test_recruit_then_satisfy_converges_no_oscillation(colony_on):
 @pytest.fixture
 def slope_cfg(colony_on, monkeypatch):
     monkeypatch.setitem(settings._data, "colony_arm_threshold", 0.5)
-    monkeypatch.setitem(settings._data, "colony_quorum_threshold", 5.0)  # high → level alone won't trip
+    monkeypatch.setitem(
+        settings._data, "colony_quorum_threshold", 5.0
+    )  # high → level alone won't trip
     monkeypatch.setitem(settings._data, "colony_quorum_slope_threshold", 0.2)
 
 

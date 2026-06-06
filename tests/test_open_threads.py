@@ -7,9 +7,12 @@ import brain.open_threads as ot
 
 def test_render_parse_roundtrip():
     threads, t = ot.open_thread(
-        [], "Does emotional gating reduce token cost?",
-        angle="efficiency-question", bears_on=["efficiency-question"],
-        bearing="affects-measurement", now=1000.0,
+        [],
+        "Does emotional gating reduce token cost?",
+        angle="efficiency-question",
+        bears_on=["efficiency-question"],
+        bearing="affects-measurement",
+        now=1000.0,
     )
     body = ot.render_section_body(threads)
     assert "```json" in body
@@ -67,7 +70,7 @@ def test_cap_evicts_oldest_least_advanced():
     threads, newest = ot.open_thread(threads, "overflow", now=200.0)
     assert len(threads) == ot.MAX_OPEN_THREADS
     assert ot.find(threads, ids[0]) is not None  # advanced one survived
-    assert ot.find(threads, ids[1]) is None       # oldest-least-advanced evicted
+    assert ot.find(threads, ids[1]) is None  # oldest-least-advanced evicted
     assert ot.find(threads, newest.id) is not None
 
 

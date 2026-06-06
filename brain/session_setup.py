@@ -64,6 +64,7 @@ class _SetupMixin:
 
     async def _setup_runpod(self) -> None:
         from brain.runpod_manager import RunPodManager
+
         self._runpod = RunPodManager()
         await self._runpod.start()
 
@@ -225,13 +226,12 @@ class _SetupMixin:
             bus=self.bus,
         )
         ui_server.set_wiring_frozen(self._wiring_frozen)
-        self.brainstem.register_loop(
-            "ui_server", lambda: ui_server.start(), restart_on_crash=False
-        )
+        self.brainstem.register_loop("ui_server", lambda: ui_server.start(), restart_on_crash=False)
         self._ui_server = ui_server
 
         # Wire TTS chunks to the browser when in browser audio mode
         from brain.pns import BROWSER_AUDIO_MODE
+
         if BROWSER_AUDIO_MODE:
             ui_server.attach_tts_queue(self.pns)
             logger.info("TTS audio routed to browser WebSocket")

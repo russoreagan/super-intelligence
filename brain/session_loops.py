@@ -232,7 +232,10 @@ class _LoopsMixin:
     async def _runpod_heartbeat_loop(self) -> None:
         import json as _json
         import time as _time
-        _path = os.path.join(os.path.dirname(__file__), "..", "second_brain", "runpod_heartbeat.json")
+
+        _path = os.path.join(
+            os.path.dirname(__file__), "..", "second_brain", "runpod_heartbeat.json"
+        )
         _path = os.path.realpath(_path)
         while True:
             await asyncio.sleep(300)  # write every 5 minutes
@@ -380,8 +383,11 @@ class _LoopsMixin:
                 combined = " ".join(self._ptt_chunks).strip()
                 self._ptt_chunks.clear()
                 if combined:
-                    logger.info("[I/O] voice → PTT phrase complete (%d chunk(s)): %r",
-                                n_chunks, combined[:80])
+                    logger.info(
+                        "[I/O] voice → PTT phrase complete (%d chunk(s)): %r",
+                        n_chunks,
+                        combined[:80],
+                    )
                     await self._dispatch_text(combined)
                 continue
 

@@ -45,7 +45,10 @@ def _make_dmn():
 def test_routes_thread_matching_activity_by_bears_on():
     dmn = _make_dmn()
     dmn._open_threads, t = ot.open_thread(
-        [], "is emotional gating cheaper?", bears_on=["efficiency-question"], bearing="affects-measurement"
+        [],
+        "is emotional gating cheaper?",
+        bears_on=["efficiency-question"],
+        bearing="affects-measurement",
     )
     dmn._open_threads, other = ot.open_thread(
         dmn._open_threads, "unrelated musing about bees", bears_on=["colony"]
@@ -84,7 +87,10 @@ def test_routing_bounded_to_budget():
 async def test_close_loop_resolves_used_thread():
     dmn = _make_dmn()
     dmn._open_threads, t = ot.open_thread(
-        [], "emotional gating reduces token cost", bears_on=["efficiency"], bearing="affects-measurement"
+        [],
+        "emotional gating reduces token cost",
+        bears_on=["efficiency"],
+        bearing="affects-measurement",
     )
     routed = [t]
     # Response clearly engages the thread.
@@ -102,7 +108,10 @@ async def test_close_loop_resolves_used_thread():
 async def test_close_loop_keeps_ignored_thread():
     dmn = _make_dmn()
     dmn._open_threads, t = ot.open_thread(
-        [], "emotional gating reduces token cost", bears_on=["efficiency"], bearing="affects-measurement"
+        [],
+        "emotional gating reduces token cost",
+        bears_on=["efficiency"],
+        bearing="affects-measurement",
     )
     events = await dmn.note_threads_used([t], "Let's talk about something totally different.")
     assert events == []
@@ -138,7 +147,9 @@ def test_user_load_signals_detect_terseness_shift():
     dmn = _make_dmn()
     # Long, on-topic messages, then short scattered ones → negative verbosity trend.
     for _ in range(2):
-        dmn.observe_user_turn({"topic_summary": "design"}, "a fairly long and detailed message here about design")
+        dmn.observe_user_turn(
+            {"topic_summary": "design"}, "a fairly long and detailed message here about design"
+        )
     for _ in range(2):
         dmn.observe_user_turn({"topic_summary": "x"}, "k")
     verbosity_trend, _ = dmn._user_load_signals()

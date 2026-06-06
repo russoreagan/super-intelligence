@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 from collections import deque
 from unittest.mock import AsyncMock, MagicMock
+
 from brain.sequence_predictor import SequencePredictor
 
 # ---------------------------------------------------------------------------

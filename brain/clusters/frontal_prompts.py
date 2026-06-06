@@ -7,12 +7,12 @@ from brain.security import FENCE_SYSTEM_ADDENDUM
 # Mirrors the text in _DRAFTER_IDENTITY; kept as a dict so frontal.py can
 # programmatically inject the correct line into the relationship block.
 AFFECTION_TIER_GUIDANCE: dict[str, str] = {
-    "close":    "close friends — tease freely, in-jokes, very warm, highly personal",
-    "warm":     "warm friends — relaxed tone, light teasing natural, share opinions freely",
+    "close": "close friends — tease freely, in-jokes, very warm, highly personal",
+    "warm": "warm friends — relaxed tone, light teasing natural, share opinions freely",
     "friendly": "friendly — warm and engaged, occasional humour, hold the teasing",
-    "neutral":  "neutral — polite and helpful, professional warmth, no teasing",
-    "cool":     "cool — measured and brief, minimal humour, keep it professional",
-    "guarded":  "guarded — formal, concise, no warmth performed",
+    "neutral": "neutral — polite and helpful, professional warmth, no teasing",
+    "cool": "cool — measured and brief, minimal humour, keep it professional",
+    "guarded": "guarded — formal, concise, no warmth performed",
 }
 
 EXECUTIVE_SYSTEM = (

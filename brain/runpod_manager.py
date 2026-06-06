@@ -32,14 +32,14 @@ _MIN_VCPU = 2
 _MIN_MEMORY_GB = 15
 
 # GPU selection policy
-_VRAM_FLOOR_GB = 24          # minimum acceptable VRAM
-_PRICE_CEILING = 0.50        # max $/hr — hard cutoff
-_MIGRATE_THRESHOLD = 0.20    # log a suggestion if new option is 20%+ cheaper
+_VRAM_FLOOR_GB = 24  # minimum acceptable VRAM
+_PRICE_CEILING = 0.50  # max $/hr — hard cutoff
+_MIGRATE_THRESHOLD = 0.20  # log a suggestion if new option is 20%+ cheaper
 
 _POLL_S = 5.0
-_READY_TIMEOUT_S = 300.0      # 5 min max for pod to come up
+_READY_TIMEOUT_S = 300.0  # 5 min max for pod to come up
 _WATCHER_INTERVAL_S = 1800.0  # check for better options every 30 min (pod running)
-_CAPACITY_POLL_S = 300.0      # retry every 5 min when on local fallback
+_CAPACITY_POLL_S = 300.0  # retry every 5 min when on local fallback
 
 
 def _required_models() -> list[str]:
@@ -62,6 +62,7 @@ class RunPodManager:
     def _get_http(self):
         if self._http is None:
             import httpx
+
             self._http = httpx.AsyncClient()
         return self._http
 
@@ -113,14 +114,18 @@ class RunPodManager:
         return [p for p in data["myself"]["pods"] if p["name"] == _POD_NAME]
 
     async def _resume_pod(self, pod_id: str) -> None:
-        await self._gql("""mutation($id: String!) {
+        await self._gql(
+            """mutation($id: String!) {
             podResume(input: {podId: $id, gpuCount: 1}) { id desiredStatus }
-        }""", {"id": pod_id})
+        }""",
+            {"id": pod_id},
+        )
         logger.info("[RunPod] Resuming pod %s", pod_id)
 
     async def _create_pod(self, gpu_id: str) -> str | None:
         try:
-            data = await self._gql("""mutation($gpuId: String!) {
+            data = await self._gql(
+                """mutation($gpuId: String!) {
                 podFindAndDeployOnDemand(input: {
                     cloudType: COMMUNITY,
                     gpuCount: 1,
@@ -135,7 +140,9 @@ class RunPodManager:
                     volumeMountPath: "/root/.ollama",
                     env: [{key: "OLLAMA_HOST", value: "0.0.0.0"}]
                 }) { id }
-            }""", {"gpuId": gpu_id})
+            }""",
+                {"gpuId": gpu_id},
+            )
             pod_id = data["podFindAndDeployOnDemand"]["id"]
             logger.info("[RunPod] Created pod %s on %s", pod_id, gpu_id)
             return pod_id
@@ -149,11 +156,14 @@ class RunPodManager:
             await asyncio.sleep(_POLL_S)
             elapsed += _POLL_S
             try:
-                data = await self._gql("""query($id: String!) {
+                data = await self._gql(
+                    """query($id: String!) {
                     pod(input: {podId: $id}) {
                         desiredStatus runtime { uptimeInSeconds }
                     }
-                }""", {"id": pod_id})
+                }""",
+                    {"id": pod_id},
+                )
                 pod = data.get("pod") or {}
                 if pod.get("runtime"):
                     # GraphQL uptime ≠ Ollama serving. Probe the actual endpoint so we
@@ -164,17 +174,27 @@ class RunPodManager:
                     try:
                         r = await self._get_http().get(f"{host}/api/tags", timeout=10.0)
                         if r.status_code == 200:
-                            logger.info("[RunPod] Pod %s ready + Ollama serving (%.0fs)",
-                                        pod_id, elapsed)
+                            logger.info(
+                                "[RunPod] Pod %s ready + Ollama serving (%.0fs)", pod_id, elapsed
+                            )
                             return True
-                        logger.debug("[RunPod] Pod %s up; Ollama HTTP %s (%.0fs)",
-                                     pod_id, r.status_code, elapsed)
+                        logger.debug(
+                            "[RunPod] Pod %s up; Ollama HTTP %s (%.0fs)",
+                            pod_id,
+                            r.status_code,
+                            elapsed,
+                        )
                     except Exception:
-                        logger.debug("[RunPod] Pod %s up; Ollama not serving yet (%.0fs)",
-                                     pod_id, elapsed)
+                        logger.debug(
+                            "[RunPod] Pod %s up; Ollama not serving yet (%.0fs)", pod_id, elapsed
+                        )
                 else:
-                    logger.debug("[RunPod] Waiting for pod %s — %s (%.0fs)",
-                                 pod_id, pod.get("desiredStatus"), elapsed)
+                    logger.debug(
+                        "[RunPod] Waiting for pod %s — %s (%.0fs)",
+                        pod_id,
+                        pod.get("desiredStatus"),
+                        elapsed,
+                    )
             except Exception as e:
                 logger.debug("[RunPod] Poll error: %s", e)
         logger.warning("[RunPod] Pod %s not ready after %.0fs", pod_id, _READY_TIMEOUT_S)
@@ -183,6 +203,7 @@ class RunPodManager:
     async def _pull_models(self, host: str) -> bool:
         """Pull any required models not already present on the pod."""
         import json as _json
+
         models = _required_models()
 
         # Check what's already installed
@@ -200,7 +221,8 @@ class RunPodManager:
             logger.info("[RunPod] Pulling %s (this may take a few minutes)...", model)
             try:
                 async with self._get_http().stream(
-                    "POST", f"{host}/api/pull",
+                    "POST",
+                    f"{host}/api/pull",
                     json={"name": model, "stream": True},
                     timeout=600.0,
                 ) as resp:
@@ -227,12 +249,14 @@ class RunPodManager:
 
     def _apply_host(self, pod_id: str) -> None:
         from brain.settings import settings
+
         host = self._pod_host(pod_id)
         settings.update({"runpod_host": host})
         logger.info("[RunPod] runpod_host → %s", host)
 
     def _clear_host(self) -> None:
         from brain.settings import settings
+
         local_host = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
         settings.update({"runpod_host": local_host})
         logger.info("[RunPod] runpod_host → local Ollama (%s)", local_host)
@@ -280,8 +304,7 @@ class RunPodManager:
             # models already downloaded. First one that resumes and is ready wins.
             existing_pods = await self._find_existing_pods()
             running = [p for p in existing_pods if p.get("runtime")]
-            stopped = [p for p in existing_pods
-                       if p.get("desiredStatus") in ("EXITED", "STOPPED")]
+            stopped = [p for p in existing_pods if p.get("desiredStatus") in ("EXITED", "STOPPED")]
 
             if running:
                 pod_id = running[0]["id"]
@@ -310,14 +333,21 @@ class RunPodManager:
             gpu_types = await self._fetch_gpu_types()
             ranked = self._rank_gpus(gpu_types)
             if not ranked:
-                logger.warning("[RunPod] No suitable GPU available — using local Ollama, will retry every %.0fs", _CAPACITY_POLL_S)
+                logger.warning(
+                    "[RunPod] No suitable GPU available — using local Ollama, will retry every %.0fs",
+                    _CAPACITY_POLL_S,
+                )
                 self._clear_host()
                 self._watcher_task = asyncio.create_task(self._watch())
                 return False
 
             for gpu in ranked:
-                logger.info("[RunPod] Trying %s (%dGB, $%.2f/hr)",
-                            gpu["displayName"], gpu["memoryInGb"], gpu["_price"])
+                logger.info(
+                    "[RunPod] Trying %s (%dGB, $%.2f/hr)",
+                    gpu["displayName"],
+                    gpu["memoryInGb"],
+                    gpu["_price"],
+                )
                 pod_id = await self._create_pod(gpu["id"])
                 if pod_id:
                     self._pod_id = pod_id
@@ -328,22 +358,32 @@ class RunPodManager:
                     await self._stop_pod(pod_id)
                     self._pod_id = None
 
-            logger.warning("[RunPod] All GPU options failed — using local Ollama, will retry every %.0fs", _CAPACITY_POLL_S)
+            logger.warning(
+                "[RunPod] All GPU options failed — using local Ollama, will retry every %.0fs",
+                _CAPACITY_POLL_S,
+            )
             self._clear_host()
             self._watcher_task = asyncio.create_task(self._watch())
             return False
 
         except Exception as e:
-            logger.warning("[RunPod] Startup failed — using local Ollama, will retry every %.0fs: %s", _CAPACITY_POLL_S, e)
+            logger.warning(
+                "[RunPod] Startup failed — using local Ollama, will retry every %.0fs: %s",
+                _CAPACITY_POLL_S,
+                e,
+            )
             self._clear_host()
             self._watcher_task = asyncio.create_task(self._watch())
             return False
 
     async def _stop_pod(self, pod_id: str) -> None:
         try:
-            await self._gql("""mutation($id: String!) {
+            await self._gql(
+                """mutation($id: String!) {
                 podStop(input: {podId: $id}) { id desiredStatus }
-            }""", {"id": pod_id})
+            }""",
+                {"id": pod_id},
+            )
             logger.info("[RunPod] Pod %s stopped", pod_id)
         except Exception as e:
             logger.warning("[RunPod] Failed to stop pod %s: %s", pod_id, e)
@@ -374,27 +414,36 @@ class RunPodManager:
                     continue
 
                 if self._pod_id is None:
-                    logger.info("[RunPod] Capacity check — trying %s (%dGB, $%.2f/hr)",
-                                ranked[0]["displayName"], ranked[0]["memoryInGb"], ranked[0]["_price"])
+                    logger.info(
+                        "[RunPod] Capacity check — trying %s (%dGB, $%.2f/hr)",
+                        ranked[0]["displayName"],
+                        ranked[0]["memoryInGb"],
+                        ranked[0]["_price"],
+                    )
                     for gpu in ranked:
                         pod_id = await self._create_pod(gpu["id"])
                         if pod_id:
                             self._pod_id = pod_id
                             self._current_price = gpu["_price"]
                             if await self._activate_pod(pod_id):
-                                logger.info("[RunPod] Pod acquired mid-session — cells switching from local to RunPod")
+                                logger.info(
+                                    "[RunPod] Pod acquired mid-session — cells switching from local to RunPod"
+                                )
                                 return  # stop looking
                             await self._stop_pod(pod_id)
                             self._pod_id = None
                 else:
                     best = ranked[0]
-                    if (self._current_price and
-                            best["_price"] < self._current_price * (1 - _MIGRATE_THRESHOLD)):
+                    if self._current_price and best["_price"] < self._current_price * (
+                        1 - _MIGRATE_THRESHOLD
+                    ):
                         logger.info(
                             "[RunPod] Better GPU available: %s (%dGB, $%.2f/hr vs current $%.2f/hr)"
                             " — restart to switch.",
-                            best["displayName"], best["memoryInGb"],
-                            best["_price"], self._current_price,
+                            best["displayName"],
+                            best["memoryInGb"],
+                            best["_price"],
+                            self._current_price,
                         )
             except Exception as e:
                 logger.debug("[RunPod] Watcher error: %s", e)

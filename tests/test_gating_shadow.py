@@ -67,10 +67,13 @@ def test_gated_skip_with_shadow_validation():
         affect = {"emotion": "neutral", "neuromod": {"DA": 0.5, "GABA": 0.0}}
         exec_sig = ("chitchat", "casual", False, "mid", "low")
 
-        # Build history so the gate fires confidently (conf 1.0 >= 0.70 skip threshold).
+        # Build history so the gate fires confidently (conf 1.0 >= 0.70 skip
+        # threshold) AND recent outcome quality clears the avg_recent_outcome > 0.7
+        # bar the gate also requires before skipping the integrator.
         gated_label = ("chitchat", "brief", "warm")
         for _ in range(3):
             f._exec_predictor.record(exec_sig, gated_label)
+            f._exec_predictor.record_outcome(exec_sig, 0.9)
 
         instruction = _run(
             f._run_executive({"DA": 0.5, "GABA": 0.0}, {}, exec_sig, features, affect, {}, "", "t1")
@@ -111,6 +114,7 @@ def test_gated_skip_without_shadow_does_not_run_llm():
         exec_sig = ("chitchat", "casual", False, "mid", "low")
         for _ in range(3):
             f._exec_predictor.record(exec_sig, ("chitchat", "brief", "warm"))
+            f._exec_predictor.record_outcome(exec_sig, 0.9)
 
         instruction = _run(
             f._run_executive({"DA": 0.5, "GABA": 0.0}, {}, exec_sig, features, affect, {}, "", "t2")

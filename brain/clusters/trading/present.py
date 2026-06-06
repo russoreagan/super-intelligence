@@ -24,7 +24,9 @@ def _emitter():
         return None
 
 
-async def table(turn_id: str, title: str, columns: list[str], rows: list[list], note: str = "") -> None:
+async def table(
+    turn_id: str, title: str, columns: list[str], rows: list[list], note: str = ""
+) -> None:
     em = _emitter()
     if em is None:
         return
@@ -57,7 +59,9 @@ def snapshot_columns() -> list[str]:
     return ["symbol"] + _SNAPSHOT_COLS
 
 
-def candlestick_spec(symbol: str, bars: list[dict], overlays: dict | None = None, markers: list | None = None) -> dict:
+def candlestick_spec(
+    symbol: str, bars: list[dict], overlays: dict | None = None, markers: list | None = None
+) -> dict:
     """Build a candlestick chart spec from bars + optional indicator overlays."""
     series = [
         {

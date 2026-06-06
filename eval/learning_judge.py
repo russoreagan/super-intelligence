@@ -175,13 +175,21 @@ class LearningJudge:
         def _turn_summary(t: TurnTrace, idx: int) -> str:
             saved = t.llm_calls_saved or 0
             outcomes = t.predictor_outcomes or []
-            correct = sum(1 for o in outcomes if o.get("correct"))
-            acc = f"{correct}/{len(outcomes)}" if outcomes else "n/a"
+            # Graded prediction quality (match fraction) is the biologically
+            # meaningful signal — predictive coding minimizes *graded* prediction
+            # error, not a binary hit/miss. Exact-match accuracy is reported only
+            # in parentheses as the strict reference; with 3-field tuple labels it
+            # is naturally near-zero and misleads if read as "the" accuracy.
+            fracs = [o["match_frac"] for o in outcomes if o.get("match_frac") is not None]
+            validated = [o for o in outcomes if o.get("correct") is not None]
+            n_correct = sum(1 for o in validated if o.get("correct"))
+            graded = f"{sum(fracs) / len(fracs):.2f}" if fracs else "n/a"
+            strict = f"{n_correct}/{len(validated)}" if validated else "n/a"
             return (
                 f"  Turn {idx + 1}: user={t.user_input[:80]!r}\n"
                 f"    response={t.response[:120]!r}\n"
                 f"    emotion={t.emotion} | llm_calls={t.llm_calls} "
-                f"saved={saved} | predictor_acc={acc}"
+                f"saved={saved} | predictor_match={graded} (exact {strict})"
             )
 
         early_text = "\n".join(_turn_summary(t, i) for i, t in enumerate(early))
@@ -190,9 +198,10 @@ class LearningJudge:
         # Predictor trend section
         trend_lines = []
         for key, label in [
-            ("predictor_accuracy_trend", "Accuracy trend (late − early)"),
+            ("predictor_match_frac_trend", "Match-fraction trend (graded; pos = improving)"),
+            ("surprise_trend", "Avg surprise trend (neg = improving — the core signal)"),
+            ("predictor_accuracy_trend", "Exact-match accuracy trend (strict reference)"),
             ("gating_efficiency_trend", "Gating efficiency trend"),
-            ("surprise_trend", "Avg surprise trend (neg = improving)"),
             ("total_llm_calls_saved", "Total LLM calls saved this session"),
         ]:
             val = metrics.get(key)

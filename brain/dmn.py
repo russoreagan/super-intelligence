@@ -47,7 +47,8 @@ PROPOSALS_DIR = SECOND_BRAIN_ROOT / "proposals"
 # Open-threads ledger lives in the hand-maintained open_questions.md (the single
 # active ledger). The DMN reads AND writes its `## Open threads` section.
 from brain import open_threads as ot  # noqa: E402
-from brain.sequence_predictor import SequencePredictor
+from brain.sequence_predictor import SequencePredictor  # noqa: E402
+
 # Novelty memory persisted across sessions so a restart doesn't resurface the
 # same idea verbatim. Holds the recent thoughts + their angles (the dedup state).
 NOVELTY_STATE_PATH = SECOND_BRAIN_ROOT / "dmn_novelty.json"
@@ -340,9 +341,7 @@ CONCLUSION_FRESH_S = float(os.environ.get("BRAIN_DMN_CONCLUSION_FRESH_S", "1800"
 # Minimum content-word overlap a randomly-sampled memory must share with the live
 # context before it's injected as associative fuel. Below this the seed is
 # skipped — keeps surfaced memories connected to the moment instead of random.
-DMN_MEMORY_SEED_MIN_OVERLAP = float(
-    os.environ.get("BRAIN_DMN_MEMORY_SEED_MIN_OVERLAP", "0.04")
-)
+DMN_MEMORY_SEED_MIN_OVERLAP = float(os.environ.get("BRAIN_DMN_MEMORY_SEED_MIN_OVERLAP", "0.04"))
 
 # Words that signal a thought is turning inward (self-referential / introspective).
 # Inward thoughts apply a small GABA bump — self-monitoring has a cost, which
@@ -752,24 +751,56 @@ class DefaultModeNetwork:
 
     # ── Novelty memory persistence ──────────────────────────────────────────
 
+    def _dmn_sb(self):
+        """Return (client, user_id, persona) when BRAIN_STORAGE_BACKEND=supabase,
+        else None. DMN state (novelty + routing weights) lives in the dmn_state
+        table, keyed by (user_id, persona). Falls back to local files on any error
+        so a transient Supabase issue never stalls the idle loop."""
+        if os.environ.get("BRAIN_STORAGE_BACKEND", "local").lower() != "supabase":
+            return None
+        try:
+            from brain.second_brain.supabase_client import get_client, get_user_id
+
+            persona = os.environ.get("BRAIN_PERSONA_NAME", "default")
+            return get_client(), get_user_id(), persona
+        except Exception as e:
+            logger.warning("[DMN] Supabase unavailable, using local files: %s", e)
+            return None
+
     def _persist_novelty(self) -> None:
-        """Save the dedup state (recent thoughts + angles) to disk so it survives
-        a restart. Embeddings are NOT persisted (large, and recomputed lazily) —
+        """Save the dedup state (recent thoughts + angles) so it survives a
+        restart. Embeddings are NOT persisted (large, and recomputed lazily) —
         on reload the word-overlap pre-filter still guards the restored thoughts,
         and fresh embeddings accumulate as new thoughts arrive."""
-        try:
-            payload = {
-                "recent_thoughts": list(self._recent_thoughts),
-                "recent_angles": list(self._recent_angles),
-                "last_rumination_seed": self._last_rumination_seed,
-                "ts": time.time(),
-            }
-            NOVELTY_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
-            tmp = NOVELTY_STATE_PATH.with_suffix(".json.tmp")
-            tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-            os.replace(tmp, NOVELTY_STATE_PATH)
-        except Exception as e:
-            logger.warning("[DMN] Could not persist novelty state: %s", e)
+        payload = {
+            "recent_thoughts": list(self._recent_thoughts),
+            "recent_angles": list(self._recent_angles),
+            "last_rumination_seed": self._last_rumination_seed,
+            "ts": time.time(),
+        }
+        sb = self._dmn_sb()
+        if sb is not None:
+            client, uid, persona = sb
+            try:
+                client.table("dmn_state").upsert(
+                    {
+                        "user_id": uid,
+                        "persona": persona,
+                        "novelty_cache": payload,
+                        "updated_at": "now()",
+                    },
+                    on_conflict="user_id,persona",
+                ).execute()
+            except Exception as e:
+                logger.warning("[DMN] Could not persist novelty state to Supabase: %s", e)
+        else:
+            try:
+                NOVELTY_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+                tmp = NOVELTY_STATE_PATH.with_suffix(".json.tmp")
+                tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+                os.replace(tmp, NOVELTY_STATE_PATH)
+            except Exception as e:
+                logger.warning("[DMN] Could not persist novelty state: %s", e)
         self._seq_predictor.save()
 
     # ── Open-threads ledger (open_questions.md) ─────────────────────────────
@@ -792,8 +823,11 @@ class DefaultModeNetwork:
             threads = ot.parse_threads(ot.extract_section(text))
             kept, retired = ot.reap_aged(threads)
             for t in retired:
-                logger.info("[DMN] Open thread aged out (>%.0fh): %r",
-                            ot.THREAD_MAX_AGE_S / 3600, t.summary[:60])
+                logger.info(
+                    "[DMN] Open thread aged out (>%.0fh): %r",
+                    ot.THREAD_MAX_AGE_S / 3600,
+                    t.summary[:60],
+                )
             self._open_threads = kept
             if retired:
                 await self._save_threads()
@@ -812,8 +846,9 @@ class DefaultModeNetwork:
             self_md = schema.read("self.md")
             if not self_md:
                 return
-            m = re.search(r"(?m)^##[ \t]+Open [Qq]uestions[ \t]*\r?\n(.*?)(?=^##[ \t]|\Z)",
-                          self_md, re.DOTALL)
+            m = re.search(
+                r"(?m)^##[ \t]+Open [Qq]uestions[ \t]*\r?\n(.*?)(?=^##[ \t]|\Z)", self_md, re.DOTALL
+            )
             if not m:
                 return
             bullets = [
@@ -836,13 +871,17 @@ class DefaultModeNetwork:
             # Remove the legacy section from self.md.
             cleaned = re.sub(
                 r"(?m)^##[ \t]+Open [Qq]uestions[ \t]*\r?\n.*?(?=^##[ \t]|\Z)",
-                "", self_md, flags=re.DOTALL,
+                "",
+                self_md,
+                flags=re.DOTALL,
             )
             cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
             await schema.awrite("self.md", cleaned)
             self._open_threads = threads
-            logger.info("[DMN] Migrated %d legacy open-question(s) from self.md into the ledger",
-                        len(bullets))
+            logger.info(
+                "[DMN] Migrated %d legacy open-question(s) from self.md into the ledger",
+                len(bullets),
+            )
         except Exception as e:
             logger.warning("[DMN] Legacy open-questions migration failed: %s", e)
 
@@ -863,20 +902,35 @@ class DefaultModeNetwork:
         Embeddings start empty and refill as new thoughts are processed; the
         restored thoughts are still guarded by the word-overlap pre-filter."""
         try:
-            if not NOVELTY_STATE_PATH.exists():
-                return
-            data = json.loads(NOVELTY_STATE_PATH.read_text(encoding="utf-8"))
-            for t in (data.get("recent_thoughts") or [])[-DMN_RECENT_THOUGHTS:]:
-                self._recent_thoughts.append(t)
-                self._recent_embeddings.append(None)  # lazy — pre-filter still applies
-            for a in (data.get("recent_angles") or [])[-DMN_RECENT_ANGLES:]:
-                self._recent_angles.append(a)
-            self._last_rumination_seed = data.get("last_rumination_seed") or ""
-            logger.info(
-                "[DMN] Restored novelty memory: %d thought(s), %d angle(s)",
-                len(self._recent_thoughts),
-                len(self._recent_angles),
-            )
+            sb = self._dmn_sb()
+            if sb is not None:
+                client, uid, persona = sb
+                res = (
+                    client.table("dmn_state")
+                    .select("novelty_cache")
+                    .eq("user_id", uid)
+                    .eq("persona", persona)
+                    .maybe_single()
+                    .execute()
+                )
+                data = (res.data or {}).get("novelty_cache") if res else None
+            else:
+                if not NOVELTY_STATE_PATH.exists():
+                    self._seq_predictor.load()
+                    return
+                data = json.loads(NOVELTY_STATE_PATH.read_text(encoding="utf-8"))
+            if data:
+                for t in (data.get("recent_thoughts") or [])[-DMN_RECENT_THOUGHTS:]:
+                    self._recent_thoughts.append(t)
+                    self._recent_embeddings.append(None)  # lazy — pre-filter still applies
+                for a in (data.get("recent_angles") or [])[-DMN_RECENT_ANGLES:]:
+                    self._recent_angles.append(a)
+                self._last_rumination_seed = data.get("last_rumination_seed") or ""
+                logger.info(
+                    "[DMN] Restored novelty memory: %d thought(s), %d angle(s)",
+                    len(self._recent_thoughts),
+                    len(self._recent_angles),
+                )
         except Exception as e:
             logger.warning("[DMN] Could not load novelty state: %s", e)
         self._seq_predictor.load()
@@ -1242,9 +1296,9 @@ class DefaultModeNetwork:
             # need not be immediately followed by the closing paren.
             priority_m = re.search(r"\(\s*(PRIMARY|secondary)\b", raw_name, re.I)
             priority = priority_m.group(1).upper() if priority_m else ""
-            clean_name = re.sub(
-                r"\s*\([^)]*\)", "", raw_name
-            ).strip() if "(" in raw_name else raw_name
+            clean_name = (
+                re.sub(r"\s*\([^)]*\)", "", raw_name).strip() if "(" in raw_name else raw_name
+            )
             task_m = re.search(r"\*\*Task\*\*:\s*(.+?)(?:\n|$)", body)
             task_line = task_m.group(1).strip() if task_m else ""
             status_m = re.search(r"\*\*Status\*\*:\s*(.+?)(?:\n|$)", body)
@@ -1298,9 +1352,7 @@ class DefaultModeNetwork:
         s = (p.get("status") or "").lower()
         if any(w in s for w in self._PROJECT_DONE_WORDS):
             return False
-        if any(w in s for w in self._PROJECT_BLOCKED_WORDS):
-            return False
-        return True
+        return not any(w in s for w in self._PROJECT_BLOCKED_WORDS)
 
     def next_project_goal(self) -> tuple[str, str] | None:
         """Pick the next project step to START, or None. Only one project runs at
@@ -1340,10 +1392,7 @@ class DefaultModeNetwork:
         self._project_task_id = None
         if name:
             stamp = time.strftime("%Y-%m-%d %H:%M")
-            note = (
-                f"In progress — last worked {stamp} "
-                f"({'ok' if success else 'failed'})"
-            )
+            note = f"In progress — last worked {stamp} ({'ok' if success else 'failed'})"
             if summary:
                 note += f": {summary.strip()[:120]}"
             await self._update_project_status(name, note)
@@ -1391,7 +1440,7 @@ class DefaultModeNetwork:
                 )
             else:
                 new_body = body.rstrip() + f"\n- **Status**: {new_status}\n"
-            new_text = text[: m.start(2)] + new_body + text[m.end(2):]
+            new_text = text[: m.start(2)] + new_body + text[m.end(2) :]
             await schema.awrite(ot.LEDGER_FILE, new_text)
             self.set_projects_context(new_text)
         except Exception as e:
@@ -1685,7 +1734,9 @@ class DefaultModeNetwork:
                         float(settings.get("flock_idle_gate_vel_nudge", 0.0)),
                         float(settings.get("flock_idle_gate_vel_nudge", 0.0)) * worry_vel,
                     )
-                if not self._idle_gate.should_fire(gate_level, chem, turn_id=f"dmn_{self._thought_count}"):
+                if not self._idle_gate.should_fire(
+                    gate_level, chem, turn_id=f"dmn_{self._thought_count}"
+                ):
                     logger.debug(
                         "[Background reflection] Tick suppressed by idle_gate "
                         "(NE=%.2f GABA=%.2f 5HT=%.2f OXT=%.2f)",
@@ -1958,9 +2009,12 @@ class DefaultModeNetwork:
         # falling chemistry does not suppress below the level-based drive.
         if settings.get("flock_dynamics", 0):
             drive += (
-                float(settings.get("flock_rum_w_cort_vel", 0.0)) * max(0.0, float(chem.get("vel_CORT", 0.0)))
-                + float(settings.get("flock_rum_w_ne_vel", 0.0)) * max(0.0, float(chem.get("vel_NE", 0.0)))
-                + float(settings.get("flock_rum_w_da_vel", 0.0)) * max(0.0, float(chem.get("vel_DA", 0.0)))
+                float(settings.get("flock_rum_w_cort_vel", 0.0))
+                * max(0.0, float(chem.get("vel_CORT", 0.0)))
+                + float(settings.get("flock_rum_w_ne_vel", 0.0))
+                * max(0.0, float(chem.get("vel_NE", 0.0)))
+                + float(settings.get("flock_rum_w_da_vel", 0.0))
+                * max(0.0, float(chem.get("vel_DA", 0.0)))
             )
         flavor = "anxious" if (cort + ne_raw) > (da_raw + ach_raw) else "engaged"
         return max(0.0, drive), flavor
@@ -2003,9 +2057,7 @@ class DefaultModeNetwork:
         cap (deepens the same seed at most N times in a row) and the advance cap
         (auto-concludes at THREAD_MAX_ADVANCES) — so finish-out can't get stuck.
         None if no threads are open."""
-        open_threads = [
-            t for t in getattr(self, "_open_threads", []) if t.status == ot.STATUS_OPEN
-        ]
+        open_threads = [t for t in getattr(self, "_open_threads", []) if t.status == ot.STATUS_OPEN]
         if not open_threads:
             return None
         return max(open_threads, key=lambda t: (t.advances, t.last_ts))
@@ -2297,7 +2349,7 @@ class DefaultModeNetwork:
         # explored threads keep bubbling up over what's actually live, which read
         # as the brain "talking about things from before." Cap at 3 so a stale
         # backlog can't crowd the prompt.
-        open_threads.sort(key=lambda t: (t.last_ts or t.opened_ts or 0.0), reverse=True)
+        open_threads.sort(key=lambda t: t.last_ts or t.opened_ts or 0.0, reverse=True)
         open_threads = open_threads[:3]
         if open_threads:
             lines = []
@@ -2346,9 +2398,8 @@ class DefaultModeNetwork:
             )
             # Detect cluster saturation and make it explicit to the model.
             from collections import Counter as _Counter
-            prefixes = [
-                a.rsplit("-", 1)[0] if "-" in a else a for a in self._recent_angles
-            ]
+
+            prefixes = [a.rsplit("-", 1)[0] if "-" in a else a for a in self._recent_angles]
             top_cluster, top_count = _Counter(prefixes).most_common(1)[0]
             if top_count >= 3:
                 prompt_parts.append(
@@ -2454,9 +2505,7 @@ class DefaultModeNetwork:
             metadata["conclude_thread_id"] = _s(parsed.get("conclude_thread_id")).strip()
             metadata["conclusion"] = _s(parsed.get("conclusion")).strip()
             conf = _s(parsed.get("conclusion_confidence"), "confident").strip().lower()
-            metadata["conclusion_confidence"] = (
-                "uncertain" if conf == "uncertain" else "confident"
-            )
+            metadata["conclusion_confidence"] = "uncertain" if conf == "uncertain" else "confident"
             metadata["bears_on"] = [
                 str(b).strip().lower() for b in (parsed.get("bears_on") or []) if str(b).strip()
             ][:4]
@@ -2560,9 +2609,7 @@ class DefaultModeNetwork:
         if not is_dup and not advancing_thread and angle and "-" in angle:
             cluster = angle.rsplit("-", 1)[0]
             cluster_count = sum(
-                1
-                for a in self._recent_angles
-                if a == cluster or a.startswith(cluster + "-")
+                1 for a in self._recent_angles if a == cluster or a.startswith(cluster + "-")
             )
             if cluster_count >= _CLUSTER_SATURATION:
                 is_dup, dup_reason = True, f"cluster saturation '{cluster}' ({cluster_count}x)"
@@ -2723,9 +2770,7 @@ class DefaultModeNetwork:
         if is_plan and thought_clean:
             asyncio.create_task(self._run_planning_pass(thought_clean, turn_id))
 
-    async def _apply_thread_actions(
-        self, thought_clean: str, metadata: dict, turn_id: str
-    ) -> dict:
+    async def _apply_thread_actions(self, thought_clean: str, metadata: dict, turn_id: str) -> dict:
         """Open / advance / conclude an open thread based on the monologue's
         ledger fields. Non-motor by construction — mutates the ledger and (on a
         confident conclusion) encodes to memory; never queues a task.
@@ -2749,9 +2794,7 @@ class DefaultModeNetwork:
 
         # ADVANCE an existing thread.
         if advance_id and ot.find(self._open_threads, advance_id):
-            self._open_threads, t = ot.advance_thread(
-                self._open_threads, advance_id, thought_clean
-            )
+            self._open_threads, t = ot.advance_thread(self._open_threads, advance_id, thought_clean)
             await self._save_threads()
             # Force closure when the advance cap is hit so a thread can't deepen
             # forever (a different kind of loop). The last progress note becomes
@@ -2769,8 +2812,11 @@ class DefaultModeNetwork:
         # OPEN a new thread.
         if open_new and thought_clean:
             self._open_threads, t = ot.open_thread(
-                self._open_threads, thought_clean,
-                angle=angle, bears_on=bears_on, bearing=bearing,
+                self._open_threads,
+                thought_clean,
+                angle=angle,
+                bears_on=bears_on,
+                bearing=bearing,
             )
             await self._save_threads()
             return {"action": "opened_thread", "thread_id": t.id, "thread_title": t.summary[:80]}
@@ -2898,8 +2944,11 @@ class DefaultModeNetwork:
             if self._hippocampus is not None:
                 asyncio.create_task(
                     self._hippocampus.encode_conclusion(
-                        session_id=sid, text=text, source="landed",
-                        tags=list(t.bears_on or []), embedding_fn=self._router.embed,
+                        session_id=sid,
+                        text=text,
+                        source="landed",
+                        tags=list(t.bears_on or []),
+                        embedding_fn=self._router.embed,
                     )
                 )
             self._open_threads = ot.remove_thread(self._open_threads, t.id)
@@ -2938,10 +2987,23 @@ class DefaultModeNetwork:
 
     def _load_routing_weights(self) -> None:
         try:
-            if not ROUTING_WEIGHTS_PATH.exists():
-                return
-            data = json.loads(ROUTING_WEIGHTS_PATH.read_text(encoding="utf-8"))
-            weights = data.get("weights") or {}
+            sb = self._dmn_sb()
+            if sb is not None:
+                client, uid, persona = sb
+                res = (
+                    client.table("dmn_state")
+                    .select("routing_weights")
+                    .eq("user_id", uid)
+                    .eq("persona", persona)
+                    .maybe_single()
+                    .execute()
+                )
+                weights = ((res.data or {}).get("routing_weights") if res else None) or {}
+            else:
+                if not ROUTING_WEIGHTS_PATH.exists():
+                    return
+                data = json.loads(ROUTING_WEIGHTS_PATH.read_text(encoding="utf-8"))
+                weights = data.get("weights") or {}
             # Decay toward rest (1.0) on load so stale associations relax — the
             # analog of Hebbian decay_toward_rest.
             rate = 0.1
@@ -2952,6 +3014,22 @@ class DefaultModeNetwork:
             logger.warning("[DMN] Could not load routing weights: %s", e)
 
     def _persist_routing_weights(self) -> None:
+        sb = self._dmn_sb()
+        if sb is not None:
+            client, uid, persona = sb
+            try:
+                client.table("dmn_state").upsert(
+                    {
+                        "user_id": uid,
+                        "persona": persona,
+                        "routing_weights": self._routing_weights,
+                        "updated_at": "now()",
+                    },
+                    on_conflict="user_id,persona",
+                ).execute()
+            except Exception as e:
+                logger.warning("[DMN] Could not persist routing weights to Supabase: %s", e)
+            return
         try:
             ROUTING_WEIGHTS_PATH.parent.mkdir(parents=True, exist_ok=True)
             tmp = ROUTING_WEIGHTS_PATH.with_suffix(".json.tmp")
@@ -2999,11 +3077,11 @@ class DefaultModeNetwork:
         Biased toward holding — a missed surface is quieter than interrupting a
         stretched user."""
         budget = base
-        if focus_ach >= 0.6:          # the AI itself is in deep focus
+        if focus_ach >= 0.6:  # the AI itself is in deep focus
             budget -= 1
         if verbosity_trend <= -0.25:  # user turned markedly terser than baseline
             budget -= 1
-        if topic_jump_rate >= 0.6:    # user is jumping between topics (scattered/stretched)
+        if topic_jump_rate >= 0.6:  # user is jumping between topics (scattered/stretched)
             budget -= 1
         return max(0, min(base, budget))
 
@@ -3068,8 +3146,11 @@ class DefaultModeNetwork:
             if self._hippocampus is not None:
                 asyncio.create_task(
                     self._hippocampus.encode_conclusion(
-                        session_id=sid, text=text, source="confirmed",
-                        tags=tags, embedding_fn=self._router.embed,
+                        session_id=sid,
+                        text=text,
+                        source="confirmed",
+                        tags=tags,
+                        embedding_fn=self._router.embed,
                     )
                 )
             self._open_threads = ot.remove_thread(self._open_threads, thread.id)
@@ -3230,13 +3311,16 @@ class DefaultModeNetwork:
         if predicted_angle and seq_confidence >= self._seq_predictor.min_confidence:
             covered = {str(q.get("topic", "")).lower() for q in queries}
             if not any(predicted_angle in t or t in predicted_angle for t in covered):
-                queries.append({
-                    "topic": predicted_angle,
-                    "reason": f"sequence prediction (confidence {seq_confidence:.2f})",
-                })
+                queries.append(
+                    {
+                        "topic": predicted_angle,
+                        "reason": f"sequence prediction (confidence {seq_confidence:.2f})",
+                    }
+                )
                 logger.debug(
                     "[SeqPredictor] Injected prefetch query: %r (conf=%.2f)",
-                    predicted_angle, seq_confidence,
+                    predicted_angle,
+                    seq_confidence,
                 )
 
         if not queries:

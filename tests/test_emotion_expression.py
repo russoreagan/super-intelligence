@@ -385,6 +385,7 @@ class TestMoodExpressionDrain:
 # Flash 2.5 helpers
 # ---------------------------------------------------------------------------
 
+
 # Minimal VoiceSettings stand-in so tests don't require the ElevenLabs SDK.
 class _VS:
     def __init__(self, stability, similarity_boost, style, use_speaker_boost, speed=None):
@@ -398,6 +399,7 @@ class _VS:
 class TestStripAllTags:
     def _strip(self, text):
         from brain.pns import PNS
+
         return PNS._strip_all_tags(text)
 
     def test_removes_mood_markup_keeps_inner_text(self):
@@ -437,6 +439,7 @@ class TestStripAllTags:
 class TestExtractMoodMap:
     def _extract(self, text):
         from brain.pns import PNS
+
         return PNS._extract_mood_map(text)
 
     def test_no_markup_returns_empty(self):
@@ -475,6 +478,7 @@ class TestVoiceSettingsFromEmotion:
 
     def _vs(self, emotion):
         from brain.pns import PNS
+
         return PNS._voice_settings_from_emotion(emotion, self.BASE, VoiceSettings=_VS)
 
     def test_none_emotion_uses_base_params(self):
@@ -523,10 +527,12 @@ class TestMakeFlashChunks:
 
     def _chunks(self, text):
         from brain.pns import PNS
+
         return PNS._make_flash_chunks(PNS, text, self.BASE, VoiceSettings=_VS)
 
     def test_plain_text_same_chunk_count_as_split_sentences(self):
         from brain.pns import PNS
+
         text = "Short text."
         chunks = self._chunks(text)
         sentences = PNS._split_sentences(text)
@@ -566,13 +572,16 @@ class TestMakeFlashChunks:
         outro = "But we move forward regardless."
         text = intro + sad + outro
         chunks = self._chunks(text)
-        assert len(chunks) >= 2, f"Expected ≥2 chunks, got {len(chunks)}: {[t[:40] for t, _ in chunks]}"
+        assert len(chunks) >= 2, (
+            f"Expected ≥2 chunks, got {len(chunks)}: {[t[:40] for t, _ in chunks]}"
+        )
         # At least one chunk should have calm (sad) params (stability=0.55, style=0.25)
         settings = [(vs.stability, vs.style) for _, vs in chunks]
         assert any(s == (0.55, 0.25) for s in settings), f"No calm chunk found: {settings}"
 
     def test_chunk_count_not_inflated_by_mood_boundaries(self):
         from brain.pns import PNS
+
         text = (
             "Normal intro sentence. "
             "[mood:sad] This is the sad part in the middle. [/mood] "
@@ -587,17 +596,20 @@ class TestMakeFlashChunks:
 class TestFlashEmotionClusters:
     def test_all_four_buckets_represented(self):
         from brain.pns import PNS
+
         buckets = set(PNS._FLASH_EMOTION_CLUSTERS.values())
         assert buckets == {"bright", "warm", "calm", "tense"}
 
     def test_no_stray_values(self):
         from brain.pns import PNS
+
         valid = {"bright", "warm", "calm", "tense"}
         for emotion, bucket in PNS._FLASH_EMOTION_CLUSTERS.items():
             assert bucket in valid, f"{emotion!r} → invalid bucket {bucket!r}"
 
     def test_core_emotion_coverage(self):
         from brain.pns import PNS
+
         clusters = PNS._FLASH_EMOTION_CLUSTERS
         assert clusters.get("excited") == "bright"
         assert clusters.get("sad") == "calm"

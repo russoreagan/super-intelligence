@@ -95,6 +95,7 @@ class LearningMonitor:
             "llm_calls_saved": saved,
             "modulated_switch_count": getattr(trace, "modulated_switch_count", 0),
             "suppressed_switch_count": getattr(trace, "suppressed_switch_count", 0),
+            "suppression_pressure": round(float(getattr(trace, "suppression_pressure", 0.0)), 4),
         }
         self._turn_metrics.append(metrics)
 
@@ -161,6 +162,14 @@ class LearningMonitor:
             summary[f"late_{key}"] = l_val
             if e_val is not None and l_val is not None:
                 summary[f"{key}_trend"] = round(l_val - e_val, 4)
+
+        # Expose the surprise trend under its documented name. The loop derives
+        # keys from metric names ("avg_surprise" → "avg_surprise_trend"), but the
+        # docstring and both consumers (LearningJudge, record_session_learning)
+        # read "surprise_trend" — without this alias the biologically core signal
+        # (prediction error falling as the model learns) was silently dropped.
+        if "avg_surprise_trend" in summary:
+            summary["surprise_trend"] = summary["avg_surprise_trend"]
 
         # Wiring deltas (requires sleep consolidation to have run first — caller's responsibility)
         if wiring is not None:

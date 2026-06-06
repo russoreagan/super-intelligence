@@ -27,19 +27,17 @@ def get_client():
     key = os.environ.get("SUPABASE_SERVICE_KEY", "")
     if not url or not key:
         raise RuntimeError(
-            "SUPABASE_URL and SUPABASE_SERVICE_KEY must be set when "
-            "BRAIN_STORAGE_BACKEND=supabase"
+            "SUPABASE_URL and SUPABASE_SERVICE_KEY must be set when BRAIN_STORAGE_BACKEND=supabase"
         )
 
     try:
         from supabase import create_client
+
         _client = create_client(url, key)
         logger.info("[Supabase] Client initialised (url=%s...)", url[:30])
         return _client
-    except ImportError:
-        raise RuntimeError(
-            "supabase package not installed. Run: uv add supabase"
-        )
+    except ImportError as e:
+        raise RuntimeError("supabase package not installed. Run: uv add supabase") from e
 
 
 def set_user_id(uid: str) -> None:

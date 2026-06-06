@@ -152,29 +152,66 @@ class PNS:
     # VoiceSettings (stability/style/speed). Emotions cluster into 4 buckets.
     _FLASH_EMOTION_CLUSTERS: dict[str, str] = {
         # bright — animated, fast
-        "joy": "bright", "excitement": "bright", "enthusiasm": "bright",
-        "excited": "bright", "enthusiastic": "bright", "playful": "bright",
-        "amused": "bright", "joking": "bright", "confident": "bright",
-        "proud": "bright", "surprised": "bright", "surprise": "bright",
-        "curious": "bright", "curious-uncertain": "bright",
-        "happy": "bright", "joyful": "bright",
+        "joy": "bright",
+        "excitement": "bright",
+        "enthusiasm": "bright",
+        "excited": "bright",
+        "enthusiastic": "bright",
+        "playful": "bright",
+        "amused": "bright",
+        "joking": "bright",
+        "confident": "bright",
+        "proud": "bright",
+        "surprised": "bright",
+        "surprise": "bright",
+        "curious": "bright",
+        "curious-uncertain": "bright",
+        "happy": "bright",
+        "joyful": "bright",
         # warm — gentle, present
-        "warm": "warm", "warmly": "warm", "affectionate": "warm",
-        "grateful": "warm", "loving": "warm", "tender": "warm",
-        "sympathetic": "warm", "flirty": "warm",
+        "warm": "warm",
+        "warmly": "warm",
+        "affectionate": "warm",
+        "grateful": "warm",
+        "loving": "warm",
+        "tender": "warm",
+        "sympathetic": "warm",
+        "flirty": "warm",
         # calm — subdued, slower
-        "sad": "calm", "softly": "calm", "gently": "calm",
-        "apologetic": "calm", "resigned": "calm", "somber": "calm",
-        "melancholy": "calm", "disappointed": "calm", "wistful": "calm",
-        "flat": "calm", "inhibited": "calm", "relieved": "calm",
-        "thoughtful": "calm", "shy": "calm", "embarrassed": "calm",
-        "bashfully": "calm", "lonely": "calm", "peaceful": "calm",
+        "sad": "calm",
+        "softly": "calm",
+        "gently": "calm",
+        "apologetic": "calm",
+        "resigned": "calm",
+        "somber": "calm",
+        "melancholy": "calm",
+        "disappointed": "calm",
+        "wistful": "calm",
+        "flat": "calm",
+        "inhibited": "calm",
+        "relieved": "calm",
+        "thoughtful": "calm",
+        "shy": "calm",
+        "embarrassed": "calm",
+        "bashfully": "calm",
+        "lonely": "calm",
+        "peaceful": "calm",
         # tense — measured, controlled intensity
-        "anxious": "tense", "agitated": "tense", "angry": "tense",
-        "anger": "tense", "restless": "tense", "cautious-agitated": "tense",
-        "defensive": "tense", "frustrated": "tense", "irritated": "tense",
-        "mad": "tense", "fear": "tense", "urgently": "tense",
-        "sarcastic": "tense", "deadpan": "tense", "dry": "tense",
+        "anxious": "tense",
+        "agitated": "tense",
+        "angry": "tense",
+        "anger": "tense",
+        "restless": "tense",
+        "cautious-agitated": "tense",
+        "defensive": "tense",
+        "frustrated": "tense",
+        "irritated": "tense",
+        "mad": "tense",
+        "fear": "tense",
+        "urgently": "tense",
+        "sarcastic": "tense",
+        "deadpan": "tense",
+        "dry": "tense",
     }
 
     @staticmethod
@@ -508,9 +545,9 @@ class PNS:
 
         _BUCKETS = {
             "bright": {"stability": 0.35, "style": 0.55, "speed": 1.05},
-            "warm":   {"stability": 0.50, "style": 0.35, "speed": 1.00},
-            "calm":   {"stability": 0.55, "style": 0.25, "speed": 0.93},
-            "tense":  {"stability": 0.65, "style": 0.25, "speed": 0.97},
+            "warm": {"stability": 0.50, "style": 0.35, "speed": 1.00},
+            "calm": {"stability": 0.55, "style": 0.25, "speed": 0.93},
+            "tense": {"stability": 0.65, "style": 0.25, "speed": 0.97},
         }
         p = _BUCKETS.get(cluster or "", base_params)
         vs_kwargs = {
@@ -736,24 +773,23 @@ class PNS:
                 flash_base = params.copy()
                 if deliberate_emotion:
                     import re as _re2
+
                     _has_inline = bool(_re2.search(r"\[mood:[^\]]+\]", text, _re2.IGNORECASE))
                     if not _has_inline:
                         # Map the deliberate emotion to a cluster and use its params.
                         _cluster = PNS._FLASH_EMOTION_CLUSTERS.get(deliberate_emotion)
                         _BUCKETS = {
                             "bright": {"stability": 0.35, "style": 0.55, "speed": 1.05},
-                            "warm":   {"stability": 0.50, "style": 0.35, "speed": 1.00},
-                            "calm":   {"stability": 0.55, "style": 0.25, "speed": 0.93},
-                            "tense":  {"stability": 0.65, "style": 0.25, "speed": 0.97},
+                            "warm": {"stability": 0.50, "style": 0.35, "speed": 1.00},
+                            "calm": {"stability": 0.55, "style": 0.25, "speed": 0.93},
+                            "tense": {"stability": 0.65, "style": 0.25, "speed": 0.97},
                         }
                         if _cluster in _BUCKETS:
                             flash_base = _BUCKETS[_cluster]
 
                 chunked = self._make_flash_chunks(text, flash_base, VoiceSettings=VoiceSettings)
                 tag_preview = "—"
-                has_inline_mood = bool(chunked and any(
-                    c[1] != voice_settings for c in chunked
-                ))
+                has_inline_mood = bool(chunked and any(c[1] != voice_settings for c in chunked))
 
             else:
                 # Other non-v3 models: strip all markup so tags aren't read aloud.
@@ -897,11 +933,13 @@ class PNS:
                                 except Exception as _sent_err:
                                     logger.error(
                                         "[I/O] TTS chunk %d/%d failed (%s: %s) — skipping",
-                                        i + 1, len(chunked),
-                                        type(_sent_err).__name__, _sent_err,
+                                        i + 1,
+                                        len(chunked),
+                                        type(_sent_err).__name__,
+                                        _sent_err,
                                     )
                                     self._emit_tts_error(
-                                        f"Chunk {i+1} failed: {type(_sent_err).__name__}"
+                                        f"Chunk {i + 1} failed: {type(_sent_err).__name__}"
                                     )
                                 finally:
                                     # Release the async generator's HTTP connection even
@@ -972,7 +1010,8 @@ class PNS:
                         except Exception as _prod_err:
                             logger.warning(
                                 "[I/O] TTS producer exited with error: %s: %s",
-                                type(_prod_err).__name__, _prod_err,
+                                type(_prod_err).__name__,
+                                _prod_err,
                             )
                         try:
                             if self._interrupt_event.is_set():

@@ -124,8 +124,7 @@ class SequencePredictor:
         """Return the N most frequent bigrams — useful for the LLM similarity pass
         and for observability (understanding what patterns have actually emerged)."""
         return [
-            {"from": a, "to": b, "count": count}
-            for (a, b), count in self._bigrams.most_common(n)
+            {"from": a, "to": b, "count": count} for (a, b), count in self._bigrams.most_common(n)
         ]
 
     # ── persistence ─────────────────────────────────────────────────────────

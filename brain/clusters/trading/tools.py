@@ -49,13 +49,15 @@ class TradingTools:
     def __init__(
         self,
         *,
-        alpaca_client=None,         # paper key — market data only
+        alpaca_client=None,  # paper key — market data only
         alpaca_account_client=None,  # live read-only key — account sync only
         router=None,
         hippocampus=None,
     ) -> None:
         self._md = MarketData(alpaca_client=alpaca_client)
-        self._account_client = alpaca_account_client if alpaca_account_client is not None else alpaca_client
+        self._account_client = (
+            alpaca_account_client if alpaca_account_client is not None else alpaca_client
+        )
         self._router = router
         self._hippocampus = hippocampus
         self._stream = None  # set via set_stream() after construction
@@ -86,7 +88,9 @@ class TradingTools:
         if "error" in q:
             return f"[error] no quote for {symbol} ({q['error']})"
         await present.table(
-            turn_id, f"{symbol} quote", ["symbol", "price", "change_pct", "source"],
+            turn_id,
+            f"{symbol} quote",
+            ["symbol", "price", "change_pct", "source"],
             [[symbol, q.get("price"), q.get("change_pct"), q.get("source")]],
         )
         return f"[success] {symbol} {q.get('price')} ({q.get('change_pct')}% today) via {q.get('source')}"
@@ -106,9 +110,12 @@ class TradingTools:
             "SMA50": list(indicators.sma(c, 50)),
             "SMA200": list(indicators.sma(c, 200)),
         }
-        await present.chart(turn_id, present.candlestick_spec(symbol, bars[-days:], overlays={
-            k: v[-days:] for k, v in overlays.items()
-        }))
+        await present.chart(
+            turn_id,
+            present.candlestick_spec(
+                symbol, bars[-days:], overlays={k: v[-days:] for k, v in overlays.items()}
+            ),
+        )
         return f"[success] {symbol}: {len(bars)} daily bars, latest close {c[-1]:.2f}"
 
     async def _get_indicators(self, args: dict, turn_id: str) -> str:
@@ -122,7 +129,9 @@ class TradingTools:
             return f"[error] no data for {symbol}"
         snap = indicators.compute_all(closes(bars))
         await present.table(
-            turn_id, f"{symbol} indicators", present.snapshot_columns(),
+            turn_id,
+            f"{symbol} indicators",
+            present.snapshot_columns(),
             [present.snapshot_row(symbol, snap)],
         )
         return f"[success] {symbol} indicators: " + json.dumps(
@@ -181,9 +190,11 @@ class TradingTools:
         if price is None:
             return "[error] could not determine resolve price"
         res = await reflection.reflect_and_resolve(
-            did, price_at_resolve=float(price),
+            did,
+            price_at_resolve=float(price),
             benchmark_at_resolve=float(bench) if bench is not None else None,
-            router=self._router, hippocampus=self._hippocampus,
+            router=self._router,
+            hippocampus=self._hippocampus,
         )
         if "error" in res:
             return f"[error] {res['error']}"
@@ -191,7 +202,8 @@ class TradingTools:
 
     async def _review_journal(self, args: dict, turn_id: str) -> str:
         rows = journal.review_journal(
-            symbol=args.get("symbol"), status=args.get("status"),
+            symbol=args.get("symbol"),
+            status=args.get("status"),
             limit=int(args.get("limit", 10)),
         )
         if not rows:
@@ -200,11 +212,16 @@ class TradingTools:
         table_rows = []
         for r in rows:
             res = r.get("resolution") or {}
-            table_rows.append([
-                r.get("symbol"), r.get("status"), r.get("prediction"),
-                res.get("outcome_label", "—"), res.get("raw_return_pct", "—"),
-                res.get("lesson", ""),
-            ])
+            table_rows.append(
+                [
+                    r.get("symbol"),
+                    r.get("status"),
+                    r.get("prediction"),
+                    res.get("outcome_label", "—"),
+                    res.get("raw_return_pct", "—"),
+                    res.get("lesson", ""),
+                ]
+            )
         await present.table(turn_id, "Decision journal", cols, table_rows)
         return f"[success] {len(rows)} journal entries (see table)"
 
@@ -234,7 +251,9 @@ class TradingTools:
         if not items:
             return "[success] no contradictions found"
         await present.table(
-            turn_id, "Contradictions", ["symbol", "kind", "detail"],
+            turn_id,
+            "Contradictions",
+            ["symbol", "kind", "detail"],
             [[i["symbol"], i["kind"], i["detail"]] for i in items],
         )
         return f"[success] {len(items)} contradiction(s) (see table)"
@@ -243,12 +262,16 @@ class TradingTools:
         result = await capabilities.stress_test_thesis(
             symbol=str(args.get("symbol", "")),
             thesis_text=str(args.get("thesis_text", "")),
-            md=self._md, router=self._router,
+            md=self._md,
+            router=self._router,
         )
         if result.get("status") == "blocked":
-            return f"{result['message']} (author the stress-test role prompts in trading/prompts.py)"
+            return (
+                f"{result['message']} (author the stress-test role prompts in trading/prompts.py)"
+            )
         await present.table(
-            turn_id, f"Stress-test: {result.get('symbol')}",
+            turn_id,
+            f"Stress-test: {result.get('symbol')}",
             ["view", "summary"],
             [
                 ["Bull", result.get("bull", "")],
@@ -263,7 +286,9 @@ class TradingTools:
 
     async def _find_mispricing(self, args: dict, turn_id: str) -> str:
         result = await capabilities.find_mispricing(
-            symbol=str(args.get("symbol", "")), md=self._md, router=self._router,
+            symbol=str(args.get("symbol", "")),
+            md=self._md,
+            router=self._router,
         )
         if result.get("status") == "blocked":
             return f"{result['message']} (author MISPRICING_SYSTEM in trading/prompts.py)"

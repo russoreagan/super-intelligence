@@ -388,7 +388,11 @@ class AuditoryCluster:
             )
             await self._bus.publish_dict("auditory.prosody", pros_result, source=CLUSTER)
 
-        if music_result is not None and not isinstance(music_result, BaseException) and music_result.get("bpm", 0) > 0:
+        if (
+            music_result is not None
+            and not isinstance(music_result, BaseException)
+            and music_result.get("bpm", 0) > 0
+        ):
             logger.debug(
                 "Auditory: music bpm=%.0f key=%s%s mood=%s centroid=%.0f",
                 music_result.get("bpm", 0),

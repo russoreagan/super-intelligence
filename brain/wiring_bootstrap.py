@@ -44,8 +44,13 @@ def bootstrap(wiring: Wiring) -> None:
     wiring.add("temporal.understanding_integrator", "hippocampus.recall", weight=1.0)
 
     # ── Frontal: executive → drafters → critic ───────────────────────────
-    for d in ("frontal.drafter_A", "frontal.drafter_B", "frontal.drafter_C",
-              "frontal.drafter_D", "frontal.drafter_E"):
+    for d in (
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+    ):
         wiring.add("frontal.executive", d, weight=1.0, polarity="excitatory")
         wiring.add(d, "frontal.critic", weight=1.0, polarity="excitatory")
         wiring.add(d, "frontal.empathy_critic", weight=1.0, polarity="excitatory")
@@ -60,8 +65,13 @@ def bootstrap(wiring: Wiring) -> None:
     )
 
     # ── Frontal inhibitory edges (GABA dampens drafters; satiation dampens repeat) ─
-    for d in ("frontal.drafter_A", "frontal.drafter_B", "frontal.drafter_C",
-              "frontal.drafter_D", "frontal.drafter_E"):
+    for d in (
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+    ):
         wiring.add("hypothalamus.threat_to_GABA", d, weight=1.0, polarity="inhibitory")
 
     # ── Stoic reframer activates when GABA is high ───────────────────────

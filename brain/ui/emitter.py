@@ -143,9 +143,7 @@ class ActivationEmitter:
         spec: {title, kind:"candlestick"|"line", series:[...], overlays:[...], markers:[...]}
         """
         with contextlib.suppress(asyncio.QueueFull):
-            self._queue.put_nowait(
-                {"type": "chart", "turn_id": turn_id, **spec, "ts": time.time()}
-            )
+            self._queue.put_nowait({"type": "chart", "turn_id": turn_id, **spec, "ts": time.time()})
 
     async def emit_event(self, event: dict) -> None:
         """Emit an arbitrary event dict to the UI WebSocket."""

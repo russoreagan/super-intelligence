@@ -17,7 +17,6 @@ from brain.clusters.parietal import (
     _measure_verbosity,
 )
 
-
 # ── F1: style note reflects the user, not the clamped entity target ───────────
 
 
@@ -68,7 +67,9 @@ def test_style_note_varies_between_users():
             "I would appreciate a thorough and comprehensive explanation, "
             "furthermore I would like to understand the complete rationale "
             "behind each architectural decision in considerable detail please.",
-            "text", 0.2, 0.5,
+            "text",
+            0.2,
+            0.5,
         )
     assert p1.user_style_note("text") != p2.user_style_note("text")
 
@@ -88,15 +89,14 @@ def test_measure_helpers_monotonic():
 
 # ── F2: self-disclosure intent set matches real temporal vocabulary ───────────
 
-from brain.clusters.frontal import FrontalCluster
+from brain.clusters.frontal import FrontalCluster  # noqa: E402
 
 # Affection >= 20 (text floor); user model string the helper parses
 _WARM_USER = "## Affection score\n- Score: 30\n"
 _AFFECT_ENGAGED = {"emotion": "engaged", "affect_dims": {"arousal": 0.5}}
 
 
-def _disc(intent, modality="text", user_emo="curious", tone="warm",
-          affect=None, user=_WARM_USER):
+def _disc(intent, modality="text", user_emo="curious", tone="warm", affect=None, user=_WARM_USER):
     features = {
         "intent": intent,
         "input_modality": modality,
@@ -182,7 +182,7 @@ def test_mark_trace_flag_noop_without_trace():
 
 # ── F5: bond model (decay / recovery / familiarity) ───────────────────────────
 
-from brain.relationship import (
+from brain.relationship import (  # noqa: E402
     apply_absence,
     decay_affection,
     decay_bond,
@@ -305,8 +305,7 @@ def test_style_persistence_round_trip():
             return self.store.get(fn, "")
 
         async def upsert_section(self, fn, section, body):
-            self.store[fn] = (self.store.get(fn, "") +
-                              f"\n## {section}\n{body}\n")
+            self.store[fn] = self.store.get(fn, "") + f"\n## {section}\n{body}\n"
 
     schema = _FakeSchema()
     p1 = _fresh_parietal()
@@ -314,7 +313,9 @@ def test_style_persistence_round_trip():
         p1.update_user_style(
             "I would appreciate a thorough and comprehensive answer please, "
             "furthermore I would like the complete rationale in considerable detail.",
-            "text", 0.2, 0.5,
+            "text",
+            0.2,
+            0.5,
         )
     saved_turns = p1.get_user_style("text").turns_tracked
     assert saved_turns >= 5
@@ -366,7 +367,7 @@ def test_affection_tier_labels_consistent_across_clusters():
     order = ["close", "warm", "friendly", "neutral", "cool", "guarded"]
 
     def hippo_label(score):
-        for (bound, _desc), label in zip(hippo, order):
+        for (bound, _desc), label in zip(hippo, order, strict=False):
             if score >= bound:
                 return label
         return "guarded"
@@ -540,8 +541,8 @@ def _perf(score, tier, user_emo="neutral", tone="neutral"):
 
 def test_performed_blocked_for_unfamiliar_cool():
     # The explicit "definitely not": unfamiliar + cool/guarded.
-    assert _perf(-20, "new")[0] is False   # guarded
-    assert _perf(-15, "new")[0] is False   # cool
+    assert _perf(-20, "new")[0] is False  # guarded
+    assert _perf(-15, "new")[0] is False  # cool
     # New but not warm enough (below new floor 15) → blocked even at neutral.
     assert _perf(5, "new")[0] is False
 

@@ -30,6 +30,8 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+import contextlib  # noqa: E402
+
 from brain.model_router import ModelRouter  # noqa: E402
 
 SOURCE_DIR = ROOT / ".claude" / "skills"
@@ -141,10 +143,8 @@ async def main(force: bool = False) -> None:
     # wipes when .claude/skills/ is missing content or partially populated.
     existing_count = 0
     if INDEX_PATH.exists():
-        try:
+        with contextlib.suppress(Exception):
             existing_count = len(json.loads(INDEX_PATH.read_text()).get("skills", []))
-        except Exception:
-            pass
     if existing_count > 0 and len(skill_dirs) < existing_count * 0.5 and not force:
         print(
             f"\n⛔  ABORTED — would reduce skill index from {existing_count} entries "

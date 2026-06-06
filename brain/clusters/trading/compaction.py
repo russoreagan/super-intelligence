@@ -63,6 +63,7 @@ def _cfg(key: str, attr: str) -> int:
 
 # ── era_summary record schema ─────────────────────────────────────────────────
 
+
 def _era_id(now: float | None = None) -> str:
     ts = now if now is not None else time.time()
     return f"era-{int(ts)}-{os.urandom(2).hex()}"
@@ -81,7 +82,7 @@ def _era_record(
     period_end = ts_list[-1][:10] if ts_list else ""
     symbols: list[str] = []
     for r in source_records:
-        for s in (r.get("symbols") or ([r["symbol"]] if r.get("symbol") else [])):
+        for s in r.get("symbols") or ([r["symbol"]] if r.get("symbol") else []):
             if s and s not in symbols:
                 symbols.append(s)
     return {
@@ -99,9 +100,7 @@ def _era_record(
 
 
 def _stats(records: list[dict]) -> dict:
-    outcomes = [
-        (r.get("resolution") or r).get("outcome_label") for r in records
-    ]
+    outcomes = [(r.get("resolution") or r).get("outcome_label") for r in records]
     wins = sum(1 for o in outcomes if o == "win")
     misses = sum(1 for o in outcomes if o == "miss")
     alphas = [
@@ -119,35 +118,50 @@ def _stats(records: list[dict]) -> dict:
 
 # ── LLM call ──────────────────────────────────────────────────────────────────
 
+
 async def _condense(records: list[dict], depth: int, router, model_key: str) -> str:
     """Call the LLM with CONDENSATION_SYSTEM and return the summary string."""
     payload = []
     for r in records:
         if r.get("status") == "era_summary":
-            payload.append({"type": "era_summary", "depth": r.get("depth"),
-                            "period": f"{r.get('period_start')} → {r.get('period_end')}",
-                            "summary": r.get("summary"), **_stats([r])})
+            payload.append(
+                {
+                    "type": "era_summary",
+                    "depth": r.get("depth"),
+                    "period": f"{r.get('period_start')} → {r.get('period_end')}",
+                    "summary": r.get("summary"),
+                    **_stats([r]),
+                }
+            )
         else:
-            payload.append({
-                "symbol": r.get("symbol"), "direction": r.get("direction"),
-                "prediction": r.get("prediction"), "rationale": r.get("rationale"),
-                "indicators": r.get("indicators_at_open"),
-                "outcome": (r.get("resolution") or {}).get("outcome_label"),
-                "alpha": (r.get("resolution") or {}).get("alpha_vs_benchmark_pct"),
-                "lesson": (r.get("resolution") or {}).get("lesson"),
-            })
+            payload.append(
+                {
+                    "symbol": r.get("symbol"),
+                    "direction": r.get("direction"),
+                    "prediction": r.get("prediction"),
+                    "rationale": r.get("rationale"),
+                    "indicators": r.get("indicators_at_open"),
+                    "outcome": (r.get("resolution") or {}).get("outcome_label"),
+                    "alpha": (r.get("resolution") or {}).get("alpha_vs_benchmark_pct"),
+                    "lesson": (r.get("resolution") or {}).get("lesson"),
+                }
+            )
 
     depth_hint = (
-        "" if depth == 1
+        ""
+        if depth == 1
         else f" These are already condensed summaries (depth {depth - 1}); compress further."
     )
     system = prompts.CONDENSATION_SYSTEM + depth_hint
 
     try:
         result = await router.call(
-            model_key, system,
+            model_key,
+            system,
             [{"role": "user", "content": json.dumps(payload, default=str)}],
-            cluster="trading", cell="compaction", max_tokens=400,
+            cluster="trading",
+            cell="compaction",
+            max_tokens=400,
         )
         return str(result).strip() or "(no summary generated)"
     except Exception as e:  # pragma: no cover
@@ -158,6 +172,7 @@ async def _condense(records: list[dict], depth: int, router, model_key: str) -> 
 
 # ── main entry points ─────────────────────────────────────────────────────────
 
+
 async def compact_journal(router=None, model_key: str = "local") -> int:
     """Condense old resolved records into era summaries.
 
@@ -166,10 +181,12 @@ async def compact_journal(router=None, model_key: str = "local") -> int:
     (last resort; always prefer calling with a router from after_job).
     """
     compacted = 0
-    compacted += await _compact_level(0, "resolved", "trading_journal_max_resolved",
-                                      "_DEFAULT_MAX_RESOLVED", router, model_key)
-    compacted += await _compact_level(1, "era_summary", "trading_journal_max_era_summaries",
-                                      "_DEFAULT_MAX_ERA", router, model_key)
+    compacted += await _compact_level(
+        0, "resolved", "trading_journal_max_resolved", "_DEFAULT_MAX_RESOLVED", router, model_key
+    )
+    compacted += await _compact_level(
+        1, "era_summary", "trading_journal_max_era_summaries", "_DEFAULT_MAX_ERA", router, model_key
+    )
     # depth-2 summaries are never compacted further — they persist as permanent
     # condensed memory.
     return compacted
@@ -194,8 +211,9 @@ async def _compact_level(
     if status_filter == "resolved":
         candidates = [r for r in records if r.get("status") == "resolved"]
     else:
-        candidates = [r for r in records if r.get("status") == "era_summary"
-                      and r.get("depth") == depth]
+        candidates = [
+            r for r in records if r.get("status") == "era_summary" and r.get("depth") == depth
+        ]
     others = [r for r in records if r not in candidates]
 
     if len(candidates) <= max_count:
@@ -203,7 +221,7 @@ async def _compact_level(
 
     # Take the oldest batch from the candidates that exceed the threshold
     overflow = len(candidates) - max_count
-    batch = candidates[:min(overflow + batch_size, len(candidates))]
+    batch = candidates[: min(overflow + batch_size, len(candidates))]
     batch = batch[:batch_size]  # cap at one batch per call to keep latency bounded
     remaining = [r for r in candidates if r not in batch]
 
@@ -215,7 +233,8 @@ async def _compact_level(
         store.rewrite_jsonl(store.JOURNAL_JSONL_PATH, others + remaining)
         logger.warning(
             "[compaction] no router — hard-dropped %d depth-%d entries (no compaction)",
-            removed, depth,
+            removed,
+            depth,
         )
         return removed
 
@@ -224,7 +243,9 @@ async def _compact_level(
     store.rewrite_jsonl(store.JOURNAL_JSONL_PATH, others + [era] + remaining)
     logger.info(
         "[compaction] condensed %d depth-%d records into era_summary (depth %d)",
-        len(batch), depth, depth + 1,
+        len(batch),
+        depth,
+        depth + 1,
     )
     return len(batch)
 
@@ -265,9 +286,16 @@ async def compact_journal_md(router=None, model_key: str = "local") -> None:
             condensed = await router.call(
                 model_key,
                 prompts.CONDENSATION_SYSTEM,
-                [{"role": "user", "content": f"Condense this trading journal section "
-                  f"into 2-4 sentences capturing only the most durable insights:\n\n{old_text[:4000]}"}],
-                cluster="trading", cell="compaction", max_tokens=200,
+                [
+                    {
+                        "role": "user",
+                        "content": f"Condense this trading journal section "
+                        f"into 2-4 sentences capturing only the most durable insights:\n\n{old_text[:4000]}",
+                    }
+                ],
+                cluster="trading",
+                cell="compaction",
+                max_tokens=200,
             )
             condensed = str(condensed).strip()
         except Exception as e:  # pragma: no cover
@@ -290,7 +318,8 @@ async def compact_journal_md(router=None, model_key: str = "local") -> None:
     store.atomic_write_text(store.JOURNAL_MD_PATH, new_content)
     logger.info(
         "[compaction] condensed journal.md: %dKB → ~%dKB",
-        size // 1024, len(new_content) // 1024,
+        size // 1024,
+        len(new_content) // 1024,
     )
 
 

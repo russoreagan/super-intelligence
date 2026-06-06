@@ -118,7 +118,20 @@
     "code-architecture",
     "code-architecture",
     "user-perception",
-    "user-preference"
+    "user-preference",
+    "day-trading",
+    "day-trading",
+    "investment-strategy",
+    "portfolio-diversification",
+    "broader-market",
+    "portfolio-diversification",
+    "day-trading",
+    "day-trading",
+    "broader-market",
+    "day-trading",
+    "day-trading",
+    "cloud-hosting",
+    "infrastructure-stability"
   ],
   "bigrams": {
     "reconnection-and\u001ffeedback-loop": 1,
@@ -233,7 +246,18 @@
     "tool-structure\u001fcode-architecture": 1,
     "code-architecture\u001fcode-architecture": 1,
     "code-architecture\u001fuser-perception": 1,
-    "user-perception\u001fuser-preference": 1
+    "user-perception\u001fuser-preference": 1,
+    "user-preference\u001fday-trading": 1,
+    "day-trading\u001fday-trading": 3,
+    "day-trading\u001finvestment-strategy": 1,
+    "investment-strategy\u001fportfolio-diversification": 1,
+    "portfolio-diversification\u001fbroader-market": 1,
+    "broader-market\u001fportfolio-diversification": 1,
+    "portfolio-diversification\u001fday-trading": 1,
+    "day-trading\u001fbroader-market": 1,
+    "broader-market\u001fday-trading": 1,
+    "day-trading\u001fcloud-hosting": 1,
+    "cloud-hosting\u001finfrastructure-stability": 1
   },
   "trigrams": {
     "reconnection-and\u001ffeedback-loop\u001freconnection": 1,
@@ -352,6 +376,19 @@
     "user-frustration\u001ftool-structure\u001fcode-architecture": 1,
     "tool-structure\u001fcode-architecture\u001fcode-architecture": 1,
     "code-architecture\u001fcode-architecture\u001fuser-perception": 1,
-    "code-architecture\u001fuser-perception\u001fuser-preference": 1
+    "code-architecture\u001fuser-perception\u001fuser-preference": 1,
+    "user-perception\u001fuser-preference\u001fday-trading": 1,
+    "user-preference\u001fday-trading\u001fday-trading": 1,
+    "day-trading\u001fday-trading\u001finvestment-strategy": 1,
+    "day-trading\u001finvestment-strategy\u001fportfolio-diversification": 1,
+    "investment-strategy\u001fportfolio-diversification\u001fbroader-market": 1,
+    "portfolio-diversification\u001fbroader-market\u001fportfolio-diversification": 1,
+    "broader-market\u001fportfolio-diversification\u001fday-trading": 1,
+    "portfolio-diversification\u001fday-trading\u001fday-trading": 1,
+    "day-trading\u001fday-trading\u001fbroader-market": 1,
+    "day-trading\u001fbroader-market\u001fday-trading": 1,
+    "broader-market\u001fday-trading\u001fday-trading": 1,
+    "day-trading\u001fday-trading\u001fcloud-hosting": 1,
+    "day-trading\u001fcloud-hosting\u001finfrastructure-stability": 1
   }
 }

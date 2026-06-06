@@ -9,6 +9,7 @@ v0.2 feature.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import time
@@ -20,6 +21,7 @@ from brain.model_router import ModelRouter
 from brain.observability.decisions import decisions
 from brain.second_brain.store import EpisodicStore, SchemaStore
 from brain.security import sanitize_fact
+from brain.settings import settings
 from brain.sleep_prompts import (
     ANGLE_SYNONYM_SYSTEM,
     EPISODE_SYNTHESIS_SYSTEM,
@@ -545,9 +547,7 @@ class SleepConsolidation:
 
         for speaker in speakers:
             try:
-                schema_file = (
-                    self._schema.ensure_speaker_schema(speaker) if speaker else "user.md"
-                )
+                schema_file = self._schema.ensure_speaker_schema(speaker) if speaker else "user.md"
                 content = self._schema.read(schema_file)
                 if not content:
                     continue
@@ -793,7 +793,7 @@ class SleepConsolidation:
 
     # ── Angle synonym pass ───────────────────────────────────────────────────
 
-    _SYNONYM_MIN_HISTORY = 50       # angles recorded before first pass
+    _SYNONYM_MIN_HISTORY = 50  # angles recorded before first pass
     _SYNONYM_MIN_INTERVAL_DAYS = 7  # minimum days between passes
 
     async def angle_synonym_pass(self, session_id: str) -> None:
@@ -829,13 +829,15 @@ class SleepConsolidation:
         if len(history) < self._SYNONYM_MIN_HISTORY:
             logger.debug(
                 "[AngleSynonyms] Not enough history (%d/%d) — skipping",
-                len(history), self._SYNONYM_MIN_HISTORY,
+                len(history),
+                self._SYNONYM_MIN_HISTORY,
             )
             return
 
         if now - last_ts < self._SYNONYM_MIN_INTERVAL_DAYS * 86400:
-            logger.debug("[AngleSynonyms] Last pass was %.1f days ago — skipping",
-                         (now - last_ts) / 86400)
+            logger.debug(
+                "[AngleSynonyms] Last pass was %.1f days ago — skipping", (now - last_ts) / 86400
+            )
             return
 
         # Build angle frequency table from bigrams (each appearance as src or dst counts).
@@ -862,7 +864,8 @@ class SleepConsolidation:
 
         logger.info(
             "[AngleSynonyms] Running synonym pass: %d unique angles from %d history entries",
-            len(angle_list), len(history),
+            len(angle_list),
+            len(history),
         )
 
         self._angle_synonym_cell.reset_turn(f"sleep_{session_id}_synonyms")
@@ -898,7 +901,8 @@ class SleepConsolidation:
             os.replace(tmp, synonyms_path)
             logger.info(
                 "[AngleSynonyms] Wrote %d synonym mappings (%d groups) to angle_synonyms.json",
-                len(existing), len(mappings),
+                len(existing),
+                len(mappings),
             )
 
         # Stamp the run time back into sequence_weights.json.
@@ -909,6 +913,8 @@ class SleepConsolidation:
                 json.dump(weights_data, f, indent=2)
             os.replace(tmp, weights_path)
         except Exception as e:
-            logger.warning("[AngleSynonyms] Could not update sequence_weights.json timestamp: %s", e)
+            logger.warning(
+                "[AngleSynonyms] Could not update sequence_weights.json timestamp: %s", e
+            )
 
     # ── Hebbian pass ─────────────────────────────────────────────────────────

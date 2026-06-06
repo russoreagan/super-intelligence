@@ -84,7 +84,10 @@ class Neuromodulators:
     # Historical resting/init values, used as the default baseline/start when no
     # persona (or older settings.json) overrides them. _DEF_BASELINE mirrors the
     # original _FLOORS; _DEF_INIT mirrors the original warm-start levels.
-    _DEF_BASELINE = {"ACh": 0.10, "DA": 0.30, "GABA": 0.02, "Glu": 0.15, "NE": 0.15}
+    # GABA default raised to 0.12 (the persona inhibition floor, see
+    # persona_chem.GABA_RESTING_FLOOR) so a no-persona / off-table run also keeps
+    # tonic inhibition reachable instead of resting at near-zero.
+    _DEF_BASELINE = {"ACh": 0.10, "DA": 0.30, "GABA": 0.12, "Glu": 0.15, "NE": 0.15}
     _DEF_INIT = {"ACh": 0.20, "DA": 0.50, "GABA": 0.05, "Glu": 0.30, "NE": 0.25}
 
     def __init__(self) -> None:
@@ -103,7 +106,7 @@ class Neuromodulators:
         # ── flock_dynamics: per-turn trajectory (derivative) of each channel ──
         # Inert unless mark_turn() is called (only the hypothalamus calls it, and
         # only when flock_dynamics is on), so flag-off behaviour is unchanged.
-        self._velocity: dict[str, float] = {ch: 0.0 for ch in self.CHANNELS}
+        self._velocity: dict[str, float] = dict.fromkeys(self.CHANNELS, 0.0)
         self._prev_levels: dict[str, float] | None = None
 
     def add(self, channel: str, delta: float) -> None:
@@ -188,7 +191,7 @@ class HormonalState:
         self._model: str = str(_s.get("chem_decay_model", "baseline"))
         # ── flock_dynamics: per-turn trajectory (derivative) of each channel ──
         # See Neuromodulators.mark_turn — inert until called by the hypothalamus.
-        self._velocity: dict[str, float] = {ch: 0.0 for ch in self.CHANNELS}
+        self._velocity: dict[str, float] = dict.fromkeys(self.CHANNELS, 0.0)
         self._prev_levels: dict[str, float] | None = None
 
     def add(self, channel: str, delta: float) -> None:

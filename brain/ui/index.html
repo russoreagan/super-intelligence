@@ -5030,7 +5030,6 @@ function handle(msg) {
         }
     case 'emotion': {
       const badge = document.getElementById('emotion-badge');
-      badge.textContent = msg.deliberate ? `<${msg.emotion}>` : msg.emotion;
       badge.classList.toggle('deliberate', !!msg.deliberate);
       // Derive badge colors from MOOD_BG_COLORS so it matches the background glow
       const moodCfg = MOOD_BG_COLORS[msg.emotion] || MOOD_BG_COLORS.neutral;
@@ -5041,7 +5040,14 @@ function handle(msg) {
       badge.style.borderColor  = `oklch(${Math.min(ml + 0.28, 0.50)} ${mc} ${mh} / 0.6)`;
       const moodDot  = document.getElementById('mood-dot');
       const moodName = document.getElementById('mood-name');
-      moodName.textContent = msg.emotion;
+      if (msg.deliberate) {
+        const current = badge.textContent.replace(/ expressing .*$/, '');
+        badge.textContent    = `${current} expressing ${msg.emotion}`;
+        moodName.textContent = `${current} expressing ${msg.emotion}`;
+      } else {
+        badge.textContent    = msg.emotion;
+        moodName.textContent = msg.emotion;
+      }
       // Mood label reads as ink (same as the persona name) — the light
       // emotion colour was hard to read on paper. The dot carries the colour,
       // at a medium saturation that's legible on both themes.
@@ -5054,7 +5060,13 @@ function handle(msg) {
     }
     case 'emotion_lock_cleared': {
       const badge = document.getElementById('emotion-badge');
-      if (badge) badge.classList.remove('deliberate');
+      const moodName = document.getElementById('mood-name');
+      if (badge) {
+        badge.classList.remove('deliberate');
+        const natural = badge.textContent.replace(/ expressing .*$/, '');
+        badge.textContent = natural;
+        if (moodName) moodName.textContent = natural;
+      }
       break;
     }
     case 'user_emotion': {

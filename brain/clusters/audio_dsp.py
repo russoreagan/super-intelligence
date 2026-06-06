@@ -488,7 +488,7 @@ def extract_music_features(audio: np.ndarray, sr: int) -> dict:
         "mode": "major",
         "spectral_centroid": 0.0,
         "spectral_rolloff": 0.0,
-        "rms_mean": float(np.sqrt(np.mean(audio ** 2))),
+        "rms_mean": float(np.sqrt(np.mean(audio**2))),
         "rms_std": 0.0,
         "onset_rate": 0.0,
         "mfcc_mean": [],
@@ -507,14 +507,16 @@ def extract_music_features(audio: np.ndarray, sr: int) -> dict:
         onset_env = librosa.onset.onset_strength(y=audio, sr=sr)
         tempo_arr, beats = librosa.beat.beat_track(onset_envelope=onset_env, sr=sr)
         bpm = float(np.atleast_1d(tempo_arr)[0])
-        conf = float(np.mean(onset_env[beats]) / (np.max(onset_env) + 1e-9)) if len(beats) > 1 else 0.0
+        conf = (
+            float(np.mean(onset_env[beats]) / (np.max(onset_env) + 1e-9)) if len(beats) > 1 else 0.0
+        )
         base["bpm"] = bpm
         base["bpm_confidence"] = round(conf, 3)
 
         # ── Key + Mode via chroma ──
         # CQT chroma is more key-stable than STFT chroma on short clips.
         chroma = librosa.feature.chroma_cqt(y=audio, sr=sr)
-        chroma_mean = chroma.mean(axis=1)          # (12,) — C through B
+        chroma_mean = chroma.mean(axis=1)  # (12,) — C through B
         key_idx = int(np.argmax(chroma_mean))
         base["key"] = _NOTE_NAMES[key_idx]
         # Major vs minor: compare energy of major 3rd (4 semitones) vs minor 3rd (3 semitones)

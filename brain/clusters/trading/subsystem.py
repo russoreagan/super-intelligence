@@ -22,8 +22,22 @@ from .market_data import MarketData
 logger = logging.getLogger(__name__)
 
 _TRADING_HINTS = (
-    "trade", "trading", "stock", "ticker", "watchlist", "portfolio", "position",
-    "thesis", "rsi", "macd", "bullish", "bearish", "buy", "sell", "hedge", "options",
+    "trade",
+    "trading",
+    "stock",
+    "ticker",
+    "watchlist",
+    "portfolio",
+    "position",
+    "thesis",
+    "rsi",
+    "macd",
+    "bullish",
+    "bearish",
+    "buy",
+    "sell",
+    "hedge",
+    "options",
 )
 
 
@@ -41,9 +55,7 @@ class TradingSubsystem(MotorSubsystem):
         if any(h in t for h in _TRADING_HINTS):
             return True
         # match any open-thesis symbol mentioned by name
-        return any(
-            rec.get("symbol", "").lower() in t for rec in journal.get_records(status="open")
-        )
+        return any(rec.get("symbol", "").lower() in t for rec in journal.get_records(status="open"))
 
     async def before_plan(self, task_description: str, router) -> str:
         if not self._looks_trading(task_description):
@@ -61,7 +73,7 @@ class TradingSubsystem(MotorSubsystem):
         # Recent open theses + their individual lessons
         for rec in opens[:5]:
             sym = rec.get("symbol", "")
-            lines.append(f"- OPEN {sym}: {rec.get('prediction','')}")
+            lines.append(f"- OPEN {sym}: {rec.get('prediction', '')}")
             for lesson in journal.last_lessons(sym, limit=1):
                 lines.append(f"    lesson: {lesson}")
         return "\n".join(lines) if len(lines) > 1 else ""

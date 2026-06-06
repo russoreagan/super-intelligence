@@ -232,8 +232,12 @@ class TestExecuteJobResume:
             async def call_structured(self, model_key, system_prompt, messages, **kwargs):
                 return {
                     "stories": [
-                        {"id": "US-001", "description": "read f", "expected_tool": "read_file",
-                         "acceptance_criteria": []}
+                        {
+                            "id": "US-001",
+                            "description": "read f",
+                            "expected_tool": "read_file",
+                            "acceptance_criteria": [],
+                        }
                     ],
                     "complexity": "low",
                 }

@@ -385,6 +385,7 @@ class FrontalCluster:
         exec_skill = instruction.get("skill")
         if exec_skill and self._skill_selector.get_skill(exec_skill):
             from brain.clusters.skill_selector import SkillBundle
+
             bundle = SkillBundle(
                 tier1=self._skill_selector.tier1_names,
                 chosen=[exec_skill],
@@ -1361,7 +1362,6 @@ class FrontalCluster:
             )
         return None
 
-
     @staticmethod
     def _disclosure_ready(features: dict, affect: dict, user_content: str) -> bool:
         """Decide whether this turn is a good moment for proactive self-disclosure.
@@ -1395,13 +1395,17 @@ class FrontalCluster:
         )
 
         hostile_user = user_emo in (
-            "hostile", "frustrated", "angry", "distressed", "overwhelmed", "annoyed",
+            "hostile",
+            "frustrated",
+            "angry",
+            "distressed",
+            "overwhelmed",
+            "annoyed",
         ) or user_tone in ("insulting", "impatient", "dismissive")
 
-        entity_has_something = (
-            (affect.get("affect_dims") or {}).get("arousal", 0) > 0.4
-            or (affect.get("emotion") or "neutral") != "neutral"
-        )
+        entity_has_something = (affect.get("affect_dims") or {}).get("arousal", 0) > 0.4 or (
+            affect.get("emotion") or "neutral"
+        ) != "neutral"
 
         return (
             affection >= min_aff
@@ -1411,7 +1415,9 @@ class FrontalCluster:
         )
 
     @staticmethod
-    def _performed_emotion_gate(features: dict, affect: dict, user_content: str) -> tuple[bool, str]:
+    def _performed_emotion_gate(
+        features: dict, affect: dict, user_content: str
+    ) -> tuple[bool, str]:
         """Decide whether to ENCOURAGE performed/deliberate emotion this turn, and
         with what flavour. Performed emotion ([mood:X], set_mood) is a playful,
         humor-leaning intimacy device — it should track relationship depth and the
@@ -1448,18 +1454,43 @@ class FrontalCluster:
             return False, ""
 
         positive_emos = {
-            "happy", "playful", "amused", "excited", "content", "warm",
-            "affectionate", "grateful", "engaged", "curious", "joyful",
+            "happy",
+            "playful",
+            "amused",
+            "excited",
+            "content",
+            "warm",
+            "affectionate",
+            "grateful",
+            "engaged",
+            "curious",
+            "joyful",
         }
         negative_emos = {
-            "sad", "anxious", "frustrated", "disappointed", "down", "stressed",
-            "overwhelmed", "distressed", "hurt", "lonely", "tired", "annoyed", "angry",
+            "sad",
+            "anxious",
+            "frustrated",
+            "disappointed",
+            "down",
+            "stressed",
+            "overwhelmed",
+            "distressed",
+            "hurt",
+            "lonely",
+            "tired",
+            "annoyed",
+            "angry",
         }
         user_positive = user_emo in positive_emos or user_tone in (
-            "warm", "joking", "praising", "playful",
+            "warm",
+            "joking",
+            "praising",
+            "playful",
         )
         user_negative = user_emo in negative_emos or user_tone in (
-            "dismissive", "impatient", "insulting",
+            "dismissive",
+            "impatient",
+            "insulting",
         )
 
         # Good mood → playful performance is the sweet spot.
@@ -1473,7 +1504,9 @@ class FrontalCluster:
                 settings.get("performed_emotion_cheerup_min_affection")
             ):
                 if user_tone in ("impatient", "dismissive") or user_emo in (
-                    "frustrated", "annoyed", "angry",
+                    "frustrated",
+                    "annoyed",
+                    "angry",
                 ):
                     return True, "tension_break"
                 return True, "cheer_up"
@@ -1481,7 +1514,8 @@ class FrontalCluster:
 
         # Neutral mood → light playful performance when there's enough warmth.
         if aff >= int(settings.get("performed_emotion_min_affection")) or tier in (
-            "acquainted", "close",
+            "acquainted",
+            "close",
         ):
             return True, "playful"
 

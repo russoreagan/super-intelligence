@@ -57,18 +57,18 @@ class Thread:
     progress: list[str] = field(default_factory=list)
     advances: int = 0
     bears_on: list[str] = field(default_factory=list)  # which work-items/domains it connects to
-    bearing: str = ""                                   # kind of bearing (changes-prioritization, …)
+    bearing: str = ""  # kind of bearing (changes-prioritization, …)
     angle: str = ""
     opened_ts: float = 0.0
     last_ts: float = 0.0
-    pending_conclusion: str = ""                        # proposed conclusion awaiting user confirmation
+    pending_conclusion: str = ""  # proposed conclusion awaiting user confirmation
 
     def to_dict(self) -> dict:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, d: dict) -> "Thread":
-        known = {f for f in cls.__dataclass_fields__}  # type: ignore[attr-defined]
+    def from_dict(cls, d: dict) -> Thread:
+        known = set(cls.__dataclass_fields__)  # type: ignore[attr-defined]
         return cls(**{k: v for k, v in d.items() if k in known})
 
 

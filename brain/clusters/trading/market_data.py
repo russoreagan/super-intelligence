@@ -54,9 +54,7 @@ class AlpacaProvider:
             if price is not None:
                 prev = daily.get("o") or daily.get("open")
                 change_pct = (
-                    round((float(price) - float(prev)) / float(prev) * 100.0, 2)
-                    if prev
-                    else None
+                    round((float(price) - float(prev)) / float(prev) * 100.0, 2) if prev else None
                 )
                 return {
                     "symbol": symbol,

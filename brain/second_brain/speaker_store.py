@@ -29,14 +29,36 @@ _MAX_SAMPLE_COUNT = 20  # cap incremental mean to prevent drift
 
 
 class SpeakerStore:
+    """Voiceprint persistence. Backend: JSON files (local) or Supabase
+    speaker_profiles (cloud). Profiles are user-scoped, not persona-scoped —
+    a voice is the same person across every persona. The in-memory cosine scan
+    (identify/update) is unchanged; only load + save change per backend.
+
+    Set BRAIN_STORAGE_BACKEND=supabase to use Supabase. The supabase_client
+    module must have user_id set before any call.
+    """
+
+    # Class-level default so __new__-built instances (test doubles) stay local.
+    _use_supabase = False
+
     def __init__(self, profiles_dir: Path | str | None = None) -> None:
+        self._use_supabase = os.environ.get("BRAIN_STORAGE_BACKEND", "local").lower() == "supabase"
         self._dir = Path(profiles_dir or _DEFAULT_PROFILES_DIR)
-        self._dir.mkdir(parents=True, exist_ok=True)
+        if not self._use_supabase:
+            self._dir.mkdir(parents=True, exist_ok=True)
         self._profiles: dict[str, dict] = {}  # id → raw dict (with "embedding" as ndarray)
         self._load_all()
 
+    def _sb(self):
+        from brain.second_brain.supabase_client import get_client, get_user_id
+
+        return get_client(), get_user_id()
+
     def _load_all(self) -> None:
         self._profiles = {}
+        if self._use_supabase:
+            self._sb_load_all()
+            return
         for p in self._dir.glob("*.json"):
             try:
                 with open(p) as f:
@@ -46,6 +68,34 @@ class SpeakerStore:
             except Exception as e:
                 logger.warning("SpeakerStore: failed to load %s: %s", p, e)
         logger.debug("SpeakerStore: loaded %d speaker profiles", len(self._profiles))
+
+    def _sb_load_all(self) -> None:
+        try:
+            sb, uid = self._sb()
+            res = sb.table("speaker_profiles").select("*").eq("user_id", uid).execute()
+            for row in res.data or []:
+                emb = row.get("embedding")
+                if isinstance(emb, str):  # pgvector comes back as "[...]"
+                    emb = json.loads(emb)
+                data = {
+                    "speaker_id": row["id"],
+                    "name": row.get("name"),
+                    "embedding": emb,
+                    "sample_count": row.get("sample_count", 0),
+                    "enrolled_ts": row.get("enrolled_ts"),
+                    "updated_ts": row.get("updated_ts"),
+                }
+                if row.get("prosody_baseline"):
+                    data["prosody_baseline"] = row["prosody_baseline"]
+                data["_vec"] = np.array(emb, dtype=np.float32)
+                self._profiles[data["speaker_id"]] = data
+            logger.debug(
+                "SpeakerStore: loaded %d speaker profiles from Supabase", len(self._profiles)
+            )
+        except Exception as e:
+            logger.warning(
+                "SpeakerStore: Supabase load failed — voiceprints unavailable this session: %s", e
+            )
 
     def enroll(self, name: str, embedding: np.ndarray) -> str:
         """Create a new speaker profile. Returns the new speaker_id."""
@@ -160,10 +210,34 @@ class SpeakerStore:
         ]
 
     def _save(self, data: dict) -> None:
+        if self._use_supabase:
+            self._sb_save(data)
+            return
         path = self._dir / f"{data['speaker_id']}.json"
         payload = {k: v for k, v in data.items() if not k.startswith("_")}
         with open(path, "w") as f:
             json.dump(payload, f, indent=2)
+
+    def _sb_save(self, data: dict) -> None:
+        try:
+            sb, uid = self._sb()
+            vec = data["embedding"]
+            row = {
+                "id": data["speaker_id"],
+                "user_id": uid,
+                "name": data.get("name"),
+                "embedding": f"[{','.join(str(v) for v in vec)}]",
+                "sample_count": data.get("sample_count", 0),
+                "enrolled_ts": data.get("enrolled_ts"),
+                "updated_ts": data.get("updated_ts"),
+            }
+            if "prosody_baseline" in data:
+                row["prosody_baseline"] = data["prosody_baseline"]
+            sb.table("speaker_profiles").upsert(row, on_conflict="id").execute()
+        except Exception as e:
+            logger.error(
+                "SpeakerStore: Supabase save failed (speaker %s): %s", data.get("speaker_id"), e
+            )
 
 
 def _normalize(vec: np.ndarray) -> np.ndarray:

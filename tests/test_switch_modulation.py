@@ -160,6 +160,50 @@ def test_near_miss_does_not_emit_when_no_modulators(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# Continuous inhibitory-pressure interoception (suppression_pressure)
+# ---------------------------------------------------------------------------
+
+
+def _bound_trace():
+    from brain.observability.firing_path import current_turn_trace
+    from brain.observability.timeline import TurnTrace
+
+    tr = TurnTrace(turn_id="t", session_id="s", user_input="hi")
+    return tr, current_turn_trace.set(tr)
+
+
+def test_suppression_pressure_accumulates_graded_even_when_switch_fires():
+    """Unlike the discrete near-miss counter, pressure is graded and accrues on
+    EVERY modulated evaluation — whether or not the input overcomes the gate."""
+    from brain.observability.firing_path import current_turn_trace
+
+    tr, tok = _bound_trace()
+    try:
+        s = SwitchNeuron("g", "frontal", threshold=0.5, modulators={"CORT": +0.20})
+        # CORT=1.0 raises threshold by +0.10 each call. Input 0.95 still FIRES,
+        # yet the inhibitory pressure it pushed through is still sensed.
+        assert s.should_fire(0.95, {"CORT": 1.0}) is True
+        assert s.should_fire(0.95, {"CORT": 1.0}) is True
+        assert tr.suppression_pressure == pytest.approx(0.20, abs=1e-9)
+        assert tr.suppressed_switch_count == 0  # never a near-miss — input cleared the gate
+    finally:
+        current_turn_trace.reset(tok)
+
+
+def test_suppression_pressure_ignores_disinhibition():
+    """A negative shift (chemistry making a gate EASIER) is not inhibitory load."""
+    from brain.observability.firing_path import current_turn_trace
+
+    tr, tok = _bound_trace()
+    try:
+        s = SwitchNeuron("g", "frontal", threshold=0.5, modulators={"CORT": -0.20})
+        s.should_fire(0.55, {"CORT": 1.0})  # threshold LOWERED → disinhibition
+        assert tr.suppression_pressure == 0.0
+    finally:
+        current_turn_trace.reset(tok)
+
+
+# ---------------------------------------------------------------------------
 # Modulation gain knob
 # ---------------------------------------------------------------------------
 

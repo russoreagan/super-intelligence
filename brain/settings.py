@@ -270,12 +270,12 @@ DEFAULTS: dict[str, float | int | str] = {
     # Can also be overridden per-session via BRAIN_RALPH_MAX_ATTEMPTS env var.
     "ralph_max_total_attempts": 12,
     # Motor-cortex job rate limits (cost guard now that planning runs on cloud).
-    # Cloud spend is also bounded by bg_cloud_token_budget + cloud_daily_usd_budget;
+    # Cloud spend is also bounded by bg_cloud_token_rate + cloud_daily_usd_budget;
     # these additionally cap how MANY autonomous jobs can run.
-    "motor_max_concurrent_jobs": 1,      # only one autonomous job at a time
-    "motor_max_jobs_per_window": 10,     # ≤ this many job starts per window
-    "motor_job_window_s": 3600.0,        # rolling window = 1 hour
-    "motor_max_jobs_per_session": 30,    # absolute ceiling per process lifetime
+    "motor_max_concurrent_jobs": 1,  # only one autonomous job at a time
+    "motor_max_jobs_per_window": 10,  # ≤ this many job starts per window
+    "motor_job_window_s": 3600.0,  # rolling window = 1 hour
+    "motor_max_jobs_per_session": 30,  # absolute ceiling per process lifetime
     # ── Section: Cloud call timeouts (anti-hang) ─────────────────────────────
     # Bound every Anthropic call so a stalled connection can't freeze a motor
     # job at the strategic-plan step. read timeout bounds long generations;
@@ -294,10 +294,14 @@ DEFAULTS: dict[str, float | int | str] = {
     # CLOUD (Anthropic / Gemini) — allowed for background work when genuinely
     # more efficient, but budgeted to avoid accidental large bills.
     #
-    # bg_cloud_token_budget: combined input+output token ceiling for all
-    #   background cloud calls in one session. Exhausted budget routes to local.
-    #   50k ≈ ~$0.04–0.20 at haiku/flash-lite prices — intentionally conservative.
-    "bg_cloud_token_budget": 50_000,
+    # bg_cloud_token_rate: token bucket refill rate — how many non-cache input+output
+    #   tokens background cloud calls may consume per hour on average. The bucket
+    #   starts full (one hour's worth) and refills continuously at this rate, capped
+    #   at one hour's allowance so idle time doesn't stack indefinitely. A single job
+    #   can exceed the hourly rate (borrowing from the next hour); the bucket goes
+    #   negative and background calls fall back to local until it refills.
+    #   100k/hr ≈ ~$0.08–0.40/hr at haiku/flash-lite prices.
+    "bg_cloud_token_rate": 100_000,
     # bg_cloud_max_tokens_per_call: output token cap applied to every background
     #   cloud call. Keeps individual calls short and cost-predictable.
     "bg_cloud_max_tokens_per_call": 512,
@@ -390,24 +394,24 @@ DEFAULTS: dict[str, float | int | str] = {
     # Text and voice are fundamentally different communication channels.
     # These weights scale how temporal features feed into neuromod updates
     # depending on which channel the input came from.
-    "enable_channel_calibration": 1,      # 1 = on, 0 = off
-    "enable_text_paralinguistics": 1,     # 1 = extract emoji/laughter/warmth markers for text
+    "enable_channel_calibration": 1,  # 1 = on, 0 = off
+    "enable_text_paralinguistics": 1,  # 1 = extract emoji/laughter/warmth markers for text
     # Text channel calibration weights
-    "text_hostility_weight": 0.65,        # short/direct text ≠ hostile; discount this signal
-    "text_sentiment_weight": 1.10,        # word-level sentiment is primary; up-weight slightly
-    "text_length_signal_weight": 0.20,    # message brevity is normal; near-zero as signal
+    "text_hostility_weight": 0.65,  # short/direct text ≠ hostile; discount this signal
+    "text_sentiment_weight": 1.10,  # word-level sentiment is primary; up-weight slightly
+    "text_length_signal_weight": 0.20,  # message brevity is normal; near-zero as signal
     # Text paralinguistic → neuromod contribution weights
-    "text_para_laughter_DA": 0.10,        # lol/😂 → DA boost
-    "text_para_warmth_DA": 0.07,          # :)/❤️ → DA boost
-    "text_para_negativity_GABA": 0.08,    # :(/ 😡 → GABA
-    "text_para_excitement_Glu": 0.07,     # omg/🔥 → Glu
-    "text_para_excitement_NE": 0.04,      # omg/🔥 → NE
+    "text_para_laughter_DA": 0.10,  # lol/😂 → DA boost
+    "text_para_warmth_DA": 0.07,  # :)/❤️ → DA boost
+    "text_para_negativity_GABA": 0.08,  # :(/ 😡 → GABA
+    "text_para_excitement_Glu": 0.07,  # omg/🔥 → Glu
+    "text_para_excitement_NE": 0.04,  # omg/🔥 → NE
     # ── Section: Relationship Stage Progression ───────────────────────────────
-    "enable_relationship_stage_progression": 1,   # 1 = auto-update familiarity tier at sleep
-    "familiarity_acquainted_min_sessions": 3,      # sessions needed to reach acquainted
-    "familiarity_acquainted_min_score": 0,         # affection score must be at least this
-    "familiarity_close_min_sessions": 10,          # sessions needed to reach close
-    "familiarity_close_min_score": 15,             # affection score must be at least this
+    "enable_relationship_stage_progression": 1,  # 1 = auto-update familiarity tier at sleep
+    "familiarity_acquainted_min_sessions": 3,  # sessions needed to reach acquainted
+    "familiarity_acquainted_min_score": 0,  # affection score must be at least this
+    "familiarity_close_min_sessions": 10,  # sessions needed to reach close
+    "familiarity_close_min_score": 15,  # affection score must be at least this
     # ── Section: Bond model (relational decay + reunion recovery) ─────────────
     # Two quantities per speaker: affection (live warmth, injected into prompts)
     # and bond (latent closeness high-water mark). Closeness creates a bond that
@@ -415,34 +419,34 @@ DEFAULTS: dict[str, float | int | str] = {
     # the same gap. Half-lives grow EXPONENTIALLY with bond so the closer the
     # prior relationship the smaller the decline.
     "enable_bond_model": 1,
-    "bond_aff_halflife_base_days": 25.0,    # affection half-life at bond=0 (days)
-    "bond_bond_halflife_base_days": 90.0,   # bond half-life at bond=0 (days, much slower)
-    "bond_halflife_scale": 23.0,            # exp denominator: HL = base * exp(bond/scale)
-    "bond_reunion_gain": 8.0,               # positive-delta multiplier slope on reengagement
-    "familiarity_close_bond": 35.0,         # bond ≥ this → "close"
-    "familiarity_acquainted_bond": 12.0,    # bond ≥ this → "acquainted", else "new"
+    "bond_aff_halflife_base_days": 25.0,  # affection half-life at bond=0 (days)
+    "bond_bond_halflife_base_days": 90.0,  # bond half-life at bond=0 (days, much slower)
+    "bond_halflife_scale": 23.0,  # exp denominator: HL = base * exp(bond/scale)
+    "bond_reunion_gain": 8.0,  # positive-delta multiplier slope on reengagement
+    "familiarity_close_bond": 35.0,  # bond ≥ this → "close"
+    "familiarity_acquainted_bond": 12.0,  # bond ≥ this → "acquainted", else "new"
     # ── Section: Self-Disclosure Policy ──────────────────────────────────────
-    "enable_self_disclosure_policy": 1,             # 1 = inject disclosure opportunity into drafter
-    "self_disclosure_cooldown_turns": 8,            # min turns between disclosure prompts
-    "self_disclosure_min_affection": 5,             # affection score floor for voice disclosure
-    "self_disclosure_text_min_affection": 20,       # affection score floor for text disclosure
+    "enable_self_disclosure_policy": 1,  # 1 = inject disclosure opportunity into drafter
+    "self_disclosure_cooldown_turns": 8,  # min turns between disclosure prompts
+    "self_disclosure_min_affection": 5,  # affection score floor for voice disclosure
+    "self_disclosure_text_min_affection": 20,  # affection score floor for text disclosure
     # ── Section: Performed Emotion Gate ──────────────────────────────────────
     # Deliberate/performed emotion ([mood:X] markup, set_mood) is a playful,
     # humor-leaning intimacy device. Gate WHEN the drafter is encouraged to use
     # it by relationship depth + the user's mood. Off → preserve the old
     # always-offered behaviour.
     "enable_performed_emotion_gate": 1,
-    "performed_emotion_min_affection": 10,          # general warmth floor (neutral mood)
-    "performed_emotion_new_min_affection": 15,      # higher floor when familiarity is still "new"
+    "performed_emotion_min_affection": 10,  # general warmth floor (neutral mood)
+    "performed_emotion_new_min_affection": 15,  # higher floor when familiarity is still "new"
     "performed_emotion_cheerup_min_affection": 20,  # bar to attempt cheer-up / tension-break when user is down
     # ── Section: Style Synchrony ─────────────────────────────────────────────
-    "enable_style_synchrony": 1,                    # 1 = track and inject user style register
-    "style_ema_alpha_voice": 0.25,                  # EMA weight for voice style (per turn)
-    "style_ema_alpha_text": 0.20,                   # EMA weight for text style (slower — more variable)
-    "style_max_shift": 0.12,                        # max drift toward user per dimension per session
-    "style_entity_formality_baseline": 0.25,        # entity's natural formality (0=casual, 1=formal)
-    "style_entity_verbosity_baseline": 0.45,        # entity's natural verbosity (0=terse, 1=expansive)
-    "style_min_turns_for_injection": 3,             # turns tracked before injecting style note
+    "enable_style_synchrony": 1,  # 1 = track and inject user style register
+    "style_ema_alpha_voice": 0.25,  # EMA weight for voice style (per turn)
+    "style_ema_alpha_text": 0.20,  # EMA weight for text style (slower — more variable)
+    "style_max_shift": 0.12,  # max drift toward user per dimension per session
+    "style_entity_formality_baseline": 0.25,  # entity's natural formality (0=casual, 1=formal)
+    "style_entity_verbosity_baseline": 0.45,  # entity's natural verbosity (0=terse, 1=expansive)
+    "style_min_turns_for_injection": 3,  # turns tracked before injecting style note
     # ── Section: Graded plasticity (correctness fix — NOT colony-gated) ───────
     # The legacy all-or-nothing `defuse_path` skip (gaba_skip_threshold_high) is
     # biologically wrong: real plasticity is graded and neuromodulator-scaled
@@ -452,13 +456,13 @@ DEFAULTS: dict[str, float | int | str] = {
     # intensity (not valence sign) multiplies the Hebbian delta, and the binary
     # skip becomes a graded high-stress dampener. Ships on its own flag,
     # independent of colony_features. Default 0 → flip to 1 after eval validates.
-    "graded_plasticity": 0,                         # 1 = graded per-turn plasticity; 0 = legacy binary skip
-    "plasticity_turn_min": 0.40,                    # floor of the per-turn plasticity multiplier
-    "plasticity_turn_max": 1.30,                    # ceiling of the per-turn plasticity multiplier
-    "plasticity_arousal_weight": 0.50,              # ACh+NE+surprise+|DA swing| → plasticity gain
-    "plasticity_intensity_weight": 0.40,            # |valence| (either sign) → plasticity gain
-    "plasticity_stress_knee": 0.70,                 # CORT/GABA above this = inverted-U descending limb
-    "plasticity_stress_damp": 0.60,                 # max multiplicative dampening at extreme stress
+    "graded_plasticity": 0,  # 1 = graded per-turn plasticity; 0 = legacy binary skip
+    "plasticity_turn_min": 0.40,  # floor of the per-turn plasticity multiplier
+    "plasticity_turn_max": 1.30,  # ceiling of the per-turn plasticity multiplier
+    "plasticity_arousal_weight": 0.50,  # ACh+NE+surprise+|DA swing| → plasticity gain
+    "plasticity_intensity_weight": 0.40,  # |valence| (either sign) → plasticity gain
+    "plasticity_stress_knee": 0.70,  # CORT/GABA above this = inverted-U descending limb
+    "plasticity_stress_damp": 0.60,  # max multiplicative dampening at extreme stress
     # ── Section: Colony / non-brain (superorganism) capabilities ─────────────
     # Single master toggle for the bio-inspired colony layer (Phases 2–8 of the
     # colony-features plan). 0 = every colony behaviour is a strict no-op and the
@@ -466,45 +470,45 @@ DEFAULTS: dict[str, float | int | str] = {
     # only when this is on. The three feedback loops (concentration, recruitment,
     # chemistry self-feedback) are also independently observable in the decisions
     # log so they can be validated in increasing-risk order.
-    "colony_features": 0,                           # 1 = enable colony layer; 0 = off (no-op)
+    "colony_features": 0,  # 1 = enable colony layer; 0 = off (no-op)
     # Phase 2 — topic concentration / quorum / silence (threat channel first)
-    "colony_conc_half_life_s": 45.0,                # exponential half-life of topic concentration
-    "colony_conc_cap": 10.0,                        # max accumulated concentration (chatty-topic bound)
-    "colony_arm_threshold": 1.00,                   # concentration must cross this to become ARMED
-    "colony_quorum_threshold": 1.50,                # ARMED + concentration ≥ this → quorum
-    "colony_silence_floor": 0.15,                   # ARMED concentration decays below this → QUIET
-    "colony_silence_disarm_s": 600.0,               # zero-dwell this long → disarm back to UNARMED
+    "colony_conc_half_life_s": 45.0,  # exponential half-life of topic concentration
+    "colony_conc_cap": 10.0,  # max accumulated concentration (chatty-topic bound)
+    "colony_arm_threshold": 1.00,  # concentration must cross this to become ARMED
+    "colony_quorum_threshold": 1.50,  # ARMED + concentration ≥ this → quorum
+    "colony_silence_floor": 0.15,  # ARMED concentration decays below this → QUIET
+    "colony_silence_disarm_s": 600.0,  # zero-dwell this long → disarm back to UNARMED
     # Phase 3 — releaser + primer in one message
-    "colony_primer_gain": 0.30,                     # scales Message.primer nudges into hormonal channels
+    "colony_primer_gain": 0.30,  # scales Message.primer nudges into hormonal channels
     # Phase 4/7 — recruitment amplification + mobilization cascade
-    "colony_recruit_gain": 0.40,                    # scales need_level → recruitment level
+    "colony_recruit_gain": 0.40,  # scales need_level → recruitment level
     # Phase 5 — threshold diversity (DEPRECATED — see colony-features-ii / N3).
     # spread_threshold is left inert; variance without real specialization is
     # noise (Lynch et al. 2024). Do NOT wire it in. Kept only for the dormant helper.
-    "colony_threshold_spread": 0.08,                # ± bound (UNUSED — spread_threshold is deprecated)
+    "colony_threshold_spread": 0.08,  # ± bound (UNUSED — spread_threshold is deprecated)
     # Phase 8 — aggregate-state neuromodulation feedback (highest-risk loop)
-    "colony_state_feedback_gain": 0.02,             # tiny gain on prior-turn aggregate → neuromod nudges
-    "colony_state_feedback_clamp": 0.05,            # max total feedback contribution per channel per turn
+    "colony_state_feedback_gain": 0.02,  # tiny gain on prior-turn aggregate → neuromod nudges
+    "colony_state_feedback_clamp": 0.05,  # max total feedback contribution per channel per turn
     # ── Colony Layer II — ant-colony lessons (all under colony_features) ──────
     # C3 — recruitment satisfaction/stop signal: a met need actively lowers
     # recruitment (composite start+stop thresholds) instead of only passive decay.
-    "colony_satisfy_rate": 0.50,                    # fraction of recruitment removed per unit satisfaction
-    "colony_satisfy_critic_floor": 0.6,             # critic score above which a commit counts as "need met"
+    "colony_satisfy_rate": 0.50,  # fraction of recruitment removed per unit satisfaction
+    "colony_satisfy_critic_floor": 0.6,  # critic score above which a commit counts as "need met"
     # C4 — rate-of-change in quorum: a fast-rising signal trips quorum via slope
     # even before the level threshold is reached.
-    "colony_quorum_slope_threshold": 0.20,          # concentration rise per second that trips quorum
+    "colony_quorum_slope_threshold": 0.20,  # concentration rise per second that trips quorum
     # N2 — softmax multi-need recruitment allocation across competing clusters.
-    "colony_recruit_budget": 1.0,                   # total recruitment budget shared per turn
-    "colony_recruit_softmax_temp": 0.5,             # Boltzmann temperature (lower = sharper allocation)
+    "colony_recruit_budget": 1.0,  # total recruitment budget shared per turn
+    "colony_recruit_softmax_temp": 0.5,  # Boltzmann temperature (lower = sharper allocation)
     # N3 — sensory-filter specialization: per-persona input-sensitivity gain over
     # feature categories (the real division-of-labor axis; supersedes Phase 5).
-    "colony_sensory_filter": 0,                     # 1 = apply per-persona sensitivity gains; 0 = off
-    "colony_sensory_gain_span": 0.30,               # ± span of the per-(persona,category) sensitivity gain
+    "colony_sensory_filter": 0,  # 1 = apply per-persona sensitivity gains; 0 = off
+    "colony_sensory_gain_span": 0.30,  # ± span of the per-(persona,category) sensitivity gain
     # N1 — live trail reinforcement (highest-risk; shadow-first).
-    "colony_trail_apply": 0,                        # 1 = apply overlay to live weights; 0 = shadow (log only)
-    "colony_trail_gain": 0.05,                      # per-turn trail bump scale (× outcome)
-    "colony_trail_clamp": 0.50,                     # max |overlay| added to any edge's persisted weight
-    "colony_trail_half_life_s": 120.0,              # trail overlay decay half-life within a session
+    "colony_trail_apply": 0,  # 1 = apply overlay to live weights; 0 = shadow (log only)
+    "colony_trail_gain": 0.05,  # per-turn trail bump scale (× outcome)
+    "colony_trail_clamp": 0.50,  # max |overlay| added to any edge's persisted weight
+    "colony_trail_half_life_s": 120.0,  # trail overlay decay half-life within a session
     # ── Section: Flock dynamics — criticality + chemistry trajectory ─────────
     # Murmuration-derived collective-dynamics layer (sibling to colony_features,
     # but kept on its OWN flag so criticality control can be run without the
@@ -517,48 +521,48 @@ DEFAULTS: dict[str, float | int | str] = {
     #       from the per-turn firing path (reconstructed via the wiring graph).
     #   (3) closed loop — arousal sets a criticality setpoint σ* and the σ-error
     #       drives the global modulation_gain toward it (never super-critical).
-    "flock_dynamics": 0,                            # 1 = enable flock/criticality layer; 0 = off (no-op)
+    "flock_dynamics": 0,  # 1 = enable flock/criticality layer; 0 = off (no-op)
     # (1) chemistry trajectory — DMN rumination velocity weights
-    "flock_rum_w_cort_vel": 0.60,                   # positive CORT velocity (rising stress) → extra worry drive
-    "flock_rum_w_ne_vel": 0.40,                     # positive NE velocity (rising alertness) → extra worry drive
-    "flock_rum_w_da_vel": 0.30,                     # positive DA velocity (rising interest) → extra engaged drive
-    "flock_idle_gate_vel_nudge": 0.10,              # rising worry-velocity lowers the idle-gate threshold by up to this
+    "flock_rum_w_cort_vel": 0.60,  # positive CORT velocity (rising stress) → extra worry drive
+    "flock_rum_w_ne_vel": 0.40,  # positive NE velocity (rising alertness) → extra worry drive
+    "flock_rum_w_da_vel": 0.30,  # positive DA velocity (rising interest) → extra engaged drive
+    "flock_idle_gate_vel_nudge": 0.10,  # rising worry-velocity lowers the idle-gate threshold by up to this
     # (4) ground arousal's triggers — CORT was driven ONLY by a hostility
     # lexicon (vestigial threat semantics). When flock_dynamics is on, ABOVE-
     # average surprise (sustained prediction-error — the world diverging from
     # the model) also accrues cortisol, so the stress signal that feeds
     # trajectory-based rumination reflects a real information-processing stake,
     # not just hostile words. Only the >0.5 (above-average) surprise contributes.
-    "flock_cort_surprise_weight": 0.05,             # surprise-excess → cortisol accrual (per turn)
+    "flock_cort_surprise_weight": 0.05,  # surprise-excess → cortisol accrual (per turn)
     # (2) criticality observable — measurement window + heavy-tail heuristic
-    "flock_sigma_window": 12,                       # turns of firing-path history used to smooth σ / build the distribution
-    "flock_sigma_min_nodes": 4,                     # fewer fired internal nodes than this → σ undefined for the turn (skip)
+    "flock_sigma_window": 12,  # turns of firing-path history used to smooth σ / build the distribution
+    "flock_sigma_min_nodes": 4,  # fewer fired internal nodes than this → σ undefined for the turn (skip)
     # (3) closed loop — arousal-modulated setpoint + conservative controller
-    "flock_sigma_target_low": 0.90,                 # σ* at low arousal (sub-critical: efficient, quiet at rest)
-    "flock_sigma_target_high": 1.00,               # σ* at high arousal (critical: hard cap — never steer super-critical)
-    "flock_gain_kp": -0.30,                          # proportional constant: Δgain = kp·(σ − σ*). SIGN IS EMPIRICAL —
-                                                    # validated in verification; negative is the starting guess.
-    "flock_gain_min": 0.50,                          # clamp band on the driven modulation_gain (lower rail)
-    "flock_gain_max": 1.80,                          # clamp band on the driven modulation_gain (upper rail)
-    "flock_gain_ema_alpha": 0.25,                    # EMA smoothing on the gain so it can't thrash turn-to-turn
+    "flock_sigma_target_low": 0.90,  # σ* at low arousal (sub-critical: efficient, quiet at rest)
+    "flock_sigma_target_high": 1.00,  # σ* at high arousal (critical: hard cap — never steer super-critical)
+    "flock_gain_kp": -0.30,  # proportional constant: Δgain = kp·(σ − σ*). SIGN IS EMPIRICAL —
+    # validated in verification; negative is the starting guess.
+    "flock_gain_min": 0.50,  # clamp band on the driven modulation_gain (lower rail)
+    "flock_gain_max": 1.80,  # clamp band on the driven modulation_gain (upper rail)
+    "flock_gain_ema_alpha": 0.25,  # EMA smoothing on the gain so it can't thrash turn-to-turn
     # ── Day-trading capability (advise-only; dark by default) ────────────────
     # When 0, the trading tools are not documented to the planner and the layer
     # is never constructed. Even when 1, the layer is READ-ONLY: it never places
     # an order (read-only Alpaca key + per-tool allow-list + ALPACA_TOOLSETS).
     "trading_enabled": 0,
-    "trading_cache_ttl_s": 30.0,                      # market-data cache TTL (seconds)
-    "trading_max_scan_symbols": 50,                   # cap on watchlist symbols scanned per pass
-    "trading_default_benchmark": "QQQ",              # benchmark for alpha when none specified
+    "trading_cache_ttl_s": 30.0,  # market-data cache TTL (seconds)
+    "trading_max_scan_symbols": 50,  # cap on watchlist symbols scanned per pass
+    "trading_default_benchmark": "QQQ",  # benchmark for alpha when none specified
     # growth management
-    "trading_execlog_max_days": 365,                  # execution_log: hard-delete fills older than N days
+    "trading_execlog_max_days": 365,  # execution_log: hard-delete fills older than N days
     # journal compaction — progressive summarization cascade (see compaction.py)
-    "trading_journal_max_resolved": 200,              # compact oldest batch when resolved count exceeds this
-    "trading_journal_max_era_summaries": 50,          # compact oldest depth-1 summaries when this is exceeded
-    "trading_compaction_batch_size": 20,              # records condensed per compaction pass
-    "trading_journal_md_max_kb": 512,                 # journal.md: condense oldest section when exceeded
+    "trading_journal_max_resolved": 200,  # compact oldest batch when resolved count exceeds this
+    "trading_journal_max_era_summaries": 50,  # compact oldest depth-1 summaries when this is exceeded
+    "trading_compaction_batch_size": 20,  # records condensed per compaction pass
+    "trading_journal_md_max_kb": 512,  # journal.md: condense oldest section when exceeded
     # real-time websocket stream
-    "trading_stream_enabled": 0,                      # no longer used for auto-start (stream is manually triggered)
-    "trading_alert_cooldown_min": 30,                 # min minutes before same trigger can re-fire
+    "trading_stream_enabled": 0,  # no longer used for auto-start (stream is manually triggered)
+    "trading_alert_cooldown_min": 30,  # min minutes before same trigger can re-fire
 }
 
 

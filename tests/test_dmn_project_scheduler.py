@@ -8,7 +8,6 @@ Project scheduler — projects run as a track PARALLEL to rumination:
 
 from __future__ import annotations
 
-import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest

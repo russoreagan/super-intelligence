@@ -97,3 +97,30 @@ def test_match_frac_aggregation():
     ]
     m = LearningMonitor().record_turn(_trace(outcomes))
     assert abs(m["predictor_match_frac"] - (0.667 + 1.0) / 2) < 1e-9
+
+
+# ── session readout: graded signals are surfaced (not silently dropped) ───────
+
+
+def test_surprise_trend_exposed_under_documented_name():
+    """The trend loop derives 'avg_surprise_trend'; consumers read 'surprise_trend'.
+    The alias must be present or the core active-inference signal is dropped."""
+    lm = LearningMonitor()
+    for s in (0.9, 0.8, 0.5, 0.4):  # surprise falling = improving
+        lm.record_turn(_trace([{"surprise": s, "integrator_woken": True}]))
+    summ = lm.session_metrics()
+    assert summ["surprise_trend"] == summ["avg_surprise_trend"]
+    assert summ["surprise_trend"] < 0  # negative = prediction error fell
+
+
+def test_match_frac_trend_is_computed():
+    lm = LearningMonitor()
+    for mf in (0.3, 0.4, 0.7, 0.8):  # graded accuracy rising
+        lm.record_turn(_trace([{"match_frac": mf, "integrator_woken": True}]))
+    summ = lm.session_metrics()
+    assert summ["predictor_match_frac_trend"] > 0
+
+
+def test_suppression_pressure_tracked_per_turn():
+    m = LearningMonitor().record_turn(_trace([], suppression_pressure=0.37))
+    assert m["suppression_pressure"] == 0.37

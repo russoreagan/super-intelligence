@@ -72,7 +72,8 @@ async def scan_watchlist(md: MarketData) -> list[dict]:
             continue
         # historical pattern: prior resolved calls with similar conditions
         priors = [
-            r for r in journal.get_records(symbol, status="resolved")
+            r
+            for r in journal.get_records(symbol, status="resolved")
             if _similar(snap, r.get("indicators_at_open", {}))
         ]
         wins = sum(1 for r in priors if (r.get("resolution") or {}).get("outcome_label") == "win")
@@ -99,7 +100,9 @@ async def scan_watchlist(md: MarketData) -> list[dict]:
 async def check_contradictions(md: MarketData) -> list[dict]:
     out: list[dict] = []
     portfolio = store.load_portfolio()
-    held = {h.get("symbol", "").upper(): h for h in portfolio.get("holdings", []) if h.get("symbol")}
+    held = {
+        h.get("symbol", "").upper(): h for h in portfolio.get("holdings", []) if h.get("symbol")
+    }
 
     for rec in journal.get_records(status="open"):
         symbol = rec.get("symbol", "").upper()
@@ -194,9 +197,15 @@ async def stress_test_thesis(
         context["lessons"] = journal.last_lessons(symbol)
     ctx_msg = [{"role": "user", "content": json.dumps(context, default=str)}]
 
-    bull = await router.call(model_key, prompts.BULL_SYSTEM, ctx_msg, cluster="trading", cell="bull")
-    bear = await router.call(model_key, prompts.BEAR_SYSTEM, ctx_msg, cluster="trading", cell="bear")
-    risk = await router.call(model_key, prompts.RISK_SYSTEM, ctx_msg, cluster="trading", cell="risk")
+    bull = await router.call(
+        model_key, prompts.BULL_SYSTEM, ctx_msg, cluster="trading", cell="bull"
+    )
+    bear = await router.call(
+        model_key, prompts.BEAR_SYSTEM, ctx_msg, cluster="trading", cell="bear"
+    )
+    risk = await router.call(
+        model_key, prompts.RISK_SYSTEM, ctx_msg, cluster="trading", cell="risk"
+    )
 
     synth_msg = [
         {

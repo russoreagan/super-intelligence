@@ -26,8 +26,8 @@ PARENT_PID = int(sys.argv[2])
 API_KEY = sys.argv[3]
 MAX_DURATION_S = float(sys.argv[4]) if len(sys.argv) > 4 else 8 * 3600.0
 
-CHECK_INTERVAL_S = 60.0   # poll every minute
-GRACE_PERIOD_S = 120.0    # wait 2 min after PID death before stopping
+CHECK_INTERVAL_S = 60.0  # poll every minute
+GRACE_PERIOD_S = 120.0  # wait 2 min after PID death before stopping
 
 _stop_cleanly = False  # set True by SIGTERM — exit without stopping pod
 
@@ -49,9 +49,9 @@ def _is_alive(pid: int) -> bool:
 
 
 def _stop_pod() -> None:
-    query = json.dumps({
-        "query": f'mutation {{ podStop(input: {{podId: "{POD_ID}"}}) {{ id desiredStatus }} }}'
-    }).encode()
+    query = json.dumps(
+        {"query": f'mutation {{ podStop(input: {{podId: "{POD_ID}"}}) {{ id desiredStatus }} }}'}
+    ).encode()
     try:
         req = urllib.request.Request(
             "https://api.runpod.io/graphql",
@@ -62,7 +62,7 @@ def _stop_pod() -> None:
             },
             method="POST",
         )
-        urllib.request.urlopen(req, timeout=30)
+        urllib.request.urlopen(req, timeout=30)  # nosec B310 - constant RunPod API URL
     except Exception as e:
         # Best-effort — log to stderr (redirected to /dev/null in prod but visible in dev)
         print(f"[watchdog] podStop failed: {e}", file=sys.stderr)

@@ -34,9 +34,7 @@ from collections import deque
 from brain.settings import settings
 
 
-def branching_ratio(
-    fired_path: list[dict], wiring, min_nodes: int = 4
-) -> float | None:
+def branching_ratio(fired_path: list[dict], wiring, min_nodes: int = 4) -> float | None:
     """Estimate the branching ratio σ for one turn's firing path.
 
     σ = (fired wiring-edges whose source AND target both fired) / (fired nodes
@@ -114,7 +112,7 @@ class FlockCriticality:
         if mean <= 0:
             return None
         var = sum((x - mean) ** 2 for x in self._avalanches) / n
-        return round((var ** 0.5) / mean, 4)
+        return round((var**0.5) / mean, 4)
 
     # ── (3) closed-loop control ────────────────────────────────────────────────
 

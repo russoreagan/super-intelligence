@@ -30,7 +30,9 @@ _PROJECT_PATTERNS = [
         re.I,
     ),
     re.compile(r"\bi(?:'d| would) like you to (?:work on|take on|look into)\b\s*(.+)", re.I),
-    re.compile(r"\bi want you to (?:work on|take on|start|build|investigate|review)\b\s*(.+)", re.I),
+    re.compile(
+        r"\bi want you to (?:work on|take on|start|build|investigate|review)\b\s*(.+)", re.I
+    ),
 ]
 
 _AFFIRM = re.compile(

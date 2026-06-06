@@ -125,8 +125,11 @@ class TestRunpodReconnect:
 
     @pytest.mark.asyncio
     async def test_stream_failure_resets_client_and_retries(self, monkeypatch):
-        monkeypatch.setitem(__import__("brain.settings", fromlist=["settings"]).settings._data,
-                            "runpod_stream_retries", 2)
+        monkeypatch.setitem(
+            __import__("brain.settings", fromlist=["settings"]).settings._data,
+            "runpod_stream_retries",
+            2,
+        )
         monkeypatch.setattr(mr_mod.asyncio, "sleep", AsyncMock())  # no real backoff delay
         router = ModelRouter()
         router._reset_http = AsyncMock()
@@ -165,8 +168,11 @@ class TestRunpodReconnect:
 
     @pytest.mark.asyncio
     async def test_all_streams_fail_falls_back_to_post(self, monkeypatch):
-        monkeypatch.setitem(__import__("brain.settings", fromlist=["settings"]).settings._data,
-                            "runpod_stream_retries", 1)
+        monkeypatch.setitem(
+            __import__("brain.settings", fromlist=["settings"]).settings._data,
+            "runpod_stream_retries",
+            1,
+        )
         monkeypatch.setattr(mr_mod.asyncio, "sleep", AsyncMock())
         router = ModelRouter()
         router._reset_http = AsyncMock()

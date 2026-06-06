@@ -139,9 +139,10 @@ class UIServer:
                 # edit — it would overwrite the incoming persona's saved evolved
                 # state with its baseline. Boot re-materializes chem from the
                 # persona's own file (resting from the table, current preserved).
-                is_switch = "persona_name" in body and str(
-                    settings.get("persona_name", "")
-                ) != prior_persona
+                is_switch = (
+                    "persona_name" in body
+                    and str(settings.get("persona_name", "")) != prior_persona
+                )
                 # If the user edited resting/boot chemistry sliders, persist them
                 # to the ACTIVE persona's own file so the edit sticks per-persona
                 # instead of leaking through global settings on the next switch.
@@ -691,6 +692,7 @@ class UIServer:
         pns._tts_ws_queue is set here; the _tts_broadcast_loop drains it.
         """
         import asyncio
+
         pns._tts_ws_queue = asyncio.Queue(maxsize=256)
         asyncio.create_task(self._tts_broadcast_loop(pns._tts_ws_queue, pns))
 
@@ -791,7 +793,10 @@ class UIServer:
 
         # Railway sets PORT env var; default to 0.0.0.0 in production
         _port = port or int(os.environ.get("PORT", "8765"))
-        _host = host or ("0.0.0.0" if os.environ.get("RAILWAY_ENVIRONMENT") else "127.0.0.1")
+        # Bind all interfaces only when hosted (Railway); localhost otherwise.
+        _host = host or (
+            "0.0.0.0" if os.environ.get("RAILWAY_ENVIRONMENT") else "127.0.0.1"  # nosec B104
+        )
 
         self._app = self._build_app()
 

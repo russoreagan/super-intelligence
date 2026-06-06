@@ -589,8 +589,9 @@ class TestCloudBinaryDiscovery:
         fake_bin = bin_dir / "claude"
         fake_bin.write_text("#!/bin/sh")
 
-        with patch("shutil.which", return_value=None), patch(
-            "glob.glob", return_value=[str(fake_bin)]
+        with (
+            patch("shutil.which", return_value=None),
+            patch("glob.glob", return_value=[str(fake_bin)]),
         ):
             exe = CloudExecutor.__new__(CloudExecutor)
             result = exe._find_claude_binary()
@@ -1426,6 +1427,7 @@ class TestExecuteInternalJob:
         # Simulate a job already running.
         motor._active_job_count = 1
         from brain.settings import settings
+
         monkeypatch.setitem(settings._data, "motor_max_concurrent_jobs", 1)
 
         mock_emitter = MagicMock()
@@ -1439,6 +1441,7 @@ class TestExecuteInternalJob:
         router = self._make_job_router({"steps": []}, [])
         motor, _ = self._make_motor_for_job(tmp_path, router)
         from brain.settings import settings
+
         monkeypatch.setitem(settings._data, "motor_max_jobs_per_session", 2)
         motor._session_job_count = 2  # already at cap
 

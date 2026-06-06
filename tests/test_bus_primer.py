@@ -23,7 +23,9 @@ async def test_primer_collected_and_drained_when_on(monkeypatch):
     monkeypatch.setitem(settings._data, "colony_features", 1)
     bus = Bus()
     await bus.publish(Message(topic="warmth", payload={}, source="s", primer={"OXT": 0.2}))
-    await bus.publish(Message(topic="warmth", payload={}, source="s", primer={"OXT": 0.1, "5HT": 0.05}))
+    await bus.publish(
+        Message(topic="warmth", payload={}, source="s", primer={"OXT": 0.1, "5HT": 0.05})
+    )
     drained = bus.drain_primers()
     assert drained["OXT"] == pytest.approx(0.3)
     assert drained["5HT"] == pytest.approx(0.05)

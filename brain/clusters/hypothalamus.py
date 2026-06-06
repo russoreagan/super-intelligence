@@ -113,8 +113,13 @@ class HypothalamusCluster:
         self._prev_aggregate = {
             # firing volume → arousal (effortful turns)
             "arousal": min(1.0, switch_fires / 25.0),
-            # chemistry-suppressed fires → inhibition/conflict load
-            "inhibition": min(1.0, float(getattr(tr, "suppressed_switch_count", 0)) / 10.0),
+            # graded inhibitory tone → inhibition/conflict load. Reads the
+            # continuous gain-control pressure (summed upward threshold shift the
+            # chemistry applied to the gates this turn), not the rare near-miss
+            # count — so the conflict→caution feedback actually senses inhibition
+            # instead of resting at zero. ~0.5 of summed raise ≈ full load
+            # (calibration constant; tune alongside colony_state_feedback_gain).
+            "inhibition": min(1.0, float(getattr(tr, "suppression_pressure", 0.0)) / 0.5),
         }
 
     def _apply_state_feedback(self) -> None:
@@ -202,9 +207,13 @@ class HypothalamusCluster:
 
         # ACh: novelty / attention signal (scaled by the persona's novelty sensitivity)
         novelty_delta = (
-            surprise * settings.get("surprise_ACh_weight")
-            + salience * settings.get("salience_ACh_weight")
-        ) * er_scale * _novelty_gain
+            (
+                surprise * settings.get("surprise_ACh_weight")
+                + salience * settings.get("salience_ACh_weight")
+            )
+            * er_scale
+            * _novelty_gain
+        )
         if self._satiation_inhibitor.state > 0.5:
             novelty_delta *= 1.0 - self._satiation_inhibitor.state * settings.get(
                 "satiation_inhibition_factor"
@@ -365,7 +374,10 @@ class HypothalamusCluster:
                     logger.debug(
                         "Hypothalamus text_para: laughter=%.2f warmth=%.2f "
                         "negativity=%.2f excitement=%.2f",
-                        laughter, warmth, negativity, excitement,
+                        laughter,
+                        warmth,
+                        negativity,
+                        excitement,
                     )
 
         snap = nm.snapshot()
@@ -447,12 +459,15 @@ class HypothalamusCluster:
             settings.get("oxt_da_lift"),
             settings.get("cort_da_suppress"),
         )
-        aea_suppress = (
-            max(0.0, h_snap["AEA"] - settings.get("aea_da_suppress_threshold"))
-            * settings.get("aea_da_suppress")
-        )
+        aea_suppress = max(
+            0.0, h_snap["AEA"] - settings.get("aea_da_suppress_threshold")
+        ) * settings.get("aea_da_suppress")
         eff_DA = max(
-            0.0, min(1.0, snap["DA"] + da_offset + h_snap["AEA"] * settings.get("aea_da_lift") - aea_suppress)
+            0.0,
+            min(
+                1.0,
+                snap["DA"] + da_offset + h_snap["AEA"] * settings.get("aea_da_lift") - aea_suppress,
+            ),
         )
         eff_GABA = max(
             0.0,

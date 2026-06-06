@@ -66,9 +66,9 @@ def log_decision(
     thread_id = ""
     if on_open_thread is not None:
         try:
-            thread_id = on_open_thread(
-                f"[{symbol}] {prediction} — {rationale}", ["trading", symbol]
-            ) or ""
+            thread_id = (
+                on_open_thread(f"[{symbol}] {prediction} — {rationale}", ["trading", symbol]) or ""
+            )
         except Exception as e:  # pragma: no cover - optional path
             logger.debug("[journal] on_open_thread failed: %s", e)
 
@@ -236,9 +236,9 @@ def resolve_decision(
 def _md_paragraph(record: dict) -> str:
     res = record.get("resolution") or {}
     return (
-        f"## {record.get('symbol')} — {res.get('ts_resolved','')[:10]} "
-        f"({res.get('outcome_label','?')})\n\n"
-        f"**Predicted** ({record.get('ts_opened','')[:10]}, conf "
+        f"## {record.get('symbol')} — {res.get('ts_resolved', '')[:10]} "
+        f"({res.get('outcome_label', '?')})\n\n"
+        f"**Predicted** ({record.get('ts_opened', '')[:10]}, conf "
         f"{record.get('confidence')}): {record.get('prediction')}\n\n"
         f"**Because:** {record.get('rationale')}\n\n"
         f"**Outcome:** {res.get('raw_return_pct')}% raw, alpha "
@@ -260,7 +260,9 @@ def get_records(symbol: str | None = None, status: str | None = None) -> list[di
     return rows
 
 
-def review_journal(symbol: str | None = None, status: str | None = None, limit: int = 10) -> list[dict]:
+def review_journal(
+    symbol: str | None = None, status: str | None = None, limit: int = 10
+) -> list[dict]:
     rows = get_records(symbol, status)
     return rows[-limit:]
 

@@ -17,8 +17,8 @@ import pytest
 from brain.bus import HormonalState, Neuromodulators
 from brain.dmn import DefaultModeNetwork
 from brain.observability.criticality import FlockCriticality, branching_ratio
-from brain.settings import settings
 from brain.sequence_predictor import SequencePredictor
+from brain.settings import settings
 
 
 @pytest.fixture
@@ -81,7 +81,9 @@ def test_velocity_scales_by_turns():
 
 
 def _rum_drive(chem):
-    dmn = DefaultModeNetwork.__new__(DefaultModeNetwork)  # _rumination_drive is pure in (chem, settings)
+    dmn = DefaultModeNetwork.__new__(
+        DefaultModeNetwork
+    )  # _rumination_drive is pure in (chem, settings)
     dmn._seq_predictor = SequencePredictor()
     return dmn._rumination_drive(chem)[0]
 
@@ -125,7 +127,7 @@ def test_observe_smooths_and_counts(monkeypatch):
     monkeypatch.setitem(settings._data, "flock_sigma_min_nodes", 2)
     fc = FlockCriticality()
     w = _Wiring()
-    m1 = fc.observe(_fp("a", "b"), w)          # σ=0.5
+    m1 = fc.observe(_fp("a", "b"), w)  # σ=0.5
     m2 = fc.observe(_fp("a", "b", "c", "d"), w)  # σ=1.5
     assert m1["sigma"] == pytest.approx(0.5)
     assert m2["avalanche"] == 4
@@ -140,9 +142,9 @@ def test_setpoint_tracks_arousal_capped():
     fc = FlockCriticality()
     lo = settings.get("flock_sigma_target_low")
     hi = settings.get("flock_sigma_target_high")
-    assert fc.setpoint(0.0) == pytest.approx(lo)        # low arousal → sub-critical
-    assert fc.setpoint(1.0) == pytest.approx(hi)        # high arousal → critical (capped)
-    assert fc.setpoint(5.0) <= hi                       # never super-critical even if arousal overshoots
+    assert fc.setpoint(0.0) == pytest.approx(lo)  # low arousal → sub-critical
+    assert fc.setpoint(1.0) == pytest.approx(hi)  # high arousal → critical (capped)
+    assert fc.setpoint(5.0) <= hi  # never super-critical even if arousal overshoots
 
 
 def test_control_holds_gain_until_sigma_estimable(monkeypatch):
@@ -185,7 +187,7 @@ def test_control_ema_no_thrash(monkeypatch):
     fc = FlockCriticality()
     w = _Wiring()
     fc.observe(_fp("a", "b", "c", "d"), w)  # σ=1.5
-    out = fc.control(0.0)                     # σ*=0.9, err=0.6
+    out = fc.control(0.0)  # σ*=0.9, err=0.6
     # |Δgain| ≈ alpha·|kp|·err, a small, bounded step
     step = abs(out["gain"] - 1.0)
     bound = abs(settings.get("flock_gain_ema_alpha") * settings.get("flock_gain_kp") * 0.6)

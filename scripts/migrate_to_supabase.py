@@ -117,6 +117,52 @@ def migrate_episodes(sb, user_id: str, persona: str, episodes_dir: Path) -> None
         logger.info("  episodes: inserted batch %d-%d", i, i + len(batch))
 
 
+def migrate_dmn_state(sb, user_id: str, persona: str, persona_dir: Path) -> None:
+    """Migrate dmn_novelty.json + dmn_routing_weights.json into the dmn_state row."""
+    novelty_path = persona_dir / "dmn_novelty.json"
+    routing_path = persona_dir / "dmn_routing_weights.json"
+    if not routing_path.exists():
+        routing_path = ROOT / "second_brain" / "dmn_routing_weights.json"
+    row: dict = {"user_id": user_id, "persona": persona, "updated_at": "now()"}
+    found = False
+    if novelty_path.exists():
+        row["novelty_cache"] = json.loads(novelty_path.read_text())
+        found = True
+    if routing_path.exists():
+        row["routing_weights"] = json.loads(routing_path.read_text()).get("weights") or {}
+        found = True
+    if not found:
+        logger.info("No DMN state for persona=%s — skipping", persona)
+        return
+    sb.table("dmn_state").upsert(row, on_conflict="user_id,persona").execute()
+    logger.info("Migrated DMN state for persona=%s", persona)
+
+
+def migrate_speakers(sb, user_id: str, speaker_dir: Path) -> None:
+    """Migrate voiceprint JSON files. User-scoped (not per-persona) — run once."""
+    if not speaker_dir.exists():
+        logger.info("No speaker_profiles dir at %s — skipping", speaker_dir)
+        return
+    count = 0
+    for p in speaker_dir.glob("*.json"):
+        data = json.loads(p.read_text())
+        vec = data.get("embedding") or []
+        row = {
+            "id": data["speaker_id"],
+            "user_id": user_id,
+            "name": data.get("name"),
+            "embedding": f"[{','.join(str(v) for v in vec)}]",
+            "sample_count": data.get("sample_count", 0),
+            "enrolled_ts": data.get("enrolled_ts"),
+            "updated_ts": data.get("updated_ts"),
+        }
+        if data.get("prosody_baseline"):
+            row["prosody_baseline"] = data["prosody_baseline"]
+        sb.table("speaker_profiles").upsert(row, on_conflict="id").execute()
+        count += 1
+    logger.info("Migrated %d speaker profile(s)", count)
+
+
 def create_user_profile(sb, user_id: str, active_persona: str) -> None:
     sb.table("user_profiles").upsert({
         "id": user_id,
@@ -179,6 +225,13 @@ def main() -> None:
         if not episodes_dir.exists():
             episodes_dir = second_brain / "episodes"
         migrate_episodes(sb, user_id, persona, episodes_dir)
+
+        # DMN state (novelty + routing weights)
+        dmn_dir = persona_dir if persona_dir.exists() else second_brain
+        migrate_dmn_state(sb, user_id, persona, dmn_dir)
+
+    # Speaker voiceprints — user-scoped, migrated once (not per persona)
+    migrate_speakers(sb, user_id, ROOT / "brain" / "second_brain" / "speaker_profiles")
 
     logger.info("Migration complete.")
     logger.info("")

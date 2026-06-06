@@ -124,7 +124,9 @@ def load_watchlist() -> dict:
 
 
 def watchlist_symbols() -> list[dict]:
-    return [s for s in load_watchlist().get("symbols", []) if isinstance(s, dict) and s.get("symbol")]
+    return [
+        s for s in load_watchlist().get("symbols", []) if isinstance(s, dict) and s.get("symbol")
+    ]
 
 
 def load_portfolio() -> dict:

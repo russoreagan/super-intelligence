@@ -102,8 +102,6 @@ Each story names the ONE tool that best fits it. Choose expected_tool using this
   cloud_action   — external services: email, calendar, messages, web search, documents
   query_langfuse — ONLY read Langfuse observability data (LLM traces/scores/sessions).
                    NEVER use it for files, code, or general analysis.
-  set_mood       — set the voice/UI emotional character for the turn
-
 Hard rule: any story about files, directories, codebases, or architecture uses
 list_files / read_file / search_files (and run_command if needed) — NEVER query_langfuse.
 
@@ -113,7 +111,7 @@ Return STRICT JSON, nothing else:
     {
       "id": "US-001",
       "description": "<imperative, concrete action>",
-      "expected_tool": "list_files|read_file|search_files|write_file|run_command|cloud_action|fetch_url|query_langfuse|set_mood",
+      "expected_tool": "list_files|read_file|search_files|write_file|run_command|cloud_action|fetch_url|query_langfuse",
       "acceptance_criteria": ["<specific checkable outcome from tool output>", ...]
     },
     ...

@@ -90,8 +90,12 @@ async def test_open_thread_appends_to_ledger():
     dmn = _make_dmn()
     await dmn._process_thought(
         "Does emotional gating actually reduce token cost?",
-        _meta(open_thread=True, angle="efficiency", bears_on=["efficiency-question"],
-              bearing="affects-measurement"),
+        _meta(
+            open_thread=True,
+            angle="efficiency",
+            bears_on=["efficiency-question"],
+            bearing="affects-measurement",
+        ),
         "t1",
     )
     assert len(dmn._open_threads) == 1
@@ -130,9 +134,11 @@ async def test_confident_conclusion_encodes_and_retires():
     dmn._open_threads, t = ot.open_thread([], "is gating cheaper?", bears_on=["efficiency"])
     await dmn._process_thought(
         "Settled: gating cuts redundant context, lowering tokens-per-response.",
-        _meta(conclude_thread_id=t.id,
-              conclusion="Emotional gating reduces tokens-per-useful-response.",
-              conclusion_confidence="confident"),
+        _meta(
+            conclude_thread_id=t.id,
+            conclusion="Emotional gating reduces tokens-per-useful-response.",
+            conclusion_confidence="confident",
+        ),
         "t3",
     )
     await asyncio.sleep(0.05)  # let the create_task encode fire
@@ -153,9 +159,11 @@ async def test_uncertain_conclusion_defers_and_stays_pending():
     dmn._open_threads, t = ot.open_thread([], "is gating cheaper?", bears_on=["efficiency"])
     await dmn._process_thought(
         "I think gating helps but I'm not certain.",
-        _meta(conclude_thread_id=t.id,
-              conclusion="Gating probably reduces cost.",
-              conclusion_confidence="uncertain"),
+        _meta(
+            conclude_thread_id=t.id,
+            conclusion="Gating probably reduces cost.",
+            conclusion_confidence="uncertain",
+        ),
         "t4",
     )
     await asyncio.sleep(0.05)

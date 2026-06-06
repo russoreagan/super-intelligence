@@ -11,7 +11,7 @@
     {
       "tool": "read_file",
       "args": {
-        "path": "/private/tmp/claude-501/pytest-of-russ/pytest-38/test_no_resume_runs_strategic_0/f.txt"
+        "path": "/private/var/folders/x3/pnty24214flf5jq9xq4glhvm0000gn/T/pytest-of-russ/pytest-15/test_no_resume_runs_strategic_0/f.txt"
       },
       "reason": "r"
     }
@@ -34,6 +34,6 @@
   "success_criteria": "",
   "complexity": "",
   "spoken_summary": null,
-  "created_at": "2026-06-05T06:14:20.398223+00:00",
-  "completed_at": "2026-06-05T06:14:20.398224+00:00"
+  "created_at": "2026-06-06T20:20:20.817551+00:00",
+  "completed_at": "2026-06-06T20:20:20.817552+00:00"
 }

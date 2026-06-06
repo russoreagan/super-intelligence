@@ -19,7 +19,6 @@ from brain.clusters import ledger_intents as li
 from brain.dmn import DefaultModeNetwork
 from brain.sequence_predictor import SequencePredictor
 
-
 # ── pure detector ────────────────────────────────────────────────────────────
 
 
@@ -55,7 +54,9 @@ def _make_dmn():
     hip = MagicMock()
     hip.encode_conclusion = AsyncMock()
     schema = MagicMock()
-    schema.read = MagicMock(return_value="# Open Questions & Projects\n\n## Projects assigned by Russ\n### Existing\n- **Task**: stuff\n")
+    schema.read = MagicMock(
+        return_value="# Open Questions & Projects\n\n## Projects assigned by Russ\n### Existing\n- **Task**: stuff\n"
+    )
     schema.awrite = AsyncMock()
     schema.upsert_section = AsyncMock()
     hip._schema = schema

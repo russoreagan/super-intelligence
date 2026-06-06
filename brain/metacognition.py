@@ -99,12 +99,12 @@ def read_session_count(schema, speaker_name: str = "") -> int:
 # friendly 5..19, warm 20..39, close >=40. The `score < threshold` scan below
 # means the threshold is the EXCLUSIVE upper edge of each band.
 _AFFECTION_TIER_THRESHOLDS = [
-    (-25, "guarded"),   # score < -25
-    (-10, "cool"),      # score -25 to -11   (was -11: off-by-one vs hippocampus, fixed F6)
-    ( 5,  "neutral"),   # score -10 to 4
-    (20,  "friendly"),  # score 5 to 19
-    (40,  "warm"),      # score 20 to 39
-    (None, "close"),    # score >= 40
+    (-25, "guarded"),  # score < -25
+    (-10, "cool"),  # score -25 to -11   (was -11: off-by-one vs hippocampus, fixed F6)
+    (5, "neutral"),  # score -10 to 4
+    (20, "friendly"),  # score 5 to 19
+    (40, "warm"),  # score 20 to 39
+    (None, "close"),  # score >= 40
 ]
 
 
@@ -117,17 +117,18 @@ def affection_to_label(score: int) -> str:
     return "close"
 
 
-from dataclasses import dataclass
+from dataclasses import dataclass  # noqa: E402
 
 
 @dataclass
 class RelationshipStage:
     """Snapshot of a speaker's relationship state, combining both tracking systems."""
-    tier: str           # familiarity tier: "new" | "acquainted" | "close"
-    affection: int      # raw affection score (-50 to +100)
+
+    tier: str  # familiarity tier: "new" | "acquainted" | "close"
+    affection: int  # raw affection score (-50 to +100)
     affection_label: str  # tier label: "guarded"|"cool"|"neutral"|"friendly"|"warm"|"close"
     session_count: int  # total interaction count
-    bond: float = 0.0   # latent closeness high-water mark (bond model)
+    bond: float = 0.0  # latent closeness high-water mark (bond model)
 
 
 def relationship_stage_from_content(content: str) -> RelationshipStage:
@@ -165,9 +166,7 @@ def read_relationship_stage(schema, speaker_name: str = "") -> RelationshipStage
     try:
         import re as _re
 
-        content = schema.read(
-            schema.speaker_filename(speaker_name) if speaker_name else "user.md"
-        )
+        content = schema.read(schema.speaker_filename(speaker_name) if speaker_name else "user.md")
         m_bond = _re.search(r"- Bond:\s*(-?\d+(?:\.\d+)?)", content or "")
         bond = float(m_bond.group(1)) if m_bond else 0.0
     except Exception:

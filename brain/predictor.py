@@ -175,9 +175,7 @@ class CompositePredictor:
             return False
         if confidence < self.confidence_skip_threshold:
             return False
-        if recent_surprise is not None and recent_surprise > self.surprise_threshold:
-            return False
-        return True
+        return not (recent_surprise is not None and recent_surprise > self.surprise_threshold)
 
     def avg_recent_outcome(self, sig: tuple[Hashable, ...]) -> float | None:
         """Mean recent quality score for a signature, or None if no data."""

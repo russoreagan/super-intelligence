@@ -26,12 +26,8 @@ _MOOD_MARKUP_RE = re.compile(r"\[mood:[^\]]+\](.*?)\[/mood\]", re.DOTALL | re.IG
 # reach display or TTS. First regex removes balanced blocks; second mops up an
 # unclosed/truncated opener through end-of-text.
 _TOOL_TAGS = "cloud_action|tool_call|tool|action_block"
-_TOOL_MARKUP_RE = re.compile(
-    rf"<({_TOOL_TAGS})\b[^>]*>.*?</\1\s*>", re.DOTALL | re.IGNORECASE
-)
-_TOOL_MARKUP_DANGLING_RE = re.compile(
-    rf"<(?:{_TOOL_TAGS})\b[^>]*>.*\Z", re.DOTALL | re.IGNORECASE
-)
+_TOOL_MARKUP_RE = re.compile(rf"<({_TOOL_TAGS})\b[^>]*>.*?</\1\s*>", re.DOTALL | re.IGNORECASE)
+_TOOL_MARKUP_DANGLING_RE = re.compile(rf"<(?:{_TOOL_TAGS})\b[^>]*>.*\Z", re.DOTALL | re.IGNORECASE)
 
 
 def _scrub_tool_markup(text: str) -> tuple[str, bool]:
@@ -261,6 +257,7 @@ class _TurnMixin:
         ):
             try:
                 from brain.metacognition import read_affection_score
+
                 _arr_schema = getattr(self.hippocampus, "_schema", None)
                 _arr_affection = read_affection_score(_arr_schema, _resolved_speaker)
                 if _arr_affection < -5:
@@ -270,12 +267,17 @@ class _TurnMixin:
                     self.bus.neuromod.add("GABA", _arr_gaba)
                     self.bus.neuromod.add("NE", _arr_ne)
                     _arr_snap = self.bus.neuromod.snapshot()
-                    trace.neuromod_midturn.append({"trigger": "presence_shadow", "snapshot": _arr_snap})
+                    trace.neuromod_midturn.append(
+                        {"trigger": "presence_shadow", "snapshot": _arr_snap}
+                    )
                     if self._emitter:
                         await self._emitter.emit_neuromod(_arr_snap)
                     logger.debug(
                         "[PresenceShadow] %s arrived (affection=%d) → GABA+%.3f NE+%.3f",
-                        _resolved_speaker, _arr_affection, _arr_gaba, _arr_ne,
+                        _resolved_speaker,
+                        _arr_affection,
+                        _arr_gaba,
+                        _arr_ne,
                     )
             except Exception:
                 pass
@@ -285,9 +287,7 @@ class _TurnMixin:
         # was applied (_speaker_assumed_primary) or ears are off → text turn.
         # This must run before hypothalamus.process() so the modality can be
         # passed in features for channel calibration.
-        _is_text_input = features.get("_speaker_assumed_primary", False) or (
-            self.ears is None
-        )
+        _is_text_input = features.get("_speaker_assumed_primary", False) or (self.ears is None)
         _input_modality = "text" if _is_text_input else "voice"
         features = dict(features)
         features["input_modality"] = _input_modality
@@ -529,7 +529,8 @@ class _TurnMixin:
                 self.dmn.observe_user_turn(features, user_input)
                 _budget = self.dmn.compute_routing_budget()
                 _activity = " ".join(
-                    str(x) for x in (
+                    str(x)
+                    for x in (
                         user_input,
                         features.get("topic_summary", ""),
                         " ".join(features.get("entities", []) or []),
@@ -759,9 +760,7 @@ class _TurnMixin:
                 trace.sigma_smoothed = _fm["sigma_smoothed"]
                 trace.avalanche_size = _fm["avalanche"]
                 _arousal = float(
-                    compute_affect_dims(nm_snap, self.bus.hormonal.snapshot()).get(
-                        "arousal", 0.3
-                    )
+                    compute_affect_dims(nm_snap, self.bus.hormonal.snapshot()).get("arousal", 0.3)
                 )
                 _ctrl = _fc.control(_arousal)
                 trace.criticality_setpoint = _ctrl["sigma_star"]
@@ -866,9 +865,8 @@ class _TurnMixin:
         trace.cluster_tokens = cluster_tokens
         trace.memory_recalled = memory_recalled
         trace.memory_hit_count = memory_hit_count
-        trace.user_emotion = (
-            affect.get("user_emotion", "") or
-            (features.get("user_emotion", "") if isinstance(features, dict) else "")
+        trace.user_emotion = affect.get("user_emotion", "") or (
+            features.get("user_emotion", "") if isinstance(features, dict) else ""
         )
         trace.speaker_name = features.get("speaker_name", "")
         trace.speaker_score = features.get("_speaker_match_score", 0.0)
@@ -890,14 +888,18 @@ class _TurnMixin:
         trace.oxt_connected_reached = bool(
             _hormonal.get("OXT", 0.0) >= settings.get("hormonal_oxt_connected_threshold")
         )
-        trace.user_sentiment = float(features.get("sentiment", 0.0)) if isinstance(features, dict) else 0.0
+        trace.user_sentiment = (
+            float(features.get("sentiment", 0.0)) if isinstance(features, dict) else 0.0
+        )
         # Relationship STAGE snapshot — capture affection/tier AT TURN TIME. The
         # schema is overwritten continuously, so this cannot be recovered later;
         # without it no behaviour can be correlated against relationship depth.
         try:
             from brain.metacognition import relationship_stage_from_content
 
-            _user_model = (memory.get("core") or {}).get("user", "") if isinstance(memory, dict) else ""
+            _user_model = (
+                (memory.get("core") or {}).get("user", "") if isinstance(memory, dict) else ""
+            )
             _stage = relationship_stage_from_content(_user_model)
             trace.affection = _stage.affection
             trace.affection_label = _stage.affection_label
@@ -1240,9 +1242,7 @@ class _TurnMixin:
                 "connecting it to the current conversation."
             )
         prompt = (
-            f"{directive}\n\n"
-            f"Current conversation:\n{parietal_ctx}\n\n"
-            f"Retrieved content:\n{output}"
+            f"{directive}\n\nCurrent conversation:\n{parietal_ctx}\n\nRetrieved content:\n{output}"
         )
         try:
             result = await self.router.call(
@@ -1260,7 +1260,9 @@ class _TurnMixin:
             logger.warning("[MotorCortex] Lobe synthesis failed (%s): %s", tool_name, e)
             return ""
 
-    async def _synthesize_tool_result(self, goal: str, tool_name: str, output: str, turn_id: str) -> str:
+    async def _synthesize_tool_result(
+        self, goal: str, tool_name: str, output: str, turn_id: str
+    ) -> str:
         """Synthesize raw tool/action output into a natural spoken update.
 
         Raw command output (file listings, JSON, logs) must never be spoken directly.
@@ -1371,7 +1373,9 @@ class _TurnMixin:
 
         logger.info(
             "[MotorCortex] Background reactive done: %s → %d chars (success=%s)",
-            tool_name, len(msg), success,
+            tool_name,
+            len(msg),
+            success,
         )
         with contextlib.suppress(Exception):
             if self._emitter:

@@ -68,12 +68,14 @@ class Wiring:
 
     def _sb(self):
         from brain.second_brain.supabase_client import get_client
+
         return get_client()
 
     def _uid(self) -> str:
         if self._user_id:
             return self._user_id
         from brain.second_brain.supabase_client import get_user_id
+
         return get_user_id()
 
     def _persona_name(self) -> str:
@@ -314,23 +316,27 @@ class Wiring:
                 {"src": e.source, "tgt": e.target, "w": e.weight, "pol": e.polarity}
                 for e in self._edges.values()
             ]
-            sb.table("wiring_snapshots").insert({
-                "user_id": uid,
-                "persona": persona,
-                "session_id": session_id,
-                "ts": time.time(),
-                "edges": edges,
-            }).execute()
+            sb.table("wiring_snapshots").insert(
+                {
+                    "user_id": uid,
+                    "persona": persona,
+                    "session_id": session_id,
+                    "ts": time.time(),
+                    "edges": edges,
+                }
+            ).execute()
             # Prune to last 100 snapshots
-            res = (sb.table("wiring_snapshots")
-                   .select("id")
-                   .eq("user_id", uid)
-                   .eq("persona", persona)
-                   .order("ts", desc=True)
-                   .execute())
+            res = (
+                sb.table("wiring_snapshots")
+                .select("id")
+                .eq("user_id", uid)
+                .eq("persona", persona)
+                .order("ts", desc=True)
+                .execute()
+            )
             ids = [r["id"] for r in (res.data or [])]
             if len(ids) > self._MAX_HISTORY_SNAPSHOTS:
-                old_ids = ids[self._MAX_HISTORY_SNAPSHOTS:]
+                old_ids = ids[self._MAX_HISTORY_SNAPSHOTS :]
                 sb.table("wiring_snapshots").delete().in_("id", old_ids).execute()
         except Exception as e:
             logger.warning("Supabase wiring snapshot failed: %s", e)
@@ -354,12 +360,14 @@ class Wiring:
         try:
             sb = self._sb()
             uid = self._uid()
-            res = (sb.table("wiring_edges")
-                   .select("source,target,weight,polarity")
-                   .eq("user_id", uid)
-                   .eq("persona", self._persona_name())
-                   .execute())
-            for item in (res.data or []):
+            res = (
+                sb.table("wiring_edges")
+                .select("source,target,weight,polarity")
+                .eq("user_id", uid)
+                .eq("persona", self._persona_name())
+                .execute()
+            )
+            for item in res.data or []:
                 self._edges[(item["source"], item["target"])] = Edge(
                     item["source"], item["target"], item["weight"], item["polarity"]
                 )

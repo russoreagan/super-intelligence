@@ -36,7 +36,13 @@ async def sync_portfolio(client) -> dict:
         return account
 
     holdings = []
-    rows = positions if isinstance(positions, list) else positions.get("positions", []) if isinstance(positions, dict) else []
+    rows = (
+        positions
+        if isinstance(positions, list)
+        else positions.get("positions", [])
+        if isinstance(positions, dict)
+        else []
+    )
     for p in rows or []:
         if not isinstance(p, dict):
             continue
@@ -66,7 +72,13 @@ async def sync_executions(client, *, limit: int = 100) -> int:
     if client is None or not client.available:
         return 0
     orders = await client.call("get_orders", {"status": "closed", "limit": limit})
-    rows = orders if isinstance(orders, list) else orders.get("orders", []) if isinstance(orders, dict) else []
+    rows = (
+        orders
+        if isinstance(orders, list)
+        else orders.get("orders", [])
+        if isinstance(orders, dict)
+        else []
+    )
     existing = {r.get("order_id") for r in store.load_executions() if r.get("order_id")}
     added = 0
     for o in rows or []:

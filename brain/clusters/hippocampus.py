@@ -918,7 +918,9 @@ class HippocampusCluster:
 
         # Speaker schemas are user.md plus user_*.md (per-speaker profiles)
         try:
-            files = [f for f in self._schema.list_files() if f == "user.md" or f.startswith("user_")]
+            files = [
+                f for f in self._schema.list_files() if f == "user.md" or f.startswith("user_")
+            ]
         except Exception:
             files = ["user.md"]
 
@@ -945,15 +947,24 @@ class HippocampusCluster:
                     bond = float(m_bond.group(1)) if m_bond else max(0.0, affection)
 
                     new_aff, new_bond = apply_absence(
-                        affection, bond, elapsed_days,
-                        aff_base=aff_base, bond_base=bond_base, scale=scale,
+                        affection,
+                        bond,
+                        elapsed_days,
+                        aff_base=aff_base,
+                        bond_base=bond_base,
+                        scale=scale,
                     )
                     new_tier = familiarity_from_bond(new_bond, close_bond, acq_bond)
 
-                    content = re.sub(r"- Score:\s*-?\d+", f"- Score: {round(new_aff)}", content, count=1)
+                    content = re.sub(
+                        r"- Score:\s*-?\d+", f"- Score: {round(new_aff)}", content, count=1
+                    )
                     if re.search(r"- Bond:\s*-?\d+(?:\.\d+)?", content):
                         content = re.sub(
-                            r"- Bond:\s*-?\d+(?:\.\d+)?", f"- Bond: {new_bond:.1f}", content, count=1
+                            r"- Bond:\s*-?\d+(?:\.\d+)?",
+                            f"- Bond: {new_bond:.1f}",
+                            content,
+                            count=1,
                         )
                     else:
                         content += f"\n- Bond: {new_bond:.1f}"
@@ -969,7 +980,13 @@ class HippocampusCluster:
                     logger.info(
                         "[Relationship] Boot decay %s: %.1f d → affection %.0f→%.0f, "
                         "bond %.1f→%.1f, familiarity=%s",
-                        schema_file, elapsed_days, affection, new_aff, bond, new_bond, new_tier,
+                        schema_file,
+                        elapsed_days,
+                        affection,
+                        new_aff,
+                        bond,
+                        new_bond,
+                        new_tier,
                     )
             except Exception as exc:
                 logger.warning("[Relationship] Boot decay failed for %s: %s", schema_file, exc)

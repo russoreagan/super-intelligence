@@ -382,7 +382,11 @@ class ToolDispatcher:
                         "latency_s": round(t.latency, 3) if t.latency else None,
                         "cost_usd": round(t.total_cost, 5) if t.total_cost else None,
                         "metadata": t.metadata,
-                        "scores": {s.name: round(s.value, 3) for s in (t.scores or []) if not isinstance(s, str)},
+                        "scores": {
+                            s.name: round(s.value, 3)
+                            for s in (t.scores or [])
+                            if not isinstance(s, str)
+                        },
                         "input": inp,
                         "output": out,
                         "observation_count": len(t.observations or []),

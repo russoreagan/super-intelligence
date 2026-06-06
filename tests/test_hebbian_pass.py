@@ -537,7 +537,9 @@ def test_turn_plasticity_bounds(monkeypatch, tmp_path):
     monkeypatch.setitem(settings._data, "plasticity_turn_max", 1.05)
     sc = _sc(monkeypatch, tmp_path)
     huge = _make_trace(DA=1.0, prior_DA=0.0, ACh=1.0, emotion="happy")  # would exceed 1.05
-    tiny = _make_trace(DA=0.5, prior_DA=0.5, ACh=0.0, GABA=1.0, emotion="neutral")  # would fall below 0.5
+    tiny = _make_trace(
+        DA=0.5, prior_DA=0.5, ACh=0.0, GABA=1.0, emotion="neutral"
+    )  # would fall below 0.5
     assert sc._hebbian._turn_plasticity(huge) == pytest.approx(1.05)
     assert sc._hebbian._turn_plasticity(tiny) == pytest.approx(0.50)
 

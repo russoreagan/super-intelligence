@@ -21,63 +21,193 @@ from dataclasses import asdict, dataclass
 
 _LAUGHTER = frozenset(
     [
-        "lol", "lmao", "lmfao", "haha", "hahaha", "hehe", "heh", "rofl",
-        "😂", "🤣", "😆", "😄", "😁",
+        "lol",
+        "lmao",
+        "lmfao",
+        "haha",
+        "hahaha",
+        "hehe",
+        "heh",
+        "rofl",
+        "😂",
+        "🤣",
+        "😆",
+        "😄",
+        "😁",
     ]
 )
 
 _WARMTH = frozenset(
     [
-        ":)", ":-)", ":)", "=)", "^_^", "😊", "😀", "😃", "🙂", "🥰", "😍",
-        "❤️", "❤", "💙", "💚", "💛", "🧡", "💜", "🖤", "🤍", "♥", "💕",
-        "💞", "💓", "💗", "💖", "💝", "👍", "🙌", "🤗", "😘", "🥲",
-        "thank", "thanks", "thankyou", "ty", "tyvm", "thx",
+        ":)",
+        ":-)",
+        ":)",
+        "=)",
+        "^_^",
+        "😊",
+        "😀",
+        "😃",
+        "🙂",
+        "🥰",
+        "😍",
+        "❤️",
+        "❤",
+        "💙",
+        "💚",
+        "💛",
+        "🧡",
+        "💜",
+        "🖤",
+        "🤍",
+        "♥",
+        "💕",
+        "💞",
+        "💓",
+        "💗",
+        "💖",
+        "💝",
+        "👍",
+        "🙌",
+        "🤗",
+        "😘",
+        "🥲",
+        "thank",
+        "thanks",
+        "thankyou",
+        "ty",
+        "tyvm",
+        "thx",
     ]
 )
 
 _NEGATIVITY = frozenset(
     [
-        ":(", ":-(", ":/", ":-/", ":/", "=(", ">:(", "😢", "😭", "😔",
-        "😞", "😟", "😣", "😤", "😡", "🤬", "👎", "🙁", "☹️",
-        "ugh", "argh", "smh", "wtf", "wth",
+        ":(",
+        ":-(",
+        ":/",
+        ":-/",
+        ":/",
+        "=(",
+        ">:(",
+        "😢",
+        "😭",
+        "😔",
+        "😞",
+        "😟",
+        "😣",
+        "😤",
+        "😡",
+        "🤬",
+        "👎",
+        "🙁",
+        "☹️",
+        "ugh",
+        "argh",
+        "smh",
+        "wtf",
+        "wth",
     ]
 )
 
 _EXCITEMENT = frozenset(
     [
-        "omg", "omfg", "wow", "wow!", "whoa", "woah", "damn", "dang",
-        "holy", "yesss", "yasss", "yay", "woohoo", "woo",
-        "🔥", "🚀", "💥", "⚡", "✨", "🎉", "🎊", "🏆", "💯", "🤩", "😱",
+        "omg",
+        "omfg",
+        "wow",
+        "wow!",
+        "whoa",
+        "woah",
+        "damn",
+        "dang",
+        "holy",
+        "yesss",
+        "yasss",
+        "yay",
+        "woohoo",
+        "woo",
+        "🔥",
+        "🚀",
+        "💥",
+        "⚡",
+        "✨",
+        "🎉",
+        "🎊",
+        "🏆",
+        "💯",
+        "🤩",
+        "😱",
     ]
 )
 
 # Informal/casual register markers — high density indicates relaxed communication
 _INFORMALITY = frozenset(
     [
-        "tbh", "ngl", "idk", "idc", "imo", "imho", "afaik", "afaict",
-        "btw", "fwiw", "iirc", "tfw", "smh", "nvm", "rn", "irl",
-        "bc", "cuz", "coz", "gonna", "wanna", "gotta", "kinda", "sorta",
-        "prolly", "def", "totes", "legit", "lit", "vibe", "vibes",
-        "fr", "fr fr", "no cap", "slay", "lowkey", "highkey", "lmk",
-        "hmu", "ttyl", "brb", "gtg", "np", "yw", "ur", "u", "r",
+        "tbh",
+        "ngl",
+        "idk",
+        "idc",
+        "imo",
+        "imho",
+        "afaik",
+        "afaict",
+        "btw",
+        "fwiw",
+        "iirc",
+        "tfw",
+        "smh",
+        "nvm",
+        "rn",
+        "irl",
+        "bc",
+        "cuz",
+        "coz",
+        "gonna",
+        "wanna",
+        "gotta",
+        "kinda",
+        "sorta",
+        "prolly",
+        "def",
+        "totes",
+        "legit",
+        "lit",
+        "vibe",
+        "vibes",
+        "fr",
+        "fr fr",
+        "no cap",
+        "slay",
+        "lowkey",
+        "highkey",
+        "lmk",
+        "hmu",
+        "ttyl",
+        "brb",
+        "gtg",
+        "np",
+        "yw",
+        "ur",
+        "u",
+        "r",
     ]
 )
 
 # Pre-compiled regex for emoji detection (broad unicode ranges)
 _EMOJI_RE = re.compile(
     "["
-    "\U0001F600-\U0001F64F"   # emoticons
-    "\U0001F300-\U0001F5FF"   # symbols & pictographs
-    "\U0001F680-\U0001F6FF"   # transport & map
-    "\U0001F1E0-\U0001F1FF"   # flags
-    "\U00002702-\U000027B0"   # dingbats
-    "\U000024C2-\U0001F251"   # enclosed
+    "\U0001f600-\U0001f64f"  # emoticons
+    "\U0001f300-\U0001f5ff"  # symbols & pictographs
+    "\U0001f680-\U0001f6ff"  # transport & map
+    "\U0001f1e0-\U0001f1ff"  # flags
+    "\U00002702-\U000027b0"  # dingbats
+    "\U000024c2-\U0001f251"  # enclosed
     "]+",
     flags=re.UNICODE,
 )
 
 
 # ── Extractor ─────────────────────────────────────────────────────────────────
+
 
 @dataclass
 class TextParalinguisticFeatures:
@@ -86,12 +216,12 @@ class TextParalinguisticFeatures:
     Values are 0–1 floats (normalized by message length), except emoji_count.
     """
 
-    laughter: float = 0.0         # lol / haha / 😂 markers
-    warmth: float = 0.0           # :) / ❤️ / thanks markers
-    negativity: float = 0.0       # :( / 😡 / ugh markers
-    excitement: float = 0.0       # omg / 🔥 / wow markers
-    informality: float = 0.0      # tbh / ngl / idk abbreviation density
-    emoji_count: int = 0          # raw emoji count
+    laughter: float = 0.0  # lol / haha / 😂 markers
+    warmth: float = 0.0  # :) / ❤️ / thanks markers
+    negativity: float = 0.0  # :( / 😡 / ugh markers
+    excitement: float = 0.0  # omg / 🔥 / wow markers
+    informality: float = 0.0  # tbh / ngl / idk abbreviation density
+    emoji_count: int = 0  # raw emoji count
     exclamation_density: float = 0.0  # exclamation marks per word
 
     def to_dict(self) -> dict:
@@ -134,12 +264,6 @@ def extract_text_paralinguistics(text: str) -> TextParalinguisticFeatures:
     for phrase in ["no cap", "fr fr"]:
         if phrase in text_lower:
             informality_hits += 1
-
-    # Also check raw text for ascii emoticons (they split oddly on token boundaries)
-    for marker in _LAUGHTER | _WARMTH | _NEGATIVITY | _EXCITEMENT:
-        if len(marker) > 2 and not marker.startswith("\U"):
-            # Treat as substring match for longer markers in raw text
-            pass
 
     # Check ascii emoticons in raw text
     for marker in (":)", ":-)", "=)", "^_^", ":(", ":-(", ":/", ":-/", ">:("):

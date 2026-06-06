@@ -27,7 +27,7 @@ SESSION_IDLE_TIMEOUT_S = float(os.environ.get("BRAIN_SESSION_IDLE_TIMEOUT_S", "6
 
 
 class _SessionEntry:
-    def __init__(self, session: "BrainSession", task: asyncio.Task) -> None:
+    def __init__(self, session: BrainSession, task: asyncio.Task) -> None:
         self.session = session
         self.task = task
         self.client_count: int = 0
@@ -53,7 +53,7 @@ class SessionManager:
         for entry in list(self._sessions.values()):
             entry.task.cancel()
 
-    async def get_or_create(self, user_id: str) -> "BrainSession":
+    async def get_or_create(self, user_id: str) -> BrainSession:
         """Return the existing session for user_id, or boot a new one."""
         async with self._lock:
             if user_id in self._sessions:
@@ -77,10 +77,9 @@ class SessionManager:
             entry.client_count = max(0, entry.client_count - 1)
             entry.last_active = time.time()
 
-    async def _boot_session(self, user_id: str) -> "BrainSession":
+    async def _boot_session(self, user_id: str) -> BrainSession:
         """Create and start a BrainSession. Called inside _lock."""
         # Set up per-user storage context
-        import os
         from brain.second_brain import supabase_client
 
         supabase_client.set_user_id(user_id)
@@ -103,7 +102,7 @@ class SessionManager:
         await asyncio.sleep(0.1)
         return session
 
-    async def _run_session(self, session: "BrainSession", user_id: str) -> None:
+    async def _run_session(self, session: BrainSession, user_id: str) -> None:
         try:
             # Run setup phases only — not the blocking run() loop.
             # The session's loops run as tasks managed by brainstem.

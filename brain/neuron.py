@@ -132,6 +132,23 @@ class SwitchNeuron:
         suppressions are visible in the decisions log.
         """
         eff_thr = self.effective_threshold(snapshot)
+        # Continuous inhibitory-pressure interoception: accumulate how much
+        # chemistry RAISED this gate's threshold (graded gain control), whether or
+        # not the input overcame it. This is the always-on, graded counterpart to
+        # the rare discrete suppressed_switch_count near-miss below — the
+        # hypothalamus reads the sum as interoceptive inhibitory load. Only upward
+        # shifts (true inhibition) count; disinhibition (negative shift) does not.
+        if snapshot is not None and self.modulators:
+            _raise = eff_thr - self.threshold
+            if _raise > 0.0:
+                try:
+                    from brain.observability.firing_path import current_turn_trace
+
+                    _tr = current_turn_trace.get()
+                    if _tr is not None:
+                        _tr.suppression_pressure += _raise
+                except Exception:
+                    pass
         if input_level >= eff_thr:
             return True
         # Near-miss: would have fired under neutral chemistry.
@@ -222,7 +239,10 @@ def spread_threshold(
         return base
     if spread <= 0:
         return base
-    digest = hashlib.md5(f"{persona_seed}:{switch_name}".encode()).hexdigest()
+    # Not security — a deterministic hash→float to jitter the switch threshold.
+    digest = hashlib.md5(
+        f"{persona_seed}:{switch_name}".encode(), usedforsecurity=False
+    ).hexdigest()
     frac = int(digest[:8], 16) / 0xFFFFFFFF  # [0, 1]
     offset = (frac * 2.0 - 1.0) * spread  # [-spread, +spread]
     return max(0.05, min(0.95, base + offset))

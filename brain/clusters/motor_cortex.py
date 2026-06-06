@@ -154,9 +154,18 @@ _PLAN_SCHEMA: dict = {
                     "expected_tool": {
                         "type": "string",
                         "enum": [
-                            "list_files", "read_file", "search_files", "write_file",
-                            "run_command", "fetch_url", "cloud_action", "query_langfuse",
-                            "set_mood", "recall_memory", "analyze_image", "ask_user", "?",
+                            "list_files",
+                            "read_file",
+                            "search_files",
+                            "write_file",
+                            "run_command",
+                            "fetch_url",
+                            "cloud_action",
+                            "query_langfuse",
+                            "recall_memory",
+                            "analyze_image",
+                            "ask_user",
+                            "?",
                         ],
                     },
                     "acceptance_criteria": {
@@ -256,7 +265,7 @@ class MotorCortexCluster:
         # a wedged/slow pod (524s) failed every job at the planning step. Haiku
         # is cheap, fast, and reliable; cost is bounded by background-mode budgets
         # + the job rate limiter (see execute_internal_job). Runs in background
-        # mode so bg_cloud_token_budget + daily USD cap both apply.
+        # mode so bg_cloud_token_rate + daily USD cap both apply.
         self._planner = IntegratorCell(
             name="tool_planner",
             cluster=CLUSTER,
@@ -275,7 +284,7 @@ class MotorCortexCluster:
         # No locality="local" — cloud is intentional. The session's egress gateway
         # (injected into the router via set_egress) pseudonymizes the prompt before
         # it leaves the device. Runs inside background mode in execute_internal_job
-        # so the bg_cloud_token_budget + daily USD cap both apply.
+        # so the bg_cloud_token_rate + daily USD cap both apply.
         self._strategic_planner = IntegratorCell(
             name="strategic_planner",
             cluster=CLUSTER,
@@ -324,7 +333,7 @@ class MotorCortexCluster:
         # Now that planning runs on cloud (Haiku/Sonnet), an unbounded number of
         # autonomous jobs could run up cost. These cap how many jobs can run per
         # session, per rolling window, and concurrently. Cloud spend is ALSO
-        # bounded independently by bg_cloud_token_budget + cloud_daily_usd_budget.
+        # bounded independently by bg_cloud_token_rate + cloud_daily_usd_budget.
         self._job_start_times: list[float] = []  # monotonic timestamps, pruned per check
         self._session_job_count: int = 0
         self._active_job_count: int = 0
@@ -641,7 +650,7 @@ class MotorCortexCluster:
         pass budget>0 to override.
 
         Runs in background mode: cloud cells (strategic_planner, verifier) are
-        subject to bg_cloud_token_budget + daily USD cap; falls back to local
+        subject to bg_cloud_token_rate + daily USD cap; falls back to local
         if either is exhausted.
         """
         from brain.ui.emitter import emitter
@@ -655,8 +664,12 @@ class MotorCortexCluster:
             logger.warning("[InternalJob] Declined job (%s): %.80s", _decline, goal)
             with contextlib.suppress(Exception):
                 await emitter.emit_event(
-                    {"type": "task_declined", "job_id": job_id, "reason": _decline,
-                     "goal": goal[:200]}
+                    {
+                        "type": "task_declined",
+                        "job_id": job_id,
+                        "reason": _decline,
+                        "goal": goal[:200],
+                    }
                 )
             return {
                 "success": False,

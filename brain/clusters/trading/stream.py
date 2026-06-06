@@ -29,6 +29,7 @@ above 30 and then dips below again) it fires fresh.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -39,9 +40,9 @@ logger = logging.getLogger(__name__)
 
 _WS_IEX = "wss://stream.data.alpaca.markets/v2/iex"
 _WS_SIP = "wss://stream.data.alpaca.markets/v2/sip"
-_MAX_SYMBOLS = 30       # free-tier websocket limit
-_BAR_BUFFER = 300       # bars kept per symbol (~5 hours of 1-min bars)
-_RECONNECT_DELAY = 30   # seconds between reconnect attempts
+_MAX_SYMBOLS = 30  # free-tier websocket limit
+_BAR_BUFFER = 300  # bars kept per symbol (~5 hours of 1-min bars)
+_RECONNECT_DELAY = 30  # seconds between reconnect attempts
 _WATCHLIST_REFRESH = 300  # seconds between watchlist re-reads
 
 
@@ -70,7 +71,11 @@ class WatchlistStream:
         self._secret_key = secret_key or os.environ.get("ALPACA_SECRET_KEY", "")
         self._md = market_data
         self._emitter = emitter
-        self._url = _WS_SIP if (use_sip or os.environ.get("ALPACA_USE_SIP", "").lower() == "true") else _WS_IEX
+        self._url = (
+            _WS_SIP
+            if (use_sip or os.environ.get("ALPACA_USE_SIP", "").lower() == "true")
+            else _WS_IEX
+        )
         # symbol -> deque of bar dicts (oldest first)
         self._buffers: dict[str, deque] = {}
         # (symbol, trigger_name, trigger, level) -> last-fired unix ts
@@ -96,10 +101,8 @@ class WatchlistStream:
         self._running = False
         if self._task and not self._task.done():
             self._task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError, Exception):
                 await self._task
-            except (asyncio.CancelledError, Exception):
-                pass
         logger.info("[stream] watchlist stream stopped")
 
     # ── main loop ─────────────────────────────────────────────────────────────
@@ -112,7 +115,9 @@ class WatchlistStream:
                 break
             except Exception as e:
                 if self._running:
-                    logger.warning("[stream] connection lost: %s — retry in %ds", e, _RECONNECT_DELAY)
+                    logger.warning(
+                        "[stream] connection lost: %s — retry in %ds", e, _RECONNECT_DELAY
+                    )
                     await asyncio.sleep(_RECONNECT_DELAY)
 
     async def _connect_and_stream(self) -> None:
@@ -128,8 +133,11 @@ class WatchlistStream:
 
         symbols = [e["symbol"].upper() for e in watchlist[:_MAX_SYMBOLS]]
         if len(watchlist) > _MAX_SYMBOLS:
-            logger.warning("[stream] watchlist has %d symbols; streaming first %d (free-tier limit)",
-                           len(watchlist), _MAX_SYMBOLS)
+            logger.warning(
+                "[stream] watchlist has %d symbols; streaming first %d (free-tier limit)",
+                len(watchlist),
+                _MAX_SYMBOLS,
+            )
 
         # Pre-load history buffers so indicators are accurate from the first bar.
         if self._md is not None:
@@ -147,13 +155,19 @@ class WatchlistStream:
             #   1. server → [{"T":"success","msg":"connected"}]   (connection ack)
             #   2. client → auth; server → [{"T":"success","msg":"authenticated"}]
             connected = json.loads(await ws.recv())
-            if not any(m.get("T") == "success" and "connected" in str(m.get("msg", "")) for m in connected):
+            if not any(
+                m.get("T") == "success" and "connected" in str(m.get("msg", "")) for m in connected
+            ):
                 logger.error("[stream] unexpected greeting: %s", connected)
                 return
 
-            await ws.send(json.dumps({"action": "auth", "key": self._api_key, "secret": self._secret_key}))
+            await ws.send(
+                json.dumps({"action": "auth", "key": self._api_key, "secret": self._secret_key})
+            )
             resp = json.loads(await ws.recv())
-            if not any(m.get("T") == "success" and "authenticated" in str(m.get("msg", "")) for m in resp):
+            if not any(
+                m.get("T") == "success" and "authenticated" in str(m.get("msg", "")) for m in resp
+            ):
                 logger.error("[stream] auth failed: %s", resp)
                 return
 
@@ -167,7 +181,7 @@ class WatchlistStream:
             while self._running:
                 try:
                     raw = await asyncio.wait_for(ws.recv(), timeout=90)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     continue  # websockets library handles pings; just loop
 
                 events = json.loads(raw)
@@ -205,7 +219,6 @@ class WatchlistStream:
 
     async def _on_bar(self, bar: dict, watchlist: list[dict]) -> None:
         from . import indicators as ind
-        from . import present
         from .capabilities import _eval_trigger
         from .market_data import closes
 
@@ -216,14 +229,16 @@ class WatchlistStream:
         if buf is None:
             buf = deque(maxlen=_BAR_BUFFER)
             self._buffers[sym] = buf
-        buf.append({
-            "t": bar.get("t"),
-            "open": bar.get("o"),
-            "high": bar.get("h"),
-            "low": bar.get("l"),
-            "close": bar.get("c"),
-            "volume": bar.get("v"),
-        })
+        buf.append(
+            {
+                "t": bar.get("t"),
+                "open": bar.get("o"),
+                "high": bar.get("h"),
+                "low": bar.get("l"),
+                "close": bar.get("c"),
+                "volume": bar.get("v"),
+            }
+        )
 
         snap = ind.compute_all(closes(list(buf)))
 
@@ -252,12 +267,12 @@ class WatchlistStream:
         if not fired:
             return
 
-        logger.info("[stream] ALERT %s — %d trigger(s): %s",
-                    sym, len(fired), [w.get("name") for w in fired])
+        logger.info(
+            "[stream] ALERT %s — %d trigger(s): %s", sym, len(fired), [w.get("name") for w in fired]
+        )
         await self._emit_alert(sym, fired, snap, entry)
 
     async def _emit_alert(self, symbol: str, fired: list[dict], snap: dict, entry: dict) -> None:
-        from . import present
 
         note = entry.get("thesis", "")
         columns = ["symbol", "indicator", "trigger", "level", "current", "price"]
@@ -275,17 +290,21 @@ class WatchlistStream:
 
         if self._emitter is not None:
             try:
-                await self._emitter.emit_table("stream", f"⚡ {symbol} alert", columns, rows, note=note)
+                await self._emitter.emit_table(
+                    "stream", f"⚡ {symbol} alert", columns, rows, note=note
+                )
             except Exception as e:
                 logger.debug("[stream] emit_table failed: %s", e)
             try:
-                await self._emitter.emit_event({
-                    "type": "trading_alert",
-                    "symbol": symbol,
-                    "fired": fired,
-                    "snapshot": {k: v for k, v in snap.items() if v is not None},
-                    "ts": time.time(),
-                })
+                await self._emitter.emit_event(
+                    {
+                        "type": "trading_alert",
+                        "symbol": symbol,
+                        "fired": fired,
+                        "snapshot": {k: v for k, v in snap.items() if v is not None},
+                        "ts": time.time(),
+                    }
+                )
             except Exception as e:
                 logger.debug("[stream] emit_event failed: %s", e)
 

@@ -11,6 +11,9 @@ build/
 .env.*
 !.env.example
 
+# Supabase CLI local link/temp state
+supabase/.temp/
+
 # LanceDB (binary vector store — large, session-specific)
 second_brain/episodes/
 second_brain/archive/

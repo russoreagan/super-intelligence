@@ -8,8 +8,8 @@ import pytest
 
 import brain.dmn as dmn_mod
 from brain.bus import Bus, Message
-from brain.settings import settings
 from brain.sequence_predictor import SequencePredictor
+from brain.settings import settings
 
 
 @pytest.fixture
@@ -39,8 +39,12 @@ def _make_dmn(bus):
 
 def _drive_to_quiet(bus, topic="threat"):
     bus.track_concentration(topic)
-    bus._accumulate(Message(topic=topic, payload={"entities": ["deadline", "sarah"]}, source="t",
-                            confidence=2.0), now=0.0)
+    bus._accumulate(
+        Message(
+            topic=topic, payload={"entities": ["deadline", "sarah"]}, source="t", confidence=2.0
+        ),
+        now=0.0,
+    )
     assert bus.is_quiet(topic, now=40.0) is True  # ARMED→QUIET, onset flagged
 
 

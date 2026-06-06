@@ -18,8 +18,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import brain.dmn as D
 from brain.dmn import DefaultModeNetwork, _cosine
-from brain.settings import settings
 from brain.sequence_predictor import SequencePredictor
+from brain.settings import settings
 
 
 def _make_dmn():

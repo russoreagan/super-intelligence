@@ -53,7 +53,9 @@ logger = logging.getLogger("brain.run")
 def ensure_ollama_running() -> None:
     """Start Ollama if not already running. Skipped when OLLAMA_HOST points to a remote server."""
     ollama_host = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
-    if not ollama_host.startswith("http://localhost") and not ollama_host.startswith("http://127.0.0.1"):
+    if not ollama_host.startswith("http://localhost") and not ollama_host.startswith(
+        "http://127.0.0.1"
+    ):
         logger.info("Ollama is remote (%s) — skipping local auto-start", ollama_host)
         return
 
@@ -281,7 +283,6 @@ def _seed_persona_self_md(root, persona: str, settings_data: dict) -> None:
         )
     except Exception as e:
         logger.warning("[Persona] self.md seed failed for %s: %s", persona, e)
-
 
 
 def _route_persona_state() -> None:
