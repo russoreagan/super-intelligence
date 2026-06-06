@@ -4,6 +4,9 @@ builder = "nixpacks"
 [deploy]
 startCommand = "python -m brain.run --ui"
 healthcheckPath = "/health"
-healthcheckTimeout = 30
+# Heavy boot (large ML imports + multi-stage cluster setup) takes well over 30s
+# before the UI server binds /health. Give it room so a slow-but-healthy start
+# isn't killed mid-boot.
+healthcheckTimeout = 300
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 3
