@@ -311,6 +311,9 @@ def _route_persona_state() -> None:
     keys = ("SECOND_BRAIN_PATH", "BRAIN_WIRING_PATH", "BRAIN_WIRING_HISTORY_DIR")
     if persona:
         slug = re.sub(r"[^a-z0-9]+", "_", persona.lower()).strip("_") or "unnamed"
+        # The Supabase stores key rows by this slug (matches the migrated persona
+        # names); local file paths use it below. Set it either way.
+        os.environ["BRAIN_PERSONA_NAME"] = slug
         root = Path(__file__).parent.parent / "second_brain" / "personas" / slug
         root.mkdir(parents=True, exist_ok=True)
         os.environ["SECOND_BRAIN_PATH"] = str(root)
@@ -374,6 +377,22 @@ def main() -> None:
         os.environ["BRAIN_EARS"] = "true"
     if args.motor:
         os.environ["BRAIN_MOTOR"] = "true"
+
+    # Supabase backend: the single-session entrypoint doesn't go through
+    # SessionManager, so inject the user_id here from BRAIN_USER_ID. Without it
+    # every store call would raise "No user_id set".
+    from brain.second_brain import supabase_client
+
+    if supabase_client.is_enabled():
+        user_id = os.environ.get("BRAIN_USER_ID", "").strip()
+        if user_id:
+            supabase_client.set_user_id(user_id)
+            logger.info("[Supabase] Storage backend active — user_id set from BRAIN_USER_ID")
+        else:
+            logger.error(
+                "BRAIN_STORAGE_BACKEND=supabase but BRAIN_USER_ID is not set — "
+                "storage calls will fail. Set BRAIN_USER_ID to the user's auth UUID."
+            )
 
     ensure_ollama_running()
     asyncio.run(session(args))

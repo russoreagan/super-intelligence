@@ -334,13 +334,37 @@ class EpisodicStore:
             logger.error("[Episode DB] Supabase tag-recall failed: %s", e)
             return []
 
+    @staticmethod
+    def _as_list(v) -> list:
+        # LanceDB stores these as JSON strings; Supabase (text[]) returns real lists.
+        if isinstance(v, list):
+            return v
+        if isinstance(v, str):
+            try:
+                return json.loads(v)
+            except (ValueError, TypeError):
+                return []
+        return []
+
+    @staticmethod
+    def _as_dict(v) -> dict:
+        # LanceDB stores this as a JSON string; Supabase (jsonb) returns a real dict.
+        if isinstance(v, dict):
+            return v
+        if isinstance(v, str):
+            try:
+                return json.loads(v)
+            except (ValueError, TypeError):
+                return {}
+        return {}
+
     def _parse_rows(self, rows: list[dict]) -> list[dict]:
         episodes = []
         for r in rows:
             ep = dict(r)
-            ep["topic_tags"] = json.loads(ep.get("topic_tags", "[]"))
-            ep["entities"] = json.loads(ep.get("entities", "[]"))
-            ep["neuromod_snapshot"] = json.loads(ep.get("neuromod_snapshot", "{}"))
+            ep["topic_tags"] = self._as_list(ep.get("topic_tags"))
+            ep["entities"] = self._as_list(ep.get("entities"))
+            ep["neuromod_snapshot"] = self._as_dict(ep.get("neuromod_snapshot"))
             episodes.append(ep)
         return episodes
 
