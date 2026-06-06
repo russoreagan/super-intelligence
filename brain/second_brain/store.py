@@ -464,7 +464,9 @@ class SchemaStore:
                     .maybe_single()
                     .execute()
                 )
-                return (res.data or {}).get("content", "")
+                # maybe_single() returns None (no response) on zero rows in this
+                # supabase-py version — treat a missing row like a missing file.
+                return (getattr(res, "data", None) or {}).get("content", "")
             except Exception as e:
                 logger.error("[Schema DB] Supabase read failed (%s): %s", filename, e)
                 return ""
