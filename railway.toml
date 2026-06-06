@@ -2,7 +2,7 @@
 builder = "nixpacks"
 
 [deploy]
-startCommand = "python -m brain.run --ui"
+startCommand = "/opt/venv/bin/python -m brain.run --ui"
 healthcheckPath = "/health"
 # Heavy boot (large ML imports + multi-stage cluster setup) takes well over 30s
 # before the UI server binds /health. Give it room so a slow-but-healthy start
