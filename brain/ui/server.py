@@ -128,7 +128,7 @@ class UIServer:
             if not ui_auth.is_configured():
                 return ui_auth.config_error_response(request)
             claims, refreshed = await ui_auth.authenticate(request)
-            if claims is None:
+            if claims is None or ui_auth.owner_mismatch(claims):
                 return ui_auth.unauthorized_response(request)
             request.state.user = claims
             response = await call_next(request)
@@ -499,7 +499,7 @@ class UIServer:
                     await websocket.close(code=1008)
                     return
                 claims, _ = await ui_auth.authenticate(websocket)
-                if claims is None:
+                if claims is None or ui_auth.owner_mismatch(claims):
                     await websocket.close(code=1008)
                     return
             await websocket.accept()

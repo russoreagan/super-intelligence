@@ -74,6 +74,21 @@ def is_public_path(path: str) -> bool:
     return path in PUBLIC_PATHS
 
 
+def owner_mismatch(claims: dict[str, Any] | None) -> bool:
+    """True when this process is pinned to one tenant and the caller isn't them.
+
+    Each multi-tenant pod serves exactly one user (BRAIN_USER_ID = their auth
+    uuid). The pod's UI is reachable over a public RunPod proxy URL, so a holder
+    of *any* valid session cookie could otherwise reach another user's pod. When
+    BRAIN_USER_ID is set, require the authenticated subject to match it. No-op
+    (returns False) when BRAIN_USER_ID is unset (single-user / dev)."""
+    owner = os.environ.get("BRAIN_USER_ID", "").strip()
+    if not owner:
+        return False
+    sub = str((claims or {}).get("sub", "")).strip()
+    return sub != owner
+
+
 def _secure_cookies() -> bool:
     # Secure cookies aren't sent over plain http (localhost), so only require
     # them when actually hosted behind TLS (Railway terminates TLS for us).

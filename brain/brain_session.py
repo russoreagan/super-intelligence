@@ -132,10 +132,22 @@ class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
         # (MediaRecorder → per-client Deepgram). Without this, a hosted server
         # reports "muted" and the browser sends server-side PTT control messages
         # to a non-existent mic, so push-to-talk silently does nothing.
-        self._voice_requested = bool(
+        _voice_asked = bool(
             getattr(self.args, "voice", False)
             or os.environ.get("BRAIN_VOICE_MODE", "false").lower() == "true"
         )
+        # Voice INPUT (server mic and browser-capture alike) transcribes via
+        # Deepgram, so it can't run without DEEPGRAM_API_KEY — and the STT clients
+        # read os.environ["DEEPGRAM_API_KEY"] unguarded (streaming_mic.py,
+        # pns.mic_listen). Gate the whole voice path on the key so an Anthropic-only
+        # tenant boots clean (text-only) instead of crashing the voice setup.
+        _has_deepgram = bool(os.environ.get("DEEPGRAM_API_KEY", "").strip())
+        if _voice_asked and not _has_deepgram:
+            logger.warning(
+                "[I/O] Voice requested but DEEPGRAM_API_KEY is not set — "
+                "voice input disabled; running text-only."
+            )
+        self._voice_requested = _voice_asked and _has_deepgram
         # Set True once _setup_streaming_mic has run (success OR failure). Lets the
         # status function distinguish "mic still starting" (report muted, so the
         # browser doesn't briefly self-capture) from "mic unavailable" (report off

@@ -14,7 +14,14 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-SETTINGS_PATH = Path(__file__).parent / "settings.json"
+# Path to the settings file. Defaults to brain/settings.json next to this module.
+# Overridable via BRAIN_SETTINGS_PATH so each multi-tenant pod points at its own
+# settings.json on the user's volume (e.g. /data/settings.json) — without an
+# override, all per-user processes on one host would share (and race on) the one
+# bundled file.
+SETTINGS_PATH = Path(
+    os.environ.get("BRAIN_SETTINGS_PATH", "").strip() or (Path(__file__).parent / "settings.json")
+)
 
 # ── Defaults ─────────────────────────────────────────────────────────────────
 # Each entry: key → default value

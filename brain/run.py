@@ -305,6 +305,32 @@ def _route_persona_state() -> None:
     import re
     from pathlib import Path
 
+    # Multi-tenant mode: the per-user pod already carries SECOND_BRAIN_PATH (the
+    # user's own volume) and an optional BRAIN_PERSONA_NAME via env, and has its
+    # own settings.json (BRAIN_SETTINGS_PATH on the volume). Do NOT read or rewrite
+    # the repo-bundled settings.json here — that file is shared across every pod on
+    # a host, so a persona materialize-write would clobber the tenant's evolving
+    # tuning and race other pods. Just derive the wiring paths under the tenant
+    # volume; persona seeding happens at pod start.
+    if os.environ.get("BRAIN_MULTITENANT", "").lower() in ("1", "true", "yes"):
+        root_str = os.environ.get("SECOND_BRAIN_PATH", "").strip()
+        if not root_str:
+            logger.error(
+                "BRAIN_MULTITENANT set but SECOND_BRAIN_PATH is empty — the "
+                "provisioner must inject the tenant's volume path."
+            )
+            return
+        root = Path(root_str)
+        root.mkdir(parents=True, exist_ok=True)
+        os.environ.setdefault("BRAIN_WIRING_PATH", str(root / "wiring.json"))
+        os.environ.setdefault("BRAIN_WIRING_HISTORY_DIR", str(root / "wiring_history"))
+        logger.info(
+            "[Persona] Multi-tenant mode — second_brain at %s (persona=%s)",
+            root,
+            os.environ.get("BRAIN_PERSONA_NAME", "") or "—",
+        )
+        return
+
     data: dict = {}
     settings_path = Path(__file__).parent / "settings.json"
     if settings_path.exists():

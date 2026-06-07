@@ -1149,7 +1149,11 @@ class PNS:
                 )
             )
 
-            client = DeepgramClient(os.environ["DEEPGRAM_API_KEY"])
+            _dg_key = os.environ.get("DEEPGRAM_API_KEY", "")
+            if not _dg_key:
+                logger.warning("[I/O] mic_listen: DEEPGRAM_API_KEY not set — skipping transcription")
+                return ""
+            client = DeepgramClient(_dg_key)
             response = await client.listen.asyncprerecorded.v("1").transcribe_file(
                 {"buffer": audio_bytes, "mimetype": "audio/raw"},
                 PrerecordedOptions(
