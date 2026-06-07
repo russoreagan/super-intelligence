@@ -217,7 +217,7 @@ A **plasticity modulator** scales the learning rate on two timescales. At the se
 
 **Competitive drafter reinforcement** runs at sleep consolidation for turns where the critic compared multiple real drafts. The winning drafter's edge to the executive receives an additional bonus proportional to its margin over the other drafters; losing drafters receive a small penalty. This creates genuine competitive selection pressure between drafters over time, separate from the path-level Hebbian update.
 
-Each of the three surfaces is now reinforced as well as read. Alongside competitive drafter reinforcement, the switches and the recall pathway that fire on turns that pay off are strengthened at consolidation, in proportion to how much they contributed — so the routes the entity actually uses well become the routes it favors next time. This closes the learning loop across all three surfaces rather than drafter selection alone: each is both a live influence on behavior and a target of reinforcement, not read-only scaffolding.
+Each of the three surfaces is reinforced as well as read. Alongside competitive drafter reinforcement, the switches and the recall pathway that fire on turns that pay off are strengthened at consolidation, in proportion to how much they contributed — so the routes the entity uses well become the routes it favors next time. Across all three surfaces, each is both a live influence on behavior and a target of reinforcement.
 
 The long-term prediction: preferred drafters, recall paths, and switch orderings should emerge from reinforcement over many sessions. Testing this prediction rigorously requires months of accumulation.
 
