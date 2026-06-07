@@ -199,11 +199,20 @@ class HypothalamusCluster:
         ) - (hostility * settings.get("hostility_DA_weight"))
         nm.add("DA", valence_delta * turns)
 
-        # GABA: threat / caution signal (inhibitory)
-        if hostility > settings.get("hostility_GABA_threshold_high"):
-            nm.add("GABA", hostility * settings.get("hostility_GABA_increment_high") * turns)
-        elif hostility > settings.get("hostility_GABA_threshold_med"):
-            nm.add("GABA", settings.get("hostility_GABA_increment_med") * turns)
+        # GABA: threat / caution signal (inhibitory). Graded with hostility — a dead
+        # zone below the med threshold, then a smooth ramp up to the high-band value,
+        # then the high-band slope above it. No flat mid-band: the release tracks HOW
+        # hostile, not just that a line was crossed, and is continuous at both knees
+        # (→0 at med, → high_threshold×high_increment at high). (hostility_GABA_
+        # increment_med is now derived from this ramp rather than a fixed step.)
+        _h_med = settings.get("hostility_GABA_threshold_med")
+        _h_high = settings.get("hostility_GABA_threshold_high")
+        _h_slope = settings.get("hostility_GABA_increment_high")
+        if hostility > _h_high:
+            nm.add("GABA", hostility * _h_slope * turns)
+        elif hostility > _h_med:
+            _knee = _h_high * _h_slope  # GABA value at the high knee, for continuity
+            nm.add("GABA", _knee * (hostility - _h_med) / (_h_high - _h_med) * turns)
 
         # ACh: novelty / attention signal (scaled by the persona's novelty sensitivity)
         novelty_delta = (
@@ -223,7 +232,9 @@ class HypothalamusCluster:
         # Glu: general arousal
         arousal_delta = salience * settings.get("salience_Glu_weight") * er_scale
         if features.get("intent") == "hostile":
-            arousal_delta += settings.get("hostile_intent_Glu_bonus")
+            # Scale the hostile-intent arousal bonus with how hostile, not a flat add
+            # on the label — a mild jab and a tirade should not spike Glu equally.
+            arousal_delta += settings.get("hostile_intent_Glu_bonus") * hostility
         nm.add("Glu", arousal_delta * turns)
 
         # NE: focused alertness — rises with salience, surprise, and threat.

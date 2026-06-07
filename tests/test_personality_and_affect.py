@@ -894,3 +894,60 @@ class TestConsolidateNow:
         assert result["ran"] is True
         assert "turns" in result
         assert "elapsed_s" in result
+
+
+# ===========================================================================
+# Graded hostility → neurochemistry (release scales with degree, not stepped)
+# ===========================================================================
+
+
+class TestGradedHostilityRelease:
+    """Hostility-driven GABA and the hostile-intent Glu bonus scale with the
+    DEGREE of hostility, rather than firing a flat amount once a threshold trips."""
+
+    async def _gaba_delta(self, hostility: float) -> float:
+        from brain.bus import Bus
+        from brain.clusters.hypothalamus import HypothalamusCluster
+
+        bus = Bus()
+        hypo = HypothalamusCluster(bus)
+        base = bus.neuromod.snapshot()["GABA"]
+        await hypo.process(
+            {"sentiment": 0.0, "hostility": hostility, "salience": 0.3,
+             "surprise_score": 0.0, "topic_summary": "t"}
+        )
+        return bus.neuromod.snapshot()["GABA"] - base
+
+    async def test_gaba_mid_band_is_graded_not_flat(self):
+        # Old behaviour: 0.25 and 0.49 both added a flat 0.05. Now the mid-band
+        # ramps, so more hostility = more GABA across the whole 0.2–0.5 range.
+        low = await self._gaba_delta(0.25)
+        mid = await self._gaba_delta(0.35)
+        high = await self._gaba_delta(0.49)
+        assert low < mid < high, f"mid-band not graded: {low} {mid} {high}"
+
+    async def test_gaba_dead_zone_below_med_threshold(self):
+        assert await self._gaba_delta(0.10) == 0.0
+
+    async def test_gaba_continuous_into_high_band(self):
+        # No discontinuity at the 0.5 knee: just-below ≈ just-above.
+        below = await self._gaba_delta(0.49)
+        above = await self._gaba_delta(0.51)
+        assert above > below
+        assert abs(above - below) < 0.02  # smooth, not a jump
+
+    async def test_hostile_intent_glu_bonus_scales_with_hostility(self):
+        from brain.bus import Bus
+        from brain.clusters.hypothalamus import HypothalamusCluster
+
+        async def glu_delta(hostility: float) -> float:
+            bus = Bus()
+            hypo = HypothalamusCluster(bus)
+            base = bus.neuromod.snapshot()["Glu"]
+            await hypo.process(
+                {"sentiment": 0.0, "hostility": hostility, "salience": 0.3,
+                 "surprise_score": 0.0, "intent": "hostile", "topic_summary": "t"}
+            )
+            return bus.neuromod.snapshot()["Glu"] - base
+
+        assert await glu_delta(0.4) < await glu_delta(0.9)
