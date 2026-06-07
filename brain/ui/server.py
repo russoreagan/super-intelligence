@@ -131,7 +131,9 @@ class UIServer:
             request.state.user = claims
             response = await call_next(request)
             if refreshed:
-                ui_auth.set_session_cookies(response, refreshed)
+                ui_auth.set_session_cookies(
+                    response, refreshed, remember=ui_auth.remembered(request)
+                )
             return response
 
         @app.get("/login")
@@ -159,9 +161,20 @@ class UIServer:
                     {"ok": False, "error": "Invalid email or password."},
                     status_code=401,
                 )
+            remember = bool(body.get("remember", True))
             resp = JSONResponse({"ok": True, "next": ui_auth.safe_next(body.get("next"))})
-            ui_auth.set_session_cookies(resp, session)
+            ui_auth.set_session_cookies(resp, session, remember=remember)
             return resp
+
+        @app.post("/auth/forgot")
+        async def auth_forgot(request: Request):
+            # Always answer ok — never disclose whether the address has an
+            # account (email-enumeration defense). The recovery email only
+            # actually sends if Supabase auth + email templates are configured.
+            if ui_auth.is_configured():
+                body = await request.json()
+                await ui_auth.request_password_reset(str(body.get("email", "")).strip())
+            return JSONResponse({"ok": True})
 
         @app.post("/auth/logout")
         async def auth_logout():
