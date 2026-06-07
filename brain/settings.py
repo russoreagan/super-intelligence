@@ -112,6 +112,17 @@ DEFAULTS: dict[str, float | int | str] = {
         "self_reference": [1.0, 1.4],
         "epistemic_action": [0.9, 1.25],
     },
+    # Recall fan-out learning surface (PAPER.md §4.7's "recall fan-out"). The third
+    # named Hebbian surface. Consume (already live): learned mem.recall→hippocampus.
+    # <strategy> weights set the schema-vs-episode budget split in hippocampus.
+    # _allocate_recall_budget. Credit (this flag): on good-outcome turns, reinforce
+    # the side that actually contributed recalls, by contribution share — so the
+    # split learns toward the productive pathway. Half-scale, signed by outcome.
+    # Attribution is at side granularity (schema={schema_grep,entity_tracker},
+    # episode={cosine_recall,time_filter}) by hit-count share — a volume proxy for
+    # usefulness, the faithful granularity since the weights only gate the split.
+    "recall_routing_credit": 1,
+    "recall_routing_credit_scale": 0.5,
     # ── Section 4: Default Mode Network ──────────────────────────────────────
     "dmn_interval": 8.0,  # active baseline — fires when any mouse/keyboard activity detected
     "dmn_idle_interval": 45.0,  # when fully away from computer (OS idle > 60s)

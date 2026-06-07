@@ -270,6 +270,12 @@ class HippocampusCluster:
             "schema": schema_context,
             "episodes": episode_text,
             "core": self._core_context,
+            # Side-granular contribution for the recall fan-out credit pass: how many
+            # hits each pathway returned. schema={schema_grep,entity_tracker},
+            # episode={cosine_recall,time_filter}. Drives Hebbian credit toward the
+            # productive split. Excludes deferred_episodes (own fixed budget, not
+            # part of the learned schema/episode allocation).
+            "recall_contrib": {"schema": len(schema_hits), "episode": len(episodes)},
             **({"recall_affect": recall_affect} if recall_affect else {}),
         }
 

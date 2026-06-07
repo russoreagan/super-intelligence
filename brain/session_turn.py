@@ -438,6 +438,9 @@ class _TurnMixin:
                 embedding_fn=self.router.embed,
             )
             await self._emit_end("hippocampus", turn_id)
+            # Record which recall pathway produced hits so the Hebbian sleep pass can
+            # credit the productive schema-vs-episode split (recall fan-out surface).
+            trace.recall_contrib = memory.get("recall_contrib", {})
             # Emotional weight of recalled episodes: strong positive memory → ACh
             # (recognition/warmth), strong negative → GABA (threat). Only fires
             # when hippocampus finds a memory that clears the significance threshold.

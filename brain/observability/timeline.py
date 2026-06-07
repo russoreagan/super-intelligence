@@ -110,6 +110,11 @@ class TurnTrace:
     # Stored here so the Hebbian sleep pass can use it without re-parsing features.
     user_emotion: str = ""
 
+    # Recall fan-out contribution this turn: hit counts per side, used by the
+    # Hebbian pass to credit the productive recall pathway (mem.recall→hippocampus.
+    # <strategy>). {"schema": int, "episode": int}; empty when no recall ran.
+    recall_contrib: dict = field(default_factory=dict)
+
     # Modulation counters (incremented by SwitchNeuron.fire / should_fire)
     modulated_switch_count: int = 0  # switches where |mod_delta| > 0.01
     suppressed_switch_count: int = 0  # near-misses: level >= base but < effective

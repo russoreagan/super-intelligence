@@ -271,6 +271,71 @@ class HebbianUpdater:
                 updated += 1
         return updated
 
+    # Recall fan-out edges (mem.recall → hippocampus.<strategy>) are never consecutive
+    # pairs on fired_path either — recall strategies are budget allocations, not fired
+    # nodes — so the main path credit can't reach them. The four strategies group into
+    # two pathways whose weight ratio sets the schema-vs-episode budget split
+    # (hippocampus._allocate_recall_budget). Credit each side by its contribution share
+    # so the split learns toward whichever pathway surfaced memories on good-outcome
+    # turns. Half-scaled like switch credit; signed by outcome (a bad turn that leaned
+    # on one side nudges it down). Attribution is at side granularity by hit-count — a
+    # volume proxy for usefulness, the faithful grain since weights only gate the split.
+    _RECALL_SIDES = {
+        "schema": ("hippocampus.schema_grep", "hippocampus.entity_tracker"),
+        "episode": ("hippocampus.cosine_recall", "hippocampus.time_filter"),
+    }
+
+    def _apply_recall_credit(
+        self, trace, outcome: float, plasticity: float, turn_plast: float, gainers: list, losers: list
+    ) -> int:
+        if not settings.get("recall_routing_credit", 1):
+            return 0
+        contrib = getattr(trace, "recall_contrib", None) or {}
+        n_schema = float(contrib.get("schema", 0) or 0)
+        n_episode = float(contrib.get("episode", 0) or 0)
+        total = n_schema + n_episode
+        if total <= 0:
+            return 0
+        scale = (
+            settings.get("hebbian_outcome_delta")
+            * plasticity
+            * turn_plast
+            * settings.get("recall_routing_credit_scale", 0.5)
+        )
+        base = outcome * scale
+        if abs(base) < 1e-6:
+            return 0
+        shares = {"schema": n_schema / total, "episode": n_episode / total}
+        updated = 0
+        for side, strategies in self._RECALL_SIDES.items():
+            delta = base * shares[side]
+            if abs(delta) < 1e-6:
+                continue
+            for strat in strategies:
+                edge = ("mem.recall", strat)
+                if not self._wiring.has(*edge):
+                    continue
+                prev = self._wiring.get_edge_weight(*edge)
+                self._wiring.hebbian_update([edge[0], edge[1]], delta)
+                now = self._wiring.get_edge_weight(*edge)
+                edge_delta = now - prev
+                if abs(edge_delta) > 0.001:
+                    (gainers if edge_delta > 0 else losers).append(
+                        (f"{edge[0]}→{edge[1]}", edge_delta)
+                    )
+                    decisions.log(
+                        "recall_routing_credit_applied",
+                        turn_id=trace.turn_id,
+                        strategy=strat.split(".")[-1],
+                        side=side,
+                        from_weight=round(prev, 4),
+                        to_weight=round(now, 4),
+                        delta=round(edge_delta, 4),
+                        outcome=round(outcome, 3),
+                    )
+                    updated += 1
+        return updated
+
     def run(self, session_id: str, full_traces: list) -> None:
         """Apply gentle decay then per-turn Hebbian updates along firing paths."""
         self._wiring.decay_toward_rest(rest=1.0, rate=0.01)
@@ -336,6 +401,9 @@ class HebbianUpdater:
             self._apply_drafter_competition(trace, outcome, plasticity, gainers, losers)
             total_updated += self._drafter_competition_edge_count(trace)
             total_updated += self._apply_switch_routing_credit(
+                trace, outcome, plasticity, turn_plast, gainers, losers
+            )
+            total_updated += self._apply_recall_credit(
                 trace, outcome, plasticity, turn_plast, gainers, losers
             )
 
