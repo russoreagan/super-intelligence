@@ -37,28 +37,35 @@ class SwitchNeuron:
     _fire_count: int = field(default=0, init=False, repr=False)
     _last_suppressed_at: float = field(default=0.0, init=False, repr=False)
 
-    def effective_threshold(self, snapshot: dict[str, float] | None) -> float:
+    def effective_threshold(self, snapshot: dict[str, float] | None, efficacy: float = 1.0) -> float:
         """Threshold shifted by the current neuromod+hormonal snapshot.
 
         The total shift is multiplied by `settings.modulation_gain` so the
         whole modulation system can be dialed up/down/off from one knob.
         Imported lazily to keep neuron.py free of settings coupling at import
-        time (tests instantiate switches without booting settings)."""
-        if not self.modulators or snapshot is None:
-            return self.threshold
-        shift = 0.0
-        for channel, coeff in self.modulators.items():
-            level = snapshot.get(channel)
-            if level is None:
-                continue
-            shift += coeff * (float(level) - 0.5)
-        try:
-            from brain.settings import settings as _settings
+        time (tests instantiate switches without booting settings).
 
-            gain = float(_settings.get("modulation_gain", 1.0))
-        except Exception:
-            gain = 1.0
-        eff = self.threshold + shift * gain
+        `efficacy` is a learned synaptic-route strength (Hebbian): >1 LOWERS the
+        threshold (the route fires more readily), <1 raises it. Applied as
+        eff/efficacy before the [min,max] clamp. Default 1.0 = identity."""
+        if not self.modulators or snapshot is None:
+            eff = self.threshold
+        else:
+            shift = 0.0
+            for channel, coeff in self.modulators.items():
+                level = snapshot.get(channel)
+                if level is None:
+                    continue
+                shift += coeff * (float(level) - 0.5)
+            try:
+                from brain.settings import settings as _settings
+
+                gain = float(_settings.get("modulation_gain", 1.0))
+            except Exception:
+                gain = 1.0
+            eff = self.threshold + shift * gain
+        if efficacy != 1.0:
+            eff = eff / max(1e-6, efficacy)
         if eff < self.min_threshold:
             return self.min_threshold
         if eff > self.max_threshold:
@@ -122,7 +129,8 @@ class SwitchNeuron:
         }
 
     def should_fire(
-        self, input_level: float, snapshot: dict[str, float] | None = None, turn_id: str = ""
+        self, input_level: float, snapshot: dict[str, float] | None = None, turn_id: str = "",
+        efficacy: float = 1.0,
     ) -> bool:
         """Did the input clear the (chemistry-shifted) threshold?
 
@@ -130,8 +138,11 @@ class SwitchNeuron:
         (level >= base threshold but < effective threshold), a
         `switch_suppressed_by_modulation` decision is emitted so silent
         suppressions are visible in the decisions log.
+
+        `efficacy` (default 1.0) is the learned synaptic-route strength applied to
+        the threshold — see effective_threshold().
         """
-        eff_thr = self.effective_threshold(snapshot)
+        eff_thr = self.effective_threshold(snapshot, efficacy)
         # Continuous inhibitory-pressure interoception: accumulate how much
         # chemistry RAISED this gate's threshold (graded gain control), whether or
         # not the input overcame it. This is the always-on, graded counterpart to

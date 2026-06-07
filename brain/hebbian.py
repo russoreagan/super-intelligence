@@ -218,6 +218,59 @@ class HebbianUpdater:
                     count += 1
         return count
 
+    # Switch-ordering edges (sensory.text → temporal.<switch>) are never consecutive
+    # pairs on fired_path (sensory.text is a bus channel, not a fired node), so the
+    # main path credit can't reach them. Credit them explicitly here for the gated
+    # switches that fired, mirroring drafter competition. Half-scaled vs the path
+    # credit on the second hop (temporal.<switch>→understanding_integrator) so the
+    # two hops of the same route don't compound into a runaway.
+    _CREDITED_SWITCHES = {"template_match", "self_reference", "epistemic_action"}
+
+    def _apply_switch_routing_credit(
+        self, trace, outcome: float, plasticity: float, turn_plast: float, gainers: list, losers: list
+    ) -> int:
+        if not settings.get("switch_routing_credit", 1):
+            return 0
+        scale = (
+            settings.get("hebbian_outcome_delta")
+            * plasticity
+            * turn_plast
+            * settings.get("switch_routing_credit_scale", 0.5)
+        )
+        delta = outcome * scale
+        if abs(delta) < 1e-6:
+            return 0
+        updated = 0
+        seen: set[str] = set()
+        for entry in trace.fired_path or []:
+            if entry.get("cluster") != "temporal" or entry.get("kind") != "switch":
+                continue
+            name = entry.get("name", "")
+            local = name.split(".")[-1]
+            if local not in self._CREDITED_SWITCHES or name in seen:
+                continue
+            seen.add(name)
+            edge = ("sensory.text", name)
+            if not self._wiring.has(*edge):
+                continue
+            prev = self._wiring.get_edge_weight(*edge)
+            self._wiring.hebbian_update([edge[0], edge[1]], delta)
+            now = self._wiring.get_edge_weight(*edge)
+            edge_delta = now - prev
+            if abs(edge_delta) > 0.001:
+                (gainers if edge_delta > 0 else losers).append((f"{edge[0]}→{edge[1]}", edge_delta))
+                decisions.log(
+                    "switch_routing_credit_applied",
+                    turn_id=trace.turn_id,
+                    switch=local,
+                    from_weight=round(prev, 4),
+                    to_weight=round(now, 4),
+                    delta=round(edge_delta, 4),
+                    outcome=round(outcome, 3),
+                )
+                updated += 1
+        return updated
+
     def run(self, session_id: str, full_traces: list) -> None:
         """Apply gentle decay then per-turn Hebbian updates along firing paths."""
         self._wiring.decay_toward_rest(rest=1.0, rate=0.01)
@@ -282,6 +335,9 @@ class HebbianUpdater:
 
             self._apply_drafter_competition(trace, outcome, plasticity, gainers, losers)
             total_updated += self._drafter_competition_edge_count(trace)
+            total_updated += self._apply_switch_routing_credit(
+                trace, outcome, plasticity, turn_plast, gainers, losers
+            )
 
         try:
             self._wiring.save()

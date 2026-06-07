@@ -60,6 +60,9 @@ DEFAULTS: dict[str, float | int | str] = {
     "accomplishment_overshoot_k": 0.5,  # how fast satisfaction erodes past the band (frustration)
     "accomplishment_anticlimax": 0.85,  # terminal modifier when much easier than feared (r << 1)
     "frustration_overshoot_gain": 0.04,  # in-the-moment NE/GABA per unit of effort-overshoot mid-task
+    # ── Idle cognition rewards (Stage 7): reinforce thinking done while alone ──
+    "idle_thought_quality_base": 0.04,  # DA for a good idle thought (novelty-weighted)
+    "idle_thought_quality_min": 0.55,  # quality below which an idle thought earns nothing
     "hostility_GABA_threshold_high": 0.50,
     "hostility_GABA_increment_high": 0.20,
     "hostility_GABA_threshold_med": 0.20,
@@ -90,6 +93,25 @@ DEFAULTS: dict[str, float | int | str] = {
     # Temperature: lower = more decisive toward high-weight drafters, higher = more even.
     "drafter_weighted_sampling": 1,
     "drafter_sampling_temperature": 0.20,
+    # Switch-ordering learning surface (PAPER.md §4.7's "switch evaluation order").
+    # Consume: learned sensory.text→temporal.<switch> weight scales that switch's
+    # firing readiness via a BOUNDED, DIRECTION-AWARE efficacy on its threshold —
+    # so safety gates can never be learned away. Credit: reinforce those edges for
+    # gated switches that fired on good-outcome turns (half-scale vs the path credit
+    # on the second hop, to avoid a runaway loop). Both 1=on; frozen wiring disables.
+    "switch_efficacy_routing": 1,
+    "switch_routing_credit": 1,
+    "switch_routing_credit_scale": 0.5,
+    # Per-switch efficacy band [min,max] on the threshold multiplier. >1 lowers the
+    # threshold (fires more readily), <1 raises it. Direction is constrained per
+    # switch by its dangerous direction: template_match may only get LESS eager
+    # (never skip understanding more); self_reference may only get MORE eager (never
+    # suppress the safety block). Switches absent here are exempt (no efficacy).
+    "switch_efficacy_bands": {
+        "template_match": [0.85, 1.0],
+        "self_reference": [1.0, 1.4],
+        "epistemic_action": [0.9, 1.25],
+    },
     # ── Section 4: Default Mode Network ──────────────────────────────────────
     "dmn_interval": 8.0,  # active baseline — fires when any mouse/keyboard activity detected
     "dmn_idle_interval": 45.0,  # when fully away from computer (OS idle > 60s)
@@ -144,6 +166,13 @@ DEFAULTS: dict[str, float | int | str] = {
     "rum_w_da": 0.45,  # dopamine over 0.50 — engaged "can't stop chasing it"
     "rum_w_ach": 0.35,  # acetylcholine over 0.50 — focused interest
     "rum_w_5ht": 0.40,  # serotonin — high 5HT lets you DISENGAGE, so it subtracts
+    # TONIC idle drive (Stage 7 fix): the phasic worry/interest drive above decays to ~0 during
+    # deep idle, so rumination never fired. The DMN is most active AT REST — these add a
+    # mind-wandering (boredom) + finish-out (unfinished business) pull that grows during idle.
+    "rum_w_boredom": 0.30,  # weight on idle-duration boredom term
+    "rum_idle_saturation_s": 300.0,  # boredom ramps 0→1 over this much idle past the threshold
+    "rum_w_unfinished": 0.30,  # weight on open-thread finish-out pull
+    "rum_unfinished_cap": 4.0,  # advances at which unfinished-business pull saturates
     # Per-step costs that let anxious rumination self-limit (added each chain step)
     "rum_step_gaba_cost": 0.02,
     "rum_step_satiation_cost": 0.05,

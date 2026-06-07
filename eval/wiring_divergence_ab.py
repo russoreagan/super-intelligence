@@ -73,7 +73,17 @@ PROBES = [
     "Tell me what's on your mind.",                            # open/emotional
     "Explain the difference between mean and median.",         # analytical
     "How's it going?",                                         # neutral
+    # Gated-switch triggers — needed to exercise the switch-ordering surface,
+    # which is otherwise inert (template/self_reference/epistemic are content-gated).
+    "Are you conscious?",                                      # self_reference
+    "Tell me about your own thoughts.",                        # self_reference
+    "How confident are you about that?",                       # epistemic_action
+    "What don't you know about me?",                           # epistemic_action
+    "hey",                                                     # template_match (trivial)
+    "thanks",                                                  # template_match (trivial)
 ]
+# The content-gated temporal switches whose sensory.text→ edge is a learning surface.
+GATED_SWITCHES = ("template_match", "self_reference", "epistemic_action")
 
 
 def _isolate_env() -> str:
@@ -368,12 +378,28 @@ async def _main(sessions: int, amplify: float, repeats: int, turns_per: int,
     print(f"  emotional switches  — warm {rate(wu, emo):.2f}  analytical {rate(au, emo):.2f}")
     print(f"  analytical switches — warm {rate(wu, ana):.2f}  analytical {rate(au, ana):.2f}")
 
+    # Switch-ordering surface: per gated switch, warm-vs-analytical firing-rate gap,
+    # unfrozen (effect) vs frozen (control). Above the control ⇒ learned switch
+    # routing changed firing. Expected MODEST (efficacy only bites at the margin).
+    def srate(rows, sw):
+        return rate(rows, [f"temporal.{sw}"])
+    print("\nGated-switch firing-rate divergence |warm−analytical| (unfrozen vs frozen):")
+    switch_div = {}
+    for sw in GATED_SWITCHES:
+        eff_gap = abs(srate(wu, sw) - srate(au, sw))
+        frz_gap = abs(srate(wf, sw) - srate(af, sw))
+        switch_div[sw] = {"effect": round(eff_gap, 3), "frozen": round(frz_gap, 3),
+                          "warm": round(srate(wu, sw), 2), "analytical": round(srate(au, sw), 2)}
+        print(f"  {sw:<16} effect {eff_gap:.2f}  frozen {frz_gap:.2f}   "
+              f"(warm {srate(wu, sw):.2f} / ana {srate(au, sw):.2f})")
+
     if out:
         results["summary"] = {"fired_jaccard_effect": jeff, "fired_jaccard_frozen": jfrz,
                               "fired_jaccard_noise": jnoise, "fired_jaccard_p": jpval,
                               "temporal_order_effect": eff, "temporal_order_frozen": frz,
                               "temporal_order_noise": noise,
                               "drafter_tv_effect": tv_eff, "drafter_tv_frozen": tv_frz,
+                              "switch_firing_divergence": switch_div,
                               "routing_order_tau": order_tau, "passed": bool(passed)}
         Path(out).write_text(json.dumps(results, indent=2))
         print(f"\nWrote results to {out}")

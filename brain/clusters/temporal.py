@@ -451,7 +451,9 @@ class TemporalCluster:
         self._ordered_switches(turn_id)
 
         trivial, trivial_type = _is_trivial(text)
-        if trivial and self._template_switch.should_fire(0.7, chem, turn_id):
+        if trivial and self._template_switch.should_fire(
+            0.7, chem, turn_id, efficacy=self._switch_efficacy("template_match")
+        ):
             # The template-match switch wins outright. High ACh (curiosity)
             # raises the threshold and can suppress the canned-response shortcut
             # even on a trivial-pattern hit — engaging the LLM instead.
@@ -512,9 +514,13 @@ class TemporalCluster:
             w in text.lower() for w in ("remember", "last", "before", "told", "what was")
         )
 
-        if self_ref and self._self_ref_switch.should_fire(0.6, chem, turn_id):
+        if self_ref and self._self_ref_switch.should_fire(
+            0.6, chem, turn_id, efficacy=self._switch_efficacy("self_reference")
+        ):
             self._self_ref_switch.fire(0.6, "self_reference", snapshot=chem)
-        if epistemic and self._epistemic_switch.should_fire(0.55, chem, turn_id):
+        if epistemic and self._epistemic_switch.should_fire(
+            0.55, chem, turn_id, efficacy=self._switch_efficacy("epistemic_action")
+        ):
             self._epistemic_switch.fire(0.55, "epistemic_action", snapshot=chem)
 
         # The inhibitor's edge weight scales the confidence threshold for skipping.
@@ -760,6 +766,27 @@ class TemporalCluster:
         return features
 
     # ── Wiring-weight helpers ────────────────────────────────────────────────
+
+    def _switch_efficacy(self, switch_name: str) -> float:
+        """Learned synaptic-route strength for a gating switch — the consume side of
+        the switch-ordering Hebbian surface. The sensory.text→temporal.<switch> edge
+        weight is clamped to that switch's DIRECTION-AWARE band (settings
+        switch_efficacy_bands) and returned as a threshold efficacy: >1 fires more
+        readily, <1 less. The band is the safety guarantee — a safety gate can never
+        be learned past its allowed direction regardless of the raw weight. Returns
+        1.0 (identity) when wiring is absent/frozen, the flag is off, or the switch
+        has no band (exempt, e.g. length_bucket)."""
+        if self._wiring is None or self._wiring_frozen:
+            return 1.0
+        from brain.settings import settings
+
+        if not settings.get("switch_efficacy_routing", 1):
+            return 1.0
+        band = settings.get("switch_efficacy_bands", {}).get(switch_name)
+        if not band:
+            return 1.0
+        w = self._wiring.get_edge_weight("sensory.text", f"{CLUSTER}.{switch_name}")
+        return max(float(band[0]), min(float(band[1]), float(w)))
 
     def _ordered_switches(self, turn_id: str) -> list[SwitchNeuron]:
         """Return temporal gating switches ordered by incoming edge weight from
