@@ -53,3 +53,6 @@ second_brain/personas/*/jobs/
 *.log
 second_brain/cloud_usage.json
 second_brain/runpod_heartbeat.json
+
+# Per-user tenant data (multi-tenant provisioner runtime)
+tenants/

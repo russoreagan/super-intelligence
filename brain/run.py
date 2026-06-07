@@ -420,6 +420,17 @@ def main() -> None:
         if user_id:
             supabase_client.set_user_id(user_id)
             logger.info("[Supabase] Storage backend active — user_id set from BRAIN_USER_ID")
+            # Multi-tenant: this user's BYO API keys live in Supabase Vault (never in
+            # the shared settings.json). Pull + export them to os.environ now, before
+            # any client reads a key. Decrypt happens server-side via the service role
+            # for this user's own uid only.
+            if os.environ.get("BRAIN_MULTITENANT", "").lower() in ("1", "true", "yes"):
+                try:
+                    from brain import vault
+
+                    vault.apply_user_keys_to_env(user_id)
+                except Exception as e:
+                    logger.error("[vault] failed to load user keys from vault: %s", e)
         else:
             logger.error(
                 "BRAIN_STORAGE_BACKEND=supabase but BRAIN_USER_ID is not set — "
