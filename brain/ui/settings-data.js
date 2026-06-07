@@ -280,6 +280,7 @@ window.SETTINGS = {
           desc: 'Colony-inspired coordination across clusters — shared-signal concentration, quorum & silence sensing, resource recruitment, primer signalling, sensory bias, self-state feedback, and use-based trail reinforcement. Every behaviour is a strict no-op while the master switch is off.',
           rows: [
             { type: 'toggle', master: true, key: 'colony_features', label: 'Collective Dynamics', hint: 'enable the colony layer — off = clusters coordinate via chemistry only, exactly as before', def: 0 },
+            { type: 'toggle', key: 'colony_trail_apply', label: 'Live Trail Reinforcement', hint: 'reinforce paths that pay off within a session. Off = shadow mode (logged, not applied). Tuning knobs in Advanced.', def: 0 },
           ],
           advanced: [
             { type: 'group', label: 'Signal Concentration & Silence' },
@@ -305,7 +306,6 @@ window.SETTINGS = {
             { type: 'range', key: 'colony_state_feedback_gain', label: 'Self-State Feedback', hint: 'prior-turn activity nudges chemistry (effort→arousal, conflict→caution)', min: 0, max: 0.1, step: 0.005, def: 0.02 },
             { type: 'range', key: 'colony_state_feedback_clamp', label: 'Feedback Limit', hint: 'max chemistry nudge per channel (keeps the loop bounded)', min: 0, max: 0.2, step: 0.01, def: 0.05 },
             { type: 'group', label: 'Trail Reinforcement' },
-            { type: 'toggle', key: 'colony_trail_apply', label: 'Live Trail Reinforcement', hint: 'reinforce paths that pay off within a session. Off = shadow mode (logged, not applied)', def: 0 },
             { type: 'range', key: 'colony_trail_gain', label: 'Reinforcement Rate', hint: 'per-turn strength of trail reinforcement (× outcome)', min: 0, max: 0.2, step: 0.01, def: 0.05 },
             { type: 'range', key: 'colony_trail_clamp', label: 'Trail Limit', hint: 'max boost a single path can accumulate over its base weight', min: 0.1, max: 1.0, step: 0.05, def: 0.50 },
             { type: 'time', unit: 'sec', key: 'colony_trail_half_life_s', label: 'Trail Persistence', hint: 'half-life of a reinforced trail within a session', min: 30, max: 600, step: 30, def: 120 },
