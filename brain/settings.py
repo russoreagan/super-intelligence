@@ -35,6 +35,31 @@ DEFAULTS: dict[str, float | int | str] = {
     "surprise_ACh_weight": 0.12,
     "salience_ACh_weight": 0.08,
     "salience_Glu_weight": 0.12,
+    # ── Intrinsic reward-source magnitudes ───────────────────────────────────
+    # Base deltas for the appraisal layer; scaled per persona by neuron.reward_weight()
+    # and by emotional_reactivity_scale. See plan: per-persona reward-source vector.
+    "correctness_reward_base": 0.10,  # DA on CONFIRMED-correct (verified — strongest)
+    "correctness_self_base": 0.06,  # DA on high self-judged draft quality (weaker evidence)
+    "correctness_penalty_base": 0.06,  # DA dip on confirmed-wrong / low self-eval
+    "correctness_5ht_drain": 0.010,  # 5HT drain on wrong (the lingering-sadness component)
+    "anticipation_reward_scale": 0.03,  # DMN anticipatory DA(hoped)/CORT(dreaded) per scenario
+    "self_standard_gate": 0.85,  # self-score above which pride fires WITHOUT user praise
+    # ── Self-verified correctness (Stage 5): prediction confirmed by reality ──
+    "prediction_reward_base": 0.04,  # DA on a confident, NON-trivial prediction confirmed
+    "prediction_confidence_min": 0.55,  # below this a "prediction" is a guess — no reward
+    "prediction_informativeness_min": 0.20,  # skip near-degenerate (always-same) predictions
+    "prediction_reward_turn_cap": 0.08,  # max prediction-confirmation DA per turn (anti-farm)
+    # ── Accomplishment / mastery (Stage 6): effort overcome × success ────────
+    "accomplishment_base": 0.07,  # DA at completion, before difficulty scaling
+    "accomplishment_fail_ratio": 0.40,  # failed-hard-task penalty = base*difficulty*this (< reward)
+    # Expectation baselines: effort the upfront complexity label braces for (r = measured/expected).
+    "accomplishment_expected_low": 2.0,
+    "accomplishment_expected_medium": 6.0,
+    "accomplishment_expected_high": 14.0,
+    "accomplishment_overshoot_band": 1.5,  # r up to here = "rose to the challenge" (peak)
+    "accomplishment_overshoot_k": 0.5,  # how fast satisfaction erodes past the band (frustration)
+    "accomplishment_anticlimax": 0.85,  # terminal modifier when much easier than feared (r << 1)
+    "frustration_overshoot_gain": 0.04,  # in-the-moment NE/GABA per unit of effort-overshoot mid-task
     "hostility_GABA_threshold_high": 0.50,
     "hostility_GABA_increment_high": 0.20,
     "hostility_GABA_threshold_med": 0.20,
@@ -59,6 +84,12 @@ DEFAULTS: dict[str, float | int | str] = {
     "weight_min": 0.10,
     "weight_max": 3.00,
     "gaba_skip_threshold_high": 0.55,
+    # Drafter selection: 1 = sample drafters ∝ softmax(learned weight) so a Hebbian
+    # ranking shift changes the response MIX even when the count saturates the slate
+    # (lets learning express behaviorally); 0 = legacy ε-greedy hard top-N (rollback).
+    # Temperature: lower = more decisive toward high-weight drafters, higher = more even.
+    "drafter_weighted_sampling": 1,
+    "drafter_sampling_temperature": 0.20,
     # ── Section 4: Default Mode Network ──────────────────────────────────────
     "dmn_interval": 8.0,  # active baseline — fires when any mouse/keyboard activity detected
     "dmn_idle_interval": 45.0,  # when fully away from computer (OS idle > 60s)

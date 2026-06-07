@@ -10,6 +10,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import math
 import os
 import random as _random
 import uuid
@@ -605,6 +606,12 @@ class FrontalCluster:
                         actual=list(shadow_actual),
                         correct=(predicted == shadow_actual),
                     )
+                    # Stage 5 Tier A: self-verified correctness. A confident, NON-trivial
+                    # prediction the integrator then confirmed is intrinsic competence — reward
+                    # it (no user needed); a confident-wrong one dips DA. Guards in the helper.
+                    self._emit_prediction_reward(
+                        confidence, predicted == shadow_actual, exec_sig
+                    )
 
         if instruction is None:
             instruction, actual = await self._run_executive_llm(
@@ -631,8 +638,36 @@ class FrontalCluster:
                         "correct": (predicted_now == actual) if predicted_now else None,
                     }
                 )
+            # Stage 5 Tier A: reward a confident, non-trivial prediction that the woken
+            # integrator confirmed (and dip on a confident miss). Only when we had a prediction.
+            if predicted_now is not None:
+                self._emit_prediction_reward(conf_now, predicted_now == actual, exec_sig)
 
         return instruction
+
+    def _emit_prediction_reward(
+        self, confidence: float, correct: bool, exec_sig: tuple
+    ) -> None:
+        """Stage 5 Tier A helper: convert a confirmed/refuted executive prediction into an
+        intrinsic correctness DA delta — self-verified, no user. Gated + capped in
+        neuron.prediction_reward / settings; persona-scaled by how much this identity values
+        being right. Best-effort: never raise into the hot path."""
+        with contextlib.suppress(Exception):
+            from brain.neuron import prediction_reward, reward_weight
+
+            info = self._exec_predictor.informativeness(exec_sig)
+            pr = prediction_reward(confidence, correct, info)
+            if not pr:
+                return
+            persona = str(settings.get("persona_name", ""))
+            delta = (
+                pr
+                * float(settings.get("prediction_reward_base"))
+                * reward_weight(persona, "correctness")
+                * float(settings.get("emotional_reactivity_scale"))
+            )
+            cap = float(settings.get("prediction_reward_turn_cap"))
+            self._bus.neuromod.add("DA", max(-cap, min(cap, delta)))
 
     async def _run_executive_llm(
         self,
@@ -1084,9 +1119,35 @@ class FrontalCluster:
             pass
         return snap
 
+    def _weighted_sample(self, indices: list[int], weights: list[float], count: int) -> list[int]:
+        """Sample `count` indices without replacement ∝ softmax(weight / temperature).
+        Unlike hard top-N, a learned ranking shift changes the selected MIX even when
+        count saturates the slate — so Hebbian weight differences become behaviorally
+        expressible. Temperature controls sharpness (low = decisive, high = exploratory)."""
+        temp = max(1e-3, float(settings.get("drafter_sampling_temperature", 0.2)))
+        pool = list(indices)
+        picked: list[int] = []
+        for _ in range(min(count, len(pool))):
+            logits = [weights[i] / temp for i in pool]
+            mx = max(logits)
+            exps = [math.exp(lg - mx) for lg in logits]
+            total = sum(exps) or 1.0
+            r = _random.random() * total
+            acc = 0.0
+            for k, i in enumerate(pool):
+                acc += exps[k]
+                if acc >= r:
+                    picked.append(i)
+                    pool.pop(k)
+                    break
+            else:
+                picked.append(pool.pop())  # numerical fallback
+        return picked
+
     def _select_drafters(self, count: int, turn_id: str) -> list[int]:
-        """Pick which drafter indices to fire, weighted by wiring edge weight.
-        ε-greedy: with prob ε pick uniformly random, otherwise pick top-weight."""
+        """Pick which drafter indices to fire from the learned executive→drafter weights.
+        Default: probabilistic weighted sampling (a ranking shift changes the mix even at
+        high count). Legacy ε-greedy top-N kept behind drafter_weighted_sampling=0."""
         all_indices = list(range(len(self._drafters)))
         count = max(1, min(count, len(self._drafters)))
 
@@ -1098,17 +1159,19 @@ class FrontalCluster:
         names = [f"frontal.drafter_{chr(65 + i)}" for i in all_indices]
         weights = [self._wiring.get_edge_weight("frontal.executive", n) for n in names]
 
-        # ε-greedy exploration
-        epsilon = 0.10
-        if _random.random() < epsilon:
-            # Explore: random pick
-            picked = _random.sample(all_indices, count)
-            roll = "explore"
+        if settings.get("drafter_weighted_sampling", 1):
+            picked = self._weighted_sample(all_indices, weights, count)
+            roll = "sampled"
         else:
-            # Exploit: top-weight
-            ranked = sorted(all_indices, key=lambda i: weights[i], reverse=True)
-            picked = ranked[:count]
-            roll = "exploit"
+            # Legacy ε-greedy top-N (rollback path).
+            epsilon = 0.10
+            if _random.random() < epsilon:
+                picked = _random.sample(all_indices, count)
+                roll = "explore"
+            else:
+                ranked = sorted(all_indices, key=lambda i: weights[i], reverse=True)
+                picked = ranked[:count]
+                roll = "exploit"
 
         # What would uniform routing have picked?
         uniform_pick = all_indices[:count]
