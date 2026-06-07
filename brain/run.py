@@ -335,6 +335,37 @@ def _route_persona_state() -> None:
         root.mkdir(parents=True, exist_ok=True)
         os.environ.setdefault("BRAIN_WIRING_PATH", str(root / "wiring.json"))
         os.environ.setdefault("BRAIN_WIRING_HISTORY_DIR", str(root / "wiring_history"))
+        # Resolve the persona slug so the Supabase stores key rows correctly. The
+        # provisioner injects BRAIN_USER_ID/SECOND_BRAIN_PATH but NOT the persona, so
+        # without this _sb_persona() silently falls back to "default" — every tenant's
+        # memory then collides in one "default" bucket and per-persona data goes
+        # invisible. Honor an explicit pre-injected BRAIN_PERSONA_NAME; otherwise read
+        # persona_name from the tenant's own settings.json (BRAIN_SETTINGS_PATH). Read
+        # only — never rewrite the file here (it's the tenant's evolving tuning).
+        if not os.environ.get("BRAIN_PERSONA_NAME", "").strip():
+            settings_str = os.environ.get("BRAIN_SETTINGS_PATH", "").strip()
+            tenant_settings = Path(settings_str) if settings_str else (root / "settings.json")
+            persona = ""
+            if tenant_settings.exists():
+                try:
+                    persona = str(
+                        json.loads(tenant_settings.read_text(encoding="utf-8")).get(
+                            "persona_name", ""
+                        )
+                    )
+                except Exception:
+                    persona = ""
+            if persona:
+                slug = re.sub(r"[^a-z0-9]+", "_", persona.lower()).strip("_") or "unnamed"
+                os.environ["BRAIN_PERSONA_NAME"] = slug
+            else:
+                logger.error(
+                    "[Persona] Multi-tenant: could not resolve persona_name from %s — "
+                    "storage would fall back to persona='default' and cross-contaminate "
+                    "tenants. The provisioner must inject BRAIN_PERSONA_NAME or seed a "
+                    "settings.json with persona_name.",
+                    tenant_settings,
+                )
         logger.info(
             "[Persona] Multi-tenant mode — second_brain at %s (persona=%s)",
             root,
