@@ -17,6 +17,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from brain.neuron import reward_weight
+from brain.settings import settings
 
 
 @pytest.fixture(autouse=True)
@@ -264,3 +265,67 @@ def test_accomplishment_anticlimax_when_easier_than_feared():
 
     _, mod = accomplishment_factor(1.0, 14.0)  # r≈0.07, much easier than the "high" brace
     assert mod < 1.0
+
+
+# ── Stage 7: idle cognition rewards ──────────────────────────────────────────────
+
+
+def test_sequence_predictor_informativeness():
+    from brain.sequence_predictor import SequencePredictor
+
+    varied = SequencePredictor()
+    for a in ["a", "b", "x", "a", "b", "y", "a", "b", "z", "a", "b"]:
+        varied.record(a)  # context ('a','b') has 3 distinct continuations
+    assert varied.informativeness() > 0.5
+    const = SequencePredictor()
+    for _ in range(6):
+        const.record("same")
+    assert const.informativeness() == 0.0
+
+
+def _make_dmn_idle(persona: str):
+    from brain.dmn import DefaultModeNetwork
+
+    settings._data["persona_name"] = persona
+    dmn = DefaultModeNetwork.__new__(DefaultModeNetwork)
+    nm = _RecordingNeuromod()
+    dmn._bus = MagicMock()
+    dmn._bus.neuromod = nm
+    return dmn, nm
+
+
+def test_idle_thought_quality_rewards_novel_thought():
+    dmn, nm = _make_dmn_idle("The Visionary")
+    # Novel thought: low overlap, low cosine → high quality → DA reward.
+    dmn._reward_idle_thought_quality("a genuinely fresh and reasonably detailed idle reflection here", 0.05, 0.1)
+    assert nm.deltas.get("DA", 0.0) > 0.0
+    settings._data.pop("persona_name", None)
+
+
+def test_idle_thought_quality_skips_filler():
+    dmn, nm = _make_dmn_idle("The Visionary")
+    # High overlap (near-duplicate) → below quality threshold → no reward.
+    dmn._reward_idle_thought_quality("again", 0.95, 0.95)
+    assert nm.deltas.get("DA", 0.0) == 0.0
+    settings._data.pop("persona_name", None)
+
+
+def test_angle_prediction_reward_sign_and_gating():
+    dmn, nm = _make_dmn_idle("The Analyst")
+    # Confident, informative, CORRECT prediction → +DA.
+    dmn._last_predicted_angle = "architecture"
+    dmn._last_angle_confidence = 0.8
+    dmn._last_angle_informativeness = 0.7
+    dmn._reward_angle_prediction("architecture")
+    assert nm.deltas.get("DA", 0.0) > 0.0
+    # Stash is consumed (scores once).
+    assert getattr(dmn, "_last_predicted_angle", None) is None
+
+    # Confident WRONG → negative.
+    dmn2, nm2 = _make_dmn_idle("The Analyst")
+    dmn2._last_predicted_angle = "architecture"
+    dmn2._last_angle_confidence = 0.8
+    dmn2._last_angle_informativeness = 0.7
+    dmn2._reward_angle_prediction("something-else")
+    assert nm2.deltas.get("DA", 0.0) < 0.0
+    settings._data.pop("persona_name", None)

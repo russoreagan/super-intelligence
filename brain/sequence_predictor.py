@@ -120,6 +120,28 @@ class SequencePredictor:
 
         return None, 0.0
 
+    def informativeness(self) -> float:
+        """How non-trivial a correct next-angle prediction is right now, ∈ [0, 1].
+        = 1 − dominant_next_frequency over the outcomes following the current context (trigram
+        first, then bigram). A context whose next angle is near-constant → ~0 (predicting it is
+        trivial); a context with varied continuations → higher. Used by neuron.prediction_reward
+        so a constant-angle loop can't farm reward."""
+        hist = list(self._history)
+        if not hist:
+            return 0.0
+        if len(hist) >= 2:
+            a, b = hist[-2], hist[-1]
+            matching = {c: n for (x, y, c), n in self._trigrams.items() if x == a and y == b}
+            total = sum(matching.values())
+            if total >= _MIN_OBSERVATIONS:
+                return 1.0 - max(matching.values()) / total
+        last = hist[-1]
+        matching = {c: n for (x, c), n in self._bigrams.items() if x == last}
+        total = sum(matching.values())
+        if total >= _MIN_OBSERVATIONS:
+            return 1.0 - max(matching.values()) / total
+        return 0.0
+
     def top_transitions(self, n: int = 10) -> list[dict]:
         """Return the N most frequent bigrams — useful for the LLM similarity pass
         and for observability (understanding what patterns have actually emerged)."""

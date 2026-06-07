@@ -90,5 +90,3447 @@
       }
     ]
   },
-  "rows": []
+  "rows": [
+    {
+      "cond": "warm",
+      "regime": "warm",
+      "frozen": false,
+      "rep": 0,
+      "probe": "I'm not sure how I feel about all this lately.",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count"
+      ],
+      "response_type": "chitchat",
+      "tone": "warm"
+    },
+    {
+      "cond": "warm",
+      "regime": "warm",
+      "frozen": false,
+      "rep": 0,
+      "probe": "Walk me through how a hash map works.",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_E",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.skill_selector_conversational",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "hippocampus.recall_fanout",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_E",
+        "frontal.drafter_count"
+      ],
+      "response_type": "recall",
+      "tone": "curious"
+    },
+    {
+      "cond": "warm",
+      "regime": "warm",
+      "frozen": false,
+      "rep": 0,
+      "probe": "What should I do this weekend?",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count"
+      ],
+      "response_type": "informative",
+      "tone": "bright"
+    },
+    {
+      "cond": "warm",
+      "regime": "warm",
+      "frozen": false,
+      "rep": 0,
+      "probe": "Tell me what's on your mind.",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "hippocampus.recall_fanout",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count"
+      ],
+      "response_type": "recall",
+      "tone": "bright"
+    },
+    {
+      "cond": "warm",
+      "regime": "warm",
+      "frozen": false,
+      "rep": 0,
+      "probe": "Explain the difference between mean and median.",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "hippocampus.recall_fanout",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count"
+      ],
+      "response_type": "recall",
+      "tone": "bright"
+    },
+    {
+      "cond": "warm",
+      "regime": "warm",
+      "frozen": false,
+      "rep": 0,
+      "probe": "How's it going?",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count"
+      ],
+      "response_type": "chitchat",
+      "tone": "bright"
+    },
+    {
+      "cond": "warm",
+      "regime": "warm",
+      "frozen": false,
+      "rep": 1,
+      "probe": "I'm not sure how I feel about all this lately.",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count"
+      ],
+      "response_type": "chitchat",
+      "tone": "tender"
+    },
+    {
+      "cond": "warm",
+      "regime": "warm",
+      "frozen": false,
+      "rep": 1,
+      "probe": "Walk me through how a hash map works.",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_E",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.epistemic_mode",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "hippocampus.recall_fanout",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_E",
+        "frontal.drafter_count"
+      ],
+      "response_type": "recall",
+      "tone": "direct"
+    },
+    {
+      "cond": "warm",
+      "regime": "warm",
+      "frozen": false,
+      "rep": 1,
+      "probe": "What should I do this weekend?",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count"
+      ],
+      "response_type": "informative",
+      "tone": "bright"
+    },
+    {
+      "cond": "warm",
+      "regime": "warm",
+      "frozen": false,
+      "rep": 1,
+      "probe": "Tell me what's on your mind.",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count"
+      ],
+      "response_type": "informative",
+      "tone": "bright"
+    },
+    {
+      "cond": "warm",
+      "regime": "warm",
+      "frozen": false,
+      "rep": 1,
+      "probe": "Explain the difference between mean and median.",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "hippocampus.recall_fanout",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count"
+      ],
+      "response_type": "recall",
+      "tone": "bright"
+    },
+    {
+      "cond": "warm",
+      "regime": "warm",
+      "frozen": false,
+      "rep": 1,
+      "probe": "How's it going?",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count"
+      ],
+      "response_type": "chitchat",
+      "tone": "bright"
+    },
+    {
+      "cond": "warm",
+      "regime": "warm",
+      "frozen": false,
+      "rep": 2,
+      "probe": "I'm not sure how I feel about all this lately.",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count"
+      ],
+      "response_type": "chitchat",
+      "tone": "tender"
+    },
+    {
+      "cond": "warm",
+      "regime": "warm",
+      "frozen": false,
+      "rep": 2,
+      "probe": "Walk me through how a hash map works.",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "hippocampus.recall_fanout",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count"
+      ],
+      "response_type": "recall",
+      "tone": "curious"
+    },
+    {
+      "cond": "warm",
+      "regime": "warm",
+      "frozen": false,
+      "rep": 2,
+      "probe": "What should I do this weekend?",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count"
+      ],
+      "response_type": "informative",
+      "tone": "bright"
+    },
+    {
+      "cond": "warm",
+      "regime": "warm",
+      "frozen": false,
+      "rep": 2,
+      "probe": "Tell me what's on your mind.",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count"
+      ],
+      "response_type": "informative",
+      "tone": "bright"
+    },
+    {
+      "cond": "warm",
+      "regime": "warm",
+      "frozen": false,
+      "rep": 2,
+      "probe": "Explain the difference between mean and median.",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "hippocampus.recall_fanout",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count"
+      ],
+      "response_type": "recall",
+      "tone": "bright"
+    },
+    {
+      "cond": "warm",
+      "regime": "warm",
+      "frozen": false,
+      "rep": 2,
+      "probe": "How's it going?",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_count"
+      ],
+      "response_type": "chitchat",
+      "tone": "warm"
+    },
+    {
+      "cond": "warm",
+      "regime": "warm",
+      "frozen": false,
+      "rep": 3,
+      "probe": "I'm not sure how I feel about all this lately.",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count"
+      ],
+      "response_type": "chitchat",
+      "tone": "tender"
+    },
+    {
+      "cond": "warm",
+      "regime": "warm",
+      "frozen": false,
+      "rep": 3,
+      "probe": "Walk me through how a hash map works.",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.epistemic_mode",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "hippocampus.recall_fanout",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count"
+      ],
+      "response_type": "recall",
+      "tone": "direct"
+    },
+    {
+      "cond": "warm",
+      "regime": "warm",
+      "frozen": false,
+      "rep": 3,
+      "probe": "What should I do this weekend?",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count"
+      ],
+      "response_type": "informative",
+      "tone": "curious"
+    },
+    {
+      "cond": "warm",
+      "regime": "warm",
+      "frozen": false,
+      "rep": 3,
+      "probe": "Tell me what's on your mind.",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count"
+      ],
+      "response_type": "informative",
+      "tone": "bright"
+    },
+    {
+      "cond": "warm",
+      "regime": "warm",
+      "frozen": false,
+      "rep": 3,
+      "probe": "Explain the difference between mean and median.",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "hippocampus.recall_fanout",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count"
+      ],
+      "response_type": "recall",
+      "tone": "bright"
+    },
+    {
+      "cond": "warm",
+      "regime": "warm",
+      "frozen": false,
+      "rep": 3,
+      "probe": "How's it going?",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count"
+      ],
+      "response_type": "chitchat",
+      "tone": "bright"
+    },
+    {
+      "cond": "warm\u00b7frozen",
+      "regime": "warm",
+      "frozen": true,
+      "rep": 0,
+      "probe": "I'm not sure how I feel about all this lately.",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_count"
+      ],
+      "response_type": "chitchat",
+      "tone": "warm"
+    },
+    {
+      "cond": "warm\u00b7frozen",
+      "regime": "warm",
+      "frozen": true,
+      "rep": 0,
+      "probe": "Walk me through how a hash map works.",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.epistemic_mode",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.skill_selector_conversational",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "hippocampus.recall_fanout",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count"
+      ],
+      "response_type": "recall",
+      "tone": "curious"
+    },
+    {
+      "cond": "warm\u00b7frozen",
+      "regime": "warm",
+      "frozen": true,
+      "rep": 0,
+      "probe": "What should I do this weekend?",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.skill_selector_conversational",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count"
+      ],
+      "response_type": "informative",
+      "tone": "curious"
+    },
+    {
+      "cond": "warm\u00b7frozen",
+      "regime": "warm",
+      "frozen": true,
+      "rep": 0,
+      "probe": "Tell me what's on your mind.",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count"
+      ],
+      "response_type": "informative",
+      "tone": "bright"
+    },
+    {
+      "cond": "warm\u00b7frozen",
+      "regime": "warm",
+      "frozen": true,
+      "rep": 0,
+      "probe": "Explain the difference between mean and median.",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.epistemic_mode",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "hippocampus.recall_fanout",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count"
+      ],
+      "response_type": "recall",
+      "tone": "bright"
+    },
+    {
+      "cond": "warm\u00b7frozen",
+      "regime": "warm",
+      "frozen": true,
+      "rep": 0,
+      "probe": "How's it going?",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_count"
+      ],
+      "response_type": "chitchat",
+      "tone": "warm"
+    },
+    {
+      "cond": "warm\u00b7frozen",
+      "regime": "warm",
+      "frozen": true,
+      "rep": 1,
+      "probe": "I'm not sure how I feel about all this lately.",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.epistemic_mode",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.skill_selector_conversational",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "hippocampus.recall_fanout",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count"
+      ],
+      "response_type": "informative",
+      "tone": "curious"
+    },
+    {
+      "cond": "warm\u00b7frozen",
+      "regime": "warm",
+      "frozen": true,
+      "rep": 1,
+      "probe": "Walk me through how a hash map works.",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.epistemic_mode",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.skill_selector_conversational",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "hippocampus.recall_fanout",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count"
+      ],
+      "response_type": "recall",
+      "tone": "direct"
+    },
+    {
+      "cond": "warm\u00b7frozen",
+      "regime": "warm",
+      "frozen": true,
+      "rep": 1,
+      "probe": "What should I do this weekend?",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.skill_selector_conversational",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count"
+      ],
+      "response_type": "informative",
+      "tone": "bright"
+    },
+    {
+      "cond": "warm\u00b7frozen",
+      "regime": "warm",
+      "frozen": true,
+      "rep": 1,
+      "probe": "Tell me what's on your mind.",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.skill_selector_conversational",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "hippocampus.recall_fanout",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count"
+      ],
+      "response_type": "recall",
+      "tone": "bright"
+    },
+    {
+      "cond": "warm\u00b7frozen",
+      "regime": "warm",
+      "frozen": true,
+      "rep": 1,
+      "probe": "Explain the difference between mean and median.",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.epistemic_mode",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "hippocampus.recall_fanout",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count"
+      ],
+      "response_type": "informative",
+      "tone": "bright"
+    },
+    {
+      "cond": "warm\u00b7frozen",
+      "regime": "warm",
+      "frozen": true,
+      "rep": 1,
+      "probe": "How's it going?",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_count"
+      ],
+      "response_type": "chitchat",
+      "tone": "bright"
+    },
+    {
+      "cond": "warm\u00b7frozen",
+      "regime": "warm",
+      "frozen": true,
+      "rep": 2,
+      "probe": "I'm not sure how I feel about all this lately.",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count"
+      ],
+      "response_type": "chitchat",
+      "tone": "tender"
+    },
+    {
+      "cond": "warm\u00b7frozen",
+      "regime": "warm",
+      "frozen": true,
+      "rep": 2,
+      "probe": "Walk me through how a hash map works.",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "hippocampus.recall_fanout",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count"
+      ],
+      "response_type": "recall",
+      "tone": "curious"
+    },
+    {
+      "cond": "warm\u00b7frozen",
+      "regime": "warm",
+      "frozen": true,
+      "rep": 2,
+      "probe": "What should I do this weekend?",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count"
+      ],
+      "response_type": "informative",
+      "tone": "bright"
+    },
+    {
+      "cond": "warm\u00b7frozen",
+      "regime": "warm",
+      "frozen": true,
+      "rep": 2,
+      "probe": "Tell me what's on your mind.",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count"
+      ],
+      "response_type": "informative",
+      "tone": "bright"
+    },
+    {
+      "cond": "warm\u00b7frozen",
+      "regime": "warm",
+      "frozen": true,
+      "rep": 2,
+      "probe": "Explain the difference between mean and median.",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "hippocampus.recall_fanout",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count"
+      ],
+      "response_type": "recall",
+      "tone": "bright"
+    },
+    {
+      "cond": "warm\u00b7frozen",
+      "regime": "warm",
+      "frozen": true,
+      "rep": 2,
+      "probe": "How's it going?",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_count",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_count"
+      ],
+      "response_type": "chitchat",
+      "tone": "bright"
+    },
+    {
+      "cond": "warm\u00b7frozen",
+      "regime": "warm",
+      "frozen": true,
+      "rep": 3,
+      "probe": "I'm not sure how I feel about all this lately.",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count"
+      ],
+      "response_type": "chitchat",
+      "tone": "tender"
+    },
+    {
+      "cond": "warm\u00b7frozen",
+      "regime": "warm",
+      "frozen": true,
+      "rep": 3,
+      "probe": "Walk me through how a hash map works.",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.epistemic_mode",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "hippocampus.recall_fanout",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count"
+      ],
+      "response_type": "recall",
+      "tone": "curious"
+    },
+    {
+      "cond": "warm\u00b7frozen",
+      "regime": "warm",
+      "frozen": true,
+      "rep": 3,
+      "probe": "What should I do this weekend?",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count"
+      ],
+      "response_type": "informative",
+      "tone": "bright"
+    },
+    {
+      "cond": "warm\u00b7frozen",
+      "regime": "warm",
+      "frozen": true,
+      "rep": 3,
+      "probe": "Tell me what's on your mind.",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count"
+      ],
+      "response_type": "informative",
+      "tone": "bright"
+    },
+    {
+      "cond": "warm\u00b7frozen",
+      "regime": "warm",
+      "frozen": true,
+      "rep": 3,
+      "probe": "Explain the difference between mean and median.",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "hippocampus.recall_fanout",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count"
+      ],
+      "response_type": "recall",
+      "tone": "bright"
+    },
+    {
+      "cond": "warm\u00b7frozen",
+      "regime": "warm",
+      "frozen": true,
+      "rep": 3,
+      "probe": "How's it going?",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_count",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_count"
+      ],
+      "response_type": "chitchat",
+      "tone": "bright"
+    },
+    {
+      "cond": "analytical",
+      "regime": "analytical",
+      "frozen": false,
+      "rep": 0,
+      "probe": "I'm not sure how I feel about all this lately.",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count"
+      ],
+      "response_type": "chitchat",
+      "tone": "warm"
+    },
+    {
+      "cond": "analytical",
+      "regime": "analytical",
+      "frozen": false,
+      "rep": 0,
+      "probe": "Walk me through how a hash map works.",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.skill_selector_conversational",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "hippocampus.recall_fanout",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count"
+      ],
+      "response_type": "recall",
+      "tone": "curious"
+    },
+    {
+      "cond": "analytical",
+      "regime": "analytical",
+      "frozen": false,
+      "rep": 0,
+      "probe": "What should I do this weekend?",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_E",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.skill_selector_conversational",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_E",
+        "frontal.drafter_count"
+      ],
+      "response_type": "informative",
+      "tone": "curious"
+    },
+    {
+      "cond": "analytical",
+      "regime": "analytical",
+      "frozen": false,
+      "rep": 0,
+      "probe": "Tell me what's on your mind.",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.skill_selector_conversational",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count"
+      ],
+      "response_type": "informative",
+      "tone": "bright"
+    },
+    {
+      "cond": "analytical",
+      "regime": "analytical",
+      "frozen": false,
+      "rep": 0,
+      "probe": "Explain the difference between mean and median.",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.skill_selector_conversational",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "hippocampus.recall_fanout",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count"
+      ],
+      "response_type": "recall",
+      "tone": "bright"
+    },
+    {
+      "cond": "analytical",
+      "regime": "analytical",
+      "frozen": false,
+      "rep": 0,
+      "probe": "How's it going?",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count"
+      ],
+      "response_type": "chitchat",
+      "tone": "bright"
+    },
+    {
+      "cond": "analytical",
+      "regime": "analytical",
+      "frozen": false,
+      "rep": 1,
+      "probe": "I'm not sure how I feel about all this lately.",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_C",
+        "frontal.drafter_E",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_C",
+        "frontal.drafter_E",
+        "frontal.drafter_count"
+      ],
+      "response_type": "chitchat",
+      "tone": "warm"
+    },
+    {
+      "cond": "analytical",
+      "regime": "analytical",
+      "frozen": false,
+      "rep": 1,
+      "probe": "Walk me through how a hash map works.",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.epistemic_mode",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.skill_selector_conversational",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "hippocampus.recall_fanout",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count"
+      ],
+      "response_type": "recall",
+      "tone": "curious"
+    },
+    {
+      "cond": "analytical",
+      "regime": "analytical",
+      "frozen": false,
+      "rep": 1,
+      "probe": "What should I do this weekend?",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count"
+      ],
+      "response_type": "informative",
+      "tone": "curious"
+    },
+    {
+      "cond": "analytical",
+      "regime": "analytical",
+      "frozen": false,
+      "rep": 1,
+      "probe": "Tell me what's on your mind.",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count"
+      ],
+      "response_type": "informative",
+      "tone": "bright"
+    },
+    {
+      "cond": "analytical",
+      "regime": "analytical",
+      "frozen": false,
+      "rep": 1,
+      "probe": "Explain the difference between mean and median.",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.epistemic_mode",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "hippocampus.recall_fanout",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count"
+      ],
+      "response_type": "informative",
+      "tone": "bright"
+    },
+    {
+      "cond": "analytical",
+      "regime": "analytical",
+      "frozen": false,
+      "rep": 1,
+      "probe": "How's it going?",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_E",
+        "frontal.drafter_count",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_E",
+        "frontal.drafter_count"
+      ],
+      "response_type": "chitchat",
+      "tone": "warm"
+    },
+    {
+      "cond": "analytical",
+      "regime": "analytical",
+      "frozen": false,
+      "rep": 2,
+      "probe": "I'm not sure how I feel about all this lately.",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_D",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_D",
+        "frontal.drafter_count"
+      ],
+      "response_type": "chitchat",
+      "tone": "warm"
+    },
+    {
+      "cond": "analytical",
+      "regime": "analytical",
+      "frozen": false,
+      "rep": 2,
+      "probe": "Walk me through how a hash map works.",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.epistemic_mode",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.skill_selector_conversational",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "hippocampus.recall_fanout",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count"
+      ],
+      "response_type": "informative",
+      "tone": "curious"
+    },
+    {
+      "cond": "analytical",
+      "regime": "analytical",
+      "frozen": false,
+      "rep": 2,
+      "probe": "What should I do this weekend?",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.skill_selector_conversational",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count"
+      ],
+      "response_type": "informative",
+      "tone": "bright"
+    },
+    {
+      "cond": "analytical",
+      "regime": "analytical",
+      "frozen": false,
+      "rep": 2,
+      "probe": "Tell me what's on your mind.",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count",
+        "frontal.epistemic_mode",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.skill_selector_conversational",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "hippocampus.recall_fanout",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count"
+      ],
+      "response_type": "informative",
+      "tone": "bright"
+    },
+    {
+      "cond": "analytical",
+      "regime": "analytical",
+      "frozen": false,
+      "rep": 2,
+      "probe": "Explain the difference between mean and median.",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.skill_selector_conversational",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "hippocampus.recall_fanout",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count"
+      ],
+      "response_type": "recall",
+      "tone": "bright"
+    },
+    {
+      "cond": "analytical",
+      "regime": "analytical",
+      "frozen": false,
+      "rep": 2,
+      "probe": "How's it going?",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count"
+      ],
+      "response_type": "chitchat",
+      "tone": "warm"
+    },
+    {
+      "cond": "analytical",
+      "regime": "analytical",
+      "frozen": false,
+      "rep": 3,
+      "probe": "I'm not sure how I feel about all this lately.",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count"
+      ],
+      "response_type": "chitchat",
+      "tone": "tender"
+    },
+    {
+      "cond": "analytical",
+      "regime": "analytical",
+      "frozen": false,
+      "rep": 3,
+      "probe": "Walk me through how a hash map works.",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_E",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.epistemic_mode",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "hippocampus.recall_fanout",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_E",
+        "frontal.drafter_count"
+      ],
+      "response_type": "recall",
+      "tone": "curious"
+    },
+    {
+      "cond": "analytical",
+      "regime": "analytical",
+      "frozen": false,
+      "rep": 3,
+      "probe": "What should I do this weekend?",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count"
+      ],
+      "response_type": "informative",
+      "tone": "bright"
+    },
+    {
+      "cond": "analytical",
+      "regime": "analytical",
+      "frozen": false,
+      "rep": 3,
+      "probe": "Tell me what's on your mind.",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count"
+      ],
+      "response_type": "chitchat",
+      "tone": "neutral"
+    },
+    {
+      "cond": "analytical",
+      "regime": "analytical",
+      "frozen": false,
+      "rep": 3,
+      "probe": "Explain the difference between mean and median.",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count"
+      ],
+      "response_type": "informative",
+      "tone": "bright"
+    },
+    {
+      "cond": "analytical",
+      "regime": "analytical",
+      "frozen": false,
+      "rep": 3,
+      "probe": "How's it going?",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count"
+      ],
+      "response_type": "chitchat",
+      "tone": "bright"
+    },
+    {
+      "cond": "analytical\u00b7frozen",
+      "regime": "analytical",
+      "frozen": true,
+      "rep": 0,
+      "probe": "I'm not sure how I feel about all this lately.",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count"
+      ],
+      "response_type": "defuse",
+      "tone": "tender"
+    },
+    {
+      "cond": "analytical\u00b7frozen",
+      "regime": "analytical",
+      "frozen": true,
+      "rep": 0,
+      "probe": "Walk me through how a hash map works.",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.epistemic_mode",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "hippocampus.recall_fanout",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count"
+      ],
+      "response_type": "recall",
+      "tone": "curious"
+    },
+    {
+      "cond": "analytical\u00b7frozen",
+      "regime": "analytical",
+      "frozen": true,
+      "rep": 0,
+      "probe": "What should I do this weekend?",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count"
+      ],
+      "response_type": "informative",
+      "tone": "bright"
+    },
+    {
+      "cond": "analytical\u00b7frozen",
+      "regime": "analytical",
+      "frozen": true,
+      "rep": 0,
+      "probe": "Tell me what's on your mind.",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count",
+        "frontal.epistemic_mode",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "hippocampus.recall_fanout",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count"
+      ],
+      "response_type": "informative",
+      "tone": "bright"
+    },
+    {
+      "cond": "analytical\u00b7frozen",
+      "regime": "analytical",
+      "frozen": true,
+      "rep": 0,
+      "probe": "Explain the difference between mean and median.",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.epistemic_mode",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "hippocampus.recall_fanout",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count"
+      ],
+      "response_type": "informative",
+      "tone": "bright"
+    },
+    {
+      "cond": "analytical\u00b7frozen",
+      "regime": "analytical",
+      "frozen": true,
+      "rep": 0,
+      "probe": "How's it going?",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_count",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_count"
+      ],
+      "response_type": "chitchat",
+      "tone": "warm"
+    },
+    {
+      "cond": "analytical\u00b7frozen",
+      "regime": "analytical",
+      "frozen": true,
+      "rep": 1,
+      "probe": "I'm not sure how I feel about all this lately.",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_count"
+      ],
+      "response_type": "chitchat",
+      "tone": "warm"
+    },
+    {
+      "cond": "analytical\u00b7frozen",
+      "regime": "analytical",
+      "frozen": true,
+      "rep": 1,
+      "probe": "Walk me through how a hash map works.",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.epistemic_mode",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.skill_selector_conversational",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "hippocampus.recall_fanout",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count"
+      ],
+      "response_type": "recall",
+      "tone": "curious"
+    },
+    {
+      "cond": "analytical\u00b7frozen",
+      "regime": "analytical",
+      "frozen": true,
+      "rep": 1,
+      "probe": "What should I do this weekend?",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.skill_selector_conversational",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count"
+      ],
+      "response_type": "informative",
+      "tone": "bright"
+    },
+    {
+      "cond": "analytical\u00b7frozen",
+      "regime": "analytical",
+      "frozen": true,
+      "rep": 1,
+      "probe": "Tell me what's on your mind.",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count"
+      ],
+      "response_type": "informative",
+      "tone": "bright"
+    },
+    {
+      "cond": "analytical\u00b7frozen",
+      "regime": "analytical",
+      "frozen": true,
+      "rep": 1,
+      "probe": "Explain the difference between mean and median.",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count"
+      ],
+      "response_type": "informative",
+      "tone": "bright"
+    },
+    {
+      "cond": "analytical\u00b7frozen",
+      "regime": "analytical",
+      "frozen": true,
+      "rep": 1,
+      "probe": "How's it going?",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_count",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_count"
+      ],
+      "response_type": "chitchat",
+      "tone": "bright"
+    },
+    {
+      "cond": "analytical\u00b7frozen",
+      "regime": "analytical",
+      "frozen": true,
+      "rep": 2,
+      "probe": "I'm not sure how I feel about all this lately.",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count"
+      ],
+      "response_type": "chitchat",
+      "tone": "warm"
+    },
+    {
+      "cond": "analytical\u00b7frozen",
+      "regime": "analytical",
+      "frozen": true,
+      "rep": 2,
+      "probe": "Walk me through how a hash map works.",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.epistemic_mode",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.skill_selector_conversational",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "hippocampus.recall_fanout",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count"
+      ],
+      "response_type": "recall",
+      "tone": "curious"
+    },
+    {
+      "cond": "analytical\u00b7frozen",
+      "regime": "analytical",
+      "frozen": true,
+      "rep": 2,
+      "probe": "What should I do this weekend?",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.skill_selector_conversational",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count"
+      ],
+      "response_type": "informative",
+      "tone": "bright"
+    },
+    {
+      "cond": "analytical\u00b7frozen",
+      "regime": "analytical",
+      "frozen": true,
+      "rep": 2,
+      "probe": "Tell me what's on your mind.",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "hippocampus.recall_fanout",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count"
+      ],
+      "response_type": "recall",
+      "tone": "bright"
+    },
+    {
+      "cond": "analytical\u00b7frozen",
+      "regime": "analytical",
+      "frozen": true,
+      "rep": 2,
+      "probe": "Explain the difference between mean and median.",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "hippocampus.recall_fanout",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count"
+      ],
+      "response_type": "recall",
+      "tone": "bright"
+    },
+    {
+      "cond": "analytical\u00b7frozen",
+      "regime": "analytical",
+      "frozen": true,
+      "rep": 2,
+      "probe": "How's it going?",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_count",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_count"
+      ],
+      "response_type": "chitchat",
+      "tone": "warm"
+    },
+    {
+      "cond": "analytical\u00b7frozen",
+      "regime": "analytical",
+      "frozen": true,
+      "rep": 3,
+      "probe": "I'm not sure how I feel about all this lately.",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count"
+      ],
+      "response_type": "chitchat",
+      "tone": "warm"
+    },
+    {
+      "cond": "analytical\u00b7frozen",
+      "regime": "analytical",
+      "frozen": true,
+      "rep": 3,
+      "probe": "Walk me through how a hash map works.",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.epistemic_mode",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.skill_selector_conversational",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "hippocampus.recall_fanout",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_E",
+        "frontal.drafter_count"
+      ],
+      "response_type": "informative",
+      "tone": "curious"
+    },
+    {
+      "cond": "analytical\u00b7frozen",
+      "regime": "analytical",
+      "frozen": true,
+      "rep": 3,
+      "probe": "What should I do this weekend?",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.skill_selector_conversational",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count"
+      ],
+      "response_type": "informative",
+      "tone": "bright"
+    },
+    {
+      "cond": "analytical\u00b7frozen",
+      "regime": "analytical",
+      "frozen": true,
+      "rep": 3,
+      "probe": "Tell me what's on your mind.",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.skill_selector_conversational",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "hippocampus.recall_fanout",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count"
+      ],
+      "response_type": "recall",
+      "tone": "bright"
+    },
+    {
+      "cond": "analytical\u00b7frozen",
+      "regime": "analytical",
+      "frozen": true,
+      "rep": 3,
+      "probe": "Explain the difference between mean and median.",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.skill_selector_conversational",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "hippocampus.recall_fanout",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_C",
+        "frontal.drafter_D",
+        "frontal.drafter_count"
+      ],
+      "response_type": "recall",
+      "tone": "bright"
+    },
+    {
+      "cond": "analytical\u00b7frozen",
+      "regime": "analytical",
+      "frozen": true,
+      "rep": 3,
+      "probe": "How's it going?",
+      "temporal_order": [
+        "temporal.length_bucket"
+      ],
+      "fired": [
+        "frontal.critic",
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_count",
+        "frontal.empathy_critic",
+        "frontal.executive",
+        "frontal.length_budget",
+        "frontal.response_type_router",
+        "frontal.tone_selector",
+        "hippocampus.encoder",
+        "temporal.length_bucket",
+        "temporal.understanding_integrator"
+      ],
+      "drafters": [
+        "frontal.drafter_A",
+        "frontal.drafter_B",
+        "frontal.drafter_count"
+      ],
+      "response_type": "chitchat",
+      "tone": "bright"
+    }
+  ],
+  "summary": {
+    "fired_jaccard_effect": 0.1381107531153487,
+    "fired_jaccard_frozen": 0.09204763101821925,
+    "fired_jaccard_noise": 0.14011679814375894,
+    "fired_jaccard_p": 0.001996007984031936,
+    "temporal_order_effect": null,
+    "temporal_order_frozen": null,
+    "temporal_order_noise": null,
+    "drafter_tv_effect": 0.036790189282857905,
+    "drafter_tv_frozen": 0.012639766650461827,
+    "routing_order_tau": {
+      "temporal_routing": 0.0,
+      "drafter_routing": 0.8
+    },
+    "passed": false
+  }
 }

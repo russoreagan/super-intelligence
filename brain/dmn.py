@@ -559,6 +559,10 @@ class DefaultModeNetwork:
         )
         self._bridge_cell.set_router(router)
 
+        # Last time the user was active (stamped at every turn start in pause()). Used as a
+        # conversation-idle fallback for the rumination gate when OS HID idle is unavailable
+        # (e.g. the Linux-hosted instance, where get_idle_seconds() always returns 0.0).
+        self._last_user_activity_ts: float = time.time()
         # Predicted next input (used by temporal lobe predictor as a warm hint)
         self.predicted_next: dict | None = None
         # When the brain's last response ended with a question, the DMN runs
@@ -721,6 +725,9 @@ class DefaultModeNetwork:
         turn ends that's fine too; the flag is harmless and clears on the next tick.
         """
         self._skip_next_tick = True
+        # Turn start = the user is active right now. Stamp it so the rumination gate's
+        # conversation-idle fallback works on hosts where OS HID idle is unavailable.
+        self._last_user_activity_ts = time.time()
 
     def resume(self) -> None:
         """No-op — the skip is self-clearing after one tick."""
@@ -2030,12 +2037,15 @@ class DefaultModeNetwork:
         drive, flavor = self._rumination_drive(chem)
         if not settings.get("dmn_rumination_enabled"):
             return "normal", flavor, drive
-        try:
-            idle = get_idle_seconds()
-        except Exception:
-            idle = 0.0
-        if idle < float(settings.get("dmn_rumination_idle_threshold_s") or 60.0):
+        idle = self._effective_idle_seconds()
+        idle_threshold = float(settings.get("dmn_rumination_idle_threshold_s") or 60.0)
+        if idle < idle_threshold:
             return "normal", flavor, drive
+        # TONIC idle drive (Stage 7): the phasic worry/interest `drive` decays to ~0 during deep
+        # idle, so on its own it never crossed threshold — rumination never fired. The DMN is most
+        # active at rest, so add a mind-wandering (boredom) + finish-out (unfinished business) pull
+        # that GROWS while idle, persona-scaled by a chemistry-derived ruminative disposition.
+        drive += self._tonic_idle_drive(chem, idle, idle_threshold)
         threshold = float(settings.get("dmn_rumination_drive_threshold") or 0.45)
         if drive < threshold:
             return "normal", flavor, drive
@@ -2048,6 +2058,97 @@ class DefaultModeNetwork:
         if random.random() < min(1.0, p * (drive / max(0.01, threshold))):
             return "ruminate", flavor, drive
         return "normal", flavor, drive
+
+    def _reward_angle_prediction(self, actual_angle: str) -> None:
+        """Stage 7 Gap 1: reward a confident, non-trivial thought-angle prediction the next
+        thought confirmed (dip on a confident miss). Self-verified — no user. Consumes the stash
+        so it scores once. Best-effort."""
+        predicted = getattr(self, "_last_predicted_angle", None)
+        if not predicted:
+            return
+        self._last_predicted_angle = None  # consume regardless of outcome
+        with contextlib.suppress(Exception):
+            from brain.neuron import prediction_reward, reward_weight
+
+            conf = float(getattr(self, "_last_angle_confidence", 0.0))
+            info = float(getattr(self, "_last_angle_informativeness", 0.0))
+            pr = prediction_reward(conf, actual_angle == predicted, info)
+            if not pr:
+                return
+            persona = str(settings.get("persona_name", ""))
+            delta = (
+                pr
+                * float(settings.get("prediction_reward_base"))
+                * reward_weight(persona, "correctness")
+                * float(settings.get("emotional_reactivity_scale"))
+            )
+            cap = float(settings.get("prediction_reward_turn_cap"))
+            self._bus.neuromod.add("DA", max(-cap, min(cap, delta)))
+
+    def _reward_idle_thought_quality(self, thought: str, max_overlap: float, max_cos: float) -> None:
+        """Stage 7 Gap 2: cheap heuristic quality (novelty + length sanity, NO LLM) → DA reward
+        for a good idle thought, persona-scaled by the 'novelty' valuation (curiosity-driven
+        personas get more). Threshold-gated so filler earns nothing. Best-effort."""
+        with contextlib.suppress(Exception):
+            novelty_word = 1.0 - float(max_overlap)
+            novelty_sem = 1.0 - max(0.0, float(max_cos) - 0.6) / 0.4  # only penalise cos>0.6
+            novelty = 0.6 * novelty_word + 0.4 * max(0.0, min(1.0, novelty_sem))
+            wc = len((thought or "").split())
+            reach = 1.0 if 12 <= wc <= 400 else (0.5 if 6 <= wc <= 700 else 0.2)
+            quality = max(0.0, min(1.0, 0.7 * novelty + 0.3 * reach))
+            if quality < float(settings.get("idle_thought_quality_min")):
+                return
+            from brain.neuron import reward_weight
+
+            persona = str(settings.get("persona_name", ""))
+            delta = (
+                float(settings.get("idle_thought_quality_base"))
+                * quality
+                * reward_weight(persona, "novelty")
+                * float(settings.get("emotional_reactivity_scale"))
+            )
+            self._bus.neuromod.add("DA", delta)
+
+    def _effective_idle_seconds(self) -> float:
+        """Seconds since the user was last active. Uses OS HID idle when available (macOS) and
+        a conversation-idle fallback (now − last turn start) otherwise — get_idle_seconds()
+        returns 0.0 on Linux, which would silently disable idle-gated cognition on the hosted
+        instance. max() is correct in all four cases (mac/linux × active/idle)."""
+        try:
+            os_idle = get_idle_seconds()
+        except Exception:
+            os_idle = 0.0
+        # convo_idle is only meaningful once a turn has actually stamped activity (pause()).
+        # Without a stamp, don't let an uninitialised timestamp fabricate idleness — trust OS.
+        last_active = float(getattr(self, "_last_user_activity_ts", 0.0))
+        if last_active <= 0.0:
+            return os_idle
+        return max(os_idle, max(0.0, time.time() - last_active))
+
+    def _tonic_idle_drive(self, chem: dict, idle: float, idle_threshold: float) -> float:
+        """Mind-wandering + finish-out pull that grows during deep idle (Stage 7). Independent of
+        the phasic worry/interest drive (which decays to ~0 at rest). Two terms, persona-scaled by
+        a chemistry-derived ruminative disposition (high ACh + low 5HT + CORT → chews more; Poet
+        most, Sage least), so deep idle itself can carry the entity over the rumination threshold."""
+        boredom = min(1.0, max(0.0, idle - idle_threshold) / max(1.0, float(settings.get("rum_idle_saturation_s") or 300.0)))
+        try:
+            max_adv = max((int(getattr(t, "advances", 0)) for t in self._open_threads), default=0)
+        except Exception:
+            max_adv = 0
+        unfinished = min(1.0, max_adv / max(1.0, float(settings.get("rum_unfinished_cap") or 4.0)))
+        tonic = (
+            float(settings.get("rum_w_boredom") or 0.0) * boredom
+            + float(settings.get("rum_w_unfinished") or 0.0) * unfinished
+        )
+        # Ruminative disposition from chemistry: focus (ACh) + can't-disengage (low 5HT) + stress.
+        # Floor at 0.8 so even the least-ruminative persona (high-5HT Sage) still crosses the
+        # threshold under SUSTAINED idle — divergence is in how SOON/OFTEN it ruminates, not
+        # whether it ever does.
+        ach = float(chem.get("ACh", 0.0))
+        sht = float(chem.get("5HT", 0.0))
+        cort = float(chem.get("CORT", 0.0))
+        disposition = max(0.8, min(1.6, 0.7 + 0.6 * ach + 0.5 * (0.5 - sht) + 0.4 * cort))
+        return tonic * disposition
 
     def _current_seed_thread(self):
         """The open thread rumination should work on next: FINISH-OUT — the
@@ -2143,6 +2244,22 @@ class DefaultModeNetwork:
                 metadata["conclusion_confidence"] = "confident"
             else:
                 metadata["advance_thread_id"] = seed_thread.id
+        # Stage 7 Gap 3: reward the EFFORT of deepening through skill packages — even when the
+        # episode doesn't conclude a thread (concluding already pays mastery via _resolve_thread,
+        # so gate it out to avoid double-counting). Scales with depth (steps) via the
+        # expectation-gap curve, persona-weighted by mastery valuation.
+        if steps > 0 and "conclude_thread_id" not in metadata:
+            with contextlib.suppress(Exception):
+                from brain.neuron import accomplishment_factor, reward_weight
+
+                _diff, _mod = accomplishment_factor(
+                    float(steps), float(settings.get("accomplishment_expected_low"))
+                )
+                _w = reward_weight(str(settings.get("persona_name", "")), "mastery")
+                _er = float(settings.get("emotional_reactivity_scale"))
+                self._bus.neuromod.add(
+                    "DA", float(settings.get("accomplishment_base")) * _diff * _mod * _w * _er
+                )
         await self._process_thought(
             final.strip(),
             metadata,
@@ -2659,7 +2776,14 @@ class DefaultModeNetwork:
             self._recent_frames.append(frame_sig)
         if angle:
             self._recent_angles.append(angle)
+            # Stage 7 Gap 1: score the DMN's own thought-sequence prediction against reality —
+            # did the angle we predicted last prefetch actually land? Self-verified correctness
+            # for idle cognition, no user. Do it BEFORE record() updates the n-grams.
+            self._reward_angle_prediction(self._seq_predictor._canonical(angle))
             self._seq_predictor.record(angle)
+        # Stage 7 Gap 2: reward a good idle thought (the idle analog of Stage-1 draft pride) —
+        # so the entity reinforces its own thinking while alone, not only thread conclusions.
+        self._reward_idle_thought_quality(thought_clean, max_overlap, max_cos)
         # Persist novelty memory so a restart doesn't resurface this idea.
         self._persist_novelty()
 
@@ -3342,6 +3466,13 @@ class DefaultModeNetwork:
         # Inject the sequence-predicted territory as a guaranteed extra query,
         # provided confidence is high enough and the topic isn't already covered.
         predicted_angle, seq_confidence = self._seq_predictor.predict()
+        if predicted_angle:
+            # Stash the live prediction so _process_thought can score it against the angle that
+            # actually lands next — self-verified correctness for the DMN's own thought-sequence
+            # model (Stage 7 Gap 1). Informativeness gates out constant-angle loops.
+            self._last_predicted_angle = self._seq_predictor._canonical(predicted_angle)
+            self._last_angle_confidence = float(seq_confidence)
+            self._last_angle_informativeness = self._seq_predictor.informativeness()
         if predicted_angle and seq_confidence >= self._seq_predictor.min_confidence:
             covered = {str(q.get("topic", "")).lower() for q in queries}
             if not any(predicted_angle in t or t in predicted_angle for t in covered):

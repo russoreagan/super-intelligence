@@ -704,7 +704,11 @@ class SkillSelector:
             base_idx = max(0, min(int(decision.get("base_idx", len(chain) - 1)), len(chain) - 1))
             if not skill or skill not in self._index._by_name:
                 # Fall back: pick a flavor-appropriate skill so the loop progresses
-                skill = self._fallback_skill(flavor)
+                skill = self._fallback_skill(flavor, self._blocked_category(chain))
+            elif self._skill_category(skill) == self._blocked_category(chain):
+                # Meta-cell ignored the category cap (it can't see the blocked category in its
+                # prompt, but a stale pick can still land here) — redirect to a fresh lens.
+                skill = self._fallback_skill(flavor, self._blocked_category(chain)) or skill
             if not skill:
                 break
 
@@ -744,14 +748,40 @@ class SkillSelector:
         "systems-leverage-analysis",
     )
 
-    def _fallback_skill(self, flavor: str) -> str | None:
+    # Allow a few skills from one category in a row, then force a move to a different lens.
+    _MAX_CONSEC_CATEGORY = 3
+
+    def _skill_category(self, name: str | None) -> str | None:
+        entry = self._index._by_name.get(name) if name else None
+        return entry.get("category") if entry else None
+
+    def _blocked_category(self, chain: list[dict]) -> str | None:
+        """If the last _MAX_CONSEC_CATEGORY applied skills are all the same category, return it
+        so the next pick is forced into a DIFFERENT lens — variety across categories, while still
+        allowing a short run within one category first."""
+        cats = [self._skill_category(c.get("skill")) for c in chain if c.get("skill")]
+        if len(cats) >= self._MAX_CONSEC_CATEGORY:
+            tail = cats[-self._MAX_CONSEC_CATEGORY :]
+            if tail[0] and all(c == tail[0] for c in tail):
+                return tail[0]
+        return None
+
+    def _fallback_skill(self, flavor: str, blocked_cat: str | None = None) -> str | None:
         """Pick a flavor-appropriate skill when the meta-cell names none, so the
-        rumination loop still progresses in the right register."""
+        rumination loop still progresses in the right register. Honors the category cap."""
         pool = self._ANXIOUS_SKILLS if flavor == "anxious" else self._ENGAGED_SKILLS
-        available = [n for n in pool if n in self._index._by_name]
+        available = [
+            n
+            for n in pool
+            if n in self._index._by_name and self._skill_category(n) != blocked_cat
+        ]
         if available:
             return random.choice(available)
-        tier2 = [s for s in self._index.skills if s["tier"] == 2 and not s["is_router"]]
+        tier2 = [
+            s
+            for s in self._index.skills
+            if s["tier"] == 2 and not s["is_router"] and s["category"] != blocked_cat
+        ]
         return random.choice(tier2)["name"] if tier2 else None
 
     async def _meta_decide(
@@ -763,12 +793,26 @@ class SkillSelector:
             f"[{i}] (skill={c['skill']}, mode={c['mode']}): {c['thought'][:160]}"
             for i, c in enumerate(recent)
         )
-        # Compact skill catalog (names + 1-line descriptions). Cap at all-non-routers.
-        skill_catalog = "\n".join(
-            f"- {s['name']}: {s['description'][:120]}"
+        # Compact skill catalog (names + 1-line descriptions). The list is alphabetical and the
+        # 8k-char budget only fits ~1/3 of skills, so a fixed prefix would hide the back half of
+        # the library (logic/systems/strategy/writing…) and bias rumination toward early-alphabet
+        # categories like analogy. SHUFFLE so each step samples variety across categories, and
+        # drop the over-used category (consecutive-category cap) to force a fresh lens.
+        blocked_cat = self._blocked_category(chain)
+        pool = [
+            s
             for s in self._index.skills
-            if not s["is_router"]
-        )[:8000]  # rough token cap
+            if not s["is_router"] and s["category"] != blocked_cat
+        ]
+        random.shuffle(pool)
+        lines, budget = [], 0
+        for s in pool:
+            line = f"- {s['name']}: {s['description'][:120]}"
+            if budget + len(line) + 1 > 8000:
+                break
+            lines.append(line)
+            budget += len(line) + 1
+        skill_catalog = "\n".join(lines)
         flavor_hint = (
             "This reflection is ANXIOUS (worried/brooding): lean toward 'reframe' and "
             "resolution/closure frameworks (decision, constraint, logic-consistency, "
