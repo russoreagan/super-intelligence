@@ -92,6 +92,14 @@ class Provisioner:
 
     @staticmethod
     def _default_cmd(port: int, env: dict) -> list[str]:
+        # BRAIN_TENANT_CMD overrides the spawn command (shlex-split; "{port}" is
+        # substituted). Used by integration tests and as an ops escape hatch;
+        # default is the real brain.
+        override = os.environ.get("BRAIN_TENANT_CMD", "").strip()
+        if override:
+            import shlex
+
+            return [part.replace("{port}", str(port)) for part in shlex.split(override)]
         return [sys.executable, "-m", "brain.run", *TENANT_ARGS]
 
     async def start(self) -> None:

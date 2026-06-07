@@ -204,7 +204,12 @@ async def _verify_access(token: str) -> dict[str, Any] | None:
         return None
     if r.status_code != 200:
         return None
-    return r.json()
+    data = r.json()
+    # GoTrue's /user returns the user object keyed "id"; the JWT path returns the
+    # standard "sub" claim. Normalize so callers can always read claims["sub"].
+    if isinstance(data, dict) and "sub" not in data and data.get("id"):
+        data["sub"] = data["id"]
+    return data
 
 
 async def authenticate(conn: Any) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:

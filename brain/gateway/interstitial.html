@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Elyceum — waking</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: radial-gradient(1200px 800px at 50% -10%, #1b1b22, #0c0c0f); color: #e7e7ea; }
+  .wrap { text-align: center; }
+  .ring { width: 46px; height: 46px; margin: 0 auto 20px; border-radius: 50%;
+    border: 3px solid #2a2a33; border-top-color: #6ee7a8; animation: spin 0.9s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  h1 { font-size: 18px; font-weight: 600; margin: 0 0 6px; }
+  p { color: #9a9aa5; font-size: 13px; margin: 0; }
+  .slow { color: #6b6b76; font-size: 12px; margin-top: 14px; min-height: 16px; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="ring"></div>
+    <h1>Waking your brain…</h1>
+    <p>Booting your private instance. This can take up to a minute on a cold start.</p>
+    <p class="slow" id="slow"></p>
+  </div>
+<script>
+  let tries = 0;
+  async function poll() {
+    tries++;
+    if (tries === 12) document.getElementById("slow").textContent = "Still warming up — loading models…";
+    if (tries === 30) document.getElementById("slow").textContent = "Taking longer than usual; hang tight.";
+    try {
+      const r = await fetch("/__brain_status", { headers: { accept: "application/json" } });
+      const d = await r.json();
+      if (d.ready) { location.reload(); return; }
+    } catch (e) { /* keep polling */ }
+    setTimeout(poll, 1500);
+  }
+  poll();
+</script>
+</body>
+</html>
