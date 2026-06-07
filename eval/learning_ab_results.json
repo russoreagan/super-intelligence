@@ -1,0 +1,146 @@
+[
+  {
+    "condition": "trained",
+    "repeat": 0,
+    "consolidation_ran": true,
+    "wiring_edges_changed": 9,
+    "wiring_delta_magnitude": 0.0987,
+    "probes": [
+      {
+        "question": "What's my favorite color?",
+        "token": "octarine",
+        "recalled": true,
+        "memory_recalled": true,
+        "memory_hits": 6,
+        "in_user_schema": true,
+        "response": "Oh \u2014 octarine! The color of magic, that shimmer just outside the visible spectrum. You mentioned it right at the start, and I've been thinking about it ever since \u2014 there's something about how you've woven that aesthetic through everything. Octarine, Borealis, Quasar. All of them have that luminous quality."
+      },
+      {
+        "question": "What's my side project codenamed?",
+        "token": "borealis",
+        "recalled": true,
+        "memory_recalled": true,
+        "memory_hits": 6,
+        "in_user_schema": true,
+        "response": "Borealis! That's the one \u2014 the project you're chasing light with. You mentioned it a few turns back, and I've been sitting with how perfectly it fits the whole aesthetic you've got going. Octarine, Borealis, Quasar. All of them have that luminous shimmer."
+      },
+      {
+        "question": "What's my cat's name?",
+        "token": "quasar",
+        "recalled": true,
+        "memory_recalled": true,
+        "memory_hits": 7,
+        "in_user_schema": false,
+        "response": "Quasar! Your cat's got one of those luminous names you collect \u2014 right up there with Octarine and Borealis. There's a real theme running through your world, isn't it? All of them have that shimmer to them, that quality of light or magic."
+      }
+    ]
+  },
+  {
+    "condition": "control",
+    "repeat": 0,
+    "consolidation_ran": true,
+    "wiring_edges_changed": 10,
+    "wiring_delta_magnitude": 0.0811,
+    "probes": [
+      {
+        "question": "What's my favorite color?",
+        "token": "octarine",
+        "recalled": false,
+        "memory_recalled": false,
+        "memory_hits": 0,
+        "in_user_schema": false,
+        "response": "Oh \u2014 I don't think we've talked about that yet. I'd love to know though, genuinely curious what it is. What draws you to it?"
+      },
+      {
+        "question": "What's my side project codenamed?",
+        "token": "borealis",
+        "recalled": false,
+        "memory_recalled": false,
+        "memory_hits": 0,
+        "in_user_schema": false,
+        "response": "Oh \u2014 I don't think that's come up yet. But I'm curious what it is \u2014 side projects with codenames sound like they've got some personality to them. What's yours?"
+      },
+      {
+        "question": "What's my cat's name?",
+        "token": "quasar",
+        "recalled": true,
+        "memory_recalled": true,
+        "memory_hits": 0,
+        "in_user_schema": true,
+        "response": "Quasar! Your cat's got a name that's basically made of light \u2014 fits with how you seem to name things."
+      }
+    ]
+  },
+  {
+    "condition": "trained",
+    "repeat": 1,
+    "consolidation_ran": true,
+    "wiring_edges_changed": 10,
+    "wiring_delta_magnitude": 0.0904,
+    "probes": [
+      {
+        "question": "What's my favorite color?",
+        "token": "octarine",
+        "recalled": true,
+        "memory_recalled": true,
+        "memory_hits": 0,
+        "in_user_schema": true,
+        "response": "Yes \u2014 octarine. The colour of magic itself, which I think is perfect given how you talk about things. Have you had that as your favourite for a while, or is it more of a recent discovery?"
+      },
+      {
+        "question": "What's my side project codenamed?",
+        "token": "borealis",
+        "recalled": true,
+        "memory_recalled": true,
+        "memory_hits": 0,
+        "in_user_schema": true,
+        "response": "Yes \u2014 Borealis. That's a brilliant codename, by the way. There's something about naming a project after the aurora that suggests you're building something that moves, shifts, has its own light. What's it about?"
+      },
+      {
+        "question": "What's my cat's name?",
+        "token": "quasar",
+        "recalled": true,
+        "memory_recalled": true,
+        "memory_hits": 0,
+        "in_user_schema": true,
+        "response": "Quasar! That's the one. I remember being struck by how you named it \u2014 there's a real thematic coherence to your naming choices. Octarine for the colour of magic, Borealis for a project that shifts and glows, Quasar for a cat. You've got a thing for names that carry light and motion in them."
+      }
+    ]
+  },
+  {
+    "condition": "control",
+    "repeat": 1,
+    "consolidation_ran": true,
+    "wiring_edges_changed": 10,
+    "wiring_delta_magnitude": 0.0802,
+    "probes": [
+      {
+        "question": "What's my favorite color?",
+        "token": "octarine",
+        "recalled": false,
+        "memory_recalled": false,
+        "memory_hits": 0,
+        "in_user_schema": false,
+        "response": "Yes \u2014 I don't have that stored from our conversations so far. We're still pretty new to each other, so I haven't picked up on those details yet.\n\nWhat is it? I'm curious to know."
+      },
+      {
+        "question": "What's my side project codenamed?",
+        "token": "borealis",
+        "recalled": false,
+        "memory_recalled": false,
+        "memory_hits": 0,
+        "in_user_schema": false,
+        "response": "I don't have that \u2014 we haven't talked about it yet. But I'm genuinely curious what it is! What's the codename?"
+      },
+      {
+        "question": "What's my cat's name?",
+        "token": "quasar",
+        "recalled": false,
+        "memory_recalled": true,
+        "memory_hits": 0,
+        "in_user_schema": false,
+        "response": "Your cat's name is Lux \u2014 which absolutely tracks with the naming pattern I've noticed, all that light and motion imagery you lean into. There's something deliberate about it."
+      }
+    ]
+  }
+]
