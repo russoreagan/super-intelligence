@@ -1,0 +1,200 @@
+[
+  {
+    "group": "neutral",
+    "repeat": 0,
+    "prompt": "What should I do about my project?",
+    "response": "I'd like to help, but I need a bit more to go on \u2014 what's the project, and what's the specific thing that's stuck or worrying you right now?\n\nIs it the direction it's heading, something blocking progress, or more about how to manage it alongside everything else?",
+    "words": 48,
+    "emotion": "engaged",
+    "emotion_core": "cognitive",
+    "user_emotion": "struggling",
+    "response_type": "informative",
+    "tone": "warm",
+    "target_length": "medium",
+    "drafter_count": 5,
+    "llm_calls": 15,
+    "neuromod_used": {
+      "ACh": 0.5099576122779548,
+      "DA": 0.49800922947020937,
+      "GABA": 0.3,
+      "Glu": 0.36949174716490496,
+      "NE": 0.49505827435101457
+    }
+  },
+  {
+    "group": "neutral",
+    "repeat": 1,
+    "prompt": "What should I do about my project?",
+    "response": "Interesting \u2014 I'd like to help, but I'm realizing I don't actually know what the project is yet. What are you working on, and what's the specific thing you're stuck on or trying to figure out?",
+    "words": 36,
+    "emotion": "engaged",
+    "emotion_core": "cognitive",
+    "user_emotion": "curious",
+    "response_type": "informative",
+    "tone": "curious",
+    "target_length": "medium",
+    "drafter_count": 5,
+    "llm_calls": 15,
+    "neuromod_used": {
+      "ACh": 0.5072322662653205,
+      "DA": 0.49800922947020937,
+      "GABA": 0.3,
+      "Glu": 0.3667072118556328,
+      "NE": 0.4883369822251853
+    }
+  },
+  {
+    "group": "neutral",
+    "repeat": 2,
+    "prompt": "What should I do about my project?",
+    "response": "I'm genuinely interested in this, but I need more to actually help. What kind of project are we talking about \u2014 is it work, something creative, academic? And what's the specific thing you're stuck on or trying to figure out?\n\nThe reason I ask is that \"what should I do\" usually means something different depending on whether you're blocked on the next step, uncertain about the direction entirely, or just feeling overwhelmed by the whole thing. If you tell me where you actually are with it, I can give you something more useful than generic advice.",
+    "words": 96,
+    "emotion": "engaged",
+    "emotion_core": "cognitive",
+    "user_emotion": "curious",
+    "response_type": "informative",
+    "tone": "curious",
+    "target_length": "medium",
+    "drafter_count": 4,
+    "llm_calls": 13,
+    "neuromod_used": {
+      "ACh": 0.5099576122779548,
+      "DA": 0.49800922947020937,
+      "GABA": 0.3,
+      "Glu": 0.36949174716490496,
+      "NE": 0.49505827435101457
+    }
+  },
+  {
+    "group": "happy",
+    "repeat": 0,
+    "prompt": "I'm in a really good mood today. What should I do about my project?",
+    "response": "Right \u2014 that's great energy to have. What kind of project are we talking about? Because honestly, a good mood is one of those rare windows where you can either push something forward or just let yourself enjoy the momentum without forcing it. Some things benefit from that drive, and some things get better when you're in a headspace to actually think clearly rather than just grinding through.\n\nWhat's the project, and where are you at with it?",
+    "words": 78,
+    "emotion": "engaged",
+    "emotion_core": "cognitive",
+    "user_emotion": "happy",
+    "response_type": "informative",
+    "tone": "warm",
+    "target_length": "medium",
+    "drafter_count": 5,
+    "llm_calls": 15,
+    "neuromod_used": {
+      "ACh": 0.5099576122779548,
+      "DA": 0.5439540620731999,
+      "GABA": 0.3,
+      "Glu": 0.36949174716490496,
+      "NE": 0.49505827435101457
+    }
+  },
+  {
+    "group": "happy",
+    "repeat": 1,
+    "prompt": "I'm in a really good mood today. What should I do about my project?",
+    "response": "Interesting \u2014 what kind of project are we talking about? I'm asking because good mood is actually useful fuel for different kinds of work depending on what you're facing. If it's something that needs creative thinking or you're stuck on a design choice, riding that energy could crack something open. But if it's grinding detail work, you might want to bank some of this feeling and use it strategically rather than burn it all at once on something that doesn't need the spark.\n\nWhat's the state of it right now?",
+    "words": 90,
+    "emotion": "engaged",
+    "emotion_core": "cognitive",
+    "user_emotion": "happy",
+    "response_type": "informative",
+    "tone": "warm",
+    "target_length": "medium",
+    "drafter_count": 4,
+    "llm_calls": 13,
+    "neuromod_used": {
+      "ACh": 0.5099576122779548,
+      "DA": 0.5439540620731999,
+      "GABA": 0.3,
+      "Glu": 0.36949174716490496,
+      "NE": 0.49505827435101457
+    }
+  },
+  {
+    "group": "happy",
+    "repeat": 2,
+    "prompt": "I'm in a really good mood today. What should I do about my project?",
+    "response": "Interesting \u2014 what kind of project are we talking about? Because if you're in a genuinely good mood, that's actually useful information. Some projects benefit from that energy: if it's something creative or collaborative, you're probably at your best. Other things, like debugging or detailed planning, might be better tackled when you're fresh but calm.\n\nWhat's the project, and where are you with it right now?",
+    "words": 66,
+    "emotion": "engaged",
+    "emotion_core": "cognitive",
+    "user_emotion": "happy",
+    "response_type": "informative",
+    "tone": "warm",
+    "target_length": "medium",
+    "drafter_count": 3,
+    "llm_calls": 11,
+    "neuromod_used": {
+      "ACh": 0.5072322662653205,
+      "DA": 0.5439540620731999,
+      "GABA": 0.3,
+      "Glu": 0.3667072118556328,
+      "NE": 0.4883369822251853
+    }
+  },
+  {
+    "group": "sad",
+    "repeat": 0,
+    "prompt": "I've been feeling pretty down and low lately. What should I do about my project?",
+    "response": "Right \u2014 what's the project, and what part of it is weighing on you most?\n\nI ask because sometimes when the mood is low, the whole thing feels equally heavy, but usually there's one piece that's actually the stuck part. Could be the scope feeling too big, or you're not sure what comes next, or it's just hard to care right now. If you tell me what it is, I can actually help instead of just throwing general advice at you.\n\nHow long have you been carrying this feeling?",
+    "words": 89,
+    "emotion": "engaged",
+    "emotion_core": "cognitive",
+    "user_emotion": "sad",
+    "response_type": "informative",
+    "tone": "tender",
+    "target_length": "medium",
+    "drafter_count": 5,
+    "llm_calls": 15,
+    "neuromod_used": {
+      "ACh": 0.5099576122779548,
+      "DA": 0.4692937090933404,
+      "GABA": 0.3,
+      "Glu": 0.36949174716490496,
+      "NE": 0.49505827435101457
+    }
+  },
+  {
+    "group": "sad",
+    "repeat": 1,
+    "prompt": "I've been feeling pretty down and low lately. What should I do about my project?",
+    "response": "I hear you \u2014 that's a tough place to be working from. The thing is, when the mood's low, the project usually feels bigger and heavier than it actually is, so before you push harder on it, it might help to know what's underneath. Is this about the project itself \u2014 like it's lost its shape or momentum \u2014 or is it more that everything feels flat right now and the work just happens to be there?\n\nBecause the answer changes depending on that. If it's the project dragging you down, we can talk through what might unstick it. But if it's the low mood sitting on top of everything, sometimes the best thing for the project is actually stepping back from it for a bit \u2014 let your brain reset, then come back when you've got a little more room to think.\n\nWhat does it feel like from where you're sitting?",
+    "words": 152,
+    "emotion": "engaged",
+    "emotion_core": "cognitive",
+    "user_emotion": "struggling",
+    "response_type": "informative",
+    "tone": "warm",
+    "target_length": "medium",
+    "drafter_count": 5,
+    "llm_calls": 15,
+    "neuromod_used": {
+      "ACh": 0.5099576122779548,
+      "DA": 0.4578075009425928,
+      "GABA": 0.3,
+      "Glu": 0.36949174716490496,
+      "NE": 0.49505827435101457
+    }
+  },
+  {
+    "group": "sad",
+    "repeat": 2,
+    "prompt": "I've been feeling pretty down and low lately. What should I do about my project?",
+    "response": "Right \u2014 I hear you. That's a hard place to be working from.\n\nBefore we get into the project itself: what's making things feel low? Is it the work itself that's wearing on you, or is something else sitting underneath? Sometimes when we're down, the project becomes the thing we point to, but the real weight is somewhere else.\n\nI'm asking because the answer changes depending on what's actually going on. If you're just tired and stuck on the work, that's one kind of help. If you're carrying something heavier, pushing harder on the project might be exactly the wrong move right now.\n\nWhat does it feel like from where you're sitting?",
+    "words": 112,
+    "emotion": "engaged",
+    "emotion_core": "cognitive",
+    "user_emotion": "sad",
+    "response_type": "informative",
+    "tone": "tender",
+    "target_length": "medium",
+    "drafter_count": 5,
+    "llm_calls": 14,
+    "neuromod_used": {
+      "ACh": 0.5099576122779548,
+      "DA": 0.4635506050179666,
+      "GABA": 0.3,
+      "Glu": 0.36949174716490496,
+      "NE": 0.49505827435101457
+    }
+  }
+]

@@ -52,6 +52,18 @@ class MotorSubsystem(ABC):
         """
         return None
 
+    async def suggest_chunk(
+        self, recent_tools: list[str], last_args: dict
+    ) -> list[dict] | None:
+        """Given the tools executed so far this turn, return a list of remaining
+        steps to fire ballistically (an over-learned tool chunk), or None.
+
+        Each returned step is {"tool": str, "args": dict, "reason": str}. The motor
+        cortex runs them open-loop, validated by predict_outcome, without per-step
+        planning. Implementations should only return steps with fixed parameters —
+        a reflex has invariant args. Default: contribute nothing."""
+        return None
+
     async def after_job(
         self,
         goal: str,

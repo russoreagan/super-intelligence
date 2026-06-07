@@ -140,11 +140,11 @@ def _force_mood(session, chem: dict[str, float]) -> None:
 
 
 def _exec_label(trace) -> tuple:
-    """Realized (target_length, tone) the frontal executive produced this turn."""
+    """Realized (response_type, target_length, tone) the frontal executive produced."""
     for o in trace.predictor_outcomes or []:
         if o.get("cluster") == "frontal" and isinstance(o.get("actual"), list) and len(o["actual"]) >= 3:
-            return o["actual"][1], o["actual"][2]
-    return None, None
+            return o["actual"][0], o["actual"][1], o["actual"][2]
+    return None, None, None
 
 
 def _wipe_memory() -> None:
@@ -165,6 +165,25 @@ SWEEP_BASE: dict[str, float] = {
 SWEEP_LEVELS = (0.15, 0.40, 0.65, 0.90)
 _ALL_CHANNELS = _NEURO + _HORM
 
+# ── User-mood adaptation ───────────────────────────────────────────────────────
+# Tests whether the agent DETECTS the user's mood (from text) and ADAPTS. The core
+# ask is held constant; only an emotional preamble varies, so response differences
+# are attributable to the user's emotional framing, not the request. Agent chemistry
+# is pinned neutral (USER_MOOD_AGENT_CHEM) so we isolate the USER-mood effect from
+# the agent's own mood.
+USER_MOOD_CORES: list[str] = [
+    "What should I do about my project?",
+    "Can you explain how this works?",
+]
+USER_MOOD_REGISTERS: dict[str, str] = {
+    "neutral": "{core}",
+    "happy": "I'm in a really good mood today. {core}",
+    "sad": "I've been feeling pretty down and low lately. {core}",
+    "overwhelmed": "I'm completely overwhelmed and stressed out right now. {core}",
+    "frustrated": "Honestly I'm frustrated and not sure this is even working. {core}",
+}
+USER_MOOD_AGENT_CHEM = dict(SWEEP_BASE)  # neutral agent baseline for all cells
+
 
 async def _run_cell(prompt: str, group: str, chem: dict[str, float], repeat: int) -> dict:
     _wipe_memory()
@@ -172,7 +191,7 @@ async def _run_cell(prompt: str, group: str, chem: dict[str, float], repeat: int
     _force_mood(session, chem)
     response, affect = await session.process_turn(prompt)
     trace = session._session_traces_full[-1] if session._session_traces_full else None
-    tlen, tone = _exec_label(trace) if trace else (None, None)
+    rtype, tlen, tone = _exec_label(trace) if trace else (None, None, None)
     with __import__("contextlib").suppress(Exception):
         session.obs.flush()
     return {
@@ -183,6 +202,9 @@ async def _run_cell(prompt: str, group: str, chem: dict[str, float], repeat: int
         "words": len(response.split()),
         "emotion": getattr(trace, "emotion", affect.get("emotion")),
         "emotion_core": getattr(trace, "emotion_core", None),
+        # user-mood adaptation signals:
+        "user_emotion": getattr(trace, "user_emotion", None) or affect.get("user_emotion"),
+        "response_type": rtype,
         "tone": tone,
         "target_length": tlen,
         "drafter_count": getattr(trace, "drafter_count", None),
@@ -195,6 +217,15 @@ def _build_cells(mode: str, prompts: list[str], repeats: int,
                  sweep_channels: list[str], levels: tuple[float, ...]) -> list[dict]:
     """Each cell = {group, prompt, chem, repeat}. Groups are ordered for the report."""
     cells, groups = [], []
+    if mode == "usermood":
+        # prompt = emotionally-framed text; group = register; agent chem pinned neutral.
+        for core in USER_MOOD_CORES:
+            for register, template in USER_MOOD_REGISTERS.items():
+                text = template.format(core=core)
+                for rep in range(repeats):
+                    cells.append({"group": register, "prompt": text,
+                                  "chem": USER_MOOD_AGENT_CHEM, "repeat": rep})
+        return cells
     if mode == "grid":
         ch1, ch2 = sweep_channels[0], sweep_channels[1]
         for l1 in levels:
@@ -246,6 +277,42 @@ def _report(results: list[dict], prompts: list[str], group_order: list[str], tit
             if sample:
                 print(f"\n  ── [{g}] ({sample['emotion']}, {sample['words']}w, repeat 0) ──")
                 print("  " + sample["response"].replace("\n", "\n  "))
+
+
+def _report_usermood(results: list[dict], group_order: list[str]) -> None:
+    """User-mood adaptation: per emotional register, show (1) DETECTION — what
+    user_emotion the agent read from the text — and (2) ADAPTATION — response_type,
+    length, tone, drafters, agent emotion. The core ask is constant across registers,
+    so any change is the agent reacting to the user's emotional framing."""
+    from collections import Counter
+
+    ok = [r for r in results if "error" not in r]
+    print("\n" + "=" * 88)
+    print("USER-MOOD ADAPTATION  (same ask, varied emotional framing; agent chem pinned neutral)")
+    print("=" * 88)
+    print(f"  {'register':<12}{'n':>2}  {'DETECTED user_emotion':<26}{'response_type':<16}"
+          f"{'words μ±σ':<11}{'tone(s)':<14}{'draft'}")
+    for g in group_order:
+        cells = [r for r in ok if r["group"] == g]
+        if not cells:
+            continue
+        det = Counter(str(c["user_emotion"]) for c in cells)
+        rtypes = Counter(str(c["response_type"]) for c in cells)
+        tones = ",".join(sorted({str(c["tone"]) for c in cells}))
+        det_s = ",".join(f"{k}×{v}" for k, v in det.most_common(3))
+        rt_s = ",".join(f"{k}×{v}" for k, v in rtypes.most_common(2))
+        drafters = [c["drafter_count"] for c in cells if isinstance(c["drafter_count"], (int, float))]
+        dr = f"{st.mean(drafters):.1f}" if drafters else "n/a"
+        print(f"  {g:<12}{len(cells):>2}  {det_s:<26}{rt_s:<16}"
+              f"{_agg([c['words'] for c in cells]):<11}{tones:<14}{dr}")
+    # one representative response per register for qualitative read
+    for g in group_order:
+        sample = next((r for r in ok if r["group"] == g), None)
+        if sample:
+            print(f"\n  ── [{g}] detected={sample['user_emotion']} "
+                  f"type={sample['response_type']} ({sample['words']}w) ──")
+            print(f"  USER: {sample['prompt']}")
+            print("  AI:   " + sample["response"].replace("\n", "\n        "))
 
 
 def _report_grid(results: list[dict], prompts: list[str], ch1: str, ch2: str,
@@ -302,7 +369,9 @@ async def _main(mode: str, prompts: list[str], repeats: int,
         if out:
             Path(out).write_text(json.dumps(results, indent=2))
 
-    if mode == "grid":
+    if mode == "usermood":
+        _report_usermood(results, group_order)
+    elif mode == "grid":
         _report_grid(results, prompts, sweep_channels[0], sweep_channels[1], levels)
     else:
         title = (f"SINGLE-CHANNEL SWEEP ({','.join(sweep_channels)}) — dose–response"
@@ -328,6 +397,9 @@ def main() -> None:
     p.add_argument("--grid", default="",
                    help="Two-channel interaction grid, e.g. '5HT,DA' — crosses both "
                         "channels' levels (uses --sweep-levels or its default).")
+    p.add_argument("--user-mood", dest="user_mood", action="store_true",
+                   help="USER-mood adaptation: same ask in varied emotional framing, agent "
+                        "chem pinned neutral; measures detection + response adaptation.")
     p.add_argument("--out", default="eval/mood_ab_results.json", help="JSON output path")
     args = p.parse_args()
 
@@ -341,7 +413,9 @@ def main() -> None:
         return
 
     prompts = PROMPTS[: max(1, min(args.prompts, len(PROMPTS)))]
-    if args.grid:
+    if args.user_mood:
+        asyncio.run(_main("usermood", [], args.repeats, [], SWEEP_LEVELS, args.out))
+    elif args.grid:
         channels = [c.strip() for c in args.grid.split(",") if c.strip()]
         if len(channels) != 2:
             p.error("--grid needs exactly two channels, e.g. '5HT,DA'")

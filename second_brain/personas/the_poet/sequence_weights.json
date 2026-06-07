@@ -1,0 +1,20 @@
+{
+  "history": [
+    "user-observation",
+    "tool-preparation",
+    "user-personal",
+    "emotional-exploration",
+    "user-emotional"
+  ],
+  "bigrams": {
+    "user-observation\u001ftool-preparation": 1,
+    "tool-preparation\u001fuser-personal": 1,
+    "user-personal\u001femotional-exploration": 1,
+    "emotional-exploration\u001fuser-emotional": 1
+  },
+  "trigrams": {
+    "user-observation\u001ftool-preparation\u001fuser-personal": 1,
+    "tool-preparation\u001fuser-personal\u001femotional-exploration": 1,
+    "user-personal\u001femotional-exploration\u001fuser-emotional": 1
+  }
+}

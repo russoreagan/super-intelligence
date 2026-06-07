@@ -39,6 +39,7 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 HTML_PATH = Path(__file__).parent / "index.html"
+LOGIN_HTML_PATH = Path(__file__).parent / "login.html"
 
 
 class UIServer:
@@ -109,7 +110,64 @@ class UIServer:
     def _build_app(self):
         app = FastAPI(docs_url=None, redoc_url=None)
 
-        from fastapi.responses import FileResponse
+        from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+
+        from brain.ui import auth as ui_auth
+
+        # ── Auth gate ─────────────────────────────────────────────────────────
+        # Nothing below /login is reachable without a valid Supabase session.
+        # Browser navigations bounce to /login; API calls get 401. Fail closed
+        # when Supabase isn't configured. Disable with BRAIN_AUTH_DISABLED=true.
+        @app.middleware("http")
+        async def _auth_gate(request: Request, call_next):
+            path = request.url.path
+            if ui_auth.is_disabled() or ui_auth.is_public_path(path):
+                return await call_next(request)
+            if not ui_auth.is_configured():
+                return ui_auth.config_error_response(request)
+            claims, refreshed = await ui_auth.authenticate(request)
+            if claims is None:
+                return ui_auth.unauthorized_response(request)
+            request.state.user = claims
+            response = await call_next(request)
+            if refreshed:
+                ui_auth.set_session_cookies(response, refreshed)
+            return response
+
+        @app.get("/login")
+        async def login_page():
+            return HTMLResponse(LOGIN_HTML_PATH.read_text(encoding="utf-8"))
+
+        @app.post("/auth/login")
+        async def auth_login(request: Request):
+            if not ui_auth.is_configured():
+                return JSONResponse(
+                    {"ok": False, "error": "Authentication is not configured."},
+                    status_code=503,
+                )
+            body = await request.json()
+            email = str(body.get("email", "")).strip()
+            password = str(body.get("password", ""))
+            if not email or not password:
+                return JSONResponse(
+                    {"ok": False, "error": "Email and password are required."},
+                    status_code=400,
+                )
+            session = await ui_auth.password_login(email, password)
+            if not session or not session.get("access_token"):
+                return JSONResponse(
+                    {"ok": False, "error": "Invalid email or password."},
+                    status_code=401,
+                )
+            resp = JSONResponse({"ok": True, "next": ui_auth.safe_next(body.get("next"))})
+            ui_auth.set_session_cookies(resp, session)
+            return resp
+
+        @app.post("/auth/logout")
+        async def auth_logout():
+            resp = JSONResponse({"ok": True})
+            ui_auth.clear_session_cookies(resp)
+            return resp
 
         @app.get("/health")
         async def health():
@@ -341,6 +399,16 @@ class UIServer:
 
         @app.websocket("/ws")
         async def ws_endpoint(websocket: WebSocket):
+            # Gate the socket with the same session cookies as the HTTP routes.
+            # Reject before accept() so an unauthenticated client never connects.
+            if not ui_auth.is_disabled():
+                if not ui_auth.is_configured():
+                    await websocket.close(code=1008)
+                    return
+                claims, _ = await ui_auth.authenticate(websocket)
+                if claims is None:
+                    await websocket.close(code=1008)
+                    return
             await websocket.accept()
             self._clients.add(websocket)
             logger.info("UI: client connected (%d total)", len(self._clients))

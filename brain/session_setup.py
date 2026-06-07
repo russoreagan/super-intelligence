@@ -269,7 +269,7 @@ class _SetupMixin:
             )
             return
 
-        from brain.clusters.cloud_executor import CloudExecutor
+        from brain.clusters.chunk_memory import ChunkMemorySubsystem
         from brain.clusters.follow_through import FollowThrough, ResultReporter
         from brain.clusters.frontal_task import FrontalTaskSubsystem, PendingTask
         from brain.clusters.lobe_bridge import LobeBridge
@@ -282,9 +282,30 @@ class _SetupMixin:
         _motor_cmds_raw = os.environ.get("BRAIN_MOTOR_COMMANDS", "")
         _motor_cmds = set(_motor_cmds_raw.split(":")) if _motor_cmds_raw else None
 
-        cloud = CloudExecutor(self.bus, schema_store=self.hippocampus._schema)
-        if not _motor_paths and cloud._trusted_dirs:
-            _motor_paths = cloud._trusted_dirs[:]
+        # Executor selection: "cma" → Anthropic Managed Agents (server-side, no
+        # local CLI); anything else → the local Claude CLI subprocess (default,
+        # unchanged). BRAIN_EXECUTOR env overrides the `brain_executor` setting.
+        from brain.settings import settings as _settings
+
+        _executor_kind = (
+            os.environ.get("BRAIN_EXECUTOR", "").strip().lower()
+            or str(_settings.get("brain_executor") or "local").lower()
+        )
+        if _executor_kind == "cma":
+            from brain.clusters.cma_executor import CMAExecutor
+
+            cloud = CMAExecutor(self.bus, schema_store=self.hippocampus._schema)
+            logger.info("Motor cortex: using Managed Agents executor (CMA)")
+        else:
+            from brain.clusters.cloud_executor import CloudExecutor
+
+            cloud = CloudExecutor(self.bus, schema_store=self.hippocampus._schema)
+
+        # CloudExecutor inherits local trusted dirs from Claude Desktop; CMAExecutor
+        # runs in a cloud sandbox and has none — guard the attribute access.
+        _trusted_dirs = getattr(cloud, "_trusted_dirs", None)
+        if not _motor_paths and _trusted_dirs:
+            _motor_paths = _trusted_dirs[:]
             logger.info(
                 "Motor cortex: inheriting trusted dirs from Claude Desktop: %s", _motor_paths
             )
@@ -317,6 +338,7 @@ class _SetupMixin:
         self.motor.set_pending_task(self._pending_task)
         self.frontal.register_subsystem(FrontalTaskSubsystem(self._pending_task))
         self.motor.register_subsystem(MuscleMemorySubsystem())
+        self.motor.register_subsystem(ChunkMemorySubsystem())
         self._follow_through = FollowThrough(self.router)
         self._result_reporter = ResultReporter(self.router)
         self._task_queue = PersistentTaskQueue()

@@ -570,6 +570,29 @@ DEFAULTS: dict[str, float | int | str] = {
     # real-time websocket stream
     "trading_stream_enabled": 0,  # no longer used for auto-start (stream is manually triggered)
     "trading_alert_cooldown_min": 30,  # min minutes before same trigger can re-fire
+    # ── Section: Cloud-action executor (CloudExecutor vs Managed Agents) ───────
+    # brain_executor: which backend runs cloud_action tasks. "local" = the local
+    #   Claude CLI subprocess (CloudExecutor, default — unchanged behavior);
+    #   "cma" = Anthropic Managed Agents (CMAExecutor, server-side, no local CLI).
+    #   Overridable per-process via the BRAIN_EXECUTOR env var.
+    "brain_executor": "local",
+    # cma_enabled: belt-and-suspenders flag (reserved); selection is driven by
+    #   brain_executor / BRAIN_EXECUTOR. 0 = off.
+    "cma_enabled": 0,
+    # cma_model: model id for the Managed-Agents agents (read + write).
+    "cma_model": "claude-opus-4-6",
+    # cma_networking: cloud sandbox egress — "unrestricted" (needed for web +
+    #   remote MCP) or "limited".
+    "cma_networking": "unrestricted",
+    # cma_task_timeout_s: wall-clock cap on one cloud_action (mirrors the local
+    #   executor's SUBPROCESS_TIMEOUT). Primary cost/runaway guard since the SDK
+    #   has no managed-agents task budget.
+    "cma_task_timeout_s": 120.0,
+    # cma_session_warm_reuse: 1 = reuse one warm session per process across
+    #   calls (pay cold-start once); 0 = fresh session per task (debug).
+    "cma_session_warm_reuse": 1,
+    # cma_max_reconnects: bounded SSE reconnect-and-replay attempts on stream drop.
+    "cma_max_reconnects": 3,
 }
 
 

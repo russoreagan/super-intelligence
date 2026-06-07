@@ -9,6 +9,7 @@ v0.2 feature.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import re
@@ -218,6 +219,9 @@ class SleepConsolidation:
 
         # 4. Angle synonym pass — infrequent; gates on history size + time since last run.
         await self.angle_synonym_pass(session_id)
+
+        # 5. Chunk mining — consolidate recurring tool sub-sequences into motor chunks.
+        await self.chunk_mining_pass(session_id)
 
         elapsed = time.time() - start
         logger.info("[Memory consolidation] Done in %.2fs", elapsed)
@@ -916,5 +920,76 @@ class SleepConsolidation:
             logger.warning(
                 "[AngleSynonyms] Could not update sequence_weights.json timestamp: %s", e
             )
+
+    # ── Chunk mining pass ────────────────────────────────────────────────────
+
+    _CHUNK_MIN_JOBS = 8  # job records before the first mining pass
+    _CHUNK_MIN_INTERVAL_HOURS = 12  # minimum time between passes
+
+    async def chunk_mining_pass(self, session_id: str) -> None:
+        """Mine recurring tool sub-sequences from second_brain/jobs/*.json into
+        second_brain/chunks.json (consumed at runtime by ChunkMemorySubsystem).
+
+        Pure n-gram counting — no LLM call. Gated on having enough jobs and on
+        time since the last pass; recomputed from scratch over the current jobs
+        window so chunks that stop recurring naturally demote.
+        """
+        import os
+
+        from brain.clusters.chunk_memory import _CHUNKS_PATH, mine_chunks
+        from brain.clusters.job_store import JOBS_DIR
+
+        chunks_path = str(_CHUNKS_PATH)
+
+        # Interval gate.
+        last_ts = 0.0
+        try:
+            if os.path.exists(chunks_path):
+                with open(chunks_path) as f:
+                    prev = json.load(f)
+                last_ts = float(prev.get("ts_epoch", 0))
+        except Exception:
+            last_ts = 0.0
+        now = time.time()
+        if last_ts and now - last_ts < self._CHUNK_MIN_INTERVAL_HOURS * 3600:
+            logger.debug(
+                "[ChunkMining] Last pass was %.1f h ago — skipping", (now - last_ts) / 3600
+            )
+            return
+
+        # Load job records.
+        jobs: list[dict] = []
+        try:
+            for path in JOBS_DIR.glob("*.json"):
+                with contextlib.suppress(Exception), open(path) as f:
+                    jobs.append(json.load(f))
+        except Exception as e:
+            logger.warning("[ChunkMining] Could not read jobs dir: %s", e)
+            return
+
+        if len(jobs) < self._CHUNK_MIN_JOBS:
+            logger.debug(
+                "[ChunkMining] Not enough jobs (%d/%d) — skipping",
+                len(jobs),
+                self._CHUNK_MIN_JOBS,
+            )
+            return
+
+        data = mine_chunks(jobs)
+        data["ts_epoch"] = now
+        n_active = sum(1 for c in data["chunks"].values() if c.get("state") == "active")
+        try:
+            tmp = chunks_path + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(data, f, indent=2)
+            os.replace(tmp, chunks_path)
+            logger.info(
+                "[ChunkMining] Wrote %d chunks (%d active) from %d jobs",
+                len(data["chunks"]),
+                n_active,
+                len(jobs),
+            )
+        except Exception as e:
+            logger.warning("[ChunkMining] Could not write chunks.json: %s", e)
 
     # ── Hebbian pass ─────────────────────────────────────────────────────────

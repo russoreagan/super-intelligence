@@ -590,6 +590,13 @@ class MotorCortexCluster:
             # Result / fallback / safety telemetry switches.
             self._fire_outcome_switches(output, tool, chem)
 
+            # Ballistic chunk firing: if this tool completed the prefix of an
+            # over-learned routine, fire its fixed-parameter tail without planning.
+            if task_goal:
+                last_result = await self._maybe_fire_chunk(
+                    steps_taken, results_log, last_result, turn_id, chem, budget
+                )
+
             if not task_goal:
                 # Reactive mode: one tool per turn
                 break
@@ -1358,6 +1365,99 @@ class MotorCortexCluster:
         raw = await self._verifier.call([{"role": "user", "content": prompt}])
         result = safe_json_parse(raw) or {}
         return bool(result.get("approved", True)), result.get("issues", "")
+
+    async def _run_tool(
+        self, tool: str, args: dict, reason: str, turn_id: str
+    ) -> tuple[str, dict]:
+        """Dispatch a single tool call and return (output, last_result).
+        Shared by ballistic chunk firing; mirrors the main loop's dispatch branch."""
+        if tool == "cloud_action":
+            last_result = await self._dispatch_cloud(args, turn_id)
+            output = (last_result or {}).get("output", "")
+            return output, (last_result or {})
+        if tool in ("recall_memory", "analyze_image"):
+            output = await self._dispatch_lobe(tool, args, turn_id)
+        else:
+            output = await self._dispatch(tool, args)
+        last_result = {
+            "tool": tool,
+            "args": args,
+            "reason": reason,
+            "output": output,
+            "success": not output.startswith("[error]") and not output.startswith("[blocked]"),
+        }
+        await self._bus.publish_dict("motor.result", last_result, source=CLUSTER)
+        return output, last_result
+
+    async def _maybe_fire_chunk(
+        self,
+        steps_taken: list[dict],
+        results_log: list[str],
+        last_result: dict | None,
+        turn_id: str,
+        chem: dict[str, float],
+        budget: int,
+    ) -> dict | None:
+        """Fire an over-learned tool chunk's invariant tail without per-step planning.
+
+        Gated on ACh: high curiosity/novelty suppresses reflexive firing and favours
+        fresh planning (the brainstem/chemistry is the gate; the motor layer owns the
+        skill content). Validates each fired step against subsystem forward models and
+        stops — suppressing the chunk for the session — on the first divergence.
+        """
+        # ACh gate — when curious, deliberate rather than run on reflex.
+        if float(chem.get("ACh", 0.3)) >= 0.6:
+            return last_result
+
+        # Subsystems that can propose chunks (muscle memory returns None by default).
+        recent_tools = [s.get("tool") for s in steps_taken]
+        last_args = steps_taken[-1].get("args", {}) if steps_taken else {}
+        suggestion: list[dict] | None = None
+        for sub in self._subsystems:
+            try:
+                suggestion = await sub.suggest_chunk(recent_tools, last_args)
+            except Exception as e:
+                logger.debug("[MotorCortex] Subsystem %s suggest_chunk failed: %s", sub.name, e)
+            if suggestion:
+                break
+        if not suggestion:
+            return last_result
+
+        fired = 0
+        for step in suggestion:
+            if self._calls_this_turn >= budget:
+                break
+            tool = step.get("tool", "none")
+            args = step.get("args", {})
+            reason = step.get("reason", "chunk")
+            logger.info("[MotorCortex] Chunk-fire step: %s — %s", tool, reason)
+            self._calls_this_turn += 1
+            output, last_result = await self._run_tool(tool, args, reason, turn_id)
+            steps_taken.append({"tool": tool, "args": args, "reason": reason})
+            results_log.append(output[:500] if output else "")
+            self._fire_outcome_switches(output, tool, chem)
+            fired += 1
+
+            # Validate against forward models; divergence aborts and suppresses.
+            diverged = output.startswith("[error]") or output.startswith("[blocked]")
+            if not diverged:
+                for sub in self._subsystems:
+                    with contextlib.suppress(Exception):
+                        p = await sub.predict_outcome(tool, args, results_log, self._router)
+                        if p is not None and p.get("expected_success", True) is False:
+                            diverged = True
+                            break
+            if diverged:
+                logger.warning("[MotorCortex] Chunk-fire diverged at %s — suppressing chunk", tool)
+                for sub in self._subsystems:
+                    if hasattr(sub, "suppress"):
+                        with contextlib.suppress(Exception):
+                            sub.suppress(reason)
+                break
+
+        if fired and last_result is not None:
+            last_result["chunk_steps_fired"] = last_result.get("chunk_steps_fired", 0) + fired
+        return last_result
 
     async def _execute_open_loop(
         self, procedure: dict, goal: str | None, turn_id: str

@@ -13,17 +13,17 @@
 ## Emotional profile
 
 ## Relationship
-- Familiarity: new (interactions: 68)
+- Familiarity: new (interactions: 70)
 
 ## Affection score
-- Score: 9
+- Score: 7
 
 - User has been experimenting with AI for about a year.
 - Built prototypes that proved concepts to the company.
 - Improving in vibe coding both professionally and personally.
-- Interactions: 68
+- Interactions: 70
 - Last seen: 1780192708
-- Bond: 10.2
+- Bond: 9.9
 - The user is developing a system with embedded philosophical values.
 - Concerns about transparency and exploitability of the architecture are being considered.
 - [relationship] User demonstrates excitement and trust in discussing complex technical and ethical issues.
@@ -41,7 +41,7 @@
 - user interested in decentralized communication systems
 - brain capable of conducting scientific literature searches
 - [relationship] User shows enthusiasm for complex problem-solving and trusts the brain to conduct detailed research.
-- History: friendly — warm and engaged, hold the teasing (last tone: polite, delta: +1)
+- History: friendly — warm and engaged, hold the teasing (last tone: testing, delta: -1)
 - User is interested in academic databases and colony communication systems.
 - Brain can parse articles on specific topics but lacks direct access to scite.
 - [relationship] The user shows enthusiasm for detailed research and collaboration.
@@ -194,3 +194,8 @@
 - The user is waiting for A/B test results to better understand user behavior.
 - Interest in how mood and action types correlate with gating decisions.
 - [relationship] Shows enthusiasm and interest in the project's progress, indicating a positive engagement.
+- User is testing if mood impacts system output.
+- Interested in whether changes are consistent across different moods.
+- [relationship] Shows enthusiasm and curiosity about the project's deeper implications.
+- Dopamine influences valence, norepinephrine affects arousal length, GABA impacts caution, serotonin modulates dopamine's effect.
+- The system now has a fixed floor for GABA inhibition to allow natural expression of caution and composed states.
