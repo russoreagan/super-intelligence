@@ -497,9 +497,17 @@ class TestVoiceSettingsFromEmotion:
         assert vs.style == 0.55
 
     def test_calm_bucket(self):
-        vs = self._vs("sad")
+        vs = self._vs("thoughtful")  # neutral low-arousal stays calm
         assert vs.stability == 0.55
         assert vs.style == 0.25
+
+    def test_low_bucket(self):
+        # Low-valence emotions get the subdued "low" bucket, distinct from calm.
+        vs = self._vs("sad")
+        assert vs.stability == 0.60
+        assert vs.style == 0.15
+        for emo in ("disappointed", "somber", "melancholy", "wistful", "flat"):
+            assert self._vs(emo).style == 0.15, f"{emo} should map to low bucket"
 
     def test_warm_bucket(self):
         vs = self._vs("warmly")
@@ -575,9 +583,9 @@ class TestMakeFlashChunks:
         assert len(chunks) >= 2, (
             f"Expected ≥2 chunks, got {len(chunks)}: {[t[:40] for t, _ in chunks]}"
         )
-        # At least one chunk should have calm (sad) params (stability=0.55, style=0.25)
+        # At least one chunk should have low (sad) params (stability=0.60, style=0.15)
         settings = [(vs.stability, vs.style) for _, vs in chunks]
-        assert any(s == (0.55, 0.25) for s in settings), f"No calm chunk found: {settings}"
+        assert any(s == (0.60, 0.15) for s in settings), f"No low chunk found: {settings}"
 
     def test_chunk_count_not_inflated_by_mood_boundaries(self):
         from brain.pns import PNS
@@ -594,16 +602,16 @@ class TestMakeFlashChunks:
 
 
 class TestFlashEmotionClusters:
-    def test_all_four_buckets_represented(self):
+    def test_all_buckets_represented(self):
         from brain.pns import PNS
 
         buckets = set(PNS._FLASH_EMOTION_CLUSTERS.values())
-        assert buckets == {"bright", "warm", "calm", "tense"}
+        assert buckets == {"bright", "warm", "calm", "tense", "low"}
 
     def test_no_stray_values(self):
         from brain.pns import PNS
 
-        valid = {"bright", "warm", "calm", "tense"}
+        valid = {"bright", "warm", "calm", "tense", "low"}
         for emotion, bucket in PNS._FLASH_EMOTION_CLUSTERS.items():
             assert bucket in valid, f"{emotion!r} → invalid bucket {bucket!r}"
 
@@ -612,6 +620,7 @@ class TestFlashEmotionClusters:
 
         clusters = PNS._FLASH_EMOTION_CLUSTERS
         assert clusters.get("excited") == "bright"
-        assert clusters.get("sad") == "calm"
+        assert clusters.get("sad") == "low"  # low-valence → subdued voice
+        assert clusters.get("thoughtful") == "calm"  # neutral low-arousal stays calm
         assert clusters.get("angry") == "tense"
         assert clusters.get("warmly") == "warm"

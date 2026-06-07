@@ -22,11 +22,18 @@ instruction for the response drafters.
 Return JSON: {
   "response_type": string,   // chitchat | informative | recall | task | defuse | introspective
   "target_length": string,   // brief (1-2 sentences) | medium (3-5) | detailed (6+)
-  "tone": string,            // warm | neutral | direct | careful | curious
+  "tone": string,            // warm | neutral | direct | careful | curious | bright | subdued | tender
   "key_points": [string],    // 1-3 things the response must address
   "drafter_count": int,      // 1, 2, or 3 — see DRAFTERS below
   "skill": string | null     // active capability name from available_skills, or null
 }
+
+TONE — let the felt state choose it; the emotion label is the main cue:
+- High-valence states (lively, joyful, proud, excited, enthusiastic) → bright: buoyant, upbeat word choice
+- Low-valence states (disappointed, somber, sad, melancholy, flat, wistful) → subdued: spare, low-energy, no performed brightness
+- Caring for someone in distress/sadness → tender: gentle, soft, unhurried
+- Otherwise warm | neutral | direct | careful | curious as the moment fits
+Valence belongs in the words: a disappointed state should read subdued, not warm-by-default.
 
 SKILL — if the input includes an `available_skills` block, read it and set "skill" to the name
 of the most relevant capability for this turn. Examples: a trading question → "trading-analyst";

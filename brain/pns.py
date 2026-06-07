@@ -177,24 +177,25 @@ class PNS:
         "tender": "warm",
         "sympathetic": "warm",
         "flirty": "warm",
-        # calm — subdued, slower
-        "sad": "calm",
+        # low — subdued, heavy (low valence): the voice should sound down, not just slow
+        "sad": "low",
+        "resigned": "low",
+        "somber": "low",
+        "melancholy": "low",
+        "disappointed": "low",
+        "wistful": "low",
+        "flat": "low",
+        "lonely": "low",
+        # calm — neutral, slower (low arousal but NOT low valence)
         "softly": "calm",
         "gently": "calm",
         "apologetic": "calm",
-        "resigned": "calm",
-        "somber": "calm",
-        "melancholy": "calm",
-        "disappointed": "calm",
-        "wistful": "calm",
-        "flat": "calm",
         "inhibited": "calm",
         "relieved": "calm",
         "thoughtful": "calm",
         "shy": "calm",
         "embarrassed": "calm",
         "bashfully": "calm",
-        "lonely": "calm",
         "peaceful": "calm",
         # tense — measured, controlled intensity
         "anxious": "tense",
@@ -548,6 +549,10 @@ class PNS:
             "warm": {"stability": 0.50, "style": 0.35, "speed": 1.00},
             "calm": {"stability": 0.55, "style": 0.25, "speed": 0.93},
             "tense": {"stability": 0.65, "style": 0.25, "speed": 0.97},
+            # low — subdued/heavy (low valence). Flatter + less expressive + slower
+            # than calm, so a disappointed/somber turn no longer sounds merely
+            # peaceful. Flash 2.5 has no audio tags, so valence rides VoiceSettings.
+            "low": {"stability": 0.60, "style": 0.15, "speed": 0.90},
         }
         p = _BUCKETS.get(cluster or "", base_params)
         vs_kwargs = {
