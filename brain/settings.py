@@ -131,7 +131,10 @@ DEFAULTS: dict[str, float | int | str] = {
     # disabled or no embedder is available. Threshold is deliberately conservative —
     # the learning loop, not a loose threshold, is what makes detection comprehensive.
     "intent_detector_enabled": 1,
-    "intent_fire_threshold": 0.62,
+    # 0.60 calibrated against nomic-embed-text on real phrasings: true-positive floor
+    # ~0.62 (e.g. "are you conscious" 0.616), cross-talk false-positive ceiling ~0.58.
+    # 0.60 sits in that gap. The learning loop catches anything still missed.
+    "intent_fire_threshold": 0.60,
     "intent_bank_max": 200,
     "intent_dedup_threshold": 0.95,
     # ── Section 4: Default Mode Network ──────────────────────────────────────
