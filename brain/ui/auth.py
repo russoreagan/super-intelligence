@@ -49,7 +49,15 @@ _REFRESH_MAX_AGE = 60 * 60 * 24 * 30  # 30 days
 # public surface of the app. The login page is fully self-contained (inline CSS,
 # no external assets) precisely so nothing else needs whitelisting here.
 PUBLIC_PATHS = frozenset(
-    {"/health", "/login", "/auth/login", "/auth/logout", "/auth/forgot"}
+    {
+        "/health",
+        "/login",
+        "/auth/login",
+        "/auth/logout",
+        "/auth/forgot",
+        "/auth/admission",
+        "/auth/reset",
+    }
 )
 
 
@@ -113,13 +121,22 @@ async def password_login(email: str, password: str) -> dict[str, Any] | None:
     return r.json()
 
 
-async def request_password_reset(email: str) -> None:
+async def request_password_reset(email: str, redirect_to: str | None = None) -> None:
     """Ask GoTrue to email a recovery link. Best-effort and intentionally silent:
     we never reveal whether the address exists (defends against enumeration), so
-    the caller always reports the same "if it exists, a link is on its way"."""
+    the caller always reports the same "if it exists, a link is on its way".
+
+    The email itself is sent by Supabase Auth; configure its SMTP to point at
+    Resend (thegaim.app's mail service) so it ships from the verified domain.
+    ``redirect_to`` is where GoTrue bounces the user after they click the link —
+    our in-app /auth/reset page, which finishes the password change."""
     if not email:
         return
     url = f"{_base()}/auth/v1/recover"
+    if redirect_to:
+        from urllib.parse import quote
+
+        url = f"{url}?redirect_to={quote(redirect_to, safe='')}"
     headers = {"apikey": _anon(), "Content-Type": "application/json"}
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:

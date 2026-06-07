@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="robots" content="noindex, nofollow" />
+<title>Elyceum — Reset passphrase</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400;1,6..72,500&family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+<style>
+:root {
+  --paper:    #fbf7f0;
+  --paper-2:  oklch(0.945 0.016 83);
+  --ink:      oklch(0.27 0.022 54);
+  --ink-2:    oklch(0.42 0.022 54);
+  --ink-3:    oklch(0.55 0.020 56);
+  --ink-4:    oklch(0.68 0.016 60);
+  --line:       oklch(0.30 0.02 54 / 0.24);
+  --line-faint: oklch(0.30 0.02 54 / 0.07);
+  --signal:      oklch(0.56 0.185 33);
+  --signal-deep: oklch(0.48 0.17 32);
+  --signal-soft: oklch(0.56 0.185 33 / 0.12);
+  --serif: 'Newsreader', Georgia, serif;
+  --sans:  'Hanken Grotesk', system-ui, sans-serif;
+  --mono:  'JetBrains Mono', ui-monospace, monospace;
+  --r-1: 5px;
+}
+* , *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { min-height: 100%; }
+body {
+  background: var(--paper); color: var(--ink); font-family: var(--sans);
+  -webkit-font-smoothing: antialiased; min-height: 100vh;
+  display: flex; align-items: center; justify-content: center; padding: 48px 24px;
+  background-image: radial-gradient(oklch(0.30 0.02 54 / 0.025) 0.5px, transparent 0.6px);
+  background-size: 4px 4px;
+}
+button { font-family: inherit; cursor: pointer; border: none; background: none; color: inherit; }
+input { font-family: inherit; }
+::selection { background: var(--signal-soft); }
+
+.card { width: 100%; max-width: 408px; }
+.wordmark { font-family: var(--mono); font-size: 10px; letter-spacing: 0.34em; text-transform: uppercase; color: var(--ink-4); text-align: center; }
+.head { text-align: center; margin-top: 18px; }
+.head h1 { font-family: var(--serif); font-size: 30px; font-weight: 500; letter-spacing: -0.015em; line-height: 1.06; }
+.head h1 em { font-style: italic; color: var(--ink-2); }
+.head .sub { font-family: var(--serif); font-style: italic; font-size: 14px; color: var(--ink-3); margin-top: 9px; line-height: 1.5; text-wrap: pretty; }
+
+form { margin-top: 30px; }
+.field-group { margin-bottom: 20px; }
+.field-label { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 7px; }
+.field-label label { font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink-3); }
+.entry-line { display: flex; align-items: center; gap: 11px; border-bottom: 1.5px solid var(--line); padding-bottom: 9px; transition: border-color 220ms; }
+.entry-line:focus-within { border-color: var(--ink); }
+.entry-line .lead { color: var(--ink-4); display: flex; transition: color 220ms; }
+.entry-line:focus-within .lead { color: var(--signal-deep); }
+.entry-line .lead svg { width: 16px; height: 16px; }
+.entry-line input { flex: 1; min-width: 0; background: none; border: none; outline: none;
+  font-family: var(--serif); font-size: 16px; color: var(--ink); padding: 2px 0; }
+.entry-line input::placeholder { color: var(--ink-4); font-style: italic; }
+.reveal { color: var(--ink-4); display: flex; padding: 2px; transition: color 150ms; }
+.reveal:hover { color: var(--ink-2); }
+.reveal svg { width: 16px; height: 16px; }
+
+.signin { width: 100%; display: flex; align-items: center; justify-content: center; gap: 10px;
+  background: var(--ink); color: var(--paper); border-radius: var(--r-1); padding: 15px 20px; margin-top: 8px;
+  font-family: var(--mono); font-size: 11px; font-weight: 500; letter-spacing: 0.18em; text-transform: uppercase;
+  transition: background 180ms, transform 120ms; }
+.signin:hover { background: var(--signal-deep); }
+.signin:active { transform: translateY(1px); }
+.signin:disabled { opacity: 0.6; cursor: default; }
+.signin:disabled:hover { background: var(--ink); }
+.signin svg { width: 15px; height: 15px; transition: transform 200ms; }
+.signin:hover svg { transform: translateX(3px); }
+
+.back { text-align: center; margin-top: 26px; font-size: 12.5px; color: var(--ink-3); }
+.back a { color: var(--ink); font-weight: 600; text-decoration: none; border-bottom: 1px solid var(--line); padding-bottom: 1px; transition: border-color 160ms, color 160ms; }
+.back a:hover { border-color: var(--signal-deep); color: var(--signal-deep); }
+
+.note { display: none; margin: 0 0 16px; padding: 10px 14px; border-radius: var(--r-1);
+  font-size: 12.5px; text-align: center; text-wrap: pretty;
+  background: oklch(0.58 0.16 30 / 0.09); border: 1px solid oklch(0.55 0.17 30 / 0.45); color: oklch(0.47 0.17 30); }
+.note.show { display: block; }
+.note.ok { background: oklch(0.62 0.10 150 / 0.10); border-color: oklch(0.55 0.11 150 / 0.45); color: oklch(0.42 0.10 150); }
+.hint { font-size: 11px; color: var(--ink-4); margin-top: 7px; }
+</style>
+</head>
+<body>
+<main class="card">
+  <p class="wordmark">Elyceum</p>
+  <div class="head">
+    <h1>Set a new <em>passphrase</em></h1>
+    <p class="sub">Choose something you'll remember for next time.</p>
+  </div>
+
+  <div class="note" id="note" role="alert"></div>
+
+  <form id="reset-form" autocomplete="on">
+    <div class="field-group">
+      <div class="field-label"><label for="password">New passphrase</label></div>
+      <div class="entry-line">
+        <span class="lead">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+        </span>
+        <input id="password" name="password" type="password" placeholder="At least 8 characters" autocomplete="new-password" minlength="8" required autofocus />
+        <button class="reveal" type="button" id="reveal" aria-label="Show passphrase" title="Show passphrase">
+          <svg id="eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+        </button>
+      </div>
+      <p class="hint">Use at least 8 characters.</p>
+    </div>
+
+    <div class="field-group">
+      <div class="field-label"><label for="confirm">Confirm passphrase</label></div>
+      <div class="entry-line">
+        <span class="lead">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+        </span>
+        <input id="confirm" name="confirm" type="password" placeholder="Repeat it" autocomplete="new-password" minlength="8" required />
+      </div>
+    </div>
+
+    <button class="signin" type="submit" id="submit">
+      <span id="submit-label">Update passphrase</span>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+    </button>
+  </form>
+
+  <p class="back">Changed your mind? <a href="/login">Back to sign in</a></p>
+</main>
+
+<script>
+(function () {
+  var SUPABASE_URL = '__SUPABASE_URL__';
+  var ANON_KEY = '__SUPABASE_ANON_KEY__';
+
+  var note = document.getElementById('note');
+  var form = document.getElementById('reset-form');
+  var btn = document.getElementById('submit');
+  var label = document.getElementById('submit-label');
+  var pw = document.getElementById('password');
+  var confirm = document.getElementById('confirm');
+
+  function showError(msg) { note.classList.remove('ok'); note.textContent = msg; note.classList.add('show'); }
+  function showOk(msg) { note.classList.add('ok'); note.textContent = msg; note.classList.add('show'); }
+
+  // Reveal toggle
+  var reveal = document.getElementById('reveal');
+  var eye = document.getElementById('eye');
+  reveal.addEventListener('click', function () {
+    var show = pw.type === 'password';
+    pw.type = confirm.type = show ? 'text' : 'password';
+    eye.innerHTML = show
+      ? '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/><line x1="3" y1="3" x2="21" y2="21"/>'
+      : '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>';
+  });
+
+  // Supabase bounces the recovery link here with tokens (or an error) in the
+  // URL hash fragment: #access_token=...&type=recovery  /  #error=...&error_description=...
+  var hash = new URLSearchParams((window.location.hash || '').replace(/^#/, ''));
+  var accessToken = hash.get('access_token');
+  var hashError = hash.get('error_description') || hash.get('error');
+
+  if (hashError) {
+    showError(decodeURIComponent(hashError).replace(/\+/g, ' ') + ' — request a fresh link from the sign-in page.');
+    btn.disabled = true;
+  } else if (!accessToken) {
+    showError('This reset link is invalid or has expired. Request a new one from the sign-in page.');
+    btn.disabled = true;
+  }
+  // Strip the token from the address bar so it isn't left in history.
+  if (window.history.replaceState) {
+    window.history.replaceState(null, '', window.location.pathname);
+  }
+
+  form.addEventListener('submit', async function (e) {
+    e.preventDefault();
+    note.classList.remove('show');
+    if (!accessToken) { showError('Missing reset token. Request a new link from the sign-in page.'); return; }
+    if (pw.value.length < 8) { showError('Passphrase must be at least 8 characters.'); return; }
+    if (pw.value !== confirm.value) { showError('The two passphrases do not match.'); return; }
+
+    btn.disabled = true;
+    label.textContent = 'Updating';
+    try {
+      var res = await fetch(SUPABASE_URL + '/auth/v1/user', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': ANON_KEY,
+          'Authorization': 'Bearer ' + accessToken,
+        },
+        body: JSON.stringify({ password: pw.value }),
+      });
+      var data = await res.json().catch(function () { return {}; });
+      if (res.ok) {
+        showOk('Passphrase updated. Redirecting you to sign in…');
+        setTimeout(function () { window.location.assign('/login'); }, 1600);
+        return;
+      }
+      showError(data.msg || data.error_description || data.error || 'Could not update passphrase. The link may have expired.');
+      btn.disabled = false;
+      label.textContent = 'Update passphrase';
+    } catch (err) {
+      showError('Network error. Please try again.');
+      btn.disabled = false;
+      label.textContent = 'Update passphrase';
+    }
+  });
+})();
+</script>
+</body>
+</html>

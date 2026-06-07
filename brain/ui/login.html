@@ -196,7 +196,7 @@ form { margin-top: 28px; max-width: 408px; margin-left: auto; margin-right: auto
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
       </button>
 
-      <p class="new-here">New to Elyceum? <a href="mailto:russ.oreagan@gmail.com?subject=Elyceum%20admission%20request">Request admission</a></p>
+      <p class="new-here">New to Elyceum? <a href="#" id="admission">Request admission</a></p>
     </form>
 
     <div class="foot"><i></i> Specimen online <span class="dot">·</span> Athens · est. MMXXVI</div>
@@ -252,6 +252,27 @@ form { margin-top: 28px; max-width: 408px; margin-left: auto; margin-right: auto
       });
     } catch (err) { /* still show the same notice — don't leak status */ }
     showNotice('If that email has an account, a reset link is on its way.');
+  });
+
+  // Request admission → notifies the admin via the mail service. Invite-only,
+  // so this just flags interest; accounts are still provisioned out-of-band.
+  document.getElementById('admission').addEventListener('click', async function (e) {
+    e.preventDefault();
+    errorEl.classList.remove('show');
+    var email = document.getElementById('email').value.trim();
+    if (!email) {
+      showError('Enter your email above, then tap “Request admission”.');
+      document.getElementById('email').focus();
+      return;
+    }
+    try {
+      await fetch('/auth/admission', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: email }),
+      });
+    } catch (err) { /* show the same notice regardless */ }
+    showNotice('Request received. We’ll be in touch if a place opens.');
   });
 
   form.addEventListener('submit', async function (e) {

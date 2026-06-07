@@ -17,6 +17,7 @@ import logging
 import os
 import sys
 from collections.abc import Callable
+from html import escape as html_escape
 from pathlib import Path
 
 # FastAPI/WebSocket imports at module level so that `from __future__ import annotations`
@@ -40,6 +41,7 @@ logger = logging.getLogger(__name__)
 
 HTML_PATH = Path(__file__).parent / "index.html"
 LOGIN_HTML_PATH = Path(__file__).parent / "login.html"
+RESET_HTML_PATH = Path(__file__).parent / "reset.html"
 
 
 class UIServer:
@@ -173,7 +175,67 @@ class UIServer:
             # actually sends if Supabase auth + email templates are configured.
             if ui_auth.is_configured():
                 body = await request.json()
-                await ui_auth.request_password_reset(str(body.get("email", "")).strip())
+                # Land the email's link on our own reset page, derived from the
+                # request so it's correct on localhost and on Railway alike.
+                reset_url = str(request.base_url).rstrip("/") + "/auth/reset"
+                await ui_auth.request_password_reset(
+                    str(body.get("email", "")).strip(), redirect_to=reset_url
+                )
+            return JSONResponse({"ok": True})
+
+        @app.get("/auth/reset")
+        async def reset_page():
+            # Supabase bounces the recovery link here with the token in the URL
+            # hash. The page reads it client-side and sets the new password via
+            # GoTrue. Inject the public Supabase URL + anon key (both publishable).
+            html = RESET_HTML_PATH.read_text(encoding="utf-8")
+            html = html.replace("__SUPABASE_URL__", os.environ.get("SUPABASE_URL", "").rstrip("/"))
+            html = html.replace("__SUPABASE_ANON_KEY__", os.environ.get("SUPABASE_ANON_KEY", ""))
+            return HTMLResponse(html)
+
+        @app.post("/auth/admission")
+        async def auth_admission(request: Request):
+            # Route admission requests through thegaim.app's Resend mail service
+            # to a real inbox (configurable; never the user's hardcoded address).
+            from brain.ui import mailer
+
+            body = await request.json()
+            applicant = str(body.get("email", "")).strip()
+            note = str(body.get("note", "")).strip()
+            if not applicant:
+                return JSONResponse(
+                    {"ok": False, "error": "An email is required."}, status_code=400
+                )
+            to = os.environ.get("ADMISSION_NOTIFY_EMAIL", "").strip() or "admin@thegaim.app"
+            safe_applicant = html_escape(applicant)
+            safe_note = html_escape(note) if note else ""
+            note_html = (
+                f"<p style='margin:16px 0 0;color:#52525b'><strong>Note:</strong> {safe_note}</p>"
+                if safe_note
+                else ""
+            )
+            html_body = (
+                "<div style=\"font-family:-apple-system,Segoe UI,Roboto,sans-serif;"
+                "max-width:520px;margin:0 auto;color:#18181b\">"
+                "<h2 style='font-weight:600'>New Elyceum admission request</h2>"
+                f"<p style='color:#52525b'><strong>{safe_applicant}</strong> "
+                "has requested admission to Elyceum.</p>"
+                f"{note_html}"
+                "<p style='margin-top:24px;color:#71717a;font-size:13px'>"
+                "Provision the account via <code>scripts/create_user.py</code> if approved.</p>"
+                "</div>"
+            )
+            text_body = (
+                f"New Elyceum admission request from {applicant}."
+                + (f"\n\nNote: {note}" if note else "")
+            )
+            await mailer.send_email(
+                to,
+                "Elyceum — new admission request",
+                html_body,
+                text=text_body,
+            )
+            # Always ok: the applicant shouldn't learn whether mail actually sent.
             return JSONResponse({"ok": True})
 
         @app.post("/auth/logout")
