@@ -296,9 +296,14 @@ class ModelRouter:
 
     def _get_google(self):
         if self._google_client is None:
+            key = os.environ.get("GOOGLE_API_KEY")
+            if not key:
+                # Clean, catchable error instead of a bare KeyError — lets callers
+                # (and the occipital vision guard) degrade gracefully when no key.
+                raise RuntimeError("GOOGLE_API_KEY not set — Gemini/vision unavailable")
             from google import genai
 
-            self._google_client = genai.Client(api_key=os.environ["GOOGLE_API_KEY"])
+            self._google_client = genai.Client(api_key=key)
         return self._google_client
 
     def _get_http(self):

@@ -4696,6 +4696,15 @@ async function loadVoices({ silent = false, _attempt = 0 } = {}) {
     const res = await fetch('/voices');
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
+    // No ElevenLabs key → voice output is unavailable. Show a clear disabled
+    // state instead of retrying; TTS already no-ops server-side without a key.
+    if (data.reason === 'no_elevenlabs_key') {
+      sel.innerHTML = '<option>Voice off</option>';
+      sel.disabled = true;
+      nameEl.textContent = 'Voice off — add an ElevenLabs key';
+      sel.title = 'Add an ElevenLabs API key in Settings → API Keys to enable voice output.';
+      return;
+    }
     const voices = data.voices || [];
     if (voices.length === 0) throw new Error('no voices returned from server');
 

@@ -180,6 +180,15 @@ class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
         def _on(flag):
             return "✓" if flag else "✗"
 
+        # Voice is "up" whenever it was requested, not only when the server-side
+        # mic exists. On hosted servers there's no audio input device, so
+        # StreamingMicSession.start() always fails and _streaming_mic is None —
+        # but voice still works because the browser self-captures (MediaRecorder
+        # → per-client Deepgram). Gating the status dot on _streaming_mic would
+        # leave Voice permanently red (→ "Degraded") on every cloud deploy even
+        # though push-to-talk works fine.
+        voice_up = self._voice_requested
+
         logger.info(
             "Session %s online — UI:%s  Motor:%s  DMN:%s  Meta:%s  Voice:%s  Ears:%s",
             self.session_id,
@@ -187,7 +196,7 @@ class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
             _on(self.motor is not None),
             _on(self.dmn is not None),
             _on(self.meta is not None),
-            _on(self._streaming_mic is not None),
+            _on(voice_up),
             _on(self.ears is not None),
         )
         if self._ui_server is not None:
@@ -197,7 +206,7 @@ class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
                     "motor": self.motor is not None,
                     "dmn": self.dmn is not None,
                     "meta": self.meta is not None,
-                    "voice": self._streaming_mic is not None,
+                    "voice": voice_up,
                     "ears": self.ears is not None,
                 }
             )

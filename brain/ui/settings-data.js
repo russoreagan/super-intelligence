@@ -63,6 +63,25 @@ window.SETTINGS = {
       ],
     },
 
+    /* ============================ API KEYS ========================= */
+    {
+      id: 'apikeys', name: 'API Keys', icon: 'key',
+      blurb: 'Bring your own provider keys. Stored on this machine; each overrides the platform default.',
+      summary: 'Connect your own provider keys. Anthropic is required — it powers the core reasoning. The rest are optional: ElevenLabs enables voice output, Deepgram improves voice input (your key is used before the platform default), and Google/Gemini enables image understanding. Keys are stored locally and applied on the next restart. A saved key shows as “saved” — leave a field blank to keep it.',
+      sections: [
+        {
+          id: 'sec-apikeys', num: '🔑', title: 'Provider Keys',
+          desc: 'Paste each provider key. Saved keys show as “saved” — leave blank to keep them; restart to apply.',
+          rows: [
+            { type: 'apikey', key: 'api_key_anthropic',  label: 'Anthropic API key',        hint: 'required — core reasoning (console.anthropic.com)', def: '' },
+            { type: 'apikey', key: 'api_key_elevenlabs', label: 'ElevenLabs API key',       hint: 'optional — enables voice output (TTS)', def: '' },
+            { type: 'apikey', key: 'api_key_deepgram',   label: 'Deepgram API key',         hint: 'optional — voice input; your key is used before the platform key', def: '' },
+            { type: 'apikey', key: 'api_key_google',     label: 'Google (Gemini) API key',  hint: 'optional — enables image processing', def: '' },
+          ],
+        },
+      ],
+    },
+
     /* ======================= EMOTION & CHEMISTRY =================== */
     {
       id: 'chemistry', name: 'Emotion & Chemistry', icon: 'flask',

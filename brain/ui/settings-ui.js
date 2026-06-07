@@ -29,6 +29,7 @@
   // ---- inline icon set --------------------------------------------------
   const ICONS = {
     user:  '<circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.2 3.6-6.5 8-6.5s8 2.3 8 6.5"/>',
+    key:   '<circle cx="7.5" cy="15.5" r="4.5"/><path d="M10.7 12.3 20 3"/><path d="M16 7l3 3M14 9l2 2"/>',
     flask: '<path d="M9 3v5.5L4.2 17a2 2 0 0 0 1.8 3h12a2 2 0 0 0 1.8-3L15 8.5V3"/><line x1="8" y1="3" x2="16" y2="3"/><line x1="7.2" y1="14" x2="16.8" y2="14"/>',
     cpu:   '<rect x="7" y="7" width="10" height="10" rx="1.5"/><rect x="10" y="10" width="4" height="4" rx="0.5"/><path d="M10 3v2M14 3v2M10 19v2M14 19v2M3 10h2M3 14h2M19 10h2M19 14h2"/>',
     mic:   '<rect x="9" y="2" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><line x1="12" y1="18" x2="12" y2="21"/>',
@@ -46,6 +47,7 @@
   const meta     = {};   // key -> row config
   const sectionOf = {};  // key -> section id
   const catOf     = {};  // key -> category id
+  let   secretsSet = {}; // key -> bool (which API keys are already stored)
 
   const PSEUDO = { persona_select: '', persona_voice: '' };
 
@@ -100,6 +102,7 @@
       const data = await res.json();
       const s = data.settings || {};
       const d = data.defaults || {};
+      secretsSet = data.secrets_set || {};
       Object.keys(s).forEach(k => { values[k] = s[k]; saved[k] = s[k]; });
       Object.keys(d).forEach(k => { defaults[k] = d[k]; });
       // persona pseudo keys reflect real keys
@@ -232,7 +235,19 @@
     const ctrl = document.createElement('div');
     ctrl.className = 'crow-control';
 
-    if (r.type === 'toggle') {
+    if (r.type === 'apikey') {
+      const input = document.createElement('input');
+      input.type = 'password';
+      input.autocomplete = 'off';
+      input.spellcheck = false;
+      input.value = values[r.key] || '';
+      input.placeholder = secretsSet[r.key] ? '•••••••••• saved — leave blank to keep' : 'not set';
+      input.style.cssText = 'flex:1 1 240px;min-width:200px;padding:7px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:inherit;font:inherit;';
+      input.addEventListener('input', () => setValue(r.key, input.value));
+      ctrl.appendChild(input);
+      row.appendChild(ctrl);
+      reg[r.key] = { rowEl: row, input, isText: true };
+    } else if (r.type === 'toggle') {
       const tog = document.createElement('button');
       tog.className = 'tog' + (+values[r.key] >= 0.5 ? ' on' : '');
       tog.setAttribute('role', 'switch');
@@ -270,7 +285,7 @@
     values[key] = v;
     const r = meta[key], e = reg[key];
     if (e) {
-      if (e.input) { e.input.value = v; setFill(e.input, r, v); }
+      if (e.input) { e.input.value = v; if (!e.isText) setFill(e.input, r, v); }
       if (e.valEl) e.valEl.textContent = fmt(r, v);
       if (e.toggle) e.toggle.classList.toggle('on', +v >= 0.5);
     }

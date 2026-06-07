@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -602,6 +603,24 @@ DEFAULTS: dict[str, float | int | str] = {
     "cma_session_warm_reuse": 1,
     # cma_max_reconnects: bounded SSE reconnect-and-replay attempts on stream drop.
     "cma_max_reconnects": 3,
+    # ── Section: API keys (user-supplied, set via the Settings → API Keys page) ─
+    # Empty = fall back to the platform-provided env var (the resolution chain is
+    # user key → platform default → none). When a value is set here it is applied
+    # to the corresponding env var at startup (apply_api_key_overrides), so it
+    # takes precedence over any platform default. Stored in settings.json; the UI
+    # masks them on read and never overwrites a stored key with an empty value.
+    "api_key_anthropic": "",  # → ANTHROPIC_API_KEY (required for the app to run)
+    "api_key_elevenlabs": "",  # → ELEVENLABS_API_KEY (optional; enables voice output)
+    "api_key_deepgram": "",  # → DEEPGRAM_API_KEY (optional; user key beats platform key)
+    "api_key_google": "",  # → GOOGLE_API_KEY (optional; enables image processing)
+}
+
+# Maps each user-supplied API-key setting to the env var the clients read.
+API_KEY_ENV = {
+    "api_key_anthropic": "ANTHROPIC_API_KEY",
+    "api_key_elevenlabs": "ELEVENLABS_API_KEY",
+    "api_key_deepgram": "DEEPGRAM_API_KEY",
+    "api_key_google": "GOOGLE_API_KEY",
 }
 
 
@@ -650,3 +669,18 @@ class Settings:
 
 # Module-level singleton — import this everywhere
 settings = Settings()
+
+
+def apply_api_key_overrides() -> None:
+    """Apply user-supplied API keys (from settings.json) to the process env.
+
+    Implements the resolution chain `user key → platform default → none`: when a
+    key is set in settings it overrides the platform-provided env var, so the
+    clients (which all read os.environ) pick up the user's own key. Empty
+    settings leave the platform default untouched. Call this AFTER load_dotenv so
+    a user key always wins over a .env default.
+    """
+    for setting_key, env_name in API_KEY_ENV.items():
+        val = str(settings.get(setting_key) or "").strip()
+        if val:
+            os.environ[env_name] = val

@@ -81,6 +81,7 @@ class OccipitalCluster:
             max_calls_per_turn=1,
         )
         self._vision_integrator.set_router(router)
+        self._warned_no_vision = False
 
         # image_present fires whenever a static image enters processing.
         # Neutral chemistry — presence detection is pure observation.
@@ -107,9 +108,25 @@ class OccipitalCluster:
     # Static image processing (file path)
     # ------------------------------------------------------------------
 
+    def _vision_available(self) -> bool:
+        """Vision routes to Gemini (flash/flash-lite), so it needs a Google key.
+        Without one, image processing is disabled (returns None) rather than
+        crashing on a missing GOOGLE_API_KEY. Logs once."""
+        if os.environ.get("GOOGLE_API_KEY"):
+            return True
+        if not self._warned_no_vision:
+            logger.warning(
+                "[Vision] GOOGLE_API_KEY not set — image/video processing disabled. "
+                "Add a Google (Gemini) key in Settings → API Keys to enable it."
+            )
+            self._warned_no_vision = True
+        return False
+
     async def process(self, image_path: str, user_text: str, turn_id: str) -> dict | None:
         """Process a single static image file. Returns vision features or None."""
         if not image_path:
+            return None
+        if not self._vision_available():
             return None
 
         chem = self._chem_snapshot()
@@ -235,6 +252,9 @@ class OccipitalCluster:
         Clears the buffer after the call.
         """
         if not self._frame_buffer:
+            return None
+        if not self._vision_available():
+            self._frame_buffer.clear()
             return None
 
         frames = list(self._frame_buffer)

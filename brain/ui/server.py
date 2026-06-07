@@ -255,15 +255,29 @@ class UIServer:
 
         @app.get("/settings")
         async def get_settings():
-            from brain.settings import DEFAULTS, settings
+            from brain.settings import API_KEY_ENV, DEFAULTS, settings
 
-            return {"settings": settings.all(), "defaults": DEFAULTS}
+            s = settings.all()
+            # Never ship API-key secrets to the browser. Report only whether each
+            # is set so the UI can show "saved"; the field itself loads blank.
+            secrets_set = {}
+            for k in API_KEY_ENV:
+                secrets_set[k] = bool(str(s.get(k) or "").strip())
+                s[k] = ""
+            return {"settings": s, "defaults": DEFAULTS, "secrets_set": secrets_set}
 
         @app.post("/settings")
         async def save_settings(request: Request):
             from brain.settings import settings
 
             body = await request.json()
+            # An empty API-key field means "leave the stored key unchanged" — never
+            # let a blank wipe a saved secret (the UI loads these fields blank).
+            from brain.settings import API_KEY_ENV
+
+            for _k in list(body):
+                if _k in API_KEY_ENV and not str(body.get(_k) or "").strip():
+                    body.pop(_k, None)
             try:
                 prior_persona = str(settings.get("persona_name", ""))
                 settings.save(body)
@@ -388,7 +402,11 @@ class UIServer:
 
             api_key = os.environ.get("ELEVENLABS_API_KEY", "")
             if not api_key:
-                return {"voices": [], "message": "ELEVENLABS_API_KEY not set"}
+                return {
+                    "voices": [],
+                    "reason": "no_elevenlabs_key",
+                    "message": "ELEVENLABS_API_KEY not set",
+                }
             model_id = (
                 os.environ.get("ELEVENLABS_MODEL_ID", "eleven_flash_v2_5").strip()
                 or "eleven_flash_v2_5"

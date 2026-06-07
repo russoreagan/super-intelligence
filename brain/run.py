@@ -39,6 +39,12 @@ from dotenv import load_dotenv
 
 load_dotenv(override=True)  # override=True so .env values win over empty shell exports
 
+# User-supplied API keys (Settings → API Keys page) override platform defaults.
+# Must run after load_dotenv so a user key wins over a .env default.
+from brain.settings import apply_api_key_overrides  # noqa: E402
+
+apply_api_key_overrides()
+
 logging.basicConfig(
     level=os.environ.get("BRAIN_LOG_LEVEL", "INFO"),
     format="%(asctime)s %(name)s %(levelname)s %(message)s",
