@@ -137,6 +137,13 @@ DEFAULTS: dict[str, float | int | str] = {
     "voice_stability_low_mood": 0.55,
     "voice_style_low_mood": 0.30,
     "voice_speed_low_mood": 0.93,
+    # Continuous voice: blend the per-turn base VoiceSettings as a chemistry-
+    # weighted average of the emotion anchors instead of snapping to one discrete
+    # state. 1 = continuous (each chemistry gets its own settings); 0 = legacy
+    # threshold branches. Temperature controls blend sharpness: low → closer to
+    # picking one anchor (more discrete); high → softer/more averaged.
+    "voice_continuous_blend": 1,
+    "voice_blend_temperature": 0.15,
     "breath_pause_count_max": 2,
     "gaba_single_pause_threshold": 0.50,
     "da_double_pause_threshold": 0.30,

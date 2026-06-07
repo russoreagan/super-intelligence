@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import math
 import os
 
 from brain.bus import Bus
@@ -432,12 +433,61 @@ class PNS:
                 break
         return result
 
+    # Continuous-voice anchors: each emotion family pins a chemistry centroid
+    # (DA/Glu/GABA/NE) to a VoiceSettings point. The per-turn base voice is a
+    # chemistry-weighted blend of these (see _blend_voice_from_chem), so every
+    # state gets its own settings instead of snapping to one of four. Voice values
+    # mirror the per-chunk _BUCKETS so the base and [mood:X] overrides agree.
+    _VOICE_ANCHORS = (
+        ("bright", {"DA": 0.78, "Glu": 0.60, "GABA": 0.08, "NE": 0.45},
+         {"stability": 0.35, "style": 0.55, "speed": 1.05}),
+        ("warm", {"DA": 0.62, "Glu": 0.30, "GABA": 0.12, "NE": 0.25},
+         {"stability": 0.50, "style": 0.35, "speed": 1.00}),
+        ("calm", {"DA": 0.45, "Glu": 0.25, "GABA": 0.30, "NE": 0.25},
+         {"stability": 0.55, "style": 0.25, "speed": 0.93}),
+        ("tense", {"DA": 0.35, "Glu": 0.58, "GABA": 0.65, "NE": 0.62},
+         {"stability": 0.65, "style": 0.25, "speed": 0.97}),
+        ("low", {"DA": 0.20, "Glu": 0.25, "GABA": 0.30, "NE": 0.30},
+         {"stability": 0.60, "style": 0.15, "speed": 0.90}),
+    )
+
+    @staticmethod
+    def _blend_voice_from_chem(nm: dict) -> dict:
+        """Chemistry-weighted blend of the voice anchors (Option A: continuous
+        VoiceSettings). Weight per anchor = softmax(−distance² / temperature) over
+        the (DA, Glu, GABA, NE) vector; output is the weighted average of the
+        anchors' settings — always inside their convex hull, smoothly varying with
+        chemistry. Reduces to ~one anchor when chemistry sits on its centroid."""
+        chem = {
+            "DA": float(nm.get("DA", 0.5)),
+            "Glu": float(nm.get("Glu", 0.3)),
+            "GABA": float(nm.get("GABA", 0.0)),
+            "NE": float(nm.get("NE", 0.3)),
+        }
+        tau = max(1e-3, float(settings.get("voice_blend_temperature", 0.15)))
+        weights = []
+        for _name, centroid, _voice in PNS._VOICE_ANCHORS:
+            d2 = sum((chem[c] - centroid[c]) ** 2 for c in chem)
+            weights.append(math.exp(-d2 / tau))
+        z = sum(weights) or 1.0
+        out = {"stability": 0.0, "style": 0.0, "speed": 0.0}
+        for w, (_n, _c, voice) in zip(weights, PNS._VOICE_ANCHORS):
+            f = w / z
+            for k in out:
+                out[k] += f * voice[k]
+        return {k: round(v, 4) for k, v in out.items()}
+
     @staticmethod
     def _voice_params_from_affect(affect: dict) -> dict:
         """voice_modulation_switch (PLAN.md): map entity state → ElevenLabs voice settings.
+        Continuous (default): chemistry-weighted blend of the anchors. Legacy
+        (voice_continuous_blend=0): discrete threshold branches (kept for rollback).
         Low DA → slower/lower; high arousal (Glu) + positive DA → faster/brighter;
         high GABA (threat/defuse) → calm/steady regardless."""
         nm = affect.get("neuromod") or {}
+        if settings.get("voice_continuous_blend", 1):
+            return PNS._blend_voice_from_chem(nm)
+
         DA = float(nm.get("DA", 0.5))
         GABA = float(nm.get("GABA", 0.0))
         Glu = float(nm.get("Glu", 0.3))

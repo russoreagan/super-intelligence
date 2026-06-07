@@ -624,3 +624,52 @@ class TestFlashEmotionClusters:
         assert clusters.get("thoughtful") == "calm"  # neutral low-arousal stays calm
         assert clusters.get("angry") == "tense"
         assert clusters.get("warmly") == "warm"
+
+
+class TestContinuousVoiceBlend:
+    """Option A: per-turn base VoiceSettings as a chemistry-weighted blend of anchors."""
+
+    def _vp(self, nm):
+        from brain.pns import PNS
+
+        return PNS._voice_params_from_affect({"neuromod": nm})
+
+    def test_output_within_anchor_convex_hull(self):
+        from brain.pns import PNS
+
+        anchors = PNS._VOICE_ANCHORS
+        states = [
+            {"DA": 0.78, "Glu": 0.60, "GABA": 0.08, "NE": 0.45},  # bright
+            {"DA": 0.20, "Glu": 0.25, "GABA": 0.30, "NE": 0.30},  # low
+            {"DA": 0.50, "Glu": 0.40, "GABA": 0.30, "NE": 0.40},  # mixed
+        ]
+        for k in ("stability", "style", "speed"):
+            lo = min(v[k] for _, _, v in anchors)
+            hi = max(v[k] for _, _, v in anchors)
+            for nm in states:
+                val = self._vp(nm)[k]
+                assert lo - 1e-9 <= val <= hi + 1e-9, f"{k}={val} outside [{lo},{hi}]"
+
+    def test_bright_vs_down_are_distinct(self):
+        bright = self._vp({"DA": 0.78, "Glu": 0.60, "GABA": 0.08, "NE": 0.45})
+        down = self._vp({"DA": 0.20, "Glu": 0.25, "GABA": 0.30, "NE": 0.30})
+        # Bright: more expressive (lower stability), more style, faster than down.
+        assert bright["stability"] < down["stability"]
+        assert bright["style"] > down["style"]
+        assert bright["speed"] > down["speed"]
+
+    def test_continuity_intermediate_state_interpolates(self):
+        bright = self._vp({"DA": 0.78, "Glu": 0.60, "GABA": 0.08, "NE": 0.45})
+        down = self._vp({"DA": 0.20, "Glu": 0.25, "GABA": 0.30, "NE": 0.30})
+        mid = self._vp({"DA": 0.49, "Glu": 0.42, "GABA": 0.19, "NE": 0.37})
+        # A halfway chemistry yields style strictly between the two extremes —
+        # the property a discrete bucket lookup can't provide.
+        assert down["style"] < mid["style"] < bright["style"]
+
+    def test_flag_off_uses_legacy_discrete(self, monkeypatch):
+        from brain.settings import settings
+
+        monkeypatch.setitem(settings._data, "voice_continuous_blend", 0)
+        # Legacy path returns exact settings-driven bright values, not a blend.
+        vp = self._vp({"DA": 0.9, "Glu": 0.9, "GABA": 0.05, "NE": 0.5})
+        assert vp["stability"] == settings.get("voice_stability_bright")
