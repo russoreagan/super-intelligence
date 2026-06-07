@@ -219,7 +219,7 @@ A **plasticity modulator** scales the learning rate on two timescales. At the se
 
 Each of the three surfaces is reinforced as well as read. Alongside competitive drafter reinforcement, the switches and the recall pathway that fire on turns that pay off are strengthened at consolidation, in proportion to how much they contributed — so the routes the entity uses well become the routes it favors next time. Across all three surfaces, each is both a live influence on behavior and a target of reinforcement.
 
-The long-term prediction: preferred drafters, recall paths, and switch orderings should emerge from reinforcement over many sessions. Testing this prediction rigorously requires months of accumulation.
+Controlled testing confirms the mechanism itself. When two copies of the system are given different experiential histories and then probed on identical inputs — with memory wiped and chemistry held neutral, so the learned weights are the only thing that can differ — they route those inputs differently, and the difference disappears when the learned weights are ignored. Experience changes *how* the system processes input, not only what it stores; the effect is strongest in how it allocates memory recall. The open question is no longer whether the loop works but whether, at the natural learning rate over many real sessions, it accrues into a stable, recognizable processing style. That remains a months-long experiment.
 
 ### 4.8 Identity and persona system
 
