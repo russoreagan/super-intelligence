@@ -254,15 +254,34 @@ class UIServer:
             return HTMLResponse(html)
 
         @app.get("/settings")
-        async def get_settings():
+        async def get_settings(request: Request):
             from brain.settings import API_KEY_ENV, DEFAULTS, settings
 
             s = settings.all()
-            # Never ship API-key secrets to the browser. Report only whether each
-            # is set so the UI can show "saved"; the field itself loads blank.
+            # API-key status: prefer the Supabase Vault (per-user, encrypted) when
+            # configured + authenticated; otherwise fall back to local settings.json.
+            # Never ship the secret VALUES to the browser — the fields load blank.
+            vault_status = None
+            token = request.cookies.get(ui_auth.ACCESS_COOKIE)
+            if token and os.environ.get("SUPABASE_URL") and os.environ.get("SUPABASE_ANON_KEY"):
+                try:
+                    from brain import vault
+
+                    st = vault.get_status(token)
+                    vault_status = {
+                        f"api_key_{p}": bool(v)
+                        for p, v in st.items()
+                        if p in vault.VALID_PROVIDERS
+                    }
+                except Exception as e:
+                    logger.warning("[settings] vault status unavailable: %s", e)
             secrets_set = {}
             for k in API_KEY_ENV:
-                secrets_set[k] = bool(str(s.get(k) or "").strip())
+                secrets_set[k] = (
+                    bool(vault_status.get(k))
+                    if vault_status is not None
+                    else bool(str(s.get(k) or "").strip())
+                )
                 s[k] = ""
             return {"settings": s, "defaults": DEFAULTS, "secrets_set": secrets_set}
 
@@ -271,14 +290,36 @@ class UIServer:
             from brain.settings import settings
 
             body = await request.json()
-            # An empty API-key field means "leave the stored key unchanged" — never
-            # let a blank wipe a saved secret (the UI loads these fields blank).
-            from brain.settings import API_KEY_ENV
-
-            for _k in list(body):
-                if _k in API_KEY_ENV and not str(body.get(_k) or "").strip():
-                    body.pop(_k, None)
             try:
+                # API keys route to the Supabase Vault (per-user, encrypted) when
+                # configured; otherwise they persist to local settings.json
+                # (single-user dev). Either way they're removed from the
+                # settings.json patch, and an empty field leaves the stored key
+                # unchanged (never let a blank wipe a saved secret).
+                from brain.settings import API_KEY_ENV
+
+                _token = request.cookies.get(ui_auth.ACCESS_COOKIE)
+                _vault_on = bool(
+                    _token
+                    and os.environ.get("SUPABASE_URL")
+                    and os.environ.get("SUPABASE_ANON_KEY")
+                )
+                for _k in list(body):
+                    if _k not in API_KEY_ENV:
+                        continue
+                    _val = str(body.pop(_k) or "").strip()
+                    if not _val:
+                        continue  # blank = keep existing
+                    if _vault_on:
+                        from brain import vault
+
+                        vault.set_key(_token, _k.replace("api_key_", ""), _val)
+                        # Apply live so a not-yet-constructed client picks it up
+                        # this session too (clients read os.environ lazily).
+                        os.environ[API_KEY_ENV[_k]] = _val
+                    else:
+                        body[_k] = _val  # local dev: persist to settings.json
+
                 prior_persona = str(settings.get("persona_name", ""))
                 settings.save(body)
                 # A persona SWITCH posts the new persona's chem_baseline/chem_init

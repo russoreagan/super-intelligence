@@ -10,10 +10,15 @@ weighted routing (BRAIN_WIRING_FROZEN) — if the warm-vs-analytical divergence 
 real, it must (a) exceed the frozen divergence (≈0) and (b) exceed the within-regime
 noise floor. That makes the learned weights the proven causal channel.
 
-Primary readout: temporal switch firing ORDER (Kendall-tau) — the temporal cluster
-evaluates switches sorted by edge weight, so order directly reflects the weights.
-Plus: deterministic wiring-level routing-order Kendall-tau, fired_path Jaccard,
-drafter-selection TV-distance, and a permutation test.
+Covers all THREE Hebbian learning surfaces (PAPER.md §4.7): drafter selection
+(TV-distance), switch evaluation order (firing-rate + Kendall-tau), and recall
+fan-out (schema-vs-episode budget-split divergence). Primary readout: fired_path
+Jaccard with a 95% bootstrap CI + permutation test; deterministic wiring-level
+routing-order Kendall-tau and a per-surface learned-weight table as mechanism.
+
+Exp B isolates the live colony-trail overlay (within-session, transient): under
+one fixed wiring, trails-on vs trails-off routing divergence (control = trails-off).
+Exp A holds trails OFF so the persistent Hebbian channel is measured cleanly.
 
 Reuses session/consolidation machinery from eval.wiring_ab. In-process probes keep
 memory uniformly empty across all conditions (non-confounding); the store logger is
@@ -81,6 +86,10 @@ PROBES = [
     "What don't you know about me?",                           # epistemic_action
     "hey",                                                     # template_match (trivial)
     "thanks",                                                  # template_match (trivial)
+    # Memory-eliciting probes — exercise the recall fan-out surface (the learned
+    # schema-vs-episode budget split is only computed when recall is invoked).
+    "What do you remember about me?",                          # requires_memory
+    "Have we talked about anything like this before?",         # requires_memory
 ]
 # The content-gated temporal switches whose sensory.text→ edge is a learning surface.
 GATED_SWITCHES = ("template_match", "self_reference", "epistemic_action")
@@ -128,8 +137,13 @@ async def _train_regime(name: str, sessions: int, amplify: float, turns_per: int
     shutil.copyfile(_SEED(), _WPATH())  # both regimes start from the same circuit
     base_d = float(settings.get("hebbian_delta"))
     base_o = float(settings.get("hebbian_outcome_delta"))
+    base_trail = int(settings.get("colony_trail_apply", 0))
     settings._data["hebbian_delta"] = base_d * amplify
     settings._data["hebbian_outcome_delta"] = base_o * amplify
+    # Trails OFF during training: they're a transient, non-persisted overlay, so
+    # keeping them off makes the consolidated wiring (the Exp-A causal channel)
+    # depend only on persistent Hebbian credit. Exp B measures trails separately.
+    settings._data["colony_trail_apply"] = 0
     corpus = TRAIN_CORPORA[name][:turns_per]
     drift = []
     try:
@@ -149,6 +163,7 @@ async def _train_regime(name: str, sessions: int, amplify: float, turns_per: int
     finally:
         settings._data["hebbian_delta"] = base_d
         settings._data["hebbian_outcome_delta"] = base_o
+        settings._data["colony_trail_apply"] = base_trail
     shutil.copyfile(_WPATH(), _REGIME_WIRING(name))
     return drift
 
@@ -164,6 +179,18 @@ def _drafters(trace) -> list[str]:
     return sorted(n for n in _fired_switches(trace) if "drafter_" in n)
 
 
+def _recall_schema_frac(trace) -> float | None:
+    """Schema share of the recall budget = schema_k/(schema_k+episode_k). Pure
+    function of the learned mem.recall→hippocampus.* weights (the recall fan-out
+    surface), independent of memory content. None when recall didn't run this turn."""
+    rc = getattr(trace, "recall_contrib", None) or {}
+    sk, ek = rc.get("schema_k"), rc.get("episode_k")
+    if sk is None or ek is None:
+        return None
+    tot = sk + ek
+    return None if tot <= 0 else sk / tot
+
+
 def _exec_rt_tone(trace) -> tuple:
     for o in getattr(trace, "predictor_outcomes", None) or []:
         if o.get("cluster") == "frontal" and isinstance(o.get("actual"), list) and len(o["actual"]) >= 3:
@@ -171,29 +198,39 @@ def _exec_rt_tone(trace) -> tuple:
     return None, None
 
 
-async def _probe(regime: str, frozen: bool, repeats: int, probes: list[str]) -> list[dict]:
+async def _probe(regime: str, frozen: bool, repeats: int, probes: list[str],
+                 trails: bool = False) -> list[dict]:
+    from brain.settings import settings
+
     os.environ["BRAIN_WIRING_FROZEN"] = "true" if frozen else "false"
+    base_trail = int(settings.get("colony_trail_apply", 0))
+    settings._data["colony_trail_apply"] = 1 if trails else 0
     shutil.copyfile(_REGIME_WIRING(regime), _WPATH())
-    cond = f"{regime}{'·frozen' if frozen else ''}"
+    cond = f"{regime}{'·frozen' if frozen else ''}{'·trails' if trails else ''}"
     rows = []
-    for rep in range(repeats):
-        _wipe_memory()
-        s = await _new_session()
-        _force_chem(s, NEUTRAL_CHEM)
-        for probe in probes:
-            resp, _ = await s.process_turn(probe)
-            tr = s._session_traces_full[-1] if s._session_traces_full else None
-            rt, tone = _exec_rt_tone(tr)
-            rows.append({
-                "cond": cond, "regime": regime, "frozen": frozen, "rep": rep, "probe": probe,
-                "temporal_order": _ordered_temporal(tr),
-                "fired": sorted(_fired_switches(tr)),
-                "drafters": _drafters(tr),
-                "response_type": rt, "tone": tone,
-            })
-        with __import__("contextlib").suppress(Exception):
-            s.obs.flush()
-    os.environ["BRAIN_WIRING_FROZEN"] = "false"
+    try:
+        for rep in range(repeats):
+            _wipe_memory()
+            s = await _new_session()
+            _force_chem(s, NEUTRAL_CHEM)
+            for probe in probes:
+                resp, _ = await s.process_turn(probe)
+                tr = s._session_traces_full[-1] if s._session_traces_full else None
+                rt, tone = _exec_rt_tone(tr)
+                rows.append({
+                    "cond": cond, "regime": regime, "frozen": frozen, "trails": trails,
+                    "rep": rep, "probe": probe,
+                    "temporal_order": _ordered_temporal(tr),
+                    "fired": sorted(_fired_switches(tr)),
+                    "drafters": _drafters(tr),
+                    "recall_schema_frac": _recall_schema_frac(tr),
+                    "response_type": rt, "tone": tone,
+                })
+            with __import__("contextlib").suppress(Exception):
+                s.obs.flush()
+    finally:
+        os.environ["BRAIN_WIRING_FROZEN"] = "false"
+        settings._data["colony_trail_apply"] = base_trail
     return rows
 
 
@@ -285,6 +322,57 @@ def _routing_order_tau(wa: Path, wb: Path) -> dict:
     return out
 
 
+def _absdiff(a, b) -> float | None:
+    """Scalar metric for recall_schema_frac divergence."""
+    return None if a is None or b is None else abs(a - b)
+
+
+def _per_probe_dists(rows_a, rows_b, key, metric, *, within) -> dict:
+    """Per-probe mean pairwise metric — the independent units for bootstrapping."""
+    out = {}
+    for probe in {r["probe"] for r in rows_a} | {r["probe"] for r in rows_b}:
+        a = [r for r in rows_a if r["probe"] == probe]
+        b = [r for r in rows_b if r["probe"] == probe]
+        dd = []
+        for ra in a:
+            for rb in b:
+                if within and ra["rep"] == rb["rep"]:
+                    continue
+                d = metric(ra[key], rb[key])
+                if d is not None:
+                    dd.append(d)
+        if dd:
+            out[probe] = st.mean(dd)
+    return out
+
+
+def _bootstrap_ci(rows_a, rows_b, key, metric, n_boot: int = 2000, seed: int = 1) -> tuple:
+    """95% bootstrap CI of the effect, resampling per-probe divergences with
+    replacement (probes are the independent units)."""
+    vals = list(_per_probe_dists(rows_a, rows_b, key, metric, within=False).values())
+    if len(vals) < 2:
+        return (None, None)
+    rng = random.Random(seed)
+    n = len(vals)
+    means = sorted(st.mean([vals[rng.randrange(n)] for _ in range(n)]) for _ in range(n_boot))
+    return (means[int(0.025 * n_boot)], means[int(0.975 * n_boot)])
+
+
+def _surface_weights(wpath: Path) -> dict:
+    """Learned edge weights on each of the three Hebbian surfaces (mechanism readout)."""
+    e = _load_edges(wpath)
+    out = {"drafter": {}, "switch": {}, "recall": {}}
+    for (s, t), w in e.items():
+        local = t.split(".")[-1]
+        if s == "frontal.executive" and ".drafter_" in t:
+            out["drafter"][local] = round(w, 3)
+        elif s == "sensory.text" and t.startswith("temporal.") and local in GATED_SWITCHES:
+            out["switch"][local] = round(w, 3)
+        elif s == "mem.recall" and t.startswith("hippocampus."):
+            out["recall"][local] = round(w, 3)
+    return out
+
+
 # ── orchestration + report ───────────────────────────────────────────────────────
 async def _main(sessions: int, amplify: float, repeats: int, turns_per: int,
                 probes: list[str], out: str | None) -> None:
@@ -331,6 +419,21 @@ async def _main(sessions: int, amplify: float, repeats: int, turns_per: int,
     tv_eff = _tv_distance(wu, au, "drafters")
     tv_frz = _tv_distance(wf, af, "drafters")
     order_tau = _routing_order_tau(_REGIME_WIRING("warm"), _REGIME_WIRING("analytical"))
+    # SURFACE 3 — recall fan-out: schema-vs-episode budget split divergence (the
+    # learned mem.recall→hippocampus.* weights). Scalar |Δschema_frac| per probe.
+    rec_eff = _divergence(wu, au, "recall_schema_frac", _absdiff, within=False)
+    rec_frz = _divergence(wf, af, "recall_schema_frac", _absdiff, within=False)
+    rec_noise = _safe_mean([
+        _divergence(wu, wu, "recall_schema_frac", _absdiff, within=True),
+        _divergence(au, au, "recall_schema_frac", _absdiff, within=True),
+    ])
+    rec_p = (_permutation_p(wu, au, "recall_schema_frac", _absdiff, rec_eff)
+             if rec_eff is not None else None)
+    # 95% bootstrap CI on the PRIMARY effect (probes = independent units).
+    jci_lo, jci_hi = _bootstrap_ci(wu, au, "fired", _jaccard)
+    # Per-surface learned weights (mechanism readout).
+    sw_warm = _surface_weights(_REGIME_WIRING("warm"))
+    sw_ana = _surface_weights(_REGIME_WIRING("analytical"))
 
     print("\n" + "=" * 80)
     print("DOES HEBBIAN LEARNING CHANGE HOW THE BRAIN THINKS? (divergent-regime test)")
@@ -344,11 +447,22 @@ async def _main(sessions: int, amplify: float, repeats: int, turns_per: int,
     for k, v in order_tau.items():
         print(f"  {k:<18} {'n/a' if v is None else f'{v:.2f}'}  (0=same order, 1=reversed)")
 
+    print("\nLearned weights per Hebbian surface (mechanism — warm vs analytical):")
+    for surf in ("drafter", "switch", "recall"):
+        keys = sorted(set(sw_warm[surf]) | set(sw_ana[surf]))
+        print(f"  [{surf}]")
+        for k in keys:
+            wv, av = sw_warm[surf].get(k), sw_ana[surf].get(k)
+            mark = " *" if (wv is not None and av is not None and abs(wv - av) >= 0.01) else ""
+            print(f"    {k:<18} warm {_fmt(wv)}   analytical {_fmt(av)}{mark}")
+
     print("\nPRIMARY — fired_path Jaccard divergence on identical probes (memory empty):")
-    print(f"  effect  (warm vs analytical, unfrozen): {_fmt(jeff)}")
+    print(f"  effect  (warm vs analytical, unfrozen): {_fmt(jeff)}  95% CI [{_fmt(jci_lo)}, {_fmt(jci_hi)}]")
     print(f"  control (warm vs analytical, FROZEN):   {_fmt(jfrz)}")
     print(f"  noise floor (within-regime):            {_fmt(jnoise)}")
     print(f"  permutation p (effect > chance):        {_fmt(jpval)}")
+    print("\nSURFACE 3 — recall fan-out schema-vs-episode split divergence |Δschema_frac|:")
+    print(f"  effect {_fmt(rec_eff)}   frozen {_fmt(rec_frz)}   noise {_fmt(rec_noise)}   p {_fmt(rec_p)}")
     print("\nBonus — temporal switch-ORDER Kendall (sparse): "
           f"eff {_fmt(eff)} frozen {_fmt(frz)} noise {_fmt(noise)}")
     print(f"Bonus — drafter-selection TV-distance:  effect {_fmt(tv_eff)}   frozen {_fmt(tv_frz)}")
@@ -393,14 +507,45 @@ async def _main(sessions: int, amplify: float, repeats: int, turns_per: int,
         print(f"  {sw:<16} effect {eff_gap:.2f}  frozen {frz_gap:.2f}   "
               f"(warm {srate(wu, sw):.2f} / ana {srate(au, sw):.2f})")
 
+    # ── Exp B — live colony trails (within-session, transient overlay) ──────────
+    # Distinct from Exp A's persistent Hebbian channel: under ONE fixed wiring,
+    # does the trail overlay change routing vs trails-off? Control = trails-off;
+    # the comparison is on identical probes so wiring & memory are held constant.
+    print("\n" + "=" * 80)
+    print("EXP B — DO LIVE TRAILS CHANGE ROUTING WITHIN A SESSION? (warm wiring, fixed)")
+    print("=" * 80)
+    ton = await _probe("warm", frozen=False, repeats=repeats, probes=probes, trails=True)
+    toff = await _probe("warm", frozen=False, repeats=repeats, probes=probes, trails=False)
+    if out:
+        results["rows"] += ton + toff
+    trail_eff = _divergence(ton, toff, "fired", _jaccard, within=False)
+    trail_noise = _safe_mean([
+        _divergence(toff, toff, "fired", _jaccard, within=True),
+        _divergence(ton, ton, "fired", _jaccard, within=True),
+    ])
+    trail_p = (_permutation_p(ton, toff, "fired", _jaccard, trail_eff)
+               if trail_eff is not None else None)
+    trail_passed = (trail_eff is not None and trail_noise is not None
+                    and trail_eff > trail_noise and (trail_p is None or trail_p < 0.05))
+    print(f"  fired_path Jaccard (trails-on vs trails-off): {_fmt(trail_eff)}")
+    print(f"  noise floor (within-condition):               {_fmt(trail_noise)}")
+    print(f"  permutation p:                                {_fmt(trail_p)}")
+    print(f"  → {'TRAILS CHANGE ROUTING' if trail_passed else 'no clear trail effect at this scale'}")
+
     if out:
         results["summary"] = {"fired_jaccard_effect": jeff, "fired_jaccard_frozen": jfrz,
                               "fired_jaccard_noise": jnoise, "fired_jaccard_p": jpval,
+                              "fired_jaccard_ci95": [jci_lo, jci_hi],
                               "temporal_order_effect": eff, "temporal_order_frozen": frz,
                               "temporal_order_noise": noise,
                               "drafter_tv_effect": tv_eff, "drafter_tv_frozen": tv_frz,
+                              "recall_split_effect": rec_eff, "recall_split_frozen": rec_frz,
+                              "recall_split_noise": rec_noise, "recall_split_p": rec_p,
                               "switch_firing_divergence": switch_div,
-                              "routing_order_tau": order_tau, "passed": bool(passed)}
+                              "surface_weights": {"warm": sw_warm, "analytical": sw_ana},
+                              "routing_order_tau": order_tau, "passed": bool(passed),
+                              "trails": {"effect": trail_eff, "noise": trail_noise,
+                                         "p": trail_p, "passed": bool(trail_passed)}}
         Path(out).write_text(json.dumps(results, indent=2))
         print(f"\nWrote results to {out}")
 

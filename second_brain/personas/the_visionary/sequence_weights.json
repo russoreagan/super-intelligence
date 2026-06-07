@@ -20,7 +20,10 @@
     "mood-and",
     "reconnecting-and",
     "live-mood",
-    "live-mood"
+    "live-mood",
+    "live-mood",
+    "architecture-and",
+    "serotonin-dopamine"
   ],
   "bigrams": {
     "temporal-analysis\u001ffresh-data": 1,
@@ -42,7 +45,9 @@
     "fresh-data\u001fmood-and": 1,
     "mood-and\u001freconnecting-and": 1,
     "reconnecting-and\u001flive-mood": 1,
-    "live-mood\u001flive-mood": 1
+    "live-mood\u001flive-mood": 2,
+    "live-mood\u001farchitecture-and": 1,
+    "architecture-and\u001fserotonin-dopamine": 1
   },
   "trigrams": {
     "temporal-analysis\u001ffresh-data\u001fnovel-request": 1,
@@ -63,6 +68,9 @@
     "fresh-data\u001ffresh-data\u001fmood-and": 1,
     "fresh-data\u001fmood-and\u001freconnecting-and": 1,
     "mood-and\u001freconnecting-and\u001flive-mood": 1,
-    "reconnecting-and\u001flive-mood\u001flive-mood": 1
+    "reconnecting-and\u001flive-mood\u001flive-mood": 1,
+    "live-mood\u001flive-mood\u001flive-mood": 1,
+    "live-mood\u001flive-mood\u001farchitecture-and": 1,
+    "live-mood\u001farchitecture-and\u001fserotonin-dopamine": 1
   }
 }

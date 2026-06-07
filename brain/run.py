@@ -45,6 +45,17 @@ from brain.settings import apply_api_key_overrides  # noqa: E402
 
 apply_api_key_overrides()
 
+# Multi-tenant pods load THIS user's keys from the encrypted Supabase Vault,
+# overriding any platform/.env defaults. Guarded by BRAIN_USER_ID so local
+# single-user dev (which uses the settings.json keys above) is unaffected.
+if os.environ.get("BRAIN_USER_ID", "").strip():
+    try:
+        from brain.vault import apply_user_keys_to_env
+
+        apply_user_keys_to_env()
+    except Exception as _vault_err:  # never block boot on a vault hiccup
+        logging.getLogger("brain.run").warning("vault key load failed: %s", _vault_err)
+
 logging.basicConfig(
     level=os.environ.get("BRAIN_LOG_LEVEL", "INFO"),
     format="%(asctime)s %(name)s %(levelname)s %(message)s",

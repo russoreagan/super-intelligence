@@ -267,7 +267,7 @@
   "colony_recruit_softmax_temp": 0.5,
   "colony_sensory_filter": 1,
   "colony_sensory_gain_span": 0.3,
-  "colony_trail_apply": 0,
+  "colony_trail_apply": 1,
   "colony_trail_gain": 0.05,
   "colony_trail_clamp": 0.5,
   "colony_trail_half_life_s": 120.0,
