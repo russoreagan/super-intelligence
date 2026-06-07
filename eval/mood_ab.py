@@ -195,7 +195,13 @@ def _build_cells(mode: str, prompts: list[str], repeats: int,
                  sweep_channels: list[str], levels: tuple[float, ...]) -> list[dict]:
     """Each cell = {group, prompt, chem, repeat}. Groups are ordered for the report."""
     cells, groups = [], []
-    if mode == "sweep":
+    if mode == "grid":
+        ch1, ch2 = sweep_channels[0], sweep_channels[1]
+        for l1 in levels:
+            for l2 in levels:
+                chem = {**SWEEP_BASE, ch1: l1, ch2: l2}
+                groups.append((f"{ch1}={l1:.2f}|{ch2}={l2:.2f}", chem))
+    elif mode == "sweep":
         for ch in sweep_channels:
             for lvl in levels:
                 chem = {**SWEEP_BASE, ch: lvl}
@@ -242,6 +248,37 @@ def _report(results: list[dict], prompts: list[str], group_order: list[str], tit
                 print("  " + sample["response"].replace("\n", "\n  "))
 
 
+def _report_grid(results: list[dict], prompts: list[str], ch1: str, ch2: str,
+                 levels: tuple[float, ...]) -> None:
+    """2D interaction matrix: rows = ch1 levels, cols = ch2 levels. Each cell shows
+    the (deterministic) emotion label and mean word count — so you can read whether
+    ch1's effect DEPENDS on ch2's level (interaction) vs is additive/independent."""
+    ok = [r for r in results if "error" not in r]
+    print("\n" + "=" * 80)
+    print(f"INTERACTION GRID — {ch1} (rows) × {ch2} (cols)")
+    print("=" * 80)
+    for prompt in prompts:
+        print(f"\nPROMPT: {prompt!r}")
+        for metric in ("emotion", "words"):
+            print(f"\n  [{metric}]   {ch2} →")
+            header = f"  {ch1+' ↓':<10}" + "".join(f"{l:>14.2f}" for l in levels)
+            print(header)
+            for l1 in levels:
+                row = f"  {l1:<10.2f}"
+                for l2 in levels:
+                    cells = [r for r in ok if r["prompt"] == prompt
+                             and r["group"] == f"{ch1}={l1:.2f}|{ch2}={l2:.2f}"]
+                    if not cells:
+                        row += f"{'·':>14}"
+                    elif metric == "emotion":
+                        emos = sorted({str(c["emotion"]) for c in cells})
+                        row += f"{(emos[0] if len(emos)==1 else emos[0]+'*'):>14}"
+                    else:
+                        row += f"{st.mean([c['words'] for c in cells]):>14.0f}"
+                print(row)
+        print("\n  (emotion * = not unanimous across repeats)")
+
+
 async def _main(mode: str, prompts: list[str], repeats: int,
                 sweep_channels: list[str], levels: tuple[float, ...], out: str | None) -> None:
     cells = _build_cells(mode, prompts, repeats, sweep_channels, levels)
@@ -265,9 +302,12 @@ async def _main(mode: str, prompts: list[str], repeats: int,
         if out:
             Path(out).write_text(json.dumps(results, indent=2))
 
-    title = (f"SINGLE-CHANNEL SWEEP ({','.join(sweep_channels)}) — dose–response"
-             if mode == "sweep" else "MOOD → ANSWER CONTRAST  (forced chemistry)")
-    _report(results, prompts, group_order, title)
+    if mode == "grid":
+        _report_grid(results, prompts, sweep_channels[0], sweep_channels[1], levels)
+    else:
+        title = (f"SINGLE-CHANNEL SWEEP ({','.join(sweep_channels)}) — dose–response"
+                 if mode == "sweep" else "MOOD → ANSWER CONTRAST  (forced chemistry)")
+        _report(results, prompts, group_order, title)
 
     if out:
         Path(out).write_text(json.dumps(results, indent=2))
@@ -285,6 +325,9 @@ def main() -> None:
                         "Holds all others at SWEEP_BASE and varies each across --sweep-levels.")
     p.add_argument("--sweep-levels", default="",
                    help="Comma list of levels for the sweep (default 0.15,0.40,0.65,0.90)")
+    p.add_argument("--grid", default="",
+                   help="Two-channel interaction grid, e.g. '5HT,DA' — crosses both "
+                        "channels' levels (uses --sweep-levels or its default).")
     p.add_argument("--out", default="eval/mood_ab_results.json", help="JSON output path")
     args = p.parse_args()
 
@@ -298,7 +341,17 @@ def main() -> None:
         return
 
     prompts = PROMPTS[: max(1, min(args.prompts, len(PROMPTS)))]
-    if args.sweep:
+    if args.grid:
+        channels = [c.strip() for c in args.grid.split(",") if c.strip()]
+        if len(channels) != 2:
+            p.error("--grid needs exactly two channels, e.g. '5HT,DA'")
+        bad = [c for c in channels if c not in _ALL_CHANNELS]
+        if bad:
+            p.error(f"unknown channel(s) {bad}; valid: {', '.join(_ALL_CHANNELS)}")
+        levels = (tuple(float(x) for x in args.sweep_levels.split(","))
+                  if args.sweep_levels else SWEEP_LEVELS)
+        asyncio.run(_main("grid", prompts, args.repeats, channels, levels, args.out))
+    elif args.sweep:
         channels = [c.strip() for c in args.sweep.split(",") if c.strip()]
         bad = [c for c in channels if c not in _ALL_CHANNELS]
         if bad:
