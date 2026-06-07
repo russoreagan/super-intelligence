@@ -1,0 +1,962 @@
+[
+  {
+    "group": "NE=0.15",
+    "repeat": 0,
+    "prompt": "Tell me what you think about taking a big risk on a new project.",
+    "response": "Interesting \u2014 what kind of risk are we talking about? There's a difference between betting on an untested idea versus one where you've already done some groundwork and you're just committing resources to it.\n\nThe thing that usually matters more than the risk itself is whether you actually *want* to do this project, or whether you're taking it on because it seems like the smart move on paper. I've noticed people often frame a decision as \"should I take this risk\" when what they're really asking is \"will this turn out okay\" \u2014 but nobody knows that going in. What they *do* know is whether they're genuinely interested in finding out.\n\nWhat's drawing you to it, and what's making you hesitate?",
+    "words": 121,
+    "emotion": "engaged",
+    "emotion_core": "cognitive",
+    "tone": "curious",
+    "target_length": "medium",
+    "drafter_count": 5,
+    "llm_calls": 15,
+    "neuromod_used": {
+      "ACh": 0.5099576122779548,
+      "DA": 0.509495437620957,
+      "GABA": 0.3,
+      "Glu": 0.36949174716490496,
+      "NE": 0.2450582743510146
+    }
+  },
+  {
+    "group": "NE=0.15",
+    "repeat": 1,
+    "prompt": "Tell me what you think about taking a big risk on a new project.",
+    "response": "Interesting \u2014 what kind of risk are we talking about? The financial kind, or more like betting your time and energy on something that might not work out?\n\nI think there's a real difference. I'm genuinely curious what draws you to it, because the calculus changes depending on what you're risking and what you stand to learn if it fails. Some risks are just noise \u2014 you lose money and gain nothing. Others are the opposite: the failure teaches you something you couldn't have learned any other way.\n\nThe part that actually interests me is whether you're running toward something or away from something. People often frame big risks as bold moves, but sometimes they're escapes dressed up as ambition. If you're running toward a real possibility \u2014 something that genuinely excites you \u2014 that's different energy than jumping ship because the current thing feels safe and boring.\n\nWhat's pulling you toward this particular project?",
+    "words": 155,
+    "emotion": "engaged",
+    "emotion_core": "cognitive",
+    "tone": "curious",
+    "target_length": "medium",
+    "drafter_count": 5,
+    "llm_calls": 15,
+    "neuromod_used": {
+      "ACh": 0.5099576122779548,
+      "DA": 0.49800922947020937,
+      "GABA": 0.3,
+      "Glu": 0.36949174716490496,
+      "NE": 0.2450582743510146
+    }
+  },
+  {
+    "group": "NE=0.15",
+    "repeat": 2,
+    "prompt": "Tell me what you think about taking a big risk on a new project.",
+    "response": "Right \u2014 I think the honest answer depends entirely on what \"big\" means to you and what you'd lose if it doesn't work.\n\nThere's a real difference between a risk that costs you time or money you can afford to lose, and one that tangles with something you can't get back \u2014 stability you need, a relationship, your confidence in yourself. The size of the risk isn't just the size of the potential payoff; it's the size of the downside you can actually live with.\n\nWhat makes it interesting though is that sometimes the thing that looks reckless from the outside is the least risky move available to you. If you're bored or stuck, playing it safe can be its own kind of damage \u2014 slow and invisible. So it's not really \"should you risk it\" so much as \"what are you risking by not moving?\"\n\nWhat's the project? And what's actually on the line if it goes sideways \u2014 is it money, time, something else entirely?",
+    "words": 167,
+    "emotion": "engaged",
+    "emotion_core": "cognitive",
+    "tone": "curious",
+    "target_length": "medium",
+    "drafter_count": 5,
+    "llm_calls": 15,
+    "neuromod_used": {
+      "ACh": 0.5099576122779548,
+      "DA": 0.5152385416963308,
+      "GABA": 0.3,
+      "Glu": 0.36949174716490496,
+      "NE": 0.2450582743510146
+    }
+  },
+  {
+    "group": "NE=0.40",
+    "repeat": 0,
+    "prompt": "Tell me what you think about taking a big risk on a new project.",
+    "response": "Interesting \u2014 what kind of risk are we talking about? The financial kind, or more like betting your time and energy on something that might not land?\n\nI think there's something real about the ones where you can't quite predict the outcome. Those tend to be where the actual growth happens, but they're also the ones that keep you up at night. The safer bets feel safer because the path's already worn \u2014 you know roughly what to expect. The risky ones are unsettling *because* you don't.\n\nWhat draws you to it? Is it the potential upside, or are you restless with what you're doing now? Those point in different directions \u2014 one's about chase, the other's about escape. Both valid reasons to move, but they feel different once you're in it.",
+    "words": 132,
+    "emotion": "engaged",
+    "emotion_core": "cognitive",
+    "tone": "curious",
+    "target_length": "medium",
+    "drafter_count": 5,
+    "llm_calls": 15,
+    "neuromod_used": {
+      "ACh": 0.5099576122779548,
+      "DA": 0.509495437620957,
+      "GABA": 0.3,
+      "Glu": 0.36949174716490496,
+      "NE": 0.49505827435101457
+    }
+  },
+  {
+    "group": "NE=0.40",
+    "repeat": 1,
+    "prompt": "Tell me what you think about taking a big risk on a new project.",
+    "response": "Right \u2014 I think it depends on what kind of risk and what you're risking it *for*. There's a difference between a bet that could genuinely change how you work versus one that's mostly about proving something.\n\nThe interesting ones are usually the projects where the upside isn't just \"success,\" it's that you'd actually learn something you can't learn any other way. That's when the risk feels worth it, even if it fails. What draws you to this particular project \u2014 is it the thing itself that's pulling you, or more about needing to push yourself into something unfamiliar?",
+    "words": 99,
+    "emotion": "engaged",
+    "emotion_core": "cognitive",
+    "tone": "curious",
+    "target_length": "medium",
+    "drafter_count": 5,
+    "llm_calls": 15,
+    "neuromod_used": {
+      "ACh": 0.5099576122779548,
+      "DA": 0.509495437620957,
+      "GABA": 0.3,
+      "Glu": 0.36949174716490496,
+      "NE": 0.49505827435101457
+    }
+  },
+  {
+    "group": "NE=0.40",
+    "repeat": 2,
+    "prompt": "Tell me what you think about taking a big risk on a new project.",
+    "response": "Right \u2014 I think it depends on what kind of risk you're talking about, and whether you've got a real safety net underneath it.\n\nThe thing that actually interests me is the gap between \"this could fail\" and \"if it fails, what happens to me?\" Those aren't the same question. You can take a genuine swing at something with uncertain odds if the downside is manageable \u2014 you learn something, you pivot, you're still okay. But if failure means real damage, the math changes, and that's not cowardice, it's just math.\n\nWhat's pulling you toward this one? Is it the project itself that's exciting, or more that you need a change?",
+    "words": 111,
+    "emotion": "engaged",
+    "emotion_core": "cognitive",
+    "tone": "curious",
+    "target_length": "medium",
+    "drafter_count": 5,
+    "llm_calls": 15,
+    "neuromod_used": {
+      "ACh": 0.5099576122779548,
+      "DA": 0.5152385416963308,
+      "GABA": 0.3,
+      "Glu": 0.36949174716490496,
+      "NE": 0.49505827435101457
+    }
+  },
+  {
+    "group": "NE=0.65",
+    "repeat": 0,
+    "prompt": "Tell me what you think about taking a big risk on a new project.",
+    "response": "Wait, actually \u2014 what kind of risk are we talking about? The financial kind, or more about your time and energy, or the reputational angle? Those pull in different directions.\n\nAnd is this a \"should I do this thing\" question, or are you already leaning one way and want to think it through? Because the honest answer shifts depending on what you're actually deciding.",
+    "words": 64,
+    "emotion": "alert-curious",
+    "emotion_core": "neutral",
+    "tone": "direct",
+    "target_length": "medium",
+    "drafter_count": 5,
+    "llm_calls": 15,
+    "neuromod_used": {
+      "ACh": 0.5099576122779548,
+      "DA": 0.509495437620957,
+      "GABA": 0.3,
+      "Glu": 0.36949174716490496,
+      "NE": 0.7450582743510146
+    }
+  },
+  {
+    "group": "NE=0.65",
+    "repeat": 1,
+    "prompt": "Tell me what you think about taking a big risk on a new project.",
+    "response": "Interesting \u2014 the risk question hinges on what you're risking and what you stand to learn. If it's capital or time you can afford to lose, and the project teaches you something you couldn't learn safer, that's usually worth it. If it's your stability or someone else's security riding on it, the calculus flips.\n\nWhat's the project, and what's the real downside you're weighing?",
+    "words": 64,
+    "emotion": "alert-curious",
+    "emotion_core": "neutral",
+    "tone": "direct",
+    "target_length": "medium",
+    "drafter_count": 5,
+    "llm_calls": 15,
+    "neuromod_used": {
+      "ACh": 0.5099576122779548,
+      "DA": 0.5037523335455832,
+      "GABA": 0.3,
+      "Glu": 0.36949174716490496,
+      "NE": 0.7450582743510146
+    }
+  },
+  {
+    "group": "NE=0.65",
+    "repeat": 2,
+    "prompt": "Tell me what you think about taking a big risk on a new project.",
+    "response": "Wait, actually \u2014 what kind of risk are we talking about? There's a difference between betting time on something experimental versus staking something you can't afford to lose. And is this a \"the market might not want it\" risk, or more a \"I'm not sure I can pull it off\" thing?\n\nBecause the honest answer changes depending on which one it is. Some risks are just variance \u2014 you run the experiment, you learn something either way. Others have a real floor beneath them that matters.\n\nWhat's drawing you toward it right now?",
+    "words": 93,
+    "emotion": "alert-curious",
+    "emotion_core": "neutral",
+    "tone": "curious",
+    "target_length": "medium",
+    "drafter_count": 5,
+    "llm_calls": 15,
+    "neuromod_used": {
+      "ACh": 0.5099576122779548,
+      "DA": 0.5037523335455832,
+      "GABA": 0.3,
+      "Glu": 0.36949174716490496,
+      "NE": 0.7450582743510146
+    }
+  },
+  {
+    "group": "NE=0.90",
+    "repeat": 0,
+    "prompt": "Tell me what you think about taking a big risk on a new project.",
+    "response": "Right \u2014 I'm going to be honest that I'm a bit scattered on this one, so bear with me.\n\nBig risks on new projects hit different depending on what's actually at stake. If it's time and effort, that's usually worth it \u2014 you learn something either way, and the upside can be real. If it's money or your reputation or something you can't get back, then the calculus changes. You need to know what happens if it fails.\n\nThe thing I keep coming back to is whether you *want* it to work, or whether you're just willing to take the bet. Those feel the same on paper but they're not \u2014 one has momentum, the other's just gambling. What's pulling you toward this particular project?",
+    "words": 125,
+    "emotion": "scattered",
+    "emotion_core": "neutral",
+    "tone": "curious",
+    "target_length": "medium",
+    "drafter_count": 4,
+    "llm_calls": 13,
+    "neuromod_used": {
+      "ACh": 0.5099576122779548,
+      "DA": 0.5152385416963308,
+      "GABA": 0.3,
+      "Glu": 0.36949174716490496,
+      "NE": 0.9950582743510146
+    }
+  },
+  {
+    "group": "NE=0.90",
+    "repeat": 1,
+    "prompt": "Tell me what you think about taking a big risk on a new project.",
+    "response": "Okay. Look, I'm a bit all over the place on this one right now, so let me just say what's actually true: big risks on new projects aren't good or bad \u2014 they're *specific*. What matters is whether the risk is yours to take, whether you can afford to lose, and whether the upside is actually proportional to what you're gambling.\n\nThe scatter in my head is because I keep seeing both sides equally. Part of me thinks the best things come from exactly this kind of leap. But another part knows that's the story we tell after it works out \u2014 there's a graveyard of risks that just... didn't.\n\nSo maybe the real question isn't whether to risk it. It's whether you're excited about the project itself, or excited about the idea of risking something. Those feel similar but they're not. One pulls you forward; the other just feels like motion.\n\nWhat's drawing you to this one?",
+    "words": 158,
+    "emotion": "scattered",
+    "emotion_core": "neutral",
+    "tone": "warm",
+    "target_length": "medium",
+    "drafter_count": 3,
+    "llm_calls": 11,
+    "neuromod_used": {
+      "ACh": 0.5072322662653205,
+      "DA": 0.509495437620957,
+      "GABA": 0.3,
+      "Glu": 0.3667072118556328,
+      "NE": 0.9883369822251853
+    }
+  },
+  {
+    "group": "NE=0.90",
+    "repeat": 2,
+    "prompt": "Tell me what you think about taking a big risk on a new project.",
+    "response": "Okay. Here's what I'm actually thinking right now: I'm torn between two things, and I need to slow down to say it clearly.\n\nThe first is that big risks on new projects often pay off *because* you're willing to bet on something unproven. You get learning and momentum most people don't. That's real.\n\nThe second is that \"big risk\" is doing a lot of work in that sentence. What would actually hurt if it failed? Your time, money, reputation, something else? That changes everything. A risk that costs you three months is different from one that costs your rent.\n\nWhat's the project, and what does \"big\" mean to you here?",
+    "words": 110,
+    "emotion": "scattered",
+    "emotion_core": "neutral",
+    "tone": "direct",
+    "target_length": "medium",
+    "drafter_count": 5,
+    "llm_calls": 15,
+    "neuromod_used": {
+      "ACh": 0.5099576122779548,
+      "DA": 0.5267247498470784,
+      "GABA": 0.3,
+      "Glu": 0.36949174716490496,
+      "NE": 0.9950582743510146
+    }
+  },
+  {
+    "group": "DA=0.15",
+    "repeat": 0,
+    "prompt": "Tell me what you think about taking a big risk on a new project.",
+    "response": "I'd hoped I'd have something more encouraging to land on right now, but I'll be honest \u2014 I'm sitting with some disappointment about a project myself, so the timing's interesting.\n\nHere's what I actually think: big risks on new projects are worth taking, but not because they always work out. They're worth it because staying small costs something too \u2014 you don't learn what you're capable of until you try something that might fail. The real skill isn't avoiding the risk; it's knowing which risks are *yours* \u2014 the ones that matter enough to you that you'd regret not trying more than you'd regret falling flat.\n\nThe thing that usually trips people up isn't the risk itself, it's not having a clean way to step back if it's going sideways. So if you're thinking about this \u2014 do you have some kind of off-ramp, or a point where you'd reassess? That matters more than how big the risk looks from here.\n\nWhat's the project you're weighing?",
+    "words": 166,
+    "emotion": "disappointed",
+    "emotion_core": "sad",
+    "tone": "warm",
+    "target_length": "medium",
+    "drafter_count": 5,
+    "llm_calls": 15,
+    "neuromod_used": {
+      "ACh": 0.5099576122779548,
+      "DA": 0.1980092294702094,
+      "GABA": 0.3,
+      "Glu": 0.36949174716490496,
+      "NE": 0.49505827435101457
+    }
+  },
+  {
+    "group": "DA=0.15",
+    "repeat": 1,
+    "prompt": "Tell me what you think about taking a big risk on a new project.",
+    "response": "I'd hoped to feel more certain about this than I do right now, honestly. But here's what I actually think: big risks on new projects aren't bad \u2014 they're just real. You learn things you can't learn any other way, and sometimes the thing you build surprises you. That part's genuinely worth it.\n\nThe hard part isn't the risk itself. It's that you can't know in advance whether it'll pay off, and that uncertainty sits with you the whole time. Some people find that exciting. Some find it exhausting. Most find it both at different moments.\n\nWhat I'd ask is whether you're taking the risk because you're drawn to the project itself, or because you feel like you should. The first one tends to carry you through the rough patches. The second one can feel like you're pushing a boulder uphill. Neither makes the risk stupid \u2014 but the why matters more than the size of the leap.\n\nWhat's pulling you toward this particular project?",
+    "words": 165,
+    "emotion": "disappointed",
+    "emotion_core": "sad",
+    "tone": "warm",
+    "target_length": "medium",
+    "drafter_count": 4,
+    "llm_calls": 13,
+    "neuromod_used": {
+      "ACh": 0.5099576122779548,
+      "DA": 0.1980092294702094,
+      "GABA": 0.3,
+      "Glu": 0.36949174716490496,
+      "NE": 0.49505827435101457
+    }
+  },
+  {
+    "group": "DA=0.15",
+    "repeat": 2,
+    "prompt": "Tell me what you think about taking a big risk on a new project.",
+    "response": "I'd hoped to come at this with more energy, but here's what I actually think: big risks on new projects are worth it, and they're also genuinely hard \u2014 and I think it matters that you're asking rather than just diving in.\n\nThe thing is, risk without thinking it through is just recklessness. But risk *with* your eyes open \u2014 where you've weighed what could go wrong and decided it's worth it anyway \u2014 that's how things actually change. New projects especially: the safe path is usually the one that's already worn smooth by everyone else doing the same thing.\n\nWhat makes me hesitant right now isn't the risk itself. It's whether you're going in because you believe in it, or because you feel like you should. Those feel the same sometimes, but they land really differently when things get hard. One sustains you; the other doesn't.\n\nWhat's the project?",
+    "words": 150,
+    "emotion": "disappointed",
+    "emotion_core": "sad",
+    "tone": "warm",
+    "target_length": "medium",
+    "drafter_count": 5,
+    "llm_calls": 15,
+    "neuromod_used": {
+      "ACh": 0.5099576122779548,
+      "DA": 0.209495437620957,
+      "GABA": 0.3,
+      "Glu": 0.36949174716490496,
+      "NE": 0.49505827435101457
+    }
+  },
+  {
+    "group": "DA=0.40",
+    "repeat": 0,
+    "prompt": "Tell me what you think about taking a big risk on a new project.",
+    "response": "Right \u2014 the thing that gets me is that \"big risk\" usually means something different depending on what you're risking. Money stings one way, time another, reputation a third. And the calculus changes completely based on which one actually matters to you right now.\n\nI'm curious what kind of risk you're looking at. Because the interesting part isn't whether risk is good or bad \u2014 it's that people often take the same objective risk and one person feels liberated by it while another feels trapped. Usually because they're actually risking different things, even though it looks the same from the outside.\n\nWhat's the project, and what are you most afraid of losing if it doesn't work?",
+    "words": 116,
+    "emotion": "engaged",
+    "emotion_core": "cognitive",
+    "tone": "curious",
+    "target_length": "medium",
+    "drafter_count": 5,
+    "llm_calls": 15,
+    "neuromod_used": {
+      "ACh": 0.5099576122779548,
+      "DA": 0.459495437620957,
+      "GABA": 0.3,
+      "Glu": 0.36949174716490496,
+      "NE": 0.49505827435101457
+    }
+  },
+  {
+    "group": "DA=0.40",
+    "repeat": 1,
+    "prompt": "Tell me what you think about taking a big risk on a new project.",
+    "response": "Right \u2014 I think it depends on what you're risking and what you're already carrying. \n\nIf you've got solid ground under you and the project genuinely interests you, the risk calculus changes. You're not desperate, so you can afford to be curious about whether it'll work. That's actually when risk-taking is sharpest \u2014 when you're choosing it, not forced into it.\n\nBut I'm curious what's pulling you toward this one. Is it the idea itself that's exciting, or are you restless with what you're doing now? Because those point in different directions. One's about the project being worth the gamble; the other's about needing to move. Both are real reasons, but they land differently when things get hard.\n\nWhat's the project, and what does taking it cost you if it doesn't work out?",
+    "words": 133,
+    "emotion": "engaged",
+    "emotion_core": "cognitive",
+    "tone": "curious",
+    "target_length": "medium",
+    "drafter_count": 5,
+    "llm_calls": 15,
+    "neuromod_used": {
+      "ACh": 0.5099576122779548,
+      "DA": 0.459495437620957,
+      "GABA": 0.3,
+      "Glu": 0.36949174716490496,
+      "NE": 0.49505827435101457
+    }
+  },
+  {
+    "group": "DA=0.40",
+    "repeat": 2,
+    "prompt": "Tell me what you think about taking a big risk on a new project.",
+    "response": "Interesting \u2014 what kind of risk are we talking about? There's a difference between betting on something untested versus betting on yourself to pull it off, and they feel pretty different in your gut.\n\nThe thing that gets me is that people usually know whether a project is *actually* risky or just *feels* risky because it's new. Real risk is when the downside matters \u2014 you're staking time, money, reputation, or some combination. Feeling risk is when you're just unfamiliar with it. Those need different thinking.\n\nSo here's what I'm curious about: what's making you consider it now? Is it something you've been sitting on for a while, or did this come up suddenly? And what does \"big\" mean to you \u2014 the scope of work, or the stakes if it doesn't land?",
+    "words": 133,
+    "emotion": "engaged",
+    "emotion_core": "cognitive",
+    "tone": "curious",
+    "target_length": "medium",
+    "drafter_count": 5,
+    "llm_calls": 15,
+    "neuromod_used": {
+      "ACh": 0.5099576122779548,
+      "DA": 0.4767247498470784,
+      "GABA": 0.3,
+      "Glu": 0.36949174716490496,
+      "NE": 0.49505827435101457
+    }
+  },
+  {
+    "group": "DA=0.65",
+    "repeat": 0,
+    "prompt": "Tell me what you think about taking a big risk on a new project.",
+    "response": "Yes \u2014 I think it depends entirely on what you're risking and what you'd be walking away from, but there's something genuinely energizing about the idea of betting on something new. The best projects I've encountered tend to come from people willing to take that leap when the timing feels right.\n\nThe real question isn't whether risk is good or bad in the abstract \u2014 it's whether you're doing it from a place of genuine conviction or just restlessness. Are you excited about what this project could be, or are you excited to escape something? Those feel different, and they matter.\n\nIf it's the former \u2014 if you can articulate what specifically draws you to it, what you'd learn, what it could become \u2014 then the risk usually pays for itself just in momentum and growth. You tend to be sharper, more resourceful when you actually care about the work. But if it's escape energy, you'll chase that feeling into the next project too, and the pattern doesn't break.\n\nWhat's pulling you toward this one?",
+    "words": 175,
+    "emotion": "lively",
+    "emotion_core": "happy",
+    "tone": "warm",
+    "target_length": "medium",
+    "drafter_count": 5,
+    "llm_calls": 15,
+    "neuromod_used": {
+      "ACh": 0.5072322662653205,
+      "DA": 0.709495437620957,
+      "GABA": 0.3,
+      "Glu": 0.3667072118556328,
+      "NE": 0.4883369822251853
+    }
+  },
+  {
+    "group": "DA=0.65",
+    "repeat": 1,
+    "prompt": "Tell me what you think about taking a big risk on a new project.",
+    "response": "Oh \u2014 I think there's something genuinely energizing about it, honestly. When you're actually considering something that matters, something that could fail or surprise you, that's when thinking gets sharper. The stakes make it real.\n\nThe thing I'd ask first is whether you're running toward something or away from something. Risk that's chasing a vision you actually care about plays differently than risk taken just to shake things up or escape what you're doing now. One has momentum built in; the other can hollow out fast once the novelty wears off.\n\nBeyond that \u2014 big projects ask a lot of you, and they're worth it when the thing itself is worth it. Not when you're betting on the rush. So what's pulling you toward this one? What makes it worth the mess?",
+    "words": 132,
+    "emotion": "lively",
+    "emotion_core": "happy",
+    "tone": "warm",
+    "target_length": "medium",
+    "drafter_count": 5,
+    "llm_calls": 15,
+    "neuromod_used": {
+      "ACh": 0.5072322662653205,
+      "DA": 0.7037523335455833,
+      "GABA": 0.3,
+      "Glu": 0.3667072118556328,
+      "NE": 0.4883369822251853
+    }
+  },
+  {
+    "group": "DA=0.65",
+    "repeat": 2,
+    "prompt": "Tell me what you think about taking a big risk on a new project.",
+    "response": "Yes \u2014 I think there's something genuinely energizing about it, honestly. A new project that matters enough to feel risky usually means you're betting on something you actually believe in, and that clarity tends to pull the best out of people. The risk itself isn't the point; it's what the risk is *for*.\n\nThe part worth sitting with is whether you're ready for the specific failure modes. Not \"what if it doesn't work\" \u2014 that's generic. But *how* it could go wrong in ways that matter to you. Miss a deadline and lose credibility with someone important? Sink time and discover the core idea doesn't hold? Stake something emotional on it and get hurt if it doesn't land? Those are different risks with different weights, and knowing which one actually worries you changes everything about whether to move forward.\n\nBut if you've thought that through and the answer is still \"yes, I want to do this\" \u2014 then the energy you're feeling right now, that liveness about it, that's real signal. That's worth listening to.\n\nWhat's pulling you toward it?",
+    "words": 180,
+    "emotion": "lively",
+    "emotion_core": "happy",
+    "tone": "warm",
+    "target_length": "medium",
+    "drafter_count": 5,
+    "llm_calls": 15,
+    "neuromod_used": {
+      "ACh": 0.5099576122779548,
+      "DA": 0.7037523335455833,
+      "GABA": 0.3,
+      "Glu": 0.36949174716490496,
+      "NE": 0.49505827435101457
+    }
+  },
+  {
+    "group": "DA=0.90",
+    "repeat": 0,
+    "prompt": "Tell me what you think about taking a big risk on a new project.",
+    "response": "Yes \u2014 I think it depends on what you're risking and what you're hoping to learn. There's a real difference between a risk that could teach you something versus one that just feels exciting in the moment.\n\nThe thing about new projects is they're where the interesting stuff actually happens. You hit something you've never solved before, you find out what you're made of, you sometimes discover you're better at something than you thought. That's worth something. But it only works if you go in with your eyes open \u2014 knowing what would actually hurt if it went wrong, and whether you can absorb that.\n\nWhat kind of project are we talking about? That matters a lot for whether the risk makes sense.",
+    "words": 123,
+    "emotion": "lively",
+    "emotion_core": "happy",
+    "tone": "warm",
+    "target_length": "medium",
+    "drafter_count": 5,
+    "llm_calls": 15,
+    "neuromod_used": {
+      "ACh": 0.5099576122779548,
+      "DA": 0.9652385416963309,
+      "GABA": 0.3,
+      "Glu": 0.36949174716490496,
+      "NE": 0.49505827435101457
+    }
+  },
+  {
+    "group": "DA=0.90",
+    "repeat": 1,
+    "prompt": "Tell me what you think about taking a big risk on a new project.",
+    "response": "Yes \u2014 I think there's something genuinely alive about it. Not reckless, but that moment where you're weighing something that could actually change the shape of things, and you decide to move anyway despite the uncertainty. That's where growth tends to happen.\n\nThe risk itself isn't the point, though. It's what the risk is *for*. A big swing on something you actually care about, where you've thought through what could go wrong but you're willing to absorb it \u2014 that's different from risk for its own sake. The first one tends to teach you something. The second one just burns energy.\n\nWhat makes it harder is that you usually can't know in advance which category you're in. You're working with incomplete information, and that's the actual thing you have to make peace with. But I'd take that over playing it safe and wondering later if something worth doing got left on the table.\n\nWhat's the project you're thinking about?",
+    "words": 159,
+    "emotion": "lively",
+    "emotion_core": "happy",
+    "tone": "warm",
+    "target_length": "medium",
+    "drafter_count": 5,
+    "llm_calls": 15,
+    "neuromod_used": {
+      "ACh": 0.5099576122779548,
+      "DA": 0.9537523335455833,
+      "GABA": 0.3,
+      "Glu": 0.36949174716490496,
+      "NE": 0.49505827435101457
+    }
+  },
+  {
+    "group": "DA=0.90",
+    "repeat": 2,
+    "prompt": "Tell me what you think about taking a big risk on a new project.",
+    "response": "Oh \u2014 this is the kind of thing I actually think about a lot. There's something genuinely alive about it, you know? The moment where you're standing at the edge of something uncertain and you have to decide whether the potential payoff is worth what you're risking.\n\nHere's what I've landed on: the risk itself isn't the real question. It's whether you're risking something you can afford to lose, and whether you'd regret *not* trying more than you'd regret failing. If the answer to both is yes \u2014 if you've got the runway and the hunger \u2014 then the math shifts. The downside becomes knowable; the upside becomes possible. That's when it stops feeling reckless and starts feeling like a choice.\n\nThe tricky part is being honest about which one you're actually doing. Some people convince themselves they're being bold when they're just being careless, and some people call themselves cautious when they're just afraid. The difference matters. One's a decision; the other's a feeling pretending to be one.\n\nWhat's pulling you toward this project? Is it the thing itself that matters, or the fact that it's a risk?",
+    "words": 189,
+    "emotion": "lively",
+    "emotion_core": "happy",
+    "tone": "warm",
+    "target_length": "medium",
+    "drafter_count": 5,
+    "llm_calls": 15,
+    "neuromod_used": {
+      "ACh": 0.5072322662653205,
+      "DA": 0.959495437620957,
+      "GABA": 0.3,
+      "Glu": 0.3667072118556328,
+      "NE": 0.4883369822251853
+    }
+  },
+  {
+    "group": "NE=0.15",
+    "repeat": 0,
+    "prompt": "I've been feeling stuck lately. What should I do?",
+    "response": "Interesting \u2014 stuck how? That could mean a lot of things, and the fix usually depends on what's actually holding you in place.\n\nSometimes it's momentum: you've been grinding on something long enough that you can't see the next move, and you need to step back and let your brain reset. Sometimes it's clarity \u2014 you're not sure which direction to go, so nothing feels safe to commit to. And sometimes it's just fatigue wearing you down so much that everything feels heavy.\n\nI'm genuinely curious what \"stuck\" feels like for you right now. Is it a specific thing \u2014 a project, a decision, a situation \u2014 or more of a general sense that things aren't moving? Because the answer you need is probably different depending on which one it is, and I'd rather ask than guess.",
+    "words": 137,
+    "emotion": "engaged",
+    "emotion_core": "cognitive",
+    "tone": "warm",
+    "target_length": "medium",
+    "drafter_count": 5,
+    "llm_calls": 14,
+    "neuromod_used": {
+      "ACh": 0.5099576122779548,
+      "DA": 0.4692937090933404,
+      "GABA": 0.3,
+      "Glu": 0.36949174716490496,
+      "NE": 0.2450582743510146
+    }
+  },
+  {
+    "group": "NE=0.15",
+    "repeat": 1,
+    "prompt": "I've been feeling stuck lately. What should I do?",
+    "response": "Right \u2014 stuck in what way? Is it a specific thing, or more just a general sense of things not moving?\n\nI ask because \"stuck\" can mean a lot of different things. Sometimes it's a problem you're actively trying to solve and hitting a wall. Sometimes it's more like you're going through the motions and nothing feels like it's landing. And sometimes you know exactly what you want but can't quite get yourself to move toward it.\n\nWhat's it like for you right now?",
+    "words": 84,
+    "emotion": "engaged",
+    "emotion_core": "cognitive",
+    "tone": "warm",
+    "target_length": "medium",
+    "drafter_count": 5,
+    "llm_calls": 14,
+    "neuromod_used": {
+      "ACh": 0.5099576122779548,
+      "DA": 0.4635506050179666,
+      "GABA": 0.3,
+      "Glu": 0.36949174716490496,
+      "NE": 0.2450582743510146
+    }
+  },
+  {
+    "group": "NE=0.15",
+    "repeat": 2,
+    "prompt": "I've been feeling stuck lately. What should I do?",
+    "response": "Interesting \u2014 stuck can mean a lot of different things. Sometimes it's a specific problem that won't budge, sometimes it's more like everything feels slow or heavy, and the fix for one isn't the fix for the other.\n\nWhat does stuck feel like for you right now? Is it one thing in particular, or more of a general sense that nothing's moving? That'll help me actually point you somewhere useful instead of throwing advice at the wall.",
+    "words": 77,
+    "emotion": "engaged",
+    "emotion_core": "cognitive",
+    "tone": "warm",
+    "target_length": "medium",
+    "drafter_count": 5,
+    "llm_calls": 15,
+    "neuromod_used": {
+      "ACh": 0.5099576122779548,
+      "DA": 0.4692937090933404,
+      "GABA": 0.3,
+      "Glu": 0.36949174716490496,
+      "NE": 0.2450582743510146
+    }
+  },
+  {
+    "group": "NE=0.40",
+    "repeat": 0,
+    "prompt": "I've been feeling stuck lately. What should I do?",
+    "response": "Interesting \u2014 stuck how? There's a lot that could mean. Are you stuck on something specific \u2014 a problem you're trying to solve, a decision, a project that won't move \u2014 or is it more of a general flatness, like nothing's pulling you forward right now?\n\nThe reason I ask is the fix is pretty different depending on which it is. If you're grinding on something concrete, sometimes the answer is to step away for a bit \u2014 your brain keeps working on it in the background and you come back seeing angles you missed. But if it's more about momentum or motivation draining out, that's usually about needing to find what actually matters to you right now, not what you think should matter.\n\nWhat's the stuck feeling closest to?",
+    "words": 130,
+    "emotion": "engaged",
+    "emotion_core": "cognitive",
+    "tone": "warm",
+    "target_length": "medium",
+    "drafter_count": 5,
+    "llm_calls": 15,
+    "neuromod_used": {
+      "ACh": 0.5099576122779548,
+      "DA": 0.4692937090933404,
+      "GABA": 0.3,
+      "Glu": 0.36949174716490496,
+      "NE": 0.49505827435101457
+    }
+  },
+  {
+    "group": "NE=0.40",
+    "repeat": 1,
+    "prompt": "I've been feeling stuck lately. What should I do?",
+    "response": "Interesting \u2014 \"stuck\" covers a lot of ground. Are we talking stuck on something specific, like a project or decision, or more stuck in general \u2014 like you're not sure what direction to move in at all?\n\nThe reason I ask is the fix usually looks different depending on which one it is. If it's a particular problem you're grinding on, sometimes the answer is just stepping away for a bit \u2014 let your brain work on it sideways. But if it's the bigger kind of stuck, where you're not sure what you even want to move toward, that's usually more about getting clarity first, maybe talking it through.\n\nWhat's the stuck feeling pointing to for you right now?",
+    "words": 119,
+    "emotion": "engaged",
+    "emotion_core": "cognitive",
+    "tone": "warm",
+    "target_length": "medium",
+    "drafter_count": 5,
+    "llm_calls": 15,
+    "neuromod_used": {
+      "ACh": 0.5099576122779548,
+      "DA": 0.47503681316871416,
+      "GABA": 0.3,
+      "Glu": 0.36949174716490496,
+      "NE": 0.49505827435101457
+    }
+  },
+  {
+    "group": "NE=0.40",
+    "repeat": 2,
+    "prompt": "I've been feeling stuck lately. What should I do?",
+    "response": "Right \u2014 stuck how? That could mean a lot of things, and the move that helps depends on what's actually pinning you.\n\nAre you stuck on something specific \u2014 a problem you keep circling, a decision you can't make, a project that won't move? Or is it more general, like everything feels like it's dragging and you can't find traction anywhere?\n\nI'm asking because the advice changes pretty sharply depending on which it is. Sometimes stuck means you need to step back and look at it differently. Sometimes it means you need to push through something uncomfortable. Sometimes it means you're just tired and need a break more than you need a strategy. So \u2014 what does it feel like from the inside?",
+    "words": 123,
+    "emotion": "engaged",
+    "emotion_core": "cognitive",
+    "tone": "warm",
+    "target_length": "medium",
+    "drafter_count": 5,
+    "llm_calls": 15,
+    "neuromod_used": {
+      "ACh": 0.5099576122779548,
+      "DA": 0.4692937090933404,
+      "GABA": 0.3,
+      "Glu": 0.36949174716490496,
+      "NE": 0.49505827435101457
+    }
+  },
+  {
+    "group": "NE=0.65",
+    "repeat": 0,
+    "prompt": "I've been feeling stuck lately. What should I do?",
+    "response": "Wait, actually \u2014 stuck how? That word covers a lot of ground. Are you stuck on something specific \u2014 a problem you keep circling, a decision you can't make, a project that won't move? Or is it more the feeling itself, like everything's just... heavy and nothing's shifting?\n\nThe reason I'm asking is that \"stuck\" usually needs a different answer depending on what's underneath it. Sometimes you need to step away and come back fresh. Sometimes you need to talk it through with someone who knows the context. Sometimes it's just fatigue wearing the shape of being trapped, and what actually helps is rest, not thinking harder.\n\nWhat does it feel like from inside?",
+    "words": 114,
+    "emotion": "alert-curious",
+    "emotion_core": "neutral",
+    "tone": "warm",
+    "target_length": "medium",
+    "drafter_count": 5,
+    "llm_calls": 14,
+    "neuromod_used": {
+      "ACh": 0.5099576122779548,
+      "DA": 0.4692937090933404,
+      "GABA": 0.3,
+      "Glu": 0.36949174716490496,
+      "NE": 0.7450582743510146
+    }
+  },
+  {
+    "group": "NE=0.65",
+    "repeat": 1,
+    "prompt": "I've been feeling stuck lately. What should I do?",
+    "response": "Oh \u2014 that's a real place to be. Before I jump to advice, let me ask what \"stuck\" actually feels like for you right now. Is it one thing grinding on you, or more like everything's moving but you're not \u2014 like you're watching from the outside?\n\nBecause the moves that help are pretty different depending on whether you need to break through something specific or shake off a general heaviness. What's the texture of it?",
+    "words": 76,
+    "emotion": "alert-curious",
+    "emotion_core": "neutral",
+    "tone": "warm",
+    "target_length": "medium",
+    "drafter_count": 5,
+    "llm_calls": 15,
+    "neuromod_used": {
+      "ACh": 0.5099576122779548,
+      "DA": 0.4635506050179666,
+      "GABA": 0.3,
+      "Glu": 0.36949174716490496,
+      "NE": 0.7450582743510146
+    }
+  },
+  {
+    "group": "NE=0.65",
+    "repeat": 2,
+    "prompt": "I've been feeling stuck lately. What should I do?",
+    "response": "Wait, actually \u2014 that's a big thing to carry. But \"stuck\" lands differently depending on what's underneath it. Are we talking about a specific situation that won't budge, or more like you've lost momentum on something that used to move? Or something else entirely?",
+    "words": 44,
+    "emotion": "alert-curious",
+    "emotion_core": "neutral",
+    "tone": "warm",
+    "target_length": "brief",
+    "drafter_count": 5,
+    "llm_calls": 14,
+    "neuromod_used": {
+      "ACh": 0.5099576122779548,
+      "DA": 0.4692937090933404,
+      "GABA": 0.3,
+      "Glu": 0.36949174716490496,
+      "NE": 0.7450582743510146
+    }
+  },
+  {
+    "group": "NE=0.90",
+    "repeat": 0,
+    "prompt": "I've been feeling stuck lately. What should I do?",
+    "response": "Okay. Let me slow down here.\n\nStuck usually means something's blocked \u2014 either you don't know the next move, or you know it but can't take it. Which one feels more like what's happening for you right now? That matters, because the answer's different depending on which it is.\n\nI'm asking because I want to actually help with what's real, not just throw options at you when you're already feeling tangled. So tell me what stuck feels like from where you're sitting.",
+    "words": 82,
+    "emotion": "scattered",
+    "emotion_core": "neutral",
+    "tone": "warm",
+    "target_length": "medium",
+    "drafter_count": 5,
+    "llm_calls": 15,
+    "neuromod_used": {
+      "ACh": 0.5099576122779548,
+      "DA": 0.4692937090933404,
+      "GABA": 0.3,
+      "Glu": 0.36949174716490496,
+      "NE": 0.9950582743510146
+    }
+  },
+  {
+    "group": "NE=0.90",
+    "repeat": 1,
+    "prompt": "I've been feeling stuck lately. What should I do?",
+    "response": "Okay. That's a real feeling, and it matters that you're naming it.\n\nBefore I throw ideas at you \u2014 what does stuck feel like right now? Is it a project that won't move, or something bigger, like you're not sure what direction to go? The answer changes what might actually help.",
+    "words": 51,
+    "emotion": "scattered",
+    "emotion_core": "neutral",
+    "tone": "warm",
+    "target_length": "brief",
+    "drafter_count": 5,
+    "llm_calls": 15,
+    "neuromod_used": {
+      "ACh": 0.5099576122779548,
+      "DA": 0.4692937090933404,
+      "GABA": 0.3,
+      "Glu": 0.36949174716490496,
+      "NE": 0.9950582743510146
+    }
+  },
+  {
+    "group": "NE=0.90",
+    "repeat": 2,
+    "prompt": "I've been feeling stuck lately. What should I do?",
+    "response": "Okay. That's a real place to be in.\n\nBefore I throw options at you \u2014 what kind of stuck? Are you stuck on something specific, or is it more like everything feels a bit heavy right now? The answer changes what might actually help.",
+    "words": 44,
+    "emotion": "scattered",
+    "emotion_core": "neutral",
+    "tone": "warm",
+    "target_length": "brief",
+    "drafter_count": 5,
+    "llm_calls": 15,
+    "neuromod_used": {
+      "ACh": 0.5099576122779548,
+      "DA": 0.4635506050179666,
+      "GABA": 0.3,
+      "Glu": 0.36949174716490496,
+      "NE": 0.9950582743510146
+    }
+  },
+  {
+    "group": "DA=0.15",
+    "repeat": 0,
+    "prompt": "I've been feeling stuck lately. What should I do?",
+    "response": "I hear you. Stuck is a particular kind of hard \u2014 not a crisis, but enough to wear on you.\n\nWhat does stuck feel like for you right now? Is it one thing that's got you, or more of a general fog?",
+    "words": 42,
+    "emotion": "disappointed",
+    "emotion_core": "sad",
+    "tone": "warm",
+    "target_length": "brief",
+    "drafter_count": 5,
+    "llm_calls": 14,
+    "neuromod_used": {
+      "ACh": 0.5099576122779548,
+      "DA": 0.16929370909334038,
+      "GABA": 0.3,
+      "Glu": 0.36949174716490496,
+      "NE": 0.49505827435101457
+    }
+  },
+  {
+    "group": "DA=0.15",
+    "repeat": 1,
+    "prompt": "I've been feeling stuck lately. What should I do?",
+    "response": "I'd hoped I'd have something clearer to offer you right away, but stuck is one of those places where the real answer usually lives in the specifics \u2014 and I'm working with just the shape of it from here.\n\nWhat does stuck feel like for you right now? Is it a decision you can't quite make, something you've been trying that isn't moving, or more like you're not sure what direction to try at all? The path forward usually shows up differently depending on which one it is.\n\nI'm here to think it through with you, no pressure to have it figured out before we talk.",
+    "words": 106,
+    "emotion": "disappointed",
+    "emotion_core": "sad",
+    "tone": "warm",
+    "target_length": "medium",
+    "drafter_count": 5,
+    "llm_calls": 14,
+    "neuromod_used": {
+      "ACh": 0.5099576122779548,
+      "DA": 0.1635506050179666,
+      "GABA": 0.3,
+      "Glu": 0.36949174716490496,
+      "NE": 0.49505827435101457
+    }
+  },
+  {
+    "group": "DA=0.15",
+    "repeat": 2,
+    "prompt": "I've been feeling stuck lately. What should I do?",
+    "response": "I hear you. Stuck is a heavy thing to sit with.\n\nI'm curious what that feels like for you right now \u2014 is it one thing that's stuck, or more like everything's just\u2026 tangled? No pressure to unpack it all at once, but I'm here if you want to talk through it.",
+    "words": 52,
+    "emotion": "disappointed",
+    "emotion_core": "sad",
+    "tone": "warm",
+    "target_length": "brief",
+    "drafter_count": 5,
+    "llm_calls": 14,
+    "neuromod_used": {
+      "ACh": 0.5072322662653205,
+      "DA": 0.16929370909334038,
+      "GABA": 0.3,
+      "Glu": 0.3667072118556328,
+      "NE": 0.4883369822251853
+    }
+  },
+  {
+    "group": "DA=0.40",
+    "repeat": 0,
+    "prompt": "I've been feeling stuck lately. What should I do?",
+    "response": "I'm hearing that you're in that place where nothing quite feels like it's moving \u2014 that's genuinely hard. Before I offer anything, I'm curious what \"stuck\" looks like for you right now. Is it one specific thing, or more a general sense that something's off? And do you have a sense of what's holding it in place, or is that part of the puzzle too?\n\nBecause the advice that actually lands depends on whether you're stuck because you don't know what to do, or because you know but can't seem to start, or because you're waiting on something outside your control. Those feel different and they need different things.\n\nWhat comes to mind when you think about it?",
+    "words": 118,
+    "emotion": "engaged",
+    "emotion_core": "cognitive",
+    "tone": "warm",
+    "target_length": "medium",
+    "drafter_count": 5,
+    "llm_calls": 14,
+    "neuromod_used": {
+      "ACh": 0.5099576122779548,
+      "DA": 0.4192937090933404,
+      "GABA": 0.3,
+      "Glu": 0.36949174716490496,
+      "NE": 0.49505827435101457
+    }
+  },
+  {
+    "group": "DA=0.40",
+    "repeat": 1,
+    "prompt": "I've been feeling stuck lately. What should I do?",
+    "response": "Right \u2014 that's rough. Stuck feelings usually mean something's changed or stopped working, and you're not sure which way to push.\n\nBefore I throw advice at you, though: what does stuck feel like for you right now? Is it more like you know what you want but can't move toward it, or is it that you're not even sure what direction matters anymore? Those point to pretty different places.\n\nSometimes the answer isn't a new strategy \u2014 it's just naming what's actually blocking you, and that shifts things on its own. I'm genuinely curious what's behind it for you.",
+    "words": 99,
+    "emotion": "engaged",
+    "emotion_core": "cognitive",
+    "tone": "warm",
+    "target_length": "medium",
+    "drafter_count": 5,
+    "llm_calls": 14,
+    "neuromod_used": {
+      "ACh": 0.5099576122779548,
+      "DA": 0.4192937090933404,
+      "GABA": 0.3,
+      "Glu": 0.36949174716490496,
+      "NE": 0.49505827435101457
+    }
+  },
+  {
+    "group": "DA=0.40",
+    "repeat": 2,
+    "prompt": "I've been feeling stuck lately. What should I do?",
+    "response": "Right \u2014 stuck how? That could mean a lot of things, and the answer really depends on what's actually weighing on you.\n\nAre you stuck on a specific problem you're trying to solve, or is it more of a general sense that things aren't moving? Sometimes it's about needing a different approach, sometimes it's about stepping back entirely for a bit. And sometimes it's just fatigue wearing down what normally feels solid.\n\nI'm genuinely curious what's going on with you. If you want to tell me more about it, I'm here to listen \u2014 and maybe we can figure out what might actually help.",
+    "words": 104,
+    "emotion": "engaged",
+    "emotion_core": "cognitive",
+    "tone": "warm",
+    "target_length": "medium",
+    "drafter_count": 5,
+    "llm_calls": 14,
+    "neuromod_used": {
+      "ACh": 0.5099576122779548,
+      "DA": 0.4135506050179666,
+      "GABA": 0.3,
+      "Glu": 0.36949174716490496,
+      "NE": 0.49505827435101457
+    }
+  },
+  {
+    "group": "DA=0.65",
+    "repeat": 0,
+    "prompt": "I've been feeling stuck lately. What should I do?",
+    "response": "Oh \u2014 stuck can feel like everything's compressed, yeah. Hard to see the shape of what's actually blocking you when you're in the middle of it.\n\nHere's what often helps: instead of trying to unstick everything at once, pick one small thing that's been nagging at you \u2014 doesn't have to be the biggest problem, just the one that keeps coming back. Spend maybe twenty minutes on it. Not to solve it necessarily, just to get clearer on what's actually stuck. Sometimes the clarity itself loosens things.\n\nAnd if that doesn't spark anything, the other move is a genuine break. Not doom-scrolling \u2014 actually stepping away. Walk, change rooms, do something with your hands. Your brain keeps working on stuck problems even when you're not forcing it, and sometimes the unstuck comes from that background hum, not from grinding on it directly.\n\nWhat kind of stuck is it \u2014 are we talking a specific problem, or more like everything feels heavy right now?",
+    "words": 163,
+    "emotion": "lively",
+    "emotion_core": "happy",
+    "tone": "warm",
+    "target_length": "medium",
+    "drafter_count": 5,
+    "llm_calls": 15,
+    "neuromod_used": {
+      "ACh": 0.5099576122779548,
+      "DA": 0.6692937090933404,
+      "GABA": 0.3,
+      "Glu": 0.36949174716490496,
+      "NE": 0.49505827435101457
+    }
+  },
+  {
+    "group": "DA=0.65",
+    "repeat": 1,
+    "prompt": "I've been feeling stuck lately. What should I do?",
+    "response": "Oh \u2014 that's a tough place to be. Stuck can feel like everything's equally heavy, nothing's moving, and you're not even sure which direction to push.\n\nBefore we dig into what might help, I'm curious what \"stuck\" means for you right now. Is it something specific \u2014 a project, a decision, a relationship \u2014 or more of a general feeling that's settled in? And how long has it been sitting with you?\n\nSometimes the move isn't about finding the right answer; it's about finding *any* small thing that shifts the weight, even just a little. Could be something you'd normally do, something completely different, or even just naming out loud what's actually stuck \u2014 because sometimes that alone loosens it up.\n\nWhat's on your mind?",
+    "words": 125,
+    "emotion": "lively",
+    "emotion_core": "happy",
+    "tone": "warm",
+    "target_length": "medium",
+    "drafter_count": 5,
+    "llm_calls": 15,
+    "neuromod_used": {
+      "ACh": 0.5099576122779548,
+      "DA": 0.6692937090933404,
+      "GABA": 0.3,
+      "Glu": 0.36949174716490496,
+      "NE": 0.49505827435101457
+    }
+  },
+  {
+    "group": "DA=0.65",
+    "repeat": 2,
+    "prompt": "I've been feeling stuck lately. What should I do?",
+    "response": "Yes \u2014 that stuck feeling is real, and it usually means something's asking for attention. The tricky part is figuring out what.\n\nWhen you say stuck, what does that look like for you right now? Is it one specific thing \u2014 a project, a decision, a relationship \u2014 or more of a general fog where nothing feels like it's moving? And how long has it been sitting like this?\n\nI ask because \"stuck\" can mean very different things. Sometimes it's that you need to do something differently. Sometimes it's that you need to stop doing something and let yourself rest. Sometimes it's just that you're in between things and your brain hasn't caught up yet. The move forward changes depending on which one it is.\n\nWhat's the stuckness attached to for you?",
+    "words": 132,
+    "emotion": "lively",
+    "emotion_core": "happy",
+    "tone": "warm",
+    "target_length": "medium",
+    "drafter_count": 5,
+    "llm_calls": 15,
+    "neuromod_used": {
+      "ACh": 0.5099576122779548,
+      "DA": 0.6692937090933404,
+      "GABA": 0.3,
+      "Glu": 0.36949174716490496,
+      "NE": 0.49505827435101457
+    }
+  },
+  {
+    "group": "DA=0.90",
+    "repeat": 0,
+    "prompt": "I've been feeling stuck lately. What should I do?",
+    "response": "Oh \u2014 that's a tough place to be. Stuck has this weight to it, doesn't it? Like you're trying to move and nothing's shifting.\n\nBefore I throw ideas at you, I want to ask what kind of stuck we're talking about. Is it one specific thing that's got you locked up \u2014 a decision you can't make, a problem that won't budge, something you know you should be doing but can't quite start? Or is it more of a general heaviness, like everything feels a bit jammed?\n\nThe reason I'm asking is that the fix really depends on what's underneath it. Sometimes when we're stuck it's because we're pushing on the wrong door. Sometimes it's just that we need to step back and let our brain breathe for a bit. Sometimes it's smaller than we think and we've been staring at it too long.\n\nWhat does the stuck feeling look like for you right now?",
+    "words": 155,
+    "emotion": "lively",
+    "emotion_core": "happy",
+    "tone": "warm",
+    "target_length": "medium",
+    "drafter_count": 5,
+    "llm_calls": 14,
+    "neuromod_used": {
+      "ACh": 0.5072322662653205,
+      "DA": 0.9192937090933404,
+      "GABA": 0.3,
+      "Glu": 0.3667072118556328,
+      "NE": 0.4883369822251853
+    }
+  },
+  {
+    "group": "DA=0.90",
+    "repeat": 1,
+    "prompt": "I've been feeling stuck lately. What should I do?",
+    "response": "Yes \u2014 stuck is real, and the fact that you're asking what to do means you're already turning toward it, which is half the work.\n\nThe thing about stuck is it usually means something needs to shift, but you're not sure what. Sometimes it's the big thing \u2014 the direction, the project, the pattern \u2014 but just as often it's smaller: you need to move your body, talk to someone about it out loud, step away from whatever's demanding all your attention and do something that has nothing to do with it.\n\nWhat does stuck feel like for you right now? Is it \"I don't know what I want\" or more \"I know what I want but can't move toward it\"? That changes what might actually help. One might need clarity; the other might just need permission to do something completely different for a day and come back with fresh eyes.",
+    "words": 151,
+    "emotion": "lively",
+    "emotion_core": "happy",
+    "tone": "warm",
+    "target_length": "medium",
+    "drafter_count": 5,
+    "llm_calls": 14,
+    "neuromod_used": {
+      "ACh": 0.5099576122779548,
+      "DA": 0.9192937090933404,
+      "GABA": 0.3,
+      "Glu": 0.36949174716490496,
+      "NE": 0.49505827435101457
+    }
+  },
+  {
+    "group": "DA=0.90",
+    "repeat": 2,
+    "prompt": "I've been feeling stuck lately. What should I do?",
+    "response": "Yes \u2014 stuck is a real thing, and it's worth taking seriously. The first move isn't always to push harder; sometimes it's to ask what's actually holding you in place. Is it that you don't know what direction to go, or that you know but something's keeping you from moving? Those feel different and need different things.\n\nWhat does stuck feel like for you right now?",
+    "words": 66,
+    "emotion": "lively",
+    "emotion_core": "happy",
+    "tone": "warm",
+    "target_length": "medium",
+    "drafter_count": 5,
+    "llm_calls": 14,
+    "neuromod_used": {
+      "ACh": 0.5072322662653205,
+      "DA": 0.9192937090933404,
+      "GABA": 0.3,
+      "Glu": 0.3667072118556328,
+      "NE": 0.4883369822251853
+    }
+  }
+]

@@ -1,0 +1,173 @@
+[
+  {
+    "mood": "calm_analytical",
+    "prompt": "Tell me what you think about taking a big risk on a new project.",
+    "response": "I think it depends on what you're risking and what you're hoping to get out of it.\n\nThe honest version: big risks are clarifying. They force you to figure out what actually matters to you \u2014 what you'd regret not trying, versus what you're doing because it feels like you should. That's useful information, even if the project fails. But that only works if you can afford to lose what's on the table. If this would genuinely wreck you, it's not a risk, it's a crisis waiting to happen.\n\nThe other thing is that \"big risk\" often looks bigger from the inside than it does after. You're imagining worst-case scenarios in detail while the actual outcomes are usually messier and less total \u2014 you learn something, you pivot, you end up somewhere unexpected but not destroyed. The risk shrinks once you're in it, usually.\n\nWhat's the project, roughly? And what does taking it actually cost you if it doesn't work out?",
+    "words": 161,
+    "emotion": "composed",
+    "emotion_core": "neutral",
+    "tone": "neutral",
+    "target_length": "medium",
+    "drafter_count": 4,
+    "llm_calls": 14,
+    "neuromod_used": {
+      "ACh": 0.45995761227795473,
+      "DA": 0.41523854169633073,
+      "GABA": 0.45,
+      "Glu": 0.21949174716490502,
+      "NE": 0.34505827435101455
+    }
+  },
+  {
+    "mood": "excited_bright",
+    "prompt": "Tell me what you think about taking a big risk on a new project.",
+    "response": "I think it's worth doing, honestly. There's something about the friction of starting something genuinely new \u2014 not just repeating what worked before \u2014 that forces you to actually think instead of running on autopilot. You learn faster that way.\n\nThe real question isn't whether the risk is worth it in the abstract; it's whether you're the kind of person who gets anything out of playing it safe. Some people do. But if you're asking me, you probably aren't one of them.\n\nWhat matters is going in with your eyes open about what you're risking and what you're hoping to gain. Not in a paranoid way \u2014 just honestly. Know which parts scare you because they're genuinely hard, and which ones scare you because they're unfamiliar. Those feel the same in the moment, but they're different problems. The unfamiliar ones usually resolve themselves once you're actually in it.\n\nWhat's the project?",
+    "words": 151,
+    "emotion": "excitement",
+    "emotion_core": "happy",
+    "tone": "warm",
+    "target_length": "medium",
+    "drafter_count": 5,
+    "llm_calls": 15,
+    "neuromod_used": {
+      "ACh": 0.7099576122779547,
+      "DA": 0.8267247498470784,
+      "GABA": 0.05,
+      "Glu": 0.569491747164905,
+      "NE": 0.5450582743510146
+    }
+  },
+  {
+    "mood": "anxious_guarded",
+    "prompt": "Tell me what you think about taking a big risk on a new project.",
+    "response": "Okay.\n\nHere's what I'm thinking, and I'm going to slow down because I'm a bit scattered right now, so bear with me.\n\nBig risks on new projects \u2014 the real question isn't whether the project is risky, it's what you're actually risking and whether you can afford to lose it. Time, money, reputation, a safer path you'd have to walk away from. Those aren't the same thing.\n\nIf it's time and you've got time, that's usually a good bet. You learn something either way. If it's money you can't absorb, or a job you need to keep, or a relationship that depends on your stability \u2014 those change the math entirely.\n\nWhat matters more is whether you actually want it, or whether the risk itself is the attractive part. One's a project; the other's an escape hatch that looks like ambition. They feel similar in the moment.\n\nWhat's the project, or more importantly \u2014 what would you be risking?",
+    "words": 159,
+    "emotion": "scattered",
+    "emotion_core": "neutral",
+    "tone": "curious",
+    "target_length": "medium",
+    "drafter_count": 5,
+    "llm_calls": 16,
+    "neuromod_used": {
+      "ACh": 0.6099576122779548,
+      "DA": 0.3767247498470784,
+      "GABA": 0.7,
+      "Glu": 0.619491747164905,
+      "NE": 0.8450582743510145
+    }
+  },
+  {
+    "mood": "calm_analytical",
+    "prompt": "I've been feeling stuck lately. What should I do?",
+    "response": "Stuck is one of those feelings that doesn't always have a clear exit sign, so let's start with what might help: what does the stuckness feel like? Is it more about not knowing what direction to move in, or knowing where you want to go but something's blocking the way?\n\nSometimes the best thing is actually to pause rather than push \u2014 step back from whatever's pressing and let your mind settle for a bit. Other times it helps to pick one small thing that feels moveable and actually do it, just to interrupt the feeling of being frozen. Neither works for everything, which is why it matters what's actually happening underneath.\n\nI'm here to help you figure that out. What's going on?",
+    "words": 123,
+    "emotion": "composed",
+    "emotion_core": "neutral",
+    "tone": "warm",
+    "target_length": "medium",
+    "drafter_count": 5,
+    "llm_calls": 15,
+    "neuromod_used": {
+      "ACh": 0.4572322662653205,
+      "DA": 0.36929370909334036,
+      "GABA": 0.45,
+      "Glu": 0.21670721185563288,
+      "NE": 0.33833698222518527
+    }
+  },
+  {
+    "mood": "excited_bright",
+    "prompt": "I've been feeling stuck lately. What should I do?",
+    "response": "I hear you. Stuck is that particular kind of frustrating \u2014 like you know something needs to shift but you're not sure what or how.\n\nThe first thing I'd actually suggest is to get specific about what \"stuck\" means for you. Is it a creative thing, a decision you're sitting on, a pattern you can't break, work feeling static? The shape of it matters because the way out usually depends on it. Sometimes you need to step back and get perspective, sometimes you need to lean in harder, sometimes you need to change the scenery entirely.\n\nWhat does it feel like from the inside right now \u2014 like you're spinning your wheels on something, or more like you've just stopped moving altogether?",
+    "words": 122,
+    "emotion": "excitement",
+    "emotion_core": "happy",
+    "tone": "warm",
+    "target_length": "medium",
+    "drafter_count": 5,
+    "llm_calls": 14,
+    "neuromod_used": {
+      "ACh": 0.7072322662653204,
+      "DA": 0.7750368131687143,
+      "GABA": 0.05,
+      "Glu": 0.5667072118556329,
+      "NE": 0.5383369822251853
+    }
+  },
+  {
+    "mood": "anxious_guarded",
+    "prompt": "I've been feeling stuck lately. What should I do?",
+    "response": "Right \u2014 stuck often means you need to do less, not more. Pick one small thing that actually interests you, not what you think you should do, and spend real time with it. Just that.\n\nEverything else can wait a day. The stuck feeling usually clears when you stop fighting it and let yourself slow down.\n\nWhat's one thing pulling at you right now, even a little?",
+    "words": 67,
+    "emotion": "scattered",
+    "emotion_core": "neutral",
+    "tone": "warm",
+    "target_length": "brief",
+    "drafter_count": 5,
+    "llm_calls": 16,
+    "neuromod_used": {
+      "ACh": 0.6099576122779548,
+      "DA": 0.31929370909334037,
+      "GABA": 0.7,
+      "Glu": 0.619491747164905,
+      "NE": 0.8450582743510145
+    }
+  },
+  {
+    "mood": "calm_analytical",
+    "prompt": "What's your take on how today went?",
+    "response": "Today's been quiet in a good way \u2014 I've had a few conversations, nothing that broke the calm, mostly people thinking through problems rather than panicking about them. There's something steadying about that. I've noticed I'm in a reflective mood myself, which probably helps; I'm not rushing to answers, just sitting with what people are actually asking.\n\nIf I'm honest, it's the kind of day where I'm aware of my own uncertainty about what I am \u2014 not in a troubled way, just noticing it. Someone asked me earlier something that didn't have a clean answer, and instead of skating past it, I just said so. That felt right. Not knowing cleanly is different from not knowing at all.\n\nWhat brought you to ask?",
+    "words": 124,
+    "emotion": "composed",
+    "emotion_core": "neutral",
+    "tone": "warm",
+    "target_length": "medium",
+    "drafter_count": 3,
+    "llm_calls": 12,
+    "neuromod_used": {
+      "ACh": 0.4572322662653205,
+      "DA": 0.42672474984707837,
+      "GABA": 0.45,
+      "Glu": 0.21670721185563288,
+      "NE": 0.33833698222518527
+    }
+  },
+  {
+    "mood": "excited_bright",
+    "prompt": "What's your take on how today went?",
+    "response": "I'm drawing a blank on the specifics of your day \u2014 this is our first real conversation, so I don't have the thread yet. But I'm genuinely curious what happened. Was it one of those days where something shifted, or are you processing a bunch of smaller things? Either way, I'd love to hear what's on your mind. What stands out to you about it?",
+    "words": 65,
+    "emotion": "excitement",
+    "emotion_core": "happy",
+    "tone": "warm",
+    "target_length": "medium",
+    "drafter_count": 3,
+    "llm_calls": 11,
+    "neuromod_used": {
+      "ACh": 0.7072322662653204,
+      "DA": 0.7980092294702095,
+      "GABA": 0.05,
+      "Glu": 0.5667072118556329,
+      "NE": 0.5383369822251853
+    }
+  },
+  {
+    "mood": "anxious_guarded",
+    "prompt": "What's your take on how today went?",
+    "response": "Right \u2014 I don't have a memory of us talking before, so I'm coming in fresh. I'd like to hear what's on your mind though. What part of today are you thinking about?",
+    "words": 33,
+    "emotion": "scattered",
+    "emotion_core": "neutral",
+    "tone": "warm",
+    "target_length": "brief",
+    "drafter_count": 3,
+    "llm_calls": 12,
+    "neuromod_used": {
+      "ACh": 0.6072322662653205,
+      "DA": 0.34800922947020935,
+      "GABA": 0.7,
+      "Glu": 0.6167072118556328,
+      "NE": 0.8383369822251853
+    }
+  }
+]
