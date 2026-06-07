@@ -228,6 +228,15 @@ DEFAULTS: dict[str, float | int | str] = {
     # Prosody / dynamics contributions
     "ne_prosody_stressed": 0.06,  # NE gain when tone_label == "stressed"
     "ne_rush_increment": 0.05,  # NE gain when pace == "rushed"
+    # Graded prosody/pace release: scale each per-category neuromod increment by
+    # the acoustic signal's strength (tone_strength / pace_strength ∈ [0,1]) so a
+    # near-threshold voice nudges and a strong one spikes, instead of a fixed jump
+    # on the label. The scale maps strength → [min, max] linearly, centered on 1.0
+    # at strength=0.5 so the existing fixed increments are the mid-strength value.
+    # 1 = graded; 0 = legacy fixed-increment path (rollback). Voice input only.
+    "prosody_graded_release": 1,
+    "prosody_graded_min_scale": 0.5,  # multiplier at strength=0 (near threshold)
+    "prosody_graded_max_scale": 1.5,  # multiplier at strength=1 (very strong)
     # Inverted-U thresholds (above high → vigilant; above scatter → degraded focus)
     "ne_high_threshold": 0.55,  # NE > this → heightened vigilance modifier
     "ne_scatter_threshold": 0.82,  # NE > this → attention narrowed, scattered

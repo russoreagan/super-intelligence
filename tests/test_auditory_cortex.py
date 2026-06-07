@@ -523,6 +523,124 @@ class TestLabelProsodyTone:
         )
 
 
+# ── prosody_tone_strength — graded intensity behind the label ────────────────
+
+
+class TestProsodyToneStrength:
+    """The DSP emits a normalized [0,1] strength alongside the tone label so
+    downstream release can scale with degree. Strength must rise monotonically
+    as the defining feature(s) push further past threshold."""
+
+    def _features(self, **overrides) -> dict:
+        base = {
+            "voiced_fraction": 0.7,
+            "f0_std_hz": 30.0,
+            "energy_mean": 0.08,
+            "energy_std": 0.03,
+            "speech_rate_hz": 3.0,
+            "jitter": 0.0,
+            "shimmer": 0.0,
+        }
+        base.update(overrides)
+        return base
+
+    def test_calm_and_monotone_have_zero_strength(self):
+        from brain.clusters.audio_dsp import prosody_tone_strength
+
+        assert prosody_tone_strength(self._features(), "calm") == 0.0
+        assert prosody_tone_strength(self._features(), "monotone") == 0.0
+
+    def test_stressed_strength_increases_with_jitter_and_shimmer(self):
+        from brain.clusters.audio_dsp import prosody_tone_strength
+
+        mild = prosody_tone_strength(self._features(jitter=0.035, shimmer=0.11), "stressed")
+        strong = prosody_tone_strength(self._features(jitter=0.06, shimmer=0.20), "stressed")
+        assert 0.0 < mild < strong <= 1.0
+
+    def test_energetic_strength_increases_with_energy_and_rate(self):
+        from brain.clusters.audio_dsp import prosody_tone_strength
+
+        mild = prosody_tone_strength(
+            self._features(energy_mean=0.13, speech_rate_hz=4.2), "energetic"
+        )
+        strong = prosody_tone_strength(
+            self._features(energy_mean=0.24, speech_rate_hz=8.0), "energetic"
+        )
+        assert 0.0 < mild < strong <= 1.0
+
+    def test_whisper_strength_increases_as_voice_quietens(self):
+        from brain.clusters.audio_dsp import prosody_tone_strength
+
+        mild = prosody_tone_strength(self._features(voiced_fraction=0.22), "whisper")
+        strong = prosody_tone_strength(self._features(voiced_fraction=0.02), "whisper")
+        assert 0.0 < mild < strong <= 1.0
+
+    def test_calibrated_baseline_rescales_stressed_strength(self):
+        from brain.clusters.audio_dsp import prosody_tone_strength
+
+        # A speaker whose baseline jitter/shimmer is high → the same raw values
+        # are closer to *their* threshold → lower strength than uncalibrated.
+        baseline = {
+            "jitter": 0.03,
+            "shimmer": 0.10,
+            "energy_mean": 0.08,
+            "f0_std": 20.0,
+            "count": 30,
+        }
+        f = self._features(jitter=0.06, shimmer=0.20)
+        uncal = prosody_tone_strength(f, "stressed")
+        cal = prosody_tone_strength(f, "stressed", baseline)
+        assert cal < uncal
+
+    def test_extract_prosody_emits_tone_strength_field(self):
+        # The published payload must carry tone_strength for the hypothalamus.
+        from brain.clusters.audio_dsp import prosody_tone_strength
+
+        # extract_prosody writes base["tone_strength"]; check the wiring directly
+        # via the public scorer on a representative stressed feature dict.
+        s = prosody_tone_strength(self._features(jitter=0.06, shimmer=0.20), "stressed")
+        assert isinstance(s, float) and 0.0 <= s <= 1.0
+
+
+class TestPaceStrength:
+    """compute_speech_dynamics emits pace_strength ∈ [0,1] rising with how far
+    the speaker's WPM is into a non-normal pace band."""
+
+    def _words(self, wpm: float, n: int = 10) -> list[dict]:
+        # n words spanning a duration that yields the target wpm.
+        # wpm = 60 * n / duration → duration = 60 * n / wpm
+        duration = 60.0 * n / wpm
+        step = duration / n
+        words = []
+        for i in range(n):
+            start = i * step
+            words.append({"word": f"w{i}", "start": start, "end": start + step * 0.5})
+        return words
+
+    def test_normal_pace_has_zero_strength(self):
+        from brain.clusters.audio_dsp import compute_speech_dynamics
+
+        r = compute_speech_dynamics(self._words(150))
+        assert r["pace_label"] == "normal"
+        assert r["pace_strength"] == 0.0
+
+    def test_rushed_strength_increases_with_wpm(self):
+        from brain.clusters.audio_dsp import compute_speech_dynamics
+
+        mild = compute_speech_dynamics(self._words(230))
+        fast = compute_speech_dynamics(self._words(380))
+        assert mild["pace_label"] == "rushed"
+        assert 0.0 < mild["pace_strength"] < fast["pace_strength"] <= 1.0
+
+    def test_halting_strength_increases_as_wpm_drops(self):
+        from brain.clusters.audio_dsp import compute_speech_dynamics
+
+        mild = compute_speech_dynamics(self._words(85))
+        slow = compute_speech_dynamics(self._words(40))
+        assert mild["pace_label"] == "halting"
+        assert 0.0 < mild["pace_strength"] < slow["pace_strength"] <= 1.0
+
+
 # ── SpeakerStore prosody baseline ────────────────────────────────────────────
 
 

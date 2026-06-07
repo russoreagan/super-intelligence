@@ -951,3 +951,78 @@ class TestGradedHostilityRelease:
             return bus.neuromod.snapshot()["Glu"] - base
 
         assert await glu_delta(0.4) < await glu_delta(0.9)
+
+
+# ===========================================================================
+# Graded prosody / speech-pace → neurochemistry (voice input only)
+# ===========================================================================
+
+
+class TestGradedProsodyRelease:
+    """Prosody- and pace-driven neuromod release scales with the DEGREE of the
+    acoustic signal (tone_strength / pace_strength), not a fixed amount once a
+    category label is assigned. This is the voice counterpart to graded hostility.
+    """
+
+    async def _gaba_from_stressed(self, strength: float, *, graded: bool = True) -> float:
+        from brain.bus import Bus
+        from brain.clusters.hypothalamus import HypothalamusCluster
+        from brain.settings import settings
+
+        settings.update({"prosody_graded_release": 1 if graded else 0})
+        try:
+            bus = Bus()
+            hypo = HypothalamusCluster(bus)
+            await bus.publish_dict(
+                "auditory.prosody",
+                {"tone_label": "stressed", "tone_strength": strength},
+                source="test",
+            )
+            base = bus.neuromod.snapshot()["GABA"]
+            await hypo.process(
+                {"sentiment": 0.0, "hostility": 0.0, "salience": 0.1,
+                 "surprise_score": 0.0, "topic_summary": "t"}
+            )
+            return bus.neuromod.snapshot()["GABA"] - base
+        finally:
+            settings.update({"prosody_graded_release": 1})
+
+    async def test_stressed_gaba_scales_with_tone_strength(self):
+        weak = await self._gaba_from_stressed(0.1)
+        strong = await self._gaba_from_stressed(0.9)
+        assert 0.0 < weak < strong, f"not graded: {weak} {strong}"
+
+    async def test_mid_strength_preserves_legacy_fixed_value(self):
+        # The scale is centered on 1.0 at strength=0.5, so a mid-strength stressed
+        # voice still adds the original fixed 0.08 GABA (average preserved).
+        mid = await self._gaba_from_stressed(0.5)
+        assert abs(mid - 0.08) < 1e-6
+
+    async def test_flag_off_restores_fixed_increment(self):
+        # With grading disabled, strength is ignored — both add the fixed 0.08.
+        weak = await self._gaba_from_stressed(0.1, graded=False)
+        strong = await self._gaba_from_stressed(0.9, graded=False)
+        assert abs(weak - 0.08) < 1e-6
+        assert abs(strong - 0.08) < 1e-6
+
+    async def test_rushed_glu_scales_with_pace_strength(self):
+        from brain.bus import Bus
+        from brain.clusters.hypothalamus import HypothalamusCluster
+
+        async def glu_delta(pace_strength: float) -> float:
+            bus = Bus()
+            hypo = HypothalamusCluster(bus)
+            await bus.publish_dict(
+                "auditory.speech_dynamics",
+                {"pace_label": "rushed", "pace_strength": pace_strength,
+                 "hesitant": False, "burst_score": 0.0, "long_pause_count": 0},
+                source="test",
+            )
+            base = bus.neuromod.snapshot()["Glu"]
+            await hypo.process(
+                {"sentiment": 0.0, "hostility": 0.0, "salience": 0.1,
+                 "surprise_score": 0.0, "topic_summary": "t"}
+            )
+            return bus.neuromod.snapshot()["Glu"] - base
+
+        assert await glu_delta(0.1) < await glu_delta(0.9)

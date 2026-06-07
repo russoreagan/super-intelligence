@@ -49,6 +49,7 @@ from brain.clusters.audio_dsp import (
     extract_speaker_embedding,
     label_prosody_tone,
     match_fingerprint,
+    prosody_tone_strength,
 )
 from brain.second_brain.speaker_store import SpeakerStore
 from brain.settings import settings as _settings
@@ -378,6 +379,11 @@ class AuditoryCluster:
                 baseline = self._speaker_store.get_prosody_baseline(self._last_speaker_id)
             if baseline is not None:
                 pros_result["tone_label"] = label_prosody_tone(pros_result, baseline)
+                # Re-score strength against the same baseline so graded release
+                # downstream uses the speaker-calibrated magnitude, not the raw one.
+                pros_result["tone_strength"] = prosody_tone_strength(
+                    pros_result, pros_result["tone_label"], baseline
+                )
 
             logger.debug(
                 "Auditory: prosody tone=%s f0=%.0f energy=%.3f voiced=%.2f",

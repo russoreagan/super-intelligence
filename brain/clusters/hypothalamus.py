@@ -278,18 +278,40 @@ class HypothalamusCluster:
             except asyncio.QueueEmpty:
                 break
 
+        # Graded release: scale each per-category increment by how strong the
+        # acoustic signal is (tone_strength ∈ [0,1] from the DSP), so a slightly
+        # tense voice and a trembling one don't add the same fixed jump. The
+        # scale maps strength→[min,max] centered on 1.0 at strength=0.5, so the
+        # existing fixed increments are preserved at mid-strength (average kept,
+        # mirroring the graded-hostility design). Flag off → legacy fixed path.
+        graded = settings.get("prosody_graded_release", 1)
+
+        def _prosody_scale(strength: float) -> float:
+            if not graded:
+                return 1.0
+            lo = settings.get("prosody_graded_min_scale")
+            hi = settings.get("prosody_graded_max_scale")
+            return lo + (hi - lo) * max(0.0, min(1.0, strength))
+
         if prosody_tone:
+            tone_strength = (prosody_features or {}).get("tone_strength", 0.0)
+            ps = _prosody_scale(tone_strength)
             if prosody_tone == "stressed":
-                nm.add("GABA", 0.08)
-                nm.add("ACh", 0.05)
-                nm.add("NE", settings.get("ne_prosody_stressed"))
+                nm.add("GABA", 0.08 * ps)
+                nm.add("ACh", 0.05 * ps)
+                nm.add("NE", settings.get("ne_prosody_stressed") * ps)
             elif prosody_tone == "energetic":
-                nm.add("Glu", 0.06)
-                nm.add("DA", 0.04)
+                nm.add("Glu", 0.06 * ps)
+                nm.add("DA", 0.04 * ps)
             elif prosody_tone == "whisper":
-                nm.add("ACh", 0.10)
+                nm.add("ACh", 0.10 * ps)
             # "calm" and "monotone" need no correction
-            logger.debug("Hypothalamus: prosody_tone=%s", prosody_tone)
+            logger.debug(
+                "Hypothalamus: prosody_tone=%s strength=%.2f scale=%.2f",
+                prosody_tone,
+                tone_strength,
+                ps,
+            )
 
         # ── Speech dynamics (pace + pauses) ───────────────────────────────────
         dynamics: dict | None = None
@@ -303,17 +325,20 @@ class HypothalamusCluster:
 
         if dynamics:
             pace = dynamics.get("pace_label")
+            # Same graded scaling as prosody: deeper into the pace band → bigger
+            # increment, fixed values preserved at mid-strength. Flag off → legacy.
+            pace_scale = _prosody_scale(dynamics.get("pace_strength", 0.0))
             if pace == "rushed":
-                nm.add("Glu", 0.08)  # urgency
-                nm.add("ACh", 0.04)
-                nm.add("NE", settings.get("ne_rush_increment"))
+                nm.add("Glu", 0.08 * pace_scale)  # urgency
+                nm.add("ACh", 0.04 * pace_scale)
+                nm.add("NE", settings.get("ne_rush_increment") * pace_scale)
             elif pace == "brisk":
-                nm.add("Glu", 0.04)
-                nm.add("DA", 0.02)  # mild positive valence — animated
+                nm.add("Glu", 0.04 * pace_scale)
+                nm.add("DA", 0.02 * pace_scale)  # mild positive valence — animated
             elif pace == "halting":
-                nm.add("ACh", 0.06)  # uncertainty → pay attention
+                nm.add("ACh", 0.06 * pace_scale)  # uncertainty → pay attention
             elif pace == "measured":
-                nm.add("ACh", 0.02)
+                nm.add("ACh", 0.02 * pace_scale)
             # "normal" → no correction
 
             if dynamics.get("hesitant"):

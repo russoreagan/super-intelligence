@@ -408,7 +408,61 @@ def extract_prosody(audio: np.ndarray, sr: int) -> dict:
             logger.debug("Auditory DSP: openSMILE extraction failed: %s", e)
 
     base["tone_label"] = label_prosody_tone(base)
+    base["tone_strength"] = prosody_tone_strength(base, base["tone_label"])
     return base
+
+
+def _prosody_thresholds(baseline: dict | None = None) -> tuple[float, float, float]:
+    """Shared (jitter, shimmer, energy) thresholds for tone classification and
+    strength scoring. Falls back to universal values; a calibrated speaker
+    baseline (>= 10 obs) raises them proportionally to that person's own range."""
+    calibrated = baseline is not None and baseline.get("count", 0) >= 10
+    if calibrated:
+        jitter_thresh = max(0.03, baseline["jitter"] * 1.8)
+        shimmer_thresh = max(0.10, baseline["shimmer"] * 1.8)
+        energy_thresh = max(0.12, baseline["energy_mean"] * 1.5)
+    else:
+        jitter_thresh = 0.03
+        shimmer_thresh = 0.10
+        energy_thresh = 0.12
+    return jitter_thresh, shimmer_thresh, energy_thresh
+
+
+def _overshoot(value: float, threshold: float) -> float:
+    """How far `value` exceeds `threshold`, as a fraction of the threshold,
+    clamped to [0,1] (value == 2×threshold → 1.0). 0 at or below threshold."""
+    if threshold <= 0:
+        return 0.0
+    return max(0.0, min(1.0, (value - threshold) / threshold))
+
+
+def prosody_tone_strength(
+    features: dict, label: str, baseline: dict | None = None
+) -> float:
+    """Normalized [0,1] intensity of a prosodic tone — how far the feature(s)
+    that *define* `label` exceed the threshold that produced it.
+
+    This is the magnitude that `label_prosody_tone` discards: a slightly tense
+    voice and a trembling one both label "stressed", but score ~0.1 vs ~0.9 here
+    so downstream neuromod release can scale with degree, not just the category.
+
+    Returns 0.0 for calm/monotone/silence (no defining excess to grade).
+    """
+    jitter_thresh, shimmer_thresh, energy_thresh = _prosody_thresholds(baseline)
+
+    if label == "whisper":
+        # Quieter (lower voiced fraction) = stronger whisper.
+        vf = features.get("voiced_fraction", 0.0)
+        return max(0.0, min(1.0, (0.25 - vf) / 0.25))
+    if label == "energetic":
+        e_mean = features.get("energy_mean", 0.0)
+        rate = features.get("speech_rate_hz", 0.0)
+        return 0.5 * (_overshoot(e_mean, energy_thresh) + _overshoot(rate, 4.0))
+    if label == "stressed":
+        jitter = features.get("jitter", 0.0)
+        shimmer = features.get("shimmer", 0.0)
+        return 0.5 * (_overshoot(jitter, jitter_thresh) + _overshoot(shimmer, shimmer_thresh))
+    return 0.0
 
 
 def label_prosody_tone(features: dict, baseline: dict | None = None) -> str:
@@ -431,18 +485,10 @@ def label_prosody_tone(features: dict, baseline: dict | None = None) -> str:
     jitter = features.get("jitter", 0.0)
     shimmer = features.get("shimmer", 0.0)
 
-    calibrated = baseline is not None and baseline.get("count", 0) >= 10
-
     # Thresholds — fall back to universal values; baseline raises them
-    # proportionally to the speaker's own normal range.
-    if calibrated:
-        jitter_thresh = max(0.03, baseline["jitter"] * 1.8)
-        shimmer_thresh = max(0.10, baseline["shimmer"] * 1.8)
-        energy_thresh = max(0.12, baseline["energy_mean"] * 1.5)
-    else:
-        jitter_thresh = 0.03
-        shimmer_thresh = 0.10
-        energy_thresh = 0.12
+    # proportionally to the speaker's own normal range (shared with
+    # prosody_tone_strength so label and magnitude stay consistent).
+    jitter_thresh, shimmer_thresh, energy_thresh = _prosody_thresholds(baseline)
 
     if vf < 0.25:
         return "whisper"
@@ -601,6 +647,7 @@ def compute_speech_dynamics(diarized_words: list[dict]) -> dict:
     base = {
         "wpm": 0.0,
         "pace_label": "normal",
+        "pace_strength": 0.0,
         "long_pause_count": 0,
         "max_pause_s": 0.0,
         "burst_score": 0.0,
@@ -627,17 +674,26 @@ def compute_speech_dynamics(diarized_words: list[dict]) -> dict:
         var = sum((g - mean) ** 2 for g in gaps) / len(gaps)
         base["burst_score"] = float(var**0.5)
 
+    # pace_label + pace_strength: how deep into the (non-normal) band the speaker
+    # is, 0→1, so neuromod release can scale with degree. Strength runs from 0 at
+    # the band edge nearest "normal" to 1 at the far edge (rushed/halting are
+    # open-ended, normalized against the band width / a reference span).
     wpm = base["wpm"]
-    if wpm < 90:
+    if wpm < 90:  # halting — slower = stronger
         base["pace_label"] = "halting"
-    elif wpm < 130:
+        base["pace_strength"] = min(1.0, (90 - wpm) / 90)
+    elif wpm < 130:  # measured
         base["pace_label"] = "measured"
-    elif wpm < 170:
+        base["pace_strength"] = min(1.0, (130 - wpm) / 40)
+    elif wpm < 170:  # normal — no defining excess
         base["pace_label"] = "normal"
-    elif wpm < 220:
+        base["pace_strength"] = 0.0
+    elif wpm < 220:  # brisk
         base["pace_label"] = "brisk"
-    else:
+        base["pace_strength"] = min(1.0, (wpm - 170) / 50)
+    else:  # rushed — faster = stronger
         base["pace_label"] = "rushed"
+        base["pace_strength"] = min(1.0, (wpm - 220) / 220)
 
     # "hesitant" — long pauses dominate the utterance shape
     base["hesitant"] = bool(

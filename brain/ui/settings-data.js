@@ -136,6 +136,9 @@ window.SETTINGS = {
           ],
           advanced: [
             { type: 'range', key: 'ne_rush_increment', label: 'NE ← Rushed prosody', min: 0, max: 0.2, step: 0.01, def: 0.05 },
+            { type: 'toggle', key: 'prosody_graded_release', label: 'Graded prosody/pace release', hint: 'scale voice neuromod release by acoustic strength, not a fixed jump per label', def: 1 },
+            { type: 'range', key: 'prosody_graded_min_scale', label: 'Prosody scale @ min strength', hint: 'multiplier for a near-threshold voice', min: 0, max: 1, step: 0.05, def: 0.5 },
+            { type: 'range', key: 'prosody_graded_max_scale', label: 'Prosody scale @ max strength', hint: 'multiplier for a very strong voice', min: 1, max: 3, step: 0.05, def: 1.5 },
             { type: 'range', key: 'ne_high_threshold', label: 'High-NE threshold', hint: 'above → heightened vigilance', min: 0.3, max: 0.8, step: 0.05, def: 0.55 },
             { type: 'range', key: 'ne_scatter_threshold', label: 'NE scatter threshold', hint: 'above → attention narrows and degrades', min: 0.5, max: 0.99, step: 0.05, def: 0.82 },
           ],
