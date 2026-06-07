@@ -11,6 +11,7 @@ import logging
 import os
 import random as _random
 import re
+from pathlib import Path
 
 from brain.bus import Bus, Message
 from brain.cell import IntegratorCell
@@ -81,35 +82,42 @@ def _is_trivial(text: str) -> tuple[bool, str]:
     return False, ""
 
 
+# Seed phrasings for the fast-path intent gates. These are no longer the detection
+# mechanism — they seed the IntentDetector's exemplar bank (which matches by embedding
+# and grows over time) and serve as the literal fast path / fallback when no embedder
+# is available. See brain/intent_detector.py.
+_SELF_REF_SEEDS = [
+    "what are you",
+    "who are you",
+    "do you remember",
+    "how are you",
+    "what do you think of yourself",
+    "your name",
+    "you feel",
+]
+
+_EPISTEMIC_SEEDS = [
+    "what was that",
+    "i told you",
+    "remind me",
+    "help me think",
+    "what do you know about",
+    "i was thinking",
+    "so to recap",
+    "what were we",
+    "we discussed",
+]
+
+
 def _detect_self_reference(text: str) -> bool:
-    patterns = [
-        "what are you",
-        "who are you",
-        "do you remember",
-        "how are you",
-        "what do you think of yourself",
-        "your name",
-        "you feel",
-    ]
     t = text.lower()
-    return any(p in t for p in patterns)
+    return any(p in t for p in _SELF_REF_SEEDS)
 
 
 def _detect_epistemic_action(text: str) -> bool:
     """Is user using the brain as a cognitive tool — thinking out loud, recalling?"""
-    patterns = [
-        "what was that",
-        "i told you",
-        "remind me",
-        "help me think",
-        "what do you know about",
-        "i was thinking",
-        "so to recap",
-        "what were we",
-        "we discussed",
-    ]
     t = text.lower()
-    return any(p in t for p in patterns)
+    return any(p in t for p in _EPISTEMIC_SEEDS)
 
 
 # Tool-request signals — when ANY of these appears, never take the fast path.
@@ -370,6 +378,18 @@ class TemporalCluster:
             threshold=0.5,
             modulators={"ACh": -0.15},
         )
+        # Embedding-based detection for the two content-gated intents above. Bank lives
+        # alongside the persona's wiring so it is per-persona and grows over time.
+        from brain.intent_detector import IntentDetector
+
+        _wpath = os.environ.get(
+            "BRAIN_WIRING_PATH",
+            str(Path(__file__).resolve().parent.parent.parent / "second_brain" / "wiring.json"),
+        )
+        self._intent = IntentDetector(
+            Path(_wpath).parent / "intent_bank.json",
+            {"self_reference": _SELF_REF_SEEDS, "epistemic_action": _EPISTEMIC_SEEDS},
+        )
         # Note: GABA modulator was removed — the should_bypass_gating() helper
         # already forces the integrator awake at high GABA (emotional states
         # engage understanding, not less of it). The old {"GABA": -0.15}
@@ -508,8 +528,10 @@ class TemporalCluster:
         surprise = self._predictor.surprise(predicted_tag, length_tag, confidence)
         should_wake = self._predictor.should_wake_integrator(surprise)
 
-        self_ref = _detect_self_reference(text)
-        epistemic = _detect_epistemic_action(text)
+        # Embedding-based intent detection (literal seeds as fast path / fallback).
+        _intents = await self._intent.detect_all(text, self._router.embed)
+        self_ref = _intents.get("self_reference", False)
+        epistemic = _intents.get("epistemic_action", False)
         memory_hint = epistemic or any(
             w in text.lower() for w in ("remember", "last", "before", "told", "what was")
         )
@@ -708,6 +730,14 @@ class TemporalCluster:
         features["switch_only"] = False
         features["surprise_score"] = surprise
         features["raw_text"] = text
+        # Teach the intent detector: when the integrator (LLM) confirms an intent the
+        # embedding match missed this turn, add the phrasing to the bank so it is
+        # recognized cheaply next time. Reuses the vector detect_all already computed,
+        # and reads the integrator's judgment before it is merged with our own below.
+        self._intent.learn_from_llm({
+            "self_reference": features.get("intent") == "self_inquiry",
+            "epistemic_action": bool(features.get("epistemic_action", False)),
+        })
         features["self_reference"] = self_ref or features.get("intent") == "self_inquiry"
         features["epistemic_action"] = epistemic or features.get("epistemic_action", False)
         features["msg_length"] = length_tag

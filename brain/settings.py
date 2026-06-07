@@ -123,6 +123,17 @@ DEFAULTS: dict[str, float | int | str] = {
     # usefulness, the faithful granularity since the weights only gate the split.
     "recall_routing_credit": 1,
     "recall_routing_credit_scale": 0.5,
+    # Embedding-based intent detection for the fast-path gates (self_reference,
+    # epistemic_action). A per-persona exemplar bank is matched by cosine against the
+    # input embedding so paraphrases the seed list never anticipated still fire; the
+    # bank grows whenever the understanding integrator confirms an intent the match
+    # missed, so LLM cost falls with use. Falls back to the literal seed list when
+    # disabled or no embedder is available. Threshold is deliberately conservative —
+    # the learning loop, not a loose threshold, is what makes detection comprehensive.
+    "intent_detector_enabled": 1,
+    "intent_fire_threshold": 0.62,
+    "intent_bank_max": 200,
+    "intent_dedup_threshold": 0.95,
     # ── Section 4: Default Mode Network ──────────────────────────────────────
     "dmn_interval": 8.0,  # active baseline — fires when any mouse/keyboard activity detected
     "dmn_idle_interval": 45.0,  # when fully away from computer (OS idle > 60s)
