@@ -65,6 +65,12 @@ def _isolate_env() -> str:
     os.environ.pop("LANGFUSE_SECRET_KEY", None)
     # Never bind the UI port — a live app may already own 8765.
     os.environ["BRAIN_UI"] = "false"
+    # CRITICAL for speed: with a RunPod key set, _setup_runpod resumes/creates a
+    # remote GPU pod over the network — ~126s PER session (measured), i.e. ~90% of
+    # each cell's wall time, rebuilt for all N cells. We don't use RunPod here
+    # (cells route to cloud/local models), so drop the key AFTER load_dotenv (which
+    # re-sets it from .env) → start() short-circuits and setup falls to <1s.
+    os.environ.pop("RUNPOD_API_KEY", None)
     return tmp
 
 
@@ -255,6 +261,9 @@ async def _main(mode: str, prompts: list[str], repeats: int,
         except Exception as e:
             print(f"    ERROR: {type(e).__name__}: {e}", file=sys.stderr)
             results.append({"group": c["group"], "prompt": c["prompt"], "error": str(e)})
+        # Incremental write so partial results are inspectable while the run is live.
+        if out:
+            Path(out).write_text(json.dumps(results, indent=2))
 
     title = (f"SINGLE-CHANNEL SWEEP ({','.join(sweep_channels)}) — dose–response"
              if mode == "sweep" else "MOOD → ANSWER CONTRAST  (forced chemistry)")
