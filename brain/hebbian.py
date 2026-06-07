@@ -283,6 +283,9 @@ class HebbianUpdater:
     _RECALL_SIDES = {
         "schema": ("hippocampus.schema_grep", "hippocampus.entity_tracker"),
         "episode": ("hippocampus.cosine_recall", "hippocampus.time_filter"),
+        # Cross-domain transfer pathway — credited by its own hit share so the
+        # brain learns whether analogical (problem-shape) recall actually helped.
+        "structural": ("hippocampus.structural_recall",),
     }
 
     def _apply_recall_credit(
@@ -293,7 +296,8 @@ class HebbianUpdater:
         contrib = getattr(trace, "recall_contrib", None) or {}
         n_schema = float(contrib.get("schema", 0) or 0)
         n_episode = float(contrib.get("episode", 0) or 0)
-        total = n_schema + n_episode
+        n_structural = float(contrib.get("structural", 0) or 0)
+        total = n_schema + n_episode + n_structural
         if total <= 0:
             return 0
         scale = (
@@ -305,7 +309,11 @@ class HebbianUpdater:
         base = outcome * scale
         if abs(base) < 1e-6:
             return 0
-        shares = {"schema": n_schema / total, "episode": n_episode / total}
+        shares = {
+            "schema": n_schema / total,
+            "episode": n_episode / total,
+            "structural": n_structural / total,
+        }
         updated = 0
         for side, strategies in self._RECALL_SIDES.items():
             delta = base * shares[side]

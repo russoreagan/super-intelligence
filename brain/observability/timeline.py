@@ -115,6 +115,14 @@ class TurnTrace:
     # <strategy>). {"schema": int, "episode": int}; empty when no recall ran.
     recall_contrib: dict = field(default_factory=dict)
 
+    # Structural (cross-domain) recall instrumentation. Gate firing is logged
+    # separately from match success so threshold calibration (too-much/too-little
+    # novelty) is observable independently of whether a match was found.
+    structural_gate_fired: bool = False
+    # Summary of the structural pass when the gate opened: {"matched", "hits",
+    # "best_sim", "approach_overlap", "fallback_stance"}. Empty when gate shut.
+    structural_recall: dict = field(default_factory=dict)
+
     # Modulation counters (incremented by SwitchNeuron.fire / should_fire)
     modulated_switch_count: int = 0  # switches where |mod_delta| > 0.01
     suppressed_switch_count: int = 0  # near-misses: level >= base but < effective

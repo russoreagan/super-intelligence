@@ -93,6 +93,7 @@ def bootstrap(wiring: Wiring) -> None:
         "hippocampus.schema_grep",
         "hippocampus.entity_tracker",
         "hippocampus.time_filter",
+        "hippocampus.structural_recall",
     ):
         wiring.add("mem.recall", recall_strategy, weight=1.0, polarity="excitatory")
         wiring.add(recall_strategy, "frontal.executive", weight=1.0, polarity="excitatory")

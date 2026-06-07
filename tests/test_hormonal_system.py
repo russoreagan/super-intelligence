@@ -669,7 +669,9 @@ class TestAnandamide:
         from brain.bus import HormonalState
 
         hs = HormonalState()
-        # AEA at 0.30 (baseline) → no suppression
+        # Pin AEA to the suppression base explicitly — don't inherit chem_init_AEA,
+        # which a persona's materialized state can push above 0.30. At base → no effect.
+        hs._levels["AEA"] = 0.30
         ne_scale, glu_scale = hs.aea_suppress(ne_rate=0.50, glu_rate=0.35)
         assert ne_scale == pytest.approx(1.0)
         assert glu_scale == pytest.approx(1.0)

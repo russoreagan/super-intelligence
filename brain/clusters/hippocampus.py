@@ -40,10 +40,62 @@ Return JSON: {
   "topic_tags": [string],     // 2-4 topic tags
   "entities": [string],       // named entities mentioned
   "key_facts": [string],      // facts about the user worth remembering long-term (preferences, life details, opinions)
-  "relationship_note": string // optional: if this turn reveals something about the relationship depth or
+  "relationship_note": string,// optional: if this turn reveals something about the relationship depth or
                               // the user's personality/humour/warmth, note it briefly (else empty string)
+  "strategy_tags": [string]   // 0-2 labels for HOW the problem was handled (the problem-solving SHAPE,
+                              // NOT the topic). Choose ONLY from this fixed vocabulary, or return []:
+                              //   "decomposed-into-steps"          broke a big task into smaller parts
+                              //   "sought-clarification-first"     asked a question before committing
+                              //   "prioritized-under-time-pressure" triaged what mattered under constraint
+                              //   "verified-before-acting"         checked/confirmed before doing
+                              //   "analogized-from-prior"          reused an approach from something else
+                              //   "explored-by-trial-and-error"    probed iteratively without a known path
+                              // These must be domain-independent — the same tag should fit problems in
+                              // completely unrelated subjects. Omit rather than inventing new tags.
 }
 Return ONLY JSON."""
+
+# Canonical problem-solving "approach" vocabulary. Kept deliberately small and
+# tightly scoped so the system settles into stable patterns; this is the main
+# steering point for what the brain learns to name as a strategy. Stored on
+# episodes namespaced as "approach:<tag>" so they ride the existing tag-scoped
+# recall without polluting topic matching.
+APPROACH_TAGS: tuple[str, ...] = (
+    "decomposed-into-steps",
+    "sought-clarification-first",
+    "prioritized-under-time-pressure",
+    "verified-before-acting",
+    "analogized-from-prior",
+    "explored-by-trial-and-error",
+)
+
+# Ordering shared by encode-time and query-time cognitive signatures. Chemistry
+# channels + graded structural signals + binary problem-STRUCTURE flags. NO topic
+# or entity content — that exclusion is what lets a memory transfer across domains.
+SIGNATURE_KEYS: tuple[str, ...] = (
+    # chemistry / activation profile
+    "DA",
+    "ACh",
+    "GABA",
+    "NE",
+    "Glu",
+    # graded structural signals
+    "surprise",
+    "salience",
+    "inhibition",  # normalized suppression_pressure (inhibitory load)
+    # binary problem-structure flags (0.0 / 1.0)
+    "requires_decomposition",
+    "requires_verification",
+    "high_stakes",
+    "time_pressure",
+    "open_ended",
+)
+
+# Structural recall tuning. A candidate must clear MIN_SIM to be surfaced as a
+# real cross-domain match; if even the closest candidate sits below ANOMALY_FLOOR
+# the current cognitive STATE itself is without precedent (not just the topic).
+STRUCTURAL_MIN_SIM = 0.80
+STRUCTURAL_ANOMALY_FLOOR = 0.55
 
 
 class HippocampusCluster:
@@ -123,6 +175,18 @@ class HippocampusCluster:
             threshold=0.5,
             modulators={"ACh": -0.10},
         )
+        # Structural (cross-domain) recall gate. Fires only on novelty — high
+        # surprise / weak topic match / emotion-aware bypass. ACh (curiosity) and
+        # surprise lower its threshold so a genuinely new situation casts the net
+        # wider for analogous past problem-shapes.
+        self._structural_recall = StatefulSwitch(
+            "structural_recall",
+            CLUSTER,
+            decay=0.95,
+            polarity="excitatory",
+            threshold=0.5,
+            modulators={"ACh": -0.10, "NE": -0.05},
+        )
 
     async def boot(self, session_id: str) -> tuple[dict[str, str], list[dict]]:
         """Load core schema and recent episodes into working memory at session start."""
@@ -143,11 +207,21 @@ class HippocampusCluster:
         return self._core_context, recent
 
     async def recall(
-        self, query: str, entities: list[str], turn_id: str, embedding_fn=None
+        self,
+        query: str,
+        entities: list[str],
+        turn_id: str,
+        embedding_fn=None,
+        novelty: bool = False,
+        features: dict | None = None,
     ) -> dict:
         """
         Recall from episodic + schema stores.
         Returns combined context for the frontal lobe.
+
+        When ``novelty`` is set, also run the structural (cross-domain) pass:
+        match the current cognitive signature against stored signatures to surface
+        problem-shapes the brain has solved before even when the topic is new.
         """
         chem = self._chem_snapshot()
 
@@ -266,6 +340,86 @@ class HippocampusCluster:
             if neg_peak < -_THRESHOLD:
                 recall_affect["GABA"] = round((-neg_peak - _THRESHOLD) * 0.20, 3)
 
+        # ── Structural (cross-domain) recall — novelty-gated ─────────────────
+        # Fires only when the situation looks novel, i.e. exactly when topic
+        # match is least likely to help. Matches on cognitive signature, not
+        # content, so it can bridge unrelated domains by problem-shape.
+        structural_text = ""
+        structural_hits: list[dict] = []
+        structural_stance: dict = {}
+        structural_summary: dict = {}
+        gate_fired = self._structural_gate(novelty, chem, turn_id)
+        trace = self._record_trace()
+        if trace is not None:
+            trace.structural_gate_fired = gate_fired
+        if gate_fired:
+            self._structural_recall.fire(
+                0.5, "structural_pass", {"novelty": True}, snapshot=chem
+            )
+            cur_sig = self._build_cog_signature(
+                features or {},
+                self._bus.neuromod.snapshot() if hasattr(self._bus, "neuromod") else chem,
+                float((features or {}).get("surprise_score", 0.0) or 0.0),
+                inhibition=self._current_inhibition(),
+            )
+            approach_now = [f"approach:{t}" for t in self._infer_current_approach(features or {})]
+            candidates = self._episodic.recall_structural(
+                cur_sig,
+                approach_tags=approach_now,
+                limit=self._structural_limit(),
+                exclude_session=getattr(self, "_session_id", None),
+            )
+            structural_hits = [c for c in candidates if c.get("cog_sim", 0.0) >= STRUCTURAL_MIN_SIM]
+            best_sim = max((c.get("cog_sim", 0.0) for c in candidates), default=0.0)
+            if structural_hits:
+                lines = []
+                for ep in structural_hits:
+                    tags = ", ".join(
+                        t.removeprefix("approach:")
+                        for t in ep.get("topic_tags", [])
+                        if t.startswith("approach:")
+                    )
+                    topic = ", ".join(
+                        t for t in ep.get("topic_tags", []) if not t.startswith("approach:")
+                    )[:60]
+                    lines.append(
+                        f"[approach: {tags or 'unlabeled'}] (was about: {topic or '?'}) "
+                        f"{ep.get('user_input', '')[:80]} → {ep.get('entity_response', '')[:160]}"
+                    )
+                structural_text = "\n".join(lines)
+            else:
+                # No usable match — derive an honest fallback stance from live
+                # state instead of leaning on the most-recent memory.
+                anomalous = best_sim < STRUCTURAL_ANOMALY_FLOOR
+                structural_stance = self._fallback_stance(chem, anomalous)
+            structural_summary = {
+                "gate_fired": True,
+                "matched": bool(structural_hits),
+                "hits": len(structural_hits),
+                "best_sim": round(best_sim, 4),
+                "approach_overlap": sorted(
+                    {
+                        t.removeprefix("approach:")
+                        for ep in structural_hits
+                        for t in ep.get("topic_tags", [])
+                        if t.startswith("approach:")
+                    }
+                ),
+                "fallback_stance": structural_stance.get("stance", ""),
+            }
+            if trace is not None:
+                trace.structural_recall = structural_summary
+            decisions.log(
+                "structural_recall",
+                turn_id=turn_id,
+                cluster=CLUSTER,
+                matched=bool(structural_hits),
+                hits=len(structural_hits),
+                best_sim=round(best_sim, 4),
+                fallback_stance=structural_stance.get("stance", ""),
+                approach_overlap=structural_summary["approach_overlap"],
+            )
+
         result = {
             "schema": schema_context,
             "episodes": episode_text,
@@ -278,12 +432,17 @@ class HippocampusCluster:
             "recall_contrib": {
                 "schema": len(schema_hits),
                 "episode": len(episodes),
+                # Structural pathway hit count — feeds the recall fan-out Hebbian
+                # credit so the brain learns whether analogical recall helped.
+                "structural": len(structural_hits),
                 # Budget allocation (pure function of the learned weights, independent
                 # of memory content) — lets the recall surface be measured even when
                 # the store is empty (the schema-vs-episode split is the learned signal).
                 "schema_k": schema_k,
                 "episode_k": episode_k,
             },
+            **({"structural_episodes": structural_text} if structural_text else {}),
+            **({"structural_stance": structural_stance} if structural_stance else {}),
             **({"recall_affect": recall_affect} if recall_affect else {}),
         }
 
@@ -394,6 +553,135 @@ class HippocampusCluster:
             return current_turn_trace.get()
         except Exception:
             return None
+
+    # ── Cognitive signature (cross-domain transfer) ──────────────────────────
+
+    @staticmethod
+    def _extract_approach_tags(encoded: dict) -> list[str]:
+        """Namespaced ``approach:*`` tags from the encoder's strategy_tags. Only
+        the canonical vocabulary is accepted, slugged and deduped, so the
+        structural surface stays steerable and the tag space doesn't drift."""
+        out: list[str] = []
+        seen: set[str] = set()
+        for raw_tag in encoded.get("strategy_tags", []) or []:
+            slug = str(raw_tag).strip().lower().replace(" ", "-").replace("_", "-")
+            if slug in APPROACH_TAGS and slug not in seen:
+                seen.add(slug)
+                out.append(f"approach:{slug}")
+        return out
+
+    def _structural_gate(self, novelty: bool, chem: dict[str, float], turn_id: str) -> bool:
+        """Whether the structural pass runs: only on novelty, and only if the
+        chemistry-modulated switch agrees. Gate firing is reported separately from
+        match success so threshold calibration is observable."""
+        return bool(novelty) and self._structural_recall.should_fire(0.5, chem, turn_id)
+
+    @staticmethod
+    def _structure_flags(features: dict) -> dict[str, float]:
+        """Problem-STRUCTURE flags derived only from domain-free signals.
+        Never read topic/entity strings here — that would let domain leak into
+        the signature and break transfer."""
+        intent = features.get("intent", "other")
+        requires_action = bool(features.get("requires_action"))
+        requires_memory = bool(features.get("requires_memory"))
+        epistemic = bool(features.get("epistemic_action")) or intent == "epistemic_action"
+        salience = float(features.get("salience", 0.5) or 0.0)
+        tone = features.get("user_tone_toward_ai", "neutral")
+        return {
+            "requires_decomposition": 1.0 if (intent == "task" or requires_action) else 0.0,
+            "requires_verification": 1.0
+            if (epistemic or intent in ("question", "memory_recall"))
+            else 0.0,
+            "high_stakes": 1.0 if salience >= 0.7 else 0.0,
+            "time_pressure": 1.0 if tone in ("impatient", "hostile") else 0.0,
+            "open_ended": 1.0
+            if (intent in ("chitchat", "question", "other") and not requires_action)
+            else 0.0,
+        }
+
+    def _build_cog_signature(
+        self,
+        features: dict,
+        neuromod_snap: dict | None,
+        surprise_score: float,
+        inhibition: float = 0.0,
+    ) -> dict[str, float]:
+        """Build the content-free activation signature used for structural recall.
+        Same helper at encode-time and query-time so the vectors are comparable."""
+        nm = neuromod_snap or {}
+        sig: dict[str, float] = {
+            "DA": round(float(nm.get("DA", 0.0)), 4),
+            "ACh": round(float(nm.get("ACh", 0.0)), 4),
+            "GABA": round(float(nm.get("GABA", 0.0)), 4),
+            "NE": round(float(nm.get("NE", 0.0)), 4),
+            "Glu": round(float(nm.get("Glu", 0.0)), 4),
+            "surprise": round(float(surprise_score or 0.0), 4),
+            "salience": round(float(features.get("salience", 0.5) or 0.0), 4),
+            # suppression_pressure can exceed 1.0; squash into [0, 1].
+            "inhibition": round(min(1.0, max(0.0, float(inhibition))), 4),
+        }
+        sig.update(self._structure_flags(features))
+        return sig
+
+    @staticmethod
+    def _infer_current_approach(features: dict) -> list[str]:
+        """Cheap query-time guess at the approach the current situation calls for,
+        from the same domain-free structure flags. Used only to BOOST candidates
+        whose stored approach tags overlap — never to filter."""
+        flags = HippocampusCluster._structure_flags(features)
+        out: list[str] = []
+        if flags["requires_decomposition"]:
+            out.append("decomposed-into-steps")
+        if flags["requires_verification"]:
+            out.append("verified-before-acting")
+        if flags["time_pressure"]:
+            out.append("prioritized-under-time-pressure")
+        if flags["open_ended"]:
+            out.append("explored-by-trial-and-error")
+        return out
+
+    def _current_inhibition(self) -> float:
+        trace = self._record_trace()
+        if trace is None:
+            return 0.0
+        return float(getattr(trace, "suppression_pressure", 0.0) or 0.0)
+
+    def _structural_limit(self) -> int:
+        """How many structural candidates to surface, scaled by the learned
+        mem.recall→hippocampus.structural_recall edge weight (base 3, [1, 5])."""
+        if self._wiring is None or self._wiring_frozen:
+            return 3
+        try:
+            w = self._wiring.get_edge_weight("mem.recall", "hippocampus.structural_recall")
+        except Exception:
+            w = 1.0
+        return max(1, min(5, round(3 * w)))
+
+    @staticmethod
+    def _fallback_stance(chem: dict[str, float], anomalous: bool) -> dict:
+        """When no structural match exists, derive a problem-solving STANCE from
+        live channel state rather than defaulting to the most-recent memory.
+        Honest about working without prior experience."""
+        if anomalous:
+            return {
+                "stance": "anomalous",
+                "note": "No close prior experience, and this cognitive state itself "
+                "has no precedent — proceed with care, low-stakes probing, and "
+                "minimal assumptions.",
+            }
+        threat = float(chem.get("GABA", 0.0)) + float(chem.get("CORT", 0.0))
+        engage = float(chem.get("DA", 0.0)) + float(chem.get("ACh", 0.0))
+        if threat >= engage:
+            return {
+                "stance": "caution",
+                "note": "No close prior experience — fall back to a careful, "
+                "tried-and-true approach and verify as you go.",
+            }
+        return {
+            "stance": "exploration",
+            "note": "No close prior experience — fall back to exploration: try a "
+            "promising approach, iterate by trial and error, keep stakes low.",
+        }
 
     async def encode(
         self,
@@ -682,6 +970,8 @@ class HippocampusCluster:
             or features.get("entities", [])
             or [features.get("topic_summary", "misc")]
         )
+        # Append problem-solving "approach" tags (namespaced) from the encoder.
+        topic_tags.extend(self._extract_approach_tags(encoded))
         entities = encoded.get("entities") or features.get("entities", [])
         intent = features.get("intent", "other")
 
@@ -722,6 +1012,13 @@ class HippocampusCluster:
                     e,
                 )
 
+        cog_signature = self._build_cog_signature(
+            features,
+            neuromod_snap,
+            surprise_score,
+            inhibition=self._current_inhibition(),
+        )
+
         episode = Episode(
             session_id=session_id,
             turn_id=turn_id,
@@ -735,6 +1032,7 @@ class HippocampusCluster:
             neuromod_snapshot=neuromod_snap,
             surprise_score=surprise_score,
             vector=vec,
+            cog_signature=cog_signature,
         )
         self._episodic.encode(episode)
         logger.debug("[Memory] Episode saved: turn=%s intent=%s", turn_id, intent)

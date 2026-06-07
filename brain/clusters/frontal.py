@@ -1633,6 +1633,22 @@ class FrontalCluster:
             parts.append(
                 f"Relevant past episodes:\n{fence('past_episodes', memory['episodes'], nonce)}"
             )
+        # Cross-domain transfer: situations that felt cognitively similar (matched
+        # on problem-shape, not topic). Three honest cases — a real match, or a
+        # fallback stance when nothing matched (incl. an unprecedented state).
+        if memory.get("structural_episodes"):
+            parts.append(
+                "Past situations that felt cognitively similar (different topic, same "
+                "problem-shape) — you may not have faced this exact thing, but consider "
+                "how you handled these:\n"
+                f"{fence('structural_recall', memory['structural_episodes'], nonce)}"
+            )
+        elif memory.get("structural_stance"):
+            _st = memory["structural_stance"]
+            parts.append(
+                f"No close prior experience for this (stance: {_st.get('stance', '')}). "
+                f"{_st.get('note', '')}"
+            )
         if memory.get("tool_result"):
             parts.append(
                 f"Tool execution result:\n{fence('tool_result', str(memory['tool_result']), nonce)}"

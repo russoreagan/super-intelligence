@@ -17,7 +17,7 @@ import logging
 import os
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -35,6 +35,20 @@ _STORAGE_BACKEND = os.environ.get("BRAIN_STORAGE_BACKEND", "local").lower()
 EMBEDDING_DIM = 768
 
 
+def _signature_cosine(a: dict[str, float], b: dict[str, float]) -> float:
+    """Cosine similarity over the union of two cognitive-signature dicts.
+    Missing keys count as 0. Returns 0.0 if either side has no magnitude."""
+    keys = set(a) | set(b)
+    if not keys:
+        return 0.0
+    dot = sum(float(a.get(k, 0.0)) * float(b.get(k, 0.0)) for k in keys)
+    na = sum(float(a.get(k, 0.0)) ** 2 for k in keys) ** 0.5
+    nb = sum(float(b.get(k, 0.0)) ** 2 for k in keys) ** 0.5
+    if na == 0.0 or nb == 0.0:
+        return 0.0
+    return dot / (na * nb)
+
+
 @dataclass
 class Episode:
     session_id: str
@@ -49,6 +63,11 @@ class Episode:
     neuromod_snapshot: dict[str, float]
     surprise_score: float  # from predict-and-surprise gating
     vector: list[float] | None = None  # embedding (populated by hippocampus)
+    # Cognitive signature: the activation profile (chemistry + problem-STRUCTURE
+    # flags) at encode time, deliberately content-free so it transfers across
+    # domains. Matched by structural recall when a novel situation arrives.
+    # Built by hippocampus._build_cog_signature; see brain/clusters/hippocampus.py.
+    cog_signature: dict[str, float] = field(default_factory=dict)
 
 
 class EpisodicStore:
@@ -106,11 +125,13 @@ class EpisodicStore:
                     pa.field("entities", pa.string()),  # JSON array
                     pa.field("neuromod_snapshot", pa.string()),  # JSON
                     pa.field("surprise_score", pa.float64()),
+                    pa.field("cog_signature", pa.string()),  # JSON
                     pa.field("vector", pa.list_(pa.float32(), EMBEDDING_DIM)),
                 ]
             )
             if "episodes" in self._db.table_names():
                 self._table = self._db.open_table("episodes")
+                self._migrate_cog_signature()
             else:
                 self._table = self._db.create_table("episodes", schema=schema)
             self._ready = True
@@ -121,6 +142,27 @@ class EpisodicStore:
                 e,
             )
             return False
+
+    def _migrate_cog_signature(self) -> None:
+        """Add the cog_signature column to a pre-existing table that lacks it.
+        Old rows default to an empty JSON object; structural recall simply skips
+        episodes whose signature is empty."""
+        try:
+            names = set(self._table.schema.names)
+        except Exception:
+            return
+        if "cog_signature" in names:
+            return
+        try:
+            # SQL expression evaluated per existing row → literal "{}".
+            self._table.add_columns({"cog_signature": "'{}'"})
+            logger.info("[Episode DB] Migrated table: added cog_signature column.")
+        except Exception as e:
+            logger.warning(
+                "[Episode DB] Could not add cog_signature column (structural recall "
+                "disabled until store is rebuilt): %s",
+                e,
+            )
 
     def encode(self, episode: Episode) -> None:
         if self._use_supabase:
@@ -141,6 +183,7 @@ class EpisodicStore:
                 "entities": json.dumps(episode.entities),
                 "neuromod_snapshot": json.dumps(episode.neuromod_snapshot),
                 "surprise_score": episode.surprise_score,
+                "cog_signature": json.dumps(episode.cog_signature or {}),
                 "vector": episode.vector or ([0.0] * EMBEDDING_DIM),
             }
             self._table.add([row])
@@ -169,6 +212,7 @@ class EpisodicStore:
                     "entities": episode.entities,
                     "neuromod_snapshot": episode.neuromod_snapshot,
                     "surprise_score": episode.surprise_score,
+                    "cog_signature": episode.cog_signature or {},
                     "vector": f"[{','.join(str(v) for v in vec)}]",
                 }
             ).execute()
@@ -334,6 +378,58 @@ class EpisodicStore:
             logger.error("[Episode DB] Supabase tag-recall failed: %s", e)
             return []
 
+    def recall_structural(
+        self,
+        current_sig: dict[str, float],
+        approach_tags: list[str] | None = None,
+        limit: int = 3,
+        exclude_session: str | None = None,
+        scan_cap: int = 500,
+    ) -> list[dict]:
+        """Rank episodes by COGNITIVE-SIGNATURE similarity rather than topic.
+
+        This is the cross-domain transfer path: it ignores text content entirely
+        and matches on the activation profile (chemistry + problem-structure
+        flags) stored in each episode's cog_signature. Candidates whose
+        ``approach:*`` tags overlap the current approach get a small boost.
+
+        Returns parsed episodes (top ``limit`` by score) each annotated with
+        ``cog_sim`` (raw signature cosine, [-1, 1]) and ``approach_overlap``
+        (int). The caller applies its own minimum-similarity threshold — the
+        store always returns the best candidates so the caller can also detect
+        the "even the closest match is weak" (anomalous-state) case.
+        """
+        if not current_sig:
+            return []
+        if self._use_supabase:
+            rows = self._sb_recall_recent(scan_cap)
+        else:
+            if not self._ensure_ready():
+                return []
+            try:
+                rows = self._parse_rows(self._table.to_arrow().to_pylist())
+            except Exception as e:
+                logger.error("[Episode DB] Structural scan failed: %s", e)
+                return []
+        approach_set = {t for t in (approach_tags or []) if t}
+        scored = []
+        for ep in rows:
+            if exclude_session and ep.get("session_id") == exclude_session:
+                continue
+            sig = ep.get("cog_signature") or {}
+            if not sig:
+                continue
+            sim = _signature_cosine(current_sig, sig)
+            overlap = sum(
+                1 for t in ep.get("topic_tags", []) if t.startswith("approach:") and t in approach_set
+            )
+            ep["cog_sim"] = round(sim, 4)
+            ep["approach_overlap"] = overlap
+            ep["_score"] = sim + 0.05 * overlap
+            scored.append(ep)
+        scored.sort(key=lambda e: e["_score"], reverse=True)
+        return scored[:limit]
+
     @staticmethod
     def _as_list(v) -> list:
         # LanceDB stores these as JSON strings; Supabase (text[]) returns real lists.
@@ -365,6 +461,7 @@ class EpisodicStore:
             ep["topic_tags"] = self._as_list(ep.get("topic_tags"))
             ep["entities"] = self._as_list(ep.get("entities"))
             ep["neuromod_snapshot"] = self._as_dict(ep.get("neuromod_snapshot"))
+            ep["cog_signature"] = self._as_dict(ep.get("cog_signature"))
             episodes.append(ep)
         return episodes
 

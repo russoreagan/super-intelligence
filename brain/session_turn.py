@@ -428,14 +428,24 @@ class _TurnMixin:
             await self._emit_end("occipital", turn_id)
 
         # ── Hippocampus: recall ───────────────────────────────────────────────
+        # Novelty also opens recall: a genuinely new topic may not request memory,
+        # but that is exactly when the structural (cross-domain) pass should try to
+        # surface a problem-shape the brain has solved before. On routine turns the
+        # structural gate stays shut, so this adds no cost there.
+        from brain.predictor import should_bypass_gating
+
+        _bypass, _ = should_bypass_gating(affect, features)
+        novelty = bool(_bypass) or float(features.get("surprise_score", 0.0) or 0.0) >= 0.6
         memory: dict = {}
-        if features.get("requires_memory") or features.get("epistemic_action"):
+        if features.get("requires_memory") or features.get("epistemic_action") or novelty:
             await self._emit("hippocampus", 0.75, "recalling memory", turn_id)
             memory = await self.hippocampus.recall(
                 query=user_input,
                 entities=features.get("entities", []),
                 turn_id=turn_id,
                 embedding_fn=self.router.embed,
+                novelty=novelty,
+                features=features,
             )
             await self._emit_end("hippocampus", turn_id)
             # Record which recall pathway produced hits so the Hebbian sleep pass can

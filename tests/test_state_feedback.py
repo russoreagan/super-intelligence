@@ -57,6 +57,11 @@ def test_feedback_self_limits_under_sustained_aggregate(colony_on):
     """Sustained high aggregate → Glu reaches a bounded steady state, no divergence."""
     h = HypothalamusCluster(Bus())
     h._prev_aggregate = {"arousal": 1.0, "inhibition": 0.0}
+    # Start Glu at its resting baseline (below the driven steady state) so the
+    # monotone-approach property is deterministic — chem_init_Glu can be pushed
+    # above the steady state by a persona's materialized state, which would make
+    # the loop approach from ABOVE and spuriously fail the monotonicity check.
+    h._bus.neuromod._levels["Glu"] = h._bus.neuromod._baseline["Glu"]
     glu_levels = []
     for _ in range(50):
         h._apply_state_feedback()
