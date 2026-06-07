@@ -41,6 +41,13 @@ _READY_TIMEOUT_S = 300.0  # 5 min max for pod to come up
 _WATCHER_INTERVAL_S = 1800.0  # check for better options every 30 min (pod running)
 _CAPACITY_POLL_S = 300.0  # retry every 5 min when on local fallback
 
+# Warmup runs in the background (never blocks boot). Loading a 32B model from disk
+# routinely exceeds the RunPod proxy's request timeout, so we kick the load and then
+# poll /api/ps — fast requests — until the model is resident.
+_WARMUP_KICK_TIMEOUT_S = 30.0  # don't hold a long request open across the model load
+_WARMUP_POLL_S = 5.0
+_WARMUP_TIMEOUT_S = 300.0  # confirm residency within 5 min
+
 
 def _required_models() -> list[str]:
     return [
@@ -55,6 +62,7 @@ class RunPodManager:
         self._pod_id: str | None = None
         self._current_price: float | None = None
         self._watcher_task: asyncio.Task | None = None
+        self._warmup_task: asyncio.Task | None = None
         self._http = None  # httpx.AsyncClient, created lazily in _get_http()
 
     # ── HTTP / GraphQL ────────────────────────────────────────────────────────
@@ -261,20 +269,59 @@ class RunPodManager:
         settings.update({"runpod_host": local_host})
         logger.info("[RunPod] runpod_host → local Ollama (%s)", local_host)
 
+    def _schedule_warmup(self, host: str) -> None:
+        """Warm the model in the background so boot (UI + DMN) is never blocked on it.
+
+        Warming a 32B model takes minutes; awaiting it here held back _setup_ui and
+        _setup_dmn — the whole brain — for the full duration. It's already declared
+        non-fatal (cells cold-load on miss), so nothing downstream needs the result.
+        """
+        self._warmup_task = asyncio.create_task(self._warmup_model(host))
+
     async def _warmup_model(self, host: str) -> None:
-        """Preload the inference model into VRAM before cells start hitting it."""
+        """Preload the inference model into VRAM before cells start hitting it.
+
+        Loading a 32B model from disk routinely exceeds the RunPod proxy's request
+        timeout (~100s): a single blocking /api/generate gets killed with a 524 even
+        though Ollama keeps loading server-side. So we kick the load off (tolerating
+        the proxy timeout) and then poll /api/ps — which returns fast — until the
+        model is actually resident.
+        """
         model = os.environ.get("RUNPOD_MODEL", "qwen2.5:32b")
-        logger.info("[RunPod] Warming up %s into VRAM...", model)
+        base = model.split(":")[0]
+        logger.info("[RunPod] Warming up %s into VRAM (background)...", model)
+
+        # Kick the load. The proxy may 524 before the model finishes loading; that's
+        # expected and harmless — Ollama keeps loading on the pod regardless.
         try:
-            r = await self._get_http().post(
+            await self._get_http().post(
                 f"{host}/api/generate",
                 json={"model": model, "prompt": "", "keep_alive": "30m"},
-                timeout=300.0,
+                timeout=_WARMUP_KICK_TIMEOUT_S,
             )
-            r.raise_for_status()
-            logger.info("[RunPod] Model %s warm and resident", model)
         except Exception as e:
-            logger.warning("[RunPod] Warmup failed (non-fatal — cells will cold-load): %s", e)
+            logger.debug("[RunPod] Warmup kick returned %s (load continues server-side)", e)
+
+        # Poll /api/ps until the model shows as resident (each request is fast).
+        elapsed = 0.0
+        while elapsed < _WARMUP_TIMEOUT_S:
+            try:
+                r = await self._get_http().get(f"{host}/api/ps", timeout=10.0)
+                if r.status_code == 200:
+                    loaded = {m.get("name", "").split(":")[0] for m in r.json().get("models", [])}
+                    if base in loaded:
+                        logger.info("[RunPod] Model %s warm and resident (%.0fs)", model, elapsed)
+                        return
+            except Exception:
+                pass
+            await asyncio.sleep(_WARMUP_POLL_S)
+            elapsed += _WARMUP_POLL_S
+        logger.warning(
+            "[RunPod] Model %s not confirmed resident after %.0fs "
+            "(non-fatal — cells will cold-load)",
+            model,
+            _WARMUP_TIMEOUT_S,
+        )
 
     async def _activate_pod(self, pod_id: str) -> bool:
         """Wait for pod, pull models, warm up, apply host. Returns True on full success."""
@@ -283,7 +330,7 @@ class RunPodManager:
         host = self._pod_host(pod_id)
         if not await self._pull_models(host):
             return False
-        await self._warmup_model(host)
+        self._schedule_warmup(host)
         self._apply_host(pod_id)
         return True
 
@@ -312,7 +359,7 @@ class RunPodManager:
                 self._pod_id = pod_id
                 host = self._pod_host(pod_id)
                 await self._pull_models(host)
-                await self._warmup_model(host)
+                self._schedule_warmup(host)
                 self._apply_host(pod_id)
                 self._watcher_task = asyncio.create_task(self._watch())
                 return True
@@ -393,6 +440,9 @@ class RunPodManager:
         if self._watcher_task:
             self._watcher_task.cancel()
             self._watcher_task = None
+        if self._warmup_task:
+            self._warmup_task.cancel()
+            self._warmup_task = None
         if self._pod_id:
             await self._stop_pod(self._pod_id)
             self._pod_id = None
