@@ -56,3 +56,7 @@ second_brain/runpod_heartbeat.json
 
 # Per-user tenant data (multi-tenant provisioner runtime)
 tenants/
+
+# Paper manuscripts (generated/working docs — not versioned)
+/PAPER*.md
+/PAPER*.html
