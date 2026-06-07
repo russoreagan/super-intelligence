@@ -2878,6 +2878,22 @@ class DefaultModeNetwork:
         self._open_threads = ot.remove_thread(self._open_threads, thread_id)
         self._recent_conclusions.append((time.time(), conclusion_text))
         await self._save_threads()
+        # Stage 6: mastery — concluding a thread through sustained reasoning IS an accomplishment
+        # (the "solving the logic puzzle is satisfying" case), no external task or user verdict.
+        # Effort = how many advances it took to resolve; scaled by the expectation-gap curve and
+        # the persona's mastery valuation. Best-effort (None bus in tests).
+        with contextlib.suppress(Exception):
+            from brain.neuron import accomplishment_factor, reward_weight
+
+            _nm = getattr(getattr(self, "_bus", None), "neuromod", None)
+            _advances = float(getattr(t, "advances", 0) or 0)
+            if _nm and _advances > 0:
+                _diff, _mod = accomplishment_factor(
+                    _advances, float(settings.get("accomplishment_expected_medium"))
+                )
+                _w = reward_weight(str(settings.get("persona_name", "")), "mastery")
+                _er = float(settings.get("emotional_reactivity_scale"))
+                _nm.add("DA", float(settings.get("accomplishment_base")) * _diff * _mod * _w * _er)
         logger.info("[DMN] Concluded thread %s → memory: %r", thread_id, conclusion_text[:80])
         return {"action": "concluded", "thread_id": thread_id, "thread_title": t.summary[:80]}
 
@@ -3141,7 +3157,18 @@ class DefaultModeNetwork:
     async def _resolve_pending_conclusion(self, thread, verdict: str, user_input: str) -> dict:
         sid = getattr(self, "_session_id", "unknown")
         tags = list(thread.bears_on or [])
+        # A user verdict on a surfaced conclusion is the truest correctness signal we get —
+        # the entity is VERIFIED right or wrong, not self-judging a draft. Reward/penalise
+        # accordingly, scaled by how much this persona values being right (reward_weight) and
+        # global emotional reactivity. This is delayed, outcome-based reinforcement (RPE-like).
+        from brain.neuron import reward_weight
+
+        _w = reward_weight(str(settings.get("persona_name", "")), "correctness")
+        _er = float(settings.get("emotional_reactivity_scale"))
+        _nm = getattr(getattr(self, "_bus", None), "neuromod", None)  # best-effort; None in tests
         if verdict == "affirm":
+            if _nm:
+                _nm.add("DA", float(settings.get("correctness_reward_base")) * _w * _er)
             text = thread.pending_conclusion or thread.summary
             if self._hippocampus is not None:
                 asyncio.create_task(
@@ -3159,11 +3186,18 @@ class DefaultModeNetwork:
             logger.info("[DMN] User confirmed conclusion → memory: %r", text[:80])
             return {"action": "conclusion_confirmed", "thread_id": thread.id}
         if verdict == "reject":
+            # Verified wrong — DA dip plus 5HT drain (the sting that lingers); resting
+            # chemistry decides whether that reads as brooding (Poet) or bristling (Analyst).
+            if _nm:
+                _nm.add("DA", -float(settings.get("correctness_penalty_base")) * _w * _er)
+                _nm.add("5HT", -float(settings.get("correctness_5ht_drain")) * _w * _er)
             self._open_threads = ot.remove_thread(self._open_threads, thread.id)
             await self._save_threads()
             logger.info("[DMN] User rejected conclusion → thread dropped: %s", thread.id)
             return {"action": "conclusion_rejected", "thread_id": thread.id}
-        # correction → re-open the thread with the correction as a fresh advance.
+        # correction → partially wrong: a softer penalty (half), then re-open the thread.
+        if _nm:
+            _nm.add("DA", -0.5 * float(settings.get("correctness_penalty_base")) * _w * _er)
         thread.status = ot.STATUS_OPEN
         thread.pending_conclusion = ""
         self._open_threads, _ = ot.advance_thread(
@@ -3391,11 +3425,27 @@ class DefaultModeNetwork:
                     "user_answer": str(s.get("user_answer", ""))[:200],
                     "response_sketch": str(s.get("response_sketch", ""))[:300],
                     "context_needed": list(s.get("context_needed", []) or [])[:5],
+                    "valence": max(-1.0, min(1.0, float(s.get("valence", 0.0) or 0.0))),
                 }
                 for s in scenarios[:3]
                 if s.get("user_answer") and s.get("response_sketch")
             ]
             if self.anticipations:
+                # Anticipation moves chemistry, not just thought: imagining a good outcome
+                # pulls DA forward (wanting / looking-forward), imagining a bad one raises CORT
+                # (dread). This is what gives the entity a forward pull instead of pure reaction.
+                # Reward for the hoped-for case scales by what this persona values (correctness
+                # as a stand-in for "things going well"); dread is persona-agnostic threat.
+                from brain.neuron import reward_weight
+
+                _scale = float(settings.get("anticipation_reward_scale"))
+                _w = reward_weight(str(settings.get("persona_name", "")), "correctness")
+                _best = max((s["valence"] for s in self.anticipations), default=0.0)
+                _worst = min((s["valence"] for s in self.anticipations), default=0.0)
+                if _best > 0:
+                    self._bus.neuromod.add("DA", _scale * _best * _w)
+                if _worst < 0:
+                    self._bus.neuromod.add("CORT", _scale * (-_worst))
                 await self._bus.publish_dict(
                     "stream.anticipation",
                     {"scenarios": self.anticipations, "ts": time.time()},

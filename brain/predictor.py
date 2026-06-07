@@ -89,6 +89,19 @@ class PredictorSwitch:
         best, n = counts.most_common(1)[0]
         return best, n / len(matching)
 
+    def informativeness(self, input_signature: str) -> float:
+        """How non-trivial a correct prediction for this signature is, ∈ [0, 1].
+        = 1 − dominant_outcome_frequency over the (signature-matched) history. A signature
+        whose outcome is near-constant → ~0 (predicting it is trivial); a signature with
+        varied outcomes → higher. Used by neuron.prediction_reward to refuse to reward being
+        right about the inevitable."""
+        matching = [tag for sig, tag in self._history if sig == input_signature]
+        pool = matching if matching else [tag for _, tag in self._history]
+        if not pool:
+            return 0.0
+        _, n = Counter(pool).most_common(1)[0]
+        return 1.0 - n / len(pool)
+
     def surprise(
         self, predicted_tag: str | None, actual_tag: str, predicted_confidence: float
     ) -> float:
@@ -151,6 +164,18 @@ class CompositePredictor:
         counts = Counter(matching)
         best, n = counts.most_common(1)[0]
         return best, n / len(matching)
+
+    def informativeness(self, sig: tuple[Hashable, ...]) -> float:
+        """How non-trivial a correct prediction for this signature is, ∈ [0, 1].
+        = 1 − dominant_label_frequency over the (signature-matched) history. See
+        PredictorSwitch.informativeness."""
+        key = tuple(sig)
+        matching = [label for s, label in self._history if s == key]
+        pool = matching if matching else [label for _, label in self._history]
+        if not pool:
+            return 0.0
+        _, n = Counter(pool).most_common(1)[0]
+        return 1.0 - n / len(pool)
 
     def surprise(self, predicted: tuple | None, actual: tuple, confidence: float) -> float:
         if predicted is None:

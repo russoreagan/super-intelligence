@@ -291,6 +291,83 @@ def sensory_gain(persona_seed: str, category: str) -> float:
     return max(0.1, 1.0 + lean * span)
 
 
+# Per-persona REWARD-SOURCE valuation: what each persona draws reward from. Distinct from
+# sensory_gain (which is *detection* — does the persona notice a category of input) — this is
+# *valuation* — how much being right / connecting / surprising / etc. actually pleases this
+# identity, and so how hard the matching failure stings. It is the cortical appraisal that
+# feeds the neuromodulator machinery, made per-persona (the same role sentiment_DA_weight
+# plays globally). Unlike sensory_gain this is ALWAYS active — reward differentiation must
+# never silently vanish behind a feature flag. Weights are multipliers on the global base
+# magnitudes (settings.py: correctness_*_base etc.), centred at 1.0.
+_PERSONA_REWARD_WEIGHTS: dict[str, dict[str, float]] = {
+    # source → multiplier. correctness=being right · connection=approval/warmth ·
+    # novelty=curiosity/info-gain · aesthetic=beauty/resonance · relief=escaping a bad state ·
+    # mastery=accomplishing something hard (effort overcome, no prediction needed).
+    "the_analyst": {"correctness": 1.4, "connection": 0.7, "novelty": 0.9, "aesthetic": 0.5, "relief": 1.0, "mastery": 1.1},
+    "the_empath": {"correctness": 0.7, "connection": 1.5, "novelty": 0.8, "aesthetic": 1.0, "relief": 1.1, "mastery": 0.9},
+    "the_visionary": {"correctness": 0.6, "connection": 0.9, "novelty": 1.5, "aesthetic": 1.1, "relief": 0.8, "mastery": 0.8},
+    "the_poet": {"correctness": 0.9, "connection": 0.9, "novelty": 1.1, "aesthetic": 1.5, "relief": 1.0, "mastery": 1.1},
+    "the_sage": {"correctness": 1.0, "connection": 1.0, "novelty": 0.9, "aesthetic": 1.1, "relief": 1.2, "mastery": 1.2},
+}
+
+
+def reward_weight(persona_seed: str, source: str) -> float:
+    """Per-persona multiplier on a reward SOURCE (what this identity values, and so how much
+    the matching failure hurts). >1.0 = this persona cares more about `source`; <1.0 = less.
+    Returns 1.0 (identity) for unknown personas/sources. Always active — not colony-gated."""
+    import re
+
+    key = re.sub(r"[^a-z0-9]+", "_", str(persona_seed).lower()).strip("_")
+    return float(_PERSONA_REWARD_WEIGHTS.get(key, {}).get(source, 1.0))
+
+
+def prediction_reward(confidence: float, correct: bool, informativeness: float) -> float:
+    """Self-verified correctness (Stage 5): the DA delta for a prediction the world then
+    confirmed or refuted — no user needed. Returns a *base-scaled* multiplier in roughly
+    [-1, +1]; callers multiply by settings['prediction_reward_base'] (and persona/er).
+
+    Anti-farming guards (all required, so trivial/safe predictions can't farm reward):
+      • confidence floor: a low-confidence guess earns nothing (return 0).
+      • informativeness gate: being right about the near-inevitable earns nothing — weight by
+        how uncertain the outcome was beforehand (1 − dominant_outcome_frequency).
+    A confident+correct+informative prediction → positive; confident+WRONG → negative (you
+    staked confidence and reality disagreed); everything below the gates → 0."""
+    from brain.settings import settings as _settings
+
+    conf_min = float(_settings.get("prediction_confidence_min"))
+    info_min = float(_settings.get("prediction_informativeness_min"))
+    if confidence < conf_min or informativeness < info_min:
+        return 0.0
+    # Scale by both how sure it was and how non-trivial the call was.
+    magnitude = confidence * informativeness
+    return magnitude if correct else -magnitude
+
+
+def accomplishment_factor(measured_effort: float, expected_effort: float) -> tuple[float, float]:
+    """Mastery (Stage 6): turn effort-overcome into (difficulty_factor, expectation_modifier).
+    difficulty_factor = log1p(effort) — smooth/continuous, no buckets. expectation_modifier
+    captures the NON-monotonic interaction Russ flagged: meeting the hardness you braced for is
+    peak satisfaction; a large overshoot past it erodes the payoff (frustration); much easier
+    than feared is a mild anticlimax. Returns both so callers can also size frustration off r."""
+    import math
+
+    from brain.settings import settings as _settings
+
+    difficulty = math.log1p(max(0.0, measured_effort))
+    exp = max(1e-6, float(expected_effort))
+    r = max(0.0, measured_effort) / exp
+    band = float(_settings.get("accomplishment_overshoot_band"))
+    if r < 0.5:
+        modifier = float(_settings.get("accomplishment_anticlimax"))
+    elif r <= band:
+        # Peak near the top of the band — "rose to a known hard challenge".
+        modifier = 1.0 + 0.1 * (r / band)
+    else:
+        k = float(_settings.get("accomplishment_overshoot_k"))
+        modifier = 1.0 / (1.0 + k * (r - band))
+    return difficulty, modifier
+
+
 def make_threshold_gate(
     name: str,
     cluster: str,

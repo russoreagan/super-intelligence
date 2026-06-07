@@ -187,15 +187,23 @@ class HypothalamusCluster:
         # perceives some categories of input more strongly than others (the real
         # division-of-labor axis — differential detection, not response threshold).
         # Identity (1.0) unless colony_features AND colony_sensory_filter are on.
-        from brain.neuron import sensory_gain
+        from brain.neuron import reward_weight, sensory_gain
 
         _persona = str(settings.get("persona_name", ""))
         _affect_gain = sensory_gain(_persona, "affective")
         _novelty_gain = sensory_gain(_persona, "novelty")
+        # reward_weight is VALUATION (how much this persona values the source) vs sensory_gain's
+        # DETECTION (does it notice the input). Both legitimately multiply; weights are kept
+        # gentle to avoid compounding, and sensory_gain is colony-gated off by default so in
+        # practice reward_weight is the active per-persona differentiator on these paths.
+        _connection_value = reward_weight(_persona, "connection")
+        _novelty_value = reward_weight(_persona, "novelty")
 
-        # DA: valence signal (reward / positive engagement)
+        # DA: valence signal. The positive (sentiment) term is a reward SOURCE — "connection"/
+        # approval — scaled by how much this persona draws reward from it. The hostility term is
+        # punishment, not a reward source, so it is left unscaled by the valuation weight.
         valence_delta = (
-            sentiment * settings.get("sentiment_DA_weight") * er_scale * _affect_gain
+            sentiment * settings.get("sentiment_DA_weight") * er_scale * _affect_gain * _connection_value
         ) - (hostility * settings.get("hostility_DA_weight"))
         nm.add("DA", valence_delta * turns)
 
@@ -214,7 +222,9 @@ class HypothalamusCluster:
             _knee = _h_high * _h_slope  # GABA value at the high knee, for continuity
             nm.add("GABA", _knee * (hostility - _h_med) / (_h_high - _h_med) * turns)
 
-        # ACh: novelty / attention signal (scaled by the persona's novelty sensitivity)
+        # ACh: novelty / attention signal — scaled by the persona's novelty DETECTION
+        # (_novelty_gain) and its novelty VALUATION (_novelty_value: how rewarding new
+        # information is to this identity — the Visionary feeds on it, the Analyst less so).
         novelty_delta = (
             (
                 surprise * settings.get("surprise_ACh_weight")
@@ -222,6 +232,7 @@ class HypothalamusCluster:
             )
             * er_scale
             * _novelty_gain
+            * _novelty_value
         )
         if self._satiation_inhibitor.state > 0.5:
             novelty_delta *= 1.0 - self._satiation_inhibitor.state * settings.get(

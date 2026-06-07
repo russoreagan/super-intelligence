@@ -17,7 +17,9 @@
     "longer-term",
     "fresh-data",
     "fresh-data",
-    "mood-and"
+    "mood-and",
+    "reconnecting-and",
+    "live-mood"
   ],
   "bigrams": {
     "temporal-analysis\u001ffresh-data": 1,
@@ -36,7 +38,9 @@
     "system-efficiency\u001flonger-term": 1,
     "longer-term\u001ffresh-data": 1,
     "fresh-data\u001ffresh-data": 1,
-    "fresh-data\u001fmood-and": 1
+    "fresh-data\u001fmood-and": 1,
+    "mood-and\u001freconnecting-and": 1,
+    "reconnecting-and\u001flive-mood": 1
   },
   "trigrams": {
     "temporal-analysis\u001ffresh-data\u001fnovel-request": 1,
@@ -54,6 +58,8 @@
     "temporal-dynamics\u001fsystem-efficiency\u001flonger-term": 1,
     "system-efficiency\u001flonger-term\u001ffresh-data": 1,
     "longer-term\u001ffresh-data\u001ffresh-data": 1,
-    "fresh-data\u001ffresh-data\u001fmood-and": 1
+    "fresh-data\u001ffresh-data\u001fmood-and": 1,
+    "fresh-data\u001fmood-and\u001freconnecting-and": 1,
+    "mood-and\u001freconnecting-and\u001flive-mood": 1
   }
 }

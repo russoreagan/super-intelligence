@@ -238,6 +238,22 @@ class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
         response, affect = await self.process_turn(self.args.message)
         await self.pns.emit(response, affect)
 
+    def _proactive_speech_allowed(self) -> bool:
+        """Gate unprompted (DMN / background-task) speech on a real listener.
+
+        In browser-audio mode the TTS is delivered over the UI WebSocket, so with
+        no browser connected the audio is synthesized (ElevenLabs cost) only to be
+        dropped — and before browser-audio mode it would play out the host's local
+        speakers with nobody watching. Skip synthesis entirely unless a client is
+        connected. In local-speaker mode (offline testing) there is no listener
+        concept, so fall through and let the OS-idle gate decide.
+        """
+        from brain.pns import BROWSER_AUDIO_MODE
+
+        if not BROWSER_AUDIO_MODE:
+            return True
+        return bool(self._ui_server is not None and self._ui_server.has_listeners)
+
     async def _run_ui_loop(self) -> None:
         print("Brain online. Open http://localhost:8765 to interact.\n")
         while True:
@@ -254,7 +270,12 @@ class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
                     spoken = self.dmn.take_proactive()
                     if spoken:
                         idle = get_idle_seconds()
-                        if (
+                        if not self._proactive_speech_allowed():
+                            logger.debug(
+                                "[Proactive] Suppressed — no connected listener "
+                                "(skipping TTS synthesis)"
+                            )
+                        elif (
                             self._proactive_idle_threshold > 0
                             and idle >= self._proactive_idle_threshold
                         ):

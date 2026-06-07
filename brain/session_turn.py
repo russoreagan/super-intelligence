@@ -87,6 +87,79 @@ class _TurnMixin:
                 self.dmn.resume()
             return timeout_msg, {}
 
+    def _emit_accomplishment_reward(self, summary: dict) -> None:
+        """Stage 6: terminal mastery DA at job completion, scaled by effort overcome × the
+        expectation-gap curve × the persona's mastery valuation. Difficulty is the MEASURED
+        effort (continuous), anti-flailing — productive work + confirmed hypotheses (depth), not
+        raw retries. Success-gated with an asymmetry: failing a hard task stings less than
+        succeeding rewards, so the entity stays drawn TO challenge. Best-effort."""
+        from brain.neuron import accomplishment_factor, reward_weight
+
+        complexity = str(summary.get("complexity", "medium"))
+        productive = float(
+            summary.get("productive_steps", summary.get("steps_taken_count", 0)) or 0
+        )
+        confirmed = float(summary.get("predictions_confirmed", 0) or 0)
+        measured_effort = productive + 0.5 * confirmed  # depth counts; thrashing (retries) doesn't
+        if measured_effort <= 0:
+            return
+        expected = float(
+            settings.get(
+                f"accomplishment_expected_{complexity}",
+                settings.get("accomplishment_expected_medium"),
+            )
+        )
+        difficulty, modifier = accomplishment_factor(measured_effort, expected)
+        persona = str(settings.get("persona_name", ""))
+        w = reward_weight(persona, "mastery")
+        er = float(settings.get("emotional_reactivity_scale"))
+        base = float(settings.get("accomplishment_base"))
+        if bool(summary.get("success")):
+            self.bus.neuromod.add("DA", base * difficulty * modifier * w * er)
+        else:
+            fail_ratio = float(settings.get("accomplishment_fail_ratio"))
+            self.bus.neuromod.add("DA", -base * difficulty * fail_ratio * w * er)
+            self.bus.neuromod.add("5HT", -float(settings.get("correctness_5ht_drain")) * w * er)
+
+    async def _verify_world_prediction(self, pred: dict, actual_input: str) -> None:
+        """Stage 5 Tier B: did our idle prediction of the user's next message hold? Embed-compare
+        the DMN's predicted_next against what the user actually said and reward a confident hit
+        (or mildly dip a confident miss) — self-verified correctness about the world, no user
+        verdict. Predicting free-form input is inherently non-trivial, so informativeness is high
+        and `correct` is decided by semantic similarity. Best-effort; never raises into the turn."""
+        try:
+            import math
+
+            from brain.neuron import prediction_reward, reward_weight
+
+            predicted_text = str(pred.get("predicted_input", "")).strip()
+            confidence = float(pred.get("confidence", 0.0) or 0.0)
+            if not predicted_text or confidence < float(settings.get("prediction_confidence_min")):
+                return
+            va = await self.router.embed(actual_input)
+            vp = await self.router.embed(predicted_text)
+            if not va or not vp:
+                return
+            dot = sum(a * b for a, b in zip(va, vp))
+            na = math.sqrt(sum(a * a for a in va)) or 1.0
+            nb = math.sqrt(sum(b * b for b in vp)) or 1.0
+            sim = dot / (na * nb)
+            correct = sim >= 0.6  # semantic-match threshold for "the world confirmed it"
+            pr = prediction_reward(confidence, correct, informativeness=1.0)
+            if not pr:
+                return
+            persona = str(settings.get("persona_name", ""))
+            delta = (
+                pr
+                * float(settings.get("prediction_reward_base"))
+                * reward_weight(persona, "correctness")
+                * float(settings.get("emotional_reactivity_scale"))
+            )
+            cap = float(settings.get("prediction_reward_turn_cap"))
+            self.bus.neuromod.add("DA", max(-cap, min(cap, delta)))
+        except Exception:
+            pass
+
     async def _process_turn_body(
         self, user_input: str, image_path: str | None = None
     ) -> tuple[str, dict]:
@@ -95,6 +168,13 @@ class _TurnMixin:
 
         if self.dmn:
             self.dmn.pause()
+            # Stage 5 Tier B: before we overwrite context, check whether the DMN's idle
+            # prediction of this turn's input actually held. Self-verified correctness about the
+            # world — reward a confident hit, no user verdict needed. Fire-and-forget.
+            _pred = getattr(self.dmn, "predicted_next", None)
+            if _pred:
+                with contextlib.suppress(Exception):
+                    asyncio.create_task(self._verify_world_prediction(_pred, user_input))
             try:
                 _interim_context = (
                     f"{self.parietal.recent_turns_text()}\n\nUser just said: {user_input}"
@@ -631,15 +711,28 @@ class _TurnMixin:
                 logger.debug("Egress: %s", self._egress.audit_summary())
             # Draft quality feeds back into chemistry: struggling to form a good
             # response is cognitively effortful (GABA/NE up); nailing it feels good (DA up).
+            # The reward/penalty magnitude scales by how much THIS persona values being right
+            # (reward_weight "correctness") — the Analyst is buoyed/stung far more than the
+            # Empath — and is intrinsic: it fires on self-judged quality, no user praise needed.
             if draft_scores:
+                from brain.neuron import reward_weight
+
                 best = max(draft_scores, key=lambda d: d.get("overall", 0.5))
                 overall = best.get("overall", 0.5)
+                _persona = str(settings.get("persona_name", ""))
+                _w = reward_weight(_persona, "correctness")
+                _er = float(settings.get("emotional_reactivity_scale"))
                 if overall < 0.4:
+                    # Effort cost (unchanged) PLUS the self-standard penalty: falling short of
+                    # its own bar dips DA and drains 5HT (the lingering disappointed-in-self /
+                    # guilt component). Flavor — brooding vs bristling — comes from resting chem.
                     self.bus.neuromod.add("GABA", 0.06)
                     self.bus.neuromod.add("NE", 0.04)
+                    self.bus.neuromod.add("DA", -float(settings.get("correctness_penalty_base")) * _w * _er)
+                    self.bus.neuromod.add("5HT", -float(settings.get("correctness_5ht_drain")) * _w * _er)
                     _trigger = "draft_quality_low"
                 elif overall > 0.7:
-                    self.bus.neuromod.add("DA", 0.05)
+                    self.bus.neuromod.add("DA", float(settings.get("correctness_self_base")) * _w * _er)
                     _trigger = "draft_quality_high"
                 else:
                     _trigger = None
@@ -1152,9 +1245,16 @@ class _TurnMixin:
                 "[TaskWorker] Task [%s] blocked on clarification: %s", task.id, question[:120]
             )
             if on_topic:
-                if self._emitter:
-                    await self._emitter.emit_proactive_speech(question)
-                await self.pns.emit(question, {"emotion": "curious"})
+                if self._proactive_speech_allowed():
+                    if self._emitter:
+                        await self._emitter.emit_proactive_speech(question)
+                    await self.pns.emit(question, {"emotion": "curious"})
+                else:
+                    logger.debug(
+                        "[TaskWorker] Task [%s] clarification held — no connected "
+                        "listener (task stays blocked, surfaces in context later)",
+                        task.id,
+                    )
             else:
                 logger.info(
                     "[TaskWorker] Task [%s] clarification held — off-topic (will surface "
@@ -1164,6 +1264,12 @@ class _TurnMixin:
             return
 
         self._task_queue.mark_done(task.id, success=bool(summary.get("success")))
+        # Stage 6: accomplishment / mastery — satisfaction from overcoming difficulty, no
+        # prediction needed (cleaning a big mess, solving a hard problem). Effort-overcome ×
+        # expectation-gap curve × persona mastery valuation. A hard, successful job feels like a
+        # real achievement; a tiny one barely registers.
+        with contextlib.suppress(Exception):
+            self._emit_accomplishment_reward(summary)
         spoken_summary = await self._result_reporter.report(summary, job_turn_id)
         # Persist the spoken summary and task linkage in the job record
         job_id = summary.get("job_id")
@@ -1217,7 +1323,7 @@ class _TurnMixin:
                     "(will surface in LLM context on next turn)",
                     task.id,
                 )
-        if on_topic:
+        if on_topic and self._proactive_speech_allowed():
             await self.pns.emit(
                 spoken_summary, {"emotion": "lively" if summary.get("success") else "concerned"}
             )
@@ -1332,13 +1438,20 @@ class _TurnMixin:
         tool_name = tool_result.get("tool", "tool")
         success = tool_result.get("success")
 
-        # Neuromod update (deferred from main turn into background completion)
+        # Neuromod update (deferred from main turn into background completion). Completing a
+        # task is an intrinsic correctness signal — reward/penalty scale by how much this
+        # persona values being right, and failure also drains 5HT (the sting that lingers).
+        from brain.neuron import reward_weight as _reward_weight
+
+        _tw = _reward_weight(str(settings.get("persona_name", "")), "correctness")
+        _ter = float(settings.get("emotional_reactivity_scale"))
         if success is False:
             self.bus.neuromod.add("GABA", 0.08)
             self.bus.neuromod.add("NE", 0.06)
-            self.bus.neuromod.add("DA", -0.05)
+            self.bus.neuromod.add("DA", -float(settings.get("correctness_penalty_base")) * _tw * _ter)
+            self.bus.neuromod.add("5HT", -float(settings.get("correctness_5ht_drain")) * _tw * _ter)
         elif success:
-            self.bus.neuromod.add("DA", 0.07)
+            self.bus.neuromod.add("DA", float(settings.get("correctness_reward_base")) * _tw * _ter)
             self.bus.neuromod.add("Glu", 0.04)
         with contextlib.suppress(Exception):
             if self._emitter:
@@ -1377,11 +1490,12 @@ class _TurnMixin:
             len(msg),
             success,
         )
-        with contextlib.suppress(Exception):
-            if self._emitter:
-                await self._emitter.emit_proactive_speech(msg)
-        with contextlib.suppress(Exception):
-            await self.pns.emit(msg, {"emotion": "lively" if success else "concerned"})
+        if self._proactive_speech_allowed():
+            with contextlib.suppress(Exception):
+                if self._emitter:
+                    await self._emitter.emit_proactive_speech(msg)
+            with contextlib.suppress(Exception):
+                await self.pns.emit(msg, {"emotion": "lively" if success else "concerned"})
 
 
 # ── Module-level helpers (used inside _process_turn_body) ─────────────────────

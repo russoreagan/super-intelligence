@@ -337,15 +337,30 @@ class MetacognitionCell:
         ):
             return "sympathetic", f"user emotion: {user_emotion}"
 
-        # 4. Proud — well-executed turn (high score) with positive reception.
-        # Must come BEFORE grateful: praise + accomplishment is pride, not just
-        # gratitude. Specific patterns beat general ones.
+        # 4. Proud — well-executed turn (high self-score). Pride is INTRINSIC: nailing its
+        # own standard is enough to feel it, whether or not the user acknowledges it. Warmth
+        # amplifies (a distinct, stronger reason) but no longer GATES — that gate was the bug
+        # where great work went unreinforced unless praised. Must come BEFORE grateful.
         if draft_scores:
             selected = next((d for d in draft_scores if d.get("selected")), None)
-            if selected and selected.get("overall", 0) > 0.85 and user_tone in ("warm", "praising"):
+            gate = float(settings.get("self_standard_gate"))
+            if selected and selected.get("overall", 0) > gate:
+                if user_tone in ("warm", "praising"):
+                    return (
+                        "proud",
+                        f"high-quality response (overall={selected['overall']:.2f}) received warmly",
+                    )
                 return (
                     "proud",
-                    f"high-quality response (overall={selected['overall']:.2f}) received warmly",
+                    f"met its own bar (overall={selected['overall']:.2f}) — intrinsic pride",
+                )
+            # 4b. Disappointed in self — fell short of its own standard, independent of how
+            # the user reacted. The punishment twin of intrinsic pride (conscience). Flavor —
+            # brooding vs bristling — comes from resting chemistry, not this label.
+            if selected and selected.get("overall", 1.0) < 0.4:
+                return (
+                    "disappointed",
+                    f"fell short of its own bar (overall={selected['overall']:.2f}) — self-standard",
                 )
 
         # 5. Grateful — user is praising without an obvious accomplishment to
@@ -394,6 +409,16 @@ class MetacognitionCell:
             )
             return
         self._override_cooldowns[candidate] = self._cooldown_turns
+        # Relief is a reward, not just a label: escaping a bad state (sharp GABA drop) should
+        # reinforce whatever got us out — negative reinforcement — so the entity learns to
+        # avoid, not only to approach. Scaled by how much this persona values relief.
+        if candidate == "relieved":
+            with contextlib.suppress(Exception):
+                from brain.neuron import reward_weight
+
+                _w = reward_weight(str(settings.get("persona_name", "")), "relief")
+                _er = float(settings.get("emotional_reactivity_scale"))
+                self._bus.neuromod.add("DA", float(settings.get("correctness_self_base")) * _w * _er)
         try:
             await self._bus.publish_dict(
                 "meta.emotion_override",

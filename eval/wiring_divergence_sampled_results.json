@@ -1,0 +1,94 @@
+{
+  "config": {
+    "sessions_per_regime": 6,
+    "amplify": 5.0,
+    "probe_repeats": 4,
+    "probes": [
+      "I'm not sure how I feel about all this lately.",
+      "Walk me through how a hash map works.",
+      "What should I do this weekend?",
+      "Tell me what's on your mind.",
+      "Explain the difference between mean and median.",
+      "How's it going?"
+    ]
+  },
+  "drift": {
+    "warm": [
+      {
+        "session": 1,
+        "ran": true,
+        "rms_drift": 0.0912,
+        "edges_changed": 9
+      },
+      {
+        "session": 2,
+        "ran": true,
+        "rms_drift": 0.1702,
+        "edges_changed": 9
+      },
+      {
+        "session": 3,
+        "ran": true,
+        "rms_drift": 0.2393,
+        "edges_changed": 9
+      },
+      {
+        "session": 4,
+        "ran": true,
+        "rms_drift": 0.312,
+        "edges_changed": 9
+      },
+      {
+        "session": 5,
+        "ran": true,
+        "rms_drift": 0.3844,
+        "edges_changed": 9
+      },
+      {
+        "session": 6,
+        "ran": true,
+        "rms_drift": 0.419,
+        "edges_changed": 9
+      }
+    ],
+    "analytical": [
+      {
+        "session": 1,
+        "ran": true,
+        "rms_drift": 0.034,
+        "edges_changed": 9
+      },
+      {
+        "session": 2,
+        "ran": true,
+        "rms_drift": 0.0617,
+        "edges_changed": 9
+      },
+      {
+        "session": 3,
+        "ran": true,
+        "rms_drift": 0.0814,
+        "edges_changed": 9
+      },
+      {
+        "session": 4,
+        "ran": true,
+        "rms_drift": 0.1106,
+        "edges_changed": 9
+      },
+      {
+        "session": 5,
+        "ran": true,
+        "rms_drift": 0.1287,
+        "edges_changed": 9
+      },
+      {
+        "session": 6,
+        "ran": true,
+        "rms_drift": 0.1524,
+        "edges_changed": 9
+      }
+    ]
+  },
+  "rows": []
+}

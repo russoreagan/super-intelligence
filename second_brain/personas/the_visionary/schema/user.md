@@ -16,14 +16,14 @@
 - Familiarity: new (interactions: 70)
 
 ## Affection score
-- Score: 7
+- Score: 5
 
 - User has been experimenting with AI for about a year.
 - Built prototypes that proved concepts to the company.
 - Improving in vibe coding both professionally and personally.
 - Interactions: 70
 - Last seen: 1780192708
-- Bond: 9.9
+- Bond: 9.2
 - The user is developing a system with embedded philosophical values.
 - Concerns about transparency and exploitability of the architecture are being considered.
 - [relationship] User demonstrates excitement and trust in discussing complex technical and ethical issues.

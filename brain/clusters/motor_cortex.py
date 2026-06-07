@@ -912,6 +912,12 @@ class MotorCortexCluster:
         productive_steps = int(resume.get("productive_steps", 0)) if resume else 0
         unverified_stories: list[str] = list(resume.get("unverified_stories", [])) if resume else []
         stopped_early = ""  # set to a reason string if a safety net tripped
+        # Stage 5 Tier C: each story's acceptance_criteria is a hypothesis; the criteria checker
+        # is the test. Track how many hypotheses were stated vs confirmed by reality — the
+        # self-verified correctness signal (no user verdict). _pred_reward_total caps the DA.
+        predictions_made = 0
+        predictions_confirmed = 0
+        _pred_reward_total = 0.0
 
         for idx, story in enumerate(stories_planned):
             if idx < resume_from:
@@ -947,6 +953,7 @@ class MotorCortexCluster:
             story_desc = story.get("description", "")
             story_criteria = story.get("acceptance_criteria", [])
             story_passed = False
+            story_criteria_verified = False  # Tier C: a real criteria check passed (not a skip)
             # Low complexity still gets ONE retry so a failed criteria/appropriateness
             # check can self-correct (the retry feeds the prior output back as a hint).
             # Extra attempts only fire on an actual failure, so happy-path stays single-attempt.
@@ -1137,6 +1144,8 @@ class MotorCortexCluster:
                     verified, unmet = await self._check_story_criteria(
                         story, output, f"{job_id}_{idx}_{attempt}"
                     )
+                    if verified:
+                        story_criteria_verified = True  # hypothesis confirmed by the test
                     logger.info(
                         "[InternalJob] Story %d criteria: verified=%s unmet=%s",
                         idx + 1,
@@ -1170,6 +1179,45 @@ class MotorCortexCluster:
                     story_passed = True
                     break
                 # criteria not met — retry if attempts remain
+
+            # Stage 5 Tier C: score the hypothesis. A story with acceptance_criteria stated a
+            # checkable prediction about what the tool would produce; the criteria checker
+            # verified it against reality. Confirmed → intrinsic correctness DA (capped per job,
+            # persona-scaled); a criteria-bearing story that never verified → a small dip. No
+            # user needed — this is objective self-verification.
+            if story_criteria:
+                predictions_made += 1
+                if story_criteria_verified:
+                    predictions_confirmed += 1
+                with contextlib.suppress(Exception):
+                    from brain.neuron import reward_weight as _rw
+
+                    _persona = str(_brain_settings.get("persona_name", ""))
+                    _base = float(_brain_settings.get("prediction_reward_base"))
+                    _er = float(_brain_settings.get("emotional_reactivity_scale"))
+                    _cap = float(_brain_settings.get("prediction_reward_turn_cap"))
+                    _w = _rw(_persona, "correctness")
+                    if story_criteria_verified:
+                        _room = max(0.0, _cap - _pred_reward_total)
+                        _delta = min(_base * _w * _er, _room)
+                        if _delta > 0:
+                            self._bus.neuromod.add("DA", _delta)
+                            _pred_reward_total += _delta
+                    else:
+                        self._bus.neuromod.add("DA", -0.5 * _base * _w * _er)
+
+            # Stage 6(c): in-the-moment frustration. The job is dragging past the effort it was
+            # braced for (complexity estimate) — accrue NE/GABA + a small DA/5HT dip as the slog
+            # continues, persona-flavored downstream by resting chemistry. This is the felt cost
+            # of "harder than expected" WHILE it happens, separate from the terminal reward.
+            with contextlib.suppress(Exception):
+                _exp = float(_brain_settings.get(f"accomplishment_expected_{complexity}", 6.0))
+                _band = float(_brain_settings.get("accomplishment_overshoot_band"))
+                if _exp > 0 and productive_steps > _exp * _band:
+                    _g = float(_brain_settings.get("frustration_overshoot_gain"))
+                    self._bus.neuromod.add("NE", _g)
+                    self._bus.neuromod.add("GABA", _g * 0.5)
+                    self._bus.neuromod.add("DA", -_g * 0.5)
 
             if clarification_question:
                 break
@@ -1297,6 +1345,10 @@ class MotorCortexCluster:
             "stopped_early": stopped_early,
             "total_attempts": total_attempts,
             "attempt_cap": _MAX_TOTAL_ATTEMPTS,
+            # Stage 6 accomplishment inputs: difficulty estimate + measured effort + hypotheses.
+            "complexity": complexity,
+            "predictions_made": predictions_made,
+            "predictions_confirmed": predictions_confirmed,
         }
 
     async def _tactical_plan(

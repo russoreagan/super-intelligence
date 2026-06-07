@@ -382,7 +382,9 @@ you know about the user, return JSON:
     {
       "user_answer": string,        // a plausible thing the user says next
       "response_sketch": string,    // 1-2 sentence sketch of how to respond
-      "context_needed": [string]    // facts/memory that would help — empty if none
+      "context_needed": [string],   // facts/memory that would help — empty if none
+      "valence": number             // -1.0 (dreaded: this answer would be hard/bad) to
+                                    // +1.0 (hoped-for: this would go well), 0 = neutral
     },
     ...
   ]

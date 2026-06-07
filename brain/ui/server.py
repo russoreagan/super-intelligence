@@ -846,6 +846,11 @@ class UIServer:
             with contextlib.suppress(Exception):
                 await dg_conn.finish()
 
+    @property
+    def has_listeners(self) -> bool:
+        """True if at least one browser client is connected to receive events/audio."""
+        return bool(self._clients)
+
     def attach_tts_queue(self, pns) -> None:
         """Wire PNS TTS queue into this server's broadcast loop.
 
