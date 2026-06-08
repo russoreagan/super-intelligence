@@ -673,14 +673,15 @@ DEFAULTS: dict[str, float | int | str] = {
     "trading_stream_enabled": 0,  # no longer used for auto-start (stream is manually triggered)
     "trading_alert_cooldown_min": 30,  # min minutes before same trigger can re-fire
     # ── Section: Cloud-action executor (CloudExecutor vs Managed Agents) ───────
-    # brain_executor: which backend runs cloud_action tasks. "local" = the local
-    #   Claude CLI subprocess (CloudExecutor, default — unchanged behavior);
-    #   "cma" = Anthropic Managed Agents (CMAExecutor, server-side, no local CLI).
+    # brain_executor: which backend runs cloud_action tasks. "cma" = Anthropic
+    #   Managed Agents (CMAExecutor, server-side, no local CLI) — the default now
+    #   that the app runs fully online. "local" = the local Claude CLI subprocess
+    #   (CloudExecutor), only useful on a dev box with the `claude` CLI installed.
     #   Overridable per-process via the BRAIN_EXECUTOR env var.
-    "brain_executor": "local",
+    "brain_executor": "cma",
     # cma_enabled: belt-and-suspenders flag (reserved); selection is driven by
-    #   brain_executor / BRAIN_EXECUTOR. 0 = off.
-    "cma_enabled": 0,
+    #   brain_executor / BRAIN_EXECUTOR. 1 = on (matches the cma default).
+    "cma_enabled": 1,
     # cma_model: model id for the Managed-Agents agents (read + write).
     "cma_model": "claude-opus-4-6",
     # cma_networking: cloud sandbox egress — "unrestricted" (needed for web +

@@ -320,12 +320,17 @@ class _SetupMixin:
 
         # Locally, include the project root so the agent can read/write its own
         # codebase regardless of how it was launched (start.sh vs direct invocation).
-        # In multi-tenant/hosted mode this MUST NOT happen — a tenant's motor cortex
-        # has no business touching the app's own source. There, paths come solely
-        # from BRAIN_MOTOR_PATHS (the per-user workdir set by the provisioner).
-        _multitenant = os.environ.get("BRAIN_MULTITENANT", "").lower() in ("1", "true", "yes")
-        if _multitenant:
-            logger.info("Motor cortex: multi-tenant mode — project root NOT added to allowed paths")
+        # Hosted (online) MUST NOT do this — the deployed brain has no business
+        # touching its own source. This covers BOTH hosted shapes: the single
+        # Railway brain (RAILWAY_ENVIRONMENT set) and per-tenant subprocesses
+        # (BRAIN_MULTITENANT set; the provisioner strips RAILWAY_ENVIRONMENT from
+        # them). There, paths come solely from BRAIN_MOTOR_PATHS / the
+        # motor_allowed_dirs setting.
+        _hosted = bool(os.environ.get("RAILWAY_ENVIRONMENT")) or os.environ.get(
+            "BRAIN_MULTITENANT", ""
+        ).lower() in ("1", "true", "yes")
+        if _hosted:
+            logger.info("Motor cortex: hosted mode — project root NOT added to allowed paths")
         else:
             from pathlib import Path as _Path
 

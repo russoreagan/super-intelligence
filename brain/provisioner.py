@@ -45,7 +45,7 @@ TENANTS_DIR = Path(os.environ.get("BRAIN_TENANTS_DIR", "tenants")).resolve()
 # brain.run flags for tenant processes. Mirrors the shared deploy's set; override
 # via BRAIN_TENANT_ARGS (e.g. drop --ears to cut per-process RAM).
 TENANT_ARGS = os.environ.get(
-    "BRAIN_TENANT_ARGS", "--ui --dmn --metacognition --ears --voice"
+    "BRAIN_TENANT_ARGS", "--ui --dmn --metacognition --ears --voice --motor"
 ).split()
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _BUNDLED_SETTINGS = Path(__file__).resolve().parent / "settings.json"
