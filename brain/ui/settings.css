@@ -495,6 +495,7 @@ input[type=range].r::-moz-range-thumb {
 
 /* ---- category tab bar ---- */
 .tabbar { display: flex; gap: 2px; margin-top: 18px; flex-wrap: wrap; }
+.tabbar[hidden] { display: none; }
 .tab { font-family: var(--sans); font-size: 12.5px; font-weight: 500; color: var(--ink-4); padding: 9px 13px 11px; border: none; background: none; border-bottom: 2px solid transparent; transition: color 140ms, border-color 140ms; white-space: nowrap; display: inline-flex; align-items: center; gap: 6px; }
 .tab:hover { color: var(--ink-2); }
 .tab.on { color: var(--ink); border-bottom-color: var(--signal); }
@@ -577,7 +578,7 @@ input[type=range].es-range::-moz-range-thumb { width: 14px; height: 14px; border
 .chrow.off-base input.es-range::-moz-range-thumb { background: var(--signal); }
 
 /* ---- generic category rows ---- */
-#tab-generic { display: flex; flex-direction: column; }
+#tab-generic:not([hidden]) { display: flex; flex-direction: column; }
 .gen-note { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 16px; padding: 13px 15px; background: var(--paper-2); border: 1px dashed var(--line); border-radius: var(--r-2); font-family: var(--mono); font-size: 10px; line-height: 1.55; color: var(--ink-3); }
 .gen-note b { color: var(--ink-2); font-weight: 500; }
 #settings-page.manual .gen-note { display: none; }
@@ -609,9 +610,9 @@ input[type=range].es-range::-moz-range-thumb { width: 14px; height: 14px; border
 .es-ac { width: 12px; height: 12px; transition: transform 200ms; display: inline-flex; } .es-ac svg { width: 12px; height: 12px; } .es-adv.open .es-ac { transform: rotate(90deg); }
 .es-advn { font-family: var(--mono); font-size: 9px; color: var(--ink-4); border: 1px solid var(--line-faint); border-radius: 999px; padding: 1px 7px; margin-left: auto; }
 .es-adv-body { display: none; flex-direction: column; gap: 15px; padding: 12px 0 4px; } .es-adv.open .es-adv-body { display: flex; }
-#settings-page:not(.manual) #tab-generic .es-range { pointer-events: none; cursor: default; }
-#settings-page:not(.manual) #tab-generic .es-range::-webkit-slider-thumb { opacity: 0; }
-#settings-page:not(.manual) #tab-generic .es-toggle { pointer-events: none; opacity: 0.55; }
+#settings-page:not(.manual):not(.system) #tab-generic .es-range { pointer-events: none; cursor: default; }
+#settings-page:not(.manual):not(.system) #tab-generic .es-range::-webkit-slider-thumb { opacity: 0; }
+#settings-page:not(.manual):not(.system) #tab-generic .es-toggle { pointer-events: none; opacity: 0.55; }
 
 /* ---- API keys (System) ---- */
 .api-row { display: grid; grid-template-columns: 248px 1fr; align-items: center; gap: 22px; padding: 16px 0; border-bottom: 1px solid var(--line-faint); }

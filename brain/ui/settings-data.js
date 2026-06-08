@@ -326,11 +326,19 @@ window.SETTINGS = {
             { type: 'time', unit: 'sec', key: 'colony_trail_half_life_s', label: 'Trail Persistence', hint: 'half-life of a reinforced trail within a session', min: 30, max: 600, step: 30, def: 120 },
           ],
         },
+      ],
+    },
+
+    /* ============= COMPUTE & RESOURCES (operational / system) ===== */
+    {
+      id: 'resources', name: 'Compute & Resources', icon: 'cpu', system: true,
+      blurb: 'Background compute budgets — operational limits, shared across every persona.',
+      summary: 'How much background work the brain may spend on cloud and local models. These are operational limits, the same for every persona — not part of any one’s temperament.',
+      sections: [
         {
-          id: 'sec-16', num: '16', title: 'Switch Modulation & Resources',
-          desc: 'Chemistry influence on gating + cloud/local compute budgets for background work.',
+          id: 'sec-16', num: '16', title: 'Compute & Resources',
+          desc: 'Cloud/local compute budgets for background work.',
           rows: [
-            { type: 'master', key: 'modulation_gain', label: 'Chemistry Influence', hint: '0 = pure logic · 1 = full chemistry', min: 0, max: 2.0, step: 0.05, def: 1.0 },
             { type: 'range', key: 'bg_cloud_token_budget', label: 'Cloud Token Budget', hint: 'max combined tokens / session', min: 5000, max: 200000, step: 5000, def: 50000 },
           ],
           advanced: [
@@ -376,7 +384,7 @@ window.SETTINGS = {
 
     /* ============================ PERCEPTION ====================== */
     {
-      id: 'perception', name: 'Perception', icon: 'eye',
+      id: 'perception', name: 'Perception', icon: 'eye', system: true,
       blurb: 'How the brain hears and sees — speaker identification and live video.',
       summary: 'How carefully the brain tells voices apart and how often it samples your camera. Stricter speaker thresholds mean fewer mistaken identities but more "who is this?" moments. Faster video sampling sees more but costs more vision calls.',
       sections: [
@@ -407,7 +415,7 @@ window.SETTINGS = {
 
     /* ===================== AUTONOMY & MAINTENANCE ================= */
     {
-      id: 'autonomy', name: 'Autonomy & Maintenance', icon: 'moon',
+      id: 'autonomy', name: 'Autonomy & Maintenance', icon: 'moon', system: true,
       blurb: 'Self-directed background work and the sleep pass that consolidates memory.',
       summary: 'Guardrails for the things the brain does on its own. The attempt cap stops autonomous jobs from looping forever. Sleep consolidation is its housekeeping — it periodically reviews recent conversations to extract facts and update its self-model, much like memory consolidation during real sleep.',
       sections: [

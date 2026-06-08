@@ -51,9 +51,29 @@
       map: [ { key: 'chem_baseline_DA', dir: +1, span: 0.10 }, { key: 'chem_baseline_AEA', dir: +1, span: 0.10 }, { key: 'chem_baseline_ACh', dir: +1, span: 0.05 }, { key: 'chem_baseline_GABA', dir: -1, span: 0.05 }, { key: 'chem_baseline_CORT', dir: -1, span: 0.05 } ] },
     { id: 'sociability', label: 'Sociability', sub: 'outgoing · initiates', glyph: 'social',
       map: [ { key: 'dmn_interval', dir: -1, span: 8 }, { key: 'proactive_idle_threshold', dir: -1, span: 90 }, { key: 'ach_suppression_weight', dir: -1, span: 0.35 }, { key: 'voice_style_default', dir: +1, span: 0.08 } ] },
-    { id: 'caution', label: 'Caution', sub: 'guarded ↔ trusting', glyph: 'shield',
+    { id: 'caution', label: 'Caution', sub: 'trusting ↔ guarded', glyph: 'shield',
       map: [ { key: 'hostility_GABA_threshold_high', dir: -1, span: 0.12 }, { key: 'cort_threat_increment', dir: +1, span: 0.012 }, { key: 'ne_hostility_weight', dir: +1, span: 0.06 }, { key: 'chem_baseline_OXT', dir: -1, span: 0.08 } ] },
   ];
+
+  /* ---- cognitive-style dials — how the mind WORKS (vs temperament = who it
+     is). A per-persona override that rests at NEUTRAL 0.5 (these mostly don't
+     touch chemistry, so they aren't posed from the persona's chemistry spread).
+     Same radial knobs, shown in a separate box below Temperament. ---- */
+  const COGNITIVE_DIALS = [
+    { id: 'focus', label: 'Focus', sub: 'scattered ↔ single-minded', glyph: 'target',
+      map: [ { key: 'ne_scatter_threshold', dir: +1, span: 0.10 }, { key: 'topic_activation_decay', dir: +1, span: 0.12 }, { key: 'dmn_overlap_threshold', dir: +1, span: 0.10 }, { key: 'salience_workspace_threshold', dir: -1, span: 0.12 } ] },
+    { id: 'curiosity', label: 'Curiosity', sub: 'novelty-seeking', glyph: 'compass',
+      map: [ { key: 'frontal_ach_weight', dir: +1, span: 0.15 }, { key: 'surprise_threshold', dir: -1, span: 0.12 }, { key: 'salience_ACh_weight', dir: +1, span: 0.06 } ] },
+    { id: 'adaptability', label: 'Adaptability', sub: 'stable ↔ adaptive', glyph: 'cycle',
+      map: [ { key: 'hebbian_delta', dir: +1, span: 0.03 }, { key: 'hebbian_outcome_delta', dir: +1, span: 0.03 }, { key: 'gaba_skip_threshold_high', dir: +1, span: 0.12 } ] },
+    { id: 'introspection', label: 'Introspection', sub: 'self-appraisal', glyph: 'spiral',
+      map: [ { key: 'meta_interval', dir: -1, span: 15 }, { key: 'meta_cooldown_turns', dir: -1, span: 1.5 } ] },
+    { id: 'memory', label: 'Memory', sub: 'in-the-moment ↔ recall', glyph: 'node',
+      map: [ { key: 'hippocampus_priority_base', dir: +1, span: 0.18 }, { key: 'topic_activation_decay', dir: +1, span: 0.10 } ] },
+    { id: 'emotionality', label: 'Emotionality', sub: 'logic ↔ feeling-driven', glyph: 'balance',
+      map: [ { key: 'modulation_gain', dir: +1, span: 1.0 } ] },
+  ];
+  const ALL_DIALS = TRAIT_DIALS.concat(COGNITIVE_DIALS);
 
   const GLYPHS = {
     spark:  '<path d="M12 3v6M12 15v6M3 12h6M15 12h6M6.5 6.5l3.2 3.2M14.3 14.3l3.2 3.2M17.5 6.5l-3.2 3.2M9.7 14.3l-3.2 3.2"/>',
@@ -65,6 +85,12 @@
     smile:  '<path d="M7 13a5 5 0 0 0 10 0"/><circle cx="9" cy="9" r="0.6" fill="currentColor" stroke="none"/><circle cx="15" cy="9" r="0.6" fill="currentColor" stroke="none"/>',
     social: '<path d="M4 5.5h16v10H10l-4 3.5v-3.5H4z"/><circle cx="9" cy="10.5" r="0.7" fill="currentColor" stroke="none"/><circle cx="12" cy="10.5" r="0.7" fill="currentColor" stroke="none"/><circle cx="15" cy="10.5" r="0.7" fill="currentColor" stroke="none"/>',
     shield: '<path d="M12 3l7 3v5c0 4.4-3 7.4-7 8.8C8 17.4 5 14.4 5 10V6l7-3z"/>',
+    target: '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.4"/><circle cx="12" cy="12" r="0.6" fill="currentColor" stroke="none"/>',
+    compass:'<circle cx="12" cy="12" r="9"/><polygon points="12 7 14 12 12 17 10 12" fill="currentColor" stroke="none"/>',
+    cycle:  '<path d="M4 12a8 8 0 0 1 13.7-5.6L20 8"/><polyline points="20 3 20 8 15 8"/><path d="M20 12a8 8 0 0 1-13.7 5.6L4 16"/><polyline points="4 21 4 16 9 16"/>',
+    spiral: '<path d="M12 12a2 2 0 1 1 2 2 4 4 0 0 1-4-4 6 6 0 0 1 6-6 8 8 0 0 1 8 8"/>',
+    node:   '<circle cx="6" cy="6" r="2"/><circle cx="18" cy="9" r="2"/><circle cx="9" cy="18" r="2"/><line x1="7.7" y1="7.2" x2="16.4" y2="8.2"/><line x1="7.2" y1="7.6" x2="8.4" y2="16.4"/>',
+    balance:'<line x1="12" y1="4" x2="12" y2="20"/><line x1="5" y1="8" x2="19" y2="8"/><path d="M5 8l-2.5 5a2.5 2.5 0 0 0 5 0z"/><path d="M19 8l-2.5 5a2.5 2.5 0 0 0 5 0z"/>',
   };
   const ico = d => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
   const chevSvg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg>';
@@ -76,7 +102,7 @@
   const rowMeta = {};
   SET.categories.forEach(cat => (cat.sections || []).forEach(sec => [...(sec.rows || []), ...(sec.advanced || [])].forEach(r => { if (r.key && r.type !== 'group') rowMeta[r.key] = r; })));
   // dial keys that exist in settings.json but aren't surfaced as a UI row
-  const FALLBACK = { dmn_overlap_threshold: { min: 0.1, max: 0.8, def: 0.35 } };
+  const FALLBACK = { dmn_overlap_threshold: { min: 0.1, max: 0.8, def: 0.35 }, modulation_gain: { min: 0, max: 2.0, def: 1.0 } };
   const keyMeta = k => rowMeta[k] || FALLBACK[k] || { min: 0, max: 1, def: 0 };
   const clampKey = (k, v) => { const m = keyMeta(k); return Math.max(+m.min, Math.min(+m.max, v)); };
 
@@ -89,37 +115,50 @@
   const manualState = {};
   let manualOpen = false;
   let scaffolded = false;
+  let systemPage = null;                // 'apikeys' | 'operational' when view==='system'
 
-  const allKeys = (() => { const s = new Set(); TRAIT_DIALS.forEach(d => d.map.forEach(t => s.add(t.key))); return [...s]; })();
+  const allKeys = (() => { const s = new Set(); ALL_DIALS.forEach(d => d.map.forEach(t => s.add(t.key))); return [...s]; })();
   const isChem = k => k.indexOf('chem_baseline_') === 0;
   const chemOf = k => k.slice('chem_baseline_'.length);
   function personaBaseline(k) { return isChem(k) ? PERSONA_CHEM[persona][chemOf(k)] : refDefault[k]; }
 
-  /* ---- dial rest positions from each persona's chemistry spread ---- */
-  const refMean = {}, halfRange = {};
-  function computeSpread() {
-    CHANNELS.forEach(c => {
-      const vals = PERSONAS.map(p => (PERSONA_CHEM[p.id] || {})[c.ch]).filter(v => v != null);
-      const mn = Math.min(...vals), mx = Math.max(...vals);
-      refMean[c.ch] = vals.reduce((a, b) => a + b, 0) / vals.length;
-      halfRange[c.ch] = (mx - mn) / 2 || 1;
-    });
-  }
+  /* ---- dial rest positions from chemistry ----------------------------
+     Where a persona's needle naturally sits on each temperament dial. This
+     is COSMETIC (the needle home + readout + zero-offset center) — it never
+     changes the underlying chemistry. Derived from an ABSOLUTE, multi-channel
+     blend so no single neurochemical dominates (the old version keyed a dial's
+     whole rest off one channel's percentile-vs-other-personas, which made e.g.
+     Intelligence = acetylcholine rank → the Sage read "6"). Each entry is
+     [channel, weight, dir]; dir -1 counts the channel's absence. A dial not in
+     this table (the cognitive dials) rests at neutral 0.5. Higher reading =
+     more of the trait — see each dial's sub-label for which pole is which.   */
+  const REST_WEIGHTS = {
+    intelligence: [['ACh', 0.40, +1], ['DA', 0.25, +1], ['5HT', 0.35, +1]],
+    empathy:      [['OXT', 0.45, +1], ['5HT', 0.30, +1], ['CORT', 0.25, -1]],
+    sensitivity:  [['NE', 0.35, +1], ['Glu', 0.30, +1], ['GABA', 0.20, -1], ['CORT', 0.15, +1]],
+    composure:    [['GABA', 0.35, +1], ['5HT', 0.25, +1], ['CORT', 0.25, -1], ['NE', 0.15, -1]],
+    drive:        [['DA', 0.55, +1], ['Glu', 0.25, +1], ['ACh', 0.20, +1]],
+    creativity:   [['ACh', 0.35, +1], ['AEA', 0.30, +1], ['GABA', 0.20, -1], ['DA', 0.15, +1]],
+    humor:        [['DA', 0.30, +1], ['AEA', 0.30, +1], ['GABA', 0.20, -1], ['CORT', 0.20, -1]],
+    sociability:  [['OXT', 0.35, +1], ['DA', 0.30, +1], ['Glu', 0.20, +1], ['GABA', 0.15, -1]],
+    caution:      [['OXT', 0.40, -1], ['CORT', 0.30, +1], ['GABA', 0.20, +1], ['NE', 0.10, +1]],
+  };
+  const nrm = v => Math.max(0, Math.min(1, (+v || 0) / 0.8));   // absolute channel scale
   function dialRest(personaId, d) {
-    const parts = [];
-    d.map.forEach(t => { if (!isChem(t.key)) return; const ch = chemOf(t.key); parts.push(t.dir * (PERSONA_CHEM[personaId][ch] - refMean[ch]) / halfRange[ch]); });
-    if (!parts.length) return 0.5;
-    const avg = parts.reduce((a, b) => a + b, 0) / parts.length;
-    return 0.5 + 0.5 * Math.max(-1, Math.min(1, avg));
+    const w = REST_WEIGHTS[d.id]; const chem = PERSONA_CHEM[personaId];
+    if (!w || !chem) return 0.5;
+    let s = 0, tw = 0;
+    w.forEach(([ch, wt, dir]) => { const x = dir > 0 ? nrm(chem[ch]) : 1 - nrm(chem[ch]); s += wt * x; tw += wt; });
+    return tw ? Math.max(0, Math.min(1, s / tw)) : 0.5;
   }
 
   /* ---- recompute: dial positions -> real key values ---- */
   function recomputeTraits() {
     const offset = {}; allKeys.forEach(k => { offset[k] = 0; });
-    TRAIT_DIALS.forEach(d => d.map.forEach(t => { offset[t.key] += t.dir * t.span * (dial[d.id] - rest[d.id]) * 2; }));
+    ALL_DIALS.forEach(d => d.map.forEach(t => { offset[t.key] += t.dir * t.span * (dial[d.id] - rest[d.id]) * 2; }));
     allKeys.forEach(k => { values[k] = clampKey(k, dialCenter[k] + offset[k]); if (isChem(k)) values['chem_init_' + chemOf(k)] = values[k]; });
   }
-  function dialOffsetFor(key) { let o = 0; TRAIT_DIALS.forEach(d => d.map.forEach(t => { if (t.key === key) o += t.dir * t.span * (dial[d.id] - rest[d.id]) * 2; })); return o; }
+  function dialOffsetFor(key) { let o = 0; ALL_DIALS.forEach(d => d.map.forEach(t => { if (t.key === key) o += t.dir * t.span * (dial[d.id] - rest[d.id]) * 2; })); return o; }
   const moved = id => Math.abs(dial[id] - rest[id]) > 1e-4;
 
   /* ---- seed dials/centers for the active persona ----
@@ -127,7 +166,7 @@
      baseline. snap=false (initial load): keep the loaded values. ---- */
   function seedDials(snap) {
     if (snap) CHANNELS.forEach(c => { values['chem_baseline_' + c.ch] = PERSONA_CHEM[persona][c.ch]; values['chem_init_' + c.ch] = PERSONA_CHEM[persona][c.ch]; });
-    TRAIT_DIALS.forEach(d => { rest[d.id] = dialRest(persona, d); dial[d.id] = rest[d.id]; });
+    ALL_DIALS.forEach(d => { rest[d.id] = dialRest(persona, d); dial[d.id] = rest[d.id]; });
     allKeys.forEach(k => { dialCenter[k] = (k in values) ? +values[k] : keyMeta(k).def; });
   }
 
@@ -158,13 +197,12 @@
     if (!('persona_name' in saved)) { values.persona_name = saved.persona_name = persona; }
     if (!(persona in manualState)) manualState[persona] = false;
 
-    computeSpread();
     seedDials(false);
     view = 'persona'; activeTab = 'persona';
     buildScaffold();
     renderPersonaRail();
     renderTabs();
-    renderDials();
+    renderAllDials();
     renderChem();
     applyChemDisplay(false);
     syncPersonaHead();
@@ -216,10 +254,11 @@
   function arcPath(aFrom, aTo, large) { const [x0, y0] = pt(aFrom), [x1, y1] = pt(aTo); return `M ${x0.toFixed(2)} ${y0.toFixed(2)} A ${R} ${R} 0 ${large} 1 ${x1.toFixed(2)} ${y1.toFixed(2)}`; }
   function tick(a) { const [x0, y0] = pt(a), [x1, y1] = pt(a, R + 5); return `<line x1="${x0.toFixed(1)}" y1="${y0.toFixed(1)}" x2="${x1.toFixed(1)}" y2="${y1.toFixed(1)}"/>`; }
   const dialEls = {};
-  function renderDials() {
-    const container = document.getElementById('trait-grid'); if (!container) return;
+  function renderAllDials() { renderDials('trait-grid', TRAIT_DIALS); renderDials('cog-grid', COGNITIVE_DIALS); }
+  function renderDials(gridId, list) {
+    const container = document.getElementById(gridId); if (!container) return;
     container.innerHTML = '';
-    TRAIT_DIALS.forEach(d => {
+    list.forEach(d => {
       const cell = document.createElement('div'); cell.className = 'tdial';
       cell.innerHTML =
         `<div class="tknob" tabindex="0" role="slider" aria-label="${d.label}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50">` +
@@ -443,14 +482,21 @@
             `<div class="chem-cols" id="chem-grid"></div>` +
             `<div class="chem-foot"><span><i class="up"></i> above persona baseline</span><span><i class="down"></i> below persona baseline</span></div>` +
           `</div>` +
-        `</div></div></div>` +
+        `</div></div>` +
+        `<div class="es-card"><div class="es-card-head static"><span class="es-num">01</span>` +
+          `<div class="es-ct"><div class="es-card-title">Cognitive Style</div>` +
+          `<div class="es-card-desc">How this persona thinks and works — attention, learning, curiosity, and how much feeling steers thought. These rest at neutral; lean one to shape the cognitive style on top of the temperament above.</div></div></div>` +
+          `<div class="es-card-body"><div class="trait-panel"><div class="trait-grid" id="cog-grid"></div>` +
+          `<div class="trait-cap">Resting at center · turn a dial to lean from neutral, double-click to return.</div></div></div></div>` +
+      `</div>` +
       `<div id="tab-generic" hidden></div>`;
     document.getElementById('st-manual').addEventListener('click', () => setManual(!manualState[persona]));
     document.getElementById('st-personareset').addEventListener('click', e => { e.stopPropagation(); resetPersona(); });
     scaffolded = true;
   }
 
-  function tabCats() { return SET.categories.filter(c => c.id !== 'apikeys'); }
+  // persona tabs exclude system-level categories (rendered on a System page)
+  function tabCats() { return SET.categories.filter(c => c.id !== 'apikeys' && !c.system); }
   function renderTabs() {
     const bar = document.getElementById('st-tabbar'); if (!bar) return;
     bar.innerHTML = '';
@@ -463,12 +509,14 @@
     });
   }
   function selectTab(id) {
-    activeTab = id; view = 'persona';
+    activeTab = id; view = 'persona'; systemPage = null;
+    const sp = document.getElementById('settings-page'); if (sp) sp.classList.remove('system');
     document.querySelectorAll('#st-tabbar .tab').forEach(t => t.classList.toggle('on', t.dataset.t === id));
     const temp = document.getElementById('tab-temperament'), gen = document.getElementById('tab-generic');
     const mode = document.getElementById('st-mode'); if (mode) mode.style.display = '';
     if (id === 'persona') { if (temp) temp.hidden = false; if (gen) gen.hidden = true; }
     else { if (temp) temp.hidden = true; if (gen) gen.hidden = false; renderGeneric(id); }
+    refreshManualUI();   // restore this persona's manual/guided gate (was forced editable in system view)
     if (scroll) scroll.scrollTop = 0;
   }
 
@@ -486,13 +534,17 @@
     const sh = document.createElement('div'); sh.className = 'pmenu-syshead'; sh.textContent = 'System'; rail.appendChild(sh);
     const api = document.createElement('button'); api.className = 'pmenu-item sys'; api.dataset.sys = 'apikeys';
     api.innerHTML = '<div class="pmenu-name">API Keys</div><div class="pmenu-tag">Models · voice · services</div>';
-    api.addEventListener('click', () => selectSystem());
+    api.addEventListener('click', () => selectSystem('apikeys'));
     rail.appendChild(api);
+    const ops = document.createElement('button'); ops.className = 'pmenu-item sys'; ops.dataset.sys = 'operational';
+    ops.innerHTML = '<div class="pmenu-name">Operational</div><div class="pmenu-tag">Perception · resources · maintenance</div>';
+    ops.addEventListener('click', () => selectSystem('operational'));
+    rail.appendChild(ops);
     syncRailSel();
   }
   function syncRailSel() {
     document.querySelectorAll('#rail-nav .pmenu-item:not(.sys)').forEach(c => c.classList.toggle('sel', view === 'persona' && c.dataset.p === persona));
-    document.querySelectorAll('#rail-nav .pmenu-item.sys').forEach(c => c.classList.toggle('sel', view === 'system'));
+    document.querySelectorAll('#rail-nav .pmenu-item.sys').forEach(c => c.classList.toggle('sel', view === 'system' && c.dataset.sys === systemPage));
   }
 
   function syncPersonaHead() {
@@ -507,26 +559,47 @@
     persona = id; view = 'persona';
     if (!(persona in manualState)) manualState[persona] = false;
     values.persona_name = id;
-    computeSpread(); seedDials(true);
-    renderDials(); renderChem(); applyChemDisplay(false);
+    seedDials(true);
+    renderAllDials(); renderChem(); applyChemDisplay(false);
     syncPersonaHead(); renderTabs(); refreshManualUI();
     if (activeTab !== 'persona') renderGeneric(activeTab);
     selectTab(activeTab); syncRailSel(); refreshDirty();
   }
-  function selectSystem() {
-    view = 'system'; syncRailSel();
+  function selectSystem(which) {
+    view = 'system'; systemPage = which; syncRailSel();
     const tb = document.getElementById('st-tabbar'); if (tb) tb.hidden = true;
     const temp = document.getElementById('tab-temperament'); if (temp) temp.hidden = true;
     const gen = document.getElementById('tab-generic'); if (gen) gen.hidden = false;
     const mode = document.getElementById('st-mode'); if (mode) mode.style.display = 'none';
-    document.getElementById('settings-page') && document.getElementById('settings-page').classList.remove('manual');
+    const sp = document.getElementById('settings-page'); if (sp) { sp.classList.remove('manual'); sp.classList.add('system'); }
+    manualOpen = true;   // system settings are always editable (no per-persona gate)
     const set = (id, t) => { const el = document.getElementById(id); if (el) el.textContent = t; };
-    set('st-eyebrow', 'System'); set('st-name', 'API Keys'); set('st-tag', '');
-    set('st-note', 'Provider credentials for language models, voice, and background services — shared across every persona, not part of any one’s temperament.');
-    const bt = document.getElementById('bar-title'); if (bt) bt.textContent = 'API Keys';
-    const bb = document.getElementById('bar-blurb'); if (bb) bb.textContent = 'System · shared providers';
-    renderApiKeys();
+    const bt = document.getElementById('bar-title'), bb = document.getElementById('bar-blurb');
+    if (which === 'operational') {
+      set('st-eyebrow', 'System'); set('st-name', 'Operational'); set('st-tag', '');
+      set('st-note', 'System-wide settings shared across every persona — perception, background compute budgets, and self-maintenance. Not part of any one persona’s temperament.');
+      if (bt) bt.textContent = 'Operational'; if (bb) bb.textContent = 'System · shared settings';
+      renderOperational();
+    } else {
+      set('st-eyebrow', 'System'); set('st-name', 'API Keys'); set('st-tag', '');
+      set('st-note', 'Provider credentials for language models, voice, and background services — shared across every persona, not part of any one’s temperament.');
+      if (bt) bt.textContent = 'API Keys'; if (bb) bb.textContent = 'System · shared providers';
+      renderApiKeys();
+    }
     if (scroll) scroll.scrollTop = 0;
+  }
+  function renderOperational() {
+    const wrap = document.getElementById('tab-generic'); if (!wrap) return;
+    wrap.innerHTML = ''; Object.keys(genReg).forEach(k => delete genReg[k]);
+    const note = document.createElement('div'); note.className = 'es-cat-blurb';
+    note.textContent = 'System-wide operational settings — the same for every persona. Perception (how it hears/sees), background compute budgets, and self-maintenance.';
+    wrap.appendChild(note);
+    SET.categories.filter(c => c.system).forEach(cat => {
+      const h = document.createElement('div'); h.className = 'es-group';
+      h.innerHTML = `<span>${cat.name}</span>` + (cat.blurb ? `<em>${cat.blurb}</em>` : '');
+      wrap.appendChild(h);
+      (cat.sections || []).forEach(sec => wrap.appendChild(genSection(sec)));
+    });
   }
 
   /* =====================================================================
@@ -548,16 +621,16 @@
     if (dirtyPill) dirtyPill.classList.toggle('on', n > 0);
     if (dirtyText) dirtyText.textContent = n + ' unsaved';
     if (saveBtn) saveBtn.classList.toggle('idle', n === 0);
-    const offBase = allKeys.some(k => Math.abs((+values[k]) - personaBaseline(k)) > 0.005) || TRAIT_DIALS.some(d => moved(d.id));
+    const offBase = allKeys.some(k => Math.abs((+values[k]) - personaBaseline(k)) > 0.005) || ALL_DIALS.some(d => moved(d.id));
     const pr = document.getElementById('st-personareset'); if (pr) pr.classList.toggle('on', offBase);
     const cb = document.getElementById('st-chembadge'); if (cb) cb.classList.toggle('on', CHANNELS.some(c => Math.abs((+values['chem_baseline_' + c.ch]) - PERSONA_CHEM[persona][c.ch]) > 0.005));
   }
   function resetPersona() {
     CHANNELS.forEach(c => { values['chem_baseline_' + c.ch] = PERSONA_CHEM[persona][c.ch]; values['chem_init_' + c.ch] = PERSONA_CHEM[persona][c.ch]; });
     allKeys.forEach(k => { if (!isChem(k)) values[k] = refDefault[k]; });
-    TRAIT_DIALS.forEach(d => { dial[d.id] = rest[d.id]; });
+    ALL_DIALS.forEach(d => { dial[d.id] = rest[d.id]; });
     allKeys.forEach(k => { dialCenter[k] = +values[k]; });
-    TRAIT_DIALS.forEach(d => paintDial(d.id)); applyChemDisplay(false); applyGenericDisplay(); refreshDirty();
+    ALL_DIALS.forEach(d => paintDial(d.id)); applyChemDisplay(false); applyGenericDisplay(); refreshDirty();
   }
 
   /* =====================================================================
