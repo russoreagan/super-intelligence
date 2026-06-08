@@ -244,6 +244,12 @@ class UIServer:
             ui_auth.clear_session_cookies(resp)
             return resp
 
+        @app.get("/auth/me")
+        async def auth_me(request: Request):
+            # Gated by the auth middleware, which attaches the verified claims.
+            claims = getattr(request.state, "user", None) or {}
+            return JSONResponse({"email": claims.get("email")})
+
         @app.get("/health")
         async def health():
             return {"status": "ok"}

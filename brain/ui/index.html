@@ -2172,10 +2172,48 @@ details[open].turn-log summary::before { transform: rotate(90deg); }
    SETTINGS PAGE
    ===================================================================== */
 
-/* Power / reset buttons */
-.icon-btn-power:hover  { background: var(--bg-2); color: oklch(0.65 0.18 25);  border-color: oklch(0.45 0.12 25); }
+/* Sleep / reset buttons */
+.icon-btn-sleep:hover  { background: var(--bg-2); color: oklch(0.72 0.12 280); border-color: oklch(0.45 0.10 280); }
 .icon-btn-reset:hover  { background: var(--bg-2); color: oklch(0.72 0.14 200); border-color: oklch(0.45 0.10 200); }
-.icon-btn-power.active { color: oklch(0.65 0.18 25);  border-color: oklch(0.45 0.12 25); }
+.icon-btn-sleep.active { color: oklch(0.72 0.12 280); border-color: oklch(0.45 0.10 280); }
+
+/* User / account menu */
+.user-menu { position: relative; }
+.user-dropdown {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 180px;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--r-1);
+  box-shadow: 0 8px 24px oklch(0 0 0 / 0.35);
+  padding: 6px;
+  display: none;
+  z-index: 50;
+}
+.user-menu.open .user-dropdown { display: block; }
+.user-email {
+  padding: 6px 8px 8px;
+  font-size: 12px;
+  color: var(--fg-mute);
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 4px;
+  word-break: break-all;
+}
+.user-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px;
+  border-radius: var(--r-1);
+  color: var(--fg);
+  font-size: 13px;
+  text-align: left;
+  transition: background 150ms, color 150ms;
+}
+.user-dropdown-item:hover { background: var(--bg-2); color: oklch(0.65 0.18 25); }
 
 /* Gear button in header */
 .icon-btn {
@@ -3901,7 +3939,7 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
 
 </style>
 <!-- Redesigned settings page styles (scoped to #settings-page) -->
-<link rel="stylesheet" href="settings.css">
+<link rel="stylesheet" href="settings.css?v=3">
 </head>
 <body>
 
@@ -3975,8 +4013,8 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
       <button id="restart-btn" title="Restart brain" class="icon-btn icon-btn-reset">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.5"/></svg>
       </button>
-      <button id="power-btn" title="Shut down brain" class="icon-btn icon-btn-power">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg>
+      <button id="sleep-btn" title="Sleep — shut down thoughts and end the pod" class="icon-btn icon-btn-sleep">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
       </button>
       <button id="settings-btn" title="Brain settings" class="icon-btn">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
@@ -3991,6 +4029,18 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
           <div class="status-row"><span>Meta</span><span class="status-row-dot" id="sub-meta"></span></div>
           <div class="status-row"><span>Voice</span><span class="status-row-dot" id="sub-voice"></span></div>
           <div class="status-row"><span>Ears</span><span class="status-row-dot" id="sub-ears"></span></div>
+        </div>
+      </div>
+      <div class="user-menu" id="user-menu">
+        <button id="user-btn" title="Account" class="icon-btn">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        </button>
+        <div class="user-dropdown" id="user-dropdown">
+          <div class="user-email" id="user-email">—</div>
+          <button id="logout-btn" class="user-dropdown-item">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+            <span>Log out</span>
+          </button>
         </div>
       </div>
     </div>
@@ -4347,9 +4397,9 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
           <div class="theme-toggle-label">Appearance</div>
           <div class="theme-seg" id="theme-seg" role="group" aria-label="Theme">
             <button type="button" class="theme-seg-btn" data-theme-choice="atlas">Atlas</button>
-            <button type="button" class="theme-seg-btn" data-theme-choice="console">Console</button>
+            <button type="button" class="theme-seg-btn" data-theme-choice="console" style="display:none">Console</button>
           </div>
-          <div class="theme-toggle-hint">Warm paper, or dark console. Saved on this device.</div>
+          <div class="theme-toggle-hint">Warm paper theme. Saved on this device.</div>
         </div>
         <!-- Mood intensity — how strongly the brain's mood tints the background -->
         <div class="theme-toggle-block">
@@ -6389,7 +6439,7 @@ const controlBar    = document.getElementById('control-bar');
 // transcriptBar already declared above
 const settingsBtn   = document.getElementById('settings-btn');
 const restartBtn    = document.getElementById('restart-btn');
-const powerBtn      = document.getElementById('power-btn');
+const sleepBtn      = document.getElementById('sleep-btn');
 const settingsBack  = document.getElementById('settings-back-btn');
 const settingsSave  = document.getElementById('settings-save-btn');
 const settingsReset = document.getElementById('settings-reset-btn');
@@ -6429,11 +6479,43 @@ async function doRestart(btn) {
 
 restartBtn.addEventListener('click', () => doRestart(restartBtn));
 
-powerBtn.addEventListener('click', async () => {
-  if (!confirm('Shut down the brain?')) return;
-  powerBtn.disabled = true;
-  powerBtn.style.opacity = '0.5';
+// Sleep: shut the brain's thoughts down and end the pod (does NOT log out).
+sleepBtn.addEventListener('click', async () => {
+  if (!confirm('Put the brain to sleep? This shuts down its thoughts and ends the pod. You stay logged in.')) return;
+  sleepBtn.disabled = true;
+  sleepBtn.style.opacity = '0.5';
   try { await fetch('/shutdown', { method: 'POST' }); } catch (_) {}
+});
+
+// User / account menu — logout operates independently of sleep.
+const userMenu     = document.getElementById('user-menu');
+const userBtn      = document.getElementById('user-btn');
+const userEmailEl  = document.getElementById('user-email');
+const logoutBtn    = document.getElementById('logout-btn');
+
+(async () => {
+  try {
+    const r = await fetch('/auth/me');
+    if (r.ok) {
+      const d = await r.json();
+      userEmailEl.textContent = d.email || 'Signed in';
+    }
+  } catch (_) {}
+})();
+
+userBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  userMenu.classList.toggle('open');
+});
+document.addEventListener('click', (e) => {
+  if (!userMenu.contains(e.target)) userMenu.classList.remove('open');
+});
+
+// Log out: clear the session and return to login (does NOT sleep the brain).
+logoutBtn.addEventListener('click', async () => {
+  logoutBtn.disabled = true;
+  try { await fetch('/auth/logout', { method: 'POST' }); } catch (_) {}
+  window.location.href = '/login';
 });
 
 restartBanner.addEventListener('click', async () => {
@@ -7892,8 +7974,8 @@ function _applyMoodTint() {
 })();
 </script>
 <!-- Redesigned settings page: schema + render engine (live-wired to /settings) -->
-<script src="settings-data.js?v=2"></script>
-<script src="settings-ui.js?v=2"></script>
+<script src="settings-data.js?v=3"></script>
+<script src="settings-ui.js?v=3"></script>
 <!-- Trading layer: vendored TradingView Lightweight Charts (Apache-2.0) for chart cards -->
 <script src="lightweight-charts.standalone.production.js"></script>
 </body>

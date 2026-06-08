@@ -287,6 +287,14 @@ class _SetupMixin:
         # unchanged). BRAIN_EXECUTOR env overrides the `brain_executor` setting.
         from brain.settings import settings as _settings
 
+        # User-managed allowlist (Settings → Motor Cortex). On a hosted tenant
+        # this is the only path source besides BRAIN_MOTOR_PATHS, since there's
+        # no Claude Desktop to inherit trusted folders from. One dir per line.
+        for _p in str(_settings.get("motor_allowed_dirs") or "").splitlines():
+            _p = _p.strip()
+            if _p and _p not in _motor_paths:
+                _motor_paths.append(_p)
+
         _executor_kind = (
             os.environ.get("BRAIN_EXECUTOR", "").strip().lower()
             or str(_settings.get("brain_executor") or "local").lower()
@@ -310,14 +318,23 @@ class _SetupMixin:
                 "Motor cortex: inheriting trusted dirs from Claude Desktop: %s", _motor_paths
             )
 
-        # Always include the project root so the agent can read/write its own
+        # Locally, include the project root so the agent can read/write its own
         # codebase regardless of how it was launched (start.sh vs direct invocation).
-        from pathlib import Path as _Path
+        # In multi-tenant/hosted mode this MUST NOT happen — a tenant's motor cortex
+        # has no business touching the app's own source. There, paths come solely
+        # from BRAIN_MOTOR_PATHS (the per-user workdir set by the provisioner).
+        _multitenant = os.environ.get("BRAIN_MULTITENANT", "").lower() in ("1", "true", "yes")
+        if _multitenant:
+            logger.info("Motor cortex: multi-tenant mode — project root NOT added to allowed paths")
+        else:
+            from pathlib import Path as _Path
 
-        _project_root = str(_Path(__file__).parent.parent.resolve())
-        if _project_root not in _motor_paths:
-            _motor_paths.insert(0, _project_root)
-            logger.info("Motor cortex: project root auto-added to allowed paths: %s", _project_root)
+            _project_root = str(_Path(__file__).parent.parent.resolve())
+            if _project_root not in _motor_paths:
+                _motor_paths.insert(0, _project_root)
+                logger.info(
+                    "Motor cortex: project root auto-added to allowed paths: %s", _project_root
+                )
 
         self.motor = MotorCortexCluster(
             self.bus,

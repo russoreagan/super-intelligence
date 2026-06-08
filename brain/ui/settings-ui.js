@@ -1,654 +1,581 @@
 /* =====================================================================
-   BRAIN SETTINGS — UI engine (live-wired)
-   Renders the category rail + section cards from window.SETTINGS and wires
-   sliders/toggles, master couplings, per-section reset, unsaved tracking.
-
-   Adapted from the Claude Design redesign to the LIVE app:
-     • real GET/POST /settings, POST /settings/reset, POST /restart
-     • master-expressiveness coupling ported from the app (design omitted it)
-     • real persona system (chemistry profiles, voice list mirrored from the
-       header voice picker, decay-model toggle, header-badge sync)
-   Self-contained: owns its own value state and reads the server as source of
-   truth, so it never fights the header persona picker (which restarts + reloads).
+   BRAIN SETTINGS — persona-first engine (live-wired)
+   Adapted from the Elyceum "Persona & Temperament" redesign to the LIVE app:
+     • Personas are the top-level entity (left rail); each settings category
+       is a TAB within the active persona. The Temperament tab holds the
+       nine radial trait dials (a macro layer over the chemistry); other tabs
+       expose that persona's raw controls, read-only until Manual mode is on.
+     • Real GET/POST /settings, POST /settings/reset; restart via the app's
+       existing restart banner. Voice + mood + theme live in the app's rail
+       chrome and are owned by index.html — this engine does not touch them.
+   Renders into #rail-nav (persona menu) and #cat-wrap (persona view); wires
+   the app's #settings-save-btn / #settings-reset-btn / #settings-restart-banner.
    ===================================================================== */
 (function () {
-  const S = window.SETTINGS;
-  const cats = S.categories;
+  'use strict';
+  const SET = window.SETTINGS;
 
-  // ---- real persona chemistry profiles (mirror brain/run.py PERSONAS) ----
+  /* ---- personas + canonical chemistry (mirror brain/run.py PERSONAS) ---- */
+  const PERSONAS = SET.personas.map(p => ({ ...p }));
   const PERSONA_CHEM = {
-    'The Visionary': { DA:0.62, ACh:0.45, GABA:0.12, Glu:0.40, NE:0.35, '5HT':0.55, CORT:0.05, OXT:0.45, AEA:0.20 },
-    'The Empath':    { DA:0.45, ACh:0.18, GABA:0.12, Glu:0.18, NE:0.15, '5HT':0.70, CORT:0.03, OXT:0.70, AEA:0.45 },
-    'The Analyst':   { DA:0.35, ACh:0.35, GABA:0.30, Glu:0.25, NE:0.25, '5HT':0.55, CORT:0.14, OXT:0.22, AEA:0.30 },
-    'The Poet':      { DA:0.32, ACh:0.55, GABA:0.12, Glu:0.38, NE:0.42, '5HT':0.28, CORT:0.15, OXT:0.22, AEA:0.38 },
-    'The Sage':      { DA:0.35, ACh:0.18, GABA:0.28, Glu:0.12, NE:0.12, '5HT':0.72, CORT:0.03, OXT:0.50, AEA:0.55 },
+    'The Visionary': { DA: 0.62, ACh: 0.45, GABA: 0.12, Glu: 0.40, NE: 0.35, '5HT': 0.55, CORT: 0.05, OXT: 0.45, AEA: 0.20 },
+    'The Empath':    { DA: 0.45, ACh: 0.18, GABA: 0.12, Glu: 0.18, NE: 0.15, '5HT': 0.70, CORT: 0.03, OXT: 0.70, AEA: 0.45 },
+    'The Analyst':   { DA: 0.35, ACh: 0.35, GABA: 0.30, Glu: 0.25, NE: 0.25, '5HT': 0.55, CORT: 0.14, OXT: 0.22, AEA: 0.30 },
+    'The Poet':      { DA: 0.32, ACh: 0.55, GABA: 0.12, Glu: 0.38, NE: 0.42, '5HT': 0.28, CORT: 0.15, OXT: 0.22, AEA: 0.38 },
+    'The Sage':      { DA: 0.35, ACh: 0.18, GABA: 0.28, Glu: 0.12, NE: 0.12, '5HT': 0.72, CORT: 0.03, OXT: 0.50, AEA: 0.55 },
   };
-  const PERSONA_CHANNELS = ['DA','ACh','GABA','Glu','NE','5HT','CORT','OXT','AEA'];
-  const personaSlug = (name) => 'persona_voice_' + String(name).toLowerCase().replace(/\s+/g,'_').replace(/[^a-z0-9_]/g,'');
+  const CHANNELS = [
+    { ch: 'DA', name: 'Dopamine' }, { ch: 'ACh', name: 'Acetylcholine' }, { ch: 'GABA', name: 'GABA' },
+    { ch: 'Glu', name: 'Glutamate' }, { ch: 'NE', name: 'Norepinephrine' }, { ch: '5HT', name: 'Serotonin' },
+    { ch: 'CORT', name: 'Cortisol' }, { ch: 'OXT', name: 'Oxytocin' }, { ch: 'AEA', name: 'Anandamide' },
+  ];
+  const CHEM_MIN = 0, CHEM_MAX = 0.8, CHEM_STEP = 0.01;
 
-  // ---- inline icon set --------------------------------------------------
-  const ICONS = {
-    user:  '<circle cx="12" cy="8" r="4"/><path d="M4 20c0-4.2 3.6-6.5 8-6.5s8 2.3 8 6.5"/>',
-    key:   '<circle cx="7.5" cy="15.5" r="4.5"/><path d="M10.7 12.3 20 3"/><path d="M16 7l3 3M14 9l2 2"/>',
-    flask: '<path d="M9 3v5.5L4.2 17a2 2 0 0 0 1.8 3h12a2 2 0 0 0 1.8-3L15 8.5V3"/><line x1="8" y1="3" x2="16" y2="3"/><line x1="7.2" y1="14" x2="16.8" y2="14"/>',
-    cpu:   '<rect x="7" y="7" width="10" height="10" rx="1.5"/><rect x="10" y="10" width="4" height="4" rx="0.5"/><path d="M10 3v2M14 3v2M10 19v2M14 19v2M3 10h2M3 14h2M19 10h2M19 14h2"/>',
-    mic:   '<rect x="9" y="2" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><line x1="12" y1="18" x2="12" y2="21"/>',
-    eye:   '<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/>',
-    moon:  '<path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"/>',
-    reset: '<polyline points="1 4 1 10 7 10"/><path d="M3.5 15a9 9 0 1 0 2.1-9.4L1 10"/>',
-    chev:  '<polyline points="9 6 15 12 9 18"/>',
+  /* ---- the nine trait dials. Each map row: { key, dir, span }. Every key
+     is a real backend settings key, so every dial both moves a real control
+     and produces a valid /settings patch. ---- */
+  const TRAIT_DIALS = [
+    { id: 'intelligence', label: 'Intelligence', sub: 'learning · reasoning', glyph: 'spark',
+      map: [ { key: 'chem_baseline_ACh', dir: +1, span: 0.12 }, { key: 'surprise_ACh_weight', dir: +1, span: 0.05 }, { key: 'frontal_ach_weight', dir: +1, span: 0.10 }, { key: 'plasticity_arousal_weight', dir: +1, span: 0.10 }, { key: 'plasticity_intensity_weight', dir: +1, span: 0.08 } ] },
+    { id: 'empathy', label: 'Empathy', sub: 'warmth · bonding', glyph: 'bond',
+      map: [ { key: 'chem_baseline_OXT', dir: +1, span: 0.15 }, { key: 'chem_baseline_5HT', dir: +1, span: 0.10 }, { key: 'oxt_positive_increment', dir: +1, span: 0.006 }, { key: 'voice_style_default', dir: +1, span: 0.10 }, { key: 'chem_baseline_CORT', dir: -1, span: 0.04 } ] },
+    { id: 'sensitivity', label: 'Sensitivity', sub: 'reactivity', glyph: 'ripple',
+      map: [ { key: 'emotional_reactivity_scale', dir: +1, span: 0.40 }, { key: 'chem_baseline_NE', dir: +1, span: 0.12 }, { key: 'chem_baseline_Glu', dir: +1, span: 0.08 }, { key: 'plasticity_intensity_weight', dir: +1, span: 0.10 }, { key: 'chem_baseline_GABA', dir: -1, span: 0.06 } ] },
+    { id: 'composure', label: 'Composure', sub: 'steadiness', glyph: 'level',
+      map: [ { key: 'chem_baseline_GABA', dir: +1, span: 0.10 }, { key: 'threat_to_GABA_decay', dir: +1, span: 0.04 }, { key: 'chem_baseline_CORT', dir: -1, span: 0.06 }, { key: 'emotional_reactivity_scale', dir: -1, span: 0.30 }, { key: 'cort_threat_increment', dir: -1, span: 0.008 } ] },
+    { id: 'drive', label: 'Drive', sub: 'ambition · reward', glyph: 'arrow',
+      map: [ { key: 'chem_baseline_DA', dir: +1, span: 0.15 }, { key: 'valence_to_DA_decay', dir: +1, span: 0.03 }, { key: 'plasticity_arousal_weight', dir: +1, span: 0.10 }, { key: 'sentiment_DA_weight', dir: +1, span: 0.06 } ] },
+    { id: 'creativity', label: 'Creativity', sub: 'associative play', glyph: 'star',
+      map: [ { key: 'chem_baseline_ACh', dir: +1, span: 0.08 }, { key: 'chem_baseline_AEA', dir: +1, span: 0.12 }, { key: 'chem_baseline_GABA', dir: -1, span: 0.06 }, { key: 'dmn_overlap_threshold', dir: +1, span: 0.05 }, { key: 'surprise_ACh_weight', dir: +1, span: 0.04 } ] },
+    { id: 'humor', label: 'Humor', sub: 'levity', glyph: 'smile',
+      map: [ { key: 'chem_baseline_DA', dir: +1, span: 0.10 }, { key: 'chem_baseline_AEA', dir: +1, span: 0.10 }, { key: 'chem_baseline_ACh', dir: +1, span: 0.05 }, { key: 'chem_baseline_GABA', dir: -1, span: 0.05 }, { key: 'chem_baseline_CORT', dir: -1, span: 0.05 } ] },
+    { id: 'sociability', label: 'Sociability', sub: 'outgoing · initiates', glyph: 'social',
+      map: [ { key: 'dmn_interval', dir: -1, span: 8 }, { key: 'proactive_idle_threshold', dir: -1, span: 90 }, { key: 'ach_suppression_weight', dir: -1, span: 0.35 }, { key: 'voice_style_default', dir: +1, span: 0.08 } ] },
+    { id: 'caution', label: 'Caution', sub: 'guarded ↔ trusting', glyph: 'shield',
+      map: [ { key: 'hostility_GABA_threshold_high', dir: -1, span: 0.12 }, { key: 'cort_threat_increment', dir: +1, span: 0.012 }, { key: 'ne_hostility_weight', dir: +1, span: 0.06 }, { key: 'chem_baseline_OXT', dir: -1, span: 0.08 } ] },
+  ];
+
+  const GLYPHS = {
+    spark:  '<path d="M12 3v6M12 15v6M3 12h6M15 12h6M6.5 6.5l3.2 3.2M14.3 14.3l3.2 3.2M17.5 6.5l-3.2 3.2M9.7 14.3l-3.2 3.2"/>',
+    bond:   '<circle cx="9" cy="12" r="5"/><circle cx="15" cy="12" r="5"/>',
+    ripple: '<circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/><path d="M7.5 12a4.5 4.5 0 0 1 9 0M4.5 12a7.5 7.5 0 0 1 15 0"/>',
+    level:  '<line x1="4" y1="12" x2="20" y2="12"/><circle cx="12" cy="12" r="2.4" fill="currentColor" stroke="none"/>',
+    arrow:  '<line x1="12" y1="20" x2="12" y2="5"/><polyline points="6 11 12 5 18 11"/>',
+    star:   '<path d="M12 3v18M3 12h18M5.5 5.5l13 13M18.5 5.5l-13 13"/>',
+    smile:  '<path d="M7 13a5 5 0 0 0 10 0"/><circle cx="9" cy="9" r="0.6" fill="currentColor" stroke="none"/><circle cx="15" cy="9" r="0.6" fill="currentColor" stroke="none"/>',
+    social: '<path d="M4 5.5h16v10H10l-4 3.5v-3.5H4z"/><circle cx="9" cy="10.5" r="0.7" fill="currentColor" stroke="none"/><circle cx="12" cy="10.5" r="0.7" fill="currentColor" stroke="none"/><circle cx="15" cy="10.5" r="0.7" fill="currentColor" stroke="none"/>',
+    shield: '<path d="M12 3l7 3v5c0 4.4-3 7.4-7 8.8C8 17.4 5 14.4 5 10V6l7-3z"/>',
   };
-  const svg = (d, w) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${w||2}" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
+  const ico = d => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
+  const chevSvg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg>';
+  const lockSvg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>';
+  const eyeSvg  = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>';
+  const resetSvg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.5 15a9 9 0 1 0 2.1-9.4L1 10"/></svg>';
 
-  // ---- state ------------------------------------------------------------
-  const defaults = {};   // key -> default value
-  const values   = {};   // key -> current value
-  const saved    = {};   // key -> last-saved value
-  const meta     = {};   // key -> row config
-  const sectionOf = {};  // key -> section id
-  const catOf     = {};  // key -> category id
-  let   secretsSet = {}; // key -> bool (which API keys are already stored)
+  /* ---- key metadata (from the real settings model) ---- */
+  const rowMeta = {};
+  SET.categories.forEach(cat => (cat.sections || []).forEach(sec => [...(sec.rows || []), ...(sec.advanced || [])].forEach(r => { if (r.key && r.type !== 'group') rowMeta[r.key] = r; })));
+  // dial keys that exist in settings.json but aren't surfaced as a UI row
+  const FALLBACK = { dmn_overlap_threshold: { min: 0.1, max: 0.8, def: 0.35 } };
+  const keyMeta = k => rowMeta[k] || FALLBACK[k] || { min: 0, max: 1, def: 0 };
+  const clampKey = (k, v) => { const m = keyMeta(k); return Math.max(+m.min, Math.min(+m.max, v)); };
 
-  const PSEUDO = { persona_select: '', persona_voice: '' };
+  /* ---- state ---- */
+  const values = {}, saved = {}, refDefault = {}, dialCenter = {}, dial = {}, rest = {};
+  let secretsSet = {};
+  let persona = PERSONAS[0].id;
+  let activeTab = 'persona';
+  let view = 'persona';                 // 'persona' | 'system'
+  const manualState = {};
+  let manualOpen = false;
+  let scaffolded = false;
 
-  cats.forEach(cat => {
-    (cat.sections || []).forEach(sec => {
-      [...(sec.rows || []), ...(sec.advanced || [])].forEach(r => {
-        if (!r.key || r.type === 'group') return;
-        defaults[r.key] = r.def; values[r.key] = r.def; saved[r.key] = r.def;
-        meta[r.key] = r; sectionOf[r.key] = sec.id; catOf[r.key] = cat.id;
-      });
+  const allKeys = (() => { const s = new Set(); TRAIT_DIALS.forEach(d => d.map.forEach(t => s.add(t.key))); return [...s]; })();
+  const isChem = k => k.indexOf('chem_baseline_') === 0;
+  const chemOf = k => k.slice('chem_baseline_'.length);
+  function personaBaseline(k) { return isChem(k) ? PERSONA_CHEM[persona][chemOf(k)] : refDefault[k]; }
+
+  /* ---- dial rest positions from each persona's chemistry spread ---- */
+  const refMean = {}, halfRange = {};
+  function computeSpread() {
+    CHANNELS.forEach(c => {
+      const vals = PERSONAS.map(p => (PERSONA_CHEM[p.id] || {})[c.ch]).filter(v => v != null);
+      const mn = Math.min(...vals), mx = Math.max(...vals);
+      refMean[c.ch] = vals.reduce((a, b) => a + b, 0) / vals.length;
+      halfRange[c.ch] = (mx - mn) / 2 || 1;
     });
-  });
-  Object.entries(PSEUDO).forEach(([k, v]) => { defaults[k] = v; values[k] = v; saved[k] = v; catOf[k] = 'persona'; });
-
-  const VIRTUAL = (k) => k.startsWith('master-');
-  const isDirty = (k) => values[k] !== saved[k];
-  const eqDef   = (k) => Math.abs((+values[k]) - (+defaults[k])) < 1e-9 || values[k] === defaults[k];
-
-  // ---- value formatting -------------------------------------------------
-  function humanizeSeconds(v) {
-    v = +v;
-    if (v < 60) return v + 's';
-    if (v < 3600) { const m = v / 60; return (Number.isInteger(m) ? m : m.toFixed(1)) + ' min'; }
-    const h = v / 3600; return (Number.isInteger(h) ? h : h.toFixed(1)) + ' h';
   }
-  function fmt(r, v) {
-    if (r.type === 'toggle') return (+v >= 0.5) ? 'On' : 'Off';
-    if (r.type === 'time') return humanizeSeconds(v);
-    const step = +r.step;
-    if (Number.isInteger(step) && step >= 1) { const n = Math.round(+v); return n >= 1000 ? n.toLocaleString() : String(n); }
-    const num = +v; return num < 0.1 ? num.toFixed(3) : num.toFixed(2);
+  function dialRest(personaId, d) {
+    const parts = [];
+    d.map.forEach(t => { if (!isChem(t.key)) return; const ch = chemOf(t.key); parts.push(t.dir * (PERSONA_CHEM[personaId][ch] - refMean[ch]) / halfRange[ch]); });
+    if (!parts.length) return 0.5;
+    const avg = parts.reduce((a, b) => a + b, 0) / parts.length;
+    return 0.5 + 0.5 * Math.max(-1, Math.min(1, avg));
   }
 
-  const reg = {};        // key -> { input, valEl, rowEl, toggle }
-  const sectionEls = {}; // secId -> { badge, resetBtn, keys, advKeys, advChanged }
-  const navEls = {};     // catId -> { btn, dot }
-  let dirtyPill, dirtyText, saveBtn, restartBanner, scroll;
-  let activeCat = cats[0].id;
-
-  // =====================================================================
-  //  NETWORK — real load / save / reset / restart
-  // =====================================================================
-  function recomputeVirtualSeeds() {
-    // master virtual sliders are seeded from their children when rendered;
-    // nothing persistent needed here.
+  /* ---- recompute: dial positions -> real key values ---- */
+  function recomputeTraits() {
+    const offset = {}; allKeys.forEach(k => { offset[k] = 0; });
+    TRAIT_DIALS.forEach(d => d.map.forEach(t => { offset[t.key] += t.dir * t.span * (dial[d.id] - rest[d.id]) * 2; }));
+    allKeys.forEach(k => { values[k] = clampKey(k, dialCenter[k] + offset[k]); if (isChem(k)) values['chem_init_' + chemOf(k)] = values[k]; });
   }
+  function dialOffsetFor(key) { let o = 0; TRAIT_DIALS.forEach(d => d.map.forEach(t => { if (t.key === key) o += t.dir * t.span * (dial[d.id] - rest[d.id]) * 2; })); return o; }
+  const moved = id => Math.abs(dial[id] - rest[id]) > 1e-4;
+
+  /* ---- seed dials/centers for the active persona ----
+     snap=true (persona switch): chemistry snaps to the persona's canonical
+     baseline. snap=false (initial load): keep the loaded values. ---- */
+  function seedDials(snap) {
+    if (snap) CHANNELS.forEach(c => { values['chem_baseline_' + c.ch] = PERSONA_CHEM[persona][c.ch]; values['chem_init_' + c.ch] = PERSONA_CHEM[persona][c.ch]; });
+    TRAIT_DIALS.forEach(d => { rest[d.id] = dialRest(persona, d); dial[d.id] = rest[d.id]; });
+    allKeys.forEach(k => { dialCenter[k] = (k in values) ? +values[k] : keyMeta(k).def; });
+  }
+
+  /* =====================================================================
+     NETWORK — load / save / reset
+     ===================================================================== */
+  let saveBtn, resetBtn, restartBanner, dirtyPill, dirtyText, scroll;
 
   async function loadFromServer() {
+    let s = {}, d = {};
     try {
       const res = await fetch('/settings');
-      if (!res.ok) return;
-      const data = await res.json();
-      const s = data.settings || {};
-      const d = data.defaults || {};
-      secretsSet = data.secrets_set || {};
-      Object.keys(s).forEach(k => { values[k] = s[k]; saved[k] = s[k]; });
-      Object.keys(d).forEach(k => { defaults[k] = d[k]; });
-      // persona pseudo keys reflect real keys
-      values.persona_select = saved.persona_select = s.persona_name || '';
-      values.persona_voice  = saved.persona_voice  = s.persona_voice_id || '';
-    } catch (e) {
-      console.warn('Settings: load failed', e);
-    }
-    recomputeVirtualSeeds();
-    renderCat(activeCat);
+      if (res.ok) { const data = await res.json(); s = data.settings || {}; d = data.defaults || {}; secretsSet = data.secrets_set || {}; }
+    } catch (e) { console.warn('Settings: load failed', e); }
+    // seed every known key from server (fallback to row default)
+    Object.keys(rowMeta).forEach(k => {
+      const def = (k in d) ? d[k] : rowMeta[k].def;
+      refDefault[k] = def;
+      values[k] = (k in s) ? s[k] : def;
+      saved[k] = values[k];
+    });
+    // server keys not in the UI model (persona_name, persona_voice_id, dial-only keys, …)
+    Object.keys(s).forEach(k => { if (!(k in values)) { values[k] = s[k]; saved[k] = s[k]; refDefault[k] = (k in d) ? d[k] : s[k]; } });
+    // ensure every dial-touched key exists
+    allKeys.forEach(k => { if (!(k in values)) { const m = keyMeta(k); refDefault[k] = m.def; values[k] = m.def; saved[k] = values[k]; } });
+
+    persona = (s.persona_name && PERSONA_CHEM[s.persona_name]) ? s.persona_name : PERSONAS[0].id;
+    if (!('persona_name' in saved)) { values.persona_name = saved.persona_name = persona; }
+    if (!(persona in manualState)) manualState[persona] = false;
+
+    computeSpread();
+    seedDials(false);
+    view = 'persona'; activeTab = 'persona';
+    buildScaffold();
+    renderPersonaRail();
+    renderTabs();
+    renderDials();
+    renderChem();
+    applyChemDisplay(false);
+    syncPersonaHead();
+    refreshManualUI();
+    selectTab('persona');
     refreshDirty();
   }
 
   function realChangedPatch() {
     const patch = {};
-    Object.keys(values).forEach(k => {
-      if (VIRTUAL(k) || k === 'persona_select' || k === 'persona_voice') return;
-      if (isDirty(k)) patch[k] = values[k];
-    });
+    Object.keys(saved).forEach(k => { if (values[k] !== saved[k]) patch[k] = values[k]; });
+    Object.keys(values).forEach(k => { if (!(k in saved) && values[k] !== '' && values[k] != null) patch[k] = values[k]; });
     return patch;
   }
+  function dirtyCount() { return Object.keys(realChangedPatch()).length; }
 
   async function doSave() {
     const patch = realChangedPatch();
     if (!Object.keys(patch).length) return;
-    saveBtn.textContent = 'Saving…';
+    if (saveBtn) saveBtn.textContent = 'Saving…';
     try {
-      const res = await fetch('/settings', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch),
-      });
+      const res = await fetch('/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) });
       if (res.ok) {
         Object.keys(values).forEach(k => saved[k] = values[k]);
-        Object.keys(reg).forEach(refreshRow);
-        Object.keys(sectionEls).forEach(refreshSection);
-        refreshDirty();
-        if (restartBanner) restartBanner.classList.add('on');
-        saveBtn.textContent = 'Saved ✓';
-        setTimeout(() => { saveBtn.textContent = 'Save Settings'; }, 1600);
-      } else {
-        saveBtn.textContent = 'Error ' + res.status;
-        setTimeout(() => { saveBtn.textContent = 'Save Settings'; }, 2200);
-      }
+        if (restartBanner) restartBanner.classList.add('on', 'visible');
+        if (saveBtn) { saveBtn.textContent = 'Saved ✓'; setTimeout(() => saveBtn.textContent = 'Save Settings', 1600); }
+        applyGenericDisplay(); refreshDirty();
+      } else if (saveBtn) { saveBtn.textContent = 'Error ' + res.status; setTimeout(() => saveBtn.textContent = 'Save Settings', 2200); }
     } catch (e) {
       console.error('Settings save error', e);
-      saveBtn.textContent = 'Error (no server)';
-      setTimeout(() => { saveBtn.textContent = 'Save Settings'; }, 2200);
+      if (saveBtn) { saveBtn.textContent = 'Error (no server)'; setTimeout(() => saveBtn.textContent = 'Save Settings', 2200); }
     }
   }
 
   async function doResetAll() {
     try {
       const res = await fetch('/settings/reset', { method: 'POST' });
-      if (res.ok) {
-        const data = await res.json();
-        const s = data.settings || {};
-        Object.keys(s).forEach(k => { values[k] = s[k]; saved[k] = s[k]; });
-        Object.keys(defaults).forEach(k => { if (k in s) values[k] = s[k]; });
-        values.persona_select = saved.persona_select = s.persona_name || '';
-        values.persona_voice  = saved.persona_voice  = s.persona_voice_id || '';
-        if (restartBanner) restartBanner.classList.add('on');
-      }
-    } catch (e) {
-      // offline: fall back to in-memory defaults
-      Object.keys(defaults).forEach(k => { values[k] = defaults[k]; });
-    }
-    selectCat(activeCat);
-    refreshDirty();
+      if (res.ok && restartBanner) restartBanner.classList.add('on', 'visible');
+    } catch (_) {}
+    await loadFromServer();
   }
 
-  async function doRestart() {
-    if (!restartBanner || restartBanner.dataset.busy) return;
-    restartBanner.dataset.busy = '1';
-    restartBanner.textContent = 'Restarting…';
-    restartBanner.style.opacity = '0.6';
-    try { await fetch('/restart', { method: 'POST' }); } catch (_) {}
-    const poll = setInterval(async () => {
-      try {
-        const r = await fetch('/settings', { method: 'GET' });
-        if (r.ok) { clearInterval(poll); setTimeout(() => window.location.reload(), 400); }
-      } catch (_) {}
-    }, 800);
-  }
-
-  // ---- DOM build: nav ---------------------------------------------------
-  function buildNav() {
-    const nav = document.getElementById('rail-nav');
-    nav.innerHTML = '';
-    cats.forEach(cat => {
-      const n = (cat.sections || []).length;
-      const b = document.createElement('button');
-      b.className = 'nav-item' + (cat.id === activeCat ? ' active' : '');
-      b.innerHTML =
-        `<span class="nav-ico">${svg(ICONS[cat.icon] || ICONS.cpu)}</span>` +
-        `<span class="nav-label">${cat.name}</span>` +
-        `<span class="nav-changed" data-navdot="${cat.id}"></span>` +
-        `<span class="nav-count">${cat.id === 'persona' ? '·' : n}</span>`;
-      b.addEventListener('click', () => selectCat(cat.id));
-      nav.appendChild(b);
-      navEls[cat.id] = { btn: b, dot: b.querySelector('[data-navdot]') };
+  /* =====================================================================
+     RENDER — radial dials
+     ===================================================================== */
+  const A0 = -135, A1 = 135, R = 34, CX = 50, CY = 50;
+  const ang = v => A0 + v * (A1 - A0);
+  function pt(a, r) { r = r || R; const rad = a * Math.PI / 180; return [CX + r * Math.sin(rad), CY - r * Math.cos(rad)]; }
+  function arcPath(aFrom, aTo, large) { const [x0, y0] = pt(aFrom), [x1, y1] = pt(aTo); return `M ${x0.toFixed(2)} ${y0.toFixed(2)} A ${R} ${R} 0 ${large} 1 ${x1.toFixed(2)} ${y1.toFixed(2)}`; }
+  function tick(a) { const [x0, y0] = pt(a), [x1, y1] = pt(a, R + 5); return `<line x1="${x0.toFixed(1)}" y1="${y0.toFixed(1)}" x2="${x1.toFixed(1)}" y2="${y1.toFixed(1)}"/>`; }
+  const dialEls = {};
+  function renderDials() {
+    const container = document.getElementById('trait-grid'); if (!container) return;
+    container.innerHTML = '';
+    TRAIT_DIALS.forEach(d => {
+      const cell = document.createElement('div'); cell.className = 'tdial';
+      cell.innerHTML =
+        `<div class="tknob" tabindex="0" role="slider" aria-label="${d.label}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50">` +
+          `<svg viewBox="0 0 100 100" aria-hidden="true">` +
+            `<path class="tk-track" d="${arcPath(A0, A1, 1)}"/><path class="tk-fill" d=""/>` +
+            `<g class="tk-ticks" stroke-width="1.4">${tick(A0)}${tick(A1)}</g>` +
+            `<circle class="tk-rest" r="2.3"/><g class="tk-needle"><line x1="50" y1="50" x2="50" y2="20"/></g>` +
+            `<circle class="tk-hub" cx="50" cy="50" r="3.4"/>` +
+          `</svg></div>` +
+        `<div class="tname"><span class="tglyph">${ico(GLYPHS[d.glyph])}</span>${d.label}</div>` +
+        `<div class="tsub">${d.sub}</div><div class="treadout" data-r>50</div>` +
+        `<div class="tdrives">drives ${d.map.length} controls</div>`;
+      container.appendChild(cell);
+      const knob = cell.querySelector('.tknob');
+      dialEls[d.id] = { cell, knob, fill: cell.querySelector('.tk-fill'), needle: cell.querySelector('.tk-needle'), restDot: cell.querySelector('.tk-rest'), readout: cell.querySelector('[data-r]') };
+      bindKnob(d.id, knob);
+      paintDial(d.id);
     });
   }
+  function paintDial(id) {
+    const v = dial[id], e = dialEls[id]; if (!e) return;
+    const a = ang(v), ar = ang(rest[id]);
+    e.needle.style.transform = `rotate(${a}deg)`;
+    const [rx, ry] = pt(ar); e.restDot.setAttribute('cx', rx.toFixed(2)); e.restDot.setAttribute('cy', ry.toFixed(2));
+    const lo = Math.min(ar, a), hi = Math.max(ar, a);
+    e.fill.setAttribute('d', Math.abs(a - ar) < 0.5 ? '' : arcPath(lo, hi, hi - lo > 180 ? 1 : 0));
+    e.readout.textContent = Math.round(v * 100);
+    e.cell.classList.toggle('moved', moved(id));
+    e.knob.setAttribute('aria-valuenow', Math.round(v * 100));
+  }
+  function bindKnob(id, knob) {
+    let dragging = false;
+    function fromEvent(ev) {
+      const r = knob.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+      let a = Math.atan2(ev.clientX - cx, -(ev.clientY - cy)) * 180 / Math.PI;
+      a = Math.max(A0, Math.min(A1, a));
+      setDial(id, (a - A0) / (A1 - A0));
+    }
+    knob.addEventListener('pointerdown', e => { dragging = true; knob.setPointerCapture(e.pointerId); knob.classList.add('grab'); fromEvent(e); e.preventDefault(); });
+    knob.addEventListener('pointermove', e => { if (dragging) fromEvent(e); });
+    knob.addEventListener('pointerup', () => { dragging = false; knob.classList.remove('grab'); });
+    knob.addEventListener('pointercancel', () => { dragging = false; knob.classList.remove('grab'); });
+    knob.addEventListener('keydown', e => {
+      const step = e.shiftKey ? 0.1 : 0.02;
+      if (e.key === 'ArrowUp' || e.key === 'ArrowRight') { setDial(id, dial[id] + step); e.preventDefault(); }
+      else if (e.key === 'ArrowDown' || e.key === 'ArrowLeft') { setDial(id, dial[id] - step); e.preventDefault(); }
+      else if (e.key === 'Home') { setDial(id, rest[id]); e.preventDefault(); }
+    });
+    knob.addEventListener('dblclick', () => setDial(id, rest[id]));
+  }
+  function setDial(id, v) {
+    v = Math.max(0, Math.min(1, v));
+    if (v === dial[id]) return;
+    dial[id] = v; paintDial(id); recomputeTraits(); applyChemDisplay(true); applyGenericDisplay(); refreshDirty();
+  }
 
-  function selectCat(id) {
-    activeCat = id;
-    document.querySelectorAll('.nav-item').forEach((el, i) => el.classList.toggle('active', cats[i].id === id));
-    renderCat(id);
+  /* =====================================================================
+     RENDER — chemistry block (Manual mode, inside Temperament tab)
+     ===================================================================== */
+  const chemEls = {};
+  const fmtChem = v => { v = +v; return v < 0.1 ? v.toFixed(3) : v.toFixed(2); };
+  const fmtDelta = d => (d > 0 ? '+' : '−') + Math.abs(d).toFixed(2);
+  function setFill(inp, v, min, max) { inp.style.setProperty('--pct', Math.max(0, Math.min(100, ((v - min) / (max - min)) * 100)) + '%'); }
+  function renderChem() {
+    const container = document.getElementById('chem-grid'); if (!container) return;
+    container.innerHTML = '';
+    CHANNELS.forEach(c => {
+      const k = 'chem_baseline_' + c.ch;
+      const row = document.createElement('div'); row.className = 'chrow';
+      row.innerHTML = `<div class="ch-meta"><span class="ch-ab">${c.ch}</span><span class="ch-name">${c.name}</span></div>` +
+        `<div class="ch-field"><input type="range" class="es-range" min="${CHEM_MIN}" max="${CHEM_MAX}" step="${CHEM_STEP}"><span class="ch-val">0.00</span><span class="ch-delta"></span></div>`;
+      container.appendChild(row);
+      const inp = row.querySelector('input');
+      inp.addEventListener('input', () => {
+        const nv = clampKey(k, parseFloat(inp.value));
+        values[k] = nv; dialCenter[k] = nv - dialOffsetFor(k); values['chem_init_' + c.ch] = nv;
+        updateChem(c.ch); refreshDirty();
+      });
+      chemEls[c.ch] = { row, inp, val: row.querySelector('.ch-val'), delta: row.querySelector('.ch-delta') };
+    });
+    applyChemDisplay(false);
+  }
+  function updateChem(ch) {
+    const k = 'chem_baseline_' + ch, e = chemEls[ch]; if (!e) return;
+    const v = values[k];
+    e.inp.value = v; setFill(e.inp, v, CHEM_MIN, CHEM_MAX); e.val.textContent = fmtChem(v);
+    const d = v - personaBaseline(k), show = Math.abs(d) >= 0.005;
+    e.delta.textContent = show ? fmtDelta(d) : ''; e.delta.className = 'ch-delta' + (show ? (d > 0 ? ' up' : ' down') : '');
+    e.row.classList.toggle('off-base', show);
+  }
+  function applyChemDisplay() { CHANNELS.forEach(c => updateChem(c.ch)); }
+
+  /* =====================================================================
+     RENDER — generic category tabs
+     ===================================================================== */
+  const genReg = {};
+  function humanize(v) { v = +v; if (v < 60) return v + 's'; if (v < 3600) { const m = v / 60; return (Number.isInteger(m) ? m : m.toFixed(1)) + ' min'; } const h = v / 3600; return (Number.isInteger(h) ? h : h.toFixed(1)) + ' h'; }
+  function fmtVal(r, v) {
+    if (r.type === 'toggle') return (+v >= 0.5) ? 'On' : 'Off';
+    if (r.type === 'time') return humanize(v);
+    const step = +r.step;
+    if (Number.isInteger(step) && step >= 1) { const n = Math.round(+v); return n >= 1000 ? n.toLocaleString() : '' + n; }
+    const n = +v; return n < 0.1 ? n.toFixed(3) : n.toFixed(2);
+  }
+  const isChanged = k => Math.abs((+values[k]) - (+refDefault[k])) > 1e-9;
+  function genRow(r) {
+    if (r.type === 'group') { const g = document.createElement('div'); g.className = 'es-group'; g.innerHTML = `<span>${r.label}</span>` + (r.hint ? `<em>${r.hint}</em>` : ''); return g; }
+    const row = document.createElement('div');
+    row.className = 'es-row' + (r.type === 'master' || r.master ? ' es-master' : '') + (r.type === 'toggle' ? ' es-togglerow' : '');
+    row.innerHTML = `<div class="es-row-meta"><span class="es-lab"><span class="es-mod"></span>${r.label}</span>` + (r.hint ? `<span class="es-hint">${r.hint}</span>` : '') + `</div>`;
+    const ctrl = document.createElement('div'); ctrl.className = 'es-row-ctrl';
+    if (r.type === 'toggle') {
+      const t = document.createElement('button'); t.className = 'es-toggle' + (+values[r.key] >= 0.5 ? ' on' : ''); t.setAttribute('role', 'switch');
+      t.addEventListener('click', () => { if (!manualOpen) return; const nv = (+values[r.key] >= 0.5) ? 0 : 1; values[r.key] = nv; if (allKeys.indexOf(r.key) >= 0) dialCenter[r.key] = nv - dialOffsetFor(r.key); updateGen(r.key); refreshDirty(); });
+      ctrl.appendChild(t); genReg[r.key] = { row, toggle: t };
+    } else {
+      const inp = document.createElement('input'); inp.type = 'range'; inp.className = 'es-range'; inp.min = r.min; inp.max = r.max; inp.step = r.step; inp.value = values[r.key]; setFill(inp, +values[r.key], +r.min, +r.max);
+      inp.addEventListener('input', () => {
+        if (!manualOpen) { inp.value = values[r.key]; setFill(inp, +values[r.key], +r.min, +r.max); return; }
+        const nv = clampKey(r.key, parseFloat(inp.value)); values[r.key] = nv; if (allKeys.indexOf(r.key) >= 0) dialCenter[r.key] = nv - dialOffsetFor(r.key); updateGen(r.key); refreshDirty();
+      });
+      const val = document.createElement('span'); val.className = 'es-val'; val.textContent = fmtVal(r, values[r.key]);
+      ctrl.appendChild(inp); ctrl.appendChild(val); genReg[r.key] = { row, input: inp, val };
+    }
+    row.appendChild(ctrl); row.classList.toggle('changed', isChanged(r.key));
+    return row;
+  }
+  function updateGen(key) {
+    const e = genReg[key], r = rowMeta[key]; if (!e || !r) return;
+    if (e.input) { e.input.value = values[key]; setFill(e.input, +values[key], +r.min, +r.max); if (e.val) e.val.textContent = fmtVal(r, values[key]); }
+    if (e.toggle) e.toggle.classList.toggle('on', +values[key] >= 0.5);
+    e.row.classList.toggle('changed', isChanged(key));
+  }
+  function applyGenericDisplay() { Object.keys(genReg).forEach(updateGen); }
+  function genSection(sec) {
+    const card = document.createElement('div'); card.className = 'es-card';
+    const head = document.createElement('div'); head.className = 'es-card-head';
+    head.innerHTML = `<span class="es-num">${sec.num}</span><div class="es-ct"><div class="es-card-title">${sec.title}</div><div class="es-card-desc">${sec.desc || ''}</div></div><span class="es-chev">${chevSvg}</span>`;
+    const body = document.createElement('div'); body.className = 'es-card-body';
+    (sec.rows || []).forEach(r => body.appendChild(genRow(r)));
+    if ((sec.advanced || []).length) {
+      const adv = document.createElement('div'); adv.className = 'es-adv';
+      const cnt = (sec.advanced || []).filter(r => r.type !== 'group').length;
+      const tg = document.createElement('button'); tg.className = 'es-adv-toggle'; tg.innerHTML = `<span class="es-ac">${chevSvg}</span><span>Advanced</span><span class="es-advn">${cnt}</span>`;
+      const ab = document.createElement('div'); ab.className = 'es-adv-body';
+      (sec.advanced || []).forEach(r => ab.appendChild(genRow(r)));
+      tg.addEventListener('click', () => adv.classList.toggle('open'));
+      adv.appendChild(tg); adv.appendChild(ab); body.appendChild(adv);
+    }
+    card.appendChild(head); card.appendChild(body);
+    head.addEventListener('click', () => card.classList.toggle('collapsed'));
+    return card;
+  }
+  function renderGeneric(catId) {
+    const cat = SET.categories.find(c => c.id === catId);
+    const wrap = document.getElementById('tab-generic'); if (!wrap || !cat) return;
+    wrap.innerHTML = ''; Object.keys(genReg).forEach(k => delete genReg[k]);
+    const pn = (PERSONAS.find(p => p.id === persona) || {}).name || persona;
+    const note = document.createElement('div'); note.className = 'gen-note';
+    note.innerHTML = `<span class="ro-dot"></span><span>Read-only · these values are produced by <b>${pn}</b>'s Temperament dials. Switch on <b>Manual mode</b> (top right) to hand-tune them for this persona.</span>`;
+    wrap.appendChild(note);
+    if (cat.summary) { const b = document.createElement('div'); b.className = 'es-cat-blurb'; b.textContent = cat.summary; wrap.appendChild(b); }
+    (cat.sections || []).forEach(sec => wrap.appendChild(genSection(sec)));
+  }
+
+  /* ---- API keys (System) ---- */
+  function renderApiKeys() {
+    const wrap = document.getElementById('tab-generic'); if (!wrap) return;
+    wrap.innerHTML = ''; Object.keys(genReg).forEach(k => delete genReg[k]);
+    const cat = SET.categories.find(c => c.id === 'apikeys'); if (!cat) return;
+    if (cat.summary) { const b = document.createElement('div'); b.className = 'es-cat-blurb'; b.textContent = cat.summary; wrap.appendChild(b); }
+    const card = document.createElement('div'); card.className = 'es-card';
+    card.innerHTML = '<div class="es-card-head static"><span class="es-num">✦</span><div class="es-ct"><div class="es-card-title">Provider Keys</div><div class="es-card-desc">Stored on this machine; applied on restart. Leave a field blank to keep a saved key.</div></div></div>';
+    const body = document.createElement('div'); body.className = 'es-card-body api-body';
+    (cat.sections[0].rows || []).forEach(r => {
+      if (r.type !== 'apikey') return;
+      const isSet = !!secretsSet[r.key];
+      const ph = isSet ? '•••••••••• saved — leave blank to keep' : 'paste key…';
+      const row = document.createElement('div'); row.className = 'api-row';
+      row.innerHTML = `<div class="api-meta"><span class="api-name"><span class="api-dot ${isSet ? 'on' : ''}"></span>${r.label}</span><span class="api-hint">${r.hint || ''}</span></div>` +
+        `<div class="api-line"><input type="password" autocomplete="off" spellcheck="false" placeholder="${ph}"><button class="api-reveal" type="button" aria-label="Reveal key">${eyeSvg}</button></div>`;
+      body.appendChild(row);
+      const inp = row.querySelector('input'), rv = row.querySelector('.api-reveal'), dot = row.querySelector('.api-dot');
+      rv.addEventListener('click', () => { inp.type = inp.type === 'password' ? 'text' : 'password'; });
+      inp.addEventListener('input', () => { values[r.key] = inp.value; dot.classList.toggle('on', inp.value.trim().length > 0 || isSet); refreshDirty(); });
+    });
+    card.appendChild(body); wrap.appendChild(card);
+  }
+
+  /* =====================================================================
+     SCAFFOLD + TABS + RAIL + HEAD
+     ===================================================================== */
+  function buildScaffold() {
+    if (scaffolded) return;
+    const wrap = document.getElementById('cat-wrap'); if (!wrap) return;
+    wrap.innerHTML =
+      `<div class="st-head">` +
+        `<div class="ch-top"><div class="ch-id">` +
+          `<div class="es-ch-k" id="st-eyebrow">Persona</div>` +
+          `<div class="pdetail-name" id="st-name"></div>` +
+          `<div class="pdetail-tag" id="st-tag"></div></div>` +
+          `<div class="es-mode" id="st-mode"><div class="es-mode-text"><span class="es-mode-label">Manual mode</span>` +
+          `<span class="es-mode-state" id="st-modestate">Guided · dials only</span></div>` +
+          `<button class="es-toggle" id="st-manual" role="switch" aria-checked="false" aria-label="Manual mode"></button></div>` +
+        `</div>` +
+        `<div class="pdetail-note" id="st-note"></div>` +
+        `<nav class="tabbar" id="st-tabbar"></nav>` +
+      `</div>` +
+      `<div id="tab-temperament"><div class="es-card">` +
+        `<div class="es-card-head static"><span class="es-num">00</span>` +
+          `<div class="es-ct"><div class="es-card-title">Temperament</div>` +
+          `<div class="es-card-desc">Nine dials that shape the persona. Each rests where this persona naturally sits and quietly turns a whole bundle of underlying controls at once — turn one to lean the temperament that way.</div></div>` +
+          `<div class="es-tools"><span class="es-badge" id="st-chembadge"><i></i><span>off baseline</span></span>` +
+          `<button class="es-reset" id="st-personareset" title="Restore this persona's baseline">${resetSvg}</button></div>` +
+        `</div>` +
+        `<div class="es-card-body"><div class="trait-panel"><div class="trait-grid" id="trait-grid"></div>` +
+          `<div class="trait-cap">The notch on each dial marks where this persona rests; the needle is the current setting. Switch personas and the dials re-pose to match · turn a dial to lean from its rest, double-click to return.</div></div>` +
+          `<div class="manual-note"><span class="ro-dot"></span><span>Read-only · these values are set by the Temperament dials above. Switch on <b>Manual mode</b> (top right) to reveal and hand-tune the chemistry — and to make every other category editable too.</span></div>` +
+          `<div class="manual-body" id="manual-body" hidden>` +
+            `<p class="chem-intro">The nine neurochemical channels the dials write into — the resting baseline the brain relaxes toward. Turn a dial above and watch them move, or set any one by hand to override the macro layer for that channel. Deltas count from this persona's canonical baseline.</p>` +
+            `<div class="chem-cols" id="chem-grid"></div>` +
+            `<div class="chem-foot"><span><i class="up"></i> above persona baseline</span><span><i class="down"></i> below persona baseline</span></div>` +
+          `</div>` +
+        `</div></div></div>` +
+      `<div id="tab-generic" hidden></div>`;
+    document.getElementById('st-manual').addEventListener('click', () => setManual(!manualState[persona]));
+    document.getElementById('st-personareset').addEventListener('click', e => { e.stopPropagation(); resetPersona(); });
+    scaffolded = true;
+  }
+
+  function tabCats() { return SET.categories.filter(c => c.id !== 'apikeys'); }
+  function renderTabs() {
+    const bar = document.getElementById('st-tabbar'); if (!bar) return;
+    bar.innerHTML = '';
+    tabCats().forEach(cat => {
+      const label = cat.id === 'persona' ? 'Temperament' : cat.name;
+      const b = document.createElement('button'); b.className = 'tab' + (cat.id === activeTab ? ' on' : ''); b.dataset.t = cat.id;
+      b.innerHTML = `<span>${label}</span>` + (cat.id === 'persona' ? '' : `<span class="tlock">${lockSvg}</span>`);
+      b.addEventListener('click', () => selectTab(cat.id));
+      bar.appendChild(b);
+    });
+  }
+  function selectTab(id) {
+    activeTab = id; view = 'persona';
+    document.querySelectorAll('#st-tabbar .tab').forEach(t => t.classList.toggle('on', t.dataset.t === id));
+    const temp = document.getElementById('tab-temperament'), gen = document.getElementById('tab-generic');
+    const mode = document.getElementById('st-mode'); if (mode) mode.style.display = '';
+    if (id === 'persona') { if (temp) temp.hidden = false; if (gen) gen.hidden = true; }
+    else { if (temp) temp.hidden = true; if (gen) gen.hidden = false; renderGeneric(id); }
     if (scroll) scroll.scrollTop = 0;
   }
 
-  // ---- control row factory ----------------------------------------------
-  function makeRow(r) {
-    if (r.type === 'group') {
-      const g = document.createElement('div');
-      g.className = 'crow-group';
-      g.innerHTML = `<span class="g-label">${r.label}</span>` + (r.hint ? `<span class="g-hint">${r.hint}</span>` : '');
-      return g;
-    }
-    const row = document.createElement('div');
-    row.className = 'crow' + (r.type === 'master' ? ' master' : '') + (r.type === 'toggle' ? ' toggle' : '') + (r.master ? ' master' : '');
-
-    const metaEl = document.createElement('div');
-    metaEl.className = 'crow-meta';
-    const label = document.createElement('span');
-    label.className = 'crow-label';
-    label.innerHTML = `<span class="moddot"></span>${r.label}`;
-    metaEl.appendChild(label);
-    if (r.hint) { const h = document.createElement('span'); h.className = 'crow-hint'; h.textContent = r.hint; metaEl.appendChild(h); }
-    row.appendChild(metaEl);
-
-    const ctrl = document.createElement('div');
-    ctrl.className = 'crow-control';
-
-    if (r.type === 'apikey') {
-      const input = document.createElement('input');
-      input.type = 'password';
-      input.autocomplete = 'off';
-      input.spellcheck = false;
-      input.value = values[r.key] || '';
-      input.placeholder = secretsSet[r.key] ? '•••••••••• saved — leave blank to keep' : 'not set';
-      input.style.cssText = 'flex:1 1 240px;min-width:200px;padding:7px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:inherit;font:inherit;';
-      input.addEventListener('input', () => setValue(r.key, input.value));
-      ctrl.appendChild(input);
-      row.appendChild(ctrl);
-      reg[r.key] = { rowEl: row, input, isText: true };
-    } else if (r.type === 'toggle') {
-      const tog = document.createElement('button');
-      tog.className = 'tog' + (+values[r.key] >= 0.5 ? ' on' : '');
-      tog.setAttribute('role', 'switch');
-      tog.addEventListener('click', () => {
-        const nv = (+values[r.key] >= 0.5) ? 0 : 1;
-        setValue(r.key, nv);
-        tog.classList.toggle('on', nv === 1);
-      });
-      ctrl.appendChild(tog);
-      row.appendChild(ctrl);
-      reg[r.key] = { rowEl: row, toggle: tog };
-    } else {
-      const input = document.createElement('input');
-      input.type = 'range'; input.className = 'r';
-      input.min = r.min; input.max = r.max; input.step = r.step;
-      input.value = values[r.key];
-      setFill(input, r, values[r.key]);
-      input.addEventListener('input', () => { setValue(r.key, parseFloat(input.value)); applyCoupling(r.key); });
-      ctrl.appendChild(input);
-      const valEl = document.createElement('span'); valEl.className = 'crow-val'; valEl.textContent = fmt(r, values[r.key]);
-      ctrl.appendChild(valEl);
-      row.appendChild(ctrl);
-      reg[r.key] = { rowEl: row, input, valEl };
-    }
-    refreshRow(r.key);
-    return row;
+  function renderPersonaRail() {
+    const rail = document.getElementById('rail-nav'); if (!rail) return;
+    rail.innerHTML = '';
+    const list = document.createElement('div'); list.className = 'pmenu-list';
+    PERSONAS.forEach(p => {
+      const c = document.createElement('button'); c.className = 'pmenu-item'; c.dataset.p = p.id;
+      c.innerHTML = `<div class="pmenu-name">${p.name}</div><div class="pmenu-tag">${p.tag}</div>`;
+      c.addEventListener('click', () => { if (view === 'persona' && p.id === persona) return; selectPersona(p.id); });
+      list.appendChild(c);
+    });
+    rail.appendChild(list);
+    const sh = document.createElement('div'); sh.className = 'pmenu-syshead'; sh.textContent = 'System'; rail.appendChild(sh);
+    const api = document.createElement('button'); api.className = 'pmenu-item sys'; api.dataset.sys = 'apikeys';
+    api.innerHTML = '<div class="pmenu-name">API Keys</div><div class="pmenu-tag">Models · voice · services</div>';
+    api.addEventListener('click', () => selectSystem());
+    rail.appendChild(api);
+    syncRailSel();
+  }
+  function syncRailSel() {
+    document.querySelectorAll('#rail-nav .pmenu-item:not(.sys)').forEach(c => c.classList.toggle('sel', view === 'persona' && c.dataset.p === persona));
+    document.querySelectorAll('#rail-nav .pmenu-item.sys').forEach(c => c.classList.toggle('sel', view === 'system'));
   }
 
-  function setFill(input, r, v) {
-    const pct = ((+v - +r.min) / (+r.max - +r.min)) * 100;
-    input.style.setProperty('--pct', Math.max(0, Math.min(100, pct)) + '%');
+  function syncPersonaHead() {
+    const p = PERSONAS.find(x => x.id === persona) || { name: persona, tag: '', note: '' };
+    const set = (id, t) => { const el = document.getElementById(id); if (el != null && el) el.textContent = t; };
+    set('st-eyebrow', 'Persona'); set('st-name', p.name); set('st-tag', p.tag); set('st-note', p.note);
+    const bt = document.getElementById('bar-title'); if (bt) bt.textContent = p.name;
+    const bb = document.getElementById('bar-blurb'); if (bb) bb.textContent = p.tag || '';
   }
 
-  function setValue(key, v) {
-    values[key] = v;
-    const r = meta[key], e = reg[key];
-    if (e) {
-      if (e.input) { e.input.value = v; if (!e.isText) setFill(e.input, r, v); }
-      if (e.valEl) e.valEl.textContent = fmt(r, v);
-      if (e.toggle) e.toggle.classList.toggle('on', +v >= 0.5);
-    }
-    refreshRow(key);
-    refreshSection(sectionOf[key]);
-    refreshDirty();
+  function selectPersona(id) {
+    persona = id; view = 'persona';
+    if (!(persona in manualState)) manualState[persona] = false;
+    values.persona_name = id;
+    computeSpread(); seedDials(true);
+    renderDials(); renderChem(); applyChemDisplay(false);
+    syncPersonaHead(); renderTabs(); refreshManualUI();
+    if (activeTab !== 'persona') renderGeneric(activeTab);
+    selectTab(activeTab); syncRailSel(); refreshDirty();
+  }
+  function selectSystem() {
+    view = 'system'; syncRailSel();
+    const tb = document.getElementById('st-tabbar'); if (tb) tb.hidden = true;
+    const temp = document.getElementById('tab-temperament'); if (temp) temp.hidden = true;
+    const gen = document.getElementById('tab-generic'); if (gen) gen.hidden = false;
+    const mode = document.getElementById('st-mode'); if (mode) mode.style.display = 'none';
+    document.getElementById('settings-page') && document.getElementById('settings-page').classList.remove('manual');
+    const set = (id, t) => { const el = document.getElementById(id); if (el) el.textContent = t; };
+    set('st-eyebrow', 'System'); set('st-name', 'API Keys'); set('st-tag', '');
+    set('st-note', 'Provider credentials for language models, voice, and background services — shared across every persona, not part of any one’s temperament.');
+    const bt = document.getElementById('bar-title'); if (bt) bt.textContent = 'API Keys';
+    const bb = document.getElementById('bar-blurb'); if (bb) bb.textContent = 'System · shared providers';
+    renderApiKeys();
+    if (scroll) scroll.scrollTop = 0;
   }
 
-  function refreshRow(key) { const e = reg[key]; if (e && e.rowEl) e.rowEl.classList.toggle('changed', isDirty(key)); }
-
-  function refreshSection(secId) {
-    const se = sectionEls[secId]; if (!se) return;
-    const dirtyN = se.keys.filter(isDirty).length;
-    const offDef = se.keys.some(k => !eqDef(k));
-    if (se.badge) { se.badge.classList.toggle('on', dirtyN > 0); if (dirtyN > 0) se.badgeText.textContent = dirtyN + ' unsaved'; }
-    if (se.resetBtn) se.resetBtn.classList.toggle('on', offDef);
-    if (se.advChanged) se.advChanged.classList.toggle('on', se.advKeys.some(isDirty));
+  /* =====================================================================
+     MANUAL MODE / DIRTY / RESET
+     ===================================================================== */
+  function refreshManualUI() {
+    const on = view === 'persona' && !!manualState[persona];
+    manualOpen = on;
+    const tg = document.getElementById('st-manual'); if (tg) { tg.classList.toggle('on', on); tg.setAttribute('aria-checked', on ? 'true' : 'false'); }
+    const mb = document.getElementById('manual-body'); if (mb) mb.hidden = !on;
+    const sp = document.getElementById('settings-page'); if (sp) sp.classList.toggle('manual', on);
+    const ms = document.getElementById('st-modestate'); if (ms) ms.textContent = on ? 'Manual · this persona' : 'Guided · dials only';
+    if (on) applyChemDisplay(false);
   }
+  function setManual(v) { manualState[persona] = v; refreshManualUI(); }
 
   function refreshDirty() {
-    cats.forEach(cat => {
-      const keys = Object.keys(catOf).filter(k => catOf[k] === cat.id);
-      const d = keys.some(isDirty);
-      if (navEls[cat.id]) navEls[cat.id].dot.classList.toggle('on', d);
-    });
-    const total = Object.keys(values).filter(isDirty).length;
-    if (dirtyPill) { dirtyPill.classList.toggle('on', total > 0); dirtyText.textContent = total + ' unsaved'; }
-    if (saveBtn) saveBtn.classList.toggle('idle', total === 0);
+    const n = dirtyCount();
+    if (dirtyPill) dirtyPill.classList.toggle('on', n > 0);
+    if (dirtyText) dirtyText.textContent = n + ' unsaved';
+    if (saveBtn) saveBtn.classList.toggle('idle', n === 0);
+    const offBase = allKeys.some(k => Math.abs((+values[k]) - personaBaseline(k)) > 0.005) || TRAIT_DIALS.some(d => moved(d.id));
+    const pr = document.getElementById('st-personareset'); if (pr) pr.classList.toggle('on', offBase);
+    const cb = document.getElementById('st-chembadge'); if (cb) cb.classList.toggle('on', CHANNELS.some(c => Math.abs((+values['chem_baseline_' + c.ch]) - PERSONA_CHEM[persona][c.ch]) > 0.005));
+  }
+  function resetPersona() {
+    CHANNELS.forEach(c => { values['chem_baseline_' + c.ch] = PERSONA_CHEM[persona][c.ch]; values['chem_init_' + c.ch] = PERSONA_CHEM[persona][c.ch]; });
+    allKeys.forEach(k => { if (!isChem(k)) values[k] = refDefault[k]; });
+    TRAIT_DIALS.forEach(d => { dial[d.id] = rest[d.id]; });
+    allKeys.forEach(k => { dialCenter[k] = +values[k]; });
+    TRAIT_DIALS.forEach(d => paintDial(d.id)); applyChemDisplay(false); applyGenericDisplay(); refreshDirty();
   }
 
-  // ---- master couplings -------------------------------------------------
-  const DECAY_KEYS = ['valence_to_DA_decay','threat_to_GABA_decay','novelty_to_ACh_decay','arousal_homeostat_decay','satiation_inhibitor_decay'];
-  const DECAY_CENTER = 0.876;
-  const SUPPRESS = { ach_suppression_weight: 1.0, glu_suppression_weight: 0.30 };
-  const LR_DEF = 0.02, WS_DEF = 0.01, LR_COUPLE = 0.4;
-  // master-expressiveness (ported from the app — the design omitted this)
-  const VOICE_BASE = { stability: 0.45, style: 0.40, speed: 1.0 };
-  const VOICE_OVERRIDES = {
-    threat:   { voice_stability_threat:   0.65, voice_style_threat:   0.25, voice_speed_threat:   0.95 },
-    bright:   { voice_stability_bright:   0.35, voice_style_bright:   0.55, voice_speed_bright:   1.05 },
-    low_mood: { voice_stability_low_mood: 0.55, voice_style_low_mood: 0.30, voice_speed_low_mood: 0.93 },
-  };
-  const vmaster = {};
-
-  function applyMasterHomeostasis(v) {
-    const offset = v - DECAY_CENTER;
-    DECAY_KEYS.forEach(k => {
-      const r = meta[k]; if (!r) return;
-      setValue(k, +Math.max(0.5, Math.min(0.99, r.def + offset)).toFixed(3));
-    });
-  }
-  function applyMasterSuppression(scale) {
-    for (const [k, base] of Object.entries(SUPPRESS)) {
-      const r = meta[k]; if (!r) continue;
-      setValue(k, +Math.max(+r.min, Math.min(+r.max, base * scale)).toFixed(3));
-    }
-  }
-  function applyMasterExpressiveness(scale) {
-    for (const overrideMap of Object.values(VOICE_OVERRIDES)) {
-      for (const [k, overrideVal] of Object.entries(overrideMap)) {
-        const dim = (k.match(/_(stability|style|speed)_/) || [])[1] || 'style';
-        const baseKey = 'voice_' + dim + '_default';
-        const baseVal = (baseKey in values) ? +values[baseKey] : VOICE_BASE[dim];
-        const delta = overrideVal - VOICE_BASE[dim];
-        const nv = Math.max(0, Math.min(1.5, baseVal + delta * scale));
-        // voice override keys have no slider — write straight to values so Save sends them
-        values[k] = +nv.toFixed(2);
-      }
-    }
-    refreshDirty();
-  }
-  function applyCoupling(key) {
-    if (key === 'hebbian_delta') {
-      const ratio = values.hebbian_delta / LR_DEF;
-      const r = meta.decay_toward_rest_rate;
-      setValue('decay_toward_rest_rate', +Math.max(+r.min, Math.min(+r.max, WS_DEF / Math.pow(ratio || 1e-6, LR_COUPLE))).toFixed(3));
-    } else if (key === 'decay_toward_rest_rate') {
-      const ratio = WS_DEF / Math.max(0.001, values.decay_toward_rest_rate);
-      const r = meta.hebbian_delta;
-      setValue('hebbian_delta', +Math.max(+r.min, Math.min(+r.max, LR_DEF * Math.pow(ratio, LR_COUPLE))).toFixed(3));
-    }
-    if (DECAY_KEYS.includes(key) && vmaster['master-homeostasis']) {
-      syncVMaster('master-homeostasis', DECAY_KEYS.reduce((a, k) => a + (+values[k]), 0) / DECAY_KEYS.length);
-    }
-    if (Object.keys(SUPPRESS).includes(key) && vmaster['master-suppression']) {
-      syncVMaster('master-suppression', (+values.ach_suppression_weight) / SUPPRESS.ach_suppression_weight);
-    }
-  }
-  function syncVMaster(id, v) {
-    const m = vmaster[id]; if (!m) return;
-    v = Math.max(+m.r.min, Math.min(+m.r.max, v));
-    m.input.value = v; setFill(m.input, m.r, v);
-    if (m.valEl) m.valEl.textContent = (+v).toFixed(m.r.step < 0.1 ? 3 : 2);
-  }
-  function makeVirtualMaster(r) {
-    const row = document.createElement('div'); row.className = 'crow master';
-    const metaEl = document.createElement('div'); metaEl.className = 'crow-meta';
-    metaEl.innerHTML = `<span class="crow-label"><span class="moddot"></span>${r.label}</span>` + (r.hint ? `<span class="crow-hint">${r.hint}</span>` : '');
-    row.appendChild(metaEl);
-    const ctrl = document.createElement('div'); ctrl.className = 'crow-control';
-    const input = document.createElement('input'); input.type = 'range'; input.className = 'r';
-    input.min = r.min; input.max = r.max; input.step = r.step;
-    let init = r.def;
-    if (r.key === 'master-homeostasis') init = DECAY_KEYS.reduce((a,k)=>a+(+values[k]),0)/DECAY_KEYS.length;
-    if (r.key === 'master-suppression') init = (+values.ach_suppression_weight) / SUPPRESS.ach_suppression_weight;
-    input.value = init; setFill(input, r, init);
-    ctrl.appendChild(input);
-    const valEl = document.createElement('span'); valEl.className = 'crow-val'; valEl.textContent = (+init).toFixed(r.step < 0.1 ? 3 : 2);
-    ctrl.appendChild(valEl);
-    input.addEventListener('input', () => {
-      const v = parseFloat(input.value); setFill(input, r, v); valEl.textContent = v.toFixed(r.step < 0.1 ? 3 : 2);
-      if (r.key === 'master-homeostasis') applyMasterHomeostasis(v);
-      else if (r.key === 'master-suppression') applyMasterSuppression(v);
-      else if (r.key === 'master-expressiveness') applyMasterExpressiveness(v);
-    });
-    row.appendChild(ctrl);
-    vmaster[r.key] = { input, valEl, r };
-    return row;
-  }
-
-  // ---- section card -----------------------------------------------------
-  function makeSection(sec) {
-    const card = document.createElement('div'); card.className = 'scard fade-in';
-    const head = document.createElement('div'); head.className = 'scard-head';
-    head.innerHTML =
-      `<span class="scard-num">${sec.num}</span>` +
-      `<div class="scard-titles"><div class="scard-title">${sec.title}</div><div class="scard-desc">${sec.desc || ''}</div></div>` +
-      `<div class="scard-tools">` +
-        `<span class="changed-badge"><span class="chip"></span><span class="badge-text">0 unsaved</span></span>` +
-        `<button class="scard-reset" title="Reset this section to defaults">${svg(ICONS.reset, 2)}</button>` +
-        `<span class="scard-chev">${svg(ICONS.chev, 2.2)}</span>` +
-      `</div>`;
-    card.appendChild(head);
-
-    const body = document.createElement('div'); body.className = 'scard-body';
-    const allKeys = [...(sec.rows||[]), ...(sec.advanced||[])].filter(r => r.key && r.type !== 'group').map(r => r.key);
-    const advKeys = (sec.advanced||[]).filter(r => r.key && r.type !== 'group').map(r => r.key);
-
-    (sec.rows || []).forEach(r => body.appendChild((r.type === 'master' && r.virtual) ? makeVirtualMaster(r) : makeRow(r)));
-
-    let advChanged = null;
-    if ((sec.advanced || []).length) {
-      const adv = document.createElement('div'); adv.className = 'adv';
-      const cnt = (sec.advanced || []).filter(r => r.type !== 'group').length;
-      const tog = document.createElement('button'); tog.className = 'adv-toggle';
-      tog.innerHTML = `<span class="chev">${svg(ICONS.chev, 2.2)}</span><span>Advanced</span><span class="adv-changed"></span><span class="adv-count">${cnt}</span>`;
-      advChanged = tog.querySelector('.adv-changed');
-      const abody = document.createElement('div'); abody.className = 'adv-body';
-      if (sec.custom === 'personaChem') renderChemCols(abody, sec.advanced);
-      else (sec.advanced || []).forEach(r => abody.appendChild((r.type === 'master' && r.virtual) ? makeVirtualMaster(r) : makeRow(r)));
-      tog.addEventListener('click', () => adv.classList.toggle('open'));
-      adv.appendChild(tog); adv.appendChild(abody); body.appendChild(adv);
-    }
-    card.appendChild(body);
-
-    head.addEventListener('click', (e) => { if (e.target.closest('.scard-reset')) return; card.classList.toggle('collapsed'); });
-    const resetBtn = head.querySelector('.scard-reset');
-    resetBtn.addEventListener('click', (e) => { e.stopPropagation(); resetSection(sec); });
-
-    sectionEls[sec.id] = { badge: head.querySelector('.changed-badge'), badgeText: head.querySelector('.badge-text'), resetBtn, keys: allKeys, advKeys, advChanged };
-    refreshSection(sec.id);
-    return card;
-  }
-
-  function renderChemCols(container, rows) {
-    // Consolidated view: one set of "resting chemistry" sliders (the baseline
-    // trait). Boot levels follow the baseline by default; the rare case of a
-    // different at-boot value lives behind a sub-disclosure.
-    const baseRows = rows.filter(r => r.key && r.key.indexOf('chem_baseline_') === 0);
-    const initRows = rows.filter(r => r.key && r.key.indexOf('chem_init_') === 0);
-
-    // Start in "follow" mode unless the saved boot values already differ.
-    let followBaseline = baseRows.every(r => {
-      const ch = r.key.slice('chem_baseline_'.length);
-      return +values['chem_init_' + ch] === +values['chem_baseline_' + ch];
-    });
-
-    const wrap = document.createElement('div'); wrap.className = 'chem-cols';
-    const col = document.createElement('div');
-    const h = document.createElement('div'); h.className = 'crow-group';
-    h.innerHTML = `<span class="g-label">Resting chemistry — the trait the brain holds and relaxes toward</span>`;
-    col.appendChild(h);
-    baseRows.forEach(r => {
-      const rowEl = makeRow(r);
-      const input = rowEl.querySelector('input.r');
-      if (input) {
-        const ch = r.key.slice('chem_baseline_'.length);
-        input.addEventListener('input', () => {
-          if (followBaseline) setValue('chem_init_' + ch, parseFloat(input.value));
-        });
-      }
-      col.appendChild(rowEl);
-    });
-    wrap.appendChild(col);
-    container.appendChild(wrap);
-
-    if (!initRows.length) return;
-
-    // Sub-disclosure: independent at-boot levels.
-    const advWrap = document.createElement('div'); advWrap.className = 'chem-boot';
-    const tog = document.createElement('button'); tog.className = 'chem-boot-toggle';
-    tog.innerHTML = `<span class="chev">${svg(ICONS.chev, 2.2)}</span><span>Set boot levels separately</span>`;
-    const bootBody = document.createElement('div'); bootBody.className = 'chem-boot-body';
-    const note = document.createElement('div'); note.className = 'chem-boot-note';
-    note.textContent = 'By default the brain boots at its resting baseline. Set different at-boot values here for a brain that starts elevated (or low) and settles.';
-    bootBody.appendChild(note);
-    initRows.forEach(r => bootBody.appendChild(makeRow(r)));
-    advWrap.appendChild(tog); advWrap.appendChild(bootBody);
-
-    if (!followBaseline) advWrap.classList.add('open');
-    tog.addEventListener('click', () => {
-      const willOpen = !advWrap.classList.contains('open');
-      advWrap.classList.toggle('open', willOpen);
-      followBaseline = !willOpen;
-      // when re-following, snap boot back to the resting baseline
-      if (followBaseline) {
-        baseRows.forEach(r => {
-          const ch = r.key.slice('chem_baseline_'.length);
-          setValue('chem_init_' + ch, +values['chem_baseline_' + ch]);
-        });
-      }
-    });
-    container.appendChild(advWrap);
-  }
-
-  function resetSection(sec) {
-    [...(sec.rows||[]), ...(sec.advanced||[])].forEach(r => { if (r.key && r.type !== 'group') setValue(r.key, r.def); });
-    if (vmaster['master-homeostasis'] && sec.id === 'sec-2') syncVMaster('master-homeostasis', DECAY_CENTER);
-    if (vmaster['master-suppression'] && sec.id === 'sec-4') syncVMaster('master-suppression', 1.0);
-    if (vmaster['master-expressiveness'] && sec.id === 'sec-7') syncVMaster('master-expressiveness', 1.0);
-  }
-
-  // ---- persona category (LIVE) -----------------------------------------
-  function _voiceOptions() {
-    // Mirror the header voice picker's options so the catalog matches the app.
-    const src = document.getElementById('voice-select');
-    const out = [];
-    if (src) [...src.options].forEach(o => { if (o.value) out.push({ value: o.value, label: o.textContent }); });
-    return out;
-  }
-  function _updateHeaderBadge(name) {
-    const badge = document.getElementById('persona-header-badge');
-    if (!badge) return;
-    if (name) { badge.textContent = name.replace(/^The\s+/i, ''); badge.classList.remove('neutral'); }
-    else { badge.textContent = 'Default'; badge.classList.add('neutral'); }
-  }
-
-  function renderPersona(cat, grid) {
-    // intro cards
-    const intro = document.createElement('div'); intro.className = 'persona-intro fade-in';
-    const cardsWrap = document.createElement('div'); cardsWrap.className = 'persona-cards';
-    function selectPersona(p) {
-      values.persona_select = p ? p.id : '';
-      values.persona_name = p ? p.id : '';
-      if (p) {
-        const chem = PERSONA_CHEM[p.id] || {};
-        PERSONA_CHANNELS.forEach(ch => {
-          if ('chem_baseline_' + ch in values) setValue('chem_baseline_' + ch, chem[ch]);
-          if ('chem_init_' + ch in values) setValue('chem_init_' + ch, chem[ch]);
-        });
-        if ('persona_born' in defaults || 'persona_born' in values) values.persona_born = new Date().toISOString();
-      } else {
-        PERSONA_CHANNELS.forEach(ch => {
-          if ('chem_baseline_' + ch in defaults) setValue('chem_baseline_' + ch, defaults['chem_baseline_' + ch]);
-          if ('chem_init_' + ch in defaults) setValue('chem_init_' + ch, defaults['chem_init_' + ch]);
-        });
-        values.persona_born = '';
-      }
-      cardsWrap.querySelectorAll('.pcard').forEach(x => x.classList.toggle('sel', p && x.dataset.id === p.id));
-      statusEl.innerHTML = p ? `Active persona: <b>${p.name}</b> — ${p.tag}` : `<b>Neutral</b> — default chemistry · no persona set`;
-      _updateHeaderBadge(p ? p.id : '');
-      refreshDirty();
-    }
-    S.personas.forEach(p => {
-      const c = document.createElement('button');
-      c.className = 'pcard' + (values.persona_select === p.id ? ' sel' : '');
-      c.dataset.id = p.id;
-      c.innerHTML = `<div class="pcard-name">${p.name}</div><div class="pcard-tag">${p.tag}</div><div class="pcard-note">${p.note}</div>`;
-      c.addEventListener('click', () => selectPersona(p));
-      cardsWrap.appendChild(c);
-    });
-    intro.appendChild(cardsWrap);
-    grid.appendChild(intro);
-
-    // bar: status + neutral + voice + decay model
-    const bar = document.createElement('div'); bar.className = 'persona-bar fade-in';
-    const cur = S.personas.find(p => p.id === values.persona_select);
-    var statusEl = document.createElement('div'); statusEl.className = 'persona-status';
-    statusEl.innerHTML = cur ? `Active persona: <b>${cur.name}</b> — ${cur.tag}` : `<b>Neutral</b> — default chemistry · no persona set`;
-    bar.appendChild(statusEl);
-
-    const neutralBtn = document.createElement('button'); neutralBtn.className = 'persona-neutral-btn'; neutralBtn.textContent = 'Return to neutral';
-    neutralBtn.addEventListener('click', () => selectPersona(null));
-    bar.appendChild(neutralBtn);
-
-    const sp = document.createElement('div'); sp.className = 'spacer'; bar.appendChild(sp);
-
-    // (Floor-decay mode was removed — chemistry always decays toward baseline.)
-
-    // voice (real catalog, mirrored from header)
-    const voiceField = document.createElement('div'); voiceField.className = 'persona-field';
-    voiceField.innerHTML = `<label>Voice</label>`;
-    const sel = document.createElement('select'); sel.className = 'sel-input';
-    const noOpt = document.createElement('option'); noOpt.value = ''; noOpt.textContent = '— no preference —'; sel.appendChild(noOpt);
-    _voiceOptions().forEach(v => { const o = document.createElement('option'); o.value = v.value; o.textContent = v.label; sel.appendChild(o); });
-    sel.value = values.persona_voice || '';
-    sel.addEventListener('change', () => {
-      values.persona_voice = sel.value;
-      values.persona_voice_id = sel.value;
-      const name = values.persona_name || values.persona_select || '';
-      if (name) values[personaSlug(name)] = sel.value;
-      refreshDirty();
-    });
-    voiceField.appendChild(sel);
-    bar.appendChild(voiceField);
-
-    grid.appendChild(bar);
-  }
-
-  // ---- category render --------------------------------------------------
-  function renderCat(id) {
-    const cat = cats.find(c => c.id === id);
-    document.getElementById('bar-title').textContent = cat.name;
-    document.getElementById('bar-blurb').textContent = cat.blurb || '';
-    const wrap = document.getElementById('cat-wrap'); wrap.innerHTML = '';
-    const grid = document.createElement('div'); grid.className = 'cat-grid';
-
-    if (cat.summary) {
-      const s = document.createElement('div'); s.className = 'cat-summary fade-in';
-      s.innerHTML = `<div class="ico">${svg(ICONS[cat.icon] || ICONS.cpu)}</div><div class="txt"><div class="h">In plain language</div><p>${cat.summary}</p></div>`;
-      grid.appendChild(s);
-    }
-    if (cat.custom === 'persona') renderPersona(cat, grid);
-    (cat.sections || []).forEach(sec => grid.appendChild(makeSection(sec)));
-    wrap.appendChild(grid);
-    refreshDirty();
-  }
-
-  // ---- boot -------------------------------------------------------------
+  /* =====================================================================
+     BOOT
+     ===================================================================== */
   function boot() {
-    if (!document.getElementById('rail-nav')) return; // settings markup not present
+    if (!document.getElementById('rail-nav')) return;
+    saveBtn = document.getElementById('settings-save-btn');
+    resetBtn = document.getElementById('settings-reset-btn');
+    restartBanner = document.getElementById('settings-restart-banner');
     dirtyPill = document.getElementById('dirty-pill');
     dirtyText = document.getElementById('dirty-text');
-    saveBtn = document.getElementById('settings-save-btn');
-    restartBanner = document.getElementById('settings-restart-banner');
     scroll = document.getElementById('scroll');
-
-    buildNav();
-    renderCat(activeCat);
-
     if (saveBtn) saveBtn.addEventListener('click', doSave);
-    // NOTE: the restart banner's click is handled by the app's existing header
-    // restart logic (it owns #settings-restart-banner). The engine only shows it.
-    const resetAll = document.getElementById('settings-reset-btn');
-    if (resetAll) resetAll.addEventListener('click', () => { if (confirm('Reset ALL settings across every category to their defaults?')) doResetAll(); });
-
-    // Expose an open hook for the SPA: refetch live values whenever settings opens.
+    if (resetBtn) resetBtn.addEventListener('click', () => { if (confirm('Reset ALL settings across every category to their defaults?')) doResetAll(); });
     window.__settingsUI = { open: loadFromServer, reload: loadFromServer };
-
-    // Initial load (also runs if the page boots straight into settings).
     loadFromServer();
   }
-
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
   else boot();
 })();

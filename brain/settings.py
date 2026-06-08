@@ -695,6 +695,15 @@ DEFAULTS: dict[str, float | int | str] = {
     "cma_session_warm_reuse": 1,
     # cma_max_reconnects: bounded SSE reconnect-and-replay attempts on stream drop.
     "cma_max_reconnects": 3,
+    # ── Section: Motor cortex (tool use) ──────────────────────────────────────
+    # motor_allowed_dirs: directories the motor cortex may read/write, one per
+    #   line. Locally this is left empty and the allowlist is inherited from
+    #   Claude Desktop's trusted folders. On a hosted tenant there is no Claude
+    #   Desktop, so this setting IS the allowlist — the user manages it here.
+    #   Merged with the BRAIN_MOTOR_PATHS env var at session setup. Empty + no
+    #   env = no filesystem access (fails closed). The app's own source root is
+    #   never auto-granted in multi-tenant mode.
+    "motor_allowed_dirs": "",
     # ── Section: API keys (user-supplied, set via the Settings → API Keys page) ─
     # Empty = fall back to the platform-provided env var (the resolution chain is
     # user key → platform default → none). When a value is set here it is applied

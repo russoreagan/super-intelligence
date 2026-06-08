@@ -35,19 +35,34 @@ window.SETTINGS = {
       custom: 'persona',
       sections: [
         {
-          id: 'sec-persona', num: '00', title: 'Resting Chemistry', custom: 'personaChem',
+          id: 'sec-traits', num: '00', title: 'Temperament',
+          desc: 'High-level trait dials. Each one nudges a bundle of underlying controls at once, on top of your chosen persona. Drop into Resting Chemistry (and the other categories) to hand-tune any single control.',
+          rows: [
+            { type: 'master', virtual: true, key: 'trait-intelligence', label: 'Intelligence',  hint: 'rate of learning, attention & reasoning depth — not raw model capability', min: 0, max: 1, step: 0.01, def: 0.5 },
+            { type: 'master', virtual: true, key: 'trait-empathy',      label: 'Empathy / Warmth', hint: 'bonding, contentment & warm delivery',                              min: 0, max: 1, step: 0.01, def: 0.5 },
+            { type: 'master', virtual: true, key: 'trait-sensitivity',  label: 'Sensitivity',   hint: 'emotional reactivity & how vividly moments imprint',                  min: 0, max: 1, step: 0.01, def: 0.5 },
+            { type: 'master', virtual: true, key: 'trait-composure',    label: 'Composure',     hint: 'calm & even-keeled — the counterweight to Sensitivity',              min: 0, max: 1, step: 0.01, def: 0.5 },
+            { type: 'master', virtual: true, key: 'trait-drive',        label: 'Drive',         hint: 'reward-seeking, motivation & persistence',                           min: 0, max: 1, step: 0.01, def: 0.5 },
+            { type: 'master', virtual: true, key: 'trait-creativity',   label: 'Creativity',    hint: 'disinhibition, loose association & novelty-seeking',                 min: 0, max: 1, step: 0.01, def: 0.5 },
+            { type: 'master', virtual: true, key: 'trait-humor',        label: 'Humor',         hint: 'playful, disinhibited & loose — approximated through chemistry',     min: 0, max: 1, step: 0.01, def: 0.5 },
+            { type: 'master', virtual: true, key: 'trait-sociability',  label: 'Sociability',   hint: 'outgoing & initiating — speaks up, thinks out loud, breaks silence', min: 0, max: 1, step: 0.01, def: 0.5 },
+            { type: 'master', virtual: true, key: 'trait-caution',      label: 'Caution',       hint: 'guarded & threat-alert (low = open & trusting)',                     min: 0, max: 1, step: 0.01, def: 0.5 },
+          ],
+        },
+        {
+          id: 'sec-persona', num: '01', title: 'Resting Chemistry', custom: 'personaChem',
           desc: 'The resting chemistry the brain holds and relaxes toward, for all nine neurochemicals.',
           rows: [], advanced: [
             { type: 'group', label: 'Resting baseline — the trait the brain relaxes toward' },
-            { type: 'range', key: 'chem_baseline_DA',   label: 'DA baseline',   min: 0, max: 0.8, step: 0.01, def: 0.30 },
-            { type: 'range', key: 'chem_baseline_ACh',  label: 'ACh baseline',  min: 0, max: 0.8, step: 0.01, def: 0.10 },
-            { type: 'range', key: 'chem_baseline_GABA', label: 'GABA baseline', min: 0, max: 0.8, step: 0.01, def: 0.02 },
-            { type: 'range', key: 'chem_baseline_Glu',  label: 'Glu baseline',  min: 0, max: 0.8, step: 0.01, def: 0.15 },
-            { type: 'range', key: 'chem_baseline_NE',   label: 'NE baseline',   min: 0, max: 0.8, step: 0.01, def: 0.15 },
-            { type: 'range', key: 'chem_baseline_5HT',  label: '5HT baseline',  min: 0, max: 0.8, step: 0.01, def: 0.20 },
-            { type: 'range', key: 'chem_baseline_CORT', label: 'CORT baseline', min: 0, max: 0.8, step: 0.01, def: 0.02 },
-            { type: 'range', key: 'chem_baseline_OXT',  label: 'OXT baseline',  min: 0, max: 0.8, step: 0.01, def: 0.15 },
-            { type: 'range', key: 'chem_baseline_AEA',  label: 'AEA baseline',  min: 0, max: 0.8, step: 0.01, def: 0.10 },
+            { type: 'range', key: 'chem_baseline_DA',   label: 'DA baseline',   min: 0, max: 0.8, step: 0.01, def: 0.30, delta: true },
+            { type: 'range', key: 'chem_baseline_ACh',  label: 'ACh baseline',  min: 0, max: 0.8, step: 0.01, def: 0.10, delta: true },
+            { type: 'range', key: 'chem_baseline_GABA', label: 'GABA baseline', min: 0, max: 0.8, step: 0.01, def: 0.02, delta: true },
+            { type: 'range', key: 'chem_baseline_Glu',  label: 'Glu baseline',  min: 0, max: 0.8, step: 0.01, def: 0.15, delta: true },
+            { type: 'range', key: 'chem_baseline_NE',   label: 'NE baseline',   min: 0, max: 0.8, step: 0.01, def: 0.15, delta: true },
+            { type: 'range', key: 'chem_baseline_5HT',  label: '5HT baseline',  min: 0, max: 0.8, step: 0.01, def: 0.20, delta: true },
+            { type: 'range', key: 'chem_baseline_CORT', label: 'CORT baseline', min: 0, max: 0.8, step: 0.01, def: 0.02, delta: true },
+            { type: 'range', key: 'chem_baseline_OXT',  label: 'OXT baseline',  min: 0, max: 0.8, step: 0.01, def: 0.15, delta: true },
+            { type: 'range', key: 'chem_baseline_AEA',  label: 'AEA baseline',  min: 0, max: 0.8, step: 0.01, def: 0.10, delta: true },
             { type: 'group', label: 'Starting level — the value at boot, before any input' },
             { type: 'range', key: 'chem_init_DA',   label: 'DA at boot',   min: 0, max: 0.8, step: 0.01, def: 0.50 },
             { type: 'range', key: 'chem_init_ACh',  label: 'ACh at boot',  min: 0, max: 0.8, step: 0.01, def: 0.20 },
@@ -398,8 +413,9 @@ window.SETTINGS = {
       sections: [
         {
           id: 'sec-17', num: '17', title: 'Motor Cortex / Autonomous Tasks',
-          desc: 'Ralph-loop limits for self-directed background jobs.',
+          desc: 'Directories the motor cortex may touch, and Ralph-loop limits for self-directed background jobs.',
           rows: [
+            { type: 'text', key: 'motor_allowed_dirs', label: 'Allowed Directories', hint: 'one absolute path per line — the only folders the motor cortex may read or write. Leave blank to allow none (running locally, Claude Desktop’s trusted folders are used instead).', rows: 4, placeholder: '/home/you/projects/my-app\n/home/you/scratch', def: '' },
             { type: 'range', key: 'ralph_max_total_attempts', label: 'Ralph Max Total Attempts', hint: 'hard cap on tool dispatches per job — prevents indefinite loops', min: 4, max: 32, step: 2, def: 12 },
           ],
           advanced: [],
@@ -420,5 +436,89 @@ window.SETTINGS = {
       ],
     },
 
+  ],
+};
+
+/* =====================================================================
+   TRAIT_DIALS — macro "Temperament" mapping
+   Each trait dial (0..1, neutral 0.5) nudges a bundle of real settings
+   keys around the active persona's center. `dir` is the push direction,
+   `span` the max excursion at a dial extreme; `min`/`max` are carried
+   inline so the engine can clamp without depending on a UI row existing
+   for the key. chem_baseline_* targets also drive their chem_init_*
+   sibling (handled in the engine), so a trait change is felt at boot and
+   persists as the resting trait.
+
+   Targets are restricted to keys that actually exist in the live
+   settings model (see settings-data rows above) so every dial both moves
+   a visible slider and produces a valid /settings patch. Keys that only
+   live in brain/settings.json but aren't surfaced here (e.g. DMN
+   rumination thresholds, prediction informativeness) are deferred to a
+   later pass rather than written blind.
+   ===================================================================== */
+window.TRAIT_DIALS = {
+  'trait-intelligence': [
+    { key: 'chem_baseline_ACh',          dir: +1, span: 0.12, min: 0,   max: 0.8 },
+    { key: 'surprise_ACh_weight',        dir: +1, span: 0.05, min: 0,   max: 0.4 },
+    { key: 'frontal_ach_weight',         dir: +1, span: 0.10, min: 0,   max: 0.6 },
+    { key: 'plasticity_arousal_weight',  dir: +1, span: 0.10, min: 0,   max: 1.0 },
+    { key: 'plasticity_intensity_weight',dir: +1, span: 0.08, min: 0,   max: 1.0 },
+  ],
+  'trait-empathy': [
+    { key: 'chem_baseline_OXT',          dir: +1, span: 0.15, min: 0,     max: 0.8  },
+    { key: 'chem_baseline_5HT',          dir: +1, span: 0.10, min: 0,     max: 0.8  },
+    { key: 'oxt_positive_increment',     dir: +1, span: 0.006,min: 0.001, max: 0.05 },
+    { key: 'voice_style_default',        dir: +1, span: 0.10, min: 0,     max: 1.0  },
+    { key: 'chem_baseline_CORT',         dir: -1, span: 0.04, min: 0,     max: 0.8  },
+  ],
+  'trait-sensitivity': [
+    { key: 'emotional_reactivity_scale', dir: +1, span: 0.40, min: 0.2, max: 3.0 },
+    { key: 'chem_baseline_NE',           dir: +1, span: 0.12, min: 0,   max: 0.8 },
+    { key: 'chem_baseline_Glu',          dir: +1, span: 0.08, min: 0,   max: 0.8 },
+    { key: 'plasticity_intensity_weight',dir: +1, span: 0.10, min: 0,   max: 1.0 },
+    { key: 'chem_baseline_GABA',         dir: -1, span: 0.06, min: 0,   max: 0.8 },
+  ],
+  'trait-composure': [
+    { key: 'chem_baseline_GABA',         dir: +1, span: 0.10, min: 0,     max: 0.8  },
+    { key: 'threat_to_GABA_decay',       dir: +1, span: 0.04, min: 0.5,   max: 0.99 },
+    { key: 'chem_baseline_CORT',         dir: -1, span: 0.06, min: 0,     max: 0.8  },
+    { key: 'emotional_reactivity_scale', dir: -1, span: 0.30, min: 0.2,   max: 3.0  },
+    { key: 'cort_threat_increment',      dir: -1, span: 0.008,min: 0.005, max: 0.08 },
+  ],
+  'trait-drive': [
+    { key: 'chem_baseline_DA',           dir: +1, span: 0.15, min: 0,   max: 0.8  },
+    { key: 'valence_to_DA_decay',        dir: +1, span: 0.03, min: 0.5, max: 0.99 },
+    { key: 'plasticity_arousal_weight',  dir: +1, span: 0.10, min: 0,   max: 1.0  },
+    { key: 'sentiment_DA_weight',        dir: +1, span: 0.06, min: 0,   max: 0.5  },
+  ],
+  'trait-creativity': [
+    { key: 'chem_baseline_ACh',          dir: +1, span: 0.08, min: 0,   max: 0.8 },
+    { key: 'chem_baseline_AEA',          dir: +1, span: 0.12, min: 0,   max: 0.8 },
+    { key: 'chem_baseline_GABA',         dir: -1, span: 0.06, min: 0,   max: 0.8 },
+    { key: 'surprise_ACh_weight',        dir: +1, span: 0.04, min: 0,   max: 0.4 },
+    { key: 'dmn_overlap_threshold',      dir: +1, span: 0.05, min: 0.1, max: 0.8 },
+  ],
+  'trait-humor': [
+    { key: 'chem_baseline_DA',           dir: +1, span: 0.10, min: 0, max: 0.8 },
+    { key: 'chem_baseline_AEA',          dir: +1, span: 0.10, min: 0, max: 0.8 },
+    { key: 'chem_baseline_ACh',          dir: +1, span: 0.05, min: 0, max: 0.8 },
+    { key: 'chem_baseline_GABA',         dir: -1, span: 0.05, min: 0, max: 0.8 },
+    { key: 'chem_baseline_CORT',         dir: -1, span: 0.05, min: 0, max: 0.8 },
+  ],
+  // ↑ = more outgoing/initiating: thinks more often, breaks silence sooner,
+  //     suppresses fewer thoughts, a touch more expressive delivery
+  'trait-sociability': [
+    { key: 'dmn_interval',               dir: -1, span: 8,    min: 5,   max: 120 },
+    { key: 'proactive_idle_threshold',   dir: -1, span: 90,   min: 30,  max: 600 },
+    { key: 'ach_suppression_weight',     dir: -1, span: 0.35, min: 0.1, max: 2.0 },
+    { key: 'voice_style_default',        dir: +1, span: 0.08, min: 0,   max: 1.0 },
+  ],
+  // ↑ = more guarded/threat-alert (↓ = open & trusting): reacts to subtler
+  //     hostility, stresses faster under threat, more vigilant, less default trust
+  'trait-caution': [
+    { key: 'hostility_GABA_threshold_high', dir: -1, span: 0.12,  min: 0.2,   max: 0.9  },
+    { key: 'cort_threat_increment',         dir: +1, span: 0.012, min: 0.005, max: 0.08 },
+    { key: 'ne_hostility_weight',           dir: +1, span: 0.06,  min: 0,     max: 0.4  },
+    { key: 'chem_baseline_OXT',             dir: -1, span: 0.08,  min: 0,     max: 0.8  },
   ],
 };
