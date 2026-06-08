@@ -374,6 +374,12 @@
       const t = document.createElement('button'); t.className = 'es-toggle' + (+values[r.key] >= 0.5 ? ' on' : ''); t.setAttribute('role', 'switch');
       t.addEventListener('click', () => { if (!manualOpen) return; const nv = (+values[r.key] >= 0.5) ? 0 : 1; values[r.key] = nv; if (allKeys.indexOf(r.key) >= 0) dialCenter[r.key] = nv - dialOffsetFor(r.key); updateGen(r.key); refreshDirty(); });
       ctrl.appendChild(t); genReg[r.key] = { row, toggle: t };
+    } else if (r.type === 'text') {
+      const ta = document.createElement('textarea'); ta.className = 'es-textarea'; ta.rows = r.rows || 4; ta.spellcheck = false;
+      ta.value = (values[r.key] != null) ? values[r.key] : ''; if (r.placeholder) ta.placeholder = r.placeholder;
+      ta.style.cssText = 'flex:1 1 100%;min-width:220px;padding:7px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:inherit;font:inherit;resize:vertical;';
+      ta.addEventListener('input', () => { if (!manualOpen) { ta.value = (values[r.key] != null) ? values[r.key] : ''; return; } values[r.key] = ta.value; refreshDirty(); });
+      ctrl.appendChild(ta); genReg[r.key] = { row, text: ta };
     } else {
       const inp = document.createElement('input'); inp.type = 'range'; inp.className = 'es-range'; inp.min = r.min; inp.max = r.max; inp.step = r.step; inp.value = values[r.key]; setFill(inp, +values[r.key], +r.min, +r.max);
       inp.addEventListener('input', () => {
@@ -389,6 +395,7 @@
   function updateGen(key) {
     const e = genReg[key], r = rowMeta[key]; if (!e || !r) return;
     if (e.input) { e.input.value = values[key]; setFill(e.input, +values[key], +r.min, +r.max); if (e.val) e.val.textContent = fmtVal(r, values[key]); }
+    if (e.text) e.text.value = (values[key] != null) ? values[key] : '';
     if (e.toggle) e.toggle.classList.toggle('on', +values[key] >= 0.5);
     e.row.classList.toggle('changed', isChanged(key));
   }
