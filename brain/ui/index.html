@@ -2215,6 +2215,52 @@ details[open].turn-log summary::before { transform: rotate(90deg); }
 }
 .user-dropdown-item:hover { background: var(--bg-2); color: oklch(0.65 0.18 25); }
 
+/* =====================================================================
+   SLEEPING STATE — cool, dimmed skin applied while the brain is asleep
+   ===================================================================== */
+@keyframes sleep-breathe {
+  0%, 100% { opacity: 0.4; }
+  50%      { opacity: 1; }
+}
+/* disposition reads "sleeping" with a calm indigo dot */
+body.sleeping #mood-dot {
+  background: oklch(0.62 0.10 280) !important;
+  box-shadow: 0 0 10px oklch(0.62 0.10 280 / 0.6) !important;
+  animation: sleep-breathe 4s ease-in-out infinite;
+}
+body.sleeping .iv-mood-name { color: oklch(0.70 0.08 280); }
+/* desaturate + dim the live readouts so they read as dormant */
+body.sleeping #chem-section,
+body.sleeping .brain-stage {
+  filter: saturate(0.4) brightness(0.82);
+  transition: filter 600ms ease;
+}
+/* status indicator breathes indigo instead of pulsing green */
+body.sleeping #ws-indicator {
+  background: oklch(0.62 0.10 280) !important;
+  box-shadow: 0 0 8px oklch(0.62 0.10 280 / 0.6) !important;
+  animation: sleep-breathe 4s ease-in-out infinite !important;
+}
+/* the sleep button stays lit indigo while asleep */
+body.sleeping .icon-btn-sleep {
+  color: oklch(0.72 0.12 280);
+  border-color: oklch(0.45 0.10 280);
+}
+/* consolidation narrative shown in the idle-thoughts feed */
+.sleep-consolidate { padding: 10px 4px 8px; display: flex; flex-direction: column; gap: 10px; }
+.sleep-consolidate-head {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 13px; color: oklch(0.74 0.08 280);
+}
+.sleep-consolidate-head svg { animation: sleep-breathe 4s ease-in-out infinite; }
+.sleep-consolidate-sub { font-size: 12px; line-height: 1.5; color: var(--fg-mute); }
+.sleep-steps { display: flex; flex-direction: column; gap: 6px; margin-top: 2px; }
+.sleep-step { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--fg-mute); }
+.sleep-step .sleep-step-dot {
+  width: 5px; height: 5px; border-radius: 50%;
+  background: oklch(0.62 0.10 280); flex-shrink: 0;
+}
+
 /* Gear button in header */
 .icon-btn {
   display: inline-flex;
@@ -4855,6 +4901,7 @@ function connect() {
   ws.onopen = () => {
     wsConnected = true;
     demoMode = false;
+    exitSleepState();  // brain reconnected → it's awake again
     const ind = document.getElementById('ws-indicator');
     const lbl = document.getElementById('status-label');
     const pill = document.getElementById('status-pill');
@@ -4877,7 +4924,7 @@ function connect() {
     const lbl = document.getElementById('status-label');
     ind.classList.remove('connected');
     ind.classList.remove('degraded');
-    if (lbl) lbl.textContent = 'Offline';
+    if (lbl) lbl.textContent = sleeping ? 'Sleeping' : 'Offline';
     if (!demoMode) setTimeout(connect, 2000);
   };
 
@@ -6480,11 +6527,62 @@ async function doRestart(btn) {
 restartBtn.addEventListener('click', () => doRestart(restartBtn));
 
 // Sleep: shut the brain's thoughts down and end the pod (does NOT log out).
+let sleeping = false;
+
+function enterSleepState() {
+  sleeping = true;
+  document.body.classList.add('sleeping');
+
+  // Disposition → sleeping
+  const moodName = document.getElementById('mood-name');
+  if (moodName) moodName.textContent = 'sleeping';
+
+  // Header active label → sleeping
+  const active = document.getElementById('active-label');
+  if (active) { active.textContent = 'sleeping'; active.classList.remove('lit'); }
+
+  // Status pill → Sleeping
+  const lbl = document.getElementById('status-label');
+  const ind = document.getElementById('ws-indicator');
+  if (lbl) lbl.textContent = 'Sleeping';
+  if (ind) ind.classList.remove('connected', 'degraded');
+
+  // Idle thoughts → what's happening during consolidation
+  const feed = document.getElementById('thoughts-feed');
+  if (feed) {
+    feed.innerHTML =
+      '<div class="sleep-consolidate">' +
+        '<div class="sleep-consolidate-head">' +
+          '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>' +
+          '<span>Consolidating…</span>' +
+        '</div>' +
+        '<div class="sleep-consolidate-sub">Winding down the day\'s thinking and writing it into long-term memory.</div>' +
+        '<div class="sleep-steps">' +
+          '<div class="sleep-step"><span class="sleep-step-dot"></span>Summarising what was learned this session</div>' +
+          '<div class="sleep-step"><span class="sleep-step-dot"></span>Updating the self-model</div>' +
+          '<div class="sleep-step"><span class="sleep-step-dot"></span>Strengthening the connections that worked</div>' +
+          '<div class="sleep-step"><span class="sleep-step-dot"></span>Ending the pod to save cost</div>' +
+        '</div>' +
+      '</div>';
+  }
+}
+
+function exitSleepState() {
+  if (!sleeping) return;
+  sleeping = false;
+  document.body.classList.remove('sleeping');
+  const active = document.getElementById('active-label');
+  if (active) active.textContent = 'awaiting input';
+  const feed = document.getElementById('thoughts-feed');
+  if (feed) feed.innerHTML = '<div class="log-empty">No thoughts yet…</div>';
+}
+
 sleepBtn.addEventListener('click', async () => {
   if (!confirm('Put the brain to sleep? This shuts down its thoughts and ends the pod. You stay logged in.')) return;
   sleepBtn.disabled = true;
   sleepBtn.style.opacity = '0.5';
   try { await fetch('/shutdown', { method: 'POST' }); } catch (_) {}
+  enterSleepState();
 });
 
 // User / account menu — logout operates independently of sleep.

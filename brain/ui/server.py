@@ -131,6 +131,16 @@ class UIServer:
             if claims is None or ui_auth.owner_mismatch(claims):
                 return ui_auth.unauthorized_response(request)
             request.state.user = claims
+            # Expose the EFFECTIVE access token (the freshly-refreshed one when the
+            # middleware just rotated it, else the cookie). Handlers that call out
+            # to Supabase as the user — e.g. the key-vault endpoints — must use this
+            # instead of request.cookies, which still holds the stale/expired token
+            # until the browser receives the new cookie set on the response below.
+            request.state.access_token = (
+                refreshed.get("access_token")
+                if refreshed
+                else request.cookies.get(ui_auth.ACCESS_COOKIE)
+            )
             response = await call_next(request)
             if refreshed:
                 ui_auth.set_session_cookies(
@@ -268,7 +278,7 @@ class UIServer:
             # configured + authenticated; otherwise fall back to local settings.json.
             # Never ship the secret VALUES to the browser — the fields load blank.
             vault_status = None
-            token = request.cookies.get(ui_auth.ACCESS_COOKIE)
+            token = getattr(request.state, "access_token", None)
             if token and os.environ.get("SUPABASE_URL") and os.environ.get("SUPABASE_ANON_KEY"):
                 try:
                     from brain import vault
@@ -304,7 +314,7 @@ class UIServer:
                 # unchanged (never let a blank wipe a saved secret).
                 from brain.settings import API_KEY_ENV
 
-                _token = request.cookies.get(ui_auth.ACCESS_COOKIE)
+                _token = getattr(request.state, "access_token", None)
                 _vault_on = bool(
                     _token
                     and os.environ.get("SUPABASE_URL")
