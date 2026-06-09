@@ -262,6 +262,12 @@ class Provisioner:
         # who hasn't connected at all in IDLE_TIMEOUT_S (default 24h). last_active
         # tracks client connections, not the brain's own DMN activity, so "no
         # connection for 24h" is the right abandoned signal.
+        # IDLE_TIMEOUT_S <= 0 disables reaping entirely (always-on): every tenant
+        # brain runs until it's explicitly slept. Used now while there's a small
+        # user count; revisit with real capacity management before scaling up.
+        if IDLE_TIMEOUT_S <= 0:
+            logger.info("[provisioner] idle reaping disabled — tenant brains run until slept")
+            return
         while True:
             await asyncio.sleep(300)
             now = time.time()
