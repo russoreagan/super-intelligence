@@ -35,6 +35,10 @@ h1 em { font-style: italic; color: var(--ink-2); }
 p { font-family: var(--serif); font-style: italic; font-size: 14px; color: var(--ink-3); margin-top: 10px; line-height: 1.5; text-wrap: pretty; }
 .slow { font-family: var(--mono); font-style: normal; font-size: 9.5px; letter-spacing: 0.08em; text-transform: uppercase;
   color: var(--ink-4); margin-top: 18px; min-height: 14px; }
+.signout { display: inline-block; margin-top: 22px; font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.12em;
+  text-transform: uppercase; color: var(--ink-4); text-decoration: none; border-bottom: 1px solid var(--line-soft);
+  padding-bottom: 2px; transition: color 150ms, border-color 150ms; }
+.signout:hover { color: var(--signal); border-color: var(--signal); }
 </style>
 </head>
 <body>
@@ -44,19 +48,27 @@ p { font-family: var(--serif); font-style: italic; font-size: 14px; color: var(-
     <h1>Waking <em>your</em> brain…</h1>
     <p>Booting your private instance. A cold start can take a couple of minutes while models load.</p>
     <p class="slow" id="slow"></p>
+    <a href="#" id="signout" class="signout">Sign out</a>
   </div>
 <script>
+  // Always-available escape so a slow/failed boot can never trap the user here.
+  document.getElementById("signout").addEventListener("click", async (e) => {
+    e.preventDefault();
+    try { await fetch("/auth/logout", { method: "POST" }); } catch (_) {}
+    location.href = "/login";
+  });
   let tries = 0;
   async function poll() {
     tries++;
     if (tries === 12) document.getElementById("slow").textContent = "Still warming up — loading models…";
-    if (tries === 30) document.getElementById("slow").textContent = "Taking longer than usual; hang tight.";
+    if (tries === 30) document.getElementById("slow").textContent = "Taking longer than usual — you can sign out and retry below.";
     try {
       const r = await fetch("/__brain_status", { headers: { accept: "application/json" } });
       const d = await r.json();
       if (d.ready) { location.reload(); return; }
     } catch (e) { /* keep polling */ }
-    setTimeout(poll, 1500);
+    // Gentle backoff (1.5s → 5s) so a long boot doesn't hammer the auth gate.
+    setTimeout(poll, Math.min(5000, 1500 + tries * 150));
   }
   poll();
 </script>
