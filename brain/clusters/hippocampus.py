@@ -1115,7 +1115,7 @@ class HippocampusCluster:
             if "- History:" not in content:
                 content += f"\n{hist_line}"
 
-            await self._schema.awrite(schema_file, content)
+            self._schema.write(schema_file, content)  # lock-free: caller already holds self._lock (awrite would deadlock)
             # Record the boost on the trace for instrumentation (P5)
             if boost != 1.0:
                 try:
@@ -1200,7 +1200,7 @@ class HippocampusCluster:
             else:
                 content += f"\n{fam_line}"
 
-            await self._schema.awrite(schema_file, content)
+            self._schema.write(schema_file, content)  # lock-free: caller already holds self._lock (awrite would deadlock)
 
     async def apply_relationship_decay_at_boot(self) -> None:
         """Apply the bond model's absence decay once at session boot.
@@ -1243,7 +1243,7 @@ class HippocampusCluster:
                     if not m_seen:
                         # First boot with the bond model: stamp now, nothing to decay yet.
                         content += f"\n- Last seen: {now:.0f}"
-                        await self._schema.awrite(schema_file, content)
+                        self._schema.write(schema_file, content)  # lock-free: caller already holds self._lock (awrite would deadlock)
                         continue
                     last_seen = float(m_seen.group(1))
                     elapsed_days = max(0.0, (now - last_seen) / 86400.0)
@@ -1285,7 +1285,7 @@ class HippocampusCluster:
                     else:
                         content += f"\n{fam_line}"
 
-                    await self._schema.awrite(schema_file, content)
+                    self._schema.write(schema_file, content)  # lock-free: caller already holds self._lock (awrite would deadlock)
                     logger.info(
                         "[Relationship] Boot decay %s: %.1f d → affection %.0f→%.0f, "
                         "bond %.1f→%.1f, familiarity=%s",
