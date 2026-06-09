@@ -46,6 +46,9 @@ class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
         # creating a new FastAPI server and attaches this session to the shared one.
         self._shared_ui_server = shared_ui_server
         self.bus = None
+        # Per-(persona, end_user) chemistry registry — lazily built only in engine
+        # mode (a turn carrying an end_user_id). None in the companion product.
+        self._client_chem = None
         self.obs = None
         self.router = None
         self.brainstem = None
@@ -247,7 +250,17 @@ class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
         speakers with nobody watching. Skip synthesis entirely unless a client is
         connected. In local-speaker mode (offline testing) there is no listener
         concept, so fall through and let the OS-idle gate decide.
+
+        Engine fan-out: when this persona serves ≥2 distinct customers, it must
+        never volunteer an unprompted musing into any one customer's channel. Its
+        inner rumination keeps running (it still thinks, learns, updates its
+        resting mood) — only the outward voice is gated. Companion mode (0–1
+        customers) is unaffected.
         """
+        reg = self._client_chem
+        if reg is not None and reg.is_fanned_out():
+            return False
+
         from brain.pns import BROWSER_AUDIO_MODE
 
         if not BROWSER_AUDIO_MODE:

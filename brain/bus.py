@@ -12,6 +12,7 @@ import math
 import time
 from collections import deque
 from collections.abc import Callable
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -153,6 +154,13 @@ class Neuromodulators:
     def snapshot(self) -> dict[str, float]:
         return dict(self._levels)
 
+    def restore(self, levels: dict[str, float]) -> None:
+        """Set channel levels from a prior snapshot() (clamped to safe bounds).
+        Unknown channels are ignored; absent channels are left untouched."""
+        for ch in self.CHANNELS:
+            if ch in levels:
+                self._levels[ch] = max(self._HARD_MIN[ch], min(1.0, float(levels[ch])))
+
 
 class HormonalState:
     """
@@ -227,6 +235,13 @@ class HormonalState:
     def snapshot(self) -> dict[str, float]:
         return dict(self._levels)
 
+    def restore(self, levels: dict[str, float]) -> None:
+        """Set channel levels from a prior snapshot() (clamped to safe bounds).
+        Unknown channels are ignored; absent channels are left untouched."""
+        for ch in self.CHANNELS:
+            if ch in levels:
+                self._levels[ch] = max(self._HARD_MIN[ch], min(1.0, float(levels[ch])))
+
     # ── Modulation helpers (used by hypothalamus) ─────────────────────────────
 
     def da_offset(self, sht_lift: float, oxt_lift: float, cort_suppress: float) -> float:
@@ -257,6 +272,43 @@ class HormonalState:
         return ne_scale, glu_scale
 
 
+@dataclass
+class ChemPair:
+    """One bound pair of (neuromod, hormonal) chemistry — the unit that becomes
+    per-(persona, end_user) under multi-tenant fan-out.
+
+    In companion mode (one end-user) there is exactly ONE pair — the persona's
+    resting pair — and it is never rebound, so every access resolves to it and
+    behaviour is byte-for-byte the original single-instance brain. Per-client
+    pairs and a separate resting pair only emerge when a turn explicitly binds
+    a client's chemistry via ``Bus.bind``."""
+
+    neuromod: Neuromodulators
+    hormonal: HormonalState
+
+    @classmethod
+    def fresh(cls) -> ChemPair:
+        """A new pair seeded from the persona temperament baseline (the same
+        settings ``Neuromodulators``/``HormonalState`` read at construction)."""
+        return cls(Neuromodulators(), HormonalState())
+
+    def snapshot(self) -> dict[str, dict[str, float]]:
+        return {"neuromod": self.neuromod.snapshot(), "hormonal": self.hormonal.snapshot()}
+
+    def restore(self, snap: dict[str, dict[str, float]]) -> None:
+        self.neuromod.restore(snap.get("neuromod") or {})
+        self.hormonal.restore(snap.get("hormonal") or {})
+
+
+# The active chemistry binding for the current async context. ``None`` means
+# "use the bus's resting pair" — which is the companion-mode default, so a brain
+# that never calls ``Bus.bind`` behaves exactly as before. Because contextvars
+# are per-asyncio-task, two concurrent turns each bound to their own client pair
+# resolve ``bus.neuromod`` to different instances through the identical access
+# path, with zero cross-bleed and no change to the ~283 call sites.
+_active_chem: ContextVar[ChemPair | None] = ContextVar("brain_active_chem", default=None)
+
+
 class Bus:
     """
     Async pub/sub blackboard. Each topic has a queue of live messages.
@@ -266,8 +318,9 @@ class Bus:
 
     def __init__(self) -> None:
         self._subscribers: dict[str, list[asyncio.Queue]] = {}
-        self.neuromod = Neuromodulators()
-        self.hormonal = HormonalState()
+        # The persona resting pair: the single chemistry in companion mode, and
+        # the DMN's inner-life / background-mood substrate under fan-out.
+        self._resting = ChemPair(Neuromodulators(), HormonalState())
         self._lock = asyncio.Lock()
         # ── Phase 2: topic concentration / quorum / silence (colony features) ──
         # Only topics explicitly registered via track_concentration() accumulate.
@@ -288,6 +341,44 @@ class Bus:
         self._pending_primers: dict[str, float] = {}
         self._recruitment: dict[str, float] = {}
         self._recruit_ts: dict[str, float] = {}
+
+    # ── Chemistry binding (per-(persona, end_user) under fan-out) ─────────────
+    # ``neuromod``/``hormonal`` resolve to the chemistry bound for the current
+    # async context, falling back to the resting pair. Kept as properties so the
+    # ~283 existing ``self.bus.neuromod`` call sites are untouched.
+
+    @property
+    def neuromod(self) -> Neuromodulators:
+        pair = _active_chem.get()
+        return (pair or self._resting).neuromod
+
+    @property
+    def hormonal(self) -> HormonalState:
+        pair = _active_chem.get()
+        return (pair or self._resting).hormonal
+
+    @property
+    def resting_chem(self) -> ChemPair:
+        """The persona resting pair — the DMN's inner-life substrate, and the
+        single chemistry in companion mode. Bind to it explicitly for background
+        loops (DMN, idle decay) that must never touch a client's active mood."""
+        return self._resting
+
+    def new_chem(self) -> ChemPair:
+        """A fresh per-client chemistry pair seeded from the persona temperament
+        baseline. Restore a returning client's snapshot onto it before binding."""
+        return ChemPair.fresh()
+
+    @contextlib.contextmanager
+    def bind(self, pair: ChemPair):
+        """Bind ``pair`` as the active chemistry for the duration of the block
+        (and any awaits within the same task). Resets on exit. No bind anywhere
+        in the process == companion mode == everything uses the resting pair."""
+        token = _active_chem.set(pair)
+        try:
+            yield pair
+        finally:
+            _active_chem.reset(token)
 
     def subscribe(self, topic: str) -> asyncio.Queue:
         q: asyncio.Queue = asyncio.Queue(maxsize=256)

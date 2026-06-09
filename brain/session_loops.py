@@ -254,6 +254,13 @@ class _LoopsMixin:
                 await asyncio.sleep(SPEAK_GATE_INTERVAL)
                 if self.dmn.candidate_count() == 0:
                     continue
+                # Engine fan-out: a persona serving ≥2 distinct customers must not
+                # voice unprompted thoughts into any one customer's channel. The
+                # DMN keeps generating candidates (inner life), but we don't speak
+                # them; they age out naturally. No-op in companion mode.
+                _reg = getattr(self, "_client_chem", None)
+                if _reg is not None and _reg.is_fanned_out():
+                    continue
                 now = time.time()
                 since_last_spoke = now - self._last_brain_spoke_ts
                 idle_s = get_idle_seconds()
@@ -418,6 +425,20 @@ class _LoopsMixin:
 
     # ── Periodic in-process sleep consolidation ──────────────────────────────
 
+    def _consolidate_resting_mood(self) -> None:
+        """Blend the cycle's weighted-average client mood into the persona resting
+        mood and persist it (persona_chem `current`). Engine-mode only — a no-op
+        unless this persona is serving ≥2 distinct customers."""
+        reg = getattr(self, "_client_chem", None)
+        if reg is None or not reg.is_fanned_out():
+            return
+        alpha = float(_brain_settings.get("resting_mood_consolidation_alpha") or 0.3)
+        snap = reg.consolidate_into_resting(alpha)
+        if snap and self.persona_name:
+            from brain import persona_chem
+
+            persona_chem.save_current(self.persona_name, snap["neuromod"], snap["hormonal"])
+
     async def consolidate_now(self, reason: str = "manual") -> dict:
         """Force a consolidation pass on the buffered traces. Safe to call
         anytime; single-flight protected. Returns a small status dict."""
@@ -482,6 +503,11 @@ class _LoopsMixin:
                 with contextlib.suppress(Exception):
                     self.dmn.resume()
             self._last_consolidation_ts = time.time()
+        # Engine fan-out: fold the cycle's interaction-mass-weighted average client
+        # mood into the persona resting mood (one-way valve — never seeds a client)
+        # and persist it as the persona's current chemistry. No-op in companion mode.
+        with contextlib.suppress(Exception):
+            self._consolidate_resting_mood()
         elapsed = time.time() - start
         logger.info(
             "[Sleep] In-process consolidation done in %.1fs (ok=%s, %d turns)", elapsed, ok, n_turns

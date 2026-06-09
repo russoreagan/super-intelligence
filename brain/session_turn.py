@@ -60,14 +60,55 @@ _CANCEL_WORDS = frozenset(
 class _TurnMixin:
     # ── Turn processing ───────────────────────────────────────────────────────
 
+    def _client_chem_registry(self):
+        """Lazily build the per-(persona, end_user) chemistry registry for this
+        session. Only ever touched in engine mode (a turn carrying an end_user_id);
+        companion turns never call this. Defaults to in-memory storage; a durable
+        backend is injected by the engine layer when it lands."""
+        reg = getattr(self, "_client_chem", None)
+        if reg is None:
+            from brain.client_chem import ClientChemRegistry
+
+            reg = ClientChemRegistry(self.bus, persona=self.persona_name)
+            self._client_chem = reg
+        return reg
+
     async def process_turn(
-        self, user_input: str, image_path: str | None = None
+        self,
+        user_input: str,
+        image_path: str | None = None,
+        end_user_id: str | None = None,
+    ) -> tuple[str, dict]:
+        # Engine mode: bind this customer's chemistry for the turn so their mood
+        # evolves in isolation, then persist it. Companion turns pass no
+        # end_user_id → no registry, no bind → the single resting chemistry,
+        # exactly as before (nullcontext is a true no-op).
+        registry = self._client_chem_registry() if end_user_id is not None else None
+        if registry is not None:
+            pair = registry.get_or_create(end_user_id)
+            registry.note_interaction(end_user_id)
+            bind_cm = self.bus.bind(pair)
+        else:
+            bind_cm = contextlib.nullcontext()
+
+        try:
+            with bind_cm:
+                return await self._run_turn_guarded(user_input, image_path, end_user_id)
+        finally:
+            if registry is not None:
+                registry.persist(end_user_id)
+
+    async def _run_turn_guarded(
+        self,
+        user_input: str,
+        image_path: str | None = None,
+        end_user_id: str | None = None,
     ) -> tuple[str, dict]:
         from brain.brainstem import TURN_TIMEOUT
 
         try:
             return await asyncio.wait_for(
-                self._process_turn_body(user_input, image_path),
+                self._process_turn_body(user_input, image_path, end_user_id),
                 timeout=TURN_TIMEOUT,
             )
         except TimeoutError:
@@ -161,7 +202,10 @@ class _TurnMixin:
             pass
 
     async def _process_turn_body(
-        self, user_input: str, image_path: str | None = None
+        self,
+        user_input: str,
+        image_path: str | None = None,
+        end_user_id: str | None = None,
     ) -> tuple[str, dict]:
         from brain.observability.firing_path import reset_current_trace, set_current_trace
         from brain.observability.timeline import TurnTrace
@@ -305,6 +349,15 @@ class _TurnMixin:
                         features["_speaker_unknown"] = True
             if latest_song:
                 features["song_match"] = latest_song
+
+        # ── Engine mode: explicit end_user identity is authoritative ──────────
+        # When an API caller supplies an end_user_id, it IS the speaker — the
+        # partner's customer — overriding voice/primary-user inference so that
+        # relationship, memory, and affect key on that customer. Companion turns
+        # pass None and fall through to the inference below unchanged.
+        if end_user_id:
+            features = dict(features) if isinstance(features, dict) else {}
+            features["speaker_name"] = end_user_id
 
         # ── Default speaker for typed input ───────────────────────────────────
         # When ears are off (or no diarization arrived) there is no voice-based
