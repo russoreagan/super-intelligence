@@ -89,6 +89,32 @@ def owner_mismatch(claims: dict[str, Any] | None) -> bool:
     return sub != owner
 
 
+def is_admin(claims: dict[str, Any] | None) -> bool:
+    """True if the authenticated user is an app admin.
+
+    Read from Supabase ``app_metadata.is_admin`` — app_metadata is admin-/
+    service-role-controlled, so a user cannot self-grant it (unlike the
+    user-editable user_metadata). Admins see the full settings surface,
+    including the operational/system pages; everyone else gets the curated view.
+    Set it with the service role, e.g.:
+      update auth.users
+        set raw_app_meta_data = raw_app_meta_data || '{"is_admin": true}'
+        where email = '<you>';
+    The flag lands in the JWT on the user's next login/token refresh.
+    """
+    app_meta = (claims or {}).get("app_metadata")
+    if isinstance(app_meta, dict) and bool(app_meta.get("is_admin")):
+        return True
+    # Optional env allowlist as a fallback / break-glass (comma-separated emails).
+    allow = os.environ.get("BRAIN_ADMIN_EMAILS", "")
+    if allow.strip():
+        email = str((claims or {}).get("email", "")).strip().lower()
+        allowed = {e.strip().lower() for e in allow.split(",") if e.strip()}
+        if email and email in allowed:
+            return True
+    return False
+
+
 def _secure_cookies() -> bool:
     # Secure cookies aren't sent over plain http (localhost), so only require
     # them when actually hosted behind TLS (Railway terminates TLS for us).

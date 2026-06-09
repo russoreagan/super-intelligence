@@ -128,6 +128,7 @@
   /* ---- state ---- */
   const values = {}, saved = {}, refDefault = {}, dialCenter = {}, dial = {}, rest = {};
   let secretsSet = {};
+  let isAdmin = false;                   // from /auth/me — gates the operational/system pages
   let persona = PERSONAS[0].id;
   let activeTab = 'persona';
   let view = 'persona';                 // 'persona' | 'system'
@@ -239,6 +240,12 @@
       const res = await fetch('/settings');
       if (res.ok) { const data = await res.json(); s = data.settings || {}; d = data.defaults || {}; secretsSet = data.secrets_set || {}; }
     } catch (e) { console.warn('Settings: load failed', e); }
+    // Admin flag gates the operational/system pages. Best-effort: a normal user
+    // (or a failed fetch) stays non-admin and gets the curated view.
+    try {
+      const me = await fetch('/auth/me');
+      if (me.ok) { isAdmin = !!(await me.json()).is_admin; }
+    } catch (e) { isAdmin = false; }
     // seed every known key from server (fallback to row default)
     Object.keys(rowMeta).forEach(k => {
       const def = (k in d) ? d[k] : rowMeta[k].def;
@@ -645,9 +652,14 @@
     const api = document.createElement('button'); api.className = 'pmenu-item sys'; api.dataset.sys = 'apikeys';
     api.innerHTML = '<div class="pmenu-name">API Keys</div><div class="pmenu-tag">Models · voice · services</div>';
     api.addEventListener('click', () => selectSystem('apikeys')); sys.appendChild(api);
-    const ops = document.createElement('button'); ops.className = 'pmenu-item sys'; ops.dataset.sys = 'operational';
-    ops.innerHTML = '<div class="pmenu-name">Operational</div><div class="pmenu-tag">Perception · resources · maintenance</div>';
-    ops.addEventListener('click', () => selectSystem('operational')); sys.appendChild(ops);
+    // Operational page (perception · compute budgets · motor/maintenance) is
+    // admin-only — these are system-wide, security-sensitive controls (e.g. the
+    // motor filesystem allowlist) that a normal hosted user shouldn't touch.
+    if (isAdmin) {
+      const ops = document.createElement('button'); ops.className = 'pmenu-item sys'; ops.dataset.sys = 'operational';
+      ops.innerHTML = '<div class="pmenu-name">Operational</div><div class="pmenu-tag">Perception · resources · maintenance</div>';
+      ops.addEventListener('click', () => selectSystem('operational')); sys.appendChild(ops);
+    }
     rail.appendChild(sys);
     syncRailSel();
   }

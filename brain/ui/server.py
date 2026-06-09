@@ -148,6 +148,37 @@ class UIServer:
                 )
             return response
 
+        # ── HTTPS upgrade + HSTS ──────────────────────────────────────────────
+        # Defined AFTER the auth gate so it wraps outermost: it can redirect an
+        # http request to https BEFORE auth runs, and it stamps HSTS on every
+        # response (including 301s and 401s). Railway terminates TLS at the edge
+        # and forwards over http, so the client's real scheme is in
+        # x-forwarded-proto. On localhost (no proxy header, http) both branches
+        # are skipped, so local dev is untouched. HSTS is omitted by design when
+        # the connection isn't secure — never pin localhost to https-only.
+        _HSTS_MAX_AGE = os.environ.get("BRAIN_HSTS_MAX_AGE", "31536000")  # 1 year
+
+        @app.middleware("http")
+        async def _https_and_hsts(request: Request, call_next):
+            from fastapi.responses import RedirectResponse
+
+            fwd_proto = request.headers.get("x-forwarded-proto", "").split(",")[0].strip()
+            is_secure = fwd_proto == "https" or request.url.scheme == "https"
+
+            # Client reached us over plain http through a proxy → bounce to https.
+            # (Railway's edge already does this; this covers any other front door
+            # and makes the guarantee app-level rather than infra-dependent.)
+            if fwd_proto == "http":
+                https_url = request.url.replace(scheme="https")
+                return RedirectResponse(str(https_url), status_code=301)
+
+            response = await call_next(request)
+            if is_secure and _HSTS_MAX_AGE != "0":
+                response.headers.setdefault(
+                    "Strict-Transport-Security", f"max-age={_HSTS_MAX_AGE}"
+                )
+            return response
+
         @app.get("/login")
         async def login_page():
             return HTMLResponse(LOGIN_HTML_PATH.read_text(encoding="utf-8"))
@@ -258,7 +289,9 @@ class UIServer:
         async def auth_me(request: Request):
             # Gated by the auth middleware, which attaches the verified claims.
             claims = getattr(request.state, "user", None) or {}
-            return JSONResponse({"email": claims.get("email")})
+            return JSONResponse(
+                {"email": claims.get("email"), "is_admin": ui_auth.is_admin(claims)}
+            )
 
         @app.get("/health")
         async def health():
