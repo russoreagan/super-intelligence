@@ -368,14 +368,43 @@ def main() -> None:
     provisioner = Provisioner()
     app = build_gateway_app(provisioner)
 
+    # The gateway is the SINGLE owner of the shared RunPod pod. Tenant children
+    # run in consumer mode (BRAIN_MULTITENANT + RUNPOD_HOST → no lifecycle), so
+    # something has to keep the shared pod alive and recover it when it 502s.
+    # That's the gateway: one RunPodManager, one watcher, no per-tenant races.
+    runpod = None
+
     @app.on_event("startup")
     async def _startup():
+        nonlocal runpod
         await provisioner.start()
         logger.info("[gateway] provisioner started")
+        try:
+            from brain.runpod_manager import RunPodManager
+
+            runpod = RunPodManager()
+            ok = await runpod.start()
+            # Publish the resolved pod host so every tenant the provisioner spawns
+            # inherits it via os.environ.copy() and enters consumer mode. (Stable
+            # across resume; a brand-new pod id would need a gateway restart.)
+            from brain.settings import settings as _s
+
+            host = str(_s.get("runpod_host") or "").strip()
+            if ok and host and "localhost" not in host:
+                os.environ["RUNPOD_HOST"] = host
+                logger.info("[gateway] shared RunPod pod ready — RUNPOD_HOST=%s", host)
+            else:
+                logger.warning("[gateway] no shared RunPod pod — tenants will lack local inference")
+        except Exception as e:
+            logger.warning("[gateway] RunPod manager failed to start (non-fatal): %s", e)
 
     @app.on_event("shutdown")
     async def _shutdown():
         await provisioner.stop()
+        # Leave the shared pod RUNNING across gateway redeploys (warm restart);
+        # just cancel the watcher task so it doesn't outlive the process.
+        if runpod is not None and getattr(runpod, "_watcher_task", None):
+            runpod._watcher_task.cancel()
 
     port = int(os.environ.get("PORT", "8765"))
     host = "0.0.0.0" if os.environ.get("RAILWAY_ENVIRONMENT") else "127.0.0.1"

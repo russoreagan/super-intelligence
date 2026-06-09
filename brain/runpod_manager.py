@@ -69,6 +69,9 @@ class RunPodManager:
         self._watcher_task: asyncio.Task | None = None
         self._warmup_task: asyncio.Task | None = None
         self._http = None  # httpx.AsyncClient, created lazily in _get_http()
+        # Consumer mode (multi-tenant tenant pointing at a shared pod): never owns
+        # or stops the pod. Set in start() when BRAIN_MULTITENANT + RUNPOD_HOST.
+        self._consumer = False
 
     # ── HTTP / GraphQL ────────────────────────────────────────────────────────
 
@@ -355,6 +358,20 @@ class RunPodManager:
         Try to resume any stopped ollama-brain pod, then fall back to creating
         a new one. Returns True if a pod is ready; False = using local Ollama.
         """
+        # Multi-tenant CONSUMER mode: a tenant child must never manage or stop the
+        # SHARED pod — its idle-reaper/watchdog would stop inference for every other
+        # tenant. When RUNPOD_HOST names a shared pod, tenants just point at it and
+        # skip all lifecycle (no resume/create/watch/stop/watchdog). The single
+        # gateway process owns the pod and its recovery (see brain/gateway/server).
+        shared_host = os.environ.get("RUNPOD_HOST", "").strip()
+        if os.environ.get("BRAIN_MULTITENANT", "").lower() in ("1", "true", "yes") and shared_host:
+            from brain.settings import settings
+
+            settings.update({"runpod_host": shared_host})
+            self._consumer = True
+            logger.info("[RunPod] Consumer mode — using shared pod %s (no lifecycle)", shared_host)
+            return True
+
         if not self._api_key:
             logger.info("[RunPod] No API key — skipping pod management")
             self._clear_host()
@@ -451,6 +468,10 @@ class RunPodManager:
 
     async def stop(self) -> None:
         """Stop the active pod (preserves volume) and cancel the watcher."""
+        # Consumer (tenant) never owns the shared pod — stopping it would kill
+        # inference for every other tenant. Nothing to tear down.
+        if self._consumer:
+            return
         if self._watcher_task:
             self._watcher_task.cancel()
             self._watcher_task = None
