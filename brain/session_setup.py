@@ -260,6 +260,25 @@ class _SetupMixin:
         await self._emitter.emit_hormonal(_hs)
         await self._emitter.emit_emotion(_emotion)
 
+    async def _setup_api(self) -> None:
+        """Start the standalone engine API server iff a runtime API key is
+        configured. OFF by default — the deployed companion product sets no key, so
+        this is fully inert there. When enabled, a partner's backend opens sessions
+        and runs turns against this persona process (see brain/api/)."""
+        from brain.api.auth import configured_keys
+
+        if not configured_keys():
+            return
+        from brain.api import ApiServer
+
+        self._api_server = ApiServer(self.api_turn)
+        self.brainstem.register_loop(
+            "api_server", lambda: self._api_server.start(), restart_on_crash=False
+        )
+        logger.info(
+            "Engine API enabled on port %s", os.environ.get("BRAIN_API_PORT", "8780")
+        )
+
     async def _setup_motor(self) -> None:
         if not (self.args.motor or os.environ.get("BRAIN_MOTOR", "false").lower() == "true"):
             self.frontal.set_capabilities(

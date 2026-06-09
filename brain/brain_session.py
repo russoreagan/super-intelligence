@@ -181,6 +181,7 @@ class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
         await self._setup_wiring()
         await self._setup_clusters()
         await self._setup_ui()
+        await self._setup_api()
         await self._setup_motor()
         await self._setup_dmn()
         await self._setup_meta()
