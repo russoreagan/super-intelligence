@@ -231,7 +231,8 @@ def build_gateway_app(provisioner: Provisioner) -> FastAPI:
             # Not ready yet — tell the client to retry (the page is on the interstitial anyway).
             await client_ws.close(code=1013)
             return
-        await _proxy_ws(client_ws, st["port"])
+        provisioner.touch(uid)  # a live client connection counts as activity
+        await _proxy_ws(client_ws, st["port"], on_activity=lambda: provisioner.touch(uid))
 
     # ── HTTP catch-all → ensure + proxy (authed) ────────────────────────────
     @app.api_route(
@@ -242,6 +243,7 @@ def build_gateway_app(provisioner: Provisioner) -> FastAPI:
         uid = request.state.user["sub"]
         st = provisioner.status(uid)
         if st and not st["booting"]:
+            provisioner.touch(uid)  # activity → reset the idle backstop timer
             return await _proxy_http(request, st["port"])
         # Brain not running yet: require an Anthropic key before spawning.
         if not await _has_anthropic(request):
@@ -294,7 +296,7 @@ async def _proxy_http(request: Request, port: int) -> Response:
     return Response(content=up.content, status_code=up.status_code, headers=resp_headers)
 
 
-async def _proxy_ws(client_ws: WebSocket, port: int) -> None:
+async def _proxy_ws(client_ws: WebSocket, port: int, on_activity=None) -> None:
     import websockets
 
     await client_ws.accept()
@@ -319,6 +321,8 @@ async def _proxy_ws(client_ws: WebSocket, port: int) -> None:
                 msg = await client_ws.receive()
                 if msg["type"] == "websocket.disconnect":
                     break
+                if on_activity is not None:
+                    on_activity()  # inbound client frame = activity → reset idle timer
                 if msg.get("text") is not None:
                     await upstream.send(msg["text"])
                 elif msg.get("bytes") is not None:
