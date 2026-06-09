@@ -794,6 +794,12 @@ class _TurnMixin:
             self.parietal.update_user_style(
                 user_input, _style_modality, _style_sentiment, _style_alpha
             )
+            # Fold this turn's discrete register tag into the rolling per-speaker
+            # register profile (persisted alongside the style vectors at sleep).
+            self.parietal.update_register(
+                features.get("user_register", "neutral"),
+                float(settings.get("register_ema_alpha")),
+            )
         await self._emit_end("parietal", turn_id)
         self.hypothalamus.decay_turn()
         turn_result = self.brainstem.end_turn()
@@ -1123,6 +1129,7 @@ class _TurnMixin:
                 "intent": features.get("intent", ""),
                 "requires_action": bool(features.get("requires_action")),
                 "register": features.get("register", ""),
+                "user_register": features.get("user_register", ""),
                 "prosody_tone": affect.get("vocal_tone") or "",
                 "pace_label": affect.get("pace_label") or "",
                 "hesitant_speech": bool(affect.get("hesitant_speech")),

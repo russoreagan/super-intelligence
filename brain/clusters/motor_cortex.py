@@ -1816,8 +1816,13 @@ class MotorCortexCluster:
     async def _dispatch_cloud(self, args: dict, turn_id: str) -> dict | None:
         """Route to CloudExecutor, applying the confirmation gate for write actions."""
         if not self._cloud or not self._cloud.available:
+            # The hosted default executor is CMA (Managed Agents), which only needs
+            # this tenant's ANTHROPIC_API_KEY — not a local CLI. Point the user at
+            # the actual cause rather than the old CLI-install instruction.
             output = (
-                "[error] Cloud executor not available. Enable --motor with Claude CLI installed."
+                "[error] Cloud executor not available — no ANTHROPIC_API_KEY for this "
+                "session. Add your Anthropic key in Settings → API Keys (or, for the "
+                "local CLI executor, ensure the Claude CLI is installed)."
             )
             result = {"tool": "cloud_action", "args": args, "output": output, "success": False}
             await self._bus.publish_dict("motor.result", result, source=CLUSTER)

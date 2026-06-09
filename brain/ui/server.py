@@ -347,6 +347,24 @@ class UIServer:
                     "persona_name" in body
                     and str(settings.get("persona_name", "")) != prior_persona
                 )
+                # Creating a NEW persona arrives as a switch to a name with no
+                # chemistry file yet. Seed its file from the posted chem_baseline/
+                # chem_init so it persists immediately (and isn't reliant on the
+                # boot-time seed reading whatever global chem happens to be set).
+                if is_switch and any(k.startswith("chem_baseline_") for k in body):
+                    from brain import persona_chem
+
+                    _new = str(settings.get("persona_name", ""))
+                    if _new and not persona_chem.exists(_new):
+                        persona_chem.save_resting(
+                            _new,
+                            {ch: float(settings.get(f"chem_baseline_{ch}")) for ch in persona_chem.CHANNELS},
+                        )
+                        persona_chem.save_current(
+                            _new,
+                            {ch: float(settings.get(f"chem_init_{ch}")) for ch in persona_chem.CHANNELS},
+                            {},
+                        )
                 # If the user edited resting/boot chemistry sliders, persist them
                 # to the ACTIVE persona's own file so the edit sticks per-persona
                 # instead of leaking through global settings on the next switch.

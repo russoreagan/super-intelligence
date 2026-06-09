@@ -61,8 +61,13 @@ def _floor_resting(resting: dict[str, float]) -> dict[str, float]:
 PERSONA_CHEMISTRY: dict[str, dict[str, float]] = {
     "The Visionary": {
         "DA": 0.62,
+        # GABA in the mid band (≥0.30) grounds the high-DA drive so the resting
+        # emotion reads "warm" (high,mid,mid,mid) instead of "excitement"
+        # (high,low,mid,mid). Keeps the Visionary's expansive dopaminergic energy
+        # without the perpetual manic-excited setpoint that also inflated reply
+        # length. Other personas keep their low-GABA character via the 0.12 floor.
         "ACh": 0.45,
-        "GABA": 0.12,
+        "GABA": 0.32,
         "Glu": 0.40,
         "NE": 0.35,
         "5HT": 0.55,
@@ -116,7 +121,15 @@ PERSONA_CHEMISTRY: dict[str, dict[str, float]] = {
     },
 }
 
-_PERSONAS_ROOT = Path(__file__).parent.parent / "second_brain" / "personas"
+# Resolve under SECOND_BRAIN_PATH so each hosted tenant's chemistry lives on its
+# own per-user volume. Falling back to __file__-relative would make every tenant
+# on the same persona share one chemistry.json (cross-contaminating their live
+# emotional state and losing it on redeploy) — see store.py for the same pattern.
+_PERSONAS_ROOT = Path(
+    os.environ.get(
+        "SECOND_BRAIN_PATH", str(Path(__file__).parent.parent / "second_brain")
+    )
+) / "personas"
 
 
 def _slug(persona: str) -> str:
@@ -164,6 +177,12 @@ def _seed_resting(persona: str) -> dict[str, float]:
 
     merged = {**Neuromodulators._DEF_BASELINE, **HormonalState._DEF_BASELINE}
     return _floor_resting({ch: float(merged.get(ch, 0.0)) for ch in CHANNELS})
+
+
+def exists(persona: str) -> bool:
+    """True if this persona already has a chemistry file on disk (i.e. it is not
+    brand-new). Lets callers distinguish creating a persona from switching to one."""
+    return bool(persona) and _path(persona).exists()
 
 
 def load(persona: str) -> dict | None:

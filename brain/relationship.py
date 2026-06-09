@@ -93,3 +93,45 @@ def apply_absence(
     # the closeness it represents.
     new_bond = max(new_bond, new_aff)
     return new_aff, new_bond
+
+
+# ── Register / communication-style profile ─────────────────────────────────
+# A rolling per-speaker memory of *how* the user tends to write — formal, casual,
+# technical — distinct from affection (how warmly they treat the AI) and bond
+# (history depth). The discrete per-turn register tag is classified cheaply
+# upstream (parietal.classify_register, zero LLM cost); these pure functions just
+# accumulate it into a stable distribution so a known user resumes with their
+# typical register remembered, the same way affection/bond persist across
+# absences. Pure (no I/O) so they're unit-testable in isolation.
+
+REGISTER_CATEGORIES = ("casual", "neutral", "formal", "technical")
+
+
+def update_register_profile(
+    profile: dict[str, float], observed: str, alpha: float = 0.3
+) -> dict[str, float]:
+    """EMA-update a rolling register distribution with one observation.
+
+    `profile` maps register category → weight (roughly summing to 1). Each turn
+    nudges the observed category toward 1 and the others toward 0, so the profile
+    tracks the user's *typical* register while still adapting to genuine drift.
+    Higher `alpha` adapts faster. Unknown observations fold into 'neutral'.
+    Returns a new dict (does not mutate the input)."""
+    if observed not in REGISTER_CATEGORIES:
+        observed = "neutral"
+    prof = {c: float(profile.get(c, 0.0)) for c in REGISTER_CATEGORIES}
+    for c in REGISTER_CATEGORIES:
+        target = 1.0 if c == observed else 0.0
+        prof[c] = alpha * target + (1.0 - alpha) * prof[c]
+    return prof
+
+
+def dominant_register(profile: dict[str, float], min_weight: float = 0.34) -> str:
+    """Return the highest-weight register category, or '' when the profile is
+    empty or too flat to call (no category clears `min_weight`). A flat profile
+    reads as *no signal*, not as 'neutral' — only a genuinely dominant 'neutral'
+    is reported as such."""
+    if not profile:
+        return ""
+    cat, weight = max(profile.items(), key=lambda kv: kv[1])
+    return cat if weight >= min_weight else ""

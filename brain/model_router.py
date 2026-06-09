@@ -37,6 +37,27 @@ OLLAMA_EMBED_MODEL = os.environ.get("OLLAMA_EMBED_MODEL", "nomic-embed-text")
 GOOGLE_EMBED_MODEL = os.environ.get("GOOGLE_EMBED_MODEL", "gemini-embedding-001")
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 RUNPOD_HOST = os.environ.get("RUNPOD_HOST", OLLAMA_HOST)
+# OPT-IN cloud bridge for hosted tenants. When a local/runpod route resolves to a
+# localhost host (e.g. RunPod is down and runpod_host was cleared back to
+# localhost) on a host with no real Ollama, every local call fails — which can
+# silently stall DMN idle thinking while RunPod recovery (runpod_manager._watch)
+# spins the pod back up. This bridge lets idle thought keep flowing on a cheap
+# cloud model DURING that recovery window. It is OFF by default: the intended
+# hosted path is RunPod auto-recovery, not cloud fallback. Enable deliberately
+# with BRAIN_HOSTED_CLOUD_FALLBACK=1 if you want the bridge.
+_HOSTED_CLOUD_FALLBACK = os.environ.get("BRAIN_HOSTED_CLOUD_FALLBACK", "").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+_HOSTED_LOCAL_FALLBACK_MODEL = os.environ.get(
+    "BRAIN_HOSTED_LOCAL_FALLBACK_MODEL", "claude-haiku-4-5-20251001"
+)
+
+
+def _host_is_local(host: str) -> bool:
+    """True if a host URL points at a local Ollama (localhost/127.0.0.1)."""
+    return ("localhost" in host) or ("127.0.0.1" in host)
 RUNPOD_MODEL = os.environ.get("RUNPOD_MODEL", "qwen2.5:32b")
 RUNPOD_HTTP_TIMEOUT = float(os.environ.get("RUNPOD_HTTP_TIMEOUT_SECONDS", "180"))
 RUNPOD_KEEP_ALIVE = os.environ.get("RUNPOD_KEEP_ALIVE", "30m")
@@ -93,9 +114,17 @@ _CLOUD_RATES: dict[str, tuple[float, float, float]] = {
     "claude-sonnet-4-6": (3.0, 15.0, 0.30),
     "claude-haiku-4-5-20251001": (1.0, 5.0, 0.10),
 }
-# Path for the per-day cloud-spend file.
+# Path for the per-day cloud-spend file. Resolve under SECOND_BRAIN_PATH so each
+# hosted tenant counts its own daily spend on its own volume. A repo-relative
+# path would make cloud_daily_usd_budget a single global counter shared by every
+# tenant (one user's spend trips fallback-to-local for everyone, concurrent
+# writes race) and lose it on redeploy.
 _CLOUD_USAGE_PATH = os.path.join(
-    os.path.dirname(__file__), "..", "second_brain", "cloud_usage.json"
+    os.environ.get(
+        "SECOND_BRAIN_PATH",
+        os.path.join(os.path.dirname(__file__), "..", "second_brain"),
+    ),
+    "cloud_usage.json",
 )
 
 
@@ -914,6 +943,23 @@ class ModelRouter:
             host = OLLAMA_HOST
             http_timeout = OLLAMA_HTTP_TIMEOUT
             keep_alive = OLLAMA_KEEP_ALIVE
+
+        # Opt-in only: bridge to cheap cloud while RunPod recovery brings the pod
+        # back. Default OFF — the intended hosted path is RunPod auto-recovery.
+        if _HOSTED_CLOUD_FALLBACK and _host_is_local(host):
+            try:
+                text, in_tok, out_tok, _cr, _cw = await self._call_anthropic(
+                    _HOSTED_LOCAL_FALLBACK_MODEL, system_prompt, messages, max_tokens
+                )
+                return text, in_tok, out_tok
+            except Exception as e:
+                logger.warning(
+                    "[ModelRouter] hosted local→cloud fallback failed (%s): %s",
+                    _HOSTED_LOCAL_FALLBACK_MODEL,
+                    e,
+                )
+                return "", 0, 0
+
         base_model = os.environ.get("OLLAMA_MODEL", "qwen2.5:14b")
         if is_runpod:
             from brain.settings import settings as _s

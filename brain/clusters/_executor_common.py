@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -57,7 +58,15 @@ _DENY_WORDS = frozenset(
     ]
 )
 
-_TOOL_LOG_PATH = Path("second_brain/schema/tool_log.md")
+# Resolve under SECOND_BRAIN_PATH (per-tenant volume on hosted) rather than the
+# process cwd — every tenant shares cwd=repo_root, so a relative path would make
+# all tenants append to one shared audit log.
+_SECOND_BRAIN_ROOT = Path(
+    os.environ.get(
+        "SECOND_BRAIN_PATH", str(Path(__file__).parent.parent.parent / "second_brain")
+    )
+)
+_TOOL_LOG_PATH = _SECOND_BRAIN_ROOT / "schema" / "tool_log.md"
 
 
 class ExecutorCommon:

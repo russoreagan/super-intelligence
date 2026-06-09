@@ -489,6 +489,15 @@ DEFAULTS: dict[str, float | int | str] = {
     # second_brain/personas/<slug>/ (see brain/run.py) and tags every eval row.
     "persona_name": "",
     "persona_born": "",
+    # User-created personas + each persona's saved knob setup. JSON object keyed
+    # by persona display name: {name: {custom: bool, tag, note, chem: {...},
+    # vals: {settings-key: value}}}. The Settings page reads this to populate the
+    # persona rail (built-ins + custom) and to re-apply a persona's full dial/
+    # manual configuration when it's selected. Stored as a JSON string so it
+    # round-trips through settings.json untouched. Chemistry still also persists
+    # per-persona in second_brain/personas/<slug>/chemistry.json (the brain's
+    # source of truth); this mirror is what the UI restores from.
+    "persona_store": "",
     # Active persona's ElevenLabs voice ID. Applied at boot via pns.set_voice_id().
     # Empty = use ELEVENLABS_VOICE_ID env var or built-in default.
     "persona_voice_id": "",
@@ -556,6 +565,7 @@ DEFAULTS: dict[str, float | int | str] = {
     "style_entity_formality_baseline": 0.25,  # entity's natural formality (0=casual, 1=formal)
     "style_entity_verbosity_baseline": 0.45,  # entity's natural verbosity (0=terse, 1=expansive)
     "style_min_turns_for_injection": 3,  # turns tracked before injecting style note
+    "register_ema_alpha": 0.30,  # EMA weight for the rolling per-speaker register profile
     # ── Section: Graded plasticity (correctness fix — NOT colony-gated) ───────
     # The legacy all-or-nothing `defuse_path` skip (gaba_skip_threshold_high) is
     # biologically wrong: real plasticity is graded and neuromodulator-scaled

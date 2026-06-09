@@ -369,6 +369,7 @@ class SleepConsolidation:
         msg_len_counter: Counter[str] = Counter()
         intent_counter: Counter[str] = Counter()
         register_counter: Counter[str] = Counter()
+        user_register_counter: Counter[str] = Counter()
         user_emotion_counter: Counter[str] = Counter()
         prosody_tone_counter: Counter[str] = Counter()
         pace_counter: Counter[str] = Counter()
@@ -386,6 +387,7 @@ class SleepConsolidation:
             msg_len_counter[t.get("msg_length") or "unknown"] += 1
             intent_counter[t.get("intent") or "unknown"] += 1
             register_counter[t.get("register") or "unknown"] += 1
+            user_register_counter[t.get("user_register") or "unknown"] += 1
             if t.get("user_emotion"):
                 user_emotion_counter[t["user_emotion"]] += 1
             if t.get("prosody_tone"):
@@ -417,6 +419,7 @@ class SleepConsolidation:
             "msg_length_mix": dict(msg_len_counter),
             "intent_mix": dict(intent_counter),
             "register_mix": dict(register_counter),
+            "user_register_mix": dict(user_register_counter),
             "user_emotion_mix": dict(user_emotion_counter),
             "joke_turns": joke_turns,
             "frustration_turns": frustration_turns,
@@ -547,7 +550,6 @@ class SleepConsolidation:
 
         now = time.time()
         speakers = {t.get("speaker_name") or "" for t in session_traces}
-        from brain.second_brain.store import SCHEMA_DIR
 
         for speaker in speakers:
             try:
@@ -562,7 +564,9 @@ class SleepConsolidation:
                     content += f"\n{seen_line}"
                 # Clean up any legacy low-score-sessions counter from the old model
                 content = re.sub(r"\n?- Low score sessions:[^\n]*", "", content)
-                self._schema._atomic_write(SCHEMA_DIR / schema_file, content)
+                # Honor the storage backend (Supabase on hosted) — a raw
+                # _atomic_write would persist to local disk that nothing reads back.
+                await self._schema.awrite(schema_file, content)
             except Exception as exc:
                 logger.warning(
                     "[Relationship] Last-seen stamp failed for speaker=%s: %s",

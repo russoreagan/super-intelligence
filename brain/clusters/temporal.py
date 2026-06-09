@@ -15,6 +15,7 @@ from pathlib import Path
 
 from brain.bus import Bus, Message
 from brain.cell import IntegratorCell
+from brain.clusters.parietal import classify_register
 from brain.model_router import ModelRouter
 from brain.neuron import SwitchNeuron
 from brain.observability.decisions import decisions
@@ -507,6 +508,7 @@ class TemporalCluster:
                 else "short"
                 if len(_words) <= 15
                 else "long",
+                "user_register": classify_register(text),
             }
             await self._bus.publish_dict("temporal.features", features, source=CLUSTER)
             logger.debug(
@@ -608,6 +610,7 @@ class TemporalCluster:
                 "switch_only": True,
                 "surprise_score": surprise,
                 "msg_length": length_tag,
+                "user_register": classify_register(text),
             }
             self._predictor.record(sig, length_tag)
             await self._bus.publish_dict("temporal.features", features, source=CLUSTER)
@@ -741,6 +744,7 @@ class TemporalCluster:
         features["self_reference"] = self_ref or features.get("intent") == "self_inquiry"
         features["epistemic_action"] = epistemic or features.get("epistemic_action", False)
         features["msg_length"] = length_tag
+        features["user_register"] = classify_register(text)
 
         # Belt-and-braces: if the text clearly looks like a tool request, flip
         # requires_action true regardless of what the LLM thought. The motor

@@ -688,14 +688,14 @@ class FrontalCluster:
         if not instruction:
             instruction = {
                 "response_type": "chitchat",
-                "target_length": "medium",
+                "target_length": "brief",
                 "tone": "neutral",
                 "key_points": [],
                 "drafter_count": 1,
             }
         actual = (
             instruction.get("response_type", "chitchat"),
-            instruction.get("target_length", "medium"),
+            instruction.get("target_length", "brief"),
             instruction.get("tone", "neutral"),
         )
         return instruction, actual
@@ -833,7 +833,7 @@ class FrontalCluster:
         )
         self._length_budget.fire(
             0.6,
-            instruction.get("target_length", "medium"),
+            instruction.get("target_length", "brief"),
             snapshot=chem,
         )
         self._tone_selector.fire(
@@ -1252,6 +1252,7 @@ class FrontalCluster:
             "dominance": round(dims.get("dominance", 0.46), 2),
             "user_emotion": features.get("user_emotion"),
             "msg_length": features.get("msg_length", "short"),
+            "user_register": features.get("user_register", "neutral"),
             "DA": round(nm["DA"], 2),
             "GABA": round(nm["GABA"], 2),
             "ACh": round(nm["ACh"], 2),
@@ -1867,6 +1868,26 @@ class FrontalCluster:
                     _mark_trace_flag(
                         "style_register", _parietal_ref.user_style_register(_style_modality)
                     )
+
+            # Per-turn register signal — the discrete tag for THIS message
+            # (classified cheaply upstream), plus the user's typical register
+            # remembered across turns. Drives the drafter's tone calibration the
+            # same way msg_length drives its length (see REGISTER in the drafter
+            # identity prompt). Stated as plain values; the identity prompt says
+            # how to use them.
+            _register = features.get("user_register", "")
+            if _register:
+                _typical = ""
+                with contextlib.suppress(Exception):
+                    _dom = _parietal_ref.dominant_register()
+                    if _dom and _dom != _register:
+                        _typical = f" Their usual register with you is {_dom}."
+                parts.append(
+                    f"User register this message: {_register}.{_typical} "
+                    f"Meet it — match formality and idiom, not just length, while "
+                    f"staying in your own voice."
+                )
+                _mark_trace_flag("user_register", _register)
 
         # Entity-side expressive guidance — shapes word choice, not just delivery.
         # The TTS layer can add a [gently] tag, but only the drafter can write "hmm".

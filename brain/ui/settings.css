@@ -459,7 +459,18 @@ input[type=range].r::-moz-range-thumb {
    ===================================================================== */
 
 /* ---- persona rail (rendered into #rail-nav) ---- */
+/* rail is a column: scrolling persona list on top, pinned System below */
+#rail-nav { display: flex; flex-direction: column; overflow: hidden; }
+.pmenu-scroll { flex: 1 1 auto; overflow-y: auto; min-height: 0; }
+.pmenu-system { flex: 0 0 auto; padding-top: 4px; }
 #rail-nav .pmenu-list { display: flex; flex-direction: column; gap: 2px; }
+.pmenu-item { position: relative; }
+.pmenu-item.custom { padding-right: 28px; }
+.pmenu-del { position: absolute; top: 50%; right: 9px; transform: translateY(-50%); width: 18px; height: 18px; border-radius: 4px; display: none; align-items: center; justify-content: center; font-size: 15px; line-height: 1; color: var(--ink-4); }
+.pmenu-item.custom:hover .pmenu-del { display: inline-flex; }
+.pmenu-del:hover { background: var(--signal-soft); color: var(--signal-deep); }
+.es-del-persona { font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-4); border: 1px solid var(--line); border-radius: var(--r-1); padding: 6px 11px; background: none; margin-top: 12px; }
+.es-del-persona:hover { color: var(--signal-deep); border-color: var(--signal-soft); background: var(--signal-soft); }
 .pmenu-item { display: block; width: 100%; text-align: left; padding: 11px 13px; border-radius: var(--r-1); border-left: 2px solid transparent; background: none; transition: background 140ms, border-color 140ms; }
 .pmenu-item:hover { background: var(--paper-2); }
 .pmenu-item.sel { background: var(--signal-soft); border-left-color: var(--signal); }

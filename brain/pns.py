@@ -902,41 +902,48 @@ class PNS:
             first_chunk_ts: float | None = None
             try:
                 try:
-                    import sounddevice as sd
-
                     SAMPLE_RATE = 22050
-                    output_device = _resolve_output_device()
+                    # In browser-audio mode the client plays the PCM we push to
+                    # _tts_ws_queue — there is no server-side sound device, and on
+                    # a headless host `import sounddevice` itself can raise OSError
+                    # (missing libportaudio). Skip the local stream entirely so a
+                    # missing/failed device never aborts the reply to silent text.
+                    stream = None
+                    if not BROWSER_AUDIO_MODE:
+                        import sounddevice as sd
 
-                    def _open_stream(device):
-                        s = sd.RawOutputStream(
-                            samplerate=SAMPLE_RATE,
-                            channels=1,
-                            dtype="int16",
-                            device=device,
-                        )
-                        s.start()
-                        return s
+                        output_device = _resolve_output_device()
 
-                    try:
-                        stream = _open_stream(output_device)
-                    except Exception as dev_err:
-                        # The configured device (e.g. a Scarlett that's asleep,
-                        # unplugged, or a stale BRAIN_AUDIO_OUTPUT_DEVICE index)
-                        # failed to open. Fall back to the system default rather
-                        # than dropping the whole reply to silent text.
-                        if output_device is not None:
-                            logger.warning(
-                                "[I/O] Output device %r failed to open (%s) — "
-                                "falling back to system default output",
-                                output_device,
-                                dev_err,
+                        def _open_stream(device):
+                            s = sd.RawOutputStream(
+                                samplerate=SAMPLE_RATE,
+                                channels=1,
+                                dtype="int16",
+                                device=device,
                             )
-                            self._emit_tts_error(
-                                f"Audio device {output_device!r} unavailable — using default"
-                            )
-                            stream = _open_stream(None)
-                        else:
-                            raise
+                            s.start()
+                            return s
+
+                        try:
+                            stream = _open_stream(output_device)
+                        except Exception as dev_err:
+                            # The configured device (e.g. a Scarlett that's asleep,
+                            # unplugged, or a stale BRAIN_AUDIO_OUTPUT_DEVICE index)
+                            # failed to open. Fall back to the system default rather
+                            # than dropping the whole reply to silent text.
+                            if output_device is not None:
+                                logger.warning(
+                                    "[I/O] Output device %r failed to open (%s) — "
+                                    "falling back to system default output",
+                                    output_device,
+                                    dev_err,
+                                )
+                                self._emit_tts_error(
+                                    f"Audio device {output_device!r} unavailable — using default"
+                                )
+                                stream = _open_stream(None)
+                            else:
+                                raise
 
                     # Producer: fetch sentences from ElevenLabs one at a time,
                     # streaming each sentence's audio chunks into the queue.
@@ -1069,12 +1076,13 @@ class PNS:
                                 _prod_err,
                             )
                         try:
-                            if self._interrupt_event.is_set():
-                                stream.abort()  # drop the buffer immediately
-                            else:
-                                await asyncio.sleep(0.3)  # let buffer drain
-                                stream.stop()
-                            stream.close()
+                            if stream is not None:
+                                if self._interrupt_event.is_set():
+                                    stream.abort()  # drop the buffer immediately
+                                else:
+                                    await asyncio.sleep(0.3)  # let buffer drain
+                                    stream.stop()
+                                stream.close()
                         except Exception as _sd_err:
                             logger.warning("[I/O] sounddevice cleanup error (ignored): %s", _sd_err)
                 except ImportError:

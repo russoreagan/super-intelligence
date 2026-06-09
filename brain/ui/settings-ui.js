@@ -18,7 +18,7 @@
   /* ---- personas + canonical chemistry (mirror brain/run.py PERSONAS) ---- */
   const PERSONAS = SET.personas.map(p => ({ ...p }));
   const PERSONA_CHEM = {
-    'The Visionary': { DA: 0.62, ACh: 0.45, GABA: 0.12, Glu: 0.40, NE: 0.35, '5HT': 0.55, CORT: 0.05, OXT: 0.45, AEA: 0.20 },
+    'The Visionary': { DA: 0.62, ACh: 0.45, GABA: 0.32, Glu: 0.40, NE: 0.35, '5HT': 0.55, CORT: 0.05, OXT: 0.45, AEA: 0.20 },
     'The Empath':    { DA: 0.45, ACh: 0.18, GABA: 0.12, Glu: 0.18, NE: 0.15, '5HT': 0.70, CORT: 0.03, OXT: 0.70, AEA: 0.45 },
     'The Analyst':   { DA: 0.35, ACh: 0.35, GABA: 0.30, Glu: 0.25, NE: 0.25, '5HT': 0.55, CORT: 0.14, OXT: 0.22, AEA: 0.30 },
     'The Poet':      { DA: 0.32, ACh: 0.55, GABA: 0.12, Glu: 0.38, NE: 0.42, '5HT': 0.28, CORT: 0.15, OXT: 0.22, AEA: 0.38 },
@@ -31,12 +31,12 @@
   ];
   const CHEM_MIN = 0, CHEM_MAX = 0.8, CHEM_STEP = 0.01;
 
-  /* ---- the nine trait dials. Each map row: { key, dir, span }. Every key
-     is a real backend settings key, so every dial both moves a real control
-     and produces a valid /settings patch. ---- */
+  /* ---- the eight temperament dials. Each map row: { key, dir, span }. Every
+     key is a real backend settings key, so every dial both moves a real control
+     and produces a valid /settings patch. (The Learning Rate dial is NOT here —
+     learning rate is not a chemistry trait, so it lives in the Cognitive Style
+     box below where it rests at neutral.) ---- */
   const TRAIT_DIALS = [
-    { id: 'intelligence', label: 'Intelligence', sub: 'learning · reasoning', glyph: 'spark',
-      map: [ { key: 'chem_baseline_ACh', dir: +1, span: 0.12 }, { key: 'surprise_ACh_weight', dir: +1, span: 0.05 }, { key: 'frontal_ach_weight', dir: +1, span: 0.10 }, { key: 'plasticity_arousal_weight', dir: +1, span: 0.10 }, { key: 'plasticity_intensity_weight', dir: +1, span: 0.08 } ] },
     { id: 'empathy', label: 'Empathy', sub: 'warmth · bonding', glyph: 'bond',
       map: [ { key: 'chem_baseline_OXT', dir: +1, span: 0.15 }, { key: 'chem_baseline_5HT', dir: +1, span: 0.10 }, { key: 'oxt_positive_increment', dir: +1, span: 0.006 }, { key: 'voice_style_default', dir: +1, span: 0.10 }, { key: 'chem_baseline_CORT', dir: -1, span: 0.04 } ] },
     { id: 'sensitivity', label: 'Sensitivity', sub: 'reactivity', glyph: 'ripple',
@@ -60,12 +60,31 @@
      touch chemistry, so they aren't posed from the persona's chemistry spread).
      Same radial knobs, shown in a separate box below Temperament. ---- */
   const COGNITIVE_DIALS = [
+    // The learning-rate knob. Low = static / traditional (near-frozen weights);
+    // high = fast, accumulating learner. Bundles the real plasticity machinery,
+    // plus live within-session learning + faster consolidation at the top end.
+    { id: 'learning-rate', label: 'Learning Rate', sub: 'static ↔ fast-learning', glyph: 'spark',
+      map: [
+        { key: 'hebbian_delta', dir: +1, span: 0.08 },          // online learning rate (→0.10 = ~5×)
+        { key: 'hebbian_outcome_delta', dir: +1, span: 0.08 },  // sleep/offline learning rate
+        { key: 'decay_toward_rest_rate', dir: -1, span: 0.008 },// retention: high intel forgets less
+        { key: 'plasticity_arousal_weight', dir: +1, span: 0.30 },
+        { key: 'plasticity_intensity_weight', dir: +1, span: 0.30 },
+        { key: 'plasticity_turn_max', dir: +1, span: 0.40 },    // deeper per-turn encoding
+        { key: 'weight_max', dir: +1, span: 1.50 },             // accumulation headroom
+        { key: 'gaba_skip_threshold_high', dir: +1, span: 0.15 },// keep learning under inhibition
+        { key: 'sleep_min_turns', dir: -1, span: 3 },           // consolidate more often
+        { key: 'colony_trail_gain', dir: +1, span: 0.10 },      // strength of live trail reinforcement
+      ],
+      toggles: [
+        { key: 'graded_plasticity', at: 0.55, mode: 'set' },        // intensity-scaled encoding once leaning up
+        { key: 'colony_features', at: 0.80, mode: 'enableHigh' },   // top end: live within-session learning…
+        { key: 'colony_trail_apply', at: 0.80, mode: 'enableHigh' },// …reinforce paths that pay off immediately
+      ] },
     { id: 'focus', label: 'Focus', sub: 'scattered ↔ single-minded', glyph: 'target',
       map: [ { key: 'ne_scatter_threshold', dir: +1, span: 0.10 }, { key: 'topic_activation_decay', dir: +1, span: 0.12 }, { key: 'dmn_overlap_threshold', dir: +1, span: 0.10 }, { key: 'salience_workspace_threshold', dir: -1, span: 0.12 } ] },
     { id: 'curiosity', label: 'Curiosity', sub: 'novelty-seeking', glyph: 'compass',
       map: [ { key: 'frontal_ach_weight', dir: +1, span: 0.15 }, { key: 'surprise_threshold', dir: -1, span: 0.12 }, { key: 'salience_ACh_weight', dir: +1, span: 0.06 } ] },
-    { id: 'adaptability', label: 'Adaptability', sub: 'stable ↔ adaptive', glyph: 'cycle',
-      map: [ { key: 'hebbian_delta', dir: +1, span: 0.03 }, { key: 'hebbian_outcome_delta', dir: +1, span: 0.03 }, { key: 'gaba_skip_threshold_high', dir: +1, span: 0.12 } ] },
     { id: 'introspection', label: 'Introspection', sub: 'self-appraisal', glyph: 'spiral',
       map: [ { key: 'meta_interval', dir: -1, span: 15 }, { key: 'meta_cooldown_turns', dir: -1, span: 1.5 } ] },
     { id: 'memory', label: 'Memory', sub: 'in-the-moment ↔ recall', glyph: 'node',
@@ -117,10 +136,27 @@
   let scaffolded = false;
   let systemPage = null;                // 'apikeys' | 'operational' when view==='system'
 
+  // Per-persona saved knob setups (built-in + custom), mirrored from the
+  // persona_store setting. name -> { custom, tag, note, chem:{9}, vals:{key:val} }.
+  const personaStore = {};
+  const BUILTIN_IDS = SET.personas.map(p => p.id);
+  const isBuiltin = id => BUILTIN_IDS.includes(id);
+  let storeChanged = false;             // persona created/renamed/deleted since last save
+
   const allKeys = (() => { const s = new Set(); ALL_DIALS.forEach(d => d.map.forEach(t => s.add(t.key))); return [...s]; })();
+  // toggle keys a dial flips at a threshold (not part of the additive map)
+  const toggleKeys = (() => { const s = new Set(); ALL_DIALS.forEach(d => (d.toggles || []).forEach(t => s.add(t.key))); return [...s]; })();
   const isChem = k => k.indexOf('chem_baseline_') === 0;
   const chemOf = k => k.slice('chem_baseline_'.length);
-  function personaBaseline(k) { return isChem(k) ? PERSONA_CHEM[persona][chemOf(k)] : refDefault[k]; }
+  function personaBaseline(k) {
+    if (!isChem(k)) return refDefault[k];
+    const c = PERSONA_CHEM[persona]; return (c && c[chemOf(k)] != null) ? c[chemOf(k)] : refDefault[k];
+  }
+  // keys captured in a persona's saved snapshot: all 9 chem baselines + boot
+  // levels, plus every non-chem key the dials touch (cognitive + global).
+  function snapKeys() { const s = new Set(); CHANNELS.forEach(c => { s.add('chem_baseline_' + c.ch); s.add('chem_init_' + c.ch); }); allKeys.forEach(k => { if (!isChem(k)) s.add(k); }); toggleKeys.forEach(k => s.add(k)); return [...s]; }
+  function snapshotVals() { const o = {}; snapKeys().forEach(k => { if (k in values) o[k] = values[k]; }); return o; }
+  function currentChem() { const o = {}; CHANNELS.forEach(c => { o[c.ch] = +values['chem_baseline_' + c.ch]; }); return o; }
 
   /* ---- dial rest positions from chemistry ----------------------------
      Where a persona's needle naturally sits on each temperament dial. This
@@ -133,7 +169,6 @@
      this table (the cognitive dials) rests at neutral 0.5. Higher reading =
      more of the trait — see each dial's sub-label for which pole is which.   */
   const REST_WEIGHTS = {
-    intelligence: [['ACh', 0.40, +1], ['DA', 0.25, +1], ['5HT', 0.35, +1]],
     empathy:      [['OXT', 0.45, +1], ['5HT', 0.30, +1], ['CORT', 0.25, -1]],
     sensitivity:  [['NE', 0.35, +1], ['Glu', 0.30, +1], ['GABA', 0.20, -1], ['CORT', 0.15, +1]],
     composure:    [['GABA', 0.35, +1], ['5HT', 0.25, +1], ['CORT', 0.25, -1], ['NE', 0.15, -1]],
@@ -144,12 +179,25 @@
     caution:      [['OXT', 0.40, -1], ['CORT', 0.30, +1], ['GABA', 0.20, +1], ['NE', 0.10, +1]],
   };
   const nrm = v => Math.max(0, Math.min(1, (+v || 0) / 0.8));   // absolute channel scale
-  function dialRest(personaId, d) {
-    const w = REST_WEIGHTS[d.id]; const chem = PERSONA_CHEM[personaId];
+  // Pose a dial from a RESTING chemistry profile (the base rate). `chem` is the
+  // persona's resting baseline, NOT its live/current state — so the needle shows
+  // where the persona naturally sits, the same regardless of how its chemistry
+  // has evolved this session.
+  function dialRest(chem, d) {
+    const w = REST_WEIGHTS[d.id];
     if (!w || !chem) return 0.5;
     let s = 0, tw = 0;
     w.forEach(([ch, wt, dir]) => { const x = dir > 0 ? nrm(chem[ch]) : 1 - nrm(chem[ch]); s += wt * x; tw += wt; });
     return tw ? Math.max(0, Math.min(1, s / tw)) : 0.5;
+  }
+  // The persona's resting baseline as actually loaded/stored (chem_baseline_*),
+  // which IS the base rate — used to pose the needles. Falls back to the
+  // hardcoded canonical only if a channel is somehow missing.
+  function personaRestChem() {
+    const canon = PERSONA_CHEM[persona] || {};
+    const o = {};
+    CHANNELS.forEach(c => { const v = values['chem_baseline_' + c.ch]; o[c.ch] = (v != null && v !== '') ? +v : canon[c.ch]; });
+    return o;
   }
 
   /* ---- recompute: dial positions -> real key values ---- */
@@ -157,6 +205,13 @@
     const offset = {}; allKeys.forEach(k => { offset[k] = 0; });
     ALL_DIALS.forEach(d => d.map.forEach(t => { offset[t.key] += t.dir * t.span * (dial[d.id] - rest[d.id]) * 2; }));
     allKeys.forEach(k => { values[k] = clampKey(k, dialCenter[k] + offset[k]); if (isChem(k)) values['chem_init_' + chemOf(k)] = values[k]; });
+    // threshold toggles: flip a 0/1 key once the dial crosses `at`. mode 'set'
+    // forces 0 below the threshold; 'enableHigh' only turns it on (leaves it
+    // alone below, so it never clobbers a switch the user set elsewhere).
+    ALL_DIALS.forEach(d => (d.toggles || []).forEach(t => {
+      if (dial[d.id] >= t.at) values[t.key] = 1;
+      else if (t.mode !== 'enableHigh') values[t.key] = 0;
+    }));
   }
   function dialOffsetFor(key) { let o = 0; ALL_DIALS.forEach(d => d.map.forEach(t => { if (t.key === key) o += t.dir * t.span * (dial[d.id] - rest[d.id]) * 2; })); return o; }
   const moved = id => Math.abs(dial[id] - rest[id]) > 1e-4;
@@ -166,7 +221,10 @@
      baseline. snap=false (initial load): keep the loaded values. ---- */
   function seedDials(snap) {
     if (snap) CHANNELS.forEach(c => { values['chem_baseline_' + c.ch] = PERSONA_CHEM[persona][c.ch]; values['chem_init_' + c.ch] = PERSONA_CHEM[persona][c.ch]; });
-    ALL_DIALS.forEach(d => { rest[d.id] = dialRest(persona, d); dial[d.id] = rest[d.id]; });
+    // Capture the resting baseline once, here, so dial leans (which change
+    // chem_baseline) don't drag the needle's anchor with them.
+    const base = personaRestChem();
+    ALL_DIALS.forEach(d => { rest[d.id] = dialRest(base, d); dial[d.id] = rest[d.id]; });
     allKeys.forEach(k => { dialCenter[k] = (k in values) ? +values[k] : keyMeta(k).def; });
   }
 
@@ -193,6 +251,24 @@
     // ensure every dial-touched key exists
     allKeys.forEach(k => { if (!(k in values)) { const m = keyMeta(k); refDefault[k] = m.def; values[k] = m.def; saved[k] = values[k]; } });
 
+    // hydrate the persona store: reset to built-ins, then fold in saved
+    // built-in overrides + any user-created custom personas.
+    Object.keys(personaStore).forEach(k => delete personaStore[k]);
+    PERSONAS.length = 0; SET.personas.forEach(p => PERSONAS.push({ ...p }));
+    Object.keys(PERSONA_CHEM).forEach(k => { if (!isBuiltin(k)) delete PERSONA_CHEM[k]; });
+    try {
+      const ps = s.persona_store ? JSON.parse(s.persona_store) : {};
+      Object.entries(ps).forEach(([name, e]) => {
+        if (!e || typeof e !== 'object') return;
+        personaStore[name] = e;
+        if (e.custom && !PERSONAS.find(p => p.id === name)) {
+          PERSONAS.push({ id: name, name, tag: e.tag || 'Custom persona', note: e.note || '' });
+          if (e.chem) PERSONA_CHEM[name] = e.chem;
+        }
+      });
+    } catch (err) { console.warn('persona_store parse failed', err); }
+    storeChanged = false;
+
     persona = (s.persona_name && PERSONA_CHEM[s.persona_name]) ? s.persona_name : PERSONAS[0].id;
     if (!('persona_name' in saved)) { values.persona_name = saved.persona_name = persona; }
     if (!(persona in manualState)) manualState[persona] = false;
@@ -217,16 +293,27 @@
     Object.keys(values).forEach(k => { if (!(k in saved) && values[k] !== '' && values[k] != null) patch[k] = values[k]; });
     return patch;
   }
-  function dirtyCount() { return Object.keys(realChangedPatch()).length; }
+  function dirtyCount() { return Object.keys(realChangedPatch()).length + (storeChanged ? 1 : 0); }
 
   async function doSave() {
     const patch = realChangedPatch();
-    if (!Object.keys(patch).length) return;
+    // On a persona, always carry its chemistry + saved knob snapshot so the
+    // active persona's full setup persists (a brand-new persona has no dirty
+    // keys vs the one it cloned, but still needs its chem written + stored).
+    if (view === 'persona' && persona) {
+      CHANNELS.forEach(c => { patch['chem_baseline_' + c.ch] = values['chem_baseline_' + c.ch]; patch['chem_init_' + c.ch] = values['chem_init_' + c.ch]; });
+      patch.persona_name = persona;
+      syncStoreFromCurrent();
+      patch.persona_store = JSON.stringify(personaStore);
+    }
+    const meaningful = Object.keys(patch).some(k => k !== 'persona_store' && k !== 'persona_name' && !(k.startsWith('chem_') && values[k] === saved[k]));
+    if (!meaningful && !storeChanged) return;
     if (saveBtn) saveBtn.textContent = 'Saving…';
     try {
       const res = await fetch('/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) });
       if (res.ok) {
         Object.keys(values).forEach(k => saved[k] = values[k]);
+        storeChanged = false;
         if (restartBanner) restartBanner.classList.add('on', 'visible');
         if (saveBtn) { saveBtn.textContent = 'Saved ✓'; setTimeout(() => saveBtn.textContent = 'Save Settings', 1600); }
         applyGenericDisplay(); refreshDirty();
@@ -270,7 +357,7 @@
           `</svg></div>` +
         `<div class="tname"><span class="tglyph">${ico(GLYPHS[d.glyph])}</span>${d.label}</div>` +
         `<div class="tsub">${d.sub}</div><div class="treadout" data-r>50</div>` +
-        `<div class="tdrives">drives ${d.map.length} controls</div>`;
+        `<div class="tdrives">drives ${d.map.length + (d.toggles ? d.toggles.length : 0)} controls</div>`;
       container.appendChild(cell);
       const knob = cell.querySelector('.tknob');
       dialEls[d.id] = { cell, knob, fill: cell.querySelector('.tk-fill'), needle: cell.querySelector('.tk-needle'), restDot: cell.querySelector('.tk-rest'), readout: cell.querySelector('[data-r]') };
@@ -472,12 +559,13 @@
           `<button class="es-toggle" id="st-manual" role="switch" aria-checked="false" aria-label="Manual mode"></button></div>` +
         `</div>` +
         `<div class="pdetail-note" id="st-note"></div>` +
+        `<button class="es-del-persona" id="st-delete" style="display:none">Delete persona</button>` +
         `<nav class="tabbar" id="st-tabbar"></nav>` +
       `</div>` +
       `<div id="tab-temperament"><div class="es-card">` +
         `<div class="es-card-head static"><span class="es-num">00</span>` +
           `<div class="es-ct"><div class="es-card-title">Temperament</div>` +
-          `<div class="es-card-desc">Nine dials that shape the persona. Each rests where this persona naturally sits and quietly turns a whole bundle of underlying controls at once — turn one to lean the temperament that way.</div></div>` +
+          `<div class="es-card-desc">Eight dials that shape the persona. Each rests where this persona naturally sits and quietly turns a whole bundle of underlying controls at once — turn one to lean the temperament that way.</div></div>` +
           `<div class="es-tools"><span class="es-badge" id="st-chembadge"><i></i><span>off baseline</span></span>` +
           `<button class="es-reset" id="st-personareset" title="Restore this persona's baseline">${resetSvg}</button></div>` +
         `</div>` +
@@ -499,6 +587,10 @@
       `<div id="tab-generic" hidden></div>`;
     document.getElementById('st-manual').addEventListener('click', () => setManual(!manualState[persona]));
     document.getElementById('st-personareset').addEventListener('click', e => { e.stopPropagation(); resetPersona(); });
+    document.getElementById('st-delete').addEventListener('click', () => deletePersona(persona));
+    const nm = document.getElementById('st-name');
+    nm.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); nm.blur(); } });
+    nm.addEventListener('blur', () => { if (view === 'persona' && !isBuiltin(persona)) renamePersona(nm.textContent); });
     scaffolded = true;
   }
 
@@ -530,23 +622,33 @@
   function renderPersonaRail() {
     const rail = document.getElementById('rail-nav'); if (!rail) return;
     rail.innerHTML = '';
-    const list = document.createElement('div'); list.className = 'pmenu-list';
+    // scrollable persona list (so a long list never pushes System off-screen)
+    const list = document.createElement('div'); list.className = 'pmenu-list pmenu-scroll';
     PERSONAS.forEach(p => {
-      const c = document.createElement('button'); c.className = 'pmenu-item'; c.dataset.p = p.id;
-      c.innerHTML = `<div class="pmenu-name">${p.name}</div><div class="pmenu-tag">${p.tag}</div>`;
-      c.addEventListener('click', () => { if (view === 'persona' && p.id === persona) return; selectPersona(p.id); });
+      const custom = !isBuiltin(p.id);
+      const c = document.createElement('button'); c.className = 'pmenu-item' + (custom ? ' custom' : ''); c.dataset.p = p.id;
+      c.innerHTML = `<div class="pmenu-name">${p.name}</div><div class="pmenu-tag">${p.tag}</div>` +
+        (custom ? '<span class="pmenu-del" title="Delete persona">×</span>' : '');
+      c.addEventListener('click', (e) => {
+        if (e.target.closest('.pmenu-del')) { e.stopPropagation(); deletePersona(p.id); return; }
+        if (!(view === 'persona' && p.id === persona)) selectPersona(p.id);
+      });
       list.appendChild(c);
     });
+    const add = document.createElement('button'); add.className = 'pmenu-add'; add.innerHTML = '<span>+</span> New persona';
+    add.addEventListener('click', createPersona);
+    list.appendChild(add);
     rail.appendChild(list);
-    const sh = document.createElement('div'); sh.className = 'pmenu-syshead'; sh.textContent = 'System'; rail.appendChild(sh);
+    // pinned System section (stays put below the scrolling persona list)
+    const sys = document.createElement('div'); sys.className = 'pmenu-system';
+    const sh = document.createElement('div'); sh.className = 'pmenu-syshead'; sh.textContent = 'System'; sys.appendChild(sh);
     const api = document.createElement('button'); api.className = 'pmenu-item sys'; api.dataset.sys = 'apikeys';
     api.innerHTML = '<div class="pmenu-name">API Keys</div><div class="pmenu-tag">Models · voice · services</div>';
-    api.addEventListener('click', () => selectSystem('apikeys'));
-    rail.appendChild(api);
+    api.addEventListener('click', () => selectSystem('apikeys')); sys.appendChild(api);
     const ops = document.createElement('button'); ops.className = 'pmenu-item sys'; ops.dataset.sys = 'operational';
     ops.innerHTML = '<div class="pmenu-name">Operational</div><div class="pmenu-tag">Perception · resources · maintenance</div>';
-    ops.addEventListener('click', () => selectSystem('operational'));
-    rail.appendChild(ops);
+    ops.addEventListener('click', () => selectSystem('operational')); sys.appendChild(ops);
+    rail.appendChild(sys);
     syncRailSel();
   }
   function syncRailSel() {
@@ -556,21 +658,86 @@
 
   function syncPersonaHead() {
     const p = PERSONAS.find(x => x.id === persona) || { name: persona, tag: '', note: '' };
+    const builtin = isBuiltin(persona);
     const set = (id, t) => { const el = document.getElementById(id); if (el != null && el) el.textContent = t; };
-    set('st-eyebrow', 'Persona'); set('st-name', p.name); set('st-tag', p.tag); set('st-note', p.note);
+    set('st-eyebrow', builtin ? 'Persona' : 'Custom persona'); set('st-name', p.name); set('st-tag', p.tag); set('st-note', p.note);
+    const nm = document.getElementById('st-name'); if (nm) nm.setAttribute('contenteditable', builtin ? 'false' : 'true');
+    const del = document.getElementById('st-delete'); if (del) del.style.display = builtin ? 'none' : '';
     const bt = document.getElementById('bar-title'); if (bt) bt.textContent = p.name;
     const bb = document.getElementById('bar-blurb'); if (bb) bb.textContent = p.tag || '';
   }
 
+  // Restore a persona's full saved knob setup (chemistry + cognitive + globals).
+  // No stored snapshot (a fresh built-in) → snap chem to canonical and reset the
+  // dial-touched globals to their defaults.
+  function applyPersonaVals(id) {
+    const e = personaStore[id];
+    if (e && e.vals) {
+      Object.entries(e.vals).forEach(([k, v]) => { values[k] = v; });
+    } else {
+      const c = PERSONA_CHEM[id] || {};
+      CHANNELS.forEach(ch => { if (c[ch.ch] != null) { values['chem_baseline_' + ch.ch] = c[ch.ch]; values['chem_init_' + ch.ch] = c[ch.ch]; } });
+      allKeys.forEach(k => { if (!isChem(k)) values[k] = refDefault[k]; });
+      toggleKeys.forEach(k => { values[k] = refDefault[k] != null ? refDefault[k] : 0; });
+    }
+  }
   function selectPersona(id) {
     persona = id; view = 'persona';
     if (!(persona in manualState)) manualState[persona] = false;
     values.persona_name = id;
-    seedDials(true);
+    applyPersonaVals(id);
+    seedDials(false);
     renderAllDials(); renderChem(); applyChemDisplay(false);
     syncPersonaHead(); renderTabs(); refreshManualUI();
     if (activeTab !== 'persona') renderGeneric(activeTab);
     selectTab(activeTab); syncRailSel(); refreshDirty();
+  }
+
+  /* ---- create / rename / delete custom personas ---- */
+  function markStore() { storeChanged = true; }
+  function uniqueName(base) { let n = base, i = 2; while (PERSONAS.find(p => p.id === n) || personaStore[n]) { n = base + ' ' + i; i++; } return n; }
+  function syncStoreFromCurrent() {
+    if (!persona || view !== 'persona') return;
+    const e = personaStore[persona] || { custom: !isBuiltin(persona) };
+    e.vals = snapshotVals();
+    const meta = PERSONAS.find(p => p.id === persona);
+    if (meta) { e.tag = meta.tag; e.note = meta.note; }
+    if (e.custom) e.chem = currentChem();
+    personaStore[persona] = e;
+  }
+  function createPersona() {
+    const fromName = (PERSONAS.find(p => p.id === persona) || {}).name || persona;
+    const name = uniqueName('New Persona');
+    const chem = currentChem();
+    PERSONA_CHEM[name] = chem;
+    const tag = 'Custom · cloned from ' + fromName;
+    const note = 'A new persona, cloned from ' + fromName + '. Rename it, then shape it with the dials — or switch on Manual mode to set the chemistry by hand.';
+    PERSONAS.push({ id: name, name, tag, note });
+    personaStore[name] = { custom: true, tag, note, chem, vals: snapshotVals() };
+    markStore(); renderPersonaRail(); selectPersona(name);
+    const nm = document.getElementById('st-name');
+    if (nm) { nm.focus(); const r = document.createRange(); r.selectNodeContents(nm); const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r); }
+  }
+  function renamePersona(newName) {
+    newName = (newName || '').trim();
+    if (!newName || isBuiltin(persona) || newName === persona ||
+        PERSONAS.find(p => p.id === newName) || personaStore[newName]) { syncPersonaHead(); return; }
+    const old = persona;
+    personaStore[newName] = personaStore[old]; delete personaStore[old];
+    PERSONA_CHEM[newName] = PERSONA_CHEM[old]; delete PERSONA_CHEM[old];
+    const meta = PERSONAS.find(p => p.id === old); if (meta) { meta.id = newName; meta.name = newName; }
+    if (manualState[old] != null) { manualState[newName] = manualState[old]; delete manualState[old]; }
+    persona = newName; values.persona_name = newName;
+    markStore(); renderPersonaRail(); syncPersonaHead(); refreshDirty();
+  }
+  function deletePersona(id) {
+    if (isBuiltin(id)) return;
+    if (!window.confirm('Delete persona "' + id + '"? This removes its saved knob setup.')) return;
+    delete personaStore[id]; delete PERSONA_CHEM[id];
+    const i = PERSONAS.findIndex(p => p.id === id); if (i >= 0) PERSONAS.splice(i, 1);
+    markStore();
+    if (persona === id) selectPersona(PERSONAS[0].id);
+    renderPersonaRail(); refreshDirty();
   }
   function selectSystem(which) {
     view = 'system'; systemPage = which; syncRailSel();
@@ -635,6 +802,7 @@
   function resetPersona() {
     CHANNELS.forEach(c => { values['chem_baseline_' + c.ch] = PERSONA_CHEM[persona][c.ch]; values['chem_init_' + c.ch] = PERSONA_CHEM[persona][c.ch]; });
     allKeys.forEach(k => { if (!isChem(k)) values[k] = refDefault[k]; });
+    toggleKeys.forEach(k => { values[k] = refDefault[k] != null ? refDefault[k] : 0; });
     ALL_DIALS.forEach(d => { dial[d.id] = rest[d.id]; });
     allKeys.forEach(k => { dialCenter[k] = +values[k]; });
     ALL_DIALS.forEach(d => paintDial(d.id)); applyChemDisplay(false); applyGenericDisplay(); refreshDirty();

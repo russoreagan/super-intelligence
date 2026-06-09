@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import os
 import shutil
@@ -156,6 +157,18 @@ class Provisioner:
         if not settings_path.exists() and _BUNDLED_SETTINGS.exists():
             shutil.copy(_BUNDLED_SETTINGS, settings_path)
 
+        # Pin the tenant's persona name so its memory/chemistry key off the right
+        # slug from the first boot (rather than relying on run.py re-deriving it
+        # from settings.json, which falls back to "default" and cross-buckets if
+        # persona_name is empty). Read it from the just-seeded settings.json.
+        persona_name = ""
+        try:
+            persona_name = str(
+                json.loads(settings_path.read_text(encoding="utf-8")).get("persona_name", "")
+            )
+        except Exception:
+            persona_name = ""
+
         env = os.environ.copy()
         env.update(
             {
@@ -164,9 +177,16 @@ class Provisioner:
                 "BRAIN_STORAGE_BACKEND": "supabase",
                 "BRAIN_SETTINGS_PATH": str(settings_path),
                 "SECOND_BRAIN_PATH": str(root / "second_brain"),
+                # Hosted tenants render/capture audio in the browser, not via a
+                # server-side sound device. Without this, BROWSER_AUDIO_MODE is
+                # false, attach_tts_queue never runs, and TTS audio is never
+                # streamed to the client (voice silently no-ops on hosted).
+                "BRAIN_AUDIO_OUTPUT_DEVICE": "browser",
                 "PORT": str(port),
             }
         )
+        if persona_name:
+            env["BRAIN_PERSONA_NAME"] = persona_name
         # Bind the child to 127.0.0.1 (reachable only via the gateway). server.py
         # binds 0.0.0.0 when RAILWAY_ENVIRONMENT is set, so clear it for children;
         # the gateway keeps it to serve publicly.

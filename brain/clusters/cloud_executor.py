@@ -76,7 +76,14 @@ _DENY_WORDS = frozenset(
 
 SUBPROCESS_TIMEOUT = 120  # seconds — cloud ops can be slow
 
-RESEARCH_DIR = Path("second_brain/research")
+# Per-tenant on hosted: resolve under SECOND_BRAIN_PATH, not the shared cwd
+# (every tenant runs with cwd=repo_root, so a relative path collides).
+_SECOND_BRAIN_ROOT = Path(
+    os.environ.get(
+        "SECOND_BRAIN_PATH", str(Path(__file__).parent.parent.parent / "second_brain")
+    )
+)
+RESEARCH_DIR = _SECOND_BRAIN_ROOT / "research"
 _RESEARCH_MAX_AGE_DAYS = 2
 
 
@@ -476,8 +483,8 @@ class CloudExecutor:
     # ── Audit trail ───────────────────────────────────────────────────────────
 
     async def _append_tool_log(self, task: str, output: str, success: bool) -> None:
-        """Append one entry to second_brain/schema/tool_log.md."""
-        log_path = Path("second_brain/schema/tool_log.md")
+        """Append one entry to the per-tenant schema/tool_log.md."""
+        log_path = _SECOND_BRAIN_ROOT / "schema" / "tool_log.md"
         try:
             ts = datetime.now().strftime("%Y-%m-%d %H:%M")
             status = "✓" if success else "✗"

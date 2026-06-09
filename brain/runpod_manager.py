@@ -38,8 +38,13 @@ _MIGRATE_THRESHOLD = 0.20  # log a suggestion if new option is 20%+ cheaper
 
 _POLL_S = 5.0
 _READY_TIMEOUT_S = 300.0  # 5 min max for pod to come up
-_WATCHER_INTERVAL_S = 1800.0  # check for better options every 30 min (pod running)
+_WATCHER_INTERVAL_S = 1800.0  # check for a CHEAPER GPU every 30 min (pod running)
 _CAPACITY_POLL_S = 300.0  # retry every 5 min when on local fallback
+# Liveness of a HELD pod is probed far more often than the cheaper-GPU migration
+# check — a dead pod must be detected and recovered fast, or idle DMN thinking
+# (its cells are model="runpod") goes silent for the whole gap. 30 min of silence
+# was the "idle thoughts freeze" symptom; 2 min keeps recovery responsive.
+_LIVENESS_POLL_S = 120.0
 
 # Warmup runs in the background (never blocks boot). Loading a 32B model from disk
 # routinely exceeds the RunPod proxy's request timeout, so we kick the load and then
@@ -255,6 +260,15 @@ class RunPodManager:
     def _pod_host(self, pod_id: str) -> str:
         return f"https://{pod_id}-{_PORT}.proxy.runpod.net"
 
+    async def _probe_alive(self, pod_id: str) -> bool:
+        """Best-effort liveness probe — same check as readiness (/api/tags 200)."""
+        host = self._pod_host(pod_id)
+        try:
+            r = await self._get_http().get(f"{host}/api/tags", timeout=10.0)
+            return r.status_code == 200
+        except Exception:
+            return False
+
     def _apply_host(self, pod_id: str) -> None:
         from brain.settings import settings
 
@@ -452,12 +466,53 @@ class RunPodManager:
     async def _watch(self) -> None:
         """
         No pod running: poll every 5 min, spin one up when capacity appears.
-        Pod running: log if a meaningfully cheaper option appears every 30 min.
+        Pod running: probe liveness every 2 min (recover fast if it died) and
+        log if a meaningfully cheaper option appears every 30 min.
         """
+        last_migration_check = 0.0
+        loop = asyncio.get_event_loop()
         while True:
-            interval = _WATCHER_INTERVAL_S if self._pod_id else _CAPACITY_POLL_S
+            # Held pod → fast liveness cadence; no pod → capacity-retry cadence.
+            interval = _LIVENESS_POLL_S if self._pod_id else _CAPACITY_POLL_S
             await asyncio.sleep(interval)
             try:
+                # Liveness recovery FIRST and on every fast tick — it must not wait
+                # on the (slow, rate-limited) GPU-type query, which is only needed
+                # for the cheaper-GPU migration check below.
+                if self._pod_id is not None:
+                    if not await self._probe_alive(self._pod_id):
+                        logger.warning(
+                            "[RunPod] Held pod %s not responding — attempting recovery",
+                            self._pod_id,
+                        )
+                        recovered = False
+                        try:
+                            await self._resume_pod(self._pod_id)
+                            recovered = await self._activate_pod(self._pod_id)
+                        except Exception as e:
+                            logger.warning(
+                                "[RunPod] Recovery of %s failed: %s", self._pod_id, e
+                            )
+                        if recovered:
+                            logger.info(
+                                "[RunPod] Pod %s recovered — cheap local inference restored",
+                                self._pod_id,
+                            )
+                        else:
+                            logger.warning(
+                                "[RunPod] Pod %s unrecoverable — releasing; acquire path "
+                                "will re-engage next tick",
+                                self._pod_id,
+                            )
+                            self._pod_id = None
+                        continue
+                    # Pod is alive — only run the (slow) cheaper-GPU comparison
+                    # every _WATCHER_INTERVAL_S, not on every liveness tick.
+                    now = loop.time()
+                    if now - last_migration_check < _WATCHER_INTERVAL_S:
+                        continue
+                    last_migration_check = now
+
                 gpu_types = await self._fetch_gpu_types()
                 ranked = self._rank_gpus(gpu_types)
                 if not ranked:
@@ -483,6 +538,41 @@ class RunPodManager:
                             await self._stop_pod(pod_id)
                             self._pod_id = None
                 else:
+                    # Liveness recovery. The acquire path only runs while no pod
+                    # is held; once one is, nothing re-checks it. runpod_watchdog
+                    # can stop it, it can go idle, or RunPod can evict it — and in
+                    # every case runpod_host keeps pointing at a dead pod (or was
+                    # reset to localhost), so DMN/local calls fail over to cloud
+                    # forever. Probe it; resume + re-apply host on failure, and if
+                    # that doesn't work, release _pod_id so the acquire path above
+                    # re-engages on the next tick. Best-effort, never fatal.
+                    if not await self._probe_alive(self._pod_id):
+                        logger.warning(
+                            "[RunPod] Held pod %s not responding — attempting recovery",
+                            self._pod_id,
+                        )
+                        recovered = False
+                        try:
+                            await self._resume_pod(self._pod_id)
+                            recovered = await self._activate_pod(self._pod_id)
+                        except Exception as e:
+                            logger.warning(
+                                "[RunPod] Recovery of %s failed: %s", self._pod_id, e
+                            )
+                        if recovered:
+                            logger.info(
+                                "[RunPod] Pod %s recovered — cheap local inference restored",
+                                self._pod_id,
+                            )
+                        else:
+                            logger.warning(
+                                "[RunPod] Pod %s unrecoverable — releasing; acquire path "
+                                "will re-engage next tick",
+                                self._pod_id,
+                            )
+                            self._pod_id = None
+                        continue
+
                     best = ranked[0]
                     if self._current_price and best["_price"] < self._current_price * (
                         1 - _MIGRATE_THRESHOLD

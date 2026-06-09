@@ -106,6 +106,51 @@ def _measure_formality(text: str) -> float:
     return max(0.0, min(1.0, score))
 
 
+# Code / jargon markers. When any of these appear the message reads as
+# technical regardless of how formal or casual the surrounding prose is, so
+# this dominates the discrete register tag below. Kept conservative — patterns
+# that are strong signals of code (fences, call syntax, snake/camelCase
+# identifiers, operators, dev keywords) and rare in ordinary prose.
+# NOTE: deliberately NOT re.IGNORECASE — the camelCase branch relies on a real
+# case transition, and a global ignore-case flag would degrade [a-z]+[A-Z] to
+# [a-z]+[a-z], matching every ordinary word. The keyword list carries its own
+# (?i:…) so it still matches "API", "JSON", etc.
+_TECHNICAL_RE = re.compile(
+    r"```|`[^`]+`"  # code fences / inline code
+    r"|\b\w+\([^)]*\)"  # function-call syntax foo(...)
+    r"|\b[a-z][a-z0-9]*_[a-z0-9_]+\b"  # snake_case identifiers
+    r"|\b[a-z]+[A-Z][a-zA-Z0-9]+\b"  # camelCase identifiers
+    r"|(?:==|!=|=>|->|::|&&|\|\|)"  # code operators
+    r"|(?i:\b(?:def|class|async|await|import|function|const|return|stdout|stderr|"
+    r"json|http|https|api|sql|regex|traceback|exception|stacktrace|"
+    r"git|npm|pip|docker|kubectl|localhost|nginx|stdin|cli)\b)",
+)
+
+
+def classify_register(text: str) -> str:
+    """Cheap, single-token classification of a user message's *register*.
+
+    The length analogue of msg_length, for style: a coarse tag computed from
+    heuristics with zero LLM cost, threaded through `features` and into the
+    drafter's tone logic so a reply meets the user's formality, not just their
+    length. Returns one of: casual | neutral | formal | technical.
+
+    Reuses the same formality heuristic as the rolling style vector so the
+    per-turn tag and the persisted register profile stay consistent. 'technical'
+    wins when code/jargon is present — it dominates perceived register regardless
+    of formal/casual prose markers."""
+    if not text or not text.strip():
+        return "neutral"
+    if _TECHNICAL_RE.search(text):
+        return "technical"
+    formality = _measure_formality(text)
+    if formality > 0.60:
+        return "formal"
+    if formality < 0.30:
+        return "casual"
+    return "neutral"
+
+
 class ParietalCluster:
     def __init__(self, bus: Bus) -> None:
         self._bus = bus
@@ -115,6 +160,10 @@ class ParietalCluster:
         self.active_skill_context: ActiveSkillContext | None = None
         # Per-modality user style tracking (voice and text tracked independently)
         self._style_state = ModalityStyleState()
+        # Rolling per-speaker register profile (casual/neutral/formal/technical).
+        # Modality-independent — register is a property of how the person writes,
+        # not which channel — so a single distribution rather than per-modality.
+        self._register_profile: dict[str, float] = {}
 
     def seed(self, episodes: list[dict]) -> None:
         """Pre-populate the ring from recent episodic history (called once at boot).
@@ -205,6 +254,22 @@ class ParietalCluster:
         """Return the current style vector for the given modality."""
         return self._style_state.get(modality)
 
+    # ── Register profile (rolling, per-speaker) ───────────────────────────────
+
+    def update_register(self, register_tag: str, alpha: float = 0.3) -> None:
+        """Fold this turn's discrete register tag into the rolling profile."""
+        from brain.relationship import update_register_profile
+
+        self._register_profile = update_register_profile(
+            self._register_profile, register_tag, alpha
+        )
+
+    def dominant_register(self) -> str:
+        """The user's typical register so far, or '' if not yet established."""
+        from brain.relationship import dominant_register
+
+        return dominant_register(self._register_profile)
+
     # ── Cross-session persistence (F3) ────────────────────────────────────────
 
     async def save_style_to_schema(self, schema_store, speaker_name: str = "") -> None:
@@ -218,11 +283,13 @@ class ParietalCluster:
             if (
                 self._style_state.voice.turns_tracked == 0
                 and self._style_state.text.turns_tracked == 0
+                and not self._register_profile
             ):
                 return
             payload = {
                 "voice": vars(self._style_state.voice),
                 "text": vars(self._style_state.text),
+                "register_profile": self._register_profile,
             }
             line = f"- vectors: {json.dumps(payload)}"
             schema_file = (
@@ -253,6 +320,9 @@ class ParietalCluster:
                 vec.verbosity = float(d.get("verbosity", vec.verbosity))
                 vec.sentiment = float(d.get("sentiment", vec.sentiment))
                 vec.turns_tracked = int(d.get("turns_tracked", vec.turns_tracked))
+            rp = payload.get("register_profile")
+            if isinstance(rp, dict):
+                self._register_profile = {k: float(v) for k, v in rp.items()}
         except Exception:
             logger.debug("parietal: style reload skipped", exc_info=True)
 
