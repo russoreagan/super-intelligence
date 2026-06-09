@@ -1114,9 +1114,8 @@ class HippocampusCluster:
             content = re.sub(r"- History:.*", hist_line, content)
             if "- History:" not in content:
                 content += f"\n{hist_line}"
-            from brain.second_brain.store import SCHEMA_DIR
 
-            self._schema._atomic_write(SCHEMA_DIR / schema_file, content)
+            await self._schema.awrite(schema_file, content)
             # Record the boost on the trace for instrumentation (P5)
             if boost != 1.0:
                 try:
@@ -1200,9 +1199,8 @@ class HippocampusCluster:
                 content = re.sub(r"- Familiarity:[^\n]*", fam_line, content, count=1)
             else:
                 content += f"\n{fam_line}"
-            from brain.second_brain.store import SCHEMA_DIR
 
-            self._schema._atomic_write(SCHEMA_DIR / schema_file, content)
+            await self._schema.awrite(schema_file, content)
 
     async def apply_relationship_decay_at_boot(self) -> None:
         """Apply the bond model's absence decay once at session boot.
@@ -1219,7 +1217,6 @@ class HippocampusCluster:
         import re
 
         from brain.relationship import apply_absence, familiarity_from_bond
-        from brain.second_brain.store import SCHEMA_DIR
 
         now = time.time()
         aff_base = float(settings.get("bond_aff_halflife_base_days"))
@@ -1246,7 +1243,7 @@ class HippocampusCluster:
                     if not m_seen:
                         # First boot with the bond model: stamp now, nothing to decay yet.
                         content += f"\n- Last seen: {now:.0f}"
-                        self._schema._atomic_write(SCHEMA_DIR / schema_file, content)
+                        await self._schema.awrite(schema_file, content)
                         continue
                     last_seen = float(m_seen.group(1))
                     elapsed_days = max(0.0, (now - last_seen) / 86400.0)
@@ -1288,7 +1285,7 @@ class HippocampusCluster:
                     else:
                         content += f"\n{fam_line}"
 
-                    self._schema._atomic_write(SCHEMA_DIR / schema_file, content)
+                    await self._schema.awrite(schema_file, content)
                     logger.info(
                         "[Relationship] Boot decay %s: %.1f d → affection %.0f→%.0f, "
                         "bond %.1f→%.1f, familiarity=%s",
