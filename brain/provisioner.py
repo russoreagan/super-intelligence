@@ -10,7 +10,10 @@ reverse-proxies that user's traffic to their port.
 Same shape as JupyterHub's spawner + culler:
   ensure()  → resume-or-spawn the user's process, wait for /health, return port
   touch()   → mark activity (called by the gateway proxy)
-  reaper    → stop processes idle past BRAIN_SESSION_IDLE_TIMEOUT_S
+  reaper    → safety backstop only: reap a process whose user hasn't connected
+              in BRAIN_SESSION_IDLE_TIMEOUT_S (default 24h). A brain stays awake
+              and keeps thinking (DMN) while its user is away — it only stops when
+              explicitly slept (Sleep button → /shutdown), not on logout/idle.
   stop()    → stop one user's process
 
 Subprocesses are children of the gateway, so if the gateway dies they die too
@@ -37,7 +40,14 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-IDLE_TIMEOUT_S = float(os.environ.get("BRAIN_SESSION_IDLE_TIMEOUT_S", "600"))
+# Safety backstop, NOT an aggressive idle culler. A tenant brain is meant to stay
+# awake and keep thinking (its DMN runs idle thoughts) the whole time its user is
+# away — it should only stop when the user explicitly sleeps it (Sleep button →
+# /shutdown). So this is set to a long window (24h) and reaps only a session whose
+# user hasn't connected at all in that span — i.e. truly abandoned. The brain
+# self-consolidates periodically while awake (sleep_periodic_*), so a backstop
+# reap doesn't lose memory. Override with BRAIN_SESSION_IDLE_TIMEOUT_S if needed.
+IDLE_TIMEOUT_S = float(os.environ.get("BRAIN_SESSION_IDLE_TIMEOUT_S", "86400"))
 READY_TIMEOUT_S = float(os.environ.get("BRAIN_TENANT_READY_TIMEOUT_S", "180"))
 PORT_RANGE_START = int(os.environ.get("BRAIN_TENANT_PORT_START", "9000"))
 PORT_RANGE_END = int(os.environ.get("BRAIN_TENANT_PORT_END", "9999"))
@@ -247,11 +257,16 @@ class Provisioner:
         logger.info("[provisioner] stopped %s", user_id[:8])
 
     async def _reaper_loop(self) -> None:
+        # Backstop only: a brain stays awake (and keeps thinking) until the user
+        # sleeps it. We reap solely to reclaim truly-abandoned sessions — a user
+        # who hasn't connected at all in IDLE_TIMEOUT_S (default 24h). last_active
+        # tracks client connections, not the brain's own DMN activity, so "no
+        # connection for 24h" is the right abandoned signal.
         while True:
-            await asyncio.sleep(60)
+            await asyncio.sleep(300)
             now = time.time()
             for uid, p in list(self._procs.items()):
                 if not p.booting and (now - p.last_active) > IDLE_TIMEOUT_S:
-                    logger.info("[provisioner] reaping idle tenant %s (idle %.0fs)",
-                                uid[:8], now - p.last_active)
+                    logger.info("[provisioner] reaping abandoned tenant %s (no connection in %.0fh)",
+                                uid[:8], (now - p.last_active) / 3600)
                     await self.stop_user(uid)
