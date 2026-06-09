@@ -166,3 +166,34 @@ def test_user_model_not_in_drafter_prompt_in_companion_mode():
         instruction=_INSTR,
     )
     assert "USER_PROFILE_MARKER" not in prompt
+
+
+def test_engine_user_model_preferred_over_process_user_model():
+    """When the customer has their own model, it wins over the process-level one."""
+    f = _make_frontal_skeleton()
+    prompt = f._build_drafter_prompt(
+        features={
+            "end_user_id": "cust-1",
+            "engine_user_model": "CUSTOMER_SPECIFIC_PROFILE",
+            "raw_text": "hi",
+        },
+        memory={"core": {"user": "PROCESS_LEVEL_USER"}},
+        parietal="",
+        affect={"emotion": "neutral", "appraisal": ""},
+        instruction=_INSTR,
+    )
+    assert "CUSTOMER_SPECIFIC_PROFILE" in prompt
+    assert "PROCESS_LEVEL_USER" not in prompt
+
+
+def test_engine_falls_back_to_process_user_model_when_customer_empty():
+    """A customer with no profile yet falls back to the process-level user.md."""
+    f = _make_frontal_skeleton()
+    prompt = f._build_drafter_prompt(
+        features={"end_user_id": "cust-1", "raw_text": "hi"},  # no engine_user_model
+        memory={"core": {"user": "PROCESS_LEVEL_USER"}},
+        parietal="",
+        affect={"emotion": "neutral", "appraisal": ""},
+        instruction=_INSTR,
+    )
+    assert "PROCESS_LEVEL_USER" in prompt

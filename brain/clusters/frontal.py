@@ -1648,12 +1648,16 @@ class FrontalCluster:
         if _sel:
             parts.append(_sel)
         # Engine mode: the per-customer user-model rides the per-turn message (it is
-        # deliberately NOT in the cached block — see _build_cached_context). Companion
-        # mode keeps it cached, so this is skipped there.
+        # deliberately NOT in the cached block — see _build_cached_context). Prefer the
+        # customer's own model (their per-speaker schema, loaded into engine_user_model);
+        # fall back to the process-level user.md until they've built up a profile.
+        # Companion mode keeps the user-model cached, so this is skipped there.
         if features.get("end_user_id"):
-            _core = memory.get("core", {}) or {}
-            if _core.get("user"):
-                parts.append(f"User model:\n{fence('user_model', _core['user'], nonce)}")
+            _um = (features.get("engine_user_model") or "").strip()
+            if not _um:
+                _um = ((memory.get("core", {}) or {}).get("user") or "").strip()
+            if _um:
+                parts.append(f"User model:\n{fence('user_model', _um, nonce)}")
         if parietal:
             parts.append(f"Recent conversation:\n{fence('conversation_history', parietal, nonce)}")
         if memory.get("schema"):

@@ -78,6 +78,26 @@ class _TurnMixin:
                 message, end_user_id=end_user_id, mandate_id=mandate_id
             )
 
+    def _engine_user_model(self, end_user_id: str) -> str:
+        """The customer's user-model for an engine turn — their per-speaker schema
+        (the same store the relationship/sleep system already populates), cached per
+        session. "" if unavailable, in which case the drafter falls back to the
+        process-level user.md. Companion turns never call this."""
+        cache = getattr(self, "_engine_um_cache", None)
+        if cache is None:
+            cache = self._engine_um_cache = {}
+        if end_user_id in cache:
+            return cache[end_user_id]
+        text = ""
+        try:
+            schema = getattr(self.hippocampus, "_schema", None)
+            if schema is not None:
+                text = schema.read(schema.speaker_filename(end_user_id)) or ""
+        except Exception:
+            text = ""
+        cache[end_user_id] = text
+        return text
+
     def _client_chem_registry(self):
         """Lazily build the per-(persona, end_user) chemistry registry for this
         session. Only ever touched in engine mode (a turn carrying an end_user_id);
@@ -383,6 +403,9 @@ class _TurnMixin:
             # context process-stable (identity + mandate catalog) and moves the
             # per-customer user-model to the per-turn message.
             features["end_user_id"] = end_user_id
+            _eum = self._engine_user_model(end_user_id)
+            if _eum:
+                features["engine_user_model"] = _eum
 
         # Engine mode: the partner-assigned MANDATE is selected by id — the catalog
         # is cached, the per-turn message just names the active assignment. Companion
