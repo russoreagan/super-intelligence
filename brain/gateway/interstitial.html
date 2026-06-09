@@ -3,26 +3,46 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="robots" content="noindex, nofollow" />
 <title>Elyceum — waking</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400;1,6..72,500&family=Hanken+Grotesk:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
-  :root { color-scheme: dark; }
-  body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    background: radial-gradient(1200px 800px at 50% -10%, #1b1b22, #0c0c0f); color: #e7e7ea; }
-  .wrap { text-align: center; }
-  .ring { width: 46px; height: 46px; margin: 0 auto 20px; border-radius: 50%;
-    border: 3px solid #2a2a33; border-top-color: #6ee7a8; animation: spin 0.9s linear infinite; }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  h1 { font-size: 18px; font-weight: 600; margin: 0 0 6px; }
-  p { color: #9a9aa5; font-size: 13px; margin: 0; }
-  .slow { color: #6b6b76; font-size: 12px; margin-top: 14px; min-height: 16px; }
+:root {
+  --paper: #fbf7f0;
+  --ink:   oklch(0.27 0.022 54);
+  --ink-2: oklch(0.42 0.022 54);
+  --ink-3: oklch(0.55 0.020 56);
+  --ink-4: oklch(0.68 0.016 60);
+  --line-soft: oklch(0.30 0.02 54 / 0.12);
+  --signal: oklch(0.56 0.185 33);
+  --serif: 'Newsreader', Georgia, serif;
+  --sans:  'Hanken Grotesk', system-ui, sans-serif;
+  --mono:  'JetBrains Mono', ui-monospace, monospace;
+}
+* , *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 48px 24px;
+  background: var(--paper); color: var(--ink); font-family: var(--sans); -webkit-font-smoothing: antialiased;
+  background-image: radial-gradient(oklch(0.30 0.02 54 / 0.025) 0.5px, transparent 0.6px); background-size: 4px 4px; }
+.wrap { text-align: center; max-width: 380px; }
+.eyebrow { font-family: var(--mono); font-size: 9px; letter-spacing: 0.24em; text-transform: uppercase; color: var(--ink-4); }
+.ring { width: 38px; height: 38px; margin: 22px auto 24px; border-radius: 50%;
+  border: 2px solid var(--line-soft); border-top-color: var(--signal); animation: spin 0.9s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+h1 { font-family: var(--serif); font-size: 24px; font-weight: 500; letter-spacing: -0.015em; }
+h1 em { font-style: italic; color: var(--ink-2); }
+p { font-family: var(--serif); font-style: italic; font-size: 14px; color: var(--ink-3); margin-top: 10px; line-height: 1.5; text-wrap: pretty; }
+.slow { font-family: var(--mono); font-style: normal; font-size: 9.5px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--ink-4); margin-top: 18px; min-height: 14px; }
 </style>
 </head>
 <body>
   <div class="wrap">
+    <p class="eyebrow">Elyceum</p>
     <div class="ring"></div>
-    <h1>Waking your brain…</h1>
-    <p>Booting your private instance. This can take up to a minute on a cold start.</p>
+    <h1>Waking <em>your</em> brain…</h1>
+    <p>Booting your private instance. A cold start can take a couple of minutes while models load.</p>
     <p class="slow" id="slow"></p>
   </div>
 <script>

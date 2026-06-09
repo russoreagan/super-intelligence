@@ -3,62 +3,135 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Elyceum — API Keys</title>
+<meta name="robots" content="noindex, nofollow" />
+<title>Elyceum — Setup</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400;1,6..72,500&family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
-  :root { color-scheme: dark; }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    background: radial-gradient(1200px 800px at 50% -10%, #1b1b22, #0c0c0f); color: #e7e7ea;
-  }
-  .card { width: 100%; max-width: 560px; margin: 32px; background: #131318;
-    border: 1px solid #26262e; border-radius: 16px; padding: 28px 28px 22px; }
-  h1 { font-size: 20px; font-weight: 600; margin: 0 0 4px; }
-  .sub { color: #9a9aa5; font-size: 13px; margin: 0 0 22px; }
-  .row { margin: 0 0 18px; }
-  .lab { display: flex; align-items: baseline; gap: 8px; font-size: 14px; font-weight: 600; margin-bottom: 6px; }
-  .req { color: #f0b35b; font-size: 11px; font-weight: 600; }
-  .opt { color: #6b6b76; font-size: 11px; font-weight: 500; }
-  .on  { color: #6ee7a8; font-size: 12px; font-weight: 600; }
-  .hint { color: #8a8a95; font-size: 12px; margin: 4px 0 0; }
-  .hint a { color: #9ab8ff; }
-  .inputrow { display: flex; gap: 8px; }
-  input { flex: 1; background: #0e0e12; border: 1px solid #2c2c36; border-radius: 9px;
-    color: #e7e7ea; padding: 10px 12px; font-size: 14px; font-family: ui-monospace, monospace; }
-  input::placeholder { color: #55555f; font-family: -apple-system, sans-serif; }
-  button { border: 0; border-radius: 9px; padding: 10px 14px; font-size: 13px; font-weight: 600; cursor: pointer; }
-  .save { background: #3b5bdb; color: #fff; }
-  .save:hover { background: #4c6ef5; }
-  .clear { background: transparent; color: #b0606a; border: 1px solid #3a2630; }
-  .clear:hover { background: #1c1216; }
-  .footer { margin-top: 8px; display: flex; align-items: center; justify-content: space-between; }
-  .cont { background: #2f9e6e; color: #fff; padding: 11px 18px; }
-  .cont:disabled { background: #24343054; color: #6b6b76; cursor: not-allowed; }
-  .logout { color: #8a8a95; font-size: 12px; text-decoration: none; }
-  .logout:hover { color: #c7c7d0; }
-  .toast { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%);
-    background: #1d1d24; border: 1px solid #2c2c36; color: #e7e7ea; padding: 10px 16px;
-    border-radius: 10px; font-size: 13px; opacity: 0; transition: opacity .2s; pointer-events: none; }
-  .toast.show { opacity: 1; }
+:root {
+  --paper:    #fbf7f0;
+  --paper-2:  oklch(0.945 0.016 83);
+  --paper-3:  oklch(0.912 0.019 82);
+  --ink:      oklch(0.27 0.022 54);
+  --ink-2:    oklch(0.42 0.022 54);
+  --ink-3:    oklch(0.55 0.020 56);
+  --ink-4:    oklch(0.68 0.016 60);
+  --line:       oklch(0.30 0.02 54 / 0.24);
+  --line-soft:  oklch(0.30 0.02 54 / 0.12);
+  --line-faint: oklch(0.30 0.02 54 / 0.07);
+  --signal:      oklch(0.56 0.185 33);
+  --signal-deep: oklch(0.48 0.17 32);
+  --signal-soft: oklch(0.56 0.185 33 / 0.12);
+  --ok:        oklch(0.55 0.11 150);
+  --ok-deep:   oklch(0.42 0.10 150);
+  --serif: 'Newsreader', Georgia, serif;
+  --sans:  'Hanken Grotesk', system-ui, sans-serif;
+  --mono:  'JetBrains Mono', ui-monospace, monospace;
+  --r-1: 5px;
+}
+* , *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { min-height: 100%; }
+body {
+  background: var(--paper); color: var(--ink); font-family: var(--sans);
+  -webkit-font-smoothing: antialiased; min-height: 100vh;
+  display: flex; align-items: center; justify-content: center; padding: 48px 24px;
+  background-image: radial-gradient(oklch(0.30 0.02 54 / 0.025) 0.5px, transparent 0.6px);
+  background-size: 4px 4px;
+}
+button { font-family: inherit; cursor: pointer; border: none; background: none; color: inherit; }
+input { font-family: inherit; }
+::selection { background: var(--signal-soft); }
+a { color: inherit; }
+
+.card { width: 100%; max-width: 520px; }
+.eyebrow { font-family: var(--mono); font-size: 9px; letter-spacing: 0.24em; text-transform: uppercase; color: var(--ink-4); text-align: center; }
+.rule { display: flex; align-items: center; gap: 12px; width: 64%; margin: 10px auto 0; }
+.rule::before, .rule::after { content: ''; flex: 1; border-top: 1px solid var(--line-soft); }
+.rule span { font-family: var(--mono); font-size: 8.5px; letter-spacing: 0.34em; text-transform: uppercase; color: var(--ink-4); white-space: nowrap; }
+
+.head { text-align: center; margin-top: 26px; }
+.head h1 { font-family: var(--serif); font-size: 30px; font-weight: 500; letter-spacing: -0.015em; line-height: 1.08; }
+.head h1 em { font-style: italic; color: var(--ink-2); }
+.head .sub { font-family: var(--serif); font-style: italic; font-size: 14px; color: var(--ink-3); margin: 10px auto 0; line-height: 1.5; max-width: 420px; text-wrap: pretty; }
+
+.fields { margin-top: 30px; }
+.field-group { margin-bottom: 22px; }
+.field-label { display: flex; align-items: baseline; gap: 9px; margin-bottom: 7px; }
+.field-label label { font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink-3); }
+.field-label .req { font-family: var(--mono); font-size: 8.5px; letter-spacing: 0.12em; color: var(--signal-deep); }
+.field-label .opt { font-family: var(--mono); font-size: 8.5px; letter-spacing: 0.12em; color: var(--ink-4); }
+.field-label .on  { font-family: var(--mono); font-size: 8.5px; letter-spacing: 0.08em; color: var(--ok-deep); margin-left: auto; }
+.entry-line { display: flex; align-items: center; gap: 11px; border-bottom: 1.5px solid var(--line); padding-bottom: 9px; transition: border-color 220ms; }
+.entry-line:focus-within { border-color: var(--ink); }
+.entry-line input { flex: 1; min-width: 0; background: none; border: none; outline: none;
+  font-family: var(--mono); font-size: 14px; color: var(--ink); padding: 2px 0; letter-spacing: 0.01em; }
+.entry-line input::placeholder { color: var(--ink-4); font-family: var(--serif); font-style: italic; letter-spacing: 0; }
+.entry-line .save { font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-3);
+  padding: 5px 9px; border-radius: var(--r-1); transition: color 150ms, background 150ms; white-space: nowrap; }
+.entry-line .save:hover { color: var(--paper); background: var(--ink); }
+.entry-line .clear { font-family: var(--mono); font-size: 9.5px; color: var(--ink-4); padding: 5px 4px; transition: color 150ms; }
+.entry-line .clear:hover { color: var(--signal-deep); }
+.hint { font-size: 12px; color: var(--ink-3); margin-top: 8px; line-height: 1.5; text-wrap: pretty; }
+.hint a { color: var(--ink); font-weight: 600; text-decoration: none; border-bottom: 1px solid var(--line); transition: border-color 160ms, color 160ms; }
+.hint a:hover { border-color: var(--signal-deep); color: var(--signal-deep); }
+
+.foot-actions { display: flex; align-items: center; justify-content: space-between; margin-top: 30px; }
+.logout { font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-4); text-decoration: none; transition: color 150ms; }
+.logout:hover { color: var(--signal-deep); }
+.cont { display: inline-flex; align-items: center; gap: 10px;
+  background: var(--ink); color: var(--paper); border-radius: var(--r-1); padding: 13px 22px;
+  font-family: var(--mono); font-size: 11px; font-weight: 500; letter-spacing: 0.18em; text-transform: uppercase;
+  transition: background 180ms, transform 120ms, opacity 180ms; }
+.cont svg { width: 14px; height: 14px; transition: transform 200ms; }
+.cont:hover { background: var(--signal-deep); }
+.cont:hover svg { transform: translateX(3px); }
+.cont:active { transform: translateY(1px); }
+.cont:disabled { opacity: 0.42; cursor: default; }
+.cont:disabled:hover { background: var(--ink); }
+.cont:disabled:hover svg { transform: none; }
+
+.foot { display: flex; align-items: center; justify-content: center; gap: 10px; margin-top: 34px;
+  font-family: var(--mono); font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-4); }
+.foot i { width: 6px; height: 6px; border-radius: 50%; background: var(--signal); animation: pulse 2.6s ease-out infinite; }
+@keyframes pulse { 0% { box-shadow: 0 0 0 0 oklch(0.56 0.185 33 / 0.45); } 70%,100% { box-shadow: 0 0 0 7px oklch(0.56 0.185 33 / 0); } }
+.foot .dot { color: var(--line); }
+
+.toast { position: fixed; bottom: 26px; left: 50%; transform: translateX(-50%) translateY(8px);
+  background: var(--ink); color: var(--paper); padding: 11px 18px; border-radius: var(--r-1);
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.06em; opacity: 0; transition: opacity .22s, transform .22s; pointer-events: none; }
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+@media (max-width: 480px) { body { padding: 32px 20px; } .head h1 { font-size: 25px; } }
 </style>
 </head>
 <body>
-  <div class="card">
-    <h1>API Keys</h1>
-    <p class="sub">Your keys are encrypted in the vault and used only by your own brain. We never display
-      a stored key — saved keys show as ••••••••.</p>
-    <div id="rows"></div>
-    <div class="footer">
-      <a class="logout" href="#" id="logout">Sign out</a>
-      <button class="cont" id="continue" disabled>Continue to Elyceum →</button>
+  <main class="card">
+    <p class="eyebrow">Elyceum</p>
+    <div class="rule"><span>Setup · one time</span></div>
+
+    <div class="head">
+      <h1>Let's wake <em>your</em> brain</h1>
+      <p class="sub">Your brain runs on your own keys, encrypted in a private vault and used only by your instance. We never display a stored key. You can change these any time in Settings.</p>
     </div>
-  </div>
+
+    <div class="fields" id="rows"></div>
+
+    <div class="foot-actions">
+      <a class="logout" href="#" id="logout">Sign out</a>
+      <button class="cont" id="continue" disabled>
+        Continue
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+      </button>
+    </div>
+
+    <div class="foot"><i></i> Encrypted vault <span class="dot">·</span> per-user isolation</div>
+  </main>
   <div class="toast" id="toast"></div>
 <script>
 const PROVIDERS = [
   { id: "anthropic", label: "Anthropic", required: true,
-    hint: 'Required. Create a <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">dedicated, spend-capped key</a> (Console → Workspaces → set a spend limit) so a worst case is bounded.' },
+    hint: 'Required — this is what powers your brain. Create a <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">dedicated, spend-capped key</a> (Console → Workspaces → set a spend limit) so a worst case is bounded.' },
   { id: "elevenlabs", label: "ElevenLabs", required: false, hint: "Optional — enables voice output." },
   { id: "deepgram", label: "Deepgram", required: false, hint: "Optional — enables voice input (speech-to-text)." },
   { id: "google", label: "Google", required: false, hint: "Optional — enables image understanding." },
@@ -73,19 +146,20 @@ function render(status) {
   rows.innerHTML = "";
   for (const p of PROVIDERS) {
     const set = !!status[p.id];
-    const row = document.createElement("div"); row.className = "row";
-    row.innerHTML = `
-      <div class="lab">${p.label}
-        ${p.required ? '<span class="req">REQUIRED</span>' : '<span class="opt">optional</span>'}
-        ${set ? '<span class="on">• Key on file ✓</span>' : ''}
+    const group = document.createElement("div"); group.className = "field-group";
+    group.innerHTML = `
+      <div class="field-label">
+        <label>${p.label}</label>
+        ${p.required ? '<span class="req">required</span>' : '<span class="opt">optional</span>'}
+        ${set ? '<span class="on">✓ on file</span>' : ''}
       </div>
-      <div class="inputrow">
-        <input type="password" autocomplete="off" placeholder="${set ? '••••••••  (leave blank to keep)' : 'paste key'}" data-p="${p.id}">
+      <div class="entry-line">
+        <input type="password" autocomplete="off" spellcheck="false" placeholder="${set ? '•••••••• — leave blank to keep' : 'paste key'}" data-p="${p.id}">
         <button class="save" data-save="${p.id}">Save</button>
         ${set ? `<button class="clear" data-clear="${p.id}">Clear</button>` : ''}
       </div>
       <p class="hint">${p.hint}</p>`;
-    rows.appendChild(row);
+    rows.appendChild(group);
   }
   document.getElementById("continue").disabled = !status.anthropic;
 }
@@ -97,7 +171,7 @@ async function load() {
 async function save(provider) {
   const input = document.querySelector(`input[data-p="${provider}"]`);
   const value = input.value.trim();
-  if (!value) { toast("Nothing to save (blank keeps the current key)"); return; }
+  if (!value) { toast("Nothing to save — blank keeps the current key"); return; }
   const r = await fetch("/api/keys", { method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({ provider, value }) });
   if (r.ok) { input.value = ""; toast(provider + " key saved"); await load(); }
@@ -110,6 +184,9 @@ async function clearKey(provider) {
 rows.addEventListener("click", (e) => {
   const s = e.target.getAttribute("data-save"); if (s) return save(s);
   const c = e.target.getAttribute("data-clear"); if (c) return clearKey(c);
+});
+rows.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && e.target.matches("input[data-p]")) { e.preventDefault(); save(e.target.getAttribute("data-p")); }
 });
 document.getElementById("continue").addEventListener("click", () => { location.href = "/"; });
 document.getElementById("logout").addEventListener("click", async (e) => {
