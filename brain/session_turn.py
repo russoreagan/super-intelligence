@@ -60,18 +60,23 @@ _CANCEL_WORDS = frozenset(
 class _TurnMixin:
     # ── Turn processing ───────────────────────────────────────────────────────
 
-    async def api_turn(self, message: str, end_user_id: str) -> tuple[str, dict]:
+    async def api_turn(
+        self, message: str, end_user_id: str, mandate_id: str | None = None
+    ) -> tuple[str, dict]:
         """Engine entry point: run one turn for a specific end-user (the partner's
-        customer). Turns are serialized per process — the turn-execution state
-        (brainstem, cluster integrators) is process-global even though chemistry is
-        now per-client, so concurrent API requests queue rather than corrupt each
-        other's turn. The customer's chemistry is bound inside process_turn via
-        end_user_id, so each queued turn still runs in its own customer's mood."""
+        customer), under the assignment selected by mandate_id (the catalog is
+        cached; this just names which one). Turns are serialized per process — the
+        turn-execution state (brainstem, cluster integrators) is process-global even
+        though chemistry is now per-client, so concurrent API requests queue rather
+        than corrupt each other's turn. The customer's chemistry is bound inside
+        process_turn via end_user_id, so each queued turn runs in its own mood."""
         lock = getattr(self, "_api_turn_lock", None)
         if lock is None:
             lock = self._api_turn_lock = asyncio.Lock()
         async with lock:
-            return await self.process_turn(message, end_user_id=end_user_id)
+            return await self.process_turn(
+                message, end_user_id=end_user_id, mandate_id=mandate_id
+            )
 
     def _client_chem_registry(self):
         """Lazily build the per-(persona, end_user) chemistry registry for this
@@ -91,6 +96,7 @@ class _TurnMixin:
         user_input: str,
         image_path: str | None = None,
         end_user_id: str | None = None,
+        mandate_id: str | None = None,
     ) -> tuple[str, dict]:
         # Engine mode: bind this customer's chemistry for the turn so their mood
         # evolves in isolation, then persist it. Companion turns pass no
@@ -106,7 +112,7 @@ class _TurnMixin:
 
         try:
             with bind_cm:
-                return await self._run_turn_guarded(user_input, image_path, end_user_id)
+                return await self._run_turn_guarded(user_input, image_path, end_user_id, mandate_id)
         finally:
             if registry is not None:
                 registry.persist(end_user_id)
@@ -116,12 +122,13 @@ class _TurnMixin:
         user_input: str,
         image_path: str | None = None,
         end_user_id: str | None = None,
+        mandate_id: str | None = None,
     ) -> tuple[str, dict]:
         from brain.brainstem import TURN_TIMEOUT
 
         try:
             return await asyncio.wait_for(
-                self._process_turn_body(user_input, image_path, end_user_id),
+                self._process_turn_body(user_input, image_path, end_user_id, mandate_id),
                 timeout=TURN_TIMEOUT,
             )
         except TimeoutError:
@@ -219,6 +226,7 @@ class _TurnMixin:
         user_input: str,
         image_path: str | None = None,
         end_user_id: str | None = None,
+        mandate_id: str | None = None,
     ) -> tuple[str, dict]:
         from brain.observability.firing_path import reset_current_trace, set_current_trace
         from brain.observability.timeline import TurnTrace
@@ -371,6 +379,13 @@ class _TurnMixin:
         if end_user_id:
             features = dict(features) if isinstance(features, dict) else {}
             features["speaker_name"] = end_user_id
+
+        # Engine mode: the partner-assigned MANDATE is selected by id — the catalog
+        # is cached, the per-turn message just names the active assignment. Companion
+        # turns pass none → no change.
+        if mandate_id:
+            features = dict(features) if isinstance(features, dict) else {}
+            features["mandate_id"] = mandate_id
 
         # ── Default speaker for typed input ───────────────────────────────────
         # When ears are off (or no diarization arrived) there is no voice-based

@@ -28,7 +28,7 @@ from brain.api.sessions import ApiSessionRegistry
 
 logger = logging.getLogger(__name__)
 
-TurnRunner = Callable[[str, str], Awaitable[tuple[str, dict]]]
+TurnRunner = Callable[[str, str, "str | None"], Awaitable[tuple[str, dict]]]
 
 
 def _mood_from_affect(affect: dict | None) -> dict:
@@ -62,8 +62,15 @@ def build_api_router(
         end_user_id = (body or {}).get("end_user_id")
         if not isinstance(end_user_id, str) or not end_user_id.strip():
             raise HTTPException(status_code=400, detail="end_user_id (non-empty string) is required")
-        s = registry.create(end_user_id.strip(), (body or {}).get("agent_id"))
-        return {"session_id": s.session_id, "end_user_id": s.end_user_id, "agent_id": s.agent_id}
+        mandate_id = (body or {}).get("mandate_id")
+        if mandate_id is not None and not isinstance(mandate_id, str):
+            raise HTTPException(status_code=400, detail="mandate_id must be a string")
+        s = registry.create(end_user_id.strip(), (body or {}).get("agent_id"), mandate_id)
+        return {
+            "session_id": s.session_id,
+            "end_user_id": s.end_user_id,
+            "agent_id": s.agent_id,
+        }
 
     @router.post("/sessions/{session_id}/turns")
     async def run_turn(
@@ -76,7 +83,7 @@ def build_api_router(
         message = (body or {}).get("message")
         if not isinstance(message, str) or not message.strip():
             raise HTTPException(status_code=400, detail="message (non-empty string) is required")
-        text, affect = await turn_runner(message, s.end_user_id)
+        text, affect = await turn_runner(message, s.end_user_id, s.mandate_id)
         return {
             "session_id": session_id,
             "end_user_id": s.end_user_id,

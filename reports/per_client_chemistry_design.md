@@ -364,3 +364,107 @@ de-identify" to "de-identify a finished conclusion"; the heavy reasoning moves u
 
 Pairs with the deferred shared-pattern store + hypothesis confidence-dial. Not built — captured
 for the engine-layer build.
+
+---
+
+# Persona contract: identity vs mandate vs agenda (2026-06-09, design — NOT built)
+
+The engine's core separation: **you define the being; the partner assigns the job; the persona
+keeps its own mind.** Fusing these makes a bespoke build per partner instead of a reusable
+engine. Three layers, three owners, three lifecycles, one precedence order.
+
+| Layer | What it is | Owner | How set | Mutability | Write-protected from |
+|---|---|---|---|---|---|
+| **Identity** | who it is: character, drives, temperament | You (platform) | self.md seed + persona_chem | slow-evolving (sleep/DMN earn it) | the partner |
+| **Mandate** | the *role/job* in this deployment | Partner admin | config (agent-config; optional per-session override) | declarative, doesn't evolve | the brain's own consolidation |
+| **Agenda** | what it works on in *off-time* | admin-directed + self-generated | see channel rule below | append/evolve | end-users |
+
+**Precedence (also the prompt-injection defense):** locked guiding-principles (Asimov / no-
+deception, in self.md) **>** identity values **>** mandate **>** agenda. A mandate or an agenda
+request can direct the job but can never override who the persona is or the safety floor. The
+mandate sits *below* the locked principles, so a partner — or an end-user routed through a
+mandate — cannot instruction-inject the persona into harm or deception.
+
+**Turn-context assembly:** compose three separately-sourced, separately-owned blocks — IDENTITY
+(self.md), MANDATE (partner config / per-session), AGENDA (open-threads). Today only IDENTITY
+(`_core_context["self"]`) is injected; add MANDATE and AGENDA as parallel blocks. Write-ownership
+is what makes the separation real: sleep/DMN may rewrite self.md + open-threads (the persona's),
+never the mandate (the partner's).
+
+**Agenda is two-sourced and scope-aware. The scope is set by WHO directs, not by forbidding
+direction — anyone may ask the persona to think about something; the question is which scope it
+lands in.**
+
+- **Shared / global agenda** ← **ADMIN ONLY**, through the platform's own chat interface (NOT
+  config — conversational so the persona receives/interprets it, subject to precedence; reuses the
+  existing open-threads / follow-through machinery), PLUS the persona's own general self-generated
+  rumination. This is what "admin directs the agenda" means — only the admin can put items on the
+  SHARED agenda.
+- **Per-client isolated rumination (silo)** ← the **end-user MAY direct it** ("can you think about
+  X before next time?") — the persona accepts it, no rejection needed — PLUS the persona's own
+  self-generated reflection about that customer. Full PII is fine here (it's the private space). It
+  does NOT touch the shared agenda directly; it reaches anything shared only via the private
+  rumination tier → de-id gate → shared learning.
+
+The abuse vector (one customer hijacking a shared persona's off-time) is closed by **scoping**
+end-user direction to the silo — not by forbidding it. The isolation + de-id gate already in place
+is what makes accepting end-user "think about this" requests safe.
+
+---
+
+# Security: the isolated rumination layer (2026-06-09 threat model + agreed mitigations)
+
+Accepting end-user *direction* turns isolated rumination into a new trust boundary: **untrusted
+input now drives autonomous, resourced, off-line work.** The architecture defends PRIVACY well
+(cross-silo isolation; de-id gate; confidence dial so one user can't promote a hypothesis to
+established). The gaps are AVAILABILITY (cost/DoS), INTEGRITY (poisoning shared learning), and
+CONTENT-SAFETY — surfaces the de-id gate was never meant to cover. The de-id gate proves "not
+identifying"; we also need "bounded," "safe," and "not instructions."
+
+**DECIDED — local (isolated/private) rumination is TOOL-LESS.** No motor / network / FS from the
+per-client rumination layer. This single rule removes the entire exfiltration/SSRF surface
+(directed "think about X by fetching this URL / reading that file"). The built PrivateRuminator is
+already pure reasoning; the rule is: the production DMN/rumination must run motor-gated-OFF in the
+isolated per-client context, and network/FS must fail closed there regardless.
+
+Agreed mitigations (✓ = must-have before end-user-directed rumination ships; ○ = staged/knob):
+
+- ✓ **Resource bounds (DoS / cost / fairness).** Directed rumination spends real LLM budget on a
+  SHARED off-time loop — one user can run up the bill and starve other clients' off-time. Add
+  per-client rumination budget + rate limit + agenda-item cap + max reasoning depth, and a fair
+  scheduler so one client's queue can't monopolize off-time.
+- ✓ **Safety floor in the rumination context.** Precedence (floor > identity > mandate > agenda)
+  was defined for live turns; rumination must carry the same guiding-principles/identity so
+  directed off-time reasoning can't be steered toward harm. (The PrivateRuminator reflect prompt
+  currently omits them — fix.)
+- ✓ **Agenda items are DATA, not instructions.** Persisted directed items are re-injected every
+  rumination; frame them as quoted content ("the user asked you to consider: …"), never as system
+  directives, or they become persistent stored prompt-injection.
+- ✓ **Tool-less rumination** (the DECIDED rule above).
+- ○ **Content-safety + sybil resistance (the deep one — stage it).** The de-id gate admits a
+  de-identified, GENERAL-form principle regardless of whether it's TRUE or HARMFUL ("people who ask
+  about refunds are usually lying" passes). The confidence dial limits a single user, but
+  distinct-source counting is only as strong as end_user_id being a real distinct person — one
+  attacker with many end_user_ids (sybil) defeats it. Need: a soundness/safety check on what
+  crosses to SHARED (not just de-identification); sybil-resistance on distinct-source counting (tie
+  contributor tokens to something costlier than a free end_user_id, or weight by source trust);
+  keep provisional hypotheses low-influence and quarantinable. The confidence dial buys time but is
+  not a substitute.
+- ○ **Mood-average manipulation (low/attenuated).** A user driving their per-client mood to an
+  extreme nudges the interaction-mass-weighted average that folds into the shared resting mood
+  (sybil-amplifiable). Mitigation already designed: trimmed-mean (the robustness knob), clamping,
+  per-client mass caps — turn them on.
+
+None of this is built — captured for the engine-layer build. The four ✓ items are cheap and close
+the sharp edges; #content-safety is the one real research problem and can be staged behind the
+confidence dial.
+
+**Mandate vs directed-agenda** are distinct: mandate = standing role, frames every LIVE turn;
+directed-agenda = off-time work, adopted into open-threads, processed in rumination. "How I respond
+now" vs "what I think about when idle."
+
+**Engine-layer build implications:** (1) self.md gets a locked admin-owned identity/instructions
+header (the persona character + non-negotiable principles) above a brain-owned evolving
+autobiography. (2) Mandate is a new first-class partner-owned block, injected, never consolidated
+into. (3) Agenda items carry provenance (directed/self) + scope (shared/per-client). (4) Agent-config
+CRUD edits the identity-character + mandate; it must NOT let admins weaken the locked principles.

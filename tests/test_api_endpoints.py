@@ -17,13 +17,13 @@ from brain.api.sessions import ApiSessionRegistry
 
 
 class _FakeRunner:
-    """Records (message, end_user_id) and returns a scripted (text, affect)."""
+    """Records (message, end_user_id, mandate_id) and returns a scripted (text, affect)."""
 
     def __init__(self):
         self.calls = []
 
-    async def __call__(self, message, end_user_id):
-        self.calls.append((message, end_user_id))
+    async def __call__(self, message, end_user_id, mandate_id=None):
+        self.calls.append((message, end_user_id, mandate_id))
         return (
             f"echo: {message}",
             {"emotion": "warm", "user_emotion": "curious", "hormonal": {"OXT": 0.3}, "appraisal": "SECRET"},
@@ -69,8 +69,27 @@ def test_create_session_and_run_turn_routes_end_user_id():
     assert r2.status_code == 200
     body = r2.json()
     assert body["response"] == "echo: hello"
-    # the turn ran as the session's end_user
-    assert runner.calls == [("hello", "cust-1")]
+    # the turn ran as the session's end_user (no mandate set here)
+    assert runner.calls == [("hello", "cust-1", None)]
+
+
+def test_mandate_id_flows_from_session_to_turn():
+    runner = _FakeRunner()
+    c = _client(runner)
+    sid = c.post(
+        "/v1/sessions",
+        json={"end_user_id": "cust-7", "mandate_id": "billing"},
+        headers=_AUTH,
+    ).json()["session_id"]
+    c.post(f"/v1/sessions/{sid}/turns", json={"message": "help"}, headers=_AUTH)
+    # the per-session mandate_id (the catalog selector) is carried into every turn
+    assert runner.calls == [("help", "cust-7", "billing")]
+
+
+def test_invalid_mandate_id_type_rejected():
+    c = _client(_FakeRunner())
+    r = c.post("/v1/sessions", json={"end_user_id": "x", "mandate_id": 123}, headers=_AUTH)
+    assert r.status_code == 400
 
 
 def test_turn_surfaces_mood_but_not_internal_fields():
@@ -127,4 +146,4 @@ def test_apiserver_app_serves_routes_with_env_key(monkeypatch):
     r = c.post(f"/v1/sessions/{sid}/turns", json={"message": "yo"}, headers=h)
     assert r.status_code == 200
     assert r.json()["response"] == "echo: yo"
-    assert runner.calls == [("yo", "cust-9")]
+    assert runner.calls == [("yo", "cust-9", None)]

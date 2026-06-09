@@ -1613,6 +1613,14 @@ class FrontalCluster:
             )
         if core.get("self"):
             parts.append(f"Entity self-model:\n{fence('self_model', core['self'], nonce)}")
+        # MANDATE catalog — the partner's small, static set of assignments. Cached here
+        # (process-stable) so it's billed once and shared across every customer; the
+        # active one is named per-turn by the selector. Empty in companion mode.
+        from brain.persona_context import mandate_catalog_block
+
+        _cat = mandate_catalog_block(settings.get("mandate_catalog") or {}, fence, nonce)
+        if _cat:
+            parts.append(_cat)
         if core.get("user"):
             parts.append(f"User model:\n{fence('user_model', core['user'], nonce)}")
         return "\n\n".join(parts)
@@ -1626,6 +1634,14 @@ class FrontalCluster:
         # per-session-stable and live in _build_cached_context(), passed as a dedicated
         # cached system block so they're sent in full (no truncation) and billed at
         # cache-read rates after the first turn. Only volatile turn content lives here.
+        # MANDATE selector: the assignment CATALOG is cached (see _build_cached_context);
+        # per-turn we send only the active assignment's id (a few tokens), which varies
+        # by customer. Placed first so it frames the response.
+        from brain.persona_context import mandate_selector
+
+        _sel = mandate_selector(features.get("mandate_id"), settings.get("mandate_catalog") or {})
+        if _sel:
+            parts.append(_sel)
         if parietal:
             parts.append(f"Recent conversation:\n{fence('conversation_history', parietal, nonce)}")
         if memory.get("schema"):
