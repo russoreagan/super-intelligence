@@ -109,3 +109,60 @@ def test_cached_context_capabilities_appears_before_models():
     self_pos = ctx.find("Entity self-model")
     assert cap_pos >= 0 and self_pos >= 0
     assert cap_pos < self_pos
+
+
+# ── user-model placement: cached in companion mode, per-turn in engine mode ──────
+
+_INSTR = {
+    "response_type": "chitchat",
+    "target_length": "brief",
+    "tone": "warm",
+    "key_points": [],
+    "drafter_count": 1,
+}
+_CORE = {"self": "I am an entity.", "user": "USER_PROFILE_MARKER"}
+
+
+def test_user_model_cached_in_companion_mode():
+    """No end_user_id (companion) → the user-model stays in the cached block."""
+    f = _make_frontal_skeleton()
+    ctx = f._build_cached_context({"core": _CORE}, features={})
+    assert "User model" in ctx and "USER_PROFILE_MARKER" in ctx
+    assert "I am an entity." in ctx  # identity cached too
+
+
+def test_user_model_not_cached_in_engine_mode():
+    """A turn carrying end_user_id (engine) → user-model leaves the cached block,
+    so the cached prefix is process-stable and shared across customers; identity
+    (and any catalog) remain cached."""
+    f = _make_frontal_skeleton()
+    ctx = f._build_cached_context({"core": _CORE}, features={"end_user_id": "cust-1"})
+    assert "USER_PROFILE_MARKER" not in ctx
+    assert "I am an entity." in ctx  # identity is still cached
+
+
+def test_user_model_in_drafter_prompt_in_engine_mode():
+    """In engine mode the per-customer user-model rides the per-turn message."""
+    f = _make_frontal_skeleton()
+    prompt = f._build_drafter_prompt(
+        features={"end_user_id": "cust-1", "raw_text": "hi"},
+        memory={"core": _CORE},
+        parietal="",
+        affect={"emotion": "neutral", "appraisal": ""},
+        instruction=_INSTR,
+    )
+    assert "User model" in prompt and "USER_PROFILE_MARKER" in prompt
+
+
+def test_user_model_not_in_drafter_prompt_in_companion_mode():
+    """Companion mode keeps the user-model cached, so it must NOT be re-sent in the
+    volatile per-turn prompt."""
+    f = _make_frontal_skeleton()
+    prompt = f._build_drafter_prompt(
+        features={"raw_text": "hi"},
+        memory={"core": _CORE},
+        parietal="",
+        affect={"emotion": "neutral", "appraisal": ""},
+        instruction=_INSTR,
+    )
+    assert "USER_PROFILE_MARKER" not in prompt

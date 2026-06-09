@@ -859,7 +859,7 @@ class FrontalCluster:
         )
         # Per-session-stable context (full self/user model, capabilities) — sent as a
         # dedicated cached system block, billed at cache-read rates after turn 1.
-        cached_context = self._build_cached_context(memory)
+        cached_context = self._build_cached_context(memory, features)
         drafter_indices = self._select_drafters(drafter_count, turn_id)
         draft_tasks = [
             self._run_drafter(
@@ -1585,7 +1585,7 @@ class FrontalCluster:
 
         return False, ""
 
-    def _build_cached_context(self, memory: dict) -> str:
+    def _build_cached_context(self, memory: dict, features: dict | None = None) -> str:
         """Per-session-stable drafter context — sent as a dedicated cached system block.
 
         Holds the content that does NOT change turn-to-turn: the entity's capabilities,
@@ -1621,7 +1621,12 @@ class FrontalCluster:
         _cat = mandate_catalog_block(settings.get("mandate_catalog") or {}, fence, nonce)
         if _cat:
             parts.append(_cat)
-        if core.get("user"):
+        # User-model: cached ONLY in companion mode, where there is one process-stable
+        # user. In engine mode (a turn carrying end_user_id) the user-model is
+        # per-customer, so it moves to the per-turn drafter prompt — keeping this
+        # cached block process-stable and shared across all the persona's customers.
+        _engine = bool((features or {}).get("end_user_id"))
+        if core.get("user") and not _engine:
             parts.append(f"User model:\n{fence('user_model', core['user'], nonce)}")
         return "\n\n".join(parts)
 
@@ -1642,6 +1647,13 @@ class FrontalCluster:
         _sel = mandate_selector(features.get("mandate_id"), settings.get("mandate_catalog") or {})
         if _sel:
             parts.append(_sel)
+        # Engine mode: the per-customer user-model rides the per-turn message (it is
+        # deliberately NOT in the cached block — see _build_cached_context). Companion
+        # mode keeps it cached, so this is skipped there.
+        if features.get("end_user_id"):
+            _core = memory.get("core", {}) or {}
+            if _core.get("user"):
+                parts.append(f"User model:\n{fence('user_model', _core['user'], nonce)}")
         if parietal:
             parts.append(f"Recent conversation:\n{fence('conversation_history', parietal, nonce)}")
         if memory.get("schema"):

@@ -379,6 +379,10 @@ class _TurnMixin:
         if end_user_id:
             features = dict(features) if isinstance(features, dict) else {}
             features["speaker_name"] = end_user_id
+            # Mark this as an engine turn so the prompt assembly keeps the cached
+            # context process-stable (identity + mandate catalog) and moves the
+            # per-customer user-model to the per-turn message.
+            features["end_user_id"] = end_user_id
 
         # Engine mode: the partner-assigned MANDATE is selected by id — the catalog
         # is cached, the per-turn message just names the active assignment. Companion
