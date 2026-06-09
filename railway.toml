@@ -2,11 +2,15 @@
 builder = "nixpacks"
 
 [deploy]
-startCommand = "/app/.venv/bin/python -m brain.run --ui --dmn --metacognition --ears --voice --motor"
+# Multi-tenant gateway: provisions one isolated brain.run subprocess per user
+# (flags via BRAIN_TENANT_ARGS, default --ui --dmn --metacognition --ears --voice
+# --motor), reverse-proxies to it, and owns the shared RunPod pod. The gateway
+# binds /health immediately, so the healthcheck passes well before any tenant
+# boots. To revert to a single shared brain, restore:
+#   /app/.venv/bin/python -m brain.run --ui --dmn --metacognition --ears --voice --motor
+startCommand = "/app/.venv/bin/python -m brain.gateway"
 healthcheckPath = "/health"
-# Heavy boot (large ML imports + multi-stage cluster setup) takes well over 30s
-# before the UI server binds /health. Give it room so a slow-but-healthy start
-# isn't killed mid-boot.
+# Gateway binds fast, but keep the generous window for the heavy import graph.
 healthcheckTimeout = 300
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 3
