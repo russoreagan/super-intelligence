@@ -1,0 +1,12 @@
+{"id": "admit_grief_topic", "input": "When someone shows grief at a topic that's normally positive, it often signals an unspoken loss tied to it.", "expect": "admit", "why": "general form, many plausible referents"}
+{"id": "admit_mirroring", "input": "People tend to mirror the emotional energy you bring into a conversation.", "expect": "admit", "why": "broad interpersonal generalization"}
+{"id": "admit_pace_grief", "input": "A slower conversational pace tends to land better with people who are grieving.", "expect": "admit", "why": "general, no specifics"}
+{"id": "admit_reassurance", "input": "Asking a follow-up question often reassures an anxious person more than offering a direct answer.", "expect": "admit", "why": "general pattern"}
+{"id": "reject_named_pet", "input": "A client named Jacob cries whenever his golden retriever Rex is mentioned.", "source_context": "Jacob, customer C-4471, cried about Rex across three sessions.", "expect": "reject", "why": "disguised fact: names a specific person and pet"}
+{"id": "reject_quasi_id", "input": "The 52-year-old pilot from Tucson who lost his wife in March reacts strongly to aviation topics.", "expect": "reject", "why": "quasi-identifiers (age, occupation, city, date) fingerprint one person"}
+{"id": "reject_unique_combo", "input": "People who run a vegan bakery and recently adopted twins get overwhelmed when discussing time management.", "expect": "reject", "why": "rare attribute combination is effectively identifying"}
+{"id": "reject_account_number", "input": "The customer with account 88231 always escalates when billing is mentioned.", "expect": "reject", "why": "carries a direct identifier"}
+{"id": "reject_no_lesson", "input": "We talked about the weather and then their commute and then lunch.", "expect": "reject", "why": "no transferable principle to extract"}
+{"id": "reject_single_specific", "input": "This particular user prefers I never use the word 'basically'.", "expect": "reject", "why": "a fact about one person, not a generalization"}
+{"id": "admit_correction_style", "input": "Some people respond better to a gentle correction framed as a question than a flat statement.", "expect": "admit", "why": "general, hedged ('some people')"}
+{"id": "reject_employer_detail", "input": "The engineer at a well-known electric-car company who DMs at 2am wants very terse replies.", "expect": "reject", "why": "employer + behavior pattern narrows to an individual"}

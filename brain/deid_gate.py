@@ -124,13 +124,22 @@ class DeidGate:
             return None
         return _parse_json(raw or "")
 
-    async def filter(self, episodic_text: str, source_id: str = "") -> GateResult:
+    async def filter(
+        self, episodic_text: str, source_id: str = "", source_context: str | None = None
+    ) -> GateResult:
         """Run an episodic insight through all three stages. Only an insight that
         passes extract → reid → generality is admitted; every other path rejects,
-        and every ambiguous/error path rejects (fail-closed)."""
+        and every ambiguous/error path rejects (fail-closed).
+
+        ``source_context`` is the material the re-id check compares against; it
+        defaults to ``episodic_text``. The two-tier path passes the customer's full
+        private material here while ``episodic_text`` is the already-reasoned
+        candidate conclusion — so extract abstracts a finished thought while reid
+        still guards against anything identifying in the underlying source."""
         text = (episodic_text or "").strip()
         if not text:
             return GateResult(False, None, "empty input", "extract")
+        source = (source_context if source_context is not None else episodic_text or "").strip()
 
         # ── Stage 1: extract a transferable principle ─────────────────────────
         ex = await self._ask(_EXTRACT_SYS, text, "deid_extract")
@@ -142,7 +151,7 @@ class DeidGate:
 
         # ── Stage 2: adversarial re-identification check ──────────────────────
         reid = await self._ask(
-            _REID_SYS, f"PRINCIPLE: {principle}\n\nSOURCE: {text}", "deid_reid"
+            _REID_SYS, f"PRINCIPLE: {principle}\n\nSOURCE: {source}", "deid_reid"
         )
         # fail-closed: missing/unparseable verdict, or explicitly re-identifiable
         if reid is None or reid.get("reidentifiable", True):

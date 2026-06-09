@@ -12,7 +12,7 @@ from __future__ import annotations
 import pytest
 
 from brain.bus import Bus
-from brain.client_chem import ClientChemRegistry, InMemoryChemStore
+from brain.client_chem import ClientChemRegistry, FileChemStore, InMemoryChemStore
 
 
 def _clock(start: float = 1000.0):
@@ -168,3 +168,30 @@ def test_consolidate_into_resting_noop_without_fanout():
     resting_before = bus.resting_chem.neuromod.snapshot()
     assert reg.consolidate_into_resting(0.5) is None
     assert bus.resting_chem.neuromod.snapshot() == resting_before
+
+
+def test_filechemstore_roundtrip(tmp_path):
+    store = FileChemStore(tmp_path)
+    assert store.load("empath:alice") == (None, None)
+    snap = {"neuromod": {"DA": 0.4}, "hormonal": {"OXT": 0.2}}
+    store.save("empath:alice", snap, 1234.0)
+    loaded, ts = store.load("empath:alice")
+    assert loaded == snap
+    assert ts == 1234.0
+
+
+def test_registry_persists_via_filechemstore(tmp_path):
+    """A returning customer is restored from disk across separate registries."""
+    bus = Bus()
+    box, now = _clock()
+    store = FileChemStore(tmp_path)
+
+    reg1 = ClientChemRegistry(bus, store, persona="empath", now_fn=now)
+    p = reg1.get_or_create("alice")
+    p.neuromod.add("DA", 0.3)
+    saved = p.neuromod.get("DA")
+    reg1.persist("alice")
+
+    reg2 = ClientChemRegistry(bus, store, persona="empath", now_fn=now)
+    p2 = reg2.get_or_create("alice")  # no time passed → no absence decay
+    assert p2.neuromod.get("DA") == pytest.approx(saved)

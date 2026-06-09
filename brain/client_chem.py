@@ -26,10 +26,16 @@ in without changing the contract.
 
 from __future__ import annotations
 
+import hashlib
+import json
+import logging
 import time
+from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 from brain.bus import Bus, ChemPair
+
+logger = logging.getLogger(__name__)
 
 # Reference cadence: how many seconds of absence equals one "turn" of decay
 # toward baseline. Mood relaxes over minutes, so a few minutes away ≈ a turn.
@@ -64,6 +70,44 @@ class InMemoryChemStore:
 
     def save(self, key: str, snapshot: dict, last_seen_ts: float) -> None:
         self._data[key] = (snapshot, float(last_seen_ts))
+
+
+class FileChemStore:
+    """Durable ChemStore backing snapshots to one JSON file per key under ``root``.
+
+    This is the persistence model the multi-tenant deployment already uses for
+    per-tenant local state (the brain's chemistry/weights live on the tenant's
+    volume, not Supabase — Supabase holds episodes/facts). Filenames are content
+    hashes of the key (the plaintext key is also stored inside the file) so any
+    persona/end_user string is filesystem-safe and collision-free."""
+
+    def __init__(self, root: str | Path) -> None:
+        self._root = Path(root)
+        self._root.mkdir(parents=True, exist_ok=True)
+
+    def _path(self, key: str) -> Path:
+        return self._root / (hashlib.sha1(key.encode()).hexdigest()[:20] + ".json")
+
+    def load(self, key: str) -> tuple[dict | None, float | None]:
+        path = self._path(key)
+        if not path.exists():
+            return (None, None)
+        try:
+            rec = json.loads(path.read_text())
+            return (rec.get("snapshot"), rec.get("last_seen"))
+        except (json.JSONDecodeError, OSError, ValueError) as exc:
+            logger.warning("[FileChemStore] unreadable %s: %s", path.name, exc)
+            return (None, None)
+
+    def save(self, key: str, snapshot: dict, last_seen_ts: float) -> None:
+        path = self._path(key)
+        payload = {"key": key, "snapshot": snapshot, "last_seen": float(last_seen_ts)}
+        tmp = path.with_suffix(".json.tmp")
+        try:
+            tmp.write_text(json.dumps(payload))
+            tmp.replace(path)  # atomic
+        except OSError as exc:
+            logger.warning("[FileChemStore] write failed %s: %s", path.name, exc)
 
 
 class ClientChemRegistry:

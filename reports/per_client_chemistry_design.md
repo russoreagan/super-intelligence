@@ -307,7 +307,19 @@ gate, not after.
 
 ---
 
-# Private (per-user) rumination tier — refinement (2026-06-09, NOT built)
+# Private (per-user) rumination tier — refinement (2026-06-09, BUILT)
+
+> **Build status:** BUILT — `brain/private_rumination.py` (PrivateRuminator),
+> `brain/hypothesis_store.py` (shared store: confidence dial + promotion + deletion
+> cascade via opaque tokens), `brain/cross_learning.py` (learn_from_private wiring),
+> `brain/client_chem.py::FileChemStore` (durable backend), `eval/deid_corpus.jsonl`
+> + `eval/deid_eval.py` (seed adversarial corpus + harness). De-id gate extended with
+> `source_context` so reid checks the original private material. All tested.
+> STILL DEFERRED (needs the engine/API layer + your input): the triggers/wiring —
+> who calls `process_turn(end_user_id)` and when `learn_from_private` runs
+> (session-close / anomaly-gated), where the silo-side case→hypothesis pointer lives,
+> mapping FileChemStore root → tenant volume, semantic (embedding) hypothesis dedup,
+> and ongoing real-model corpus hardening.
 
 **Problem.** As built, the de-id gate's *extract* stage does double duty: discover what an
 outlier means AND strip it to an abstraction, in one small LLM call, every time. Relying on a
