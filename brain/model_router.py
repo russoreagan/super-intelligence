@@ -762,6 +762,109 @@ class ModelRouter:
                 logger.debug("obs.record_llm_call failed: %s", e)
         return text
 
+    async def call_structured_any(
+        self,
+        model_key: str,
+        system_prompt: str,
+        messages: list[dict],
+        tools: list[dict],
+        *,
+        cluster: str = "",
+        cell: str = "",
+        turn_id: str = "",
+        max_tokens: int = 1024,
+    ) -> dict:
+        """Agentic tool-choice (NOT forced): the model picks one of `tools` or
+        none. Provider-agnostic — dispatches by _provider_for like call(). Each
+        tool is {name, description, input_schema}. Returns
+        {"tool": <name>, "args": {...}} on a tool call, or {"text": <str>} when
+        the model answered without calling a tool (the loop's stop signal).
+        Powers GenericExecutor; budget/bg-mode caps mirror call_structured."""
+        import json as _json
+
+        model_id = _remap_cloud_provider(MODEL_MAP.get(model_key, model_key), cluster)
+        provider = _provider_for(model_id)
+        try:
+            if provider == "anthropic":
+                client = self._get_anthropic()
+                resp = await client.messages.create(
+                    model=model_id,
+                    max_tokens=max_tokens,
+                    system=system_prompt,
+                    messages=[{"role": m["role"], "content": m["content"]} for m in messages],
+                    tools=[
+                        {
+                            "name": t["name"],
+                            "description": t.get("description", ""),
+                            "input_schema": t["input_schema"],
+                        }
+                        for t in tools
+                    ],
+                )
+                for block in resp.content:
+                    if getattr(block, "type", None) == "tool_use":
+                        return {"tool": block.name, "args": block.input or {}}
+                txt = "".join(
+                    getattr(b, "text", "") for b in resp.content if getattr(b, "type", "") == "text"
+                )
+                return {"text": txt}
+            if provider in ("openai",):
+                client = self._get_openai()
+                oai_msgs = [{"role": "system", "content": system_prompt}]
+                for m in messages:
+                    c = m["content"]
+                    if isinstance(c, list):
+                        c = "\n".join(str(b.get("text", "")) for b in c if isinstance(b, dict))
+                    oai_msgs.append({"role": m["role"], "content": c})
+                resp = await client.chat.completions.create(
+                    model=model_id,
+                    max_completion_tokens=max_tokens,
+                    messages=oai_msgs,
+                    tools=[
+                        {
+                            "type": "function",
+                            "function": {
+                                "name": t["name"],
+                                "description": t.get("description", ""),
+                                "parameters": t["input_schema"],
+                            },
+                        }
+                        for t in tools
+                    ],
+                    tool_choice="auto",
+                )
+                msg = resp.choices[0].message if resp.choices else None
+                calls = getattr(msg, "tool_calls", None) if msg else None
+                if calls:
+                    return {
+                        "tool": calls[0].function.name,
+                        "args": _json.loads(calls[0].function.arguments or "{}"),
+                    }
+                return {"text": (msg.content or "") if msg else ""}
+            # Local / RunPod (Ollama): no native tool calling — ask for a JSON
+            # decision and parse it. Looser, but enough to drive the loop on a
+            # local model. The tool menu is rendered into the prompt.
+            menu = "\n".join(
+                f"- {t['name']}({', '.join((t['input_schema'].get('properties') or {}).keys())}): "
+                f"{t.get('description', '')}"
+                for t in tools
+            )
+            sys2 = (
+                f"{system_prompt}\n\nAvailable tools:\n{menu}\n\n"
+                'Reply with ONE JSON object: {"tool":"<name>","args":{...}} to call a tool, '
+                'or {"text":"<one-line summary>"} when the task is done. JSON only.'
+            )
+            text, _i, _o = await self._call_local(sys2, messages, max_tokens, local_variant=model_id)
+            from brain.utils import safe_json_parse
+
+            parsed = safe_json_parse(text) or {}
+            if parsed.get("tool"):
+                return {"tool": str(parsed["tool"]), "args": parsed.get("args") or {}}
+            return {"text": str(parsed.get("text", text))}
+        except Exception as e:
+            logger.warning("[ModelRouter] call_structured_any %s/%s failed: %s", cluster, cell, e)
+            return {"text": f"[error] {e}"}
+
     async def call_structured(
         self,
         model_key: str,

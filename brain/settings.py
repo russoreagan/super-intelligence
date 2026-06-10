@@ -738,7 +738,15 @@ DEFAULTS: dict[str, float | int | str] = {
     #   that the app runs fully online. "local" = the local Claude CLI subprocess
     #   (CloudExecutor), only useful on a dev box with the `claude` CLI installed.
     #   Overridable per-process via the BRAIN_EXECUTOR env var.
+    #   "generic" = the in-process, provider-agnostic agent loop over the brain's
+    #   own toolset (GenericExecutor) — works with GPT/Groq/DeepSeek or a local
+    #   model, no Anthropic dependency; fewer agentic capabilities than CMA but
+    #   the only motor tier that doesn't require Anthropic.
     "brain_executor": "cma",
+    # motor_model: model key the generic executor plans actions with (any router
+    #   key — gpt, gpt-mini, local-general, runpod-general). Only used when
+    #   brain_executor=generic.
+    "motor_model": "gpt",
     # cma_enabled: belt-and-suspenders flag (reserved); selection is driven by
     #   brain_executor / BRAIN_EXECUTOR. 1 = on (matches the cma default).
     "cma_enabled": 1,

@@ -323,6 +323,18 @@ class _SetupMixin:
 
             cloud = CMAExecutor(self.bus, schema_store=self.hippocampus._schema)
             logger.info("Motor cortex: using Managed Agents executor (CMA)")
+        elif _executor_kind == "generic":
+            from brain.clusters.generic_executor import GenericExecutor
+
+            cloud = GenericExecutor(
+                self.bus,
+                schema_store=self.hippocampus._schema,
+                router=self.router,
+            )
+            logger.info(
+                "Motor cortex: using provider-agnostic generic executor (model=%s)",
+                settings.get("motor_model") or "gpt",
+            )
         else:
             from brain.clusters.cloud_executor import CloudExecutor
 
@@ -359,6 +371,14 @@ class _SetupMixin:
                 logger.info(
                     "Motor cortex: project root auto-added to allowed paths: %s", _project_root
                 )
+
+        # The generic executor runs the brain's own toolset in-process, so it
+        # must share the SAME final allowlist the motor cortex uses (resolved
+        # just above, after trusted-dir inheritance + project-root rules).
+        if _executor_kind == "generic" and hasattr(cloud, "set_allowed_paths"):
+            cloud.set_allowed_paths(_motor_paths)
+            if _motor_cmds is not None:
+                cloud._dispatcher._allowed_commands = _motor_cmds
 
         self.motor = MotorCortexCluster(
             self.bus,
