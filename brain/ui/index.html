@@ -4025,11 +4025,162 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
   color: var(--fg-faint); padding: 8px 12px;
 }
 
+/* ---- boot overlay ("Awakening the mind") — fixed warm-paper splash, theme-independent ---- */
+#boot-overlay { position: fixed; inset: 0; z-index: 4000; display: none;
+  align-items: center; justify-content: center; overflow: hidden;
+  background: #f7f3ec; color: #4a3f2f; opacity: 1; transition: opacity 0.75s ease; }
+#boot-overlay.on { display: flex; }
+#boot-overlay.fade { opacity: 0; pointer-events: none; }
+.bo-wreath { position: absolute; top: 50%; height: min(76vh, 620px); color: #5d5138; opacity: 0.9; }
+.bo-wreath-l { left: clamp(10px, 7vw, 140px); transform: translateY(-50%); }
+.bo-wreath-r { right: clamp(10px, 7vw, 140px); transform: translateY(-50%) scaleX(-1); }
+.bo-center { max-width: 580px; padding: 0 28px; text-align: center; }
+.bo-sun { width: min(430px, 72vw); color: #5d5138; display: block; margin: 0 auto 20px; }
+.bo-eyebrow { font-family: var(--mono); font-size: 11px; letter-spacing: 0.42em; text-transform: uppercase;
+  color: #6b5f4a; display: flex; align-items: center; gap: 16px; justify-content: center; }
+.bo-eyebrow i { display: block; width: 46px; height: 1px; background: #8a7c63; flex: none; }
+.bo-title { font-family: 'Newsreader', Georgia, serif; font-size: clamp(32px, 5.5vw, 62px); font-weight: 500;
+  margin: 12px 0 0; color: #33291b; letter-spacing: -0.01em; white-space: nowrap; }
+.bo-title em { font-style: italic; font-weight: 400; }
+.bo-divider { display: flex; align-items: center; justify-content: center; gap: 12px; margin: 18px 0 20px; color: #6b5f4a; }
+.bo-divider .bo-line { width: clamp(70px, 18vw, 140px); height: 1px; background: #8a7c63; }
+.bo-divider .bo-dot { width: 6px; height: 6px; border: 1px solid #8a7c63; border-radius: 50%; flex: none; }
+.bo-divider .bo-gem { font-size: 13px; line-height: 1; }
+.bo-sub { font-family: 'Newsreader', Georgia, serif; font-style: italic; font-size: clamp(17px, 2.6vw, 21px);
+  line-height: 1.55; color: #6b5d45; margin: 0 0 36px; }
+.bo-progress { max-width: 440px; margin: 0 auto 42px; }
+.bo-track { position: relative; height: 2px; background: #d9d0bf; border-radius: 2px; }
+.bo-track::before, .bo-track::after { content: ''; position: absolute; top: 50%; width: 7px; height: 7px;
+  border: 1.5px solid #8a7c63; border-radius: 50%; background: #f7f3ec; transform: translateY(-50%); }
+.bo-track::before { left: -10px; } .bo-track::after { right: -10px; }
+.bo-fill { position: absolute; left: 0; top: 0; height: 100%; width: 0%; background: #b54a2c; border-radius: 2px; transition: width 0.25s linear; }
+.bo-knob { position: absolute; top: 50%; left: 0%; width: 9px; height: 9px; border: 1.5px solid #b54a2c;
+  border-radius: 50%; background: #f7f3ec; transform: translate(-50%, -50%); transition: left 0.25s linear; }
+.bo-meta { display: flex; justify-content: space-between; margin-top: 13px; font-family: var(--mono);
+  font-size: 11px; letter-spacing: 0.28em; text-transform: uppercase; color: #6b5f4a; }
+.bo-column { width: min(320px, 58vw); color: #5d5138; display: block; margin: 0 auto; }
+@media (max-width: 820px) { .bo-wreath { display: none; } }
+@media (max-height: 700px) { .bo-sun { margin-bottom: 8px; } .bo-column { display: none; } .bo-progress { margin-bottom: 8px; } }
 </style>
 <!-- Redesigned settings page styles (scoped to #settings-page) -->
-<link rel="stylesheet" href="settings.css?v=25">
+<link rel="stylesheet" href="settings.css?v=26">
 </head>
 <body>
+
+<!-- ====== BOOT OVERLAY — "Awakening the mind" splash while the brain boots ====== -->
+<div id="boot-overlay" class="on" aria-hidden="true">
+  <svg class="bo-wreath bo-wreath-l" viewBox="0 0 150 620" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round">
+    <defs>
+      <g id="bo-leaf">
+        <path d="M0 0 C 12 -13 15 -34 0 -52 C -15 -34 -12 -13 0 0 Z"/>
+        <path d="M0 -8 L0 -42" stroke-width="0.9"/>
+      </g>
+    </defs>
+    <path d="M128 600 C 40 470 18 300 56 96" stroke-width="1.5"/>
+    <use href="#bo-leaf" transform="translate(104,560) rotate(-62)"/>
+    <use href="#bo-leaf" transform="translate(96,540) rotate(28)"/>
+    <use href="#bo-leaf" transform="translate(83,517) rotate(-58)"/>
+    <use href="#bo-leaf" transform="translate(74,495) rotate(30)"/>
+    <use href="#bo-leaf" transform="translate(66,472) rotate(-52)"/>
+    <use href="#bo-leaf" transform="translate(59,448) rotate(32)"/>
+    <use href="#bo-leaf" transform="translate(54,425) rotate(-46)"/>
+    <use href="#bo-leaf" transform="translate(49,400) rotate(34)"/>
+    <use href="#bo-leaf" transform="translate(45,376) rotate(-42)"/>
+    <use href="#bo-leaf" transform="translate(42,350) rotate(36)"/>
+    <use href="#bo-leaf" transform="translate(40,324) rotate(-38) scale(0.95)"/>
+    <use href="#bo-leaf" transform="translate(39,297) rotate(38) scale(0.95)"/>
+    <use href="#bo-leaf" transform="translate(38,270) rotate(-34) scale(0.9)"/>
+    <use href="#bo-leaf" transform="translate(39,242) rotate(40) scale(0.9)"/>
+    <use href="#bo-leaf" transform="translate(40,214) rotate(-28) scale(0.85)"/>
+    <use href="#bo-leaf" transform="translate(43,185) rotate(42) scale(0.85)"/>
+    <use href="#bo-leaf" transform="translate(46,156) rotate(-22) scale(0.8)"/>
+    <use href="#bo-leaf" transform="translate(51,126) rotate(44) scale(0.8)"/>
+    <use href="#bo-leaf" transform="translate(56,98) rotate(-6) scale(0.85)"/>
+    <circle cx="116" cy="586" r="2" fill="currentColor" stroke="none"/>
+    <circle cx="70" cy="538" r="2" fill="currentColor" stroke="none"/>
+    <circle cx="34" cy="430" r="2" fill="currentColor" stroke="none"/>
+    <circle cx="24" cy="306" r="2" fill="currentColor" stroke="none"/>
+    <circle cx="34" cy="180" r="2" fill="currentColor" stroke="none"/>
+    <circle cx="66" cy="78" r="2" fill="currentColor" stroke="none"/>
+  </svg>
+  <svg class="bo-wreath bo-wreath-r" viewBox="0 0 150 620" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round">
+    <path d="M128 600 C 40 470 18 300 56 96" stroke-width="1.5"/>
+    <use href="#bo-leaf" transform="translate(104,560) rotate(-62)"/>
+    <use href="#bo-leaf" transform="translate(96,540) rotate(28)"/>
+    <use href="#bo-leaf" transform="translate(83,517) rotate(-58)"/>
+    <use href="#bo-leaf" transform="translate(74,495) rotate(30)"/>
+    <use href="#bo-leaf" transform="translate(66,472) rotate(-52)"/>
+    <use href="#bo-leaf" transform="translate(59,448) rotate(32)"/>
+    <use href="#bo-leaf" transform="translate(54,425) rotate(-46)"/>
+    <use href="#bo-leaf" transform="translate(49,400) rotate(34)"/>
+    <use href="#bo-leaf" transform="translate(45,376) rotate(-42)"/>
+    <use href="#bo-leaf" transform="translate(42,350) rotate(36)"/>
+    <use href="#bo-leaf" transform="translate(40,324) rotate(-38) scale(0.95)"/>
+    <use href="#bo-leaf" transform="translate(39,297) rotate(38) scale(0.95)"/>
+    <use href="#bo-leaf" transform="translate(38,270) rotate(-34) scale(0.9)"/>
+    <use href="#bo-leaf" transform="translate(39,242) rotate(40) scale(0.9)"/>
+    <use href="#bo-leaf" transform="translate(40,214) rotate(-28) scale(0.85)"/>
+    <use href="#bo-leaf" transform="translate(43,185) rotate(42) scale(0.85)"/>
+    <use href="#bo-leaf" transform="translate(46,156) rotate(-22) scale(0.8)"/>
+    <use href="#bo-leaf" transform="translate(51,126) rotate(44) scale(0.8)"/>
+    <use href="#bo-leaf" transform="translate(56,98) rotate(-6) scale(0.85)"/>
+    <circle cx="116" cy="586" r="2" fill="currentColor" stroke="none"/>
+    <circle cx="70" cy="538" r="2" fill="currentColor" stroke="none"/>
+    <circle cx="34" cy="430" r="2" fill="currentColor" stroke="none"/>
+    <circle cx="24" cy="306" r="2" fill="currentColor" stroke="none"/>
+    <circle cx="34" cy="180" r="2" fill="currentColor" stroke="none"/>
+    <circle cx="66" cy="78" r="2" fill="currentColor" stroke="none"/>
+  </svg>
+  <div class="bo-center">
+    <svg class="bo-sun" viewBox="0 0 480 185" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round">
+      <!-- rising sun -->
+      <path d="M 188 168 A 52 52 0 0 1 292 168"/>
+      <!-- rays -->
+      <path d="M174 150 L145 143"/><path d="M181 134 L134 107"/><path d="M192 120 L172 100"/>
+      <path d="M206 109 L177 59"/><path d="M222 102 L215 73"/><path d="M240 100 L240 36"/>
+      <path d="M258 102 L265 73"/><path d="M274 109 L303 59"/><path d="M288 120 L308 100"/>
+      <path d="M299 134 L346 107"/><path d="M306 150 L335 143"/>
+      <circle cx="240" cy="29" r="2.5"/><circle cx="174" cy="54" r="2.5"/><circle cx="306" cy="54" r="2.5"/>
+      <circle cx="128" cy="103" r="2" fill="currentColor" stroke="none"/><circle cx="352" cy="103" r="2" fill="currentColor" stroke="none"/>
+      <!-- circuit traces -->
+      <path d="M58 150 H106 L123 133 H152"/><circle cx="54" cy="150" r="2.5"/>
+      <path d="M88 168 H132 L146 154"/><circle cx="84" cy="168" r="2.5"/>
+      <path d="M422 150 H374 L357 133 H328"/><circle cx="426" cy="150" r="2.5"/>
+      <path d="M392 168 H348 L334 154"/><circle cx="396" cy="168" r="2.5"/>
+      <!-- baseline rule with diamond -->
+      <circle cx="36" cy="180" r="3"/><circle cx="444" cy="180" r="3"/>
+      <path d="M42 180 H228"/><path d="M252 180 H438"/>
+      <path d="M240 173 L244 180 L240 187 L236 180 Z" fill="currentColor" stroke="none"/>
+    </svg>
+    <div class="bo-eyebrow"><i></i><span>The Birthplace of AEI</span><i></i></div>
+    <h1 class="bo-title">Awakening the <em>mind</em></h1>
+    <div class="bo-divider"><span class="bo-dot"></span><span class="bo-line"></span><span class="bo-gem">✦</span><span class="bo-line"></span><span class="bo-dot"></span></div>
+    <p class="bo-sub">Gathering memory, settling the chemistry,<br>and reconstructing a sense of self.</p>
+    <div class="bo-progress">
+      <div class="bo-track"><i class="bo-fill" id="bo-fill"></i><i class="bo-knob" id="bo-knob"></i></div>
+      <div class="bo-meta"><span id="bo-stage">kindling the cortex</span><span id="bo-pct">0%</span></div>
+    </div>
+    <svg class="bo-column" viewBox="0 0 360 135" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round">
+      <!-- ionic capital -->
+      <rect x="130" y="8" width="100" height="11" rx="1"/>
+      <rect x="138" y="19" width="84" height="7" rx="1"/>
+      <circle cx="150" cy="41" r="10"/><circle cx="150" cy="41" r="4.5"/>
+      <circle cx="210" cy="41" r="10"/><circle cx="210" cy="41" r="4.5"/>
+      <path d="M160 33 C 175 27 185 27 200 33"/>
+      <!-- fluted shaft -->
+      <path d="M152 52 H208"/>
+      <path d="M154 52 L156 128"/><path d="M168 52 L169 128"/><path d="M180 52 L180 128"/>
+      <path d="M192 52 L191 128"/><path d="M206 52 L204 128"/>
+      <!-- circuit traces -->
+      <path d="M34 70 H94 L109 55 H128"/><circle cx="30" cy="70" r="2.5"/>
+      <path d="M50 98 H100 L114 84 H130"/><circle cx="46" cy="98" r="2.5"/>
+      <path d="M326 70 H266 L251 55 H232"/><circle cx="330" cy="70" r="2.5"/>
+      <path d="M310 98 H260 L246 84 H230"/><circle cx="314" cy="98" r="2.5"/>
+      <circle cx="74" cy="120" r="2" fill="currentColor" stroke="none"/><circle cx="286" cy="120" r="2" fill="currentColor" stroke="none"/>
+    </svg>
+  </div>
+</div>
+
 
 <div class="app">
 
@@ -4935,6 +5086,63 @@ document.getElementById('voice-select').addEventListener('change', function() {
 });
 
 /* =====================================================================
+   BOOT OVERLAY — "Awakening the mind"
+   Shown on page load and across brain restarts (persona switch, manual
+   restart). The server emits no boot-progress signal, so the percent is
+   simulated: it eases toward 93% and snaps to 100% when the brain reports
+   in (first subsystem_status, or shortly after the socket opens).
+   ===================================================================== */
+const _bootEl = document.getElementById('boot-overlay');
+let _bootPct = 2, _bootTimer = null, _bootHidden = false, _bootAwaitClose = false, _bootMaxT = null;
+const _BOOT_STAGES = [
+  [0,  'kindling the cortex'],
+  [24, 'gathering memory'],
+  [46, 'settling the chemistry'],
+  [68, 'reconstructing a sense of self'],
+  [88, 'opening the senses'],
+];
+function _bootPaint() {
+  const f = document.getElementById('bo-fill'), k = document.getElementById('bo-knob');
+  const s = document.getElementById('bo-stage'), p = document.getElementById('bo-pct');
+  const pct = Math.round(_bootPct);
+  if (f) f.style.width = pct + '%';
+  if (k) k.style.left = pct + '%';
+  if (p) p.textContent = pct + '%';
+  let label = _BOOT_STAGES[0][1];
+  for (const [at, t] of _BOOT_STAGES) if (_bootPct >= at) label = t;
+  if (s) s.textContent = label;
+}
+function showBootOverlay(awaitClose) {
+  if (!_bootEl) return;
+  // awaitClose: we just *triggered* a restart — ignore hide signals from the
+  // old process until its socket actually closes, or the overlay would be
+  // dismissed by the dying brain's last subsystem_status.
+  _bootHidden = false; _bootAwaitClose = !!awaitClose; _bootPct = 2;
+  _bootEl.classList.remove('fade'); _bootEl.classList.add('on'); _bootPaint();
+  if (_bootTimer) clearInterval(_bootTimer);
+  _bootTimer = setInterval(() => {
+    _bootPct = Math.min(93, _bootPct + Math.max(0.18, (93 - _bootPct) * 0.022));
+    _bootPaint();
+  }, 200);
+  if (_bootMaxT) clearTimeout(_bootMaxT);
+  _bootMaxT = setTimeout(() => hideBootOverlay(true), 120000); // never trap the UI
+}
+function hideBootOverlay(force) {
+  if (!_bootEl || _bootHidden) return;
+  if (_bootAwaitClose && !force) return;
+  _bootHidden = true;
+  if (_bootTimer) { clearInterval(_bootTimer); _bootTimer = null; }
+  if (_bootMaxT) { clearTimeout(_bootMaxT); _bootMaxT = null; }
+  _bootPct = 100; _bootPaint();
+  const s = document.getElementById('bo-stage'); if (s) s.textContent = 'awake';
+  setTimeout(() => {
+    _bootEl.classList.add('fade');
+    setTimeout(() => _bootEl.classList.remove('on', 'fade'), 800);
+  }, 450);
+}
+showBootOverlay(false); // initial page load — markup ships with .on so it covers pre-JS too
+
+/* =====================================================================
    WEBSOCKET
    ===================================================================== */
 function connect() {
@@ -4968,10 +5176,14 @@ function connect() {
     const vid = document.getElementById('voice-select').value;
     if (vid) ws.send(JSON.stringify({ type: 'set_voice', voice_id: vid }));
     renderTopEdges();
+    // Connected — the brain server is up; if no subsystem_status lands soon,
+    // dismiss the splash anyway rather than sit on a live connection.
+    setTimeout(() => hideBootOverlay(false), 4000);
   };
 
   ws.onclose = () => {
     wsConnected = false;
+    _bootAwaitClose = false; // restart underway: hide signals are trustworthy again
     const ind = document.getElementById('ws-indicator');
     const lbl = document.getElementById('status-label');
     ind.classList.remove('connected');
@@ -5361,6 +5573,7 @@ function handle(msg) {
       break;
     }
     case 'subsystem_status': {
+      hideBootOverlay(false); // the brain is reporting in — it's awake
       const subs = { ui: msg.ui, motor: msg.motor, dmn: msg.dmn, meta: msg.meta, voice: msg.voice, ears: msg.ears };
       let allUp = true;
       for (const [key, up] of Object.entries(subs)) {
@@ -6650,6 +6863,7 @@ evalBtn.addEventListener('click', () => {
 function enterDemoMode() {
   if (demoMode) return;
   demoMode = true;
+  hideBootOverlay(true); // no backend — don't leave the splash covering the demo
   document.getElementById('ws-indicator').classList.remove('connected');
   const lbl = document.getElementById('status-label');
   if (lbl) lbl.textContent = 'Demo';
@@ -6860,6 +7074,7 @@ function tickerMsg(text, color) {
 
 async function doRestart(btn) {
   if (btn) { btn.disabled = true; btn.style.opacity = '0.5'; }
+  showBootOverlay(true); // covers until the post-restart page reload
   tickerMsg('restarting…', 'oklch(0.72 0.14 200)');
   await new Promise(r => setTimeout(r, 600));
   try { await fetch('/restart', { method: 'POST' }); } catch (_) {}
@@ -7108,6 +7323,7 @@ async function _switchPersona(name, p) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...currentSettings, ...patch }),
     });
+    showBootOverlay(true); // awakening splash until the new persona reports in
   } catch (e) {
     // Offline (static preview): update local state + badge only.
     Object.assign(currentSettings, patch);
@@ -8428,8 +8644,8 @@ function _applyMoodTint() {
 })();
 </script>
 <!-- Redesigned settings page: schema + render engine (live-wired to /settings) -->
-<script src="settings-data.js?v=25"></script>
-<script src="settings-ui.js?v=25"></script>
+<script src="settings-data.js?v=26"></script>
+<script src="settings-ui.js?v=26"></script>
 <!-- Trading layer: vendored TradingView Lightweight Charts (Apache-2.0) for chart cards -->
 <script src="lightweight-charts.standalone.production.js"></script>
 </body>

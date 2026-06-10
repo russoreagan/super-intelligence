@@ -618,7 +618,7 @@
     } else if (r.type === 'text') {
       const ta = document.createElement('textarea'); ta.className = 'es-textarea'; ta.rows = r.rows || 4; ta.spellcheck = false;
       ta.value = (values[r.key] != null) ? values[r.key] : ''; if (r.placeholder) ta.placeholder = r.placeholder;
-      ta.style.cssText = 'flex:1 1 100%;min-width:220px;padding:7px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:inherit;font:inherit;resize:vertical;';
+      ta.style.cssText = 'flex:1 1 100%;min-width:220px;resize:vertical;';
       ta.addEventListener('input', () => { if (!manualOpen) { ta.value = (values[r.key] != null) ? values[r.key] : ''; return; } values[r.key] = ta.value; refreshDirty(); });
       ctrl.appendChild(ta); genReg[r.key] = { row, text: ta };
     } else {
