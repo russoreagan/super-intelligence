@@ -594,6 +594,7 @@ class SchemaStore:
                     .select("content")
                     .eq("org_id", uid)
                     .eq("persona", self._sb_persona())
+                    .eq("end_user_id", "")
                     .eq("filename", filename)
                     .maybe_single()
                     .execute()
@@ -621,11 +622,15 @@ class SchemaStore:
                 {
                     "org_id": uid,
                     "persona": self._sb_persona(),
+                    "end_user_id": "",  # companion mode; engine-mode callers will thread this
                     "filename": filename,
                     "content": content,
                     "updated_at": "now()",
                 },
-                on_conflict="user_id,persona,filename",
+                # Must name the table's actual unique constraint
+                # (org_id, persona, end_user_id, filename) — migration 007. A stale
+                # column list here makes every upsert error out (silently, log-only).
+                on_conflict="org_id,persona,end_user_id,filename",
             ).execute()
         except Exception as e:
             logger.error("[Schema DB] Supabase write failed (%s): %s", filename, e)
@@ -740,6 +745,7 @@ class SchemaStore:
                     .select("filename")
                     .eq("org_id", uid)
                     .eq("persona", self._sb_persona())
+                    .eq("end_user_id", "")
                     .execute()
                 )
                 return [r["filename"] for r in (res.data or [])]
@@ -758,6 +764,7 @@ class SchemaStore:
                     .select("filename,content")
                     .eq("org_id", uid)
                     .eq("persona", self._sb_persona())
+                    .eq("end_user_id", "")
                     .ilike("content", f"%{keyword}%")
                     .execute()
                 )

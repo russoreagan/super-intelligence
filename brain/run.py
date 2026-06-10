@@ -255,9 +255,27 @@ def _seed_persona_self_md(root, persona: str, settings_data: dict) -> None:
     from pathlib import Path
 
     base = Path(__file__).parent.parent / "second_brain" / "schema" / "self.md"
-    target = Path(root) / "schema" / "self.md"
-    if target.exists() or not base.exists():
+    if not base.exists():
         return
+    # The seed must land wherever the brain actually reads self.md from. On the
+    # hosted backend that's the Supabase brain_schemas table — a local-disk write
+    # there is invisible to the running brain (and evaporates on redeploy).
+    use_supabase = os.environ.get("BRAIN_STORAGE_BACKEND", "local").lower() == "supabase"
+    store = None
+    if use_supabase:
+        try:
+            from brain.second_brain.store import SchemaStore
+
+            store = SchemaStore(persona=persona)
+            if store.read("self.md"):
+                return  # persona already has a life — don't clobber it
+        except Exception as e:
+            logger.warning("[Persona] self.md seed: Supabase check failed for %s: %s", persona, e)
+            return
+    else:
+        target = Path(root) / "schema" / "self.md"
+        if target.exists():
+            return
     try:
         text = base.read_text(encoding="utf-8")
 
@@ -291,12 +309,16 @@ def _seed_persona_self_md(root, persona: str, settings_data: dict) -> None:
                 flags=re.S,
             )
 
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(text, encoding="utf-8")
+        if store is not None:
+            store.write("self.md", text)  # sync write — boot-time, outside the event loop
+        else:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(text, encoding="utf-8")
         logger.info(
-            "[Persona] Seeded self.md for %s from base identity + archetype (%d chars)",
+            "[Persona] Seeded self.md for %s from base identity + archetype (%d chars, %s)",
             persona,
             len(text),
+            "supabase" if store is not None else "local",
         )
     except Exception as e:
         logger.warning("[Persona] self.md seed failed for %s: %s", persona, e)

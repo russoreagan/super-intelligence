@@ -68,6 +68,41 @@ _SECOND_BRAIN_ROOT = Path(
 )
 _TOOL_LOG_PATH = _SECOND_BRAIN_ROOT / "schema" / "tool_log.md"
 
+# Serializes tool-log appends across executors (the read-modify-write on the
+# hosted backend would otherwise drop entries under concurrency).
+_tool_log_lock = asyncio.Lock()
+
+
+async def append_tool_log_entry(task: str, output: str, success: bool, tag: str) -> None:
+    """Append one audit entry to schema/tool_log.md via the active storage backend.
+
+    Hosted (BRAIN_STORAGE_BACKEND=supabase): goes through SchemaStore so the log
+    lands in the brain_schemas table like every other schema file. Local: appends
+    to the per-persona file on disk.
+    """
+    try:
+        from datetime import datetime as _dt
+
+        ts = _dt.now().strftime("%Y-%m-%d %H:%M")
+        status = "✓" if success else "✗"
+        preview = output[:200].replace("\n", " ").strip()
+        if len(output) > 200:
+            preview += "..."
+        entry = f"\n## {ts} {status}\n**Task:** {task}\n**Result:** {preview}\n"
+        async with _tool_log_lock:
+            if os.environ.get("BRAIN_STORAGE_BACKEND", "local").lower() == "supabase":
+                from brain.second_brain.store import SchemaStore
+
+                store = SchemaStore()
+                existing = store.read("tool_log.md")
+                await store.awrite("tool_log.md", existing + entry)
+            else:
+                _TOOL_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+                with open(_TOOL_LOG_PATH, "a") as f:
+                    f.write(entry)
+    except Exception as e:
+        logger.debug("[%s] Could not write tool log: %s", tag, e)
+
 
 class ExecutorCommon:
     """Mixin: confirmation handshake, pending-state, result screening, audit log.
@@ -124,16 +159,5 @@ class ExecutorCommon:
     # ── Audit trail ────────────────────────────────────────────────────────────
 
     async def _append_tool_log(self, task: str, output: str, success: bool) -> None:
-        """Append one entry to second_brain/schema/tool_log.md (fire-and-forget)."""
-        try:
-            ts = datetime.now().strftime("%Y-%m-%d %H:%M")
-            status = "✓" if success else "✗"
-            preview = output[:200].replace("\n", " ").strip()
-            if len(output) > 200:
-                preview += "..."
-            entry = f"\n## {ts} {status}\n**Task:** {task}\n**Result:** {preview}\n"
-            async with asyncio.Lock():
-                with open(_TOOL_LOG_PATH, "a") as f:
-                    f.write(entry)
-        except Exception as e:
-            logger.debug("[executor] Could not write tool log: %s", e)
+        """Append one entry to schema/tool_log.md (fire-and-forget)."""
+        await append_tool_log_entry(task, output, success, "executor")

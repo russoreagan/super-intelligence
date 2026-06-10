@@ -483,21 +483,10 @@ class CloudExecutor:
     # ── Audit trail ───────────────────────────────────────────────────────────
 
     async def _append_tool_log(self, task: str, output: str, success: bool) -> None:
-        """Append one entry to the per-tenant schema/tool_log.md."""
-        log_path = _SECOND_BRAIN_ROOT / "schema" / "tool_log.md"
-        try:
-            ts = datetime.now().strftime("%Y-%m-%d %H:%M")
-            status = "✓" if success else "✗"
-            # Truncate output for the log — keep it readable
-            preview = output[:200].replace("\n", " ").strip()
-            if len(output) > 200:
-                preview += "..."
-            entry = f"\n## {ts} {status}\n**Task:** {task}\n**Result:** {preview}\n"
-            async with asyncio.Lock():
-                with open(log_path, "a") as f:
-                    f.write(entry)
-        except Exception as e:
-            logger.debug("[CloudExecutor] Could not write tool log: %s", e)
+        """Append one entry to schema/tool_log.md via the active storage backend."""
+        from brain.clusters._executor_common import append_tool_log_entry
+
+        await append_tool_log_entry(task, output, success, "CloudExecutor")
 
     @property
     def available(self) -> bool:
