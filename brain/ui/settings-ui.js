@@ -1056,7 +1056,7 @@
   }
 
   // persona tabs exclude system-level categories (rendered on a System page)
-  function tabCats() { return SET.categories.filter(c => c.id !== 'apikeys' && !c.system); }
+  function tabCats() { return SET.categories.filter(c => c.id !== 'apikeys' && !c.system && !c.motor); }
   function renderTabs() {
     const bar = document.getElementById('st-tabbar'); if (!bar) return;
     bar.innerHTML = '';

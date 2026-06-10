@@ -414,6 +414,25 @@ class UIServer:
             from brain.settings import settings
 
             body = await request.json()
+            # Motor authorization keys are admin-only (they govern host
+            # filesystem + capability grants). The UI hides the page from
+            # non-admins; enforce it here too so a hand-crafted POST can't
+            # widen the sandbox. Skipped when auth is disabled (local dev).
+            if not ui_auth.is_disabled():
+                _claims = getattr(request.state, "user", None) or {}
+                if not ui_auth.is_admin(_claims):
+                    _stripped = [
+                        k
+                        for k in list(body)
+                        if k.startswith("motor_") or k == "ralph_max_total_attempts"
+                    ]
+                    for k in _stripped:
+                        body.pop(k, None)
+                    if _stripped:
+                        logger.warning(
+                            "[settings] Non-admin tried to set motor keys %s — stripped",
+                            _stripped,
+                        )
             try:
                 # API keys route to the Supabase Vault (per-user, encrypted) when
                 # configured; otherwise they persist to local settings.json
