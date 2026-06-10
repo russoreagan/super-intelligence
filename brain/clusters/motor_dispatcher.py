@@ -80,6 +80,12 @@ DEFAULT_COMMANDS = {
 }
 
 
+# Commands safe to run with a read-only working directory: they inspect, never
+# mutate. Anything else (interpreters, package managers, editors, rm/mv/cp …)
+# requires the cwd to be under a read/write root.
+READONLY_COMMANDS = {"ls", "find", "grep", "cat", "head", "tail", "wc", "sort", "uniq", "diff", "echo"}
+
+
 class ToolDispatcher:
     """Validates and executes filesystem/shell tool calls on behalf of MotorCortexCluster."""
 
@@ -87,6 +93,9 @@ class ToolDispatcher:
         self,
         allowed_paths: list[str] | None = None,
         allowed_commands: set[str] | None = None,
+        read_only_paths: list[str] | None = None,
+        enable_shell: bool = True,
+        enable_network: bool = True,
     ) -> None:
         self._allowed_paths: list[str] = []
         for p in allowed_paths or []:
@@ -94,13 +103,26 @@ class ToolDispatcher:
                 self._allowed_paths.append(str(Path(p).resolve()))
             except Exception:
                 logger.warning("[ToolDispatcher] Ignoring invalid allowed path: %s", p)
+        # Read-only roots: reads/listing/search OK, writes + mutating shell
+        # commands blocked. A path under both lists gets the laxer rw grant.
+        self._ro_paths: list[str] = []
+        for p in read_only_paths or []:
+            try:
+                self._ro_paths.append(str(Path(p).resolve()))
+            except Exception:
+                logger.warning("[ToolDispatcher] Ignoring invalid read-only path: %s", p)
         self._allowed_commands: set[str] = allowed_commands or set(DEFAULT_COMMANDS)
+        self._enable_shell = bool(enable_shell)
+        self._enable_network = bool(enable_network)
 
     # ── Path / command safety ──────────────────────────────────────────────────
 
-    def _validate_path(self, path: str) -> tuple[bool, str]:
-        """Returns (is_safe, resolved_path_or_error_message)."""
-        if not self._allowed_paths:
+    def _validate_path(self, path: str, write: bool = False) -> tuple[bool, str]:
+        """Returns (is_safe, resolved_path_or_error_message).
+
+        write=True restricts the match to read/write roots; read-only roots
+        satisfy reads but reject writes with an explanatory message."""
+        if not self._allowed_paths and not self._ro_paths:
             return False, "No paths configured. Set BRAIN_MOTOR_PATHS env var."
         if not path:
             return False, "Empty path."
@@ -111,8 +133,23 @@ class ToolDispatcher:
         for allowed in self._allowed_paths:
             if resolved == allowed or resolved.startswith(allowed + os.sep):
                 return True, resolved
+        for ro in self._ro_paths:
+            if resolved == ro or resolved.startswith(ro + os.sep):
+                if write:
+                    return False, (
+                        f"Path '{resolved}' is in a READ-ONLY area — writes are not "
+                        "permitted there. Read/write roots: "
+                        f"{self._allowed_paths or '(none)'}"
+                    )
+                return True, resolved
         return False, (
-            f"Path '{path}' (resolved: {resolved}) is outside allowed roots: {self._allowed_paths}"
+            f"Path '{path}' (resolved: {resolved}) is outside allowed roots: "
+            f"rw={self._allowed_paths} ro={self._ro_paths}"
+        )
+
+    def _is_rw(self, resolved: str) -> bool:
+        return any(
+            resolved == a or resolved.startswith(a + os.sep) for a in self._allowed_paths
         )
 
     def _validate_command(self, cmd: str) -> tuple[bool, str]:
@@ -148,7 +185,7 @@ class ToolDispatcher:
             return f"[error] Permission denied: {resolved}"
 
     def _write_file(self, path: str, content: str) -> str:
-        safe, resolved = self._validate_path(path)
+        safe, resolved = self._validate_path(path, write=True)
         if not safe:
             return f"[blocked] {resolved}"
         try:
@@ -159,7 +196,7 @@ class ToolDispatcher:
             return f"[error] Permission denied: {resolved}"
 
     def _append_file(self, path: str, content: str) -> str:
-        safe, resolved = self._validate_path(path)
+        safe, resolved = self._validate_path(path, write=True)
         if not safe:
             return f"[blocked] {resolved}"
         try:
@@ -190,6 +227,8 @@ class ToolDispatcher:
             return f"[error] Permission denied: {resolved}"
 
     async def _run_command(self, cmd: str, cwd: str = "") -> str:
+        if not self._enable_shell:
+            return "[blocked] Shell commands are disabled (Settings → Motor Permissions)."
         safe_cmd, err = self._validate_command(cmd)
         if not safe_cmd:
             return f"[blocked] {err}"
@@ -202,6 +241,19 @@ class ToolDispatcher:
             cwd_resolved = resolved_cwd
         elif self._allowed_paths:
             cwd_resolved = self._allowed_paths[0]
+        elif self._ro_paths:
+            cwd_resolved = self._ro_paths[0]
+
+        # In a read-only working directory only inspection commands may run —
+        # a shell can mutate anything its cwd can reach.
+        if cwd_resolved is not None and not self._is_rw(cwd_resolved):
+            base = os.path.basename(shlex.split(cmd)[0])
+            if base not in READONLY_COMMANDS:
+                return (
+                    f"[blocked] '{base}' is not allowed in the read-only area "
+                    f"'{cwd_resolved}'. Read-only areas permit: "
+                    f"{sorted(READONLY_COMMANDS)}."
+                )
 
         try:
             parts = shlex.split(cmd)
@@ -260,6 +312,8 @@ class ToolDispatcher:
             return f"[error] Permission denied: {resolved}"
 
     async def _fetch_url(self, url: str, max_chars: int = 8000) -> str:
+        if not self._enable_network:
+            return "[blocked] Network fetch is disabled (Settings → Motor Permissions)."
         import ipaddress
         import socket
         from urllib.parse import urlparse
@@ -460,10 +514,19 @@ class ToolDispatcher:
     # ── Path management ────────────────────────────────────────────────────────
 
     def build_path_hint(self) -> str:
-        if not self._allowed_paths:
+        if not self._allowed_paths and not self._ro_paths:
             return "Filesystem access: none configured (BRAIN_MOTOR_PATHS unset)."
+        if not self._allowed_paths:
+            ro_roots = "\n  ".join(self._ro_paths)
+            return (
+                f"Filesystem access (READ-ONLY):\n  {ro_roots}\n"
+                "You may read, list, and search these — never write, and only "
+                "inspection shell commands work there. Always use absolute paths."
+            )
         primary = self._allowed_paths[0]
         roots = "\n  ".join(self._allowed_paths)
+        if self._ro_paths:
+            roots += "\n  " + "\n  ".join(f"{p}  (read-only)" for p in self._ro_paths)
         # Build a list of known key subdirectories so the planner never guesses paths.
         key_dirs = self._known_subdirs(primary)
         key_dirs_hint = (

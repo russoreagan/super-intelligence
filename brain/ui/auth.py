@@ -266,10 +266,22 @@ async def _verify_access(token: str) -> dict[str, Any] | None:
                 algorithms=["HS256"],
                 audience="authenticated",
             )
-        except jwt.PyJWTError:
-            return None
+        except jwt.ExpiredSignatureError:
+            return None  # genuinely expired — let the refresh path handle it
+        except jwt.PyJWTError as e:
+            # Signature/format mismatch — e.g. the project rotated to Supabase's
+            # asymmetric signing keys and the legacy HS256 secret no longer
+            # matches. Returning None here would shunt EVERY request into the
+            # refresh path (token churn + lost app_metadata → admin pages
+            # vanish). Fall through and let GoTrue judge the token instead.
+            logger.warning(
+                "[auth] Local JWT verify failed (%s) — falling back to GoTrue /user. "
+                "Check SUPABASE_JWT_SECRET matches the project's signing key.",
+                e,
+            )
 
-    # No local secret configured → ask GoTrue. One network hop, but correct.
+    # No local secret (or local verify inconclusive) → ask GoTrue. One network
+    # hop, but correct.
     url = f"{_base()}/auth/v1/user"
     headers = {"apikey": _anon(), "Authorization": f"Bearer {token}"}
     try:
@@ -313,8 +325,14 @@ async def authenticate(conn: Any) -> tuple[dict[str, Any] | None, dict[str, Any]
             claims = await _verify_access(session["access_token"])
             if claims is None:
                 # Trust the fresh token even if we can't re-verify it offline.
+                # Carry app_metadata through — is_admin lives there, and dropping
+                # it silently demotes admins (system settings pages vanish).
                 user = session.get("user") or {}
-                claims = {"sub": user.get("id"), "email": user.get("email")}
+                claims = {
+                    "sub": user.get("id"),
+                    "email": user.get("email"),
+                    "app_metadata": user.get("app_metadata") or {},
+                }
             return claims, session
 
     return None, None

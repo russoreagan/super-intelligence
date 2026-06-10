@@ -223,10 +223,17 @@ class MotorCortexCluster:
         allowed_paths: list[str] | None = None,
         allowed_commands: set[str] | None = None,
         cloud_executor=None,
+        read_only_paths: list[str] | None = None,
+        enable_shell: bool = True,
+        enable_network: bool = True,
+        enable_cloud: bool = True,
     ) -> None:
         self._bus = bus
         self._router = router
-        self._cloud = cloud_executor
+        # Cloud actions disabled in Motor Permissions → drop the executor
+        # entirely: the planner hint says none exist and cloud_action dispatch
+        # falls through to its no-executor error path.
+        self._cloud = cloud_executor if enable_cloud else None
         self._pending_task = None  # set post-init via set_pending_task()
         self._lobe_bridge = None  # set post-init via set_lobe_bridge()
         self._trading = None  # set post-init via set_trading_tools() (advise-only)
@@ -235,12 +242,18 @@ class MotorCortexCluster:
         self.job_store = JobStore()
         self._subsystems: list[MotorSubsystem] = []
 
-        self._dispatcher = ToolDispatcher(allowed_paths, allowed_commands)
+        self._dispatcher = ToolDispatcher(
+            allowed_paths,
+            allowed_commands,
+            read_only_paths=read_only_paths,
+            enable_shell=enable_shell,
+            enable_network=enable_network,
+        )
 
         # Build planner prompt dynamically: include cloud connector hint if available
-        if cloud_executor and cloud_executor.available:
+        if self._cloud and self._cloud.available:
             self._cloud_hint = (
-                f"Cloud connectors currently enabled: {cloud_executor.connectors_summary()}. "
+                f"Cloud connectors currently enabled: {self._cloud.connectors_summary()}. "
                 "Use cloud_action for any request that involves these services."
             )
         else:

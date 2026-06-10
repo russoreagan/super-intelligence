@@ -314,6 +314,24 @@ class _SetupMixin:
             _p = _p.strip()
             if _p and _p not in _motor_paths:
                 _motor_paths.append(_p)
+        # Read-only roots + capability switches (Settings → Motor Permissions).
+        _motor_ro_paths = [
+            _p.strip()
+            for _p in str(_settings.get("motor_read_only_dirs") or "").splitlines()
+            if _p.strip()
+        ]
+        _motor_enable_shell = bool(int(_settings.get("motor_enable_shell", 1) or 0))
+        _motor_enable_network = bool(int(_settings.get("motor_enable_network", 1) or 0))
+        _motor_enable_cloud = bool(int(_settings.get("motor_enable_cloud_actions", 1) or 0))
+        # Command allowlist: env wins, then the setting, then the built-in set.
+        if _motor_cmds is None:
+            _cmds_setting = {
+                c.strip()
+                for c in str(_settings.get("motor_allowed_commands") or "").splitlines()
+                if c.strip()
+            }
+            if _cmds_setting:
+                _motor_cmds = _cmds_setting
 
         _executor_kind = (
             os.environ.get("BRAIN_EXECUTOR", "").strip().lower()
@@ -380,6 +398,13 @@ class _SetupMixin:
             cloud.set_allowed_paths(_motor_paths)
             if _motor_cmds is not None:
                 cloud._dispatcher._allowed_commands = _motor_cmds
+            # Mirror the full Motor Permissions policy onto the in-process
+            # executor's dispatcher (same enforcement surface as the motor's own).
+            from pathlib import Path as _P
+
+            cloud._dispatcher._ro_paths = [str(_P(p).resolve()) for p in _motor_ro_paths]
+            cloud._dispatcher._enable_shell = _motor_enable_shell
+            cloud._dispatcher._enable_network = _motor_enable_network
 
         self.motor = MotorCortexCluster(
             self.bus,
@@ -387,6 +412,10 @@ class _SetupMixin:
             allowed_paths=_motor_paths,
             allowed_commands=_motor_cmds,
             cloud_executor=cloud,
+            read_only_paths=_motor_ro_paths,
+            enable_shell=_motor_enable_shell,
+            enable_network=_motor_enable_network,
+            enable_cloud=_motor_enable_cloud,
         )
         if _motor_paths:
             logger.info("Motor cortex online. Allowed paths: %s", _motor_paths)

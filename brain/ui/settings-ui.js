@@ -136,6 +136,12 @@
              { key: 'eligibility_tau_turns', dir: +1, span: 1.2 } ] },
   ];
   const ALL_DIALS = TRAIT_DIALS.concat(COGNITIVE_DIALS);
+  // Non-chemistry dials whose KEY VALUES are materialized per persona (cognitive
+  // style + lingering) vs motivation dials, which only pose the needle (their
+  // backend is neuron._PERSONA_REWARD_WEIGHTS; the reward_weight_* multipliers
+  // stay at the neutral default). Must match persona_chem._NONCHEM_DIAL_MAP.
+  const _MOTIVATION_DIALS = new Set(['warmth-seeking', 'curiosity-seeking', 'mastery-seeking']);
+  const _materializableDialIds = COGNITIVE_DIALS.map(d => d.id).concat(['lingering']);
 
   const GLYPHS = {
     spark:  '<path d="M12 3v6M12 15v6M3 12h6M15 12h6M6.5 6.5l3.2 3.2M14.3 14.3l3.2 3.2M17.5 6.5l-3.2 3.2M9.7 14.3l-3.2 3.2"/>',
@@ -165,6 +171,13 @@
   const voiceKeyFor = name => 'persona_voice_' + String(name || '').toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
   let _voiceList = null;        // cached /voices response: [{voice_id,name}]
   let _voiceUnavailable = false;
+  // Per-persona non-chemistry dial positions (cognitive + motivation + lingering),
+  // from /settings. Temperament dials pose from chemistry; these have none, so
+  // without this every persona shows them flat-neutral. { persona: { dialId: 0..1 } }.
+  let PERSONA_POS = {};
+  // Dials that pose from PERSONA_POS rather than chemistry (everything not in
+  // REST_WEIGHTS). Built once from ALL_DIALS below.
+  const _posedDialIds = new Set();
   const resetSvg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.5 15a9 9 0 1 0 2.1-9.4L1 10"/></svg>';
   const fileSvg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3v5h5"/><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg>';
   const moonSvg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>';
@@ -261,10 +274,36 @@
   // has evolved this session.
   function dialRest(chem, d) {
     const w = REST_WEIGHTS[d.id];
-    if (!w || !chem) return 0.5;
-    let s = 0, tw = 0;
-    w.forEach(([ch, wt, dir]) => { const x = dir > 0 ? nrm(chem[ch]) : 1 - nrm(chem[ch]); s += wt * x; tw += wt; });
-    return tw ? Math.max(0, Math.min(1, s / tw)) : 0.5;
+    if (w && chem) {
+      let s = 0, tw = 0;
+      w.forEach(([ch, wt, dir]) => { const x = dir > 0 ? nrm(chem[ch]) : 1 - nrm(chem[ch]); s += wt * x; tw += wt; });
+      return tw ? Math.max(0, Math.min(1, s / tw)) : 0.5;
+    }
+    // Non-chemistry dials (cognitive · motivation · lingering) pose from the
+    // per-persona positions the server supplies. Absent → neutral (the Stoic).
+    const p = (PERSONA_POS[persona] || {})[d.id];
+    return (p != null) ? Math.max(0, Math.min(1, +p)) : 0.5;
+  }
+  // The key VALUES a persona's cognitive fingerprint implies. Sums each
+  // materializable dial's offset into its keys (shared keys accumulate, matching
+  // persona_chem._apply_cog_positions and recomputeTraits), then base + offset.
+  // So a built-in persona's cognitive keys differ per persona even before a save,
+  // and the loaded values match the posed needle. `persona` must be set to the
+  // target id before calling.
+  function cogFingerprintValues() {
+    const pos = PERSONA_POS[persona] || {};
+    const offset = {};
+    _materializableDialIds.forEach(did => {
+      if (pos[did] == null) return;
+      const dial = ALL_DIALS.find(x => x.id === did); if (!dial) return;
+      dial.map.forEach(t => { offset[t.key] = (offset[t.key] || 0) + t.dir * t.span * (+pos[did] - 0.5) * 2; });
+    });
+    const out = {};
+    Object.keys(offset).forEach(k => {
+      const base = (k in refDefault) ? +refDefault[k] : keyMeta(k).def;
+      out[k] = base + offset[k];
+    });
+    return out;
   }
   // The persona's resting baseline as actually loaded/stored (chem_baseline_*),
   // which IS the base rate — used to pose the needles. Falls back to the
@@ -313,7 +352,7 @@
     let s = {}, d = {}, serverSelfMd = '';
     try {
       const res = await fetch('/settings');
-      if (res.ok) { const data = await res.json(); s = data.settings || {}; d = data.defaults || {}; secretsSet = data.secrets_set || {}; serverSelfMd = data.self_md || ''; }
+      if (res.ok) { const data = await res.json(); s = data.settings || {}; d = data.defaults || {}; secretsSet = data.secrets_set || {}; serverSelfMd = data.self_md || ''; PERSONA_POS = data.persona_dial_positions || {}; }
     } catch (e) { console.warn('Settings: load failed', e); }
     // Admin flag gates the operational/system pages. Best-effort: a normal user
     // (or a failed fetch) stays non-admin and gets the curated view.
@@ -1023,6 +1062,9 @@
     // admin-only — these are system-wide, security-sensitive controls (e.g. the
     // motor filesystem allowlist) that a normal hosted user shouldn't touch.
     if (isAdmin) {
+      const mot = document.createElement('button'); mot.className = 'pmenu-item sys'; mot.dataset.sys = 'motor';
+      mot.innerHTML = '<div class="pmenu-name">Motor Permissions</div><div class="pmenu-tag">Filesystem · capabilities · job limits</div>';
+      mot.addEventListener('click', () => selectSystem('motor')); sys.appendChild(mot);
       const ops = document.createElement('button'); ops.className = 'pmenu-item sys'; ops.dataset.sys = 'operational';
       ops.innerHTML = '<div class="pmenu-name">Operational</div><div class="pmenu-tag">Perception · resources · maintenance</div>';
       ops.addEventListener('click', () => selectSystem('operational')); sys.appendChild(ops);
@@ -1106,6 +1148,18 @@
       CHANNELS.forEach(ch => { if (c[ch.ch] != null) { values['chem_baseline_' + ch.ch] = c[ch.ch]; values['chem_init_' + ch.ch] = c[ch.ch]; } });
       allKeys.forEach(k => { if (!isChem(k)) values[k] = refDefault[k]; });
       toggleKeys.forEach(k => { values[k] = refDefault[k] != null ? refDefault[k] : 0; });
+      // Cognitive fingerprint: a built-in persona's cognitive/lingering keys
+      // differ per persona even before any save (mirrors the backend boot
+      // materialization). Motivation dials are NOT applied here — their backend
+      // is the reward table; their reward_weight_* multipliers stay at default
+      // and only the needle poses (from PERSONA_POS). `persona` is `id` here.
+      const _prevPersona = persona; persona = id;
+      _materializableDialIds.forEach(did => {
+        Object.entries(cogKeyValuesFor(did)).forEach(([k, v]) => {
+          if (k in values) values[k] = clampKey(k, v);
+        });
+      });
+      persona = _prevPersona;
     }
   }
   function selectPersona(id) {
@@ -1187,7 +1241,12 @@
     manualOpen = true;   // system settings are always editable (no per-persona gate)
     const set = (id, t) => { const el = document.getElementById(id); if (el) el.textContent = t; };
     const bt = document.getElementById('bar-title'), bb = document.getElementById('bar-blurb');
-    if (which === 'operational') {
+    if (which === 'motor') {
+      set('st-eyebrow', 'System'); set('st-name', 'Motor Permissions'); set('st-tag', '');
+      set('st-note', 'What the brain is authorized to do with its motor cortex — which directories it may read or write, which tool families are enabled, and how much autonomous work may run. Applies to every persona.');
+      if (bt) bt.textContent = 'Motor Permissions'; if (bb) bb.textContent = 'System · authorization';
+      renderMotor();
+    } else if (which === 'operational') {
       set('st-eyebrow', 'System'); set('st-name', 'Operational'); set('st-tag', '');
       set('st-note', 'System-wide settings shared across every persona — perception, background compute budgets, and self-maintenance. Not part of any one persona’s temperament.');
       if (bt) bt.textContent = 'Operational'; if (bb) bb.textContent = 'System · shared settings';
@@ -1204,6 +1263,19 @@
       renderApiKeys();
     }
     if (scroll) scroll.scrollTop = 0;
+  }
+  function renderMotor() {
+    const wrap = document.getElementById('tab-generic'); if (!wrap) return;
+    wrap.innerHTML = ''; Object.keys(genReg).forEach(k => delete genReg[k]);
+    const note = document.createElement('div'); note.className = 'es-cat-blurb';
+    note.textContent = 'Authorization for autonomous action. Read/write grants full access to a folder; read-only lets the brain study an area without being able to change it. Empty lists fail closed.';
+    wrap.appendChild(note);
+    SET.categories.filter(c => c.motor).forEach(cat => {
+      const h = document.createElement('div'); h.className = 'es-group';
+      h.innerHTML = `<span>${cat.name}</span>` + (cat.blurb ? `<em>${cat.blurb}</em>` : '');
+      wrap.appendChild(h);
+      (cat.sections || []).forEach(sec => wrap.appendChild(genSection(sec)));
+    });
   }
   function renderOperational() {
     const wrap = document.getElementById('tab-generic'); if (!wrap) return;

@@ -443,19 +443,51 @@ window.SETTINGS = {
 
     /* ===================== AUTONOMY & MAINTENANCE ================= */
     {
+      id: 'motorperms', name: 'Motor Permissions', icon: 'hand', motor: true,
+      blurb: 'What the brain’s motor cortex is allowed to touch and do.',
+      summary: 'The authorization surface for autonomous action. Filesystem areas are granted read-only or read/write; capabilities (shell, network, cloud actions) toggle whole tool families; job limits bound how much self-directed work can run.',
+      sections: [
+        {
+          id: 'sec-m1', num: 'M1', title: 'Filesystem Access',
+          desc: 'The only places the motor cortex can touch the filesystem. Everything outside these roots is blocked — and with both lists empty it has no filesystem access at all (fails closed).',
+          rows: [
+            { type: 'text', key: 'motor_allowed_dirs', label: 'Read & Write Directories', hint: 'one absolute path per line — full access: read, write, create, and any allowed shell command. Running locally, Claude Desktop’s trusted folders are inherited when this is blank.', rows: 4, placeholder: '/home/you/projects/my-app\n/home/you/scratch', def: '' },
+            { type: 'text', key: 'motor_read_only_dirs', label: 'Read-Only Directories', hint: 'one absolute path per line — the brain can list, read, and search here but never write; only inspection commands (ls, grep, cat…) run with a working directory inside these.', rows: 4, placeholder: '/home/you/documents/reference', def: '' },
+          ],
+          advanced: [],
+        },
+        {
+          id: 'sec-m2', num: 'M2', title: 'Capabilities',
+          desc: 'Whole tool families, switchable. Turning one off blocks the tool with a clear message the planner can see and route around.',
+          rows: [
+            { type: 'toggle', key: 'motor_enable_shell', label: 'Shell Commands', hint: 'allow run_command — executing allowed binaries inside the granted directories', def: 1 },
+            { type: 'toggle', key: 'motor_enable_network', label: 'Network Fetch', hint: 'allow fetch_url — outbound HTTP reads of public pages', def: 1 },
+            { type: 'toggle', key: 'motor_enable_cloud_actions', label: 'Cloud Actions', hint: 'allow cloud_action — delegated multi-step work via the cloud executor (email, calendar, research connectors)', def: 1 },
+          ],
+          advanced: [
+            { type: 'text', key: 'motor_allowed_commands', label: 'Shell Command Allowlist', hint: 'one binary name per line — replaces the built-in default set (ls, grep, git, python…) when non-empty. The BRAIN_MOTOR_COMMANDS env var overrides both.', rows: 4, placeholder: 'ls\ngrep\ncat\ngit', def: '' },
+          ],
+        },
+        {
+          id: 'sec-m3', num: 'M3', title: 'Autonomous Job Limits',
+          desc: 'How much self-directed background work may run, and how hard each job may try.',
+          rows: [
+            { type: 'range', key: 'ralph_max_total_attempts', label: 'Ralph Max Total Attempts', hint: 'hard cap on tool dispatches per job — prevents indefinite loops', min: 4, max: 32, step: 2, def: 12 },
+            { type: 'range', key: 'motor_max_concurrent_jobs', label: 'Concurrent Jobs', hint: 'autonomous jobs running at once', min: 1, max: 4, step: 1, def: 1 },
+          ],
+          advanced: [
+            { type: 'range', key: 'motor_max_jobs_per_window', label: 'Jobs / Hour Window', hint: 'job starts allowed per rolling window', min: 1, max: 40, step: 1, def: 10 },
+            { type: 'time', key: 'motor_job_window_s', unit: 'sec', label: 'Rate Window', hint: 'length of the rolling job-rate window', min: 600, max: 14400, step: 600, def: 3600 },
+            { type: 'range', key: 'motor_max_jobs_per_session', label: 'Jobs / Session Cap', hint: 'absolute ceiling per process lifetime', min: 5, max: 100, step: 5, def: 30 },
+          ],
+        },
+      ],
+    },
+    {
       id: 'autonomy', name: 'Autonomy & Maintenance', icon: 'moon', system: true,
       blurb: 'Self-directed background work and the sleep pass that consolidates memory.',
       summary: 'Guardrails for the things the brain does on its own. The attempt cap stops autonomous jobs from looping forever. Sleep consolidation is its housekeeping — it periodically reviews recent conversations to extract facts and update its self-model, much like memory consolidation during real sleep.',
       sections: [
-        {
-          id: 'sec-17', num: '17', title: 'Motor Cortex / Autonomous Tasks',
-          desc: 'Directories the motor cortex may touch, and Ralph-loop limits for self-directed background jobs.',
-          rows: [
-            { type: 'text', key: 'motor_allowed_dirs', label: 'Allowed Directories', hint: 'one absolute path per line — the only folders the motor cortex may read or write. Leave blank to allow none (running locally, Claude Desktop’s trusted folders are used instead).', rows: 4, placeholder: '/home/you/projects/my-app\n/home/you/scratch', def: '' },
-            { type: 'range', key: 'ralph_max_total_attempts', label: 'Ralph Max Total Attempts', hint: 'hard cap on tool dispatches per job — prevents indefinite loops', min: 4, max: 32, step: 2, def: 12 },
-          ],
-          advanced: [],
-        },
         {
           id: 'sec-18', num: '18', title: 'Sleep Consolidation',
           desc: 'In-process memory consolidation — extracts facts, updates the self-model, observes mood patterns. Runs while the brain stays online.',

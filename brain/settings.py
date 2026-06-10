@@ -773,6 +773,18 @@ DEFAULTS: dict[str, float | int | str] = {
     #   env = no filesystem access (fails closed). The app's own source root is
     #   never auto-granted in multi-tenant mode.
     "motor_allowed_dirs": "",
+    # motor_read_only_dirs: like motor_allowed_dirs, but READ-ONLY — the motor
+    #   cortex may list/read/search these but never write, and only inspection
+    #   shell commands run with a cwd inside them. One absolute path per line.
+    "motor_read_only_dirs": "",
+    # Capability switches for the motor toolset. All default ON for backwards
+    #   compatibility; turn off in Settings → Motor Permissions.
+    "motor_enable_shell": 1,  # run_command tool (shell execution)
+    "motor_enable_network": 1,  # fetch_url tool (outbound HTTP)
+    "motor_enable_cloud_actions": 1,  # cloud_action tool (Claude CLI / CMA executor)
+    # motor_allowed_commands: shell command allowlist, one binary name per line.
+    #   Empty = the built-in DEFAULT_COMMANDS set. BRAIN_MOTOR_COMMANDS env wins.
+    "motor_allowed_commands": "",
     # ── Section: API keys (user-supplied, set via the Settings → API Keys page) ─
     # Empty = fall back to the platform-provided env var (the resolution chain is
     # user key → platform default → none). When a value is set here it is applied
