@@ -445,12 +445,25 @@
     try {
       const res = await fetch('/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) });
       if (res.ok) {
+        let data = null; try { data = await res.json(); } catch (_) {}
         Object.keys(values).forEach(k => saved[k] = values[k]);
         Object.keys(selfStore).forEach(id => selfSaved[id] = selfStore[id]);
         storeChanged = false;
-        if (restartBanner) restartBanner.classList.add('on', 'visible');
-        if (saveBtn) { saveBtn.textContent = 'Saved ✓'; setTimeout(() => saveBtn.textContent = 'Save Settings', 1600); }
         applyGenericDisplay(); refreshDirty();
+        if (data && data.restarting) {
+          // The save switched the active persona — the server is re-execing to
+          // re-namespace per-persona state. Say so, poll until it's back, then
+          // re-sync so the page reflects what the new boot actually loaded.
+          if (saveBtn) saveBtn.textContent = 'Switching persona…';
+          const poll = () => fetch('/settings')
+            .then(r => { if (!r.ok) throw new Error('not up'); })
+            .then(() => { if (saveBtn) saveBtn.textContent = 'Save Settings'; loadFromServer(); })
+            .catch(() => setTimeout(poll, 2000));
+          setTimeout(poll, 2500);
+        } else {
+          if (restartBanner) restartBanner.classList.add('on', 'visible');
+          if (saveBtn) { saveBtn.textContent = 'Saved ✓'; setTimeout(() => saveBtn.textContent = 'Save Settings', 1600); }
+        }
       } else if (saveBtn) { saveBtn.textContent = 'Error ' + res.status; setTimeout(() => saveBtn.textContent = 'Save Settings', 2200); }
     } catch (e) {
       console.error('Settings save error', e);
@@ -1164,15 +1177,10 @@
     if (!sel) return;
     sel.addEventListener('change', () => {
       const vid = sel.value; if (!vid) return;
-      // Persist per-persona AND as the active default, mirroring the header pill.
-      const patch = { persona_voice_id: vid }; patch[voiceKeyFor(persona)] = vid;
+      // Save-gated like every other persona setting: just mark the values dirty.
+      // Save posts persona_voice_* and the server applies it live (_on_voice_change).
       values.persona_voice_id = vid; values[voiceKeyFor(persona)] = vid;
-      fetch('/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) }).catch(() => {});
-      // Apply live to the running brain (same message the header voice pill sends).
-      // `ws` is the page-global socket from index.html (bare name resolves up-scope).
-      try { if (typeof ws !== 'undefined' && ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'set_voice', voice_id: vid })); } catch (_) {}
-      // Keep the header pill in sync if it's present.
-      const pill = document.getElementById('voice-select'); if (pill && pill.value !== vid) pill.value = vid;
+      refreshDirty();
     });
   }
 
