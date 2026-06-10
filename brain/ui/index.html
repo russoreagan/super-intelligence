@@ -4027,7 +4027,7 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
 
 </style>
 <!-- Redesigned settings page styles (scoped to #settings-page) -->
-<link rel="stylesheet" href="settings.css?v=22">
+<link rel="stylesheet" href="settings.css?v=23">
 </head>
 <body>
 
@@ -4468,8 +4468,11 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
       <nav class="rail-nav" id="rail-nav"></nav>
 
       <div class="rail-foot">
-        <!-- Voice (ElevenLabs) — moved here from the conversation header -->
-        <div class="theme-toggle-block">
+        <!-- Voice (ElevenLabs) — hidden: voice is chosen per persona on the
+             persona page. The pill stays in the DOM because loadVoices() and
+             the WebSocket onopen handler resolve/broadcast the active voice
+             through #voice-select. -->
+        <div class="theme-toggle-block" style="display:none">
           <div class="theme-toggle-label">Voice</div>
           <label class="voice-pill" title="ElevenLabs voice">
             <span class="v-icon">
@@ -4486,8 +4489,9 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
             </select>
           </label>
         </div>
-        <!-- Appearance theme toggle — local UI preference, no restart -->
-        <div class="theme-toggle-block">
+        <!-- Appearance theme toggle — hidden while only one theme ships; the
+             theme machinery stays for future multi-theme support. -->
+        <div class="theme-toggle-block" style="display:none">
           <div class="theme-toggle-label">Appearance</div>
           <div class="theme-seg" id="theme-seg" role="group" aria-label="Theme">
             <button type="button" class="theme-seg-btn" data-theme-choice="atlas">Atlas</button>
@@ -6019,7 +6023,7 @@ let micActive = false;
 let micStream = null;
 let finalTranscript = '';
 let autoSendTimer = null;
-const AUTO_SEND_DELAY_MS = 1500;
+const AUTO_SEND_DELAY_MS = 1200;
 
 /* ---- Raw-PCM mic capture (replaces MediaRecorder/WebM) -------------------
    The server's Deepgram session is deliberately closed while the brain is
@@ -8422,8 +8426,8 @@ function _applyMoodTint() {
 })();
 </script>
 <!-- Redesigned settings page: schema + render engine (live-wired to /settings) -->
-<script src="settings-data.js?v=22"></script>
-<script src="settings-ui.js?v=22"></script>
+<script src="settings-data.js?v=23"></script>
+<script src="settings-ui.js?v=23"></script>
 <!-- Trading layer: vendored TradingView Lightweight Charts (Apache-2.0) for chart cards -->
 <script src="lightweight-charts.standalone.production.js"></script>
 </body>

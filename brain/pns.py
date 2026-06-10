@@ -276,15 +276,17 @@ class PNS:
         return None
 
     @staticmethod
-    def _split_sentences(text: str, min_len: int = 260, first_min_len: int = 120) -> list[str]:
+    def _split_sentences(text: str, min_len: int = 450, first_min_len: int = 200) -> list[str]:
         """Split text at natural boundaries for pipelined TTS generation.
 
-        Graduated sizing for v3: the FIRST chunk uses a smaller target
-        (`first_min_len`) so audio starts quickly (low time-to-first-sound),
-        while every chunk after that uses the larger `min_len` so v3 has enough
-        context to perform realistic, emotion-infused prosody. (v3 degrades on
-        tiny fragments; request stitching in _producer carries prosody across
-        the boundaries.)
+        Every chunk is a separate TTS request, and prosody re-initializes at
+        each boundary (previous_text/next_text conditioning softens but does
+        not remove the seam). Fewer, larger chunks therefore phrase better.
+        The FIRST chunk still uses a smaller target (`first_min_len`) for
+        time-to-first-sound, but on streaming models (Flash 2.5) audio starts
+        flowing almost immediately regardless of chunk length, so these targets
+        favor phrasing over the aggressive sizing the slow v3 model needed
+        (120/260 — produced single-sentence chunks that "jumped in" awkwardly).
 
         Paragraph breaks (\\n\\n) are hard stops — a paragraph >= half the active
         target is flushed as its own chunk rather than merged into the next.
@@ -645,25 +647,17 @@ class PNS:
     def _openai_chunk_instructions(
         self, text: str, affect: dict, deliberate_emotion: str | None
     ) -> list[str]:
-        """Per-chunk delivery instructions aligned 1:1 with _make_flash_chunks'
-        sentence split — [mood:X] spans override the base affect per chunk, the
-        same precedence the Flash VoiceSettings path uses."""
-        clean = self._strip_all_tags(text)
-        mood_spans = self._extract_mood_map(text)
-        sentences = self._split_sentences(clean)
+        """Per-chunk delivery instructions aligned 1:1 with _make_flash_chunks
+        via the shared _mood_segmented_chunks split — [mood:X] spans override
+        the base affect per chunk, the same precedence the Flash VoiceSettings
+        path uses."""
         base = self._openai_instruction_from_emotion(
             deliberate_emotion or (affect or {}).get("emotion")
         )
-        out: list[str] = []
-        pos = 0
-        for chunk in sentences:
-            anchor = chunk[:30]
-            found = clean.find(anchor, pos)
-            chunk_pos = found if found >= 0 else pos
-            mood = next((m for s, e, m in mood_spans if s <= chunk_pos < e), None)
-            out.append(self._openai_instruction_from_emotion(mood) if mood else base)
-            pos = chunk_pos + len(chunk)
-        return out
+        return [
+            self._openai_instruction_from_emotion(mood) if mood else base
+            for _, mood in self._mood_segmented_chunks(text)
+        ]
 
     @staticmethod
     def _pcm_resample(data: bytes, src_hz: int = 24000, dst_hz: int = 22050) -> bytes:
@@ -704,28 +698,45 @@ class PNS:
         self, text: str, base_params: dict, *, VoiceSettings
     ) -> list[tuple[str, object]]:
         """Build (chunk_text, VoiceSettings) pairs for Flash 2.5.
-        Chunking is identical to _split_sentences() (fast first chunk, larger subsequent).
-        [mood:X] spans drive per-chunk VoiceSettings; chunk count stays the same."""
-        clean = self._strip_all_tags(text)
-        mood_spans = self._extract_mood_map(text)  # in clean-text coordinates
-        sentences = self._split_sentences(clean)
 
-        def _mood_at(pos: int) -> str | None:
-            for start, end, mood in mood_spans:
-                if start <= pos < end:
-                    return mood
-            return None
+        [mood:X] span boundaries are hard split points: each mood span becomes
+        its own chunk(s) with its own VoiceSettings, however short, so a brief
+        emotional aside is never swallowed by the larger phrasing-oriented
+        chunk targets."""
+        return [
+            (
+                chunk,
+                self._voice_settings_from_emotion(mood, base_params, VoiceSettings=VoiceSettings),
+            )
+            for chunk, mood in self._mood_segmented_chunks(text)
+        ]
 
-        result: list[tuple[str, object]] = []
-        pos = 0
-        for chunk in sentences:
-            anchor = chunk[:30]
-            found = clean.find(anchor, pos)
-            chunk_pos = found if found >= 0 else pos
-            mood = _mood_at(chunk_pos)
-            vs = self._voice_settings_from_emotion(mood, base_params, VoiceSettings=VoiceSettings)
-            result.append((chunk, vs))
-            pos = chunk_pos + len(chunk)
+    @staticmethod
+    def _mood_segmented_chunks(text: str) -> list[tuple[str, str | None]]:
+        """Split response text into (chunk_text, mood_or_None) pairs.
+
+        [mood:X] span edges are hard split points so every chunk is
+        mood-homogeneous; the segments between edges are sentence-split via
+        _split_sentences(). Single source of truth for the per-chunk lists in
+        _make_flash_chunks (VoiceSettings) and _openai_chunk_instructions
+        (delivery instructions) — index-paired in _producer, so they must
+        never diverge."""
+        clean = PNS._strip_all_tags(text)
+        mood_spans = PNS._extract_mood_map(text)  # in clean-text coordinates
+
+        boundaries = sorted(
+            {0, len(clean)}
+            | {s for s, _, _ in mood_spans}
+            | {e for _, e, _ in mood_spans}
+        )
+        result: list[tuple[str, str | None]] = []
+        for seg_start, seg_end in zip(boundaries, boundaries[1:]):
+            segment = clean[seg_start:seg_end].strip()
+            if not segment:
+                continue
+            mood = next((m for s, e, m in mood_spans if s <= seg_start < e), None)
+            for chunk in PNS._split_sentences(segment):
+                result.append((chunk, mood))
         return result
 
     def _emit_tts_error(self, detail: str) -> None:

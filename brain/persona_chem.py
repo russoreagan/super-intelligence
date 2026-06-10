@@ -228,23 +228,96 @@ PERSONA_CHEMISTRY: dict[str, dict[str, float]] = {
     },
 }
 
-# Per-persona defaults for the non-chemistry temperament knobs (the dial-backed
-# settings keys). Materialized alongside chemistry so persona identity carries
-# them: the Poet LINGERS in a feeling, the Stoic resets almost immediately, the
-# Mentor connects lessons across a longer arc. Only keys listed here are
-# touched; everything else keeps the global default. Values must be valid for
-# the matching settings.DEFAULTS key.
-PERSONA_TRAIT_DEFAULTS: dict[str, dict[str, float]] = {
-    "The Poet": {"affect_carryover_da_threshold": 0.06},  # feels everything, carries it
-    "The Empath": {"affect_carryover_da_threshold": 0.08},
-    "The Sage": {"affect_carryover_da_threshold": 0.14},
-    "The Adversary": {"affect_carryover_da_threshold": 0.08},  # holds the grudge — the point
-    "The Concierge": {"affect_carryover_da_threshold": 0.15},  # professional reset
-    "The Jester": {"affect_carryover_da_threshold": 0.12},
-    "The Stoic": {"affect_carryover_da_threshold": 0.25},  # resets almost immediately
-    "The Mentor": {"eligibility_lookback": 3},  # credits across a teaching arc
-    "The Cynic": {"affect_carryover_da_threshold": 0.08},  # carries the sulk — and the thaw
+# ── Per-persona NON-CHEMISTRY dial profile ────────────────────────────────────
+# Temperament dials pose from chemistry (the UI projects them from chem_baseline_*).
+# The cognitive-style + lingering dials have no chemistry to pose from, so without
+# this every persona shows them at a flat neutral and — worse — the brain BEHAVES
+# identically on those axes regardless of persona. This table gives each persona a
+# distinct cognitive fingerprint as DIAL POSITIONS (0..1, 0.5 = neutral): the same
+# unit the UI needle uses. The positions drive BOTH the UI pose (exposed via
+# /settings) AND the real settings values (materialized at boot via
+# _NONCHEM_DIAL_MAP below) — one source, no drift.
+#
+# Motivation dials (warmth/curiosity/mastery-seeking) are NOT here: their backend
+# already varies per persona via neuron._PERSONA_REWARD_WEIGHTS, so they only need
+# the UI pose, which the server derives from that table. The Stoic is the flat
+# control — absent here = every cognitive dial rests at neutral.
+PERSONA_COG_POSITIONS: dict[str, dict[str, float]] = {
+    # dial ids: learning-rate · focus · curiosity · introspection · memory ·
+    #           emotionality · hindsight · lingering
+    "The Visionary": {"learning-rate": 0.70, "focus": 0.30, "curiosity": 0.85, "introspection": 0.50, "memory": 0.50, "emotionality": 0.65, "hindsight": 0.50, "lingering": 0.50},
+    "The Empath":    {"learning-rate": 0.60, "focus": 0.50, "curiosity": 0.50, "introspection": 0.70, "memory": 0.72, "emotionality": 0.80, "hindsight": 0.65, "lingering": 0.70},
+    "The Analyst":   {"learning-rate": 0.60, "focus": 0.85, "curiosity": 0.55, "introspection": 0.60, "memory": 0.65, "emotionality": 0.25, "hindsight": 0.72, "lingering": 0.40},
+    "The Poet":      {"learning-rate": 0.65, "focus": 0.40, "curiosity": 0.70, "introspection": 0.88, "memory": 0.70, "emotionality": 0.92, "hindsight": 0.60, "lingering": 0.88},
+    "The Sage":      {"learning-rate": 0.45, "focus": 0.70, "curiosity": 0.60, "introspection": 0.85, "memory": 0.80, "emotionality": 0.40, "hindsight": 0.82, "lingering": 0.30},
+    "The Companion": {"learning-rate": 0.60, "focus": 0.45, "curiosity": 0.60, "introspection": 0.50, "memory": 0.78, "emotionality": 0.70, "hindsight": 0.60, "lingering": 0.60},
+    "The Adversary": {"learning-rate": 0.55, "focus": 0.80, "curiosity": 0.50, "introspection": 0.55, "memory": 0.72, "emotionality": 0.35, "hindsight": 0.75, "lingering": 0.58},
+    "The Mentor":    {"learning-rate": 0.70, "focus": 0.65, "curiosity": 0.80, "introspection": 0.70, "memory": 0.75, "emotionality": 0.55, "hindsight": 0.85, "lingering": 0.50},
+    "The Concierge": {"learning-rate": 0.55, "focus": 0.82, "curiosity": 0.45, "introspection": 0.50, "memory": 0.85, "emotionality": 0.40, "hindsight": 0.70, "lingering": 0.40},
+    "The Jester":    {"learning-rate": 0.60, "focus": 0.30, "curiosity": 0.80, "introspection": 0.40, "memory": 0.50, "emotionality": 0.78, "hindsight": 0.45, "lingering": 0.52},
+    "The Cynic":     {"learning-rate": 0.50, "focus": 0.65, "curiosity": 0.40, "introspection": 0.72, "memory": 0.70, "emotionality": 0.45, "hindsight": 0.70, "lingering": 0.62},
+    # The Stoic intentionally omitted — flat-neutral control.
 }
+
+# Mirror of the cognitive/lingering dial maps in brain/ui/settings-ui.js (keep the
+# two in sync — tests/test_review_fixes.py asserts it). Each entry:
+# (settings_key, dir, span, lo, hi). value = default + Σ dir·span·(pos−0.5)·2,
+# clamped to [lo,hi]. Learning-rate's threshold TOGGLES (graded_plasticity,
+# colony_features, colony_trail_apply) are deliberately excluded — flipping those
+# major behavioral switches per persona is not something a style dial should do.
+_NONCHEM_DIAL_MAP: dict[str, list[tuple[str, int, float, float, float]]] = {
+    "learning-rate": [
+        ("hebbian_delta", +1, 0.08, 0.0, 0.5), ("hebbian_outcome_delta", +1, 0.08, 0.0, 0.5),
+        ("decay_toward_rest_rate", -1, 0.008, 0.0, 0.2), ("plasticity_arousal_weight", +1, 0.30, 0.0, 1.0),
+        ("plasticity_intensity_weight", +1, 0.30, 0.0, 1.0), ("plasticity_turn_max", +1, 0.40, 1.0, 2.0),
+        ("weight_max", +1, 1.50, 0.5, 6.0), ("sleep_min_turns", -1, 3, 2, 40),
+        ("colony_trail_gain", +1, 0.10, 0.0, 0.5),
+    ],
+    "focus": [
+        ("ne_scatter_threshold", +1, 0.10, 0.5, 1.0), ("topic_activation_decay", +1, 0.12, 0.3, 0.99),
+        ("dmn_overlap_threshold", +1, 0.10, 0.1, 0.8), ("salience_workspace_threshold", +1, 0.12, 0.2, 0.95),
+    ],
+    "curiosity": [
+        ("frontal_ach_weight", +1, 0.15, 0.0, 0.6), ("surprise_threshold", -1, 0.12, 0.1, 0.9),
+        ("salience_ACh_weight", +1, 0.06, 0.0, 0.4),
+    ],
+    "introspection": [("meta_interval", -1, 15, 5, 120), ("meta_cooldown_turns", -1, 1.5, 0, 10)],
+    "memory": [("hippocampus_priority_base", +1, 0.18, 0.0, 1.0), ("topic_activation_decay", +1, 0.10, 0.3, 0.99)],
+    "emotionality": [
+        ("flock_sigma_target_low", +1, 0.05, 0.70, 0.98), ("flock_gain_max", +1, 0.30, 1.0, 2.5),
+        ("flock_gain_min", +1, 0.20, 0.2, 0.9), ("modulation_gain", +1, 1.0, 0.0, 2.0),
+    ],
+    "hindsight": [("eligibility_lookback", +1, 2, 0, 5), ("eligibility_tau_turns", +1, 1.2, 0.5, 5.0)],
+    "lingering": [("affect_carryover_da_threshold", -1, 0.06, 0.02, 0.40)],
+}
+# Keys that are INTEGERS in settings.DEFAULTS — round materialized values for these.
+_NONCHEM_INT_KEYS = frozenset({"sleep_min_turns", "eligibility_lookback"})
+
+
+def _apply_cog_positions(settings_data: dict, persona: str) -> None:
+    """Materialize the persona's cognitive fingerprint: sum each dial's offset
+    into its settings keys (shared keys accumulate, matching the UI's recompute),
+    clamp, and write. A persona absent from the table (the Stoic, customs) leaves
+    every key at its global default."""
+    positions = PERSONA_COG_POSITIONS.get(persona)
+    if not positions:
+        return
+    try:
+        from brain.settings import DEFAULTS
+    except Exception:
+        return
+    offsets: dict[str, float] = {}
+    for dial_id, pos in positions.items():
+        for key, dir_, span, _lo, _hi in _NONCHEM_DIAL_MAP.get(dial_id, []):
+            offsets[key] = offsets.get(key, 0.0) + dir_ * span * (float(pos) - 0.5) * 2.0
+    bounds = {k: (lo, hi) for rows in _NONCHEM_DIAL_MAP.values() for (k, _d, _s, lo, hi) in rows}
+    for key, off in offsets.items():
+        base = float(DEFAULTS.get(key, 0.0))
+        lo, hi = bounds.get(key, (None, None))
+        val = base + off
+        if lo is not None:
+            val = max(lo, min(hi, val))
+        settings_data[key] = round(val) if key in _NONCHEM_INT_KEYS else round(val, 5)
 
 # Resolve under SECOND_BRAIN_PATH so each hosted tenant's chemistry lives on its
 # own per-user volume. Falling back to __file__-relative would make every tenant
@@ -397,9 +470,10 @@ def materialize_into_settings(persona: str, settings_data: dict) -> dict:
             settings_data[f"chem_baseline_{ch}"] = resting[ch]
         if ch in state["current"]:
             settings_data[f"chem_init_{ch}"] = state["current"][ch]
-    # Non-chemistry temperament defaults (lingering, hindsight, …): persona
-    # identity carries these too. Written only for table personas that declare
-    # them; user dial edits land in the same keys afterwards and win.
-    for key, val in PERSONA_TRAIT_DEFAULTS.get(persona, {}).items():
-        settings_data[key] = val
+    # Non-chemistry cognitive fingerprint (learning rate, focus, curiosity,
+    # memory, hindsight, lingering, …): persona identity carries these too.
+    # Materialized from the per-persona dial positions; a persona absent from the
+    # table leaves every key at its global default. User dial edits land in the
+    # same keys afterwards via /settings and win on the next save.
+    _apply_cog_positions(settings_data, persona)
     return settings_data

@@ -374,3 +374,59 @@ def test_pcm_resample_length_and_type():
     out = PNS._pcm_resample(src, 24000, 22050)
     assert len(out) % 2 == 0
     assert abs(len(out) // 2 - 22050) <= 1  # 1s of audio stays ~1s
+
+
+# ── per-persona cognitive fingerprint: JS↔Python dial-map sync ─────────────────
+
+
+def _parse_js_dial_maps(js: str) -> dict:
+    """Extract { dial_id: {key: (dir, span)} } from the COGNITIVE_DIALS + lingering
+    blocks of settings-ui.js, so the test fails loudly if the JS and Python dial
+    maps drift apart (they MUST match — both compute the same materialized values)."""
+    import re
+
+    out: dict[str, dict] = {}
+    # Each dial block: id: 'x', ... map: [ {...}, {...} ]  (map ends at the next ']').
+    for m in re.finditer(r"\{\s*id:\s*'([a-z-]+)'.*?map:\s*\[(.*?)\]", js, re.S):
+        did, body = m.group(1), m.group(2)
+        entries = {}
+        for e in re.finditer(r"\{\s*key:\s*'([A-Za-z_0-9]+)',\s*dir:\s*([+-]?\d+),\s*span:\s*([0-9.]+)", body):
+            entries[e.group(1)] = (int(e.group(2)), float(e.group(3)))
+        if entries:
+            out[did] = entries
+    return out
+
+
+def test_cognitive_dial_map_js_python_sync():
+    from pathlib import Path
+
+    from brain.persona_chem import _NONCHEM_DIAL_MAP
+
+    js = Path("brain/ui/settings-ui.js").read_text()
+    js_maps = _parse_js_dial_maps(js)
+    for dial_id, rows in _NONCHEM_DIAL_MAP.items():
+        assert dial_id in js_maps, f"{dial_id} missing from settings-ui.js dial maps"
+        py = {key: (d, s) for (key, d, s, _lo, _hi) in rows}
+        js_entry = js_maps[dial_id]
+        assert set(py) == set(js_entry), (
+            f"{dial_id} key drift: python={set(py)} js={set(js_entry)}"
+        )
+        for key, (pd, ps) in py.items():
+            jd, jsp = js_entry[key]
+            assert pd == jd, f"{dial_id}.{key} dir drift: py={pd} js={jd}"
+            assert abs(ps - jsp) < 1e-9, f"{dial_id}.{key} span drift: py={ps} js={jsp}"
+
+
+def test_cog_positions_materialize_and_skip_stoic(tmp_path, monkeypatch):
+    import brain.persona_chem as pc
+
+    monkeypatch.setattr(pc, "_PERSONAS_ROOT", tmp_path)
+    # High-focus persona raises the workspace bar; low-emotionality lowers the
+    # flock target — both real per-persona behavior, not just UI cosmetics.
+    sd = pc.materialize_into_settings("The Analyst", {})
+    assert sd["salience_workspace_threshold"] > 0.6
+    assert sd["flock_sigma_target_low"] < 0.9
+    # The Stoic is the flat control — no cognitive keys materialized.
+    sd2 = pc.materialize_into_settings("The Stoic", {})
+    assert "salience_workspace_threshold" not in sd2
+    assert "modulation_gain" not in sd2

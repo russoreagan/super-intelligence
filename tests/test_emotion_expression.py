@@ -587,18 +587,25 @@ class TestMakeFlashChunks:
         settings = [(vs.stability, vs.style) for _, vs in chunks]
         assert any(s == (0.60, 0.15) for s in settings), f"No low chunk found: {settings}"
 
-    def test_chunk_count_not_inflated_by_mood_boundaries(self):
-        from brain.pns import PNS
-
+    def test_mood_boundaries_split_but_plain_text_does_not_inflate(self):
+        # Mood span edges are hard split points (each mood gets its own
+        # request/VoiceSettings), so this text yields exactly intro/sad/outro —
+        # while sentences inside each mood-homogeneous segment still accumulate
+        # toward the normal size targets instead of splitting per sentence.
         text = (
             "Normal intro sentence. "
             "[mood:sad] This is the sad part in the middle. [/mood] "
             "And back to normal here."
         )
         chunks = self._chunks(text)
-        clean = PNS._strip_all_tags(text)
-        sentences = PNS._split_sentences(clean)
-        assert len(chunks) == len(sentences)
+        assert len(chunks) == 3, f"Expected intro/sad/outro, got {[t for t, _ in chunks]}"
+        settings = [(vs.stability, vs.style) for _, vs in chunks]
+        assert settings[1] == (0.60, 0.15), f"Middle chunk should be sad: {settings}"
+        assert settings[0] == settings[2] != settings[1]
+
+        # Plain text with no mood markup must not split per sentence.
+        plain = "One short sentence. Another short one. And a third short one."
+        assert len(self._chunks(plain)) == 1
 
 
 class TestFlashEmotionClusters:

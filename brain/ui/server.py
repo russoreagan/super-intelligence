@@ -39,6 +39,54 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+def _persona_dial_positions() -> dict:
+    """Per-persona non-chemistry dial positions for the settings UI.
+    Cognitive + lingering: the authored fingerprint (persona_chem). Motivation
+    (warmth/curiosity/mastery-seeking): derived from the reward table so the
+    needle matches the per-persona reward profile the brain actually runs on —
+    map a reward weight in ~[0.5,1.6] to a 0..1 needle position."""
+    try:
+        from brain.neuron import _PERSONA_REWARD_WEIGHTS
+        from brain.persona_chem import PERSONA_COG_POSITIONS
+
+        def _slug(name: str) -> str:
+            import re as _re
+
+            return _re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
+
+        def _pos(w: float) -> float:
+            return max(0.0, min(1.0, (float(w) - 0.5) / 1.1))
+
+        out: dict[str, dict[str, float]] = {}
+        for name, cog in PERSONA_COG_POSITIONS.items():
+            out[name] = dict(cog)
+        # Add motivation positions for every persona that has reward weights.
+        for name in set(list(out) + [p for p in _reward_persona_names()]):
+            rw = _PERSONA_REWARD_WEIGHTS.get(_slug(name), {})
+            if rw:
+                out.setdefault(name, {})
+                out[name]["warmth-seeking"] = _pos(rw.get("connection", 1.0))
+                out[name]["curiosity-seeking"] = _pos(rw.get("novelty", 1.0))
+                out[name]["mastery-seeking"] = _pos(
+                    (rw.get("correctness", 1.0) + rw.get("mastery", 1.0)) / 2.0
+                )
+        return out
+    except Exception as e:
+        logger.debug("[settings] persona dial positions unavailable: %s", e)
+        return {}
+
+
+def _reward_persona_names() -> list[str]:
+    """Display names for personas that carry reward weights (so motivation
+    positions cover every built-in, not just those with a cognitive profile)."""
+    try:
+        from brain.persona_chem import PERSONA_CHEMISTRY
+
+        return list(PERSONA_CHEMISTRY.keys())
+    except Exception:
+        return []
+
+
 HTML_PATH = Path(__file__).parent / "index.html"
 LOGIN_HTML_PATH = Path(__file__).parent / "login.html"
 RESET_HTML_PATH = Path(__file__).parent / "reset.html"
@@ -346,7 +394,18 @@ class UIServer:
                 self_md = SchemaStore(persona=str(s.get("persona_name", ""))).read("self.md")
             except Exception as _sm_err:
                 logger.warning("[settings] self.md read failed: %s", _sm_err)
-            return {"settings": s, "defaults": DEFAULTS, "secrets_set": secrets_set, "self_md": self_md}
+            # Per-persona non-chemistry dial positions, so the UI poses the
+            # cognitive + motivation needles per persona (temperament poses from
+            # chemistry; these have none). Cognitive positions are authored;
+            # motivation positions are derived from the reward table so the needle
+            # reflects the same per-persona reward profile the brain actually uses.
+            return {
+                "settings": s,
+                "defaults": DEFAULTS,
+                "secrets_set": secrets_set,
+                "self_md": self_md,
+                "persona_dial_positions": _persona_dial_positions(),
+            }
 
         @app.post("/settings")
         async def save_settings(request: Request):
@@ -870,7 +929,11 @@ class UIServer:
                     smart_format=True,
                     punctuate=True,
                     interim_results=True,
-                    endpointing=150,  # ms of silence before finalising (was 300)
+                    endpointing=500,  # ms of silence before finalising — below ~400
+                    # natural intra-sentence pauses split one sentence into several
+                    # independently-punctuated finals ("I was thinking. About the.
+                    # Project."). Turn latency is governed by the browser's
+                    # AUTO_SEND_DELAY_MS, not this, so low values bought nothing.
                     utterance_end_ms=1000,  # also fire on utterance boundary
                     diarize=True,  # enable speaker diarization for auditory cortex
                     # The browser sends raw PCM16 mono @16kHz (AudioWorklet tap).

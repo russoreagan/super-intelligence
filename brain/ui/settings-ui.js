@@ -137,10 +137,10 @@
   ];
   const ALL_DIALS = TRAIT_DIALS.concat(COGNITIVE_DIALS);
   // Non-chemistry dials whose KEY VALUES are materialized per persona (cognitive
-  // style + lingering) vs motivation dials, which only pose the needle (their
-  // backend is neuron._PERSONA_REWARD_WEIGHTS; the reward_weight_* multipliers
-  // stay at the neutral default). Must match persona_chem._NONCHEM_DIAL_MAP.
-  const _MOTIVATION_DIALS = new Set(['warmth-seeking', 'curiosity-seeking', 'mastery-seeking']);
+  // style + lingering). Motivation dials (warmth/curiosity/mastery-seeking) only
+  // pose the needle — their backend is neuron._PERSONA_REWARD_WEIGHTS and the
+  // reward_weight_* multipliers stay neutral. Must match the materializable set
+  // in persona_chem._NONCHEM_DIAL_MAP.
   const _materializableDialIds = COGNITIVE_DIALS.map(d => d.id).concat(['lingering']);
 
   const GLYPHS = {
@@ -1023,6 +1023,8 @@
     document.querySelectorAll('#st-tabbar .tab').forEach(t => t.classList.toggle('on', t.dataset.t === id));
     const temp = document.getElementById('tab-temperament'), gen = document.getElementById('tab-generic');
     const mode = document.getElementById('st-mode'); if (mode) mode.style.display = (id === 'self') ? 'none' : '';
+    // The per-persona voice picker belongs to persona views only (selectSystem hides it).
+    const vb = document.getElementById('st-voicebar'); if (vb) vb.style.display = '';
     if (id === 'persona') { if (temp) temp.hidden = false; if (gen) gen.hidden = true; }
     else { if (temp) temp.hidden = true; if (gen) gen.hidden = false; if (id === 'self') renderSelf(); else renderGeneric(id); }
     refreshManualUI();   // restore this persona's manual/guided gate (was forced editable in system view)
@@ -1237,6 +1239,8 @@
     const temp = document.getElementById('tab-temperament'); if (temp) temp.hidden = true;
     const gen = document.getElementById('tab-generic'); if (gen) gen.hidden = false;
     const mode = document.getElementById('st-mode'); if (mode) mode.style.display = 'none';
+    // System pages share the persona scaffold head — hide the per-persona voice picker here.
+    const vb = document.getElementById('st-voicebar'); if (vb) vb.style.display = 'none';
     const sp = document.getElementById('settings-page'); if (sp) { sp.classList.remove('manual'); sp.classList.add('system'); }
     manualOpen = true;   // system settings are always editable (no per-persona gate)
     const set = (id, t) => { const el = document.getElementById(id); if (el) el.textContent = t; };
