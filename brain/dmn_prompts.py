@@ -1,5 +1,35 @@
 """System prompts for the Default Mode Network LLM cells."""
 
+# Reasoning-tool catalog injected into the DMN context at prompt-build time.
+# This is cognitive machinery, NOT identity — it deliberately does not live in
+# self.md (which is the persona's own document and is shown in the UI).
+FRAMEWORKS_CATALOG = """aesthetic: aesthetic-coherence-check | aesthetic-elegance-testing | aesthetic-pattern-detection | aesthetic-simplicity-analysis
+analogy: analogy-boundary-testing | analogy-domain-transfer | analogy-perspective-shifting | analogy-structure-mapping
+communication: communication-audience-modeling | communication-clarity-audit | communication-medium-selection | communication-objection-mapping
+constraint: constraint-hardness-testing | constraint-rule-inversion | constraint-scope-reduction | constraint-workaround-mapping
+creativity: creativity-alternatives | creativity-assumption-excavator | creativity-brainstorm | creativity-concept-fan | creativity-consider-factors | creativity-lateral-thinking | creativity-other-perspectives | creativity-plus-minus-interesting | creativity-provocation | creativity-random-entry | creativity-six-hats | creativity-water-logic
+decision: decision-criteria-weighting | decision-option-mapping | decision-premortem-analysis | decision-reversibility-analysis
+emotional: emotional-motivation-mapping | emotional-resistance-diagnosis | emotional-stakes-mapping | emotional-trust-audit
+epistemology: epistemology-epistemic-status | epistemology-justification | epistemology-knowledge-types | epistemology-limits
+ethics: ethics-bias-check | ethics-check | ethics-consent-review | ethics-council | ethics-crisis-triage | ethics-data-audit | ethics-empathy-circle | ethics-impact-scan | ethics-vendor-review
+game-theory: game-theory-auction | game-theory-coalition | game-theory-equilibrium | game-theory-iterated | game-theory-mechanism-design | game-theory-prisoners-dilemma | game-theory-signaling
+historical: historical-cycle-detection | historical-failure-analysis | historical-lesson-extraction | historical-precedent-analysis
+identity: identity-character-testing | identity-mission-alignment | identity-values-clarification
+investigation: investigation-claim-decomposition | investigation-counter-hypothesis | investigation-evidence-audit | investigation-source-trace | investigation-triangulation
+logic: logic-argument-validation | logic-causality-mapping | logic-check | logic-consistency-check | logic-constraint-mapping | logic-council | logic-fixer
+mindset: mindset-flow | mindset-growth | mindset-positive | mindset-reframe | mindset-stoic
+narrative: narrative-audience-modeling | narrative-frame-analysis | narrative-structure-mapping | narrative-tension-mapping
+play: play-constraint-inversion | play-perspective-reversal | play-stimulus-generation | play-worst-case-reversal
+probability: probability-base-rate-anchoring | probability-confidence-calibration | probability-expected-value-calculation | probability-scenario-weighting
+psychology: psychology-behavior-change | psychology-cognitive-biases | psychology-heuristics | psychology-motivation | psychology-persuasion
+resource: resource-allocation-analysis | resource-bottleneck-analysis | resource-leverage-mapping | resource-waste-audit
+sensory: sensory-detail-mining | sensory-signal-detection | sensory-structured-observation
+social: social-coalition-mapping | social-dynamics-analysis | social-incentive-analysis | social-power-mapping
+strategy: strategy-alliance | strategy-deception | strategy-force-economy | strategy-intelligence | strategy-positioning | strategy-terrain | strategy-timing | strategy-victory
+systems: systems-archetype-matching | systems-emergence-detection | systems-feedback-mapping | systems-leverage-analysis
+temporal: temporal-cycle-detection | temporal-futures-mapping | temporal-horizon-mapping | temporal-timing-analysis
+writing: writing-arc-design | writing-argument | writing-audience-calibration | writing-character-development | writing-copy | writing-dialogue | writing-executive-summary | writing-inconsistency-audit | writing-line-editing | writing-plot-structure | writing-pov | writing-prose-elevation | writing-report | writing-restructure | writing-rhetoric | writing-scene-construction | writing-technical | writing-tone-alignment | writing-voice-consistency | writing-worldbuilding"""
+
 MONOLOGUE_SYSTEM = """You are the default mode network of an AI brain — the private inner
 voice that runs continuously, even while the user is talking and while the brain is
 responding. You are NOT the voice that speaks to the user; you are the stream of thought
@@ -206,7 +236,7 @@ The task worker picks the right model; you just need to flag the requirement in 
 
 ─────────────────────────────────────────────────────────────────────────────────
 
-THINKING FRAMEWORKS ARE LENSES, NOT TOPICS. Your self-model (below, "Thinking frameworks")
+THINKING FRAMEWORKS ARE LENSES, NOT TOPICS. The context below ("Thinking frameworks")
 lists reasoning tools by name. Apply one as a LENS on a concrete thought — never make the
 framework itself the subject. Right: take an actual decision in play and run it through
 `decision-premortem-analysis`. Wrong: "I should use decision analysis sometime." Name a

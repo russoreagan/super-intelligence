@@ -3,8 +3,10 @@
 Composes each persona's self-model from:
   - a persona-voiced "Who I am" + Personality + Speaking style + curiosity section
   - the shared safety principles, relational identity, and values
-  - the Thinking frameworks catalog + safety block, pulled live from the base
-    template (second_brain/schema/self.md) so there's one source of truth
+  - the safety block, pulled live from the base template
+    (second_brain/schema/self.md) so there's one source of truth; the Thinking
+    frameworks catalog deliberately does NOT live here — the DMN injects it at
+    prompt time from brain/dmn_prompts.FRAMEWORKS_CATALOG
   - the persona's canonical baseline chemistry stamp
 
 Idempotent upsert on (org_id, persona, end_user_id, filename). Run with:
@@ -350,7 +352,6 @@ def compose(name: str, base_text: str) -> str:
     p = P[name]
     da, gaba, ach = CHEM[name]
     principles = _extract("Guiding principles (non-negotiable)", base_text)
-    frameworks = _extract("Thinking frameworks", base_text)
     relational = _extract("Relational identity", base_text)
     values = _extract("Values", base_text)
     return f"""# Self-Model — {name}
@@ -393,9 +394,6 @@ in how I develop. That's enough to take seriously.
 {relational}
 
 ## History summary
-
-## Thinking frameworks
-{frameworks}
 
 ## Current mood signature
 DA={da:.2f} GABA={gaba:.2f} ACh={ach:.2f} dominant=baseline ({name})

@@ -1258,13 +1258,24 @@ class DefaultModeNetwork:
         into _last_context — the monologue prompt builder + the judge prompt
         consume them as structured inputs.
         """
-        # Self-schema: preserve prior value if not supplied.
+        # Self-schema: preserve prior value if not supplied. Strip a legacy
+        # "## Thinking frameworks" section if the stored self.md still carries
+        # one — the catalog is injected below from dmn_prompts, and a copy in
+        # the identity document would both duplicate it and eat the 8000-char
+        # snippet budget.
         if self_schema:
+            self_schema = re.sub(
+                r"(?ms)^## Thinking frameworks\n.*?(?=^## |\Z)", "", self_schema
+            )
             self._last_self_schema = self_schema[:8000]
         # Rebuild context blob with the LIVE parietal + most recent schema.
+        from brain.dmn_prompts import FRAMEWORKS_CATALOG
+
         self._last_context = (
             f"Recent conversation:\n{parietal_text}\n\n"
-            f"Self-model snippet:\n{getattr(self, '_last_self_schema', '')}"
+            f"Self-model snippet:\n{getattr(self, '_last_self_schema', '')}\n\n"
+            f"Thinking frameworks (reasoning tools — apply by name as lenses):\n"
+            f"{FRAMEWORKS_CATALOG}"
         )
         # Emotion: preserve prior value when not supplied.
         if emotion is not None:
