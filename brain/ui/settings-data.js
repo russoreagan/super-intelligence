@@ -477,6 +477,17 @@ window.SETTINGS = {
           ],
         },
         {
+          id: 'sec-m4', num: 'M4', title: 'When Acting On Its Own',
+          desc: 'Tighter grants for work the brain initiates itself (idle thoughts, recovered jobs). Tasks executing a live command from you keep the full grants above — this column only governs its own initiative.',
+          rows: [
+            { type: 'toggle', key: 'motor_self_writes', label: 'File Writes', hint: 'allow self-directed jobs to write files and run mutating shell commands — off limits them to reading, listing, and searching', def: 0 },
+            { type: 'toggle', key: 'motor_self_network', label: 'Network Fetch', hint: 'allow self-directed jobs to fetch public web pages', def: 1 },
+            { type: 'select', key: 'motor_self_cloud', label: 'Cloud Actions', hint: 'connected-service access for self-initiated work — read-only lets it look things up but never act', def: 'ro',
+              options: [ { v: 'full', l: 'Full (writes still confirmed)' }, { v: 'ro', l: 'Read-only' }, { v: 'off', l: 'Off' } ] },
+          ],
+          advanced: [],
+        },
+        {
           id: 'sec-m3', num: 'M3', title: 'Autonomous Job Limits',
           desc: 'How much self-directed background work may run, and how hard each job may try.',
           rows: [

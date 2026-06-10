@@ -241,6 +241,10 @@ class MotorCortexCluster:
         self._obs = None  # set post-init via set_observability()
         self.job_store = JobStore()
         self._subsystems: list[MotorSubsystem] = []
+        # Self-directed autonomy mode: True while executing a task the brain
+        # initiated itself (vs a live user command). Tightens tool access per
+        # the motor_self_* settings — set by the task worker around each job.
+        self._self_mode = False
 
         self._dispatcher = ToolDispatcher(
             allowed_paths,
@@ -1835,6 +1839,23 @@ class MotorCortexCluster:
             except Exception as e:
                 logger.warning("[MotorCortex] Subsystem %s after_job failed: %s", sub.name, e)
 
+    def enter_self_mode(self) -> None:
+        self._self_mode = True
+
+    def exit_self_mode(self) -> None:
+        self._self_mode = False
+
+    @staticmethod
+    def _self_policy() -> dict:
+        """Live read of the self-directed autonomy policy (no restart needed)."""
+        from brain.settings import settings as _s
+
+        return {
+            "writes": bool(int(_s.get("motor_self_writes", 0) or 0)),
+            "network": bool(int(_s.get("motor_self_network", 1) or 0)),
+            "cloud": str(_s.get("motor_self_cloud", "ro") or "ro").lower(),
+        }
+
     async def _dispatch_cloud(self, args: dict, turn_id: str) -> dict | None:
         """Route to CloudExecutor, applying the confirmation gate for write actions."""
         if not self._cloud or not self._cloud.available:
@@ -1854,6 +1875,26 @@ class MotorCortexCluster:
         is_write = bool(args.get("is_write", False))
         context_facts = args.get("context_facts", [])
         description = args.get("description", task)
+
+        # Self-directed autonomy policy: the user can grant themselves broad
+        # cloud access while keeping the brain's own initiative narrower.
+        if self._self_mode:
+            _pol = self._self_policy()["cloud"]
+            if _pol == "off" or (_pol == "ro" and is_write):
+                output = (
+                    "[blocked] Cloud actions are restricted for self-directed work "
+                    f"(policy: {_pol}). This task was not requested by the user — "
+                    "either complete it with local read tools, or note it as a "
+                    "suggestion the user can approve in conversation."
+                )
+                result = {
+                    "tool": "cloud_action",
+                    "args": args,
+                    "output": output,
+                    "success": False,
+                }
+                await self._bus.publish_dict("motor.result", result, source=CLUSTER)
+                return result
 
         # Guardrail 3: confirmation gate — write actions need explicit user sign-off
         if is_write:
@@ -1928,6 +1969,32 @@ class MotorCortexCluster:
 
     async def _dispatch_once(self, tool: str, args: dict) -> str:
         """Single (non-retrying) tool dispatch. Called by _dispatch."""
+        if self._self_mode:
+            _pol = self._self_policy()
+            if not _pol["writes"] and tool in ("write_file", "append_file"):
+                return (
+                    "[blocked] File writes are disabled for self-directed work "
+                    "(Settings → Motor Permissions → When Acting On Its Own)."
+                )
+            if not _pol["writes"] and tool == "run_command":
+                from brain.clusters.motor_dispatcher import READONLY_COMMANDS
+                import shlex as _shlex
+
+                try:
+                    _base = os.path.basename(_shlex.split(args.get("cmd", ""))[0])
+                except (ValueError, IndexError):
+                    _base = ""
+                if _base not in READONLY_COMMANDS:
+                    return (
+                        f"[blocked] '{_base or args.get('cmd', '')}' is not allowed for "
+                        "self-directed work — only inspection commands "
+                        f"({sorted(READONLY_COMMANDS)}) run without a user request."
+                    )
+            if not _pol["network"] and tool == "fetch_url":
+                return (
+                    "[blocked] Network fetch is disabled for self-directed work "
+                    "(Settings → Motor Permissions → When Acting On Its Own)."
+                )
         try:
             if tool == "read_file":
                 return await asyncio.get_event_loop().run_in_executor(

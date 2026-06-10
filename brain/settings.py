@@ -785,6 +785,13 @@ DEFAULTS: dict[str, float | int | str] = {
     # motor_allowed_commands: shell command allowlist, one binary name per line.
     #   Empty = the built-in DEFAULT_COMMANDS set. BRAIN_MOTOR_COMMANDS env wins.
     "motor_allowed_commands": "",
+    # ── Self-directed autonomy policy ──────────────────────────────────────────
+    # Applied ONLY when the motor runs a task the brain initiated itself (DMN
+    # self-tasks, recovery jobs) — tasks executing a live user command keep the
+    # full grants above. Read each dispatch, so changes apply without restart.
+    "motor_self_writes": 0,  # 1 = self-directed jobs may write files / run mutating commands
+    "motor_self_network": 1,  # 1 = self-directed jobs may fetch_url
+    "motor_self_cloud": "ro",  # cloud_action when self-directed: full | ro | off
     # ── Section: API keys (user-supplied, set via the Settings → API Keys page) ─
     # Empty = fall back to the platform-provided env var (the resolution chain is
     # user key → platform default → none). When a value is set here it is applied

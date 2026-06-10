@@ -1458,8 +1458,14 @@ class _TurnMixin:
         except Exception:
             pass
         is_self = getattr(task, "source", "") == "self"
+        # Autonomy policy: anything not directly commanded by the user right now
+        # (DMN self-tasks AND recovered jobs from a previous session) runs under
+        # the tighter self-directed grants.
+        is_autonomous = getattr(task, "source", "") != "user"
         if is_self:
             self.router.enter_background_mode()
+        if is_autonomous:
+            self.motor.enter_self_mode()
         try:
             summary = await self.motor.execute_internal_job(task.goal, job_turn_id)
         except Exception as _e:
@@ -1470,6 +1476,8 @@ class _TurnMixin:
                     await self.dmn.note_project_complete(task.id, False, "execution error")
             return
         finally:
+            if is_autonomous:
+                self.motor.exit_self_mode()
             if is_self:
                 self.router.exit_background_mode()
 
