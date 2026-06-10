@@ -279,6 +279,10 @@ class CMAExecutor(ExecutorCommon):
         self._state["seeded_mcp"] = sorted(seeded)
         self._save_state()
 
+    def connector_names(self) -> list[str]:
+        """All configured connector names (unfiltered) — for the settings UI."""
+        return sorted({s["name"] for s in self._mcp_servers})
+
     def set_connector_filter(self, names: set[str] | None) -> None:
         """Restrict which MCP connectors the NEXT agent session may use.
         None = all. Filter participates in the config hash, so a warm session

@@ -1326,6 +1326,52 @@
       wrap.appendChild(h);
       (cat.sections || []).forEach(sec => wrap.appendChild(genSection(sec)));
     });
+    upgradeConnectorRows();
+  }
+  // Replace the free-text connector allowlists with toggles built from the
+  // connectors actually configured in Claude (GET /connectors). Storage is
+  // unchanged: '' = all (including ones connected later); otherwise a
+  // newline-separated allowlist of the enabled names.
+  function upgradeConnectorRows() {
+    fetch('/connectors').then(r => r.ok ? r.json() : null).then(data => {
+      const live = (data && data.connectors) || [];
+      if (!live.length) return; // nothing configured — keep the textarea
+      ['motor_user_connectors', 'motor_self_connectors'].forEach(key => {
+        const reg = genReg[key]; if (!reg || !reg.text) return;
+        const ta = reg.text; ta.style.display = 'none';
+        const stored = String(values[key] || '').split('\n').map(s => s.trim()).filter(Boolean);
+        // Stale names the user saved but Claude no longer has — keep visible.
+        const all = [...live, ...stored.filter(s => !live.some(n => n.toLowerCase() === s.toLowerCase()))];
+        const isOn = name => !stored.length || stored.some(s => s.toLowerCase() === name.toLowerCase());
+        const box = document.createElement('div'); box.className = 'conn-chips';
+        const state = document.createElement('div'); state.className = 'conn-state';
+        const syncState = () => {
+          state.textContent = String(values[key] || '').trim()
+            ? 'Only the highlighted services exist for these tasks.'
+            : 'All connectors allowed — including ones you connect later.';
+        };
+        all.forEach(name => {
+          const chip = document.createElement('button'); chip.type = 'button'; chip.className = 'conn-chip';
+          chip.textContent = name;
+          if (!live.some(n => n.toLowerCase() === name.toLowerCase())) chip.classList.add('stale');
+          chip.classList.toggle('on', isOn(name));
+          chip.addEventListener('click', () => {
+            chip.classList.toggle('on');
+            const on = [...box.querySelectorAll('.conn-chip.on')].map(c => c.textContent);
+            // every live connector on (and no stale picks) → '' = all
+            const allOn = live.every(n => on.some(o => o.toLowerCase() === n.toLowerCase())) &&
+                          on.length === live.length;
+            values[key] = allOn ? '' : on.join('\n');
+            ta.value = values[key];
+            syncState(); refreshDirty();
+          });
+          box.appendChild(chip);
+        });
+        syncState();
+        ta.parentNode.insertBefore(box, ta);
+        ta.parentNode.insertBefore(state, ta);
+      });
+    }).catch(() => {});
   }
   function renderOperational() {
     const wrap = document.getElementById('tab-generic'); if (!wrap) return;

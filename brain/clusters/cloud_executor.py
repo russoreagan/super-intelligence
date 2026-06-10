@@ -260,6 +260,27 @@ class CloudExecutor:
 
     _connector_filter: set | None = None
 
+    def connector_names(self) -> list[str]:
+        """All MCP server names configured in Claude (~/.claude.json) — these are
+        the exact tokens the connector filter matches, so the settings UI can
+        offer toggles instead of free-text names."""
+        names: set[str] = set()
+        try:
+            data = json.loads(Path(os.path.expanduser("~/.claude.json")).read_text())
+
+            def _collect(obj: object) -> None:
+                if not isinstance(obj, dict):
+                    return
+                for name in obj.get("mcpServers", {}):
+                    names.add(name)
+                for v in obj.values():
+                    _collect(v)
+
+            _collect(data)
+        except Exception:
+            pass
+        return sorted(names)
+
     def set_connector_filter(self, names: set | None) -> None:
         """Restrict which MCP servers get --allowedTools grants on the next
         subprocess call. None = all configured servers."""

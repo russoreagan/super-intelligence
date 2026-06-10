@@ -105,6 +105,7 @@ class UIServer:
         mic_status_fn: Callable[[], str] | None = None,
         on_interrupt: Callable[[], None] | None = None,
         on_tasks_clear: Callable[[], dict] | None = None,
+        connectors_fn: Callable[[], list] | None = None,
         wiring=None,
         bus=None,
     ) -> None:
@@ -121,6 +122,7 @@ class UIServer:
         self._mic_status_fn = mic_status_fn
         self._on_interrupt = on_interrupt
         self._on_tasks_clear = on_tasks_clear  # () -> stats dict; kills self-directed work
+        self._connectors_fn = connectors_fn  # () -> configured cloud connector names
         self._clients: set = set()
         self._last_neuromod: dict = {}
         self._last_hormonal: dict = {}
@@ -580,6 +582,16 @@ class UIServer:
             settings.reset_to_defaults()
             settings.save()
             return {"ok": True, "settings": settings.all()}
+
+        @app.get("/connectors")
+        async def list_connectors():
+            names: list = []
+            if self._connectors_fn is not None:
+                try:
+                    names = list(self._connectors_fn() or [])
+                except Exception as _cn_err:
+                    logger.debug("[connectors] list failed: %s", _cn_err)
+            return {"connectors": names}
 
         @app.post("/tasks/clear")
         async def tasks_clear():

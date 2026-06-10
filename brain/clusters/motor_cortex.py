@@ -1839,6 +1839,17 @@ class MotorCortexCluster:
             except Exception as e:
                 logger.warning("[MotorCortex] Subsystem %s after_job failed: %s", sub.name, e)
 
+    def list_connectors(self) -> list[str]:
+        """Configured cloud connector names from the active executor (for the
+        Motor Permissions UI). Empty when no executor or none configured."""
+        c = self._cloud
+        if c is not None and hasattr(c, "connector_names"):
+            try:
+                return list(c.connector_names())
+            except Exception:
+                return []
+        return []
+
     def enter_self_mode(self) -> None:
         self._self_mode = True
 
