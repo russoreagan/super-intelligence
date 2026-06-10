@@ -35,6 +35,17 @@ _STORAGE_BACKEND = os.environ.get("BRAIN_STORAGE_BACKEND", "local").lower()
 EMBEDDING_DIM = 768
 
 
+_PERSONA_SLUG_RE = re.compile(r"[^a-z0-9]+")
+
+
+def _persona_key(persona: str) -> str:
+    """Canonical persona key for the schema/episode stores. Slugifies so the hosted
+    path (provisioner injects the RAW display name, e.g. 'The Visionary') and the
+    local path (already slugified to 'the_visionary') read/write the SAME store.
+    Idempotent on an already-slugged name; empty falls back to 'default'."""
+    return _PERSONA_SLUG_RE.sub("_", (persona or "").lower()).strip("_") or "default"
+
+
 def _signature_cosine(a: dict[str, float], b: dict[str, float]) -> float:
     """Cosine similarity over the union of two cognitive-signature dicts.
     Missing keys count as 0. Returns 0.0 if either side has no magnitude."""
@@ -98,10 +109,10 @@ class EpisodicStore:
         return get_client(), get_user_id()
 
     def _sb_persona(self) -> str:
-        """Active persona — falls back to env var so callers don't have to pass it."""
-        if self._persona:
-            return self._persona
-        return os.environ.get("BRAIN_PERSONA_NAME", "default")
+        """Active persona key (slugified) — hosted (raw display name) and local
+        (slug) converge on the same store. Falls back to the env var."""
+        raw = self._persona or os.environ.get("BRAIN_PERSONA_NAME", "default")
+        return _persona_key(raw)
 
     def _ensure_ready(self) -> bool:
         if self._ready:
@@ -525,9 +536,8 @@ class SchemaStore:
         return get_client(), get_user_id()
 
     def _sb_persona(self) -> str:
-        if self._persona:
-            return self._persona
-        return os.environ.get("BRAIN_PERSONA_NAME", "default")
+        raw = self._persona or os.environ.get("BRAIN_PERSONA_NAME", "default")
+        return _persona_key(raw)
 
     def _validate_filename(self, filename: str) -> bool:
         """Return True if filename is safe; log a warning and return False otherwise."""
