@@ -183,7 +183,12 @@ class Provisioner:
         env.update(
             {
                 "BRAIN_MULTITENANT": "1",
+                # user_id is the TENANT key = org id (the gateway resolves it). For a
+                # personal org it equals the user's own uid, so data keyed by
+                # BRAIN_USER_ID is unchanged. BRAIN_ORG_ID is the explicit name the
+                # brain's membership-aware auth uses.
                 "BRAIN_USER_ID": user_id,
+                "BRAIN_ORG_ID": user_id,
                 "BRAIN_STORAGE_BACKEND": "supabase",
                 "BRAIN_SETTINGS_PATH": str(settings_path),
                 "SECOND_BRAIN_PATH": str(root / "second_brain"),

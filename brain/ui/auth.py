@@ -75,18 +75,32 @@ def is_public_path(path: str) -> bool:
 
 
 def owner_mismatch(claims: dict[str, Any] | None) -> bool:
-    """True when this process is pinned to one tenant and the caller isn't them.
+    """True when this process is pinned to one tenant and the caller isn't entitled.
 
-    Each multi-tenant pod serves exactly one user (BRAIN_USER_ID = their auth
-    uuid). The pod's UI is reachable over a public RunPod proxy URL, so a holder
-    of *any* valid session cookie could otherwise reach another user's pod. When
-    BRAIN_USER_ID is set, require the authenticated subject to match it. No-op
-    (returns False) when BRAIN_USER_ID is unset (single-user / dev)."""
-    owner = os.environ.get("BRAIN_USER_ID", "").strip()
-    if not owner:
+    Each process serves exactly one ORG (BRAIN_ORG_ID = the org/tenant id). Its UI
+    is reachable over a public proxy URL, so a holder of *any* valid session cookie
+    could otherwise reach another tenant's process. Entitlement = membership in this
+    org. Fast path: a caller whose sub == the org id is the owner (and the only
+    member of a personal org), so no DB hit — this is the dev/companion case. Only a
+    multi-member org pays a membership lookup. No-op when neither id is set
+    (single-user / dev)."""
+    org_id = (
+        os.environ.get("BRAIN_ORG_ID", "").strip()
+        or os.environ.get("BRAIN_USER_ID", "").strip()
+    )
+    if not org_id:
         return False
     sub = str((claims or {}).get("sub", "")).strip()
-    return sub != owner
+    if not sub:
+        return True
+    if sub == org_id:
+        return False  # owner / personal-org member — fast path, no DB
+    try:
+        from brain.org import is_member
+
+        return not is_member(sub, org_id)
+    except Exception:
+        return True  # fail closed
 
 
 def is_admin(claims: dict[str, Any] | None) -> bool:

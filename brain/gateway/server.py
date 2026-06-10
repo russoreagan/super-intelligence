@@ -57,6 +57,26 @@ def _access_token(request: Request) -> str:
     return tok or request.cookies.get(ui_auth.ACCESS_COOKIE, "") or ""
 
 
+# Cache uid → org (the tenant unit) so routing isn't a DB query per request.
+# Memberships are stable within a session; a gateway restart refreshes (add a TTL
+# before memberships become mutable at runtime).
+_org_cache: dict[str, str] = {}
+
+
+def _tenant_for(uid: str) -> str:
+    """Resolve an authenticated user to their org id (the tenant the brain process
+    and all data key on). Falls back to the uid itself when there's no membership
+    (pre-migration / dev) — which for a personal org is the same value, so this is
+    behavior-preserving."""
+    t = _org_cache.get(uid)
+    if t is None:
+        from brain import org
+
+        t = org.org_id_for_user(uid) or uid
+        _org_cache[uid] = t
+    return t
+
+
 def build_gateway_app(provisioner: Provisioner) -> FastAPI:
     app = FastAPI(docs_url=None, redoc_url=None)
 
@@ -205,10 +225,10 @@ def build_gateway_app(provisioner: Provisioner) -> FastAPI:
     # ── Readiness poll for the interstitial ─────────────────────────────────
     @app.get("/__brain_status")
     async def brain_status(request: Request):
-        uid = request.state.user["sub"]
-        st = provisioner.status(uid)
+        tenant = _tenant_for(request.state.user["sub"])
+        st = provisioner.status(tenant)
         if st is None:
-            asyncio.create_task(_safe_ensure(provisioner, uid))
+            asyncio.create_task(_safe_ensure(provisioner, tenant))
             return JSONResponse({"ready": False, "state": "starting"})
         return JSONResponse({"ready": (not st["booting"]), "state": "booting" if st["booting"] else "ready"})
 
@@ -226,13 +246,14 @@ def build_gateway_app(provisioner: Provisioner) -> FastAPI:
             uid = claims["sub"]
         else:
             uid = os.environ.get("BRAIN_USER_ID", "dev")
-        st = provisioner.status(uid)
+        tenant = _tenant_for(uid)
+        st = provisioner.status(tenant)
         if not st or st["booting"]:
             # Not ready yet — tell the client to retry (the page is on the interstitial anyway).
             await client_ws.close(code=1013)
             return
-        provisioner.touch(uid)  # a live client connection counts as activity
-        await _proxy_ws(client_ws, st["port"], on_activity=lambda: provisioner.touch(uid))
+        provisioner.touch(tenant)  # a live client connection counts as activity
+        await _proxy_ws(client_ws, st["port"], on_activity=lambda: provisioner.touch(tenant))
 
     # ── HTTP catch-all → ensure + proxy (authed) ────────────────────────────
     @app.api_route(
@@ -240,10 +261,10 @@ def build_gateway_app(provisioner: Provisioner) -> FastAPI:
         methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
     )
     async def proxy(request: Request, path: str):
-        uid = request.state.user["sub"]
-        st = provisioner.status(uid)
+        tenant = _tenant_for(request.state.user["sub"])
+        st = provisioner.status(tenant)
         if st and not st["booting"]:
-            provisioner.touch(uid)  # activity → reset the idle backstop timer
+            provisioner.touch(tenant)  # activity → reset the idle backstop timer
             return await _proxy_http(request, st["port"])
         # Brain not running yet: require an Anthropic key before spawning.
         if not await _has_anthropic(request):
@@ -251,7 +272,7 @@ def build_gateway_app(provisioner: Provisioner) -> FastAPI:
                 return RedirectResponse("/keys", status_code=303)
             return JSONResponse({"error": "no_anthropic_key"}, status_code=403)
         if st is None:
-            asyncio.create_task(_safe_ensure(provisioner, uid))
+            asyncio.create_task(_safe_ensure(provisioner, tenant))
         if _wants_html(request):
             return HTMLResponse(INTERSTITIAL_HTML.read_text(encoding="utf-8"), status_code=200)
         return JSONResponse({"status": "booting"}, status_code=503)
