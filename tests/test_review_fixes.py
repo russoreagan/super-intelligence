@@ -430,3 +430,66 @@ def test_cog_positions_materialize_and_skip_stoic(tmp_path, monkeypatch):
     sd2 = pc.materialize_into_settings("The Stoic", {})
     assert "salience_workspace_threshold" not in sd2
     assert "modulation_gain" not in sd2
+
+
+# ── multitenant persona isolation (run.py _route_persona_state) ───────────────
+
+
+def _mt_env(monkeypatch, tmp_path, persona_in_settings):
+    import json as _json
+
+    root = tmp_path / "second_brain"
+    root.mkdir(parents=True, exist_ok=True)
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text(_json.dumps({"persona_name": persona_in_settings}))
+    monkeypatch.setenv("BRAIN_MULTITENANT", "1")
+    monkeypatch.setenv("SECOND_BRAIN_PATH", str(root))
+    monkeypatch.setenv("BRAIN_SETTINGS_PATH", str(settings_path))
+    monkeypatch.delenv("BRAIN_PERSONA_NAME", raising=False)
+    monkeypatch.delenv("BRAIN_WIRING_PATH", raising=False)
+    monkeypatch.delenv("BRAIN_WIRING_HISTORY_DIR", raising=False)
+    return root
+
+
+def test_multitenant_namespaces_state_per_persona(tmp_path, monkeypatch):
+    """The org volume root must never be shared: jobs/research/wiring/dmn state
+    all derive from SECOND_BRAIN_PATH, so it has to be personas/<slug>."""
+    import os
+
+    from brain.run import _route_persona_state
+
+    root = _mt_env(monkeypatch, tmp_path, "The Companion")
+    _route_persona_state()
+    assert os.environ["BRAIN_PERSONA_NAME"] == "the_companion"
+    assert os.environ["SECOND_BRAIN_PATH"] == str(root / "personas" / "the_companion")
+    assert os.environ["BRAIN_WIRING_PATH"] == str(
+        root / "personas" / "the_companion" / "wiring.json"
+    )
+
+
+def test_multitenant_settings_json_wins_over_stale_env(tmp_path, monkeypatch):
+    """After a persona switch + /restart re-exec, the inherited env still names
+    the OLD persona — settings.json is the source of truth."""
+    import os
+
+    from brain.run import _route_persona_state
+
+    _mt_env(monkeypatch, tmp_path, "The Companion")
+    monkeypatch.setenv("BRAIN_PERSONA_NAME", "The Analyst")  # stale, raw-name form
+    _route_persona_state()
+    assert os.environ["BRAIN_PERSONA_NAME"] == "the_companion"
+
+
+def test_multitenant_renamespacing_does_not_nest(tmp_path, monkeypatch):
+    """A re-exec inherits the already-namespaced SECOND_BRAIN_PATH; the bootstrap
+    must normalize back to the org root, not produce personas/x/personas/y."""
+    import os
+
+    from brain.run import _route_persona_state
+
+    root = _mt_env(monkeypatch, tmp_path, "The Companion")
+    monkeypatch.setenv(
+        "SECOND_BRAIN_PATH", str(root / "personas" / "the_analyst")
+    )  # prior persona's namespace, inherited across exec
+    _route_persona_state()
+    assert os.environ["SECOND_BRAIN_PATH"] == str(root / "personas" / "the_companion")

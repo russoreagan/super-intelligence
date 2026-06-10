@@ -354,48 +354,70 @@ def _route_persona_state() -> None:
             )
             return
         root = Path(root_str)
+        # A /restart re-exec inherits the persona-namespaced SECOND_BRAIN_PATH this
+        # function wrote on the previous boot (…/personas/<slug>). Normalize back
+        # to the org root so re-derivation below starts clean — and picks up a new
+        # persona_name from settings.json instead of nesting personas/x/personas/y.
+        if root.parent.name == "personas":
+            root = root.parent.parent
         root.mkdir(parents=True, exist_ok=True)
-        os.environ.setdefault("BRAIN_WIRING_PATH", str(root / "wiring.json"))
-        os.environ.setdefault("BRAIN_WIRING_HISTORY_DIR", str(root / "wiring_history"))
-        # Resolve the persona slug so the Supabase stores key rows correctly. The
-        # provisioner injects BRAIN_USER_ID/SECOND_BRAIN_PATH but NOT the persona, so
-        # without this _sb_persona() silently falls back to "default" — every tenant's
-        # memory then collides in one "default" bucket and per-persona data goes
-        # invisible. Honor an explicit pre-injected BRAIN_PERSONA_NAME; otherwise read
-        # persona_name from the tenant's own settings.json (BRAIN_SETTINGS_PATH). Read
-        # only — never rewrite the file here (it's the tenant's evolving tuning).
-        if not os.environ.get("BRAIN_PERSONA_NAME", "").strip():
-            settings_str = os.environ.get("BRAIN_SETTINGS_PATH", "").strip()
-            tenant_settings = Path(settings_str) if settings_str else (root / "settings.json")
-            persona = ""
-            if tenant_settings.exists():
-                try:
-                    persona = str(
-                        json.loads(tenant_settings.read_text(encoding="utf-8")).get(
-                            "persona_name", ""
-                        )
+        # Resolve the persona so every store keys rows correctly. The tenant's
+        # settings.json (BRAIN_SETTINGS_PATH) is the SOURCE OF TRUTH and wins over
+        # an inherited BRAIN_PERSONA_NAME: the provisioner snapshots the env at
+        # spawn time, so after a persona switch + /restart re-exec the inherited
+        # env still names the OLD persona while settings.json names the new one —
+        # honoring the env would silently keep reading/writing the old persona's
+        # state. Env is only the fallback for engine-mode boots with no settings
+        # file. Read only — never rewrite the file (it's the tenant's tuning).
+        settings_str = os.environ.get("BRAIN_SETTINGS_PATH", "").strip()
+        tenant_settings = Path(settings_str) if settings_str else (root / "settings.json")
+        persona = ""
+        if tenant_settings.exists():
+            try:
+                persona = str(
+                    json.loads(tenant_settings.read_text(encoding="utf-8")).get(
+                        "persona_name", ""
                     )
-                except Exception:
-                    persona = ""
-            if persona:
-                slug = re.sub(r"[^a-z0-9]+", "_", persona.lower()).strip("_") or "unnamed"
-                os.environ["BRAIN_PERSONA_NAME"] = slug
-            else:
-                # Hard-fail: booting without a persona would key every store on
-                # persona='default', a bucket shared by every tenant that failed
-                # the same way — silent cross-tenant contamination. Better a dead
-                # pod the provisioner notices than a leaking one nobody does.
-                raise RuntimeError(
-                    "[Persona] Multi-tenant: could not resolve persona_name from "
-                    f"{tenant_settings} — refusing to boot (storage would fall back "
-                    "to persona='default' and cross-contaminate tenants). The "
-                    "provisioner must inject BRAIN_PERSONA_NAME or seed a "
-                    "settings.json with persona_name."
                 )
+            except Exception:
+                persona = ""
+        persona = persona or os.environ.get("BRAIN_PERSONA_NAME", "").strip()
+        if not persona:
+            # Hard-fail: booting without a persona would key every store on
+            # persona='default', a bucket shared by every tenant that failed
+            # the same way — silent cross-tenant contamination. Better a dead
+            # pod the provisioner notices than a leaking one nobody does.
+            raise RuntimeError(
+                "[Persona] Multi-tenant: could not resolve persona_name from "
+                f"{tenant_settings} — refusing to boot (storage would fall back "
+                "to persona='default' and cross-contaminate tenants). The "
+                "provisioner must inject BRAIN_PERSONA_NAME or seed a "
+                "settings.json with persona_name."
+            )
+        # Always normalize to the slug, even when the env carried a raw display
+        # name ("The Companion") — dmn_state and friends key off this env var and
+        # must agree with the slugified keys the Supabase stores use.
+        slug = re.sub(r"[^a-z0-9]+", "_", persona.lower()).strip("_") or "unnamed"
+        os.environ["BRAIN_PERSONA_NAME"] = slug
+        # Persona-namespace ALL volume-backed state, exactly like local mode does.
+        # The tenant root is per-ORG; without this subdir every persona of the org
+        # shares jobs/, research/, proposals/, deferred_thoughts.md, dmn_*.json,
+        # task_queue.json and wiring.json — i.e. one persona's background tasks,
+        # research corpus and learned routing bleed into the next, surviving
+        # restarts because the volume persists. settings.json deliberately stays
+        # at the org root (BRAIN_SETTINGS_PATH) — it holds persona_name itself.
+        persona_root = root / "personas" / slug
+        persona_root.mkdir(parents=True, exist_ok=True)
+        # Forced, not setdefault: nothing else legitimately sets these in
+        # multitenant mode, and a /restart re-exec would otherwise inherit the
+        # previous persona's paths from its own environment.
+        os.environ["SECOND_BRAIN_PATH"] = str(persona_root)
+        os.environ["BRAIN_WIRING_PATH"] = str(persona_root / "wiring.json")
+        os.environ["BRAIN_WIRING_HISTORY_DIR"] = str(persona_root / "wiring_history")
         logger.info(
             "[Persona] Multi-tenant mode — second_brain at %s (persona=%s)",
-            root,
-            os.environ.get("BRAIN_PERSONA_NAME", "") or "—",
+            persona_root,
+            slug,
         )
         return
 

@@ -521,6 +521,38 @@ class UIServer:
                         self._bus.rebaseline_chem()
                     except Exception as _rb_err:
                         logger.warning("live rebaseline failed: %s", _rb_err)
+                # A persona switch MUST re-key storage. Two layers, because memory
+                # bleeding across personas is never acceptable:
+                #  1) Re-point BRAIN_PERSONA_NAME immediately — the Supabase stores
+                #     resolve it per call, so episode/schema/dmn_state writes stop
+                #     landing in the old persona's bucket the moment this returns.
+                #  2) Re-exec the process — file-backed state (SECOND_BRAIN_PATH:
+                #     jobs/, research/, proposals/, dmn_*.json, wiring) is resolved
+                #     at import time and can only re-namespace through a boot. Do
+                #     it automatically rather than trusting the operator to restart.
+                if is_switch:
+                    import re as _re
+                    import sys as _sys
+
+                    _new_persona = str(settings.get("persona_name", ""))
+                    _new_slug = (
+                        _re.sub(r"[^a-z0-9]+", "_", _new_persona.lower()).strip("_") or "unnamed"
+                    )
+                    os.environ["BRAIN_PERSONA_NAME"] = _new_slug
+
+                    async def _restart_for_switch():
+                        await asyncio.sleep(0.4)
+                        cmd = [_sys.executable] + _sys.argv
+                        logger.info(
+                            "[Persona] Switch to %r — restarting to re-namespace "
+                            "file-backed state: %s",
+                            _new_slug,
+                            " ".join(cmd),
+                        )
+                        os.execv(_sys.executable, cmd)
+
+                    asyncio.create_task(_restart_for_switch())
+                    return {"ok": True, "restarting": True, "persona": _new_persona}
                 # Apply a voice change LIVE so the settings-page Voice dropdown
                 # (which only writes the setting) takes effect immediately, just
                 # like the header pill's set_voice — no restart required.
