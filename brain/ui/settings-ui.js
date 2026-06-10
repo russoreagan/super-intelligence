@@ -160,6 +160,11 @@
   const chevSvg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg>';
   const lockSvg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>';
   const eyeSvg  = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>';
+  const voiceSvg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>';
+  // Per-persona voice key (matches index.html _personaSlug + backend resolution).
+  const voiceKeyFor = name => 'persona_voice_' + String(name || '').toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
+  let _voiceList = null;        // cached /voices response: [{voice_id,name}]
+  let _voiceUnavailable = false;
   const resetSvg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.5 15a9 9 0 1 0 2.1-9.4L1 10"/></svg>';
   const fileSvg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3v5h5"/><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg>';
   const moonSvg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>';
@@ -919,6 +924,11 @@
           `<button class="es-toggle" id="st-manual" role="switch" aria-checked="false" aria-label="Manual mode"></button></div>` +
         `</div>` +
         `<div class="pdetail-note" id="st-note"></div>` +
+        `<div class="pdetail-voice" id="st-voicebar">` +
+          `<span class="pv-icon">${voiceSvg}</span>` +
+          `<label class="pv-label" for="st-voice">Voice</label>` +
+          `<select class="pv-select" id="st-voice" title="This persona's speaking voice"></select>` +
+        `</div>` +
         `<button class="es-del-persona" id="st-delete" style="display:none">Delete persona</button>` +
         `<nav class="tabbar" id="st-tabbar"></nav>` +
       `</div>` +
@@ -951,6 +961,7 @@
     const nm = document.getElementById('st-name');
     nm.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); nm.blur(); } });
     nm.addEventListener('blur', () => { if (view === 'persona' && !isBuiltin(persona)) renamePersona(nm.textContent); });
+    wirePersonaVoice();
     scaffolded = true;
   }
 
@@ -1033,6 +1044,54 @@
     const del = document.getElementById('st-delete'); if (del) del.style.display = builtin ? 'none' : '';
     const bt = document.getElementById('bar-title'); if (bt) bt.textContent = p.name;
     const bb = document.getElementById('bar-blurb'); if (bb) bb.textContent = p.tag || '';
+    syncPersonaVoice();
+  }
+
+  // ── Per-persona voice picker (above the tabs, under the description) ────────
+  async function loadPersonaVoices() {
+    if (_voiceList || _voiceUnavailable) return;
+    try {
+      const res = await fetch('/voices');
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      if (data.reason === 'no_elevenlabs_key') { _voiceUnavailable = true; return; }
+      _voiceList = data.voices || [];
+    } catch (e) { /* leave null — retried on next persona render */ }
+  }
+  function syncPersonaVoice() {
+    const bar = document.getElementById('st-voicebar'), sel = document.getElementById('st-voice');
+    if (!bar || !sel) return;
+    if (_voiceUnavailable) {
+      bar.classList.add('disabled');
+      sel.innerHTML = '<option>Voice off — add an ElevenLabs key in API Keys</option>'; sel.disabled = true;
+      return;
+    }
+    if (!_voiceList) { loadPersonaVoices().then(syncPersonaVoice); return; }
+    bar.classList.remove('disabled'); sel.disabled = false;
+    // The active persona's voice: persona_voice_<slug> → persona_voice_id → first.
+    const chosen = (values[voiceKeyFor(persona)] || values.persona_voice_id || '').trim();
+    sel.innerHTML = '';
+    _voiceList.forEach(v => { const o = document.createElement('option'); o.value = v.voice_id; o.textContent = v.name; sel.appendChild(o); });
+    if (chosen && !_voiceList.find(v => v.voice_id === chosen)) {
+      const o = document.createElement('option'); o.value = chosen; o.textContent = '(custom voice)'; sel.appendChild(o);
+    }
+    sel.value = chosen || (_voiceList[0] && _voiceList[0].voice_id) || '';
+  }
+  function wirePersonaVoice() {
+    const sel = document.getElementById('st-voice');
+    if (!sel) return;
+    sel.addEventListener('change', () => {
+      const vid = sel.value; if (!vid) return;
+      // Persist per-persona AND as the active default, mirroring the header pill.
+      const patch = { persona_voice_id: vid }; patch[voiceKeyFor(persona)] = vid;
+      values.persona_voice_id = vid; values[voiceKeyFor(persona)] = vid;
+      fetch('/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) }).catch(() => {});
+      // Apply live to the running brain (same message the header voice pill sends).
+      // `ws` is the page-global socket from index.html (bare name resolves up-scope).
+      try { if (typeof ws !== 'undefined' && ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'set_voice', voice_id: vid })); } catch (_) {}
+      // Keep the header pill in sync if it's present.
+      const pill = document.getElementById('voice-select'); if (pill && pill.value !== vid) pill.value = vid;
+    });
   }
 
   // Restore a persona's full saved knob setup (chemistry + cognitive + globals).

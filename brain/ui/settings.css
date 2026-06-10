@@ -508,6 +508,17 @@ input[type=range].r::-moz-range-thumb {
 .es-toggle.on { background: var(--signal-soft); border-color: var(--signal-deep); }
 .es-toggle.on::after { transform: translateX(19px); background: var(--signal); }
 
+/* ---- per-persona voice picker (under the description, above the tabs) ---- */
+.pdetail-voice { display: flex; align-items: center; gap: 9px; margin-top: 16px; }
+.pdetail-voice .pv-icon { display: inline-flex; width: 15px; height: 15px; color: var(--signal-deep); flex-shrink: 0; }
+.pdetail-voice .pv-icon svg { width: 100%; height: 100%; }
+.pdetail-voice .pv-label { font-family: var(--mono); font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-3); }
+.pdetail-voice .pv-select { font-family: var(--sans); font-size: 12.5px; color: var(--ink-2); background: var(--paper-3); border: 1px solid var(--line); border-radius: 7px; padding: 5px 9px; min-width: 180px; cursor: pointer; transition: border-color 140ms; }
+.pdetail-voice .pv-select:hover { border-color: var(--signal-deep); }
+.pdetail-voice .pv-select:focus { outline: none; border-color: var(--signal-deep); }
+.pdetail-voice.disabled .pv-select { color: var(--ink-4); cursor: default; }
+.pdetail-voice.disabled .pv-icon { color: var(--ink-4); }
+
 /* ---- category tab bar ---- */
 .tabbar { display: flex; gap: 2px; margin-top: 18px; flex-wrap: wrap; }
 .tabbar[hidden] { display: none; }
