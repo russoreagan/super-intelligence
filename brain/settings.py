@@ -401,7 +401,7 @@ DEFAULTS: dict[str, float | int | str] = {
     # Cross-learning chain (private rumination → de-id gate → hypothesis store) at
     # sleep, plus established-principle injection into the turn context. Off until
     # the chain has been observed end-to-end on a real consolidation.
-    "cross_learning": 0,
+    "cross_learning": 1,  # graduated from experimental 2026-06 — production default
     # ── Section: Motor Cortex / Autonomous Tasks ─────────────────────────────
     # ralph_max_total_attempts: hard ceiling on total tool dispatches across ALL
     # stories + retries in a single internal job. Prevents runaway loops
@@ -573,7 +573,7 @@ DEFAULTS: dict[str, float | int | str] = {
     # Voice laughter detection (transcript markers + DSP heuristic + classifier all
     # feed the same levity-scaled DA path as text_para_laughter_DA, composed via max)
     "laughter_dsp_threshold": 0.5,  # min audio_dsp.laughter_likelihood before DA release
-    "vocal_events": 0,  # 1 = run PANNs vocal-event classifier (laughter/sigh/gasp/crying)
+    "vocal_events": 1,  # PANNs vocal-event classifier — production default (graduated 2026-06)
     # ── Section: Relationship Stage Progression ───────────────────────────────
     "enable_relationship_stage_progression": 1,  # 1 = auto-update familiarity tier at sleep
     "familiarity_acquainted_min_sessions": 3,  # sessions needed to reach acquainted
@@ -639,7 +639,7 @@ DEFAULTS: dict[str, float | int | str] = {
     # only when this is on. The three feedback loops (concentration, recruitment,
     # chemistry self-feedback) are also independently observable in the decisions
     # log so they can be validated in increasing-risk order.
-    "colony_features": 0,  # 1 = enable colony layer; 0 = off (no-op)
+    "colony_features": 1,  # colony layer — production default (graduated 2026-06)
     # Phase 2 — topic concentration / quorum / silence (threat channel first)
     "colony_conc_half_life_s": 45.0,  # exponential half-life of topic concentration
     "colony_conc_cap": 10.0,  # max accumulated concentration (chatty-topic bound)
@@ -690,7 +690,7 @@ DEFAULTS: dict[str, float | int | str] = {
     #       from the per-turn firing path (reconstructed via the wiring graph).
     #   (3) closed loop — arousal sets a criticality setpoint σ* and the σ-error
     #       drives the global modulation_gain toward it (never super-critical).
-    "flock_dynamics": 0,  # 1 = enable flock/criticality layer; 0 = off (no-op)
+    "flock_dynamics": 1,  # flock/criticality layer — production default (graduated 2026-06)
     # (1) chemistry trajectory — DMN rumination velocity weights
     "flock_rum_w_cort_vel": 0.60,  # positive CORT velocity (rising stress) → extra worry drive
     "flock_rum_w_ne_vel": 0.40,  # positive NE velocity (rising alertness) → extra worry drive

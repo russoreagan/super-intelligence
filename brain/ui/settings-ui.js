@@ -785,7 +785,7 @@
     return [
       `# Self-Model — ${p.name}`, '',
       `> Seeded from the shared identity scaffold + the ${p.name} archetype${tagLine ? ' (' + tagLine + ')' : ''}. The brain rewrites this for itself at sleep consolidation.`, '',
-      `## What I am`, '', base.whatIAm || '', '',
+      `## Who I am`, '', base.whatIAm || '', '',
       `## Core drives`, '', base.drives || '', '',
       `## Guiding principles (non-negotiable)`, '', base.principles || '', '',
       `## Personality`, '', blk.personality || '', '',
@@ -814,29 +814,6 @@
       .catch(() => {});
   }
   function selfDirtyCount() { return Object.keys(selfStore).filter(id => selfStore[id] !== selfSaved[id]).length; }
-
-  // The "Living" page: the self-model as the brain maintains it for itself,
-  // drifted from the seed. Read-only sample composed from SET.livingModel.
-  function pickLM(map, id) { return (map && (map[id] != null ? map[id] : map._default)) || ''; }
-  function buildLiving(id) {
-    const SM = SET.selfModel || {}, base = SM.base || {}, LM = SET.livingModel || {};
-    const p = personaMeta(id);
-    const blk = (SM.personas && SM.personas[id]) || SM.fallback || { personality: '', speaking: '' };
-    const history = (pickLM(LM.history, id) || []).map(h => '- ' + h).join('\n');
-    return [
-      `# Self-Model — ${p.name}`, '',
-      `> ${LM.intro || ''}`, '',
-      `## What I am`, '', base.whatIAm || '', '',
-      `## Core drives`, '', base.drives || '', '',
-      `## Personality`, '', (blk.personality || '') + '\n' + (pickLM(LM.drift, id) || ''), '',
-      `## Speaking style`, '', blk.speaking || '', '',
-      `## What I've come to notice about myself`, '', pickLM(LM.noticed, id), '',
-      `## History summary`, '', history, '',
-      `## Current mood signature`, '', '`' + pickLM(LM.mood, id) + '`', '',
-      `## Guiding principles (non-negotiable)`, '', base.principles || '', '',
-      `## Values`, '', base.values || '',
-    ].join('\n');
-  }
 
   /* tiny markdown renderer for the Preview pane (headings, bold, code, lists,
      blockquote, hr) — scoped to what self.md actually uses. */

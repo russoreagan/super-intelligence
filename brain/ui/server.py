@@ -352,6 +352,26 @@ class UIServer:
         @app.get("/")
         async def index():
             html = HTML_PATH.read_text(encoding="utf-8")
+            # Replace the manual ?v=N cache-busters on the settings assets with
+            # a content-derived token (newest asset mtime). The hand-bumped
+            # numbers have repeatedly gone stale — edits shipped without a bump
+            # served old JS and masqueraded as app bugs. The literal v=N stays
+            # in the file as a fallback for static serving (preview/dev).
+            try:
+                import re as _re
+
+                _dir = HTML_PATH.parent
+                _stamp = max(
+                    int((_dir / f).stat().st_mtime)
+                    for f in ("settings.css", "settings-data.js", "settings-ui.js")
+                )
+                html = _re.sub(
+                    r"(settings(?:-data|-ui)?\.(?:css|js))\?v=\d+",
+                    rf"\1?v={_stamp}",
+                    html,
+                )
+            except Exception as _cb_err:
+                logger.debug("[ui] cache-bust injection failed: %s", _cb_err)
             # Always revalidate: a stale cached shell has repeatedly masqueraded
             # as an app bug (missing sub-tabs, dead mic). The page is rebuilt
             # per-request anyway, so caching buys nothing.
