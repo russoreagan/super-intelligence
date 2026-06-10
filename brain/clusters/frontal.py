@@ -1847,30 +1847,44 @@ class FrontalCluster:
         # The guidance line matches the tier table in the DRAFTER_IDENTITY system
         # prompt — this is the per-turn reminder of which tier applies right now.
         _user_content = memory.get("core", {}).get("user", "")
+        _stage = None
         if _user_content:
             from brain.clusters.frontal_prompts import AFFECTION_TIER_GUIDANCE
             from brain.metacognition import relationship_stage_from_content
 
             _stage = relationship_stage_from_content(_user_content)
-            if _stage.affection != 0 or _stage.tier != "new" or _stage.bond > 0:
-                _guidance = AFFECTION_TIER_GUIDANCE.get(_stage.affection_label, "")
-                _speaker = features.get("speaker_name", "")
-                _with = f"with {_speaker}" if _speaker else ""
-                _rel = (
-                    f"Relationship {_with}: {_stage.affection_label} "
-                    f"| affection {_stage.affection}/100 | familiarity: {_stage.tier}"
+        if _stage is not None and (
+            _stage.affection != 0 or _stage.tier != "new" or _stage.bond > 0
+        ):
+            _guidance = AFFECTION_TIER_GUIDANCE.get(_stage.affection_label, "")
+            _speaker = features.get("speaker_name", "")
+            _with = f"with {_speaker}" if _speaker else ""
+            _rel = (
+                f"Relationship {_with}: {_stage.affection_label} "
+                f"| affection {_stage.affection}/100 | familiarity: {_stage.tier}"
+            )
+            # Surface the bond/affection divergence: a former-close friend
+            # we haven't spoken to in a while (high bond, decayed affection)
+            # reads differently from someone we're just warming up to.
+            if _stage.bond - _stage.affection >= 15:
+                _rel += (
+                    f"\n  (latent bond {_stage.bond:.0f} — you've been close before; "
+                    f"warmth can resume quickly)"
                 )
-                # Surface the bond/affection divergence: a former-close friend
-                # we haven't spoken to in a while (high bond, decayed affection)
-                # reads differently from someone we're just warming up to.
-                if _stage.bond - _stage.affection >= 15:
-                    _rel += (
-                        f"\n  (latent bond {_stage.bond:.0f} — you've been close before; "
-                        f"warmth can resume quickly)"
-                    )
-                if _guidance:
-                    _rel += f"\n  → {_guidance}"
-                parts.append(_rel)
+            if _guidance:
+                _rel += f"\n  → {_guidance}"
+            parts.append(_rel)
+        else:
+            # Brand-new relationship (or no user model at all). Without an
+            # explicit signal here, a self-model that says "I remember people
+            # across sessions" tempts the drafter into performing familiarity
+            # it doesn't have. Make the blank slate explicit.
+            parts.append(
+                "Relationship: first meeting — no shared history with this person "
+                "exists yet. Never reference past conversations or imply prior "
+                "familiarity; you're just getting to know them, so be genuinely "
+                "curious about who they are."
+            )
 
         # ── Self-disclosure opportunity ───────────────────────────────────────
         # Proactive reciprocal self-disclosure: when conditions are right,

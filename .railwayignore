@@ -1,0 +1,7 @@
+# Keep Russ's local-mode second_brain (episodes, personas, jobs, proposals,
+# research, runtime state) OUT of the hosted image. Hosted tenants read from
+# Supabase + their own volume dir; the only repo-bundled file the server needs
+# is the base self.md seed template.
+second_brain/**
+!second_brain/schema/
+!second_brain/schema/self.md
