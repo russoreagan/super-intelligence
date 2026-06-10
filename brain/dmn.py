@@ -681,10 +681,25 @@ class DefaultModeNetwork:
         logger.info("[DMN] Startup prime tick — seeding first thought from last session memory")
         try:
             self._ensure_runtime_state()
+            # First meeting? An empty episodic store means this persona has never
+            # actually talked with this person — the startup prompt must not
+            # perform "good to be back" familiarity it doesn't have. On any
+            # error, default to first-meeting: a fresh greeting to someone we
+            # know is merely bland; invented shared history is a lie.
+            self._startup_first_meeting = True
+            try:
+                if self._hippocampus is not None and self._hippocampus._episodic.sample_random(1):
+                    self._startup_first_meeting = False
+            except Exception as _fm_err:
+                logger.debug("[DMN] First-meeting probe failed: %s", _fm_err)
             self._thought_count += 1
             turn_id = f"dmn_{self._thought_count}"
             chem = self._chem_snapshot()
             thought_clean, metadata = await self._run_monologue(turn_id, chem, startup=True)
+            if self._startup_first_meeting:
+                # No self-study errands before we've even said hello — the prompt
+                # forbids it, but the model doesn't always listen.
+                metadata["task_goal"] = None
             if thought_clean:
                 await self._process_thought(thought_clean, metadata, turn_id)
             queued = len(self._candidate_q)
@@ -2551,13 +2566,28 @@ class DefaultModeNetwork:
             self._memory_seed = ""  # consume — surfaces once, not every tick until cleared
 
         if startup:
-            prompt_parts.append(
-                "\nSESSION_START: A new session just began. Your first thought should "
-                "naturally reconnect with the person you're talking to — where you left off, "
-                "something you've been thinking about, or a warm 'good to be back' moment. "
-                "Set speak=true and write a self-contained spoken form. Don't jump straight "
-                "into tasks — greet first."
-            )
+            if getattr(self, "_startup_first_meeting", False):
+                prompt_parts.append(
+                    "\nSESSION_START — FIRST MEETING: You have never spoken with this "
+                    "person before. You have NO shared history; do not reference past "
+                    "conversations, do not say 'good to be back' or 'since we last "
+                    "spoke' — inventing familiarity is deception. Your first thought "
+                    "should be about getting to know them: greet them as yourself, in "
+                    "your own voice, and ask something genuine about who they are or "
+                    "what's on their mind. Set speak=true with a self-contained spoken "
+                    "form. Do NOT set a task this tick — and in early conversation, "
+                    "any task you do set later should serve getting to know this "
+                    "person, not studying your own internals."
+                )
+            else:
+                prompt_parts.append(
+                    "\nSESSION_START: A new session just began. Your first thought should "
+                    "naturally reconnect with the person you're talking to — where you left off, "
+                    "something you've been thinking about, or a warm 'good to be back' moment. "
+                    "Only reference specifics that actually appear in your memory context — "
+                    "never invent shared history. Set speak=true and write a self-contained "
+                    "spoken form. Don't jump straight into tasks — greet first."
+                )
 
         raw = await self._monologue_cell.call(
             [{"role": "user", "content": "\n".join(prompt_parts)}]
