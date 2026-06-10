@@ -104,10 +104,41 @@ def build_gateway_app(provisioner: Provisioner) -> FastAPI:
             ui_auth.set_session_cookies(response, refreshed, remember=ui_auth.remembered(request))
         return response
 
+    # ── HTTPS upgrade + HSTS ──────────────────────────────────────────────
+    # Mirrors the brain UI server: registered after the auth gate so it wraps
+    # OUTERMOST — an http request redirects to https before auth runs, and
+    # every response (including 301/401) carries HSTS so the browser pins
+    # https and never attempts plain http again. Railway terminates TLS at
+    # the edge and forwards the real scheme in x-forwarded-proto; localhost
+    # has no proxy header, so local dev is untouched (and never HSTS-pinned).
+    _HSTS_MAX_AGE = os.environ.get("BRAIN_HSTS_MAX_AGE", "31536000")  # 1 year
+
+    @app.middleware("http")
+    async def _https_and_hsts(request: Request, call_next):
+        from fastapi.responses import RedirectResponse
+
+        proto = request.headers.get("x-forwarded-proto", "")
+        if proto == "http":
+            url = request.url.replace(scheme="https")
+            return RedirectResponse(str(url), status_code=301)
+        response = await call_next(request)
+        if proto == "https":
+            response.headers["Strict-Transport-Security"] = (
+                f"max-age={_HSTS_MAX_AGE}; includeSubDomains"
+            )
+        return response
+
     # ── Public auth routes (reused from the brain UI) ───────────────────────
     @app.get("/health")
     async def health():
         return {"status": "ok"}
+
+    @app.post("/auth/logout")
+    @app.get("/auth/logout")
+    async def auth_logout():
+        resp = RedirectResponse("/login", status_code=303)
+        ui_auth.clear_session_cookies(resp)
+        return resp
 
     @app.get("/login")
     async def login_page():
@@ -228,7 +259,10 @@ def build_gateway_app(provisioner: Provisioner) -> FastAPI:
     # ── Readiness poll for the interstitial ─────────────────────────────────
     @app.get("/__brain_status")
     async def brain_status(request: Request):
-        tenant = _tenant_for(request.state.user["sub"])
+        user = getattr(request.state, "user", None)
+        if user is None:  # public-path fall-through / auth-disabled edge
+            return JSONResponse({"ready": False, "state": "unauthorized"}, status_code=401)
+        tenant = _tenant_for(user["sub"])
         st = provisioner.status(tenant)
         if st is None:
             asyncio.create_task(_safe_ensure(provisioner, tenant))
@@ -264,7 +298,15 @@ def build_gateway_app(provisioner: Provisioner) -> FastAPI:
         methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
     )
     async def proxy(request: Request, path: str):
-        tenant = _tenant_for(request.state.user["sub"])
+        # Public paths without a dedicated gateway route (and non-GET methods on
+        # routed paths, e.g. HEAD /login) fall through to this catch-all with no
+        # auth state — send them to login instead of crashing on state.user.
+        user = getattr(request.state, "user", None)
+        if user is None:
+            if _wants_html(request):
+                return RedirectResponse("/login", status_code=303)
+            return JSONResponse({"error": "unauthorized"}, status_code=401)
+        tenant = _tenant_for(user["sub"])
         st = provisioner.status(tenant)
         if st and not st["booting"]:
             provisioner.touch(tenant)  # activity → reset the idle backstop timer
