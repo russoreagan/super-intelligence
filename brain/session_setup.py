@@ -222,6 +222,7 @@ class _SetupMixin:
             is_muted_fn=self._is_mic_muted,
             mic_status_fn=self._mic_status,
             on_interrupt=self.pns.interrupt,
+            on_tasks_clear=self.kill_self_directed_work,
             wiring=self.wiring,
             bus=self.bus,
         )

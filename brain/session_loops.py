@@ -636,8 +636,49 @@ class _LoopsMixin:
                     logger.info(
                         "[TaskWorker] %s task [%s]: %s", source_label, task.id, task.goal[:80]
                     )
-                    await self._run_task(task)
+                    # Run as a child task so the UI kill switch can cancel the
+                    # in-flight job without tearing down the worker loop itself.
+                    exec_task = asyncio.create_task(self._run_task(task))
+                    self._task_exec = exec_task
+                    try:
+                        await exec_task
+                    except asyncio.CancelledError:
+                        if getattr(self, "_tasks_kill_requested", False):
+                            self._tasks_kill_requested = False
+                            logger.info(
+                                "[TaskWorker] Task [%s] killed by user", task.id
+                            )
+                        else:
+                            raise  # session shutdown — propagate
+                    finally:
+                        self._task_exec = None
             except asyncio.CancelledError:
                 return
             except Exception as _e:
                 logger.error("[TaskWorker] Unexpected error: %s", _e, exc_info=True)
+
+    def kill_self_directed_work(self) -> dict:
+        """UI kill switch: cancel the in-flight internal job (if any), fail all
+        pending/blocked/running queue entries, and drain the DMN's un-enqueued
+        self-task buffer so the work doesn't immediately respawn."""
+        killed_running = False
+        exec_task = getattr(self, "_task_exec", None)
+        if exec_task is not None and not exec_task.done():
+            self._tasks_kill_requested = True
+            exec_task.cancel()
+            killed_running = True
+        cleared = self._task_queue.clear_all() if self._task_queue else 0
+        drained = 0
+        if self.dmn is not None:
+            try:
+                drained = len(self.dmn._self_task_q)
+                self.dmn._self_task_q.clear()
+            except Exception:
+                pass
+        logger.info(
+            "[TaskWorker] Kill switch: running_killed=%s queue_cleared=%d dmn_drained=%d",
+            killed_running,
+            cleared,
+            drained,
+        )
+        return {"killed_running": killed_running, "cleared": cleared, "drained": drained}

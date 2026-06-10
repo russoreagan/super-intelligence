@@ -7343,10 +7343,12 @@ function handleTaskEvent(msg) {
 }
 
 document.getElementById('tasks-clear-btn')?.addEventListener('click', () => {
-  Object.keys(TASKS).forEach(id => {
-    if (TASKS[id].status === 'complete' || TASKS[id].status === 'failed') delete TASKS[id];
-  });
+  // Kill switch: cancel the running job + pending queue server-side, then
+  // wipe the panel. Server result is best-effort — the panel clears either way.
+  fetch('/tasks/clear', { method: 'POST' }).catch(() => {});
+  Object.keys(TASKS).forEach(id => { delete TASKS[id]; });
   renderTasks();
+  _updateTaskBadge();
 });
 
 renderRegionList();

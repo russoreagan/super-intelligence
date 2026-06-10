@@ -56,6 +56,7 @@ class UIServer:
         is_muted_fn: Callable[[], bool] | None = None,
         mic_status_fn: Callable[[], str] | None = None,
         on_interrupt: Callable[[], None] | None = None,
+        on_tasks_clear: Callable[[], dict] | None = None,
         wiring=None,
         bus=None,
     ) -> None:
@@ -71,6 +72,7 @@ class UIServer:
         # (hosted, no audio device). Preferred over _is_muted_fn when provided.
         self._mic_status_fn = mic_status_fn
         self._on_interrupt = on_interrupt
+        self._on_tasks_clear = on_tasks_clear  # () -> stats dict; kills self-directed work
         self._clients: set = set()
         self._last_neuromod: dict = {}
         self._last_hormonal: dict = {}
@@ -487,6 +489,17 @@ class UIServer:
             settings.reset_to_defaults()
             settings.save()
             return {"ok": True, "settings": settings.all()}
+
+        @app.post("/tasks/clear")
+        async def tasks_clear():
+            if self._on_tasks_clear is None:
+                return {"ok": False, "error": "no task handler wired"}
+            try:
+                stats = self._on_tasks_clear() or {}
+            except Exception as _tc_err:
+                logger.warning("[tasks] clear failed: %s", _tc_err)
+                return {"ok": False, "error": str(_tc_err)}
+            return {"ok": True, **stats}
 
         @app.get("/self-model")
         async def get_self_model(request: Request):

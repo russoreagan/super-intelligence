@@ -254,6 +254,23 @@ class PersistentTaskQueue:
                 return True
         return False
 
+    def clear_all(self) -> int:
+        """Kill switch for the Self-directed work panel: fail every pending /
+        blocked / running task. The running task's asyncio execution must be
+        cancelled separately by the caller — this only settles the ledger.
+        Returns the number of tasks cleared."""
+        cleared = 0
+        for t in self._tasks:
+            if t.status in ("pending", "blocked", "running"):
+                t.status = "failed"
+                t.completed_at = time.time()
+                t.success = False
+                cleared += 1
+        if cleared:
+            self._save()
+            logger.info("[TaskQueue] Cleared %d task(s) (user kill switch)", cleared)
+        return cleared
+
     def update_goal(self, task_id: str, new_goal: str) -> bool:
         """Update the goal of a pending task. Returns True if found and updated."""
         new_goal = new_goal.strip()
