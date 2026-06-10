@@ -1064,6 +1064,13 @@ class PNS:
                                     None, stream.write, chunk
                                 )
                     finally:
+                        # Tell the browser the stream is over on every exit path
+                        # (normal end, watchdog abort, interrupt, error). Without
+                        # this the None sentinel only ever reached the local
+                        # consumer loop and hosted clients never got tts_end.
+                        if self._tts_ws_queue is not None:
+                            with contextlib.suppress(asyncio.QueueFull):
+                                self._tts_ws_queue.put_nowait(None)
                         producer_task.cancel()
                         try:
                             await producer_task

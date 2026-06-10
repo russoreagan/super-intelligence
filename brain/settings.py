@@ -84,6 +84,31 @@ DEFAULTS: dict[str, float | int | str] = {
     "hebbian_delta": 0.02,
     "hebbian_outcome_delta": 0.02,
     "decay_toward_rest_rate": 0.01,
+    # Eligibility traces: a turn's outcome also credits the fired paths of the
+    # previous N turns, decayed e^(-age/τ) — delayed conversational payoff
+    # reaches the turns that set it up. lookback 0 restores instantaneous-only.
+    "eligibility_lookback": 2,
+    "eligibility_tau_turns": 2.0,
+    # Force a real critic run (no predictor skip) on high-information turns:
+    # an explicit user verdict tone, NE at/above this, or DA this far from the
+    # persona baseline. Phasic outcome sampling for the Hebbian signal.
+    "critic_force_ne": 0.70,
+    "critic_force_da_dev": 0.15,
+    # Affect carryover: a post-draft DA swing past this threshold becomes a one-
+    # line interoceptive hint in the NEXT turn's drafter prompt (two-phase rule:
+    # post-draft chemistry is reward, never re-colors the current response).
+    "affect_carryover": 1,
+    "affect_carryover_da_threshold": 0.10,
+    # Motivation overrides (the Motivation dials): per-persona multipliers on
+    # the innate reward-source table in neuron._PERSONA_REWARD_WEIGHTS, centred
+    # at 1.0. >1 = this deployment's persona draws MORE reward from the source.
+    "reward_weight_correctness": 1.0,
+    "reward_weight_connection": 1.0,
+    "reward_weight_novelty": 1.0,
+    "reward_weight_aesthetic": 1.0,
+    "reward_weight_relief": 1.0,
+    "reward_weight_mastery": 1.0,
+    "reward_weight_levity": 1.0,
     "weight_min": 0.10,
     "weight_max": 3.00,
     "gaba_skip_threshold_high": 0.55,
@@ -372,6 +397,11 @@ DEFAULTS: dict[str, float | int | str] = {
     "sleep_idle_threshold_s": 7200.0,  # 2 h  — fire after this much user idle
     "sleep_hard_cap_s": 21600.0,  # 6 h  — fire regardless of idle
     "sleep_min_turns": 5,  # don't bother with tiny batches
+    "session_trace_cap": 300,  # buffered-turn ceiling that forces a consolidation pass (0 = off)
+    # Cross-learning chain (private rumination → de-id gate → hypothesis store) at
+    # sleep, plus established-principle injection into the turn context. Off until
+    # the chain has been observed end-to-end on a real consolidation.
+    "cross_learning": 0,
     # ── Section: Motor Cortex / Autonomous Tasks ─────────────────────────────
     # ralph_max_total_attempts: hard ceiling on total tool dispatches across ALL
     # stories + retries in a single internal job. Prevents runaway loops
@@ -524,6 +554,10 @@ DEFAULTS: dict[str, float | int | str] = {
     "text_para_negativity_GABA": 0.08,  # :(/ 😡 → GABA
     "text_para_excitement_Glu": 0.07,  # omg/🔥 → Glu
     "text_para_excitement_NE": 0.04,  # omg/🔥 → NE
+    # Voice laughter detection (transcript markers + DSP heuristic + classifier all
+    # feed the same levity-scaled DA path as text_para_laughter_DA, composed via max)
+    "laughter_dsp_threshold": 0.5,  # min audio_dsp.laughter_likelihood before DA release
+    "vocal_events": 0,  # 1 = run PANNs vocal-event classifier (laughter/sigh/gasp/crying)
     # ── Section: Relationship Stage Progression ───────────────────────────────
     "enable_relationship_stage_progression": 1,  # 1 = auto-update familiarity tier at sleep
     "familiarity_acquainted_min_sessions": 3,  # sessions needed to reach acquainted

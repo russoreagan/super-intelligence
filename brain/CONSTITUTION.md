@@ -78,6 +78,13 @@ threat — the functional role of threat, not its biology.
   quality determines relevance; storage does not gate memory.
 - Core schema files (`self.md`, `user.md`) are pre-loaded into working memory at session
   boot — they are reliably needed every session and should be treated as standing context.
+- **Two-phase chemistry rule:** chemistry before drafting colors expression; chemistry
+  after drafting is reward. Pre-draft neuromod updates (hypothalamus appraisal, recall
+  affect) may re-derive the emotion label the drafters see. Post-draft updates (draft
+  quality, motor outcomes, prediction verdicts) must never re-color the CURRENT response
+  — they are the learning signal for Hebbian consolidation. A large post-draft swing may
+  carry forward as an interoceptive hint to the NEXT turn (affect carryover), never back
+  into this one.
 
 ## What this entity is NOT claimed to be
 

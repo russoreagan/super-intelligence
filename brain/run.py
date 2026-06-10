@@ -359,12 +359,16 @@ def _route_persona_state() -> None:
                 slug = re.sub(r"[^a-z0-9]+", "_", persona.lower()).strip("_") or "unnamed"
                 os.environ["BRAIN_PERSONA_NAME"] = slug
             else:
-                logger.error(
-                    "[Persona] Multi-tenant: could not resolve persona_name from %s — "
-                    "storage would fall back to persona='default' and cross-contaminate "
-                    "tenants. The provisioner must inject BRAIN_PERSONA_NAME or seed a "
-                    "settings.json with persona_name.",
-                    tenant_settings,
+                # Hard-fail: booting without a persona would key every store on
+                # persona='default', a bucket shared by every tenant that failed
+                # the same way — silent cross-tenant contamination. Better a dead
+                # pod the provisioner notices than a leaking one nobody does.
+                raise RuntimeError(
+                    "[Persona] Multi-tenant: could not resolve persona_name from "
+                    f"{tenant_settings} — refusing to boot (storage would fall back "
+                    "to persona='default' and cross-contaminate tenants). The "
+                    "provisioner must inject BRAIN_PERSONA_NAME or seed a "
+                    "settings.json with persona_name."
                 )
         logger.info(
             "[Persona] Multi-tenant mode — second_brain at %s (persona=%s)",

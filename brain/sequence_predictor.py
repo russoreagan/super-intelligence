@@ -64,11 +64,19 @@ class SequencePredictor:
         self._bigrams: Counter = Counter()
         self._trigrams: Counter = Counter()
         self._synonyms: dict[str, str] = {}
+        self._syn_mtime: float = 0.0
+        # Keys other modules keep in sequence_weights.json (e.g. the sleep pass's
+        # last_synonym_pass_ts) — carried through save() so we never drop them.
+        self._extra: dict = {}
         self._dirty = False
 
     # ── canonical form ───────────────────────────────────────────────────────
 
     def _canonical(self, angle: str) -> str:
+        # mtime-checked so a sleep-pass rewrite of angle_synonyms.json takes
+        # effect in the SAME session (previously synonyms loaded only at startup,
+        # giving the clustering a one-full-session latency).
+        self._load_synonyms()
         norm = _normalize(angle)
         return self._synonyms.get(norm, norm)
 
@@ -168,6 +176,9 @@ class SequencePredictor:
             self._trigrams = Counter(
                 {tuple(k.split(_SEP, 2)): v for k, v in data.get("trigrams", {}).items() if k}
             )
+            self._extra = {
+                k: v for k, v in data.items() if k not in ("history", "bigrams", "trigrams")
+            }
             logger.debug(
                 "[SeqPredictor] Loaded: %d history, %d bigrams, %d trigrams",
                 len(self._history),
@@ -182,7 +193,19 @@ class SequencePredictor:
             return
         try:
             path = os.path.abspath(_WEIGHTS_PATH)
+            # Pick up bookkeeping another writer (the sleep synonym pass) may have
+            # stamped since our load, then overlay our learned state on top.
+            try:
+                if os.path.exists(path):
+                    with open(path) as f:
+                        on_disk = json.load(f)
+                    for k, v in on_disk.items():
+                        if k not in ("history", "bigrams", "trigrams"):
+                            self._extra[k] = v
+            except Exception:
+                pass
             data = {
+                **self._extra,
                 "history": list(self._history),
                 "bigrams": {_SEP.join(k): v for k, v in self._bigrams.items()},
                 "trigrams": {_SEP.join(k): v for k, v in self._trigrams.items()},
@@ -196,12 +219,18 @@ class SequencePredictor:
             logger.warning("[SeqPredictor] Save failed: %s", e)
 
     def _load_synonyms(self) -> None:
+        """(Re)load the synonym map when the file is new or changed — cheap stat
+        per call, so hot callers (_canonical) can invoke it freely."""
         try:
             path = os.path.abspath(_SYNONYMS_PATH)
             if not os.path.exists(path):
                 return
+            mtime = os.stat(path).st_mtime
+            if mtime == self._syn_mtime:
+                return
             with open(path) as f:
                 self._synonyms = json.load(f)
+            self._syn_mtime = mtime
             logger.debug("[SeqPredictor] Loaded %d synonyms", len(self._synonyms))
         except Exception as e:
             logger.warning("[SeqPredictor] Synonyms load failed: %s", e)

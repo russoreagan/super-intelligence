@@ -408,7 +408,14 @@ class HypothalamusCluster:
                 excitement = text_para.get("excitement", 0.0)
 
                 if laughter > 0.0:
-                    nm.add("DA", laughter * settings.get("text_para_laughter_DA"))
+                    # The user laughing IS the reward event for levity — scaled by
+                    # how much this persona draws reward from landing a laugh
+                    # (reward-source valuation, same pattern as connection/novelty
+                    # above). A levity-driven persona feels a laugh land harder,
+                    # and the resulting DA swing feeds the Hebbian funnel, so
+                    # what earned laughs gets reinforced.
+                    _levity_value = reward_weight(_persona, "levity")
+                    nm.add("DA", laughter * settings.get("text_para_laughter_DA") * _levity_value)
                 if warmth > 0.0:
                     nm.add("DA", warmth * settings.get("text_para_warmth_DA"))
                 if negativity > 0.0:
@@ -426,6 +433,48 @@ class HypothalamusCluster:
                         negativity,
                         excitement,
                     )
+
+        # ── Voice laughter (transcript ∨ DSP heuristic ∨ event classifier) ────
+        # Narrow exception to the "prosody skips text-para" rule above: laughter
+        # markers in a TRANSCRIPT are evidence of a real laugh regardless of
+        # channel (Deepgram often transcribes laughs as "ha ha"), and the
+        # acoustic tiers add what the transcript misses. Tiers compose via
+        # max() — the same laugh seen by two detectors is one laugh, not two.
+        # All channels reuse text_para_laughter_DA so text and voice laughter
+        # release comparable DA. Like the text path, this is PRE-draft appraisal
+        # (the user's laugh is the stimulus), not post-draft reward.
+        if modality == "voice" or prosody_tone:
+            _pf = prosody_features or {}
+            voice_laughter = features.get("transcript_laughter", 0.0)
+            _dsp_laugh = _pf.get("laughter_likelihood", 0.0)
+            if _dsp_laugh >= settings.get("laughter_dsp_threshold"):
+                voice_laughter = max(voice_laughter, _dsp_laugh)
+            _events = _pf.get("vocal_events") or {}
+            _event_laugh = _events.get("laughter", 0.0)
+            # The classifier emits small probs for everything; gate at the same
+            # conservative threshold as the DSP tier before releasing chemistry.
+            if _event_laugh >= settings.get("laughter_dsp_threshold"):
+                voice_laughter = max(voice_laughter, _event_laugh)
+
+            if voice_laughter > 0.0:
+                # Same reward-source valuation as the text laughter path: the
+                # user laughing IS the reward event for levity, and the DA
+                # swing feeds the Hebbian funnel.
+                _levity_value = reward_weight(_persona, "levity")
+                nm.add(
+                    "DA",
+                    voice_laughter * settings.get("text_para_laughter_DA") * _levity_value,
+                )
+                logger.debug(
+                    "Hypothalamus voice laughter: transcript=%.2f dsp=%.2f event=%.2f → %.2f",
+                    features.get("transcript_laughter", 0.0),
+                    _dsp_laugh,
+                    _event_laugh,
+                    voice_laughter,
+                )
+            # Future: _events also carries sigh/gasp/crying probabilities —
+            # candidates for small GABA (sigh = release/fatigue) and NE
+            # (gasp = startle) nudges once the classifier has eval coverage.
 
         snap = nm.snapshot()
 
@@ -486,71 +535,11 @@ class HypothalamusCluster:
             h_snap["OXT"],
             h_snap["AEA"],
         )
-
-        # Apply hormonal modulation to effective neuromod values for emotion naming.
-        # Raw accumulator levels are unchanged; only the values passed to name_emotion
-        # and the color functions are adjusted so hormonal state shapes the emotion
-        # without touching the bus.
-
-        # AEA suppresses effective NE and Glu when elevated above resting baseline.
-        ne_scale, glu_scale = hs.aea_suppress(
-            settings.get("aea_ne_suppression"),
-            settings.get("aea_glu_suppression"),
-        )
-        eff_NE = max(0.0, min(1.0, snap["NE"] * ne_scale))
-        eff_Glu = max(0.0, min(1.0, snap["Glu"] * glu_scale))
-
-        # DA: hormonal offset + AEA afterglow lift
-        da_offset = hs.da_offset(
-            settings.get("sht_da_floor_lift"),
-            settings.get("oxt_da_lift"),
-            settings.get("cort_da_suppress"),
-        )
-        aea_suppress = max(
-            0.0, h_snap["AEA"] - settings.get("aea_da_suppress_threshold")
-        ) * settings.get("aea_da_suppress")
-        eff_DA = max(
-            0.0,
-            min(
-                1.0,
-                snap["DA"] + da_offset + h_snap["AEA"] * settings.get("aea_da_lift") - aea_suppress,
-            ),
-        )
-        eff_GABA = max(
-            0.0,
-            min(
-                1.0,
-                snap["GABA"]
-                * hs.gaba_scale(
-                    settings.get("cort_gaba_amplify"),
-                    settings.get("oxt_gaba_buffer"),
-                ),
-            ),
-        )
-
-        # Name current emotion (using fully-adjusted effective values)
-        emotion, tendency = name_emotion(eff_DA, eff_GABA, snap["ACh"], eff_Glu)
-
-        # NE color: inverted-U modifier (vigilant / alert-curious / scattered)
-        emotion, tendency = apply_ne_color(
-            emotion,
-            tendency,
-            eff_NE,
-            ne_high=settings.get("ne_high_threshold"),
-            ne_scatter=settings.get("ne_scatter_threshold"),
-        )
-
-        # Hormonal color: connected / withdrawn / guarded / eased / dysphoric
-        emotion, tendency = apply_hormonal_color(
-            emotion,
-            tendency,
-            h_snap,
-            oxt_connected=settings.get("hormonal_oxt_connected_threshold"),
-            cort_withdrawn=settings.get("hormonal_cort_withdrawn_threshold"),
-            oxt_guarded=settings.get("hormonal_oxt_guarded_threshold"),
-            sht_dysphoric=settings.get("hormonal_sht_dysphoric_threshold"),
-            aea_eased=settings.get("aea_eased_threshold"),
-        )
+        # Apply hormonal modulation to effective neuromod values for emotion
+        # naming. Raw accumulator levels are unchanged; the math lives in
+        # _effective_emotion so refresh_emotion() can re-derive mid-turn
+        # (post-recall-affect) with identical adjustments.
+        emotion, tendency = self._effective_emotion(snap, hs, h_snap)
 
         # ── Metacognition appraisal override ──────────────────────────────────
         # Drain any pending overrides; the most recent fresh one wins. This is
@@ -635,6 +624,80 @@ class HypothalamusCluster:
             "Hypothalamus: emotion=%s DA=%.2f GABA=%.2f", emotion, snap["DA"], snap["GABA"]
         )
         return affect
+
+    def _effective_emotion(self, snap: dict, hs, h_snap: dict) -> tuple[str, str]:
+        """Name the emotion from hormonally-adjusted effective neuromod values.
+        Pure read — raw accumulators are untouched. Shared by process() and
+        refresh_emotion() so a mid-turn re-derivation uses identical math."""
+        # AEA suppresses effective NE and Glu when elevated above resting baseline.
+        ne_scale, glu_scale = hs.aea_suppress(
+            settings.get("aea_ne_suppression"),
+            settings.get("aea_glu_suppression"),
+        )
+        eff_NE = max(0.0, min(1.0, snap["NE"] * ne_scale))
+        eff_Glu = max(0.0, min(1.0, snap["Glu"] * glu_scale))
+
+        # DA: hormonal offset + AEA afterglow lift
+        da_offset = hs.da_offset(
+            settings.get("sht_da_floor_lift"),
+            settings.get("oxt_da_lift"),
+            settings.get("cort_da_suppress"),
+        )
+        aea_suppress = max(
+            0.0, h_snap["AEA"] - settings.get("aea_da_suppress_threshold")
+        ) * settings.get("aea_da_suppress")
+        eff_DA = max(
+            0.0,
+            min(
+                1.0,
+                snap["DA"] + da_offset + h_snap["AEA"] * settings.get("aea_da_lift") - aea_suppress,
+            ),
+        )
+        eff_GABA = max(
+            0.0,
+            min(
+                1.0,
+                snap["GABA"]
+                * hs.gaba_scale(
+                    settings.get("cort_gaba_amplify"),
+                    settings.get("oxt_gaba_buffer"),
+                ),
+            ),
+        )
+
+        # Name current emotion (using fully-adjusted effective values)
+        emotion, tendency = name_emotion(eff_DA, eff_GABA, snap["ACh"], eff_Glu)
+
+        # NE color: inverted-U modifier (vigilant / alert-curious / scattered)
+        emotion, tendency = apply_ne_color(
+            emotion,
+            tendency,
+            eff_NE,
+            ne_high=settings.get("ne_high_threshold"),
+            ne_scatter=settings.get("ne_scatter_threshold"),
+        )
+
+        # Hormonal color: connected / withdrawn / guarded / eased / dysphoric
+        emotion, tendency = apply_hormonal_color(
+            emotion,
+            tendency,
+            h_snap,
+            oxt_connected=settings.get("hormonal_oxt_connected_threshold"),
+            cort_withdrawn=settings.get("hormonal_cort_withdrawn_threshold"),
+            oxt_guarded=settings.get("hormonal_oxt_guarded_threshold"),
+            sht_dysphoric=settings.get("hormonal_sht_dysphoric_threshold"),
+            aea_eased=settings.get("aea_eased_threshold"),
+        )
+        return emotion, tendency
+
+    def refresh_emotion(self) -> tuple[str, str]:
+        """Re-derive (emotion, tendency) from the CURRENT bus state — for mid-turn
+        neuromod updates that land after process() named the emotion (recall
+        affect). Same effective-value math as process(); does NOT re-drain the
+        metacognition override inbox (overrides are consumed once, by process)."""
+        snap = self._bus.neuromod.snapshot()
+        hs = self._bus.hormonal
+        return self._effective_emotion(snap, hs, hs.snapshot())
 
     def decay_turn(self) -> None:
         """Apply time-weighted decay using turns computed by process() this turn.

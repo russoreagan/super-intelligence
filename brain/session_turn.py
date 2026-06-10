@@ -485,6 +485,15 @@ class _TurnMixin:
 
             _text_para = extract_text_paralinguistics(user_input)
             features["text_paralinguistics"] = _text_para.to_dict()
+        elif settings.get("enable_text_paralinguistics"):
+            # Voice turn: the full text-para extractor stays off (prosody owns
+            # the acoustic channel), but laughter markers in the TRANSCRIPT are
+            # still evidence — Deepgram often transcribes a real laugh as
+            # "ha ha". Hypothalamus composes this with the acoustic laughter
+            # tiers via max(), feeding the same levity-scaled DA path.
+            from brain.clusters.text_paralinguistics import extract_laughter
+
+            features["transcript_laughter"] = extract_laughter(user_input)
 
         # ── Hypothalamus + Thalamus: parallel ─────────────────────────────────
         await self._emit("hypothalamus", 0.6, "updating affect", turn_id)
@@ -570,6 +579,23 @@ class _TurnMixin:
                 trace.neuromod_midturn.append({"trigger": "hippocampus_recall", "snapshot": _snap})
                 if self._emitter:
                     await self._emitter.emit_neuromod(_snap)
+                # Recall affect moved the chemistry AFTER process() named the
+                # emotion — re-derive the label so the drafters see one that
+                # matches the neuromod state they're modulated by. Pre-draft, so
+                # this is expression-phase chemistry (see the two-phase rule in
+                # CONSTITUTION.md), not reward.
+                try:
+                    _emotion, _tendency = self.hypothalamus.refresh_emotion()
+                    if _emotion != affect.get("emotion"):
+                        logger.debug(
+                            "[Affect] Recall affect shifted emotion %s → %s",
+                            affect.get("emotion"),
+                            _emotion,
+                        )
+                        affect["emotion"] = _emotion
+                        affect["tendency"] = _tendency
+                except Exception:
+                    pass
         else:
             memory = {"core": self._core_context, "schema": "", "episodes": ""}
 
@@ -749,6 +775,31 @@ class _TurnMixin:
             except Exception as _rt_err:
                 logger.debug("[DMN] Thread routing skipped: %s", _rt_err)
 
+        # ── Established cross-learning principles ─────────────────────────────
+        # De-identified, k-corroborated lessons from the hypothesis store. Loaded
+        # once per session (the store only changes at sleep consolidation) and
+        # injected as background guidance the drafters may draw on.
+        if settings.get("cross_learning", 0):
+            if not hasattr(self, "_established_principles"):
+                try:
+                    from brain import cross_learning
+
+                    self._established_principles = cross_learning.established_principles()
+                except Exception as _xl_err:
+                    logger.debug("[Cross-learning] principle load skipped: %s", _xl_err)
+                    self._established_principles = []
+            if self._established_principles:
+                memory["established_principles"] = list(self._established_principles)
+
+        # ── Affect carryover from the previous turn ───────────────────────────
+        # A large post-draft chemistry swing last turn carries forward as a one-
+        # line interoceptive hint (consumed once). See the two-phase chemistry
+        # rule in CONSTITUTION.md.
+        _carry = getattr(self, "_carryover_affect", None)
+        if _carry:
+            memory["affect_carryover"] = _carry
+            self._carryover_affect = None
+
         # ── Per-turn speaker context injection ────────────────────────────────
         _speaker = features.get("speaker_name", "")
         if _speaker:
@@ -914,6 +965,27 @@ class _TurnMixin:
 
         nm_snap = self.bus.neuromod.snapshot()
 
+        # Affect carryover (two-phase rule, CONSTITUTION.md): post-draft chemistry
+        # never re-colors THIS response, but a large swing shouldn't vanish either
+        # — a person still feels the last exchange's miss or win at the start of
+        # the next one. Stash the DA delta; the next turn's drafter prompt gets a
+        # one-line interoceptive hint.
+        if settings.get("affect_carryover", 1):
+            try:
+                _pre_da = float((affect.get("neuromod") or {}).get("DA", nm_snap.get("DA", 0.5)))
+                _carry_delta = float(nm_snap.get("DA", 0.5)) - _pre_da
+                if abs(_carry_delta) >= float(settings.get("affect_carryover_da_threshold", 0.1)):
+                    self._carryover_affect = {
+                        "da_delta": round(_carry_delta, 3),
+                        "feeling": (
+                            "a lingering lift from how the last exchange landed"
+                            if _carry_delta > 0
+                            else "a lingering dip from how the last exchange landed"
+                        ),
+                    }
+            except Exception:
+                pass
+
         # Persist the active persona's evolved chemistry so a restart / persona
         # switch resumes from here instead of snapping back to the resting
         # profile. Throttled (>=5s) and best-effort: a single ~300-byte file per
@@ -926,7 +998,12 @@ class _TurnMixin:
                 if _now - getattr(self, "_last_chem_save_ts", 0.0) >= 5.0:
                     from brain import persona_chem
 
-                    persona_chem.save_current(_persona, nm_snap, self.bus.hormonal.snapshot())
+                    # Off the event loop: this is a read-modify-write of a file on
+                    # disk, and the turn shouldn't stall on filesystem latency.
+                    _hs_snap = self.bus.hormonal.snapshot()
+                    await asyncio.get_running_loop().run_in_executor(
+                        None, persona_chem.save_current, _persona, nm_snap, _hs_snap
+                    )
                     self._last_chem_save_ts = _now
         except Exception:
             pass
@@ -1244,6 +1321,17 @@ class _TurnMixin:
                 "response_chars": len(final or ""),
             }
         )
+
+        # Backstop on buffer growth: a very long unconsolidated session (or a
+        # sleep loop that's wedged) would otherwise accumulate traces without
+        # bound. Force a mini-consolidation; consolidate_now is single-flight,
+        # so re-triggering while one runs is a no-op.
+        _trace_cap = int(settings.get("session_trace_cap", 300))
+        if _trace_cap > 0 and len(self._session_traces) >= _trace_cap:
+            logger.warning(
+                "[Sleep] Trace buffer hit cap (%d) — forcing consolidation", _trace_cap
+            )
+            asyncio.create_task(self.consolidate_now("trace_cap"))
 
         await self._emit("hippocampus", 0.45, "encoding episode", turn_id)
         encode_task = asyncio.create_task(

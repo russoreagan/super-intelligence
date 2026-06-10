@@ -46,6 +46,27 @@ def _persona_key(persona: str) -> str:
     return _PERSONA_SLUG_RE.sub("_", (persona or "").lower()).strip("_") or "default"
 
 
+def _resolve_persona(explicit: str) -> str:
+    """Persona for store scoping. In multitenant mode an unresolved persona must
+    never fall back to 'default' — that bucket is shared across every tenant whose
+    provisioning failed the same way, i.e. silent cross-tenant contamination."""
+    raw = explicit or os.environ.get("BRAIN_PERSONA_NAME", "")
+    if not raw.strip() and os.environ.get("BRAIN_MULTITENANT"):
+        raise RuntimeError(
+            "BRAIN_PERSONA_NAME is not set in multitenant mode — refusing the "
+            "persona='default' fallback (it cross-contaminates tenants). The "
+            "provisioner must inject BRAIN_PERSONA_NAME."
+        )
+    return raw or "default"
+
+
+def _sql_quote(value: str) -> str:
+    """Escape a string for interpolation into a LanceDB (DataFusion SQL) filter.
+    Doubles single quotes and strips characters that can't appear in our tags or
+    session ids anyway — these filters are built from user-influenced strings."""
+    return str(value).replace("'", "''").replace("\\", "")
+
+
 def _signature_cosine(a: dict[str, float], b: dict[str, float]) -> float:
     """Cosine similarity over the union of two cognitive-signature dicts.
     Missing keys count as 0. Returns 0.0 if either side has no magnitude."""
@@ -79,6 +100,10 @@ class Episode:
     # domains. Matched by structural recall when a novel situation arrives.
     # Built by hippocampus._build_cog_signature; see brain/clusters/hippocampus.py.
     cog_signature: dict[str, float] = field(default_factory=dict)
+    # Engine mode: which of the partner's customers this episode belongs to and
+    # which assignment (mandates table) was active. "" / None in companion mode.
+    end_user_id: str = ""
+    mandate_id: str = ""
 
 
 class EpisodicStore:
@@ -111,8 +136,7 @@ class EpisodicStore:
     def _sb_persona(self) -> str:
         """Active persona key (slugified) — hosted (raw display name) and local
         (slug) converge on the same store. Falls back to the env var."""
-        raw = self._persona or os.environ.get("BRAIN_PERSONA_NAME", "default")
-        return _persona_key(raw)
+        return _persona_key(_resolve_persona(self._persona))
 
     def _ensure_ready(self) -> bool:
         if self._ready:
@@ -210,7 +234,7 @@ class EpisodicStore:
             vec = episode.vector or ([0.0] * EMBEDDING_DIM)
             sb.table("episodes").insert(
                 {
-                    "user_id": uid,
+                    "org_id": uid,
                     "persona": persona,
                     "session_id": episode.session_id,
                     "turn_id": episode.turn_id,
@@ -224,6 +248,8 @@ class EpisodicStore:
                     "neuromod_snapshot": episode.neuromod_snapshot,
                     "surprise_score": episode.surprise_score,
                     "cog_signature": episode.cog_signature or {},
+                    "end_user_id": episode.end_user_id or "",
+                    "mandate_id": episode.mandate_id or None,
                     "vector": f"[{','.join(str(v) for v in vec)}]",
                 }
             ).execute()
@@ -260,7 +286,7 @@ class EpisodicStore:
             res = (
                 sb.table("episodes")
                 .select("*")
-                .eq("user_id", uid)
+                .eq("org_id", uid)
                 .eq("persona", self._sb_persona())
                 .order("ts", desc=True)
                 .limit(limit)
@@ -296,7 +322,7 @@ class EpisodicStore:
             res = (
                 sb.table("episodes")
                 .select("*")
-                .eq("user_id", uid)
+                .eq("org_id", uid)
                 .eq("persona", self._sb_persona())
                 .limit(200)
                 .execute()
@@ -323,7 +349,7 @@ class EpisodicStore:
             q = self._table.search(query_vector).limit(limit)
             if exclude_tags:
                 for tag in exclude_tags:
-                    q = q.where(f"topic_tags NOT LIKE '%{tag}%'")
+                    q = q.where(f"topic_tags NOT LIKE '%{_sql_quote(tag)}%'")
             results = q.to_list()
             return self._parse_rows(results)
         except Exception as e:
@@ -340,7 +366,7 @@ class EpisodicStore:
             # Use Supabase RPC for pgvector cosine similarity search
             params = {
                 "query_vector": vec_str,
-                "user_id_param": uid,
+                "org_id_param": uid,
                 "persona_param": persona,
                 "match_count": limit,
             }
@@ -361,7 +387,7 @@ class EpisodicStore:
         try:
             results = (
                 self._table.search(query_vector)
-                .where(f"topic_tags LIKE '%{tag}%'")
+                .where(f"topic_tags LIKE '%{_sql_quote(tag)}%'")
                 .limit(limit)
                 .to_list()
             )
@@ -378,7 +404,7 @@ class EpisodicStore:
                 "match_episodes_by_tag",
                 {
                     "query_vector": vec_str,
-                    "user_id_param": uid,
+                    "org_id_param": uid,
                     "persona_param": self._sb_persona(),
                     "tag_param": tag,
                     "match_count": limit,
@@ -490,7 +516,7 @@ class EpisodicStore:
                 res = (
                     sb.table("episodes")
                     .select("*")
-                    .eq("user_id", uid)
+                    .eq("org_id", uid)
                     .eq("persona", self._sb_persona())
                     .eq("session_id", session_id)
                     .execute()
@@ -502,7 +528,9 @@ class EpisodicStore:
         if not self._ensure_ready():
             return []
         try:
-            results = self._table.search().where(f"session_id = '{session_id}'").to_list()
+            results = (
+                self._table.search().where(f"session_id = '{_sql_quote(session_id)}'").to_list()
+            )
             return results
         except Exception as e:
             logger.error("[Episode DB] Session recall failed: %s", e)
@@ -536,8 +564,7 @@ class SchemaStore:
         return get_client(), get_user_id()
 
     def _sb_persona(self) -> str:
-        raw = self._persona or os.environ.get("BRAIN_PERSONA_NAME", "default")
-        return _persona_key(raw)
+        return _persona_key(_resolve_persona(self._persona))
 
     def _validate_filename(self, filename: str) -> bool:
         """Return True if filename is safe; log a warning and return False otherwise."""
@@ -565,7 +592,7 @@ class SchemaStore:
                 res = (
                     sb.table("brain_schemas")
                     .select("content")
-                    .eq("user_id", uid)
+                    .eq("org_id", uid)
                     .eq("persona", self._sb_persona())
                     .eq("filename", filename)
                     .maybe_single()
@@ -592,7 +619,7 @@ class SchemaStore:
             sb, uid = self._sb()
             sb.table("brain_schemas").upsert(
                 {
-                    "user_id": uid,
+                    "org_id": uid,
                     "persona": self._sb_persona(),
                     "filename": filename,
                     "content": content,
@@ -711,7 +738,7 @@ class SchemaStore:
                 res = (
                     sb.table("brain_schemas")
                     .select("filename")
-                    .eq("user_id", uid)
+                    .eq("org_id", uid)
                     .eq("persona", self._sb_persona())
                     .execute()
                 )
@@ -729,7 +756,7 @@ class SchemaStore:
                 res = (
                     sb.table("brain_schemas")
                     .select("filename,content")
-                    .eq("user_id", uid)
+                    .eq("org_id", uid)
                     .eq("persona", self._sb_persona())
                     .ilike("content", f"%{keyword}%")
                     .execute()
@@ -863,7 +890,7 @@ class SchemaStore:
                         (
                             sb.table("brain_schemas")
                             .delete()
-                            .eq("user_id", uid)
+                            .eq("org_id", uid)
                             .eq("persona", self._sb_persona())
                             .eq("filename", placeholder_filename)
                             .execute()

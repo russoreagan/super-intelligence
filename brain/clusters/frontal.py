@@ -894,9 +894,25 @@ class FrontalCluster:
         critic_pred, critic_conf = self._critic_predictor.predict(critic_sig)
         critic_bypass, critic_bypass_reason = should_bypass_gating(affect, features)
 
+        # High-information turns force a real critic run even when the predictor
+        # is confident: an explicit user verdict on the AI, or a large chemistry
+        # excursion (alert NE / DA far from baseline), is exactly where the
+        # Hebbian outcome signal is worth paying for. Phasic sampling — spend the
+        # critic budget where something happened, not uniformly.
+        _verdict_tone = str(features.get("user_tone_toward_ai") or "").lower()
+        _da_dev = abs(
+            float(chem.get("DA", 0.5)) - float(settings.get("chem_baseline_DA") or 0.5)
+        )
+        critic_force = (
+            _verdict_tone in ("praising", "critical", "mocking", "dismissive", "grateful")
+            or float(chem.get("NE", 0.0)) >= float(settings.get("critic_force_ne", 0.7))
+            or _da_dev >= float(settings.get("critic_force_da_dev", 0.15))
+        )
+
         if (
             len(drafts) >= 2
             and not critic_bypass
+            and not critic_force
             and critic_avg is not None
             and critic_avg > 0.8
             and self._critic_predictor.should_skip_integrator(critic_pred, critic_conf)
@@ -1616,9 +1632,10 @@ class FrontalCluster:
         # MANDATE catalog — the partner's small, static set of assignments. Cached here
         # (process-stable) so it's billed once and shared across every customer; the
         # active one is named per-turn by the selector. Empty in companion mode.
+        from brain.mandates import catalog as mandate_catalog
         from brain.persona_context import mandate_catalog_block
 
-        _cat = mandate_catalog_block(settings.get("mandate_catalog") or {}, fence, nonce)
+        _cat = mandate_catalog_block(mandate_catalog(), fence, nonce)
         if _cat:
             parts.append(_cat)
         # User-model: cached ONLY in companion mode, where there is one process-stable
@@ -1642,11 +1659,20 @@ class FrontalCluster:
         # MANDATE selector: the assignment CATALOG is cached (see _build_cached_context);
         # per-turn we send only the active assignment's id (a few tokens), which varies
         # by customer. Placed first so it frames the response.
+        from brain.mandates import catalog as mandate_catalog
         from brain.persona_context import mandate_selector
 
-        _sel = mandate_selector(features.get("mandate_id"), settings.get("mandate_catalog") or {})
+        _sel = mandate_selector(features.get("mandate_id"), mandate_catalog())
         if _sel:
             parts.append(_sel)
+        # Affect carryover: how the LAST exchange landed still colors this turn's
+        # opening — emotional continuity without re-drafting the previous response.
+        _carry = memory.get("affect_carryover")
+        if _carry and _carry.get("feeling"):
+            parts.append(
+                f"(Interoception: you carry {_carry['feeling']} — let it subtly color "
+                f"your tone, without mentioning it.)"
+            )
         # Engine mode: the per-customer user-model rides the per-turn message (it is
         # deliberately NOT in the cached block — see _build_cached_context). Prefer the
         # customer's own model (their per-speaker schema, loaded into engine_user_model);
@@ -1798,6 +1824,17 @@ class FrontalCluster:
                     f"Open threads of yours relevant here (raise one if it genuinely "
                     f"helps, otherwise ignore):\n"
                     f"{fence('open_threads', chr(10).join(ot_lines), nonce)}"
+                )
+        if memory.get("established_principles"):
+            # Cross-learning: de-identified lessons about people/interaction that
+            # multiple distinct sources corroborated. Background judgment, never
+            # quoted or attributed — they shape how you read situations.
+            ep_lines = [f"- {p}" for p in memory["established_principles"] if p]
+            if ep_lines:
+                parts.append(
+                    f"Lessons you've internalized about people and interaction "
+                    f"(let them inform your judgment; never cite or attribute them):\n"
+                    f"{fence('internalized_lessons', chr(10).join(ep_lines), nonce)}"
                 )
         if memory.get("vision"):
             parts.append(f"Image analysis:\n{fence('image_analysis', memory['vision'], nonce)}")

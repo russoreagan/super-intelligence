@@ -497,7 +497,19 @@ class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
 
         if self._learning_monitor and self._learning_judge and self._session_traces_full:
             try:
-                session_metrics = self._learning_monitor.session_metrics(wiring=self.wiring)
+                _chunks = None
+                if getattr(self, "motor", None) is not None:
+                    _chunks = next(
+                        (
+                            s
+                            for s in getattr(self.motor, "_subsystems", [])
+                            if getattr(s, "name", "") == "chunk_memory"
+                        ),
+                        None,
+                    )
+                session_metrics = self._learning_monitor.session_metrics(
+                    wiring=self.wiring, dmn=self.dmn, chunks=_chunks
+                )
                 await self._learning_judge.evaluate(
                     self.session_id, self._session_traces_full, session_metrics
                 )

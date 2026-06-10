@@ -3985,7 +3985,7 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
 
 </style>
 <!-- Redesigned settings page styles (scoped to #settings-page) -->
-<link rel="stylesheet" href="settings.css?v=12">
+<link rel="stylesheet" href="settings.css?v=16">
 </head>
 <body>
 
@@ -5077,13 +5077,12 @@ function sendMessage(text) {
     // or by the fallback timer below for text-only responses.
     if (micActive && micState === 'off') {
       clearTimeout(voiceRestartTimer);
-      ws.send(JSON.stringify({ type: 'voice_stop' }));
+      _voiceSessionStop();
       // Fallback for text-only mode where no speaking event fires:
       // reopen after 5 s if the brain hasn't started TTS by then.
       voiceRestartTimer = setTimeout(() => {
-        if (micActive && micState === 'off' && !brainIsSpeaking
-            && ws && ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: 'voice_start' }));
+        if (micActive && micState === 'off' && !brainIsSpeaking) {
+          _voiceSessionStart();
         }
       }, 5000);
     }
@@ -5270,15 +5269,13 @@ function handle(msg) {
         if (brainIsSpeaking) {
           // TTS starting — close Deepgram. The session was already closed by
           // sendMessage, but guard here too for any edge-case path that skips it.
-          if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'voice_stop' }));
-          }
+          _voiceSessionStop();
         } else {
           // TTS ended — reopen Deepgram after a brief audio-settle delay.
           // This is the primary auto-resume mechanism between turns.
           voiceRestartTimer = setTimeout(() => {
-            if (micActive && micState === 'off' && ws && ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ type: 'voice_start' }));
+            if (micActive && micState === 'off') {
+              _voiceSessionStart();
             }
           }, 400);
         }
@@ -5964,11 +5961,114 @@ const micBtn = document.getElementById('mic-btn');
 const transcriptBar = document.getElementById('transcript-bar');
 const transcriptText = transcriptBar.querySelector('.tx-text');
 let micActive = false;
-let mediaRecorder = null;
 let micStream = null;
 let finalTranscript = '';
 let autoSendTimer = null;
 const AUTO_SEND_DELAY_MS = 1500;
+
+/* ---- Raw-PCM mic capture (replaces MediaRecorder/WebM) -------------------
+   The server's Deepgram session is deliberately closed while the brain is
+   processing a turn and reopened when TTS ends. WebM/Opus made that fatal:
+   MediaRecorder emits the container header only in its first chunk, so every
+   reopened session received undecodable headerless audio — the mic died after
+   the first turn. Raw PCM16 @16kHz frames are stateless: any session can pick
+   up the stream at any chunk boundary. The server connects to Deepgram with
+   encoding=linear16&sample_rate=16000&channels=1 to match. */
+const PCM_TARGET_RATE = 16000;
+let _pcmCtx = null, _pcmSource = null, _pcmNode = null;
+// True while the server is expected to have a live Deepgram session. Audio
+// frames are only sent when this is set — capture keeps running between
+// turns, but we don't stream into a deliberately-closed session.
+let voiceSessionOpen = false;
+
+const PCM_WORKLET_SRC = `
+class PcmTap extends AudioWorkletProcessor {
+  process(inputs) {
+    const ch = inputs[0] && inputs[0][0];
+    if (ch && ch.length) this.port.postMessage(new Float32Array(ch));
+    return true;
+  }
+}
+registerProcessor('pcm-tap', PcmTap);
+`;
+
+function _downsampleToInt16(f32, fromRate) {
+  const ratio = fromRate / PCM_TARGET_RATE;
+  const outLen = Math.floor(f32.length / ratio);
+  const out = new Int16Array(outLen);
+  for (let i = 0; i < outLen; i++) {
+    const pos = i * ratio;
+    const i0 = Math.floor(pos);
+    const i1 = Math.min(i0 + 1, f32.length - 1);
+    const frac = pos - i0;
+    let s = f32[i0] * (1 - frac) + f32[i1] * frac;
+    s = Math.max(-1, Math.min(1, s));
+    out[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+  }
+  return out;
+}
+
+async function _startPcmCapture(stream) {
+  _pcmCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (_pcmCtx.state === 'suspended') await _pcmCtx.resume();
+  _pcmSource = _pcmCtx.createMediaStreamSource(stream);
+  const srcRate = _pcmCtx.sampleRate;
+
+  let pending = [];
+  let pendingLen = 0;
+  const flushAt = Math.round(srcRate * 0.25); // ~250ms batches, like MediaRecorder.start(250)
+  const onSamples = (f32) => {
+    pending.push(f32);
+    pendingLen += f32.length;
+    if (pendingLen < flushAt) return;
+    const all = new Float32Array(pendingLen);
+    let off = 0;
+    for (const b of pending) { all.set(b, off); off += b.length; }
+    pending = []; pendingLen = 0;
+    if (!voiceSessionOpen || !ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(_downsampleToInt16(all, srcRate).buffer);
+  };
+
+  if (_pcmCtx.audioWorklet) {
+    const url = URL.createObjectURL(new Blob([PCM_WORKLET_SRC], { type: 'application/javascript' }));
+    try { await _pcmCtx.audioWorklet.addModule(url); } finally { URL.revokeObjectURL(url); }
+    _pcmNode = new AudioWorkletNode(_pcmCtx, 'pcm-tap', { numberOfOutputs: 0 });
+    _pcmNode.port.onmessage = (e) => onSamples(e.data);
+    _pcmSource.connect(_pcmNode);
+  } else {
+    // Legacy fallback (no AudioWorklet): ScriptProcessor must be wired to the
+    // destination to fire, but it carries no signal so nothing is audible.
+    _pcmNode = _pcmCtx.createScriptProcessor(4096, 1, 1);
+    _pcmNode.onaudioprocess = (e) => onSamples(new Float32Array(e.inputBuffer.getChannelData(0)));
+    _pcmSource.connect(_pcmNode);
+    _pcmNode.connect(_pcmCtx.destination);
+  }
+}
+
+function _stopPcmCapture() {
+  if (_pcmNode) {
+    try { if (_pcmNode.port) _pcmNode.port.onmessage = null; } catch (e) {}
+    try { _pcmNode.disconnect(); } catch (e) {}
+    _pcmNode = null;
+  }
+  if (_pcmSource) { try { _pcmSource.disconnect(); } catch (e) {} _pcmSource = null; }
+  if (_pcmCtx) { try { _pcmCtx.close(); } catch (e) {} _pcmCtx = null; }
+}
+
+// Single entry points for opening/closing the server-side Deepgram session so
+// the voiceSessionOpen gate can never drift out of sync with what we sent.
+function _voiceSessionStart() {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    voiceSessionOpen = true;
+    ws.send(JSON.stringify({ type: 'voice_start' }));
+  }
+}
+function _voiceSessionStop() {
+  voiceSessionOpen = false;
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'voice_stop' }));
+  }
+}
 
 // Single source of truth for mic state: 'off' | 'muted' | 'active'
 // 'off'    = no Python voice mode (browser press-to-talk only)
@@ -6102,18 +6202,22 @@ async function startListening() {
     return;
   }
 
-  ws.send(JSON.stringify({ type: 'voice_start' }));
+  _voiceSessionStart();
   finalTranscript = '';
   msgInput.value = '';
 
-  const mime = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus']
-    .find(m => MediaRecorder.isTypeSupported(m)) || '';
-  mediaRecorder = new MediaRecorder(micStream, mime ? { mimeType: mime } : {});
-  mediaRecorder.ondataavailable = (e) => {
-    if (e.data && e.data.size > 0 && ws && ws.readyState === WebSocket.OPEN)
-      e.data.arrayBuffer().then(buf => ws.send(buf));
-  };
-  mediaRecorder.start(250);
+  try {
+    await _startPcmCapture(micStream);
+  } catch (err) {
+    console.error('PCM capture failed:', err);
+    _voiceSessionStop();
+    _stopPcmCapture();
+    if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
+    transcriptText.textContent = 'Mic capture failed: ' + (err && err.message ? err.message : err);
+    transcriptBar.classList.add('visible');
+    setTimeout(() => transcriptBar.classList.remove('visible'), 4000);
+    return;
+  }
 
   micActive = true;
   micBtn.classList.remove('muted');
@@ -6129,14 +6233,13 @@ function stopListening(autoSend = false) {
   clearTimeout(autoSendTimer);
   autoSendTimer = null;
 
-  const wasDemo = demoMode && !mediaRecorder;
+  const wasDemo = demoMode && !_pcmCtx;
   const captured = transcriptText.textContent.replace(/^✓\s*/, '').trim();
 
   _micReset();
-  if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
-  mediaRecorder = null;
+  _stopPcmCapture();
   if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
-  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'voice_stop' }));
+  _voiceSessionStop();
 
   const text = finalTranscript.trim() || msgInput.value.trim() || (wasDemo ? captured : '');
   finalTranscript = '';
@@ -6149,7 +6252,7 @@ function stopListening(autoSend = false) {
 
 function handleTranscriptEvent(msg) {
   // Two code paths fire this:
-  //   - Browser-side MediaRecorder (micActive=true): user is press-to-talk,
+  //   - Browser-side PCM capture (micActive=true): user is press-to-talk,
   //     transcripts stream in interim+final, auto-send after a pause.
   //   - Python streaming_mic in micState !== 'off': only final transcripts
   //     arrive (the voice bridge in run.py emits them AND auto-dispatches
@@ -6202,18 +6305,22 @@ function handleTtsError(msg) {
 }
 
 function handleTranscriptError(msg) {
-  transcriptText.textContent = '⚠ Reconnecting mic…';
+  // Show the real reason (missing API key, SDK absent…) — a permanent failure
+  // disguised as "reconnecting" is undebuggable from the UI.
+  const reason = msg && msg.msg ? String(msg.msg) : '';
+  const permanent = /not set|not installed/i.test(reason);
+  transcriptText.textContent = permanent ? ('⚠ Mic unavailable: ' + reason)
+                                         : '⚠ Reconnecting mic…' + (reason ? ' (' + reason + ')' : '');
   transcriptBar.classList.add('visible');
   setTimeout(() => transcriptBar.classList.remove('visible'), 3000);
   if (micActive && micState === 'off') {
-    // Don't fully stop — the Deepgram connection died but MediaRecorder is
-    // still running. Clear the dead server session and open a fresh one.
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: 'voice_stop' }));
-    }
+    // Don't fully stop — the Deepgram connection died but PCM capture is
+    // still running. Clear the dead server session and open a fresh one;
+    // raw PCM frames are stateless so the new session decodes mid-stream.
+    _voiceSessionStop();
     setTimeout(() => {
-      if (micActive && micState === 'off' && ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'voice_start' }));
+      if (micActive && micState === 'off') {
+        _voiceSessionStart();
       }
     }, 300);
   } else {
@@ -8072,8 +8179,8 @@ function _applyMoodTint() {
 })();
 </script>
 <!-- Redesigned settings page: schema + render engine (live-wired to /settings) -->
-<script src="settings-data.js?v=12"></script>
-<script src="settings-ui.js?v=12"></script>
+<script src="settings-data.js?v=16"></script>
+<script src="settings-ui.js?v=16"></script>
 <!-- Trading layer: vendored TradingView Lightweight Charts (Apache-2.0) for chart cards -->
 <script src="lightweight-charts.standalone.production.js"></script>
 </body>

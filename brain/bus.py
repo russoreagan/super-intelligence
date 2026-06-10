@@ -161,6 +161,20 @@ class Neuromodulators:
             if ch in levels:
                 self._levels[ch] = max(self._HARD_MIN[ch], min(1.0, float(levels[ch])))
 
+    def rebaseline(self) -> None:
+        """Re-read the resting setpoints from settings. Baselines are cached at
+        init for the hot decay path; without this, a temperament-dial edit to
+        chem_baseline_* only takes effect on the next boot while the dial's
+        other (live-read) targets apply instantly — mixed-latency dials. Called
+        by the settings endpoint whenever a patch touches chem_baseline_*.
+        Levels are untouched: the mood is unchanged, only where it relaxes to."""
+        from brain.settings import settings as _s
+
+        self._baseline = {
+            ch: float(_s.get(f"chem_baseline_{ch}", self._DEF_BASELINE[ch]))
+            for ch in self.CHANNELS
+        }
+
 
 class HormonalState:
     """
@@ -241,6 +255,15 @@ class HormonalState:
         for ch in self.CHANNELS:
             if ch in levels:
                 self._levels[ch] = max(self._HARD_MIN[ch], min(1.0, float(levels[ch])))
+
+    def rebaseline(self) -> None:
+        """Re-read resting setpoints from settings — see Neuromodulators.rebaseline."""
+        from brain.settings import settings as _s
+
+        self._baseline = {
+            ch: float(_s.get(f"chem_baseline_{ch}", self._DEF_BASELINE[ch]))
+            for ch in self.CHANNELS
+        }
 
     # ── Modulation helpers (used by hypothalamus) ─────────────────────────────
 
@@ -368,6 +391,18 @@ class Bus:
         """A fresh per-client chemistry pair seeded from the persona temperament
         baseline. Restore a returning client's snapshot onto it before binding."""
         return ChemPair.fresh()
+
+    def rebaseline_chem(self) -> None:
+        """Re-read resting setpoints from settings into every live chemistry —
+        the resting pair plus any bound per-client pairs (engine mode; the
+        registry attaches itself at construction). Levels are untouched. Called
+        by the settings endpoint when a patch moves chem_baseline_*."""
+        self._resting.neuromod.rebaseline()
+        self._resting.hormonal.rebaseline()
+        reg = getattr(self, "_chem_registry", None)
+        for pair in getattr(reg, "_live", {}).values() if reg else ():
+            pair.neuromod.rebaseline()
+            pair.hormonal.rebaseline()
 
     @contextlib.contextmanager
     def bind(self, pair: ChemPair):

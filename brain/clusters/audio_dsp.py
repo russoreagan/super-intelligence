@@ -319,6 +319,7 @@ def extract_prosody(audio: np.ndarray, sr: int) -> dict:
         "shimmer": 0.0,
         "voiced_fraction": 0.0,
         "tone_label": "calm",
+        "laughter_likelihood": 0.0,
     }
 
     # Quick energy check
@@ -409,6 +410,7 @@ def extract_prosody(audio: np.ndarray, sr: int) -> dict:
 
     base["tone_label"] = label_prosody_tone(base)
     base["tone_strength"] = prosody_tone_strength(base, base["tone_label"])
+    base["laughter_likelihood"] = laughter_likelihood(base)
     return base
 
 
@@ -463,6 +465,60 @@ def prosody_tone_strength(
         shimmer = features.get("shimmer", 0.0)
         return 0.5 * (_overshoot(jitter, jitter_thresh) + _overshoot(shimmer, shimmer_thresh))
     return 0.0
+
+
+def laughter_likelihood(features: dict, baseline: dict | None = None) -> float:
+    """
+    Graded [0,1] likelihood that the segment contains laughter, from features
+    extract_prosody already computes — no extra DSP passes.
+
+    Laughter's acoustic signature: rhythmic energy bursts at ~4–6 Hz (the
+    "ha-ha-ha" pulse train, visible as speech_rate_hz in that band with high
+    energy_std), a high voiced fraction (laughs are voiced exhalations), and
+    elevated, highly variable pitch (f0 well above speech with large f0_std).
+
+    Deliberately conservative: ALL four components must register (each above a
+    floor) or the score is 0.0, so merely animated/energetic speech — which
+    shares the rate and energy bands but not the pitch signature — does not
+    false-positive. Downstream additionally gates on settings
+    "laughter_dsp_threshold" before any chemistry is released.
+
+    Like label_prosody_tone, a calibrated per-speaker `baseline` (>= 10 obs)
+    raises the energy/pitch-variability thresholds proportionally to that
+    person's own normal range.
+    """
+    vf = features.get("voiced_fraction", 0.0)
+    f0_mean = features.get("f0_mean_hz", 0.0)
+    f0_std = features.get("f0_std_hz", 0.0)
+    e_std = features.get("energy_std", 0.0)
+    rate = features.get("speech_rate_hz", 0.0)
+
+    # Universal thresholds; a calibrated speaker baseline raises them so an
+    # expressive talker's normal variability doesn't read as laughter.
+    energy_std_thresh = 0.04
+    f0_std_thresh = 40.0
+    calibrated = baseline is not None and baseline.get("count", 0) >= 10
+    if calibrated:
+        energy_std_thresh = max(energy_std_thresh, baseline.get("energy_mean", 0.0) * 0.5)
+        f0_std_thresh = max(f0_std_thresh, baseline.get("f0_std", 0.0) * 1.5)
+
+    # Rhythmic syllable bursts peaked at ~5 Hz, zero outside ~3.5–7 Hz.
+    if 3.5 <= rate <= 7.0:
+        rhythm = max(0.0, 1.0 - abs(rate - 5.0) / 2.0)
+    else:
+        rhythm = 0.0
+    burst = _overshoot(e_std, energy_std_thresh)
+    voiced = max(0.0, min(1.0, (vf - 0.5) / 0.3))
+    # Pitch component requires elevated mean f0 — laughter sits above the
+    # speaking register — AND large pitch variability.
+    pitch = _overshoot(f0_std, f0_std_thresh) if f0_mean > 150.0 else 0.0
+
+    # Conservative AND-gate: every component must clear a floor, otherwise
+    # this is just lively speech missing part of the signature.
+    _floor = 0.2
+    if min(rhythm, burst, voiced, pitch) < _floor:
+        return 0.0
+    return min(1.0, 0.35 * rhythm + 0.25 * burst + 0.2 * voiced + 0.2 * pitch)
 
 
 def label_prosody_tone(features: dict, baseline: dict | None = None) -> str:

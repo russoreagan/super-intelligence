@@ -23,6 +23,13 @@
     'The Analyst':   { DA: 0.35, ACh: 0.35, GABA: 0.30, Glu: 0.25, NE: 0.25, '5HT': 0.55, CORT: 0.14, OXT: 0.22, AEA: 0.30 },
     'The Poet':      { DA: 0.32, ACh: 0.55, GABA: 0.12, Glu: 0.38, NE: 0.42, '5HT': 0.28, CORT: 0.15, OXT: 0.22, AEA: 0.38 },
     'The Sage':      { DA: 0.35, ACh: 0.18, GABA: 0.28, Glu: 0.12, NE: 0.12, '5HT': 0.72, CORT: 0.03, OXT: 0.50, AEA: 0.55 },
+    'The Companion': { DA: 0.52, ACh: 0.35, GABA: 0.24, Glu: 0.32, NE: 0.25, '5HT': 0.60, CORT: 0.05, OXT: 0.65, AEA: 0.30 },
+    'The Adversary': { DA: 0.30, ACh: 0.30, GABA: 0.40, Glu: 0.30, NE: 0.40, '5HT': 0.40, CORT: 0.20, OXT: 0.12, AEA: 0.15 },
+    'The Mentor':    { DA: 0.45, ACh: 0.45, GABA: 0.35, Glu: 0.26, NE: 0.22, '5HT': 0.64, CORT: 0.04, OXT: 0.50, AEA: 0.30 },
+    'The Concierge': { DA: 0.38, ACh: 0.28, GABA: 0.45, Glu: 0.18, NE: 0.22, '5HT': 0.60, CORT: 0.05, OXT: 0.35, AEA: 0.40 },
+    'The Jester':    { DA: 0.55, ACh: 0.48, GABA: 0.16, Glu: 0.42, NE: 0.28, '5HT': 0.55, CORT: 0.04, OXT: 0.40, AEA: 0.50 },
+    'The Stoic':     { DA: 0.35, ACh: 0.25, GABA: 0.42, Glu: 0.15, NE: 0.15, '5HT': 0.60, CORT: 0.05, OXT: 0.25, AEA: 0.45 },
+    'The Cynic':     { DA: 0.25, ACh: 0.30, GABA: 0.30, Glu: 0.22, NE: 0.28, '5HT': 0.42, CORT: 0.18, OXT: 0.20, AEA: 0.22 },
   };
   const CHANNELS = [
     { ch: 'DA', name: 'Dopamine' }, { ch: 'ACh', name: 'Acetylcholine' }, { ch: 'GABA', name: 'GABA' },
@@ -48,11 +55,32 @@
     { id: 'creativity', label: 'Creativity', sub: 'associative play', glyph: 'star',
       map: [ { key: 'chem_baseline_ACh', dir: +1, span: 0.08 }, { key: 'chem_baseline_AEA', dir: +1, span: 0.12 }, { key: 'chem_baseline_GABA', dir: -1, span: 0.06 }, { key: 'dmn_overlap_threshold', dir: +1, span: 0.05 }, { key: 'surprise_ACh_weight', dir: +1, span: 0.04 } ] },
     { id: 'humor', label: 'Humor', sub: 'levity', glyph: 'smile',
-      map: [ { key: 'chem_baseline_DA', dir: +1, span: 0.10 }, { key: 'chem_baseline_AEA', dir: +1, span: 0.10 }, { key: 'chem_baseline_ACh', dir: +1, span: 0.05 }, { key: 'chem_baseline_GABA', dir: -1, span: 0.05 }, { key: 'chem_baseline_CORT', dir: -1, span: 0.05 } ] },
+      // Two halves: a resting-mood tilt toward amused (the chem baselines) AND
+      // a reward-side component — how much landing a laugh actually pays
+      // (reward_weight_levity scales the laughter→DA event, which feeds the
+      // Hebbian funnel: a high-Humor persona reinforces what earned laughs).
+      map: [ { key: 'chem_baseline_DA', dir: +1, span: 0.10 }, { key: 'chem_baseline_AEA', dir: +1, span: 0.10 }, { key: 'chem_baseline_ACh', dir: +1, span: 0.05 }, { key: 'chem_baseline_GABA', dir: -1, span: 0.05 }, { key: 'chem_baseline_CORT', dir: -1, span: 0.05 }, { key: 'reward_weight_levity', dir: +1, span: 0.5 } ] },
     { id: 'sociability', label: 'Sociability', sub: 'outgoing · initiates', glyph: 'social',
-      map: [ { key: 'dmn_interval', dir: -1, span: 8 }, { key: 'proactive_idle_threshold', dir: -1, span: 90 }, { key: 'ach_suppression_weight', dir: -1, span: 0.35 }, { key: 'voice_style_default', dir: +1, span: 0.08 } ] },
+      // voice expressiveness deliberately NOT here — it belongs to Empathy alone,
+      // so two dials never silently sum into one voice parameter.
+      map: [ { key: 'dmn_interval', dir: -1, span: 8 }, { key: 'proactive_idle_threshold', dir: -1, span: 90 }, { key: 'ach_suppression_weight', dir: -1, span: 0.35 } ] },
     { id: 'caution', label: 'Caution', sub: 'trusting ↔ guarded', glyph: 'shield',
       map: [ { key: 'hostility_GABA_threshold_high', dir: -1, span: 0.12 }, { key: 'cort_threat_increment', dir: +1, span: 0.012 }, { key: 'ne_hostility_weight', dir: +1, span: 0.06 }, { key: 'chem_baseline_OXT', dir: -1, span: 0.08 } ] },
+    { id: 'lingering', label: 'Lingering', sub: 'resets fast ↔ carries the moment', glyph: 'echo',
+      // Affect carryover: how strongly the LAST exchange's emotional residue
+      // colors the next turn. Higher dial → lower trigger threshold → more
+      // moments linger. (The two-phase rule: residue hints the NEXT turn only.)
+      map: [ { key: 'affect_carryover_da_threshold', dir: -1, span: 0.06 } ] },
+    /* ---- Motivation: what this persona finds REWARDING (reward-source
+       valuation, multiplied onto its innate leaning) — distinct from Empathy/
+       Drive, which shape expression and reward SENSITIVITY, not what counts as
+       reward in the first place. ---- */
+    { id: 'warmth-seeking', label: 'Warmth-seeking', sub: 'rewarded by connection', glyph: 'bond',
+      map: [ { key: 'reward_weight_connection', dir: +1, span: 0.5 } ] },
+    { id: 'curiosity-seeking', label: 'Curiosity-seeking', sub: 'rewarded by discovery', glyph: 'compass',
+      map: [ { key: 'reward_weight_novelty', dir: +1, span: 0.5 } ] },
+    { id: 'mastery-seeking', label: 'Mastery-seeking', sub: 'rewarded by being right', glyph: 'arrow',
+      map: [ { key: 'reward_weight_correctness', dir: +1, span: 0.4 }, { key: 'reward_weight_mastery', dir: +1, span: 0.4 } ] },
   ];
 
   /* ---- cognitive-style dials — how the mind WORKS (vs temperament = who it
@@ -72,7 +100,6 @@
         { key: 'plasticity_intensity_weight', dir: +1, span: 0.30 },
         { key: 'plasticity_turn_max', dir: +1, span: 0.40 },    // deeper per-turn encoding
         { key: 'weight_max', dir: +1, span: 1.50 },             // accumulation headroom
-        { key: 'gaba_skip_threshold_high', dir: +1, span: 0.15 },// keep learning under inhibition
         { key: 'sleep_min_turns', dir: -1, span: 3 },           // consolidate more often
         { key: 'colony_trail_gain', dir: +1, span: 0.10 },      // strength of live trail reinforcement
       ],
@@ -82,7 +109,9 @@
         { key: 'colony_trail_apply', at: 0.80, mode: 'enableHigh' },// …reinforce paths that pay off immediately
       ] },
     { id: 'focus', label: 'Focus', sub: 'scattered ↔ single-minded', glyph: 'target',
-      map: [ { key: 'ne_scatter_threshold', dir: +1, span: 0.10 }, { key: 'topic_activation_decay', dir: +1, span: 0.12 }, { key: 'dmn_overlap_threshold', dir: +1, span: 0.10 }, { key: 'salience_workspace_threshold', dir: -1, span: 0.12 } ] },
+      // salience_workspace_threshold is a minimum BAR for workspace entry, so
+      // single-minded = HIGHER bar (fewer topics promoted), dir +1.
+      map: [ { key: 'ne_scatter_threshold', dir: +1, span: 0.10 }, { key: 'topic_activation_decay', dir: +1, span: 0.12 }, { key: 'dmn_overlap_threshold', dir: +1, span: 0.10 }, { key: 'salience_workspace_threshold', dir: +1, span: 0.12 } ] },
     { id: 'curiosity', label: 'Curiosity', sub: 'novelty-seeking', glyph: 'compass',
       map: [ { key: 'frontal_ach_weight', dir: +1, span: 0.15 }, { key: 'surprise_threshold', dir: -1, span: 0.12 }, { key: 'salience_ACh_weight', dir: +1, span: 0.06 } ] },
     { id: 'introspection', label: 'Introspection', sub: 'self-appraisal', glyph: 'spiral',
@@ -90,7 +119,21 @@
     { id: 'memory', label: 'Memory', sub: 'in-the-moment ↔ recall', glyph: 'node',
       map: [ { key: 'hippocampus_priority_base', dir: +1, span: 0.18 }, { key: 'topic_activation_decay', dir: +1, span: 0.10 } ] },
     { id: 'emotionality', label: 'Emotionality', sub: 'logic ↔ feeling-driven', glyph: 'balance',
-      map: [ { key: 'modulation_gain', dir: +1, span: 1.0 } ] },
+      // With flock_dynamics ON the controller owns modulation_gain per turn, so
+      // this dial sets the controller's OPERATING BAND instead of fighting it:
+      // the resting responsiveness target (sigma at low arousal) and where the
+      // gain is allowed to travel. modulation_gain stays as the direct lever
+      // for flag-off personas (the controller simply overwrites it when on).
+      map: [ { key: 'flock_sigma_target_low', dir: +1, span: 0.05 },
+             { key: 'flock_gain_max', dir: +1, span: 0.30 },
+             { key: 'flock_gain_min', dir: +1, span: 0.20 },
+             { key: 'modulation_gain', dir: +1, span: 1.0 } ] },
+    { id: 'hindsight', label: 'Hindsight', sub: 'in-the-moment ↔ connects the dots', glyph: 'rewind',
+      // Eligibility traces: how far back an outcome reaches when crediting the
+      // turns that set it up. Low = only the immediate turn learns; high =
+      // lessons attribute across the whole exchange.
+      map: [ { key: 'eligibility_lookback', dir: +1, span: 2 },
+             { key: 'eligibility_tau_turns', dir: +1, span: 1.2 } ] },
   ];
   const ALL_DIALS = TRAIT_DIALS.concat(COGNITIVE_DIALS);
 
@@ -110,6 +153,8 @@
     spiral: '<path d="M12 12a2 2 0 1 1 2 2 4 4 0 0 1-4-4 6 6 0 0 1 6-6 8 8 0 0 1 8 8"/>',
     node:   '<circle cx="6" cy="6" r="2"/><circle cx="18" cy="9" r="2"/><circle cx="9" cy="18" r="2"/><line x1="7.7" y1="7.2" x2="16.4" y2="8.2"/><line x1="7.2" y1="7.6" x2="8.4" y2="16.4"/>',
     balance:'<line x1="12" y1="4" x2="12" y2="20"/><line x1="5" y1="8" x2="19" y2="8"/><path d="M5 8l-2.5 5a2.5 2.5 0 0 0 5 0z"/><path d="M19 8l-2.5 5a2.5 2.5 0 0 0 5 0z"/>',
+    echo:   '<circle cx="9" cy="12" r="3"/><path d="M14.5 8.5a5 5 0 0 1 0 7M17.5 6a8.5 8.5 0 0 1 0 12"/>',
+    rewind: '<polygon points="11 6 4 12 11 18" fill="currentColor" stroke="none"/><polygon points="20 6 13 12 20 18" fill="currentColor" stroke="none"/>',
   };
   const ico = d => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
   const chevSvg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg>';
@@ -121,7 +166,21 @@
   const rowMeta = {};
   SET.categories.forEach(cat => (cat.sections || []).forEach(sec => [...(sec.rows || []), ...(sec.advanced || [])].forEach(r => { if (r.key && r.type !== 'group') rowMeta[r.key] = r; })));
   // dial keys that exist in settings.json but aren't surfaced as a UI row
-  const FALLBACK = { dmn_overlap_threshold: { min: 0.1, max: 0.8, def: 0.35 }, modulation_gain: { min: 0, max: 2.0, def: 1.0 } };
+  const FALLBACK = {
+    dmn_overlap_threshold: { min: 0.1, max: 0.8, def: 0.35 },
+    modulation_gain: { min: 0, max: 2.0, def: 1.0 },
+    flock_sigma_target_low: { min: 0.70, max: 0.98, def: 0.90 },
+    flock_gain_max: { min: 1.0, max: 2.5, def: 1.8 },
+    flock_gain_min: { min: 0.2, max: 0.9, def: 0.5 },
+    affect_carryover_da_threshold: { min: 0.02, max: 0.40, def: 0.10 },
+    reward_weight_connection: { min: 0.2, max: 2.0, def: 1.0 },
+    reward_weight_novelty: { min: 0.2, max: 2.0, def: 1.0 },
+    reward_weight_correctness: { min: 0.2, max: 2.0, def: 1.0 },
+    reward_weight_mastery: { min: 0.2, max: 2.0, def: 1.0 },
+    reward_weight_levity: { min: 0.2, max: 2.0, def: 1.0 },
+    eligibility_lookback: { min: 0, max: 5, def: 2 },
+    eligibility_tau_turns: { min: 0.5, max: 5.0, def: 2.0 },
+  };
   const keyMeta = k => rowMeta[k] || FALLBACK[k] || { min: 0, max: 1, def: 0 };
   const clampKey = (k, v) => { const m = keyMeta(k); return Math.max(+m.min, Math.min(+m.max, v)); };
 

@@ -123,7 +123,11 @@ class Wiring:
         if _settings.get("colony_features", 0) and _settings.get("colony_trail_apply", 0):
             overlay = self._trail.get((source, target), 0.0)
             if overlay:
-                return max(WEIGHT_MIN, min(WEIGHT_MAX, base + overlay))
+                # Clamp to the LIVE weight ceiling (the Learning Rate dial raises
+                # weight_max for accumulation headroom; the hardcoded constant
+                # would silently cap trails below what Hebbian updates may reach).
+                w_max = float(_settings.get("weight_max", WEIGHT_MAX) or WEIGHT_MAX)
+                return max(WEIGHT_MIN, min(w_max, base + overlay))
         return base
 
     # ── N1: live trail reinforcement (transient, non-persisted) ───────────────
@@ -260,7 +264,7 @@ class Wiring:
             persona = self._persona_name()
             rows = [
                 {
-                    "user_id": uid,
+                    "org_id": uid,
                     "persona": persona,
                     "source": e.source,
                     "target": e.target,
@@ -318,7 +322,7 @@ class Wiring:
             ]
             sb.table("wiring_snapshots").insert(
                 {
-                    "user_id": uid,
+                    "org_id": uid,
                     "persona": persona,
                     "session_id": session_id,
                     "ts": time.time(),
@@ -329,7 +333,7 @@ class Wiring:
             res = (
                 sb.table("wiring_snapshots")
                 .select("id")
-                .eq("user_id", uid)
+                .eq("org_id", uid)
                 .eq("persona", persona)
                 .order("ts", desc=True)
                 .execute()
@@ -363,7 +367,7 @@ class Wiring:
             res = (
                 sb.table("wiring_edges")
                 .select("source,target,weight,polarity")
-                .eq("user_id", uid)
+                .eq("org_id", uid)
                 .eq("persona", self._persona_name())
                 .execute()
             )

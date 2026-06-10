@@ -12,6 +12,7 @@ import logging
 import os
 import re
 import time
+from collections import OrderedDict
 
 logger = logging.getLogger(__name__)
 
@@ -137,6 +138,10 @@ class ModelRouter:
         self._obs = obs
         # Local-first embeddings; flip to "google" if Ollama is unreachable.
         self._embed_backend = "ollama"
+        # Small LRU over recent embeddings — the same texts recur within a session
+        # (DMN predictions re-checked per turn, dedup backfill, repeated recall
+        # queries) and re-embedding them is pure waste.
+        self._embed_cache: OrderedDict[str, list[float]] = OrderedDict()
         # Egress pseudonymization gateway (injected from session after creation).
         self._egress = None
 
@@ -1102,19 +1107,29 @@ class ModelRouter:
             return None
         text = text[:8192]  # safety cap
 
+        cached = self._embed_cache.get(text)
+        if cached is not None:
+            self._embed_cache.move_to_end(text)
+            return list(cached)
+
+        vec: list[float] | None = None
         if self._embed_backend == "ollama":
             vec = await self._embed_ollama(text)
-            if vec is not None:
-                return vec
-            # Permanent flip to google for remainder of session.
-            logger.info(
-                "Ollama embedding service unreachable — switching to Google embeddings for this session. "
-                "Memory search will still work. To restore local embeddings: run 'ollama serve' and "
-                "'ollama pull nomic-embed-text'."
-            )
-            self._embed_backend = "google"
-
-        return await self._embed_google(text)
+            if vec is None:
+                # Permanent flip to google for remainder of session.
+                logger.info(
+                    "Ollama embedding service unreachable — switching to Google embeddings for this session. "
+                    "Memory search will still work. To restore local embeddings: run 'ollama serve' and "
+                    "'ollama pull nomic-embed-text'."
+                )
+                self._embed_backend = "google"
+        if vec is None:
+            vec = await self._embed_google(text)
+        if vec is not None:
+            self._embed_cache[text] = list(vec)
+            while len(self._embed_cache) > 256:
+                self._embed_cache.popitem(last=False)
+        return vec
 
     async def _embed_ollama(self, text: str) -> list[float] | None:
         try:

@@ -192,6 +192,10 @@ class ChunkMemorySubsystem(MotorSubsystem):
         # Chunks that diverged this session are suppressed until the next sleep
         # pass re-derives their success rate from the (now lower-quality) history.
         self._suppressed: set[str] = set()
+        # Session-local count of clean ballistic completions per chunk — live
+        # reinforcement that biases ranking until the next mining pass folds the
+        # successes into the durable counts.
+        self._session_success: dict[str, int] = {}
         self._load()
 
     @property
@@ -210,7 +214,17 @@ class ChunkMemorySubsystem(MotorSubsystem):
             with open(_CHUNKS_PATH) as f:
                 data = json.load(f)
             self._chunks = data.get("chunks", {}) or {}
+            had_prior = self._mtime > 0.0
             self._mtime = mtime
+            # A fresh mining pass re-derived every chunk's success rate from the
+            # job history (which now includes any divergences), so session
+            # suppression has served its purpose — let demotion do the gating.
+            if had_prior and self._suppressed:
+                logger.info(
+                    "[ChunkMemory] New mining pass — lifting %d session suppression(s)",
+                    len(self._suppressed),
+                )
+                self._suppressed.clear()
             n_active = sum(1 for c in self._chunks.values() if c.get("state") == "active")
             logger.info("[ChunkMemory] Loaded %d chunks (%d active)", len(self._chunks), n_active)
         except Exception as e:
@@ -230,8 +244,12 @@ class ChunkMemorySubsystem(MotorSubsystem):
         active = self._active_chunks()
         if not active:
             return ""
-        # Surface the most-exercised routines first.
-        active.sort(key=lambda kc: kc[1].get("occurrences", 0), reverse=True)
+        # Surface the most-exercised routines first; clean firings this session
+        # count alongside the mined history.
+        active.sort(
+            key=lambda kc: kc[1].get("occurrences", 0) + self._session_success.get(kc[0], 0),
+            reverse=True,
+        )
         lines = ["Familiar tool routines (you often run these as a unit):"]
         for _, c in active[:_MAX_PRIMING]:
             seq = " → ".join(s.get("tool", "?") for s in c.get("sequence", []))
@@ -279,9 +297,19 @@ class ChunkMemorySubsystem(MotorSubsystem):
         return best
 
     def suppress(self, reason_tag: str) -> None:
-        """Stop firing a chunk for the rest of the session (reason_tag is 'chunk:<key>')."""
+        """Stop firing a chunk until the next mining pass (reason_tag is 'chunk:<key>')."""
         if reason_tag.startswith("chunk:"):
             key = reason_tag.split("chunk:", 1)[1]
             if key and key not in self._suppressed:
                 self._suppressed.add(key)
+                self._session_success.pop(key, None)
                 logger.info("[ChunkMemory] Suppressed diverged chunk for session: %s", key)
+
+    def reinforce(self, reason_tag: str) -> None:
+        """Record a clean ballistic completion (reason_tag is 'chunk:<key>') — the
+        success side of the loop suppress() is the failure side of. Biases ranking
+        live; the durable counts catch up at the next mining pass."""
+        if reason_tag.startswith("chunk:"):
+            key = reason_tag.split("chunk:", 1)[1]
+            if key:
+                self._session_success[key] = self._session_success.get(key, 0) + 1

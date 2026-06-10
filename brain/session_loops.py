@@ -187,10 +187,26 @@ class _LoopsMixin:
             self._pending_encodes.discard(t)
             exc = t.exception() if not t.cancelled() else None
             if exc:
+                # Count it so the loss is visible beyond a log line — a session
+                # silently dropping episodes looks healthy from the outside.
+                self._encode_failures = getattr(self, "_encode_failures", 0) + 1
+                self._last_encode_error = str(exc)
                 logger.error(
-                    "Memory write failed for this turn — episode will not be saved to long-term memory: %s",
+                    "Memory write failed for this turn — episode will not be saved to "
+                    "long-term memory (%d failure(s) this session): %s",
+                    self._encode_failures,
                     exc,
                 )
+                if self._emitter:
+                    with contextlib.suppress(Exception):
+                        asyncio.ensure_future(
+                            self._emitter.emit(
+                                "hippocampus",
+                                0.0,
+                                f"memory write failed ({self._encode_failures}x)",
+                                "error",
+                            )
+                        )
 
         task.add_done_callback(_done)
 

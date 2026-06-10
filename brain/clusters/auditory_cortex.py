@@ -48,9 +48,11 @@ from brain.clusters.audio_dsp import (
     extract_speaker_audio_segments,
     extract_speaker_embedding,
     label_prosody_tone,
+    laughter_likelihood,
     match_fingerprint,
     prosody_tone_strength,
 )
+from brain.clusters.vocal_events import detect_vocal_events
 from brain.second_brain.speaker_store import SpeakerStore
 from brain.settings import settings as _settings
 
@@ -343,17 +345,24 @@ class AuditoryCluster:
 
         _music_mode = os.environ.get("BRAIN_MUSIC_MODE", "false").lower() == "true"
 
+        _vocal_events_on = bool(_settings.get("vocal_events"))
+
         gather_coros = [
             loop.run_in_executor(None, match_fingerprint, audio, sr, fp_db),
             loop.run_in_executor(None, extract_prosody, audio, sr),
         ]
         if _music_mode:
             gather_coros.append(loop.run_in_executor(None, extract_music_features, audio, sr))
+        if _vocal_events_on:
+            # Same waveform, same executor pattern as prosody. detect_vocal_events
+            # fails soft to {} when panns_inference isn't installed.
+            gather_coros.append(loop.run_in_executor(None, detect_vocal_events, audio, sr))
 
         gather_results = await asyncio.gather(*gather_coros, return_exceptions=True)
         fp_result = gather_results[0]
         pros_result = gather_results[1]
         music_result = gather_results[2] if _music_mode else None
+        vocal_result = gather_results[-1] if _vocal_events_on else None
 
         if not isinstance(fp_result, BaseException):
             best_id = fp_result.pop("_best_song_id", None)
@@ -384,13 +393,23 @@ class AuditoryCluster:
                 pros_result["tone_strength"] = prosody_tone_strength(
                     pros_result, pros_result["tone_label"], baseline
                 )
+                # Same for the laughter heuristic: an expressive speaker's normal
+                # pitch/energy variability shouldn't read as laughter.
+                pros_result["laughter_likelihood"] = laughter_likelihood(pros_result, baseline)
+
+            # Merge vocal-event classifier probabilities (flag-gated tier 3)
+            # into the prosody payload so hypothalamus sees one voice-affect dict.
+            if vocal_result is not None and not isinstance(vocal_result, BaseException):
+                if vocal_result:
+                    pros_result["vocal_events"] = vocal_result
 
             logger.debug(
-                "Auditory: prosody tone=%s f0=%.0f energy=%.3f voiced=%.2f",
+                "Auditory: prosody tone=%s f0=%.0f energy=%.3f voiced=%.2f laugh=%.2f",
                 pros_result.get("tone_label"),
                 pros_result.get("f0_mean_hz", 0),
                 pros_result.get("energy_mean", 0),
                 pros_result.get("voiced_fraction", 0),
+                pros_result.get("laughter_likelihood", 0),
             )
             await self._bus.publish_dict("auditory.prosody", pros_result, source=CLUSTER)
 

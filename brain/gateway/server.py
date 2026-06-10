@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from html import escape as html_escape
 from pathlib import Path
 
@@ -58,9 +59,10 @@ def _access_token(request: Request) -> str:
 
 
 # Cache uid → org (the tenant unit) so routing isn't a DB query per request.
-# Memberships are stable within a session; a gateway restart refreshes (add a TTL
-# before memberships become mutable at runtime).
-_org_cache: dict[str, str] = {}
+# TTL'd so membership changes (user added to / removed from an org) take effect
+# within minutes rather than only on gateway restart.
+_ORG_CACHE_TTL_S = 30 * 60
+_org_cache: dict[str, tuple[str, float]] = {}
 
 
 def _tenant_for(uid: str) -> str:
@@ -68,12 +70,13 @@ def _tenant_for(uid: str) -> str:
     and all data key on). Falls back to the uid itself when there's no membership
     (pre-migration / dev) — which for a personal org is the same value, so this is
     behavior-preserving."""
-    t = _org_cache.get(uid)
-    if t is None:
-        from brain import org
+    hit = _org_cache.get(uid)
+    if hit is not None and time.time() - hit[1] < _ORG_CACHE_TTL_S:
+        return hit[0]
+    from brain import org
 
-        t = org.org_id_for_user(uid) or uid
-        _org_cache[uid] = t
+    t = org.org_id_for_user(uid) or uid
+    _org_cache[uid] = (t, time.time())
     return t
 
 
@@ -351,15 +354,21 @@ async def _proxy_ws(client_ws: WebSocket, port: int, on_activity=None) -> None:
         except Exception:
             pass
 
+    upstream_failed = False
+
     async def upstream_to_client():
+        nonlocal upstream_failed
         try:
             async for message in upstream:
                 if isinstance(message, (bytes, bytearray)):
                     await client_ws.send_bytes(bytes(message))
                 else:
                     await client_ws.send_text(message)
-        except Exception:
-            pass
+        except Exception as e:
+            # An abnormal upstream close means the brain process died or hung —
+            # tell the client (1011) so it retries, and tell the operator.
+            upstream_failed = True
+            logger.warning("[gateway] ws upstream closed abnormally on :%d: %s", port, e)
 
     try:
         done, pending = await asyncio.wait(
@@ -372,7 +381,7 @@ async def _proxy_ws(client_ws: WebSocket, port: int, on_activity=None) -> None:
         with _suppress():
             await upstream.close()
         with _suppress():
-            await client_ws.close()
+            await client_ws.close(code=1011 if upstream_failed else 1000)
 
 
 class _suppress:

@@ -72,7 +72,7 @@ class SpeakerStore:
     def _sb_load_all(self) -> None:
         try:
             sb, uid = self._sb()
-            res = sb.table("speaker_profiles").select("*").eq("user_id", uid).execute()
+            res = sb.table("speaker_profiles").select("*").eq("org_id", uid).execute()
             for row in res.data or []:
                 emb = row.get("embedding")
                 if isinstance(emb, str):  # pgvector comes back as "[...]"
@@ -224,7 +224,7 @@ class SpeakerStore:
             vec = data["embedding"]
             row = {
                 "id": data["speaker_id"],
-                "user_id": uid,
+                "org_id": uid,
                 "name": data.get("name"),
                 "embedding": f"[{','.join(str(v) for v in vec)}]",
                 "sample_count": data.get("sample_count", 0),

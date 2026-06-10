@@ -28,6 +28,7 @@ dependencies = [
     # is the keyless market-data fallback when no Alpaca key is configured.
     "mcp>=1.0.0",
     "yfinance>=0.2.40",
+    "panns-inference>=0.1.1",
 ]
 
 [dependency-groups]

@@ -157,15 +157,38 @@ class Provisioner:
             return await self._spawn(user_id)
 
     async def _spawn(self, user_id: str) -> int:
-        """Launch one brain.run subprocess for user_id and wait for /health."""
+        """Launch one brain.run subprocess for user_id and wait for /health.
+
+        Retries once on a failed boot with a fresh port: between _free_port()'s
+        probe and the child binding, another process can steal the port
+        (concurrent logins), which shows up as a health-check timeout."""
+        last_err: Exception | None = None
+        for attempt in range(2):
+            try:
+                return await self._spawn_once(user_id)
+            except RuntimeError as e:
+                last_err = e
+                logger.warning(
+                    "[provisioner] spawn attempt %d for %s failed: %s",
+                    attempt + 1,
+                    user_id[:8],
+                    e,
+                )
+        raise last_err if last_err else RuntimeError("tenant spawn failed")
+
+    async def _spawn_once(self, user_id: str) -> int:
         port = _free_port()
         root = TENANTS_DIR / user_id
         (root / "second_brain").mkdir(parents=True, exist_ok=True)
         settings_path = root / "settings.json"
         # Seed a fresh tenant's settings.json from the bundled defaults so they
         # start with sane chemistry; thereafter it's theirs and never overwritten.
+        # Copy via temp + atomic rename: the persona_name read just below (and a
+        # racing concurrent spawn) must never see a partially-written file.
         if not settings_path.exists() and _BUNDLED_SETTINGS.exists():
-            shutil.copy(_BUNDLED_SETTINGS, settings_path)
+            tmp = settings_path.with_suffix(".json.tmp")
+            shutil.copy(_BUNDLED_SETTINGS, tmp)
+            os.replace(tmp, settings_path)
 
         # Pin the tenant's persona name so its memory/chemistry key off the right
         # slug from the first boot (rather than relying on run.py re-deriving it
@@ -202,6 +225,14 @@ class Provisioner:
         )
         if persona_name:
             env["BRAIN_PERSONA_NAME"] = persona_name
+        else:
+            # run.py now hard-fails a multitenant boot without a resolvable persona
+            # (the persona='default' fallback cross-buckets tenants). Catch it here
+            # before burning a port + health-check timeout on a doomed spawn.
+            raise RuntimeError(
+                f"tenant {user_id[:8]}: settings.json at {settings_path} has no "
+                "persona_name — cannot spawn without BRAIN_PERSONA_NAME"
+            )
         # Bind the child to 127.0.0.1 (reachable only via the gateway). server.py
         # binds 0.0.0.0 when RAILWAY_ENVIRONMENT is set, so clear it for children;
         # the gateway keeps it to serve publicly.
@@ -209,6 +240,51 @@ class Provisioner:
         # Auth stays ON in the child; it re-verifies the forwarded cookie and pins
         # to BRAIN_USER_ID. Never disable it for tenants.
         env.pop("BRAIN_AUTH_DISABLED", None)
+        # Scoped DB credential: mint an org JWT (sub = org_id) so the tenant's
+        # storage layer runs under RLS instead of the service role. The vault
+        # fetch happens HERE (the gateway holds the service key) and the user's
+        # BYO keys are injected directly — the tenant never needs service-role
+        # access for anything. Key changes are picked up on respawn.
+        from brain.gateway.org_token import mint_org_token
+
+        org_jwt = mint_org_token(user_id)
+        if org_jwt:
+            env["BRAIN_SUPABASE_JWT"] = org_jwt
+        else:
+            logger.warning(
+                "[provisioner] SUPABASE_JWT_SECRET unset — tenant %s falls back to "
+                "the service-role key (RLS not enforced). Set the secret in prod.",
+                user_id[:8],
+            )
+        # Gateway-only secrets never belong in a tenant process: the service-role
+        # key (the tenant uses the org JWT above), pod lifecycle (RUNPOD_API_KEY),
+        # admission/reset mail (RESEND_API_KEY), the gateway's engine-API keys
+        # (BRAIN_API_KEYS), and the platform Anthropic key — tenants are BYO-key.
+        # Redact BEFORE the vault injection below so the user's own keys survive;
+        # the service key is only kept when no JWT could be minted (dev fallback).
+        secrets = [
+            "RUNPOD_API_KEY",
+            "RESEND_API_KEY",
+            "BRAIN_API_KEYS",
+            "BRAIN_API_KEY",
+            "ANTHROPIC_API_KEY",
+        ]
+        if org_jwt:
+            secrets.append("SUPABASE_SERVICE_KEY")
+        for secret in secrets:
+            env.pop(secret, None)
+
+        # The tenant's own BYO keys, fetched here because only the gateway holds
+        # the service role. Key changes are picked up on respawn.
+        try:
+            from brain.vault import PROVIDER_ENV, fetch_user_keys
+
+            for provider, value in (fetch_user_keys(user_id) or {}).items():
+                env_name = PROVIDER_ENV.get(provider)
+                if env_name and value:
+                    env[env_name] = value
+        except Exception as e:
+            logger.warning("[provisioner] vault key fetch for %s failed: %s", user_id[:8], e)
 
         cmd = self._cmd_builder(port, env)
         logger.info("[provisioner] spawning %s on :%d (%s)", user_id[:8], port, " ".join(cmd[:4]))

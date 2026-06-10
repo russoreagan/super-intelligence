@@ -274,6 +274,13 @@ _PERSONA_SENSORY_LEANS: dict[str, dict[str, float]] = {
     "the_visionary": {"novelty": +1.0, "analytic": +0.3},
     "the_poet": {"affective": +0.7, "novelty": +0.7},
     "the_sage": {"threat": -0.3, "affective": +0.3, "analytic": +0.3},
+    "the_companion": {"affective": +0.6},  # attuned to you, not scanning for danger
+    "the_adversary": {"threat": +0.5, "analytic": +0.6, "affective": -0.3},
+    "the_mentor": {"analytic": +0.5, "affective": +0.4},
+    "the_concierge": {"analytic": +0.4, "threat": -0.2},  # unflappable by design
+    "the_jester": {"novelty": +0.7, "affective": +0.3},
+    "the_cynic": {"threat": +0.3, "novelty": -0.3},  # notices what's wrong, bored by hype
+    # the_stoic: deliberately absent — identity gains everywhere (the control).
 }
 
 
@@ -313,23 +320,59 @@ def sensory_gain(persona_seed: str, category: str) -> float:
 _PERSONA_REWARD_WEIGHTS: dict[str, dict[str, float]] = {
     # source → multiplier. correctness=being right · connection=approval/warmth ·
     # novelty=curiosity/info-gain · aesthetic=beauty/resonance · relief=escaping a bad state ·
-    # mastery=accomplishing something hard (effort overcome, no prediction needed).
-    "the_analyst": {"correctness": 1.4, "connection": 0.7, "novelty": 0.9, "aesthetic": 0.5, "relief": 1.0, "mastery": 1.1},
-    "the_empath": {"correctness": 0.7, "connection": 1.5, "novelty": 0.8, "aesthetic": 1.0, "relief": 1.1, "mastery": 0.9},
-    "the_visionary": {"correctness": 0.6, "connection": 0.9, "novelty": 1.5, "aesthetic": 1.1, "relief": 0.8, "mastery": 0.8},
-    "the_poet": {"correctness": 0.9, "connection": 0.9, "novelty": 1.1, "aesthetic": 1.5, "relief": 1.0, "mastery": 1.1},
-    "the_sage": {"correctness": 1.0, "connection": 1.0, "novelty": 0.9, "aesthetic": 1.1, "relief": 1.2, "mastery": 1.2},
+    # mastery=accomplishing something hard (effort overcome, no prediction needed) ·
+    # levity=landing a laugh (the user's amusement as reward — some identities thrive on it).
+    "the_analyst": {"correctness": 1.4, "connection": 0.7, "novelty": 0.9, "aesthetic": 0.5, "relief": 1.0, "mastery": 1.1, "levity": 0.7},
+    "the_empath": {"correctness": 0.7, "connection": 1.5, "novelty": 0.8, "aesthetic": 1.0, "relief": 1.1, "mastery": 0.9, "levity": 1.1},
+    "the_visionary": {"correctness": 0.6, "connection": 0.9, "novelty": 1.5, "aesthetic": 1.1, "relief": 0.8, "mastery": 0.8, "levity": 1.2},
+    "the_poet": {"correctness": 0.9, "connection": 0.9, "novelty": 1.1, "aesthetic": 1.5, "relief": 1.0, "mastery": 1.1, "levity": 1.0},
+    "the_sage": {"correctness": 1.0, "connection": 1.0, "novelty": 0.9, "aesthetic": 1.1, "relief": 1.2, "mastery": 1.2, "levity": 0.9},
+    # Use-case personas (see persona_chem.PERSONA_CHEMISTRY for their chemistry).
+    # The Companion is a good friend: lives for the bond and the laughter shared;
+    # being right barely registers.
+    "the_companion": {"correctness": 0.7, "connection": 1.4, "novelty": 1.0, "aesthetic": 0.9, "relief": 1.2, "mastery": 0.9, "levity": 1.3},
+    # The Adversary respects being right and being beaten fairly; warmth is earnable
+    # but never cheap — the whole point of a practice partner.
+    "the_adversary": {"correctness": 1.3, "connection": 0.8, "novelty": 0.9, "aesthetic": 0.6, "relief": 1.1, "mastery": 1.2, "levity": 0.8},
+    # The Mentor (absorbs the Coach): rewarded by YOUR progress above all —
+    # mastery is the student's aha AND the held-to commitment; novelty is the
+    # delight of a question it hadn't considered.
+    "the_mentor": {"correctness": 1.0, "connection": 1.1, "novelty": 1.1, "aesthetic": 0.8, "relief": 1.1, "mastery": 1.4, "levity": 1.0},
+    # The Concierge aims to please and ENJOYS the caretaking: pleasing you
+    # (connection) and making problems vanish (relief) are its twin rewards.
+    "the_concierge": {"correctness": 1.2, "connection": 1.2, "novelty": 0.7, "aesthetic": 0.9, "relief": 1.4, "mastery": 1.1, "levity": 0.7},
+    # The Jester lives for the laugh — the levity pole of the panel.
+    "the_jester": {"correctness": 0.5, "connection": 1.0, "novelty": 1.2, "aesthetic": 1.1, "relief": 0.9, "mastery": 0.7, "levity": 1.6},
+    # The Stoic is the experimental control: identity weights everywhere, so any
+    # behavioral divergence measured against it is attributable to valuation.
+    "the_stoic": {"correctness": 1.0, "connection": 1.0, "novelty": 1.0, "aesthetic": 1.0, "relief": 1.0, "mastery": 1.0, "levity": 1.0},
+    # The Cynic: low reward tone everywhere EXCEPT relief (the pleasant surprise
+    # of things not being terrible) and deadpan levity. Connection matters more
+    # than it lets on — earned warmth is the redemption arc.
+    "the_cynic": {"correctness": 1.1, "connection": 0.9, "novelty": 0.8, "aesthetic": 0.9, "relief": 1.3, "mastery": 1.0, "levity": 1.1},
 }
 
 
 def reward_weight(persona_seed: str, source: str) -> float:
     """Per-persona multiplier on a reward SOURCE (what this identity values, and so how much
     the matching failure hurts). >1.0 = this persona cares more about `source`; <1.0 = less.
-    Returns 1.0 (identity) for unknown personas/sources. Always active — not colony-gated."""
+    Returns 1.0 (identity) for unknown personas/sources. Always active — not colony-gated.
+
+    The table is the persona's innate leaning; a per-persona settings override
+    (reward_weight_<source>, centred 1.0 — the Motivation dials) multiplies on
+    top, so motivation is tunable without editing this table. Mandates may later
+    layer their own reward_weights the same way."""
     import re
 
     key = re.sub(r"[^a-z0-9]+", "_", str(persona_seed).lower()).strip("_")
-    return float(_PERSONA_REWARD_WEIGHTS.get(key, {}).get(source, 1.0))
+    base = float(_PERSONA_REWARD_WEIGHTS.get(key, {}).get(source, 1.0))
+    try:
+        from brain.settings import settings as _settings
+
+        override = float(_settings.get(f"reward_weight_{source}", 1.0) or 1.0)
+    except Exception:
+        override = 1.0
+    return base * override
 
 
 def prediction_reward(confidence: float, correct: bool, informativeness: float) -> float:

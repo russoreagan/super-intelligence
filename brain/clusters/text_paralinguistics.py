@@ -8,7 +8,10 @@ in text: laughter markers, warmth signals, negativity markers, excitement, infor
 register abbreviations, emoji, and punctuation density.
 
 Analogous role to auditory_cortex → audio_dsp for voice.
-Called from session_turn.py for text turns only; voice turns skip this entirely.
+Called from session_turn.py for text turns. Voice turns skip the full extractor
+(prosody carries the acoustic signal) with one narrow exception: extract_laughter()
+runs over voice transcripts too, because STT engines often transcribe a real laugh
+as "ha ha" — a laughter marker in a transcript is evidence regardless of channel.
 """
 
 from __future__ import annotations
@@ -235,6 +238,45 @@ def _tokenise(text: str) -> list[str]:
     # Split on whitespace and common punctuation (but not ! or ?)
     tokens = re.split(r"[\s,;:\"'\(\)\[\]{}|\\/<>]+", text)
     return [t for t in tokens if t]
+
+
+# STT engines render real laughs as separated syllables ("ha ha", "ha ha ha",
+# "heh heh") or as event annotations ("(laughs)", "[laughter]"). Neither form
+# tokenises into the _LAUGHTER set, so they get their own patterns. Two or more
+# consecutive syllables are required — a lone "ha" is sarcasm as often as mirth.
+_TRANSCRIBED_LAUGH_RE = re.compile(
+    r"\b(?:ha|heh?|hee)(?:[\s,.!]+(?:ha|heh?|hee)){1,}\b", re.IGNORECASE
+)
+_STT_LAUGH_ANNOTATIONS = ("(laugh", "[laugh", "(chuckl", "[chuckl", "(giggl", "[giggl")
+
+
+def extract_laughter(text: str) -> float:
+    """
+    Laughter-only extraction, safe for VOICE transcripts.
+
+    The full extractor is text-channel-only (voice has prosody instead), but
+    laughter markers in a transcript are evidence of a real laugh regardless of
+    channel. Returns the same 0–1 normalized score as the `laughter` field of
+    extract_text_paralinguistics, plus STT-specific forms ("ha ha" syllable
+    runs, "(laughs)" annotations) that the token list misses.
+    """
+    if not text or not text.strip():
+        return 0.0
+
+    tokens = _tokenise(text)
+    n = max(len(tokens), 1)
+
+    hits = sum(1 for tok in tokens if tok in _LAUGHTER)
+    for match_str in _EMOJI_RE.findall(text):
+        hits += sum(1 for glyph in match_str if glyph in _LAUGHTER)
+
+    hits += len(_TRANSCRIBED_LAUGH_RE.findall(text))
+    text_lower = text.lower()
+    hits += sum(1 for marker in _STT_LAUGH_ANNOTATIONS if marker in text_lower)
+
+    # Same non-linear normalisation as the full extractor: one strong signal
+    # in a short message should register.
+    return min(1.0, hits / n * 3.0)
 
 
 def extract_text_paralinguistics(text: str) -> TextParalinguisticFeatures:

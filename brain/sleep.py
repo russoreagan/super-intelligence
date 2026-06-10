@@ -12,6 +12,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import os
 import re
 import time
 from collections import Counter, defaultdict
@@ -208,6 +209,36 @@ class SleepConsolidation:
 
         if updates:
             await self._apply_self_updates(updates)
+
+        # 2b. Cross-learning: reflect privately over this session's material,
+        # de-id gate the conclusion, and fold an admitted principle into the
+        # shared hypothesis store (provisional → established on distinct-source
+        # corroboration). Fail-open for consolidation: a gate refusal or LLM
+        # hiccup here must never block the rest of sleep.
+        if settings.get("cross_learning", 0):
+            try:
+                from brain import cross_learning
+                from brain.deid_gate import DeidGate
+                from brain.private_rumination import PrivateRuminator
+
+                source_id = os.environ.get("BRAIN_USER_ID", "").strip() or "primary"
+                store = cross_learning.load_store()
+                ruminator = PrivateRuminator(self._router, DeidGate(self._router))
+                outcome = await cross_learning.learn_from_private(
+                    ruminator, store, batch_text, source_id
+                )
+                if outcome.admitted:
+                    cross_learning.save_store(store)
+                    logger.info(
+                        "[Cross-learning] principle %s (%s): %s",
+                        outcome.hypothesis_id,
+                        outcome.status,
+                        (outcome.principle or "")[:100],
+                    )
+                else:
+                    logger.info("[Cross-learning] nothing admitted (stage=%s)", outcome.stage)
+            except Exception as e:
+                logger.warning("[Cross-learning] pass failed: %s", e)
 
         # 3. REM-style thought consolidation — process the session's inner life.
         if session_thoughts:
@@ -913,12 +944,16 @@ class SleepConsolidation:
                 len(mappings),
             )
 
-        # Stamp the run time back into sequence_weights.json.
+        # Stamp the run time back into sequence_weights.json. Re-read first: the
+        # LLM call above took seconds, and writing back our stale pre-call
+        # snapshot would clobber any predictor.save() that landed meanwhile.
         try:
-            weights_data["last_synonym_pass_ts"] = now
+            with open(weights_path) as f:
+                current: dict = json.load(f)
+            current["last_synonym_pass_ts"] = now
             tmp = weights_path + ".tmp"
             with open(tmp, "w") as f:
-                json.dump(weights_data, f, indent=2)
+                json.dump(current, f, indent=2)
             os.replace(tmp, weights_path)
         except Exception as e:
             logger.warning(

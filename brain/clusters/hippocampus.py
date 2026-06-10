@@ -1033,6 +1033,8 @@ class HippocampusCluster:
             surprise_score=surprise_score,
             vector=vec,
             cog_signature=cog_signature,
+            end_user_id=str(features.get("end_user_id") or ""),
+            mandate_id=str(features.get("mandate_id") or ""),
         )
         self._episodic.encode(episode)
         logger.debug("[Memory] Episode saved: turn=%s intent=%s", turn_id, intent)

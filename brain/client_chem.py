@@ -123,6 +123,9 @@ class ClientChemRegistry:
         now_fn=time.time,
     ) -> None:
         self._bus = bus
+        # Attach so Bus.rebaseline_chem() can reach live client pairs when a
+        # temperament edit moves the resting setpoints mid-process.
+        bus._chem_registry = self
         self._store: ChemStore = store or InMemoryChemStore()
         self._persona = persona
         self._absence_turn_s = max(1.0, float(absence_turn_s))

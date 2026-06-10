@@ -623,6 +623,7 @@ class DefaultModeNetwork:
         # used to modulate the live-surfacing budget (read shift from baseline, not
         # raw level). Threads routed this turn, for the close-the-loop pass.
         self._routing_weights: dict = {}
+        self._routing_weights_loaded: dict = {}
         self._last_routed_ids: list = []
         self._user_msg_lens: deque = deque(maxlen=6)
         self._user_topics: deque = deque(maxlen=6)
@@ -791,7 +792,7 @@ class DefaultModeNetwork:
             try:
                 client.table("dmn_state").upsert(
                     {
-                        "user_id": uid,
+                        "org_id": uid,
                         "persona": persona,
                         "novelty_cache": payload,
                         "updated_at": "now()",
@@ -915,7 +916,7 @@ class DefaultModeNetwork:
                 res = (
                     client.table("dmn_state")
                     .select("novelty_cache")
-                    .eq("user_id", uid)
+                    .eq("org_id", uid)
                     .eq("persona", persona)
                     .maybe_single()
                     .execute()
@@ -1860,6 +1861,8 @@ class DefaultModeNetwork:
                 setattr(self, attr, default)
         if not hasattr(self, "_routing_weights"):
             self._routing_weights = {}
+        if not hasattr(self, "_routing_weights_loaded"):
+            self._routing_weights_loaded = {}
         if not hasattr(self, "_last_routed_ids"):
             self._last_routed_ids = []
         if not hasattr(self, "_user_msg_lens"):
@@ -2695,13 +2698,27 @@ class DefaultModeNetwork:
         max_cos = 0.0
         if not is_dup and not advancing_thread and new_emb is not None:
             sem_thr = float(settings.get("dmn_semantic_dup_threshold") or 0.88)
-            for prior, prior_emb in zip(
-                self._recent_thoughts, self._recent_embeddings, strict=False
+            # Thoughts restored from a prior session land with embedding=None
+            # (_load_novelty). Backfill a few per pass so cross-session dedup
+            # regains its semantic gate instead of degrading to word overlap
+            # forever; the cap bounds embed calls on any single thought.
+            backfill_budget = 5
+            for i, (prior, prior_emb) in enumerate(
+                zip(self._recent_thoughts, self._recent_embeddings, strict=False)
             ):
                 if exempt_seed is not None and prior == exempt_seed:
                     continue
                 if not prior_emb:
-                    continue
+                    if backfill_budget <= 0:
+                        continue
+                    backfill_budget -= 1
+                    prior_emb = await self._safe_embed(prior)
+                    if not prior_emb:
+                        continue
+                    # The await may have let the deque shift (escape-hatch clear,
+                    # concurrent append at maxlen) — only cache if still aligned.
+                    if i < len(self._recent_thoughts) and self._recent_thoughts[i] == prior:
+                        self._recent_embeddings[i] = prior_emb
                 c = _cosine(new_emb, prior_emb)
                 if c > max_cos:
                     max_cos = c
@@ -3133,7 +3150,7 @@ class DefaultModeNetwork:
                 res = (
                     client.table("dmn_state")
                     .select("routing_weights")
-                    .eq("user_id", uid)
+                    .eq("org_id", uid)
                     .eq("persona", persona)
                     .maybe_single()
                     .execute()
@@ -3150,6 +3167,9 @@ class DefaultModeNetwork:
             self._routing_weights = {
                 k: float(v) + (1.0 - float(v)) * rate for k, v in weights.items()
             }
+            # Session-start baseline so the eval layer can measure whether
+            # reinforcement actually outpaces the decay (loop-closure check).
+            self._routing_weights_loaded = dict(self._routing_weights)
         except Exception as e:
             logger.warning("[DMN] Could not load routing weights: %s", e)
 
@@ -3160,7 +3180,7 @@ class DefaultModeNetwork:
             try:
                 client.table("dmn_state").upsert(
                     {
-                        "user_id": uid,
+                        "org_id": uid,
                         "persona": persona,
                         "routing_weights": self._routing_weights,
                         "updated_at": "now()",

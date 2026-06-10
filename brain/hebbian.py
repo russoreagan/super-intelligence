@@ -355,6 +355,16 @@ class HebbianUpdater:
         total_updated = 0
         skipped = 0
 
+        # Eligibility trace: conversational payoff is often delayed — the turn
+        # where DA finally moves is rarely the only turn that earned it. Recent
+        # turns' fired paths stay "eligible" and receive an age-decayed share of
+        # the current outcome. Lookback 0 disables (pre-trace behavior).
+        import math as _math
+
+        _elig_lookback = int(settings.get("eligibility_lookback", 2))
+        _elig_tau = max(0.1, float(settings.get("eligibility_tau_turns", 2.0)))
+        _recent_paths: list[list[str]] = []  # most recent last
+
         for trace in full_traces:
             if not trace.fired_path:
                 skipped += 1
@@ -405,6 +415,18 @@ class HebbianUpdater:
                         turn_plasticity=round(turn_plast, 3),
                         breakdown=breakdown,
                     )
+
+            # Delayed credit: prior turns' paths get an age-decayed share of this
+            # outcome (the turn that set up the payoff learns too, not only the
+            # turn where DA finally moved). Decay e^(-age/τ) keeps it local.
+            if _elig_lookback > 0:
+                for age, past_path in enumerate(reversed(_recent_paths[-_elig_lookback:]), 1):
+                    if not past_path or past_path == path_names:
+                        continue
+                    elig_delta = delta * _math.exp(-age / _elig_tau)
+                    if abs(elig_delta) > 1e-5:
+                        total_updated += self._wiring.hebbian_update(past_path, elig_delta)
+            _recent_paths.append(path_names)
 
             self._apply_drafter_competition(trace, outcome, plasticity, gainers, losers)
             total_updated += self._drafter_competition_edge_count(trace)

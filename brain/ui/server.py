@@ -300,7 +300,10 @@ class UIServer:
         @app.get("/")
         async def index():
             html = HTML_PATH.read_text(encoding="utf-8")
-            return HTMLResponse(html)
+            # Always revalidate: a stale cached shell has repeatedly masqueraded
+            # as an app bug (missing sub-tabs, dead mic). The page is rebuilt
+            # per-request anyway, so caching buys nothing.
+            return HTMLResponse(html, headers={"Cache-Control": "no-cache"})
 
         @app.get("/settings")
         async def get_settings(request: Request):
@@ -425,6 +428,16 @@ class UIServer:
                                 },
                                 {},
                             )
+                # Apply a resting-chemistry change LIVE: the bus caches baselines
+                # at init for the hot decay path, so without this a temperament
+                # dial's chem_baseline_* component only lands on the next boot
+                # while its live-read components apply instantly (mixed-latency
+                # dials). Levels are untouched — only the relaxation setpoints.
+                if (edited_resting or is_switch) and self._bus is not None:
+                    try:
+                        self._bus.rebaseline_chem()
+                    except Exception as _rb_err:
+                        logger.warning("live rebaseline failed: %s", _rb_err)
                 # Apply a voice change LIVE so the settings-page Voice dropdown
                 # (which only writes the setting) takes effect immediately, just
                 # like the header pill's set_voice — no restart required.
@@ -708,6 +721,10 @@ class UIServer:
             from deepgram.listen.v1.types import ListenV1Results
         except ImportError:
             logger.warning("deepgram-sdk not installed — mic disabled. Run 'uv sync' to install.")
+            with contextlib.suppress(Exception):
+                await websocket.send_text(
+                    json.dumps({"type": "transcript_error", "msg": "deepgram-sdk not installed"})
+                )
             return None
 
         api_key = os.environ.get("DEEPGRAM_API_KEY", "")
@@ -802,6 +819,14 @@ class UIServer:
                     endpointing=150,  # ms of silence before finalising (was 300)
                     utterance_end_ms=1000,  # also fire on utterance boundary
                     diarize=True,  # enable speaker diarization for auditory cortex
+                    # The browser sends raw PCM16 mono @16kHz (AudioWorklet tap).
+                    # Raw frames are stateless, so a session can be closed between
+                    # turns and reopened mid-capture — unlike WebM/Opus, where a
+                    # fresh connection can never decode a headerless mid-stream
+                    # chunk (the old failure: mic dead after the first turn).
+                    encoding="linear16",
+                    sample_rate=16000,
+                    channels=1,
                 ) as conn:
                     logger.info("UI: Deepgram live session started for client")
 
@@ -890,10 +915,16 @@ class UIServer:
 
     async def _receive_loop(self, websocket) -> None:
         dg_conn = None  # per-client Deepgram live connection
+        dg_last_attempt = 0.0  # monotonic ts of the last connect attempt (backoff)
+        loop = asyncio.get_running_loop()
         while True:
             try:
                 msg = await websocket.receive()
-
+            except Exception:
+                break
+            if msg.get("type") == "websocket.disconnect":
+                break
+            try:
                 if "text" in msg and msg["text"]:
                     data = json.loads(msg["text"])
                     t = data.get("type")
@@ -943,12 +974,36 @@ class UIServer:
                                 await dg_conn.finish()
                             dg_conn = None
 
-                elif "bytes" in msg and msg["bytes"] and dg_conn is not None:
-                    dg_conn.audio_chunks.append(msg["bytes"])
-                    await dg_conn.send(msg["bytes"])
+                elif "bytes" in msg and msg["bytes"]:
+                    # The browser only streams audio while it believes a voice
+                    # session is open, so a missing/dead connection here means
+                    # Deepgram failed to start or died mid-capture (e.g. their
+                    # 1011 idle timeout). Self-heal: reopen, with a 2s backoff
+                    # so a hard failure (bad key) doesn't hammer the API. The
+                    # old code dropped these frames silently — the mic looked
+                    # alive ("Listening…") while nothing was transcribed.
+                    if dg_conn is not None and dg_conn._task is not None and dg_conn._task.done():
+                        logger.warning("UI: Deepgram session died mid-capture — reopening")
+                        dg_conn = None
+                    if dg_conn is None and loop.time() - dg_last_attempt >= 2.0:
+                        dg_last_attempt = loop.time()
+                        dg_conn = await self._start_deepgram(websocket)
+                        if dg_conn is None:
+                            logger.warning(
+                                "UI: mic audio arriving but Deepgram is unavailable — dropping"
+                            )
+                    if dg_conn is not None:
+                        dg_conn.audio_chunks.append(msg["bytes"])
+                        await dg_conn.send(msg["bytes"])
 
-            except Exception:
-                break
+            except Exception as e:
+                # A handler error must not kill the receive loop — that would
+                # silently disable ALL input (text and voice) for this client.
+                logger.warning(
+                    "UI: ws message handler error (%s: %s) — continuing",
+                    type(e).__name__,
+                    e,
+                )
 
         if dg_conn is not None:
             with contextlib.suppress(Exception):

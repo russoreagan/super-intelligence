@@ -1476,6 +1476,7 @@ class MotorCortexCluster:
             return last_result
 
         fired = 0
+        chunk_diverged = False
         for step in suggestion:
             if self._calls_this_turn >= budget:
                 break
@@ -1500,6 +1501,7 @@ class MotorCortexCluster:
                             diverged = True
                             break
             if diverged:
+                chunk_diverged = True
                 logger.warning("[MotorCortex] Chunk-fire diverged at %s — suppressing chunk", tool)
                 for sub in self._subsystems:
                     if hasattr(sub, "suppress"):
@@ -1509,6 +1511,13 @@ class MotorCortexCluster:
 
         if fired and last_result is not None:
             last_result["chunk_steps_fired"] = last_result.get("chunk_steps_fired", 0) + fired
+            # Every suggested step ran without divergence — reinforce the chunk so
+            # clean reflexes rank above untested ones for the rest of the session.
+            if fired == len(suggestion) and not chunk_diverged:
+                for sub in self._subsystems:
+                    if hasattr(sub, "reinforce"):
+                        with contextlib.suppress(Exception):
+                            sub.reinforce(suggestion[0].get("reason", ""))
         return last_result
 
     async def _execute_open_loop(

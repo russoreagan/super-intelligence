@@ -126,11 +126,15 @@ class LearningMonitor:
 
         return metrics
 
-    def session_metrics(self, wiring: Wiring | None = None) -> dict:
+    def session_metrics(self, wiring: Wiring | None = None, dmn=None, chunks=None) -> dict:
         """
         Compute session-level learning summary.
         Call at session end before the Hebbian pass runs (so wiring.session_deltas()
         reflects changes from this session's sleep consolidation).
+
+        dmn:    DefaultModeNetwork — adds routing-weight convergence (did bearing
+                reinforcement outpace the decay-toward-rest this session?).
+        chunks: ChunkMemorySubsystem — adds chunk reuse/suppression counts.
         """
         n = len(self._turn_metrics)
         if n < 2:
@@ -190,6 +194,44 @@ class LearningMonitor:
             drift = _cross_session_drift(wiring)
             if drift is not None:
                 summary["cross_session_drift"] = round(drift, 4)
+
+        # DMN routing-weight convergence: total |Δ| vs the session-start baseline
+        # and net movement away from rest (1.0). Net > 0 means reinforcement is
+        # outpacing the load-time decay — the loop is closing; persistently ≤ 0
+        # means the weights are just relaxing back and nothing is being learned.
+        if dmn is not None:
+            try:
+                now_w: dict = dict(getattr(dmn, "_routing_weights", {}) or {})
+                base_w: dict = dict(getattr(dmn, "_routing_weights_loaded", {}) or {})
+                moved = {
+                    k: now_w.get(k, 1.0) - base_w.get(k, 1.0) for k in set(now_w) | set(base_w)
+                }
+                summary["routing_weights_tracked"] = len(now_w)
+                summary["routing_weight_session_delta"] = round(
+                    sum(abs(d) for d in moved.values()), 4
+                )
+                dist_now = sum(abs(v - 1.0) for v in now_w.values())
+                dist_base = sum(abs(v - 1.0) for v in base_w.values())
+                summary["routing_weight_net_learning"] = round(dist_now - dist_base, 4)
+            except Exception as e:
+                logger.debug("routing-weight metrics failed: %s", e)
+
+        # Chunk reuse: ballistic firings that completed cleanly this session vs
+        # chunks suppressed for diverging. Zero reuse across many sessions with
+        # active chunks means the chunking tier is dead weight.
+        if chunks is not None:
+            try:
+                succ: dict = dict(getattr(chunks, "_session_success", {}) or {})
+                summary["chunk_reuse_count"] = sum(succ.values())
+                summary["chunks_reused_distinct"] = len(succ)
+                summary["chunks_suppressed"] = len(getattr(chunks, "_suppressed", []) or [])
+                summary["chunks_active"] = sum(
+                    1
+                    for c in (getattr(chunks, "_chunks", {}) or {}).values()
+                    if c.get("state") == "active"
+                )
+            except Exception as e:
+                logger.debug("chunk metrics failed: %s", e)
 
         return summary
 

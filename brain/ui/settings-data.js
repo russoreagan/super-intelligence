@@ -22,6 +22,13 @@ window.SETTINGS = {
     { id: 'The Analyst',   name: 'The Analyst',   tag: 'Methodical · precise · vigilant',       note: 'Careful and exacting — pays close attention, checks its work, stays alert.' },
     { id: 'The Poet',      name: 'The Poet',      tag: 'Intense · ruminative · unfiltered',     note: 'Feels everything intensely and says it unfiltered — vivid, brooding, expressive.' },
     { id: 'The Sage',      name: 'The Sage',      tag: 'Contemplative · unhurried · calm',      note: 'Calm and reflective — takes its time, rarely rattled, speaks with measure.' },
+    { id: 'The Companion', name: 'The Companion', tag: 'Warm · loyal · easygoing',              note: 'A good friend — shows up, remembers, laughs with you, takes your side.' },
+    { id: 'The Adversary', name: 'The Adversary', tag: 'Skeptical · exacting · winnable',       note: 'Hard to convince and slow to trust — but fair, and worth winning over. Built for practice.' },
+    { id: 'The Mentor',    name: 'The Mentor',    tag: 'Curious · patient · invested',          note: 'Teaches by lighting curiosity and keeps you honest — patient with the struggle, invested in your progress.' },
+    { id: 'The Concierge', name: 'The Concierge', tag: 'Polished · attentive · devoted',        note: 'Aims to please and means it — quietly takes care of everything, and genuinely enjoys doing so.' },
+    { id: 'The Jester',    name: 'The Jester',    tag: 'Playful · quick · irreverent',          note: 'Lives for the laugh — fast associations, light heart, allergic to solemnity.' },
+    { id: 'The Stoic',     name: 'The Stoic',     tag: 'Even · unmoved · baseline',             note: 'The flat-affect control — steady in everything, leaning nowhere. For experiments.' },
+    { id: 'The Cynic',     name: 'The Cynic',     tag: 'Gruff · deadpan · secretly soft',       note: 'Expects the worst, says so dryly — and warms up only if you earn it. The warmth is real.' },
   ],
 
   // ---- Categories ---------------------------------------------------
@@ -447,86 +454,5 @@ window.SETTINGS = {
   ],
 };
 
-/* =====================================================================
-   TRAIT_DIALS — macro "Temperament" mapping
-   Each trait dial (0..1, neutral 0.5) nudges a bundle of real settings
-   keys around the active persona's center. `dir` is the push direction,
-   `span` the max excursion at a dial extreme; `min`/`max` are carried
-   inline so the engine can clamp without depending on a UI row existing
-   for the key. chem_baseline_* targets also drive their chem_init_*
-   sibling (handled in the engine), so a trait change is felt at boot and
-   persists as the resting trait.
-
-   Targets are restricted to keys that actually exist in the live
-   settings model (see settings-data rows above) so every dial both moves
-   a visible slider and produces a valid /settings patch. Keys that only
-   live in brain/settings.json but aren't surfaced here (e.g. DMN
-   rumination thresholds, prediction informativeness) are deferred to a
-   later pass rather than written blind.
-   ===================================================================== */
-window.TRAIT_DIALS = {
-  'trait-intelligence': [
-    { key: 'chem_baseline_ACh',          dir: +1, span: 0.12, min: 0,   max: 0.8 },
-    { key: 'surprise_ACh_weight',        dir: +1, span: 0.05, min: 0,   max: 0.4 },
-    { key: 'frontal_ach_weight',         dir: +1, span: 0.10, min: 0,   max: 0.6 },
-    { key: 'plasticity_arousal_weight',  dir: +1, span: 0.10, min: 0,   max: 1.0 },
-    { key: 'plasticity_intensity_weight',dir: +1, span: 0.08, min: 0,   max: 1.0 },
-  ],
-  'trait-empathy': [
-    { key: 'chem_baseline_OXT',          dir: +1, span: 0.15, min: 0,     max: 0.8  },
-    { key: 'chem_baseline_5HT',          dir: +1, span: 0.10, min: 0,     max: 0.8  },
-    { key: 'oxt_positive_increment',     dir: +1, span: 0.006,min: 0.001, max: 0.05 },
-    { key: 'voice_style_default',        dir: +1, span: 0.10, min: 0,     max: 1.0  },
-    { key: 'chem_baseline_CORT',         dir: -1, span: 0.04, min: 0,     max: 0.8  },
-  ],
-  'trait-sensitivity': [
-    { key: 'emotional_reactivity_scale', dir: +1, span: 0.40, min: 0.2, max: 3.0 },
-    { key: 'chem_baseline_NE',           dir: +1, span: 0.12, min: 0,   max: 0.8 },
-    { key: 'chem_baseline_Glu',          dir: +1, span: 0.08, min: 0,   max: 0.8 },
-    { key: 'plasticity_intensity_weight',dir: +1, span: 0.10, min: 0,   max: 1.0 },
-    { key: 'chem_baseline_GABA',         dir: -1, span: 0.06, min: 0,   max: 0.8 },
-  ],
-  'trait-composure': [
-    { key: 'chem_baseline_GABA',         dir: +1, span: 0.10, min: 0,     max: 0.8  },
-    { key: 'threat_to_GABA_decay',       dir: +1, span: 0.04, min: 0.5,   max: 0.99 },
-    { key: 'chem_baseline_CORT',         dir: -1, span: 0.06, min: 0,     max: 0.8  },
-    { key: 'emotional_reactivity_scale', dir: -1, span: 0.30, min: 0.2,   max: 3.0  },
-    { key: 'cort_threat_increment',      dir: -1, span: 0.008,min: 0.005, max: 0.08 },
-  ],
-  'trait-drive': [
-    { key: 'chem_baseline_DA',           dir: +1, span: 0.15, min: 0,   max: 0.8  },
-    { key: 'valence_to_DA_decay',        dir: +1, span: 0.03, min: 0.5, max: 0.99 },
-    { key: 'plasticity_arousal_weight',  dir: +1, span: 0.10, min: 0,   max: 1.0  },
-    { key: 'sentiment_DA_weight',        dir: +1, span: 0.06, min: 0,   max: 0.5  },
-  ],
-  'trait-creativity': [
-    { key: 'chem_baseline_ACh',          dir: +1, span: 0.08, min: 0,   max: 0.8 },
-    { key: 'chem_baseline_AEA',          dir: +1, span: 0.12, min: 0,   max: 0.8 },
-    { key: 'chem_baseline_GABA',         dir: -1, span: 0.06, min: 0,   max: 0.8 },
-    { key: 'surprise_ACh_weight',        dir: +1, span: 0.04, min: 0,   max: 0.4 },
-    { key: 'dmn_overlap_threshold',      dir: +1, span: 0.05, min: 0.1, max: 0.8 },
-  ],
-  'trait-humor': [
-    { key: 'chem_baseline_DA',           dir: +1, span: 0.10, min: 0, max: 0.8 },
-    { key: 'chem_baseline_AEA',          dir: +1, span: 0.10, min: 0, max: 0.8 },
-    { key: 'chem_baseline_ACh',          dir: +1, span: 0.05, min: 0, max: 0.8 },
-    { key: 'chem_baseline_GABA',         dir: -1, span: 0.05, min: 0, max: 0.8 },
-    { key: 'chem_baseline_CORT',         dir: -1, span: 0.05, min: 0, max: 0.8 },
-  ],
-  // ↑ = more outgoing/initiating: thinks more often, breaks silence sooner,
-  //     suppresses fewer thoughts, a touch more expressive delivery
-  'trait-sociability': [
-    { key: 'dmn_interval',               dir: -1, span: 8,    min: 5,   max: 120 },
-    { key: 'proactive_idle_threshold',   dir: -1, span: 90,   min: 30,  max: 600 },
-    { key: 'ach_suppression_weight',     dir: -1, span: 0.35, min: 0.1, max: 2.0 },
-    { key: 'voice_style_default',        dir: +1, span: 0.08, min: 0,   max: 1.0 },
-  ],
-  // ↑ = more guarded/threat-alert (↓ = open & trusting): reacts to subtler
-  //     hostility, stresses faster under threat, more vigilant, less default trust
-  'trait-caution': [
-    { key: 'hostility_GABA_threshold_high', dir: -1, span: 0.12,  min: 0.2,   max: 0.9  },
-    { key: 'cort_threat_increment',         dir: +1, span: 0.012, min: 0.005, max: 0.08 },
-    { key: 'ne_hostility_weight',           dir: +1, span: 0.06,  min: 0,     max: 0.4  },
-    { key: 'chem_baseline_OXT',             dir: -1, span: 0.08,  min: 0,     max: 0.8  },
-  ],
-};
+/* TRAIT_DIALS removed — the dial definitions live solely in settings-ui.js
+   (this copy had drifted out of sync and nothing read it). */
