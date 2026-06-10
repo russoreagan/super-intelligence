@@ -29,6 +29,7 @@ dependencies = [
     "mcp>=1.0.0",
     "yfinance>=0.2.40",
     "panns-inference>=0.1.1",
+    "openai>=2.41.0",
 ]
 
 [dependency-groups]

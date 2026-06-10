@@ -29,7 +29,51 @@ MODEL_MAP = {
     "runpod-free": "runpod-free",  # RunPod plain-text output (no JSON grammar)
     "runpod-code": "runpod-code",  # RunPod code/JSON settings (temp=0.1, ctx=8192)
     "runpod-general": "runpod-general",  # RunPod general settings (temp=0.3, ctx=8192)
+    # OpenAI-compatible cloud (also Groq/Mistral/DeepSeek/Together via OPENAI_BASE_URL).
+    "gpt": os.environ.get("OPENAI_MODEL", "gpt-5.1"),
+    "gpt-mini": os.environ.get("OPENAI_MODEL_MINI", "gpt-5-mini"),
 }
+
+_LOCAL_VARIANTS = frozenset(
+    {
+        "local",
+        "local-free",
+        "local-code",
+        "local-general",
+        "runpod",
+        "runpod-free",
+        "runpod-code",
+        "runpod-general",
+    }
+)
+
+
+def _provider_for(model_id: str) -> str:
+    """Which client a resolved model id dispatches to. Anything that isn't
+    Claude/Gemini/local routes through the OpenAI-compatible client — which is
+    how GPT and every base_url-compatible provider (Groq, Mistral, DeepSeek,
+    Together) plug in without new client code."""
+    if model_id.startswith("claude"):
+        return "anthropic"
+    if model_id.startswith("gemini"):
+        return "google"
+    if model_id in _LOCAL_VARIANTS:
+        return "local"
+    return "openai"
+
+
+def _remap_cloud_provider(model_id: str, cluster: str) -> str:
+    """The cognition-provider lever: cloud_provider=openai reroutes Claude-bound
+    calls to the configured OpenAI model (haiku-class work → the mini model).
+    The motor cluster is exempt — its tool-use loop is Anthropic-shaped — and
+    non-Claude routes (Gemini, local) are untouched."""
+    from brain.settings import settings as _settings
+
+    if cluster == "motor" or not model_id.startswith("claude"):
+        return model_id
+    if str(_settings.get("cloud_provider", "anthropic")).lower() != "openai":
+        return model_id
+    return MODEL_MAP["gpt-mini"] if "haiku" in model_id else MODEL_MAP["gpt"]
 
 # Embedding dim must match EpisodicStore table schema (see brain/second_brain/store.py).
 # nomic-embed-text and gemini-embedding-001 both produce 768-dim vectors.
@@ -114,6 +158,10 @@ def _strip_chatml(text: str) -> str:
 _CLOUD_RATES: dict[str, tuple[float, float, float]] = {
     "claude-sonnet-4-6": (3.0, 15.0, 0.30),
     "claude-haiku-4-5-20251001": (1.0, 5.0, 0.10),
+    # OpenAI (budgeting estimates; unknown models fall back to the Sonnet-class
+    # default below, so a wrong guess only skews the log line, never the call).
+    "gpt-5.1": (1.25, 10.0, 0.125),
+    "gpt-5-mini": (0.25, 2.0, 0.025),
 }
 # Path for the per-day cloud-spend file. Resolve under SECOND_BRAIN_PATH so each
 # hosted tenant counts its own daily spend on its own volume. A repo-relative
@@ -439,10 +487,10 @@ class ModelRouter:
 
         _s = _settings.get
 
-        model_id = MODEL_MAP.get(model_key, model_key)
+        model_id = _remap_cloud_provider(MODEL_MAP.get(model_key, model_key), cluster)
 
         # Locality enforcement: local cells must never dispatch to cloud APIs
-        _is_cloud = model_id.startswith("claude") or model_id.startswith("gemini")
+        _is_cloud = _provider_for(model_id) != "local"
         if locality == "local" and _is_cloud:
             logger.warning(
                 "[Security] Memory cell %s/%s is restricted to local-only inference but model '%s' "
@@ -645,16 +693,7 @@ class ModelRouter:
                     out_tok,
                     self._bg_cloud_tokens_used,
                 )
-        elif model_id in (
-            "local",
-            "local-free",
-            "local-code",
-            "local-general",
-            "runpod",
-            "runpod-free",
-            "runpod-code",
-            "runpod-general",
-        ):
+        elif model_id in _LOCAL_VARIANTS:
             text, in_tok, out_tok = await self._call_local(
                 system_with_context,
                 messages,
@@ -663,7 +702,31 @@ class ModelRouter:
                 temperature=temperature,
             )
         else:
-            raise ValueError(f"Unknown model key: {model_key}")
+            # OpenAI-compatible cloud (GPT, or any base_url provider).
+            try:
+                async with self._get_cloud_semaphore():
+                    coro = self._call_openai(
+                        model_id, system_with_context, messages, max_tokens, temperature
+                    )
+                    if bg_timeout:
+                        text, in_tok, out_tok = await asyncio.wait_for(coro, timeout=bg_timeout)
+                    else:
+                        text, in_tok, out_tok = await coro
+            except TimeoutError:
+                logger.warning(
+                    "[Resource] Background cloud call %s/%s timed out after %.0fs — falling back to local.",
+                    cluster,
+                    cell,
+                    bg_timeout,
+                )
+                text, in_tok, out_tok = await self._call_local(
+                    system_with_context, messages, max_tokens
+                )
+            if self._bg_mode:
+                spent = in_tok + out_tok
+                self._bg_cloud_tokens_used += spent
+                self._bg_cloud_bucket -= spent
+            self._charge_cloud_usd(model_id, in_tok, out_tok, 0)
 
         # ── Depseudonymize cloud response (restores ⟨type_n⟩ → real values) ──────
         if _egress_active:
@@ -722,8 +785,8 @@ class ModelRouter:
         from brain.settings import settings as _settings
 
         _s = _settings.get
-        model_id = MODEL_MAP.get(model_key, model_key)
-        _is_cloud = model_id.startswith("claude") or model_id.startswith("gemini")
+        model_id = _remap_cloud_provider(MODEL_MAP.get(model_key, model_key), cluster)
+        _is_cloud = _provider_for(model_id) != "local"
 
         # Background mode: apply per-hour rate limit — if exhausted, fall back gracefully.
         if self._bg_mode and _is_cloud:
@@ -741,6 +804,12 @@ class ModelRouter:
                     cell,
                 )
                 return {}
+
+        if _provider_for(model_id) == "openai":
+            return await self._call_structured_openai(
+                model_id, system_prompt, messages, tool_name, tool_description, tool_schema,
+                cluster=cluster, cell=cell, max_tokens=max_tokens,
+            )
 
         try:
             client = self._get_anthropic()
@@ -813,6 +882,135 @@ class ModelRouter:
         except Exception as e:
             logger.warning("[ModelRouter] call_structured %s/%s failed: %s", cluster, cell, e)
             return {}
+
+    async def _call_structured_openai(
+        self,
+        model_id: str,
+        system_prompt: str,
+        messages: list[dict],
+        tool_name: str,
+        tool_description: str,
+        tool_schema: dict,
+        *,
+        cluster: str = "",
+        cell: str = "",
+        max_tokens: int = 4096,
+    ) -> dict:
+        """Structured output via forced function-calling — the OpenAI-compatible
+        analog of the Anthropic tool_use path. Returns the parsed arguments dict,
+        {} on any failure (mirrors call_structured's contract)."""
+        import json as _json
+
+        from brain.settings import settings as _settings
+
+        try:
+            client = self._get_openai()
+            oai_msgs = [{"role": "system", "content": system_prompt}]
+            for m in messages:
+                content = m["content"]
+                if isinstance(content, list):
+                    content = "\n".join(
+                        str(b.get("text", "")) for b in content if isinstance(b, dict)
+                    )
+                oai_msgs.append({"role": m["role"], "content": content})
+            _struct_to = float(_settings.get("structured_call_timeout_s") or 150.0)
+            async with self._get_cloud_semaphore():
+                response = await asyncio.wait_for(
+                    client.chat.completions.create(
+                        model=model_id,
+                        max_completion_tokens=max_tokens,
+                        messages=oai_msgs,
+                        tools=[
+                            {
+                                "type": "function",
+                                "function": {
+                                    "name": tool_name,
+                                    "description": tool_description,
+                                    "parameters": tool_schema,
+                                },
+                            }
+                        ],
+                        tool_choice={"type": "function", "function": {"name": tool_name}},
+                    ),
+                    timeout=_struct_to,
+                )
+            usage = getattr(response, "usage", None)
+            in_tok = getattr(usage, "prompt_tokens", 0) or 0
+            out_tok = getattr(usage, "completion_tokens", 0) or 0
+            if self._bg_mode:
+                spent = in_tok + out_tok
+                self._bg_cloud_tokens_used += spent
+                self._bg_cloud_bucket -= spent
+            self._charge_cloud_usd(model_id, in_tok, out_tok, 0)
+            calls = response.choices[0].message.tool_calls if response.choices else None
+            if calls:
+                return _json.loads(calls[0].function.arguments or "{}")
+            logger.warning(
+                "[ModelRouter] call_structured(openai) %s/%s: no tool call in response",
+                cluster,
+                cell,
+            )
+            return {}
+        except Exception as e:
+            logger.warning(
+                "[ModelRouter] call_structured(openai) %s/%s failed: %s", cluster, cell, e
+            )
+            return {}
+
+    def _get_openai(self):
+        """OpenAI-compatible client. OPENAI_API_KEY + optional OPENAI_BASE_URL
+        come from env (the SDK reads both natively), so pointing the whole
+        cognition layer at Groq/Mistral/DeepSeek is two env vars."""
+        if getattr(self, "_openai_client", None) is None:
+            import httpx
+            import openai
+
+            from brain.settings import settings as _settings
+
+            _read_to = float(_settings.get("anthropic_timeout_s") or 120.0)
+            _connect_to = float(_settings.get("anthropic_connect_timeout_s") or 10.0)
+            self._openai_client = openai.AsyncOpenAI(
+                timeout=httpx.Timeout(_read_to, connect=_connect_to),
+                max_retries=int(_settings.get("anthropic_max_retries") or 2),
+            )
+        return self._openai_client
+
+    async def _call_openai(
+        self,
+        model_id: str,
+        system_prompt: str,
+        messages: list[dict],
+        max_tokens: int = 1024,
+        temperature: float | None = None,
+    ) -> tuple[str, int, int]:
+        """Call an OpenAI-compatible chat API. Returns (text, in_tok, out_tok).
+
+        The cached_context block is folded into system_prompt by the caller
+        (system_with_context) — OpenAI prefix-caches stable prompts automatically,
+        so the per-session block still gets discounted without explicit markers.
+        chat.completions (not the Responses API) for base_url compatibility."""
+        client = self._get_openai()
+        oai_msgs = [{"role": "system", "content": system_prompt}]
+        for m in messages:
+            content = m["content"]
+            if isinstance(content, list):  # flatten Anthropic-style blocks
+                content = "\n".join(
+                    str(b.get("text", "")) for b in content if isinstance(b, dict)
+                )
+            oai_msgs.append({"role": m["role"], "content": content})
+        kwargs: dict = {
+            "model": model_id,
+            "messages": oai_msgs,
+            "max_completion_tokens": max_tokens,
+        }
+        if temperature is not None:
+            kwargs["temperature"] = temperature
+        response = await client.chat.completions.create(**kwargs)
+        text = (response.choices[0].message.content or "") if response.choices else ""
+        usage = getattr(response, "usage", None)
+        in_tok = getattr(usage, "prompt_tokens", 0) or 0
+        out_tok = getattr(usage, "completion_tokens", 0) or 0
+        return text, in_tok, out_tok
 
     async def _call_anthropic(
         self,

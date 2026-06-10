@@ -913,6 +913,208 @@ class UIServer:
             return None  # connection failed immediately
         return session
 
+    async def _start_stt(self, websocket) -> object | None:
+        """Provider dispatcher for the browser-capture STT session.
+        stt_provider=openai uses Realtime transcription (no per-word diarization
+        — multi-speaker attribution degrades to the local fingerprint path);
+        anything else, or an OpenAI startup failure, lands on Deepgram."""
+        from brain.settings import settings as _settings
+
+        if str(_settings.get("stt_provider", "deepgram")).lower() == "openai" and os.environ.get(
+            "OPENAI_API_KEY"
+        ):
+            s = await self._start_openai_stt(websocket)
+            if s is not None:
+                return s
+            logger.warning("UI: OpenAI STT failed to start — falling back to Deepgram")
+        return await self._start_deepgram(websocket)
+
+    async def _start_openai_stt(self, websocket) -> object | None:
+        """OpenAI Realtime transcription session for one browser client.
+        Same handle contract as _start_deepgram (.send/.finish/.audio_chunks).
+        The browser sends 16 kHz PCM16; Realtime expects 24 kHz, so chunks are
+        linearly upsampled on the way in."""
+        api_key = os.environ.get("OPENAI_API_KEY", "")
+        if not api_key:
+            return None
+        import base64
+
+        from brain.pns import PNS
+        from brain.settings import settings as _settings
+
+        model = str(_settings.get("openai_stt_model", "gpt-4o-transcribe"))
+        language = os.environ.get("BRAIN_STT_LANGUAGE", "en").strip() or "en"
+        audio_queue: asyncio.Queue = asyncio.Queue()
+
+        class OAISession:
+            def __init__(self) -> None:
+                self._task: asyncio.Task | None = None
+                self.audio_chunks: list[bytes] = []
+
+            async def send(self, data: bytes) -> None:
+                await audio_queue.put(data)
+
+            async def finish(self) -> None:
+                await audio_queue.put(None)
+                if self._task:
+                    try:
+                        await asyncio.wait_for(asyncio.shield(self._task), timeout=2.0)
+                    except Exception:
+                        self._task.cancel()
+
+        session = OAISession()
+
+        async def _publish_utterance(transcript: str, audio_bytes: bytes) -> None:
+            """Mirror the Deepgram path's bus events; empty word list (no
+            diarization), so prosody/fingerprinting still run on raw audio."""
+            if not (self._bus and audio_bytes):
+                return
+            duration_s = len(audio_bytes) / (16000 * 2)
+            with contextlib.suppress(Exception):
+                await self._bus.publish_dict(
+                    "auditory.raw_audio",
+                    {
+                        "audio_bytes": audio_bytes,
+                        "sample_rate": 16000,
+                        "duration_s": duration_s,
+                        "channels": 1,
+                        "dtype": "int16",
+                    },
+                    source="ui",
+                )
+                await self._bus.publish_dict(
+                    "auditory.diarized_audio",
+                    {
+                        "audio_bytes": audio_bytes,
+                        "sample_rate": 16000,
+                        "duration_s": duration_s,
+                        "dtype": "int16",
+                        "diarized_words": [],
+                        "transcript": transcript,
+                    },
+                    source="ui",
+                )
+
+        async def _run_session() -> None:
+            try:
+                import websockets
+
+                url = "wss://api.openai.com/v1/realtime?intent=transcription"
+                async with websockets.connect(
+                    url,
+                    additional_headers=[
+                        ("Authorization", f"Bearer {api_key}"),
+                        ("OpenAI-Beta", "realtime=v1"),
+                    ],
+                    max_size=None,
+                ) as conn:
+                    await conn.send(
+                        json.dumps(
+                            {
+                                "type": "transcription_session.update",
+                                "session": {
+                                    "input_audio_format": "pcm16",
+                                    "input_audio_transcription": {
+                                        "model": model,
+                                        "language": language,
+                                    },
+                                    "turn_detection": {
+                                        "type": "server_vad",
+                                        "silence_duration_ms": 600,
+                                    },
+                                },
+                            }
+                        )
+                    )
+                    logger.info("UI: OpenAI Realtime STT session started (model=%s)", model)
+                    interim = ""
+
+                    async def _listen() -> None:
+                        nonlocal interim
+                        async for raw in conn:
+                            try:
+                                ev = json.loads(raw)
+                            except json.JSONDecodeError:
+                                continue
+                            etype = ev.get("type", "")
+                            if etype == "conversation.item.input_audio_transcription.delta":
+                                interim += ev.get("delta", "")
+                                if interim.strip():
+                                    with contextlib.suppress(Exception):
+                                        await websocket.send_text(
+                                            json.dumps(
+                                                {
+                                                    "type": "transcript",
+                                                    "text": interim,
+                                                    "is_final": False,
+                                                }
+                                            )
+                                        )
+                            elif etype == "conversation.item.input_audio_transcription.completed":
+                                interim = ""
+                                text = str(ev.get("transcript", "")).strip()
+                                if text:
+                                    with contextlib.suppress(Exception):
+                                        await websocket.send_text(
+                                            json.dumps(
+                                                {
+                                                    "type": "transcript",
+                                                    "text": text,
+                                                    "is_final": True,
+                                                }
+                                            )
+                                        )
+                                    audio_bytes = b"".join(session.audio_chunks)
+                                    session.audio_chunks.clear()
+                                    asyncio.create_task(_publish_utterance(text, audio_bytes))
+                            elif etype == "error":
+                                logger.warning("UI: OpenAI STT error event: %s", ev.get("error"))
+
+                    listen_task = asyncio.create_task(_listen())
+                    closed_early = False
+                    try:
+                        while True:
+                            chunk = await audio_queue.get()
+                            if chunk is None:
+                                break
+                            if listen_task.done():
+                                closed_early = True
+                                break
+                            up = PNS._pcm_resample(chunk, 16000, 24000)
+                            await conn.send(
+                                json.dumps(
+                                    {
+                                        "type": "input_audio_buffer.append",
+                                        "audio": base64.b64encode(up).decode(),
+                                    }
+                                )
+                            )
+                    finally:
+                        listen_task.cancel()
+                        logger.info("UI: OpenAI Realtime STT session closed")
+                    if closed_early:
+                        with contextlib.suppress(Exception):
+                            await websocket.send_text(
+                                json.dumps(
+                                    {
+                                        "type": "transcript_error",
+                                        "msg": "OpenAI STT closed connection",
+                                    }
+                                )
+                            )
+            except Exception as e:
+                logger.warning("OpenAI STT session error — voice input unavailable: %s", e)
+                with contextlib.suppress(Exception):
+                    await websocket.send_text(
+                        json.dumps({"type": "transcript_error", "msg": str(e)})
+                    )
+
+        session._task = asyncio.create_task(_run_session())
+        await asyncio.sleep(0.3)
+        if session._task.done():
+            return None
+        return session
+
     async def _receive_loop(self, websocket) -> None:
         dg_conn = None  # per-client Deepgram live connection
         dg_last_attempt = 0.0  # monotonic ts of the last connect attempt (backoff)
@@ -967,7 +1169,7 @@ class UIServer:
                         if dg_conn is not None and dg_conn._task.done():
                             dg_conn = None
                         if dg_conn is None:
-                            dg_conn = await self._start_deepgram(websocket)
+                            dg_conn = await self._start_stt(websocket)
                     elif t == "voice_stop":
                         if dg_conn is not None:
                             with contextlib.suppress(Exception):
@@ -987,7 +1189,7 @@ class UIServer:
                         dg_conn = None
                     if dg_conn is None and loop.time() - dg_last_attempt >= 2.0:
                         dg_last_attempt = loop.time()
-                        dg_conn = await self._start_deepgram(websocket)
+                        dg_conn = await self._start_stt(websocket)
                         if dg_conn is None:
                             logger.warning(
                                 "UI: mic audio arriving but Deepgram is unavailable — dropping"

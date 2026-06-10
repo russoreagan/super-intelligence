@@ -161,6 +161,10 @@
   const lockSvg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>';
   const eyeSvg  = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>';
   const resetSvg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.5 15a9 9 0 1 0 2.1-9.4L1 10"/></svg>';
+  const fileSvg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3v5h5"/><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg>';
+  const moonSvg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>';
+  const pencilSvg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>';
+  const sparkSvg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.7 4.6L18.5 9.3l-4.8 1.7L12 16l-1.7-5L5.5 9.3l4.8-1.7z"/><path d="M19 14l.6 1.7 1.9.6-1.9.7-.6 1.7-.6-1.7-1.9-.7 1.9-.6z"/></svg>';
 
   /* ---- key metadata (from the real settings model) ---- */
   const rowMeta = {};
@@ -202,6 +206,13 @@
   const BUILTIN_IDS = SET.personas.map(p => p.id);
   const isBuiltin = id => BUILTIN_IDS.includes(id);
   let storeChanged = false;             // persona created/renamed/deleted since last save
+
+  // Per-persona self.md ("Sense of Self" tab). selfStore = live text, selfSaved
+  // = last-saved text (dirty = differs). Seeded lazily from SET.selfModel, or
+  // from personaStore[id].selfMd when one was saved earlier.
+  const selfStore = {}, selfSaved = {};
+  let selfMode = 'edit';                 // 'edit' | 'preview'  (Seed page only)
+  let selfPage = 'seed';                 // 'seed' | 'living'   (sub-page of the tab)
 
   const allKeys = (() => { const s = new Set(); ALL_DIALS.forEach(d => d.map.forEach(t => s.add(t.key))); return [...s]; })();
   // toggle keys a dial flips at a threshold (not part of the additive map)
@@ -320,6 +331,8 @@
     // hydrate the persona store: reset to built-ins, then fold in saved
     // built-in overrides + any user-created custom personas.
     Object.keys(personaStore).forEach(k => delete personaStore[k]);
+    Object.keys(selfStore).forEach(k => delete selfStore[k]);
+    Object.keys(selfSaved).forEach(k => delete selfSaved[k]);
     PERSONAS.length = 0; SET.personas.forEach(p => PERSONAS.push({ ...p }));
     Object.keys(PERSONA_CHEM).forEach(k => { if (!isBuiltin(k)) delete PERSONA_CHEM[k]; });
     try {
@@ -359,7 +372,7 @@
     Object.keys(values).forEach(k => { if (!(k in saved) && values[k] !== '' && values[k] != null) patch[k] = values[k]; });
     return patch;
   }
-  function dirtyCount() { return Object.keys(realChangedPatch()).length + (storeChanged ? 1 : 0); }
+  function dirtyCount() { return Object.keys(realChangedPatch()).length + (storeChanged ? 1 : 0) + selfDirtyCount(); }
 
   async function doSave() {
     const patch = realChangedPatch();
@@ -370,15 +383,24 @@
       CHANNELS.forEach(c => { patch['chem_baseline_' + c.ch] = values['chem_baseline_' + c.ch]; patch['chem_init_' + c.ch] = values['chem_init_' + c.ch]; });
       patch.persona_name = persona;
       syncStoreFromCurrent();
+      // fold every persona's edited self.md into the store so persona_store
+      // carries them all; also send the active persona's self.md as a flat key.
+      Object.keys(selfStore).forEach(id => {
+        const e = personaStore[id] || (personaStore[id] = { custom: !isBuiltin(id) });
+        e.selfMd = selfStore[id];
+      });
+      if (selfStore[persona] !== selfSaved[persona]) patch.self_md = selfStore[persona];
       patch.persona_store = JSON.stringify(personaStore);
     }
+    const selfChanged = selfDirtyCount() > 0;
     const meaningful = Object.keys(patch).some(k => k !== 'persona_store' && k !== 'persona_name' && !(k.startsWith('chem_') && values[k] === saved[k]));
-    if (!meaningful && !storeChanged) return;
+    if (!meaningful && !storeChanged && !selfChanged) return;
     if (saveBtn) saveBtn.textContent = 'Saving…';
     try {
       const res = await fetch('/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) });
       if (res.ok) {
         Object.keys(values).forEach(k => saved[k] = values[k]);
+        Object.keys(selfStore).forEach(id => selfSaved[id] = selfStore[id]);
         storeChanged = false;
         if (restartBanner) restartBanner.classList.add('on', 'visible');
         if (saveBtn) { saveBtn.textContent = 'Saved ✓'; setTimeout(() => saveBtn.textContent = 'Save Settings', 1600); }
@@ -527,6 +549,13 @@
       const t = document.createElement('button'); t.className = 'es-toggle' + (+values[r.key] >= 0.5 ? ' on' : ''); t.setAttribute('role', 'switch');
       t.addEventListener('click', () => { if (!manualOpen) return; const nv = (+values[r.key] >= 0.5) ? 0 : 1; values[r.key] = nv; if (allKeys.indexOf(r.key) >= 0) dialCenter[r.key] = nv - dialOffsetFor(r.key); updateGen(r.key); refreshDirty(); });
       ctrl.appendChild(t); genReg[r.key] = { row, toggle: t };
+    } else if (r.type === 'select') {
+      const sel = document.createElement('select'); sel.className = 'es-select';
+      sel.style.cssText = 'flex:0 0 auto;min-width:180px;padding:6px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:inherit;font:inherit;';
+      (r.options || []).forEach(o => { const opt = document.createElement('option'); opt.value = o.v; opt.textContent = o.l; sel.appendChild(opt); });
+      sel.value = (values[r.key] != null && values[r.key] !== '') ? String(values[r.key]) : (r.def || '');
+      sel.addEventListener('change', () => { if (!manualOpen && !systemPage) { sel.value = String(values[r.key] != null ? values[r.key] : (r.def || '')); return; } values[r.key] = sel.value; refreshDirty(); });
+      ctrl.appendChild(sel); genReg[r.key] = { row, select: sel };
     } else if (r.type === 'text') {
       const ta = document.createElement('textarea'); ta.className = 'es-textarea'; ta.rows = r.rows || 4; ta.spellcheck = false;
       ta.value = (values[r.key] != null) ? values[r.key] : ''; if (r.placeholder) ta.placeholder = r.placeholder;
@@ -549,6 +578,7 @@
     const e = genReg[key], r = rowMeta[key]; if (!e || !r) return;
     if (e.input) { e.input.value = values[key]; setFill(e.input, +values[key], +r.min, +r.max); if (e.val) e.val.textContent = fmtVal(r, values[key]); }
     if (e.text) e.text.value = (values[key] != null) ? values[key] : '';
+    if (e.select) e.select.value = String(values[key] != null ? values[key] : (r.def || ''));
     if (e.toggle) e.toggle.classList.toggle('on', +values[key] >= 0.5);
     e.row.classList.toggle('changed', isChanged(key));
   }
@@ -606,6 +636,243 @@
       inp.addEventListener('input', () => { values[r.key] = inp.value; dot.classList.toggle('on', inp.value.trim().length > 0 || isSet); refreshDirty(); });
     });
     card.appendChild(body); wrap.appendChild(card);
+    // Additional sections on the API Keys page (e.g. provider selection) render
+    // through the generic section builder — select/toggle/range rows all work.
+    (cat.sections || []).slice(1).forEach(sec => wrap.appendChild(genSection(sec)));
+  }
+
+  /* ---- API docs (System) ---- */
+  function renderApiDocs() {
+    const wrap = document.getElementById('tab-generic'); if (!wrap) return;
+    wrap.innerHTML = ''; Object.keys(genReg).forEach(k => delete genReg[k]);
+
+    const origin = window.location.origin;
+
+    function card(title, desc, bodyHtml) {
+      const c = document.createElement('div'); c.className = 'es-card';
+      c.innerHTML = `<div class="es-card-head static"><span class="es-num">✦</span><div class="es-ct"><div class="es-card-title">${title}</div><div class="es-card-desc">${desc}</div></div></div><div class="es-card-body">${bodyHtml}</div>`;
+      return c;
+    }
+    function ep(method, path, desc) {
+      return `<div class="apidoc-endpoint"><span class="apidoc-method ${method.toLowerCase()}">${method}</span><span class="apidoc-path">${path}</span><span class="apidoc-desc">${desc}</span></div>`;
+    }
+    function code(text, label) {
+      const id = 'adc-' + Math.random().toString(36).slice(2);
+      return (label ? `<div class="apidoc-label">${label}<button class="apidoc-copy" onclick="(function(b){navigator.clipboard.writeText(document.getElementById('${id}').textContent).then(()=>{b.textContent='copied';setTimeout(()=>b.textContent='copy',1400)});})(this)">copy</button></div>` : '') +
+        `<div class="apidoc-code" id="${id}">${text}</div>`;
+    }
+
+    // Auth card
+    wrap.appendChild(card(
+      'Authentication',
+      'Every route checks the session cookie set by POST /auth/login. For API clients, pass the access_token as a Bearer header instead.',
+      code(
+        `# 1. Obtain a token\ncurl -s -X POST ${origin}/auth/login \\\n  -H 'Content-Type: application/json' \\\n  -d '{"email":"you@example.com","password":"…"}'\n\n# 2. Use it on subsequent calls\ncurl -s ${origin}/settings \\\n  -H 'Authorization: Bearer <access_token>'`,
+        'Example'
+      )
+    ));
+
+    // Core endpoints card
+    wrap.appendChild(card(
+      'Core endpoints',
+      'Standard JSON over HTTP. All responses are application/json unless otherwise noted.',
+      ep('GET',    '/health',             'Readiness check — returns {"ok":true}') +
+      ep('GET',    '/settings',           'Current brain settings + defaults + which API keys are set') +
+      ep('POST',   '/settings',           'Patch settings — body is a partial key→value object') +
+      ep('POST',   '/settings/reset',     "Reset one persona's settings to factory defaults") +
+      ep('GET',    '/voices',             'List available ElevenLabs voices')
+    ));
+
+    // Auth endpoints card
+    wrap.appendChild(card(
+      'Auth endpoints',
+      'Login, logout, and password reset flows.',
+      ep('POST',   '/auth/login',         'Email + password → sets session cookies; returns access_token') +
+      ep('POST',   '/auth/logout',        'Clears session cookies') +
+      ep('POST',   '/auth/forgot',        'Send a password-reset email') +
+      ep('GET',    '/auth/me',            'Current session claims (sub, email, is_admin)')
+    ));
+
+    // Key vault card
+    wrap.appendChild(card(
+      'Key vault',
+      'Provider API keys are stored encrypted per-user in Supabase Vault. Values are write-only — the API only confirms whether each key is set.',
+      ep('GET',    '/api/keys',           'Status map: {"anthropic":true,"elevenlabs":false,…}') +
+      ep('POST',   '/api/keys',           'Set a key — body: {"provider":"anthropic","value":"sk-…"}') +
+      ep('DELETE', '/api/keys/{provider}','Remove a stored key; provider ∈ anthropic · elevenlabs · deepgram · google')
+    ));
+
+    // WebSocket card
+    wrap.appendChild(card(
+      'WebSocket',
+      'Real-time conversation and brain-state stream. The browser UI connects here; external clients can too.',
+      code(`wss://${window.location.host}/ws\n\n# Auth: the session cookie is sent automatically by the browser.\n# API clients: pass the token as a query param or Sec-WebSocket-Protocol header\n#   (server reads the 'access' cookie; set it before connecting).`, 'Endpoint') +
+      code(
+        `// Outbound — send a chat message\n{ "type": "chat", "text": "hello" }\n\n// Outbound — image attachment\n{ "type": "chat", "text": "describe this", "image_url": "data:image/png;base64,…" }\n\n// Inbound — streaming token\n{ "type": "token", "text": "…" }\n\n// Inbound — full brain-state tick\n{ "type": "state", "mood": "…", "chem": {…}, "emotion": "…" }\n\n// Inbound — turn complete\n{ "type": "done" }`,
+        'Message shapes'
+      )
+    ));
+  }
+
+  /* =====================================================================
+     RENDER — Sense of Self (per-persona self.md editor)
+     ===================================================================== */
+  function personaMeta(id) { return PERSONAS.find(p => p.id === id) || { id, name: id, tag: '', note: '' }; }
+  function buildSelf(id) {
+    const SM = SET.selfModel || {}, base = SM.base || {};
+    const p = personaMeta(id);
+    const blk = (SM.personas && SM.personas[id]) || SM.fallback || { personality: '', speaking: '' };
+    const tagLine = p.tag ? p.tag.replace(/\s*·\s*/g, ', ') : '';
+    return [
+      `# Self-Model — ${p.name}`, '',
+      `> Seeded from the shared identity scaffold + the ${p.name} archetype${tagLine ? ' (' + tagLine + ')' : ''}. The brain rewrites this for itself at sleep consolidation.`, '',
+      `## What I am`, '', base.whatIAm || '', '',
+      `## Core drives`, '', base.drives || '', '',
+      `## Guiding principles (non-negotiable)`, '', base.principles || '', '',
+      `## Personality`, '', blk.personality || '', '',
+      `## Speaking style`, '', blk.speaking || '', '',
+      `## Values`, '', base.values || '',
+    ].join('\n');
+  }
+  function ensureSelf(id) {
+    if (id in selfStore) return;
+    const stored = personaStore[id] && personaStore[id].selfMd;
+    const txt = (typeof stored === 'string') ? stored : buildSelf(id);
+    selfStore[id] = txt; selfSaved[id] = txt;
+  }
+  function selfDirtyCount() { return Object.keys(selfStore).filter(id => selfStore[id] !== selfSaved[id]).length; }
+
+  // The "Living" page: the self-model as the brain maintains it for itself,
+  // drifted from the seed. Read-only sample composed from SET.livingModel.
+  function pickLM(map, id) { return (map && (map[id] != null ? map[id] : map._default)) || ''; }
+  function buildLiving(id) {
+    const SM = SET.selfModel || {}, base = SM.base || {}, LM = SET.livingModel || {};
+    const p = personaMeta(id);
+    const blk = (SM.personas && SM.personas[id]) || SM.fallback || { personality: '', speaking: '' };
+    const history = (pickLM(LM.history, id) || []).map(h => '- ' + h).join('\n');
+    return [
+      `# Self-Model — ${p.name}`, '',
+      `> ${LM.intro || ''}`, '',
+      `## What I am`, '', base.whatIAm || '', '',
+      `## Core drives`, '', base.drives || '', '',
+      `## Personality`, '', (blk.personality || '') + '\n' + (pickLM(LM.drift, id) || ''), '',
+      `## Speaking style`, '', blk.speaking || '', '',
+      `## What I've come to notice about myself`, '', pickLM(LM.noticed, id), '',
+      `## History summary`, '', history, '',
+      `## Current mood signature`, '', '`' + pickLM(LM.mood, id) + '`', '',
+      `## Guiding principles (non-negotiable)`, '', base.principles || '', '',
+      `## Values`, '', base.values || '',
+    ].join('\n');
+  }
+
+  /* tiny markdown renderer for the Preview pane (headings, bold, code, lists,
+     blockquote, hr) — scoped to what self.md actually uses. */
+  function mdEsc(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+  function mdInline(s) { return mdEsc(s).replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>').replace(/\*([^*]+)\*/g, '<em>$1</em>'); }
+  function mdToHtml(src) {
+    const lines = (src || '').split('\n'); let html = '', list = null;
+    const close = () => { if (list) { html += `</${list}>`; list = null; } };
+    for (const raw of lines) {
+      const line = raw.replace(/\s+$/, ''); let m;
+      if (!line.trim()) { close(); continue; }
+      if (/^---+$/.test(line.trim())) { close(); html += '<hr>'; continue; }
+      if ((m = line.match(/^(#{1,3})\s+(.*)$/))) { close(); const lv = m[1].length; html += `<h${lv}>${mdInline(m[2])}</h${lv}>`; continue; }
+      if ((m = line.match(/^>\s?(.*)$/))) { close(); html += `<blockquote>${mdInline(m[1])}</blockquote>`; continue; }
+      if ((m = line.match(/^\s*[-*]\s+(.*)$/))) { if (list !== 'ul') { close(); html += '<ul>'; list = 'ul'; } html += `<li>${mdInline(m[1])}</li>`; continue; }
+      if ((m = line.match(/^\s*\d+\.\s+(.*)$/))) { if (list !== 'ol') { close(); html += '<ol>'; list = 'ol'; } html += `<li>${mdInline(m[1])}</li>`; continue; }
+      close(); html += `<p>${mdInline(line)}</p>`;
+    }
+    close();
+    return html || '<div class="empty">Nothing here yet — write this persona\u2019s sense of self in the editor.</div>';
+  }
+
+  function renderSelf() {
+    const wrap = document.getElementById('tab-generic'); if (!wrap) return;
+    wrap.innerHTML = ''; Object.keys(genReg).forEach(k => delete genReg[k]);
+    ensureSelf(persona);
+    const cat = SET.categories.find(c => c.id === 'self');
+    if (cat && cat.summary) { const b = document.createElement('div'); b.className = 'es-cat-blurb'; b.textContent = cat.summary; wrap.appendChild(b); }
+
+    const sw = document.createElement('div'); sw.className = 'self-wrap';
+    const nav = document.createElement('div'); nav.className = 'self-pages';
+    const pageBtn = (pg, ic, title, sub) =>
+      `<button type="button" class="self-page" data-pg="${pg}"><span class="pg-ic">${ic}</span><span class="pg-t"><span class="pg-title">${title}</span><span class="pg-sub">${sub}</span></span></button>`;
+    nav.innerHTML = pageBtn('seed', pencilSvg, 'Seed', 'You author it') + pageBtn('living', sparkSvg, 'Living self-model', 'It authors itself');
+    sw.appendChild(nav);
+    const host = document.createElement('div'); host.id = 'self-host'; sw.appendChild(host);
+    wrap.appendChild(sw);
+
+    const paintNav = () => nav.querySelectorAll('.self-page').forEach(b => b.classList.toggle('on', b.dataset.pg === selfPage));
+    const renderBody = () => { host.innerHTML = ''; if (selfPage === 'living') renderSelfLiving(host); else renderSelfSeed(host); };
+    nav.querySelectorAll('.self-page').forEach(b => b.addEventListener('click', () => { selfPage = b.dataset.pg; paintNav(); renderBody(); }));
+    paintNav(); renderBody();
+  }
+
+  // Seed page — editable starting self-model the human authors.
+  function renderSelfSeed(host) {
+    const p = personaMeta(persona);
+    const ed = document.createElement('div'); ed.className = 'self-editor';
+    ed.innerHTML =
+      `<div class="self-bar">` +
+        `<span class="self-file">${fileSvg}<b>self.md</b> · <span style="color:var(--ink-4)">seed</span></span>` +
+        `<span class="self-modepill" id="self-dirty"><i></i>edited</span>` +
+        `<span class="spacer"></span>` +
+        `<span class="self-meta" id="self-count"></span>` +
+        `<div class="self-seg" id="self-seg"><button type="button" data-m="edit">Edit</button><button type="button" data-m="preview">Preview</button></div>` +
+        `<button class="self-revert" id="self-revert" title="Restore the seeded self-model">${resetSvg}Restore seed</button>` +
+      `</div>` +
+      `<textarea class="self-area" id="self-area" spellcheck="false" placeholder="Write this persona\u2019s sense of self…"></textarea>` +
+      `<div class="self-preview" id="self-preview" hidden></div>`;
+    host.appendChild(ed);
+    const foot = document.createElement('div'); foot.className = 'self-foot';
+    foot.innerHTML = `${pencilSvg}<span>The starting point you hand the brain. It's loaded into working memory at the start of every session — then the brain grows from it on its own. Change where it begins by editing here; what it has become so far lives on the <b>Living self-model</b> page.</span>`;
+    host.appendChild(foot);
+
+    const area = ed.querySelector('#self-area'), preview = ed.querySelector('#self-preview');
+    const count = ed.querySelector('#self-count'), dpill = ed.querySelector('#self-dirty');
+    area.value = selfStore[persona];
+    const updateMeta = () => {
+      const t = selfStore[persona] || '';
+      const words = (t.trim().match(/\S+/g) || []).length;
+      count.textContent = `${words} words · ${t.length.toLocaleString()} chars`;
+      dpill.classList.toggle('on', selfStore[persona] !== selfSaved[persona]);
+    };
+    const applyMode = () => {
+      const pre = selfMode === 'preview';
+      area.hidden = pre; preview.hidden = !pre;
+      if (pre) preview.innerHTML = mdToHtml(selfStore[persona]);
+      ed.querySelectorAll('#self-seg button').forEach(b => b.classList.toggle('on', b.dataset.m === selfMode));
+    };
+    updateMeta(); applyMode();
+    area.addEventListener('input', () => { selfStore[persona] = area.value; updateMeta(); refreshDirty(); });
+    ed.querySelectorAll('#self-seg button').forEach(b => b.addEventListener('click', () => { selfMode = b.dataset.m; applyMode(); }));
+    ed.querySelector('#self-revert').addEventListener('click', () => {
+      if (!window.confirm(`Restore ${p.name}'s self-model to the seeded version? Edits to this persona's self.md will be discarded.`)) return;
+      selfStore[persona] = buildSelf(persona); area.value = selfStore[persona];
+      if (selfMode === 'preview') preview.innerHTML = mdToHtml(selfStore[persona]);
+      updateMeta(); refreshDirty();
+    });
+  }
+
+  // Living page — read-only view of what the brain has rewritten for itself.
+  function renderSelfLiving(host) {
+    const LM = SET.livingModel || {};
+    const doc = buildLiving(persona);
+    const words = (doc.trim().match(/\S+/g) || []).length;
+    const ed = document.createElement('div'); ed.className = 'self-editor self-living';
+    ed.innerHTML =
+      `<div class="self-bar">` +
+        `<span class="self-file">${fileSvg}<b>self.md</b> · <span style="color:var(--ink-4)">living</span></span>` +
+        `<span class="self-ro">${lockSvg}read-only</span>` +
+        `<span class="spacer"></span>` +
+        `<span class="self-meta">${(LM.meta && LM.meta.revised) || ''} · ${words} words</span>` +
+      `</div>` +
+      `<div class="self-preview"></div>`;
+    ed.querySelector('.self-preview').innerHTML = mdToHtml(doc);
+    host.appendChild(ed);
+    const foot = document.createElement('div'); foot.className = 'self-foot';
+    foot.innerHTML = `${moonSvg}<span>The brain wrote this for itself — ${(LM.meta && LM.meta.passes) || 'revised over many sleep passes'}. It's read here, not edited: the brain owns this document. To change where it starts from, edit the <b>Seed</b> — it grows from there.</span>`;
+    host.appendChild(foot);
   }
 
   /* =====================================================================
@@ -668,7 +935,7 @@
     tabCats().forEach(cat => {
       const label = cat.id === 'persona' ? 'Temperament' : cat.name;
       const b = document.createElement('button'); b.className = 'tab' + (cat.id === activeTab ? ' on' : ''); b.dataset.t = cat.id;
-      b.innerHTML = `<span>${label}</span>` + (cat.id === 'persona' ? '' : `<span class="tlock">${lockSvg}</span>`);
+      b.innerHTML = `<span>${label}</span>` + ((cat.id === 'persona' || cat.id === 'self') ? '' : `<span class="tlock">${lockSvg}</span>`);
       b.addEventListener('click', () => selectTab(cat.id));
       bar.appendChild(b);
     });
@@ -678,9 +945,9 @@
     const sp = document.getElementById('settings-page'); if (sp) sp.classList.remove('system');
     document.querySelectorAll('#st-tabbar .tab').forEach(t => t.classList.toggle('on', t.dataset.t === id));
     const temp = document.getElementById('tab-temperament'), gen = document.getElementById('tab-generic');
-    const mode = document.getElementById('st-mode'); if (mode) mode.style.display = '';
+    const mode = document.getElementById('st-mode'); if (mode) mode.style.display = (id === 'self') ? 'none' : '';
     if (id === 'persona') { if (temp) temp.hidden = false; if (gen) gen.hidden = true; }
-    else { if (temp) temp.hidden = true; if (gen) gen.hidden = false; renderGeneric(id); }
+    else { if (temp) temp.hidden = true; if (gen) gen.hidden = false; if (id === 'self') renderSelf(); else renderGeneric(id); }
     refreshManualUI();   // restore this persona's manual/guided gate (was forced editable in system view)
     if (scroll) scroll.scrollTop = 0;
   }
@@ -711,6 +978,9 @@
     const api = document.createElement('button'); api.className = 'pmenu-item sys'; api.dataset.sys = 'apikeys';
     api.innerHTML = '<div class="pmenu-name">API Keys</div><div class="pmenu-tag">Models · voice · services</div>';
     api.addEventListener('click', () => selectSystem('apikeys')); sys.appendChild(api);
+    const apidocs = document.createElement('button'); apidocs.className = 'pmenu-item sys'; apidocs.dataset.sys = 'apidocs';
+    apidocs.innerHTML = '<div class="pmenu-name">API Reference</div><div class="pmenu-tag">Endpoints · auth · WebSocket</div>';
+    apidocs.addEventListener('click', () => selectSystem('apidocs')); sys.appendChild(apidocs);
     // Operational page (perception · compute budgets · motor/maintenance) is
     // admin-only — these are system-wide, security-sensitive controls (e.g. the
     // motor filesystem allowlist) that a normal hosted user shouldn't touch.
@@ -774,6 +1044,7 @@
     const meta = PERSONAS.find(p => p.id === persona);
     if (meta) { e.tag = meta.tag; e.note = meta.note; }
     if (e.custom) e.chem = currentChem();
+    if (persona in selfStore) e.selfMd = selfStore[persona];
     personaStore[persona] = e;
   }
   function createPersona() {
@@ -785,6 +1056,13 @@
     const note = 'A new persona, cloned from ' + fromName + '. Rename it, then shape it with the dials — or switch on Manual mode to set the chemistry by hand.';
     PERSONAS.push({ id: name, name, tag, note });
     personaStore[name] = { custom: true, tag, note, chem, vals: snapshotVals() };
+    // clone the source persona's self.md, retitled for the new persona
+    ensureSelf(persona);
+    const cloned = (selfStore[persona] || buildSelf(persona))
+      .replace(/^# Self-Model —.*$/m, `# Self-Model — ${name}`)
+      .replace(/^> .*$/m, `> Cloned from ${fromName}. Edit freely — the brain revises it for itself at sleep consolidation.`);
+    selfStore[name] = cloned; selfSaved[name] = cloned;
+    personaStore[name].selfMd = cloned;
     markStore(); renderPersonaRail(); selectPersona(name);
     const nm = document.getElementById('st-name');
     if (nm) { nm.focus(); const r = document.createRange(); r.selectNodeContents(nm); const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r); }
@@ -795,6 +1073,8 @@
         PERSONAS.find(p => p.id === newName) || personaStore[newName]) { syncPersonaHead(); return; }
     const old = persona;
     personaStore[newName] = personaStore[old]; delete personaStore[old];
+    if (old in selfStore) { selfStore[newName] = selfStore[old]; delete selfStore[old]; }
+    if (old in selfSaved) { selfSaved[newName] = selfSaved[old]; delete selfSaved[old]; }
     PERSONA_CHEM[newName] = PERSONA_CHEM[old]; delete PERSONA_CHEM[old];
     const meta = PERSONAS.find(p => p.id === old); if (meta) { meta.id = newName; meta.name = newName; }
     if (manualState[old] != null) { manualState[newName] = manualState[old]; delete manualState[old]; }
@@ -805,6 +1085,7 @@
     if (isBuiltin(id)) return;
     if (!window.confirm('Delete persona "' + id + '"? This removes its saved knob setup.')) return;
     delete personaStore[id]; delete PERSONA_CHEM[id];
+    delete selfStore[id]; delete selfSaved[id];
     const i = PERSONAS.findIndex(p => p.id === id); if (i >= 0) PERSONAS.splice(i, 1);
     markStore();
     if (persona === id) selectPersona(PERSONAS[0].id);
@@ -825,6 +1106,11 @@
       set('st-note', 'System-wide settings shared across every persona — perception, background compute budgets, and self-maintenance. Not part of any one persona’s temperament.');
       if (bt) bt.textContent = 'Operational'; if (bb) bb.textContent = 'System · shared settings';
       renderOperational();
+    } else if (which === 'apidocs') {
+      set('st-eyebrow', 'System'); set('st-name', 'API Reference'); set('st-tag', '');
+      set('st-note', 'HTTP and WebSocket endpoints exposed by the brain server. All routes require an active session cookie or a Bearer token obtained from POST /auth/login.');
+      if (bt) bt.textContent = 'API Reference'; if (bb) bb.textContent = 'System · endpoints & auth';
+      renderApiDocs();
     } else {
       set('st-eyebrow', 'System'); set('st-name', 'API Keys'); set('st-tag', '');
       set('st-note', 'Provider credentials for language models, voice, and background services — shared across every persona, not part of any one’s temperament.');

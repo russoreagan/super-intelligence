@@ -419,6 +419,22 @@ DEFAULTS: dict[str, float | int | str] = {
     # Bound every Anthropic call so a stalled connection can't freeze a motor
     # job at the strategic-plan step. read timeout bounds long generations;
     # connect timeout catches dead sockets fast; retries are bounded.
+    # ── Provider selection ───────────────────────────────────────────────────
+    # cloud_provider: which cloud serves COGNITION (frontal/temporal/DMN-deep…).
+    # "anthropic" (default) | "openai" — openai reroutes Claude-bound calls to
+    # OPENAI_MODEL/OPENAI_MODEL_MINI (motor cluster stays on Anthropic: its
+    # tool-use loop is Anthropic-shaped). OPENAI_BASE_URL points the same client
+    # at Groq/Mistral/DeepSeek/Together.
+    "cloud_provider": "anthropic",
+    # tts_provider: "elevenlabs" (default) | "openai" (gpt-4o-mini-tts — emotion
+    # rides the instructions parameter instead of VoiceSettings).
+    "tts_provider": "elevenlabs",
+    "openai_tts_model": "gpt-4o-mini-tts",
+    "openai_tts_voice": "alloy",
+    # stt_provider: "deepgram" (default) | "openai" (Realtime transcription —
+    # NOTE: no per-word diarization, so multi-speaker attribution degrades).
+    "stt_provider": "deepgram",
+    "openai_stt_model": "gpt-4o-transcribe",
     "anthropic_timeout_s": 120.0,
     "anthropic_connect_timeout_s": 10.0,
     "anthropic_max_retries": 2,
@@ -767,6 +783,7 @@ API_KEY_ENV = {
     "api_key_elevenlabs": "ELEVENLABS_API_KEY",
     "api_key_deepgram": "DEEPGRAM_API_KEY",
     "api_key_google": "GOOGLE_API_KEY",
+    "api_key_openai": "OPENAI_API_KEY",
 }
 
 

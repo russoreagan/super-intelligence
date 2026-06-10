@@ -311,3 +311,66 @@ def test_persona_trait_defaults_materialize(tmp_path, monkeypatch):
     # Personas without overrides leave the key untouched.
     out3 = pc.materialize_into_settings("The Visionary", {})
     assert "affect_carryover_da_threshold" not in out3
+
+
+# ── OpenAI provider integration (router remap + dispatch) ─────────────────────
+
+
+def test_provider_for_dispatch():
+    from brain.model_router import _provider_for
+
+    assert _provider_for("claude-sonnet-4-6") == "anthropic"
+    assert _provider_for("gemini-2.5-flash") == "google"
+    assert _provider_for("local-general") == "local"
+    assert _provider_for("runpod-code") == "local"
+    assert _provider_for("gpt-5.1") == "openai"
+    # Unknown ids route via the OpenAI-compatible client (base_url providers).
+    assert _provider_for("llama-3.3-70b-versatile") == "openai"
+
+
+def test_cloud_provider_remap_respects_motor_exemption(monkeypatch):
+    from brain.model_router import MODEL_MAP, _remap_cloud_provider
+    from brain.settings import settings
+
+    monkeypatch.setattr(
+        settings, "_data", {**settings._data, "cloud_provider": "openai"}, raising=False
+    )
+    # Cognition clusters reroute to the configured OpenAI models.
+    assert _remap_cloud_provider("claude-sonnet-4-6", "frontal") == MODEL_MAP["gpt"]
+    assert _remap_cloud_provider("claude-haiku-4-5-20251001", "temporal") == MODEL_MAP["gpt-mini"]
+    # Motor keeps Anthropic — its tool-use loop is Anthropic-shaped.
+    assert _remap_cloud_provider("claude-sonnet-4-6", "motor") == "claude-sonnet-4-6"
+    # Non-Claude routes are untouched.
+    assert _remap_cloud_provider("gemini-2.5-flash", "frontal") == "gemini-2.5-flash"
+    assert _remap_cloud_provider("local-general", "frontal") == "local-general"
+
+
+def test_cloud_provider_default_is_noop(monkeypatch):
+    from brain.model_router import _remap_cloud_provider
+    from brain.settings import settings
+
+    monkeypatch.setattr(
+        settings, "_data", {**settings._data, "cloud_provider": "anthropic"}, raising=False
+    )
+    assert _remap_cloud_provider("claude-sonnet-4-6", "frontal") == "claude-sonnet-4-6"
+
+
+def test_openai_tts_instruction_mapping():
+    from brain.pns import PNS
+
+    # Same cluster vocabulary as Flash VoiceSettings — providers can't drift.
+    assert "animated" in PNS._openai_instruction_from_emotion("excited")
+    assert "warmly" in PNS._openai_instruction_from_emotion("affectionate")
+    assert "weight" in PNS._openai_instruction_from_emotion("somber")
+    assert PNS._openai_instruction_from_emotion(None) == PNS._OPENAI_TTS_DEFAULT_INSTRUCTION
+
+
+def test_pcm_resample_length_and_type():
+    import numpy as np
+
+    from brain.pns import PNS
+
+    src = (np.sin(np.linspace(0, 100, 24000)) * 10000).astype(np.int16).tobytes()
+    out = PNS._pcm_resample(src, 24000, 22050)
+    assert len(out) % 2 == 0
+    assert abs(len(out) // 2 - 22050) <= 1  # 1s of audio stays ~1s

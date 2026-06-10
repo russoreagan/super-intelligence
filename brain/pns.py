@@ -616,6 +616,90 @@ class PNS:
         except TypeError:
             return VoiceSettings(**vs_kwargs)
 
+    # OpenAI TTS (gpt-4o-mini-tts) has no VoiceSettings — emotional delivery
+    # rides the `instructions` parameter. Same 4+1 clusters as Flash so the two
+    # providers can never drift in WHICH emotions exist, only in how each
+    # provider expresses them.
+    _OPENAI_TTS_INSTRUCTIONS: dict[str, str] = {
+        "bright": "Speak with bright, animated energy — lively pace, an audible smile.",
+        "warm": "Speak warmly and gently — present, affectionate, unhurried.",
+        "calm": "Speak calmly and softly — even, settled, taking your time.",
+        "tense": "Speak with controlled tension — measured, slightly clipped, focused.",
+        "low": "Speak quietly and heavily — subdued, slower, let the weight show.",
+    }
+    _OPENAI_TTS_DEFAULT_INSTRUCTION = "Speak naturally — conversational, present, relaxed."
+
+    @staticmethod
+    def _openai_instruction_from_emotion(emotion: str | None) -> str:
+        from brain.emotion_hierarchy import lookup_with_inheritance
+
+        cluster = None
+        if emotion:
+            cluster = PNS._FLASH_EMOTION_CLUSTERS.get(emotion) or lookup_with_inheritance(
+                emotion, PNS._FLASH_EMOTION_CLUSTERS
+            )
+        return PNS._OPENAI_TTS_INSTRUCTIONS.get(
+            cluster or "", PNS._OPENAI_TTS_DEFAULT_INSTRUCTION
+        )
+
+    def _openai_chunk_instructions(
+        self, text: str, affect: dict, deliberate_emotion: str | None
+    ) -> list[str]:
+        """Per-chunk delivery instructions aligned 1:1 with _make_flash_chunks'
+        sentence split — [mood:X] spans override the base affect per chunk, the
+        same precedence the Flash VoiceSettings path uses."""
+        clean = self._strip_all_tags(text)
+        mood_spans = self._extract_mood_map(text)
+        sentences = self._split_sentences(clean)
+        base = self._openai_instruction_from_emotion(
+            deliberate_emotion or (affect or {}).get("emotion")
+        )
+        out: list[str] = []
+        pos = 0
+        for chunk in sentences:
+            anchor = chunk[:30]
+            found = clean.find(anchor, pos)
+            chunk_pos = found if found >= 0 else pos
+            mood = next((m for s, e, m in mood_spans if s <= chunk_pos < e), None)
+            out.append(self._openai_instruction_from_emotion(mood) if mood else base)
+            pos = chunk_pos + len(chunk)
+        return out
+
+    @staticmethod
+    def _pcm_resample(data: bytes, src_hz: int = 24000, dst_hz: int = 22050) -> bytes:
+        """Linear-interpolation resample of mono int16 PCM. OpenAI TTS emits
+        24 kHz; the playback path (sounddevice + browser client) runs 22050."""
+        import numpy as np
+
+        x = np.frombuffer(data, dtype=np.int16)
+        if len(x) == 0 or src_hz == dst_hz:
+            return data
+        n_out = max(1, int(len(x) * dst_hz / src_hz))
+        xi = np.linspace(0.0, len(x) - 1.0, n_out)
+        y = np.interp(xi, np.arange(len(x), dtype=np.float64), x.astype(np.float64))
+        return y.astype(np.int16).tobytes()
+
+    async def _fetch_openai_tts(self, sentence: str, instructions: str) -> bytes:
+        """Fetch one sentence of audio from OpenAI TTS, resampled to 22050 PCM.
+        Sentence-buffered (not chunk-streamed): clips are short, and resampling
+        needs whole-signal alignment — the producer/consumer overlap across
+        sentences still hides the latency."""
+        from brain.settings import settings as _settings
+
+        if getattr(self, "_openai_tts_client", None) is None:
+            import openai
+
+            self._openai_tts_client = openai.AsyncOpenAI()
+        resp = await self._openai_tts_client.audio.speech.create(
+            model=str(_settings.get("openai_tts_model", "gpt-4o-mini-tts")),
+            voice=str(_settings.get("openai_tts_voice", "alloy")),
+            input=sentence,
+            instructions=instructions,
+            response_format="pcm",
+        )
+        data = await resp.aread() if hasattr(resp, "aread") else resp.read()
+        return self._pcm_resample(data)
+
     def _make_flash_chunks(
         self, text: str, base_params: dict, *, VoiceSettings
     ) -> list[tuple[str, object]]:
@@ -696,10 +780,23 @@ class PNS:
         Uses PCM output + sounddevice so playback starts on the first chunk.
         Falls back to buffered play() if sounddevice is unavailable.
         """
+        from brain.settings import settings as _tts_settings
+
+        _tts_provider = str(_tts_settings.get("tts_provider", "elevenlabs")).lower()
         api_key = os.environ.get("ELEVENLABS_API_KEY", "")
-        if not api_key:
-            logger.warning("[I/O] ELEVENLABS_API_KEY not set — skipping TTS")
-            return
+        _openai_key = os.environ.get("OPENAI_API_KEY", "")
+        if _tts_provider == "openai" and not _openai_key:
+            logger.warning("[I/O] tts_provider=openai but OPENAI_API_KEY not set — using ElevenLabs")
+            _tts_provider = "elevenlabs"
+        if _tts_provider != "openai" and not api_key:
+            if _openai_key:
+                logger.info("[I/O] ELEVENLABS_API_KEY not set — using OpenAI TTS")
+                _tts_provider = "openai"
+            else:
+                logger.warning(
+                    "[I/O] No TTS key set (ELEVENLABS_API_KEY / OPENAI_API_KEY) — skipping TTS"
+                )
+                return
         try:
             from elevenlabs import AsyncElevenLabs
             from elevenlabs.types import VoiceSettings
@@ -747,8 +844,11 @@ class PNS:
 
             # Shape text and build chunked: list[tuple[str, VoiceSettings]].
             # Each chunk is one ElevenLabs streaming call with its own settings.
-            _is_flash = model_id.startswith("eleven_flash")
-            if model_id == "eleven_v3":
+            # OpenAI TTS reuses the Flash chunking (per-chunk mood resolution);
+            # the VoiceSettings payloads are ignored and per-chunk `instructions`
+            # carry the emotion instead (built below as _oai_instructions).
+            _is_flash = model_id.startswith("eleven_flash") or _tts_provider == "openai"
+            if model_id == "eleven_v3" and _tts_provider != "openai":
                 # Step 1: resolve the base (reactive) tag from affect.
                 base_tag = self._v3_audio_tag_from_affect(affect or {})
 
@@ -889,6 +989,19 @@ class PNS:
                     (affect or {}).get("emotion"),
                 )
 
+            # Per-chunk OpenAI delivery instructions, aligned 1:1 with `chunked`.
+            _oai_instructions: list[str] = []
+            if _tts_provider == "openai":
+                _oai_instructions = self._openai_chunk_instructions(
+                    text, affect or {}, deliberate_emotion
+                )
+                logger.info(
+                    "[I/O] TTS provider=openai voice=%s emotion=%s chunks=%d",
+                    _tts_settings.get("openai_tts_voice"),
+                    (affect or {}).get("emotion"),
+                    len(chunked),
+                )
+
             logger.debug("[I/O] TTS: %d chunk(s) for streaming", len(chunked))
 
             self._interrupt_event.clear()
@@ -957,6 +1070,42 @@ class PNS:
                             for i, (sentence, chunk_vs) in enumerate(chunked):
                                 if self._interrupt_event.is_set():
                                     break
+                                if _tts_provider == "openai":
+                                    # Sentence-buffered fetch + resample; sliced into
+                                    # ~8 KB pieces so interrupts stay responsive.
+                                    try:
+                                        _data = await self._fetch_openai_tts(
+                                            sentence,
+                                            _oai_instructions[i]
+                                            if i < len(_oai_instructions)
+                                            else self._OPENAI_TTS_DEFAULT_INSTRUCTION,
+                                        )
+                                        for _off in range(0, len(_data), 8192):
+                                            if self._interrupt_event.is_set():
+                                                break
+                                            await audio_queue.put(_data[_off : _off + 8192])
+                                    except Exception as _oai_err:
+                                        logger.error(
+                                            "[I/O] OpenAI TTS chunk %d/%d failed (%s: %s) — skipping",
+                                            i + 1,
+                                            len(chunked),
+                                            type(_oai_err).__name__,
+                                            _oai_err,
+                                        )
+                                        self._emit_tts_error(
+                                            f"Chunk {i + 1} failed: {type(_oai_err).__name__}"
+                                        )
+                                    # Inter-chunk gap handled below, shared with ElevenLabs.
+                                    _gap_ms = int(os.environ.get("BRAIN_TTS_CHUNK_GAP_MS", "20"))
+                                    if (
+                                        _gap_ms > 0
+                                        and not self._interrupt_event.is_set()
+                                        and i < len(chunked) - 1
+                                    ):
+                                        await audio_queue.put(
+                                            b"\x00" * (22050 * 2 * _gap_ms // 1000)
+                                        )
+                                    continue
                                 # Use the streaming endpoint (/stream) — it properly
                                 # supports previous_text/next_text for prosody stitching
                                 # across chunk boundaries (the non-streaming /convert
@@ -1100,9 +1249,17 @@ class PNS:
                     from elevenlabs.play import play
 
                     audio_bytes = b""
-                    for sentence, chunk_vs in chunked:
+                    for _i, (sentence, chunk_vs) in enumerate(chunked):
                         if self._interrupt_event.is_set():
                             break
+                        if _tts_provider == "openai":
+                            audio_bytes += await self._fetch_openai_tts(
+                                sentence,
+                                _oai_instructions[_i]
+                                if _i < len(_oai_instructions)
+                                else self._OPENAI_TTS_DEFAULT_INSTRUCTION,
+                            )
+                            continue
                         async for chunk in client.text_to_speech.convert(
                             text=sentence,
                             voice_id=voice_id,
