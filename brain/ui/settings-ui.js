@@ -305,10 +305,10 @@
   let saveBtn, resetBtn, restartBanner, dirtyPill, dirtyText, scroll;
 
   async function loadFromServer() {
-    let s = {}, d = {};
+    let s = {}, d = {}, serverSelfMd = '';
     try {
       const res = await fetch('/settings');
-      if (res.ok) { const data = await res.json(); s = data.settings || {}; d = data.defaults || {}; secretsSet = data.secrets_set || {}; }
+      if (res.ok) { const data = await res.json(); s = data.settings || {}; d = data.defaults || {}; secretsSet = data.secrets_set || {}; serverSelfMd = data.self_md || ''; }
     } catch (e) { console.warn('Settings: load failed', e); }
     // Admin flag gates the operational/system pages. Best-effort: a normal user
     // (or a failed fetch) stays non-admin and gets the curated view.
@@ -351,6 +351,8 @@
     persona = (s.persona_name && PERSONA_CHEM[s.persona_name]) ? s.persona_name : PERSONAS[0].id;
     if (!('persona_name' in saved)) { values.persona_name = saved.persona_name = persona; }
     if (!(persona in manualState)) manualState[persona] = false;
+    // seed the active persona's self.md from the server response
+    if (serverSelfMd) { selfStore[persona] = serverSelfMd; selfSaved[persona] = serverSelfMd; }
 
     seedDials(false);
     view = 'persona'; activeTab = 'persona';
@@ -856,23 +858,34 @@
 
   // Living page — read-only view of what the brain has rewritten for itself.
   function renderSelfLiving(host) {
-    const LM = SET.livingModel || {};
-    const doc = buildLiving(persona);
-    const words = (doc.trim().match(/\S+/g) || []).length;
     const ed = document.createElement('div'); ed.className = 'self-editor self-living';
     ed.innerHTML =
       `<div class="self-bar">` +
         `<span class="self-file">${fileSvg}<b>self.md</b> · <span style="color:var(--ink-4)">living</span></span>` +
         `<span class="self-ro">${lockSvg}read-only</span>` +
         `<span class="spacer"></span>` +
-        `<span class="self-meta">${(LM.meta && LM.meta.revised) || ''} · ${words} words</span>` +
+        `<span class="self-meta" id="self-living-meta"></span>` +
       `</div>` +
-      `<div class="self-preview"></div>`;
-    ed.querySelector('.self-preview').innerHTML = mdToHtml(doc);
+      `<div class="self-preview" id="self-living-body"><span style="opacity:.45">Loading…</span></div>`;
     host.appendChild(ed);
     const foot = document.createElement('div'); foot.className = 'self-foot';
-    foot.innerHTML = `${moonSvg}<span>The brain wrote this for itself — ${(LM.meta && LM.meta.passes) || 'revised over many sleep passes'}. It's read here, not edited: the brain owns this document. To change where it starts from, edit the <b>Seed</b> — it grows from there.</span>`;
+    foot.innerHTML = `${moonSvg}<span>The brain wrote this for itself — revised over sleep passes. It's read here, not edited: the brain owns this document. To change where it starts from, edit the <b>Seed</b> — it grows from there.</span>`;
     host.appendChild(foot);
+    fetch('/self-model').then(r => r.ok ? r.json() : null).then(data => {
+      const bodyEl = ed.querySelector('#self-living-body');
+      const metaEl = ed.querySelector('#self-living-meta');
+      const content = (data && data.content) ? data.content.trim() : '';
+      if (content) {
+        const words = (content.match(/\S+/g) || []).length;
+        metaEl.textContent = words + ' words';
+        bodyEl.innerHTML = mdToHtml(content);
+      } else {
+        bodyEl.innerHTML = `<span style="opacity:.45">No living self-model yet — the brain will build one during sleep passes.</span>`;
+      }
+    }).catch(() => {
+      const bodyEl = ed.querySelector('#self-living-body');
+      if (bodyEl) bodyEl.innerHTML = `<span style="opacity:.45">Could not load living self-model.</span>`;
+    });
   }
 
   /* =====================================================================

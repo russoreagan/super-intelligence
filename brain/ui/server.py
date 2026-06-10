@@ -335,7 +335,16 @@ class UIServer:
                     else bool(str(s.get(k) or "").strip())
                 )
                 s[k] = ""
-            return {"settings": s, "defaults": DEFAULTS, "secrets_set": secrets_set}
+            # Return the active persona's self.md from the schema store (Supabase or
+            # local) so the Sense-of-Self Seed page shows the real stored content,
+            # not the static JS template.
+            self_md = ""
+            try:
+                from brain.second_brain.store import SchemaStore
+                self_md = SchemaStore(persona=str(s.get("persona_name", ""))).read("self.md")
+            except Exception as _sm_err:
+                logger.warning("[settings] self.md read failed: %s", _sm_err)
+            return {"settings": s, "defaults": DEFAULTS, "secrets_set": secrets_set, "self_md": self_md}
 
         @app.post("/settings")
         async def save_settings(request: Request):
@@ -371,6 +380,19 @@ class UIServer:
                         os.environ[API_KEY_ENV[_k]] = _val
                     else:
                         body[_k] = _val  # local dev: persist to settings.json
+
+                # self_md goes to the SchemaStore (Supabase brain_schemas table or
+                # local file), never into settings.json.
+                _self_md = str(body.pop("self_md", "") or "").strip()
+                if _self_md:
+                    _persona_name = str(
+                        body.get("persona_name") or settings.get("persona_name", "") or ""
+                    )
+                    try:
+                        from brain.second_brain.store import SchemaStore
+                        SchemaStore(persona=_persona_name).write("self.md", _self_md)
+                    except Exception as _sm_err:
+                        logger.warning("[settings] self.md write failed: %s", _sm_err)
 
                 prior_persona = str(settings.get("persona_name", ""))
                 settings.save(body)
@@ -465,6 +487,20 @@ class UIServer:
             settings.reset_to_defaults()
             settings.save()
             return {"ok": True, "settings": settings.all()}
+
+        @app.get("/self-model")
+        async def get_self_model(request: Request):
+            from brain.settings import settings
+            from fastapi.responses import JSONResponse
+
+            persona_name = str(settings.get("persona_name", ""))
+            content = ""
+            try:
+                from brain.second_brain.store import SchemaStore
+                content = SchemaStore(persona=persona_name).read("self.md")
+            except Exception as _e:
+                logger.warning("[self-model] read failed: %s", _e)
+            return JSONResponse({"content": content, "persona": persona_name})
 
         @app.get("/wiring")
         async def get_wiring():
