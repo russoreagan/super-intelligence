@@ -43,6 +43,56 @@ _tagger = None
 _label_index: dict[str, int] | None = None
 _load_attempted = False
 
+# Where panns_inference expects its checkpoint, and the canonical source.
+# We pre-fetch it OURSELVES because the library shells out to wget (absent on
+# macOS, flaky in containers) and leaves corrupt partials behind on failure.
+_CKPT_PATH_ENV = "BRAIN_PANNS_CHECKPOINT"
+_CKPT_URL = "https://zenodo.org/record/3987831/files/Cnn14_mAP%3D0.431.pth?download=1"
+_CKPT_BYTES = 327_428_481  # exact size — anything else is a corrupt partial
+
+
+def _checkpoint_path():
+    import os
+    from pathlib import Path
+
+    override = os.environ.get(_CKPT_PATH_ENV, "").strip()
+    if override:
+        return Path(override)
+    return Path.home() / "panns_data" / "Cnn14_mAP=0.431.pth"
+
+
+def _ensure_checkpoint() -> str | None:
+    """Make sure the CNN14 checkpoint exists and is complete; download with
+    urllib if not (Python-native — works on macOS, Railway, RunPod alike).
+    Returns the path, or None when the download failed (caller disables)."""
+    import urllib.request
+
+    path = _checkpoint_path()
+    if path.exists() and path.stat().st_size == _CKPT_BYTES:
+        return str(path)
+    if path.exists():
+        logger.warning(
+            "Vocal events: checkpoint at %s is %d bytes (expected %d) — corrupt partial, refetching",
+            path,
+            path.stat().st_size,
+            _CKPT_BYTES,
+        )
+        path.unlink()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".pth.partial")
+    logger.info("Vocal events: downloading PANNs CNN14 checkpoint (~312 MB, one-time) …")
+    try:
+        urllib.request.urlretrieve(_CKPT_URL, tmp)
+        if tmp.stat().st_size != _CKPT_BYTES:
+            raise OSError(f"downloaded {tmp.stat().st_size} bytes, expected {_CKPT_BYTES}")
+        tmp.replace(path)
+        logger.info("Vocal events: checkpoint ready at %s", path)
+        return str(path)
+    except Exception as e:
+        logger.warning("Vocal events: checkpoint download failed (%s) — classifier disabled", e)
+        tmp.unlink(missing_ok=True)
+        return None
+
 
 def _get_tagger():
     """Lazy-load the PANNs tagger once; on any failure disable permanently
@@ -53,7 +103,10 @@ def _get_tagger():
         try:
             from panns_inference import AudioTagging, labels
 
-            _tagger = AudioTagging(checkpoint_path=None, device="cpu")
+            ckpt = _ensure_checkpoint()
+            if ckpt is None:
+                raise RuntimeError("checkpoint unavailable")
+            _tagger = AudioTagging(checkpoint_path=ckpt, device="cpu")
             _label_index = {name: i for i, name in enumerate(labels)}
         except Exception as e:
             logger.warning(
