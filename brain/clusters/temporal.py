@@ -109,6 +109,21 @@ _EPISTEMIC_SEEDS = [
     "we discussed",
 ]
 
+_STOP_WORK_SEEDS = [
+    "stop that",
+    "stop working on that",
+    "stop the task",
+    "cancel that",
+    "cancel the job",
+    "kill that job",
+    "abort that",
+    "drop that task",
+    "forget that task",
+    "stop what you're doing",
+    "don't do that task",
+    "leave it alone",
+]
+
 
 def _detect_self_reference(text: str) -> bool:
     t = text.lower()
@@ -389,7 +404,11 @@ class TemporalCluster:
         )
         self._intent = IntentDetector(
             Path(_wpath).parent / "intent_bank.json",
-            {"self_reference": _SELF_REF_SEEDS, "epistemic_action": _EPISTEMIC_SEEDS},
+            {
+                "self_reference": _SELF_REF_SEEDS,
+                "epistemic_action": _EPISTEMIC_SEEDS,
+                "stop_work": _STOP_WORK_SEEDS,
+            },
         )
         # Note: GABA modulator was removed — the should_bypass_gating() helper
         # already forces the integrator awake at high GABA (emotional states
@@ -534,6 +553,7 @@ class TemporalCluster:
         _intents = await self._intent.detect_all(text, self._router.embed)
         self_ref = _intents.get("self_reference", False)
         epistemic = _intents.get("epistemic_action", False)
+        stop_work = _intents.get("stop_work", False)
         memory_hint = epistemic or any(
             w in text.lower() for w in ("remember", "last", "before", "told", "what was")
         )
@@ -743,6 +763,7 @@ class TemporalCluster:
         })
         features["self_reference"] = self_ref or features.get("intent") == "self_inquiry"
         features["epistemic_action"] = epistemic or features.get("epistemic_action", False)
+        features["stop_work"] = stop_work
         features["msg_length"] = length_tag
         features["user_register"] = classify_register(text)
 

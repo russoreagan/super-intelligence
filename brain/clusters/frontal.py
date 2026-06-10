@@ -1713,6 +1713,9 @@ class FrontalCluster:
                 f"Tool execution result:\n{fence('tool_result', str(memory['tool_result']), nonce)}"
             )
 
+        if memory.get("stop_work_ack"):
+            parts.append(f"Background work status: {memory['stop_work_ack']}")
+
         # Reasoning/EI FRAMEWORK text is deliberately NOT injected — the drafters
         # run on Claude, which has those natively, so local copies are bloat. Skill
         # SELECTION still seeds parietal.active_skill_context for the DMN.

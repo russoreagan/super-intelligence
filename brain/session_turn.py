@@ -687,6 +687,30 @@ class _TurnMixin:
             except Exception as _li_err:
                 logger.debug("[DMN] Ledger-intent handling skipped: %s", _li_err)
 
+            # Stop-work intent: the user asked to stop/cancel the brain's
+            # background work mid-conversation. Same kill switch as the UI
+            # Clear button; the context note keeps the spoken acknowledgement
+            # honest about what actually got stopped.
+            try:
+                if features.get("stop_work"):
+                    _q = getattr(self, "_task_queue", None)
+                    _had_work = bool(
+                        (_q is not None and (_q.is_running() or _q.has_pending()))
+                        or getattr(self, "_task_exec", None) is not None
+                        or (self.dmn is not None and len(self.dmn._self_task_q) > 0)
+                    )
+                    if _had_work:
+                        _stats = self.kill_self_directed_work()
+                        memory["stop_work_ack"] = (
+                            "You just STOPPED your background jobs at the user's request "
+                            f"(running job killed: {_stats['killed_running']}, "
+                            f"queued tasks cleared: {_stats['cleared']}). Acknowledge "
+                            "briefly and naturally; do not restart the work unless asked."
+                        )
+                        logger.info("[TaskWorker] Stop-work intent honored: %s", _stats)
+            except Exception as _sw_err:
+                logger.debug("[TaskWorker] Stop-work handling failed: %s", _sw_err)
+
             ABSENCE_THRESHOLD_S = 300.0
             absence_s = time.time() - self._last_turn_ts
             if absence_s >= ABSENCE_THRESHOLD_S and self.dmn.has_deferred_content():
