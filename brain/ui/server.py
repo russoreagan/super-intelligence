@@ -611,6 +611,26 @@ class UIServer:
                 logger.warning("[self-model] read failed: %s", _e)
             return JSONResponse({"content": content, "persona": persona_name})
 
+        @app.get("/user-model")
+        async def get_user_model(request: Request):
+            from brain.settings import settings
+            from fastapi.responses import JSONResponse
+
+            # Read-only "Sense of You" tab: the persona's model of the user
+            # (user.md), written during sleep consolidation. Same persona
+            # resolution as /self-model.
+            persona_name = str(
+                request.query_params.get("persona", "").strip()
+                or settings.get("persona_name", "")
+            )
+            content = ""
+            try:
+                from brain.second_brain.store import SchemaStore
+                content = SchemaStore(persona=persona_name).read("user.md")
+            except Exception as _e:
+                logger.warning("[user-model] read failed: %s", _e)
+            return JSONResponse({"content": content, "persona": persona_name})
+
         @app.get("/wiring")
         async def get_wiring():
             w = self._wiring

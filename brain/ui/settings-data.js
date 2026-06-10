@@ -93,6 +93,14 @@ window.SETTINGS = {
       sections: [],
     },
 
+    /* ========================= SENSE OF YOU ======================== */
+    {
+      id: 'you', name: 'Sense of You', icon: 'self',
+      blurb: "What this persona has learned about you — its working model of the person it talks to.",
+      summary: "The persona's model of you — the facts, preferences, and patterns it has gathered from your conversations, written to user.md during sleep consolidation. Each persona keeps its own. Read-only: the brain owns this document and revises it as the relationship develops.",
+      sections: [],
+    },
+
     /* ============================ API KEYS ========================= */
     {
       id: 'apikeys', name: 'API Keys', icon: 'key',

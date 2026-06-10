@@ -946,6 +946,44 @@
     });
   }
 
+  // "Sense of You" tab — read-only view of the persona's model of the user
+  // (user.md, written during sleep consolidation). Mirrors the Living page.
+  function renderSenseOfYou() {
+    const wrap = document.getElementById('tab-generic'); if (!wrap) return;
+    wrap.innerHTML = ''; Object.keys(genReg).forEach(k => delete genReg[k]);
+    const cat = SET.categories.find(c => c.id === 'you');
+    if (cat && cat.summary) { const b = document.createElement('div'); b.className = 'es-cat-blurb'; b.textContent = cat.summary; wrap.appendChild(b); }
+    const ed = document.createElement('div'); ed.className = 'self-editor self-living';
+    ed.innerHTML =
+      `<div class="self-bar">` +
+        `<span class="self-file">${fileSvg}<b>user.md</b> · <span style="color:var(--ink-4)">living</span></span>` +
+        `<span class="self-ro">${lockSvg}read-only</span>` +
+        `<span class="spacer"></span>` +
+        `<span class="self-meta" id="you-meta"></span>` +
+      `</div>` +
+      `<div class="self-preview" id="you-body"><span style="opacity:.45">Loading…</span></div>`;
+    wrap.appendChild(ed);
+    const foot = document.createElement('div'); foot.className = 'self-foot';
+    foot.innerHTML = `${moonSvg}<span>What this persona has learned about you — gathered from your conversations and revised over sleep passes. It's read here, not edited: the brain keeps this model for itself and updates it as it gets to know you.</span>`;
+    wrap.appendChild(foot);
+    fetch('/user-model?persona=' + encodeURIComponent(persona)).then(r => r.ok ? r.json() : null).then(data => {
+      const bodyEl = ed.querySelector('#you-body');
+      const metaEl = ed.querySelector('#you-meta');
+      if (!bodyEl) return; // tab switched away before the fetch resolved
+      const content = (data && data.content) ? data.content.trim() : '';
+      if (content) {
+        const words = (content.match(/\S+/g) || []).length;
+        if (metaEl) metaEl.textContent = words + ' words';
+        bodyEl.innerHTML = mdToHtml(content);
+      } else {
+        bodyEl.innerHTML = `<span style="opacity:.45">No model of you yet — the persona builds one from your conversations during sleep consolidation.</span>`;
+      }
+    }).catch(() => {
+      const bodyEl = ed.querySelector('#you-body');
+      if (bodyEl) bodyEl.innerHTML = `<span style="opacity:.45">Could not load the user model.</span>`;
+    });
+  }
+
   /* =====================================================================
      SCAFFOLD + TABS + RAIL + HEAD
      ===================================================================== */
@@ -1012,7 +1050,7 @@
     tabCats().forEach(cat => {
       const label = cat.id === 'persona' ? 'Temperament' : cat.name;
       const b = document.createElement('button'); b.className = 'tab' + (cat.id === activeTab ? ' on' : ''); b.dataset.t = cat.id;
-      b.innerHTML = `<span>${label}</span>` + ((cat.id === 'persona' || cat.id === 'self') ? '' : `<span class="tlock">${lockSvg}</span>`);
+      b.innerHTML = `<span>${label}</span>` + ((cat.id === 'persona' || cat.id === 'self' || cat.id === 'you') ? '' : `<span class="tlock">${lockSvg}</span>`);
       b.addEventListener('click', () => selectTab(cat.id));
       bar.appendChild(b);
     });
@@ -1022,11 +1060,11 @@
     const sp = document.getElementById('settings-page'); if (sp) sp.classList.remove('system');
     document.querySelectorAll('#st-tabbar .tab').forEach(t => t.classList.toggle('on', t.dataset.t === id));
     const temp = document.getElementById('tab-temperament'), gen = document.getElementById('tab-generic');
-    const mode = document.getElementById('st-mode'); if (mode) mode.style.display = (id === 'self') ? 'none' : '';
+    const mode = document.getElementById('st-mode'); if (mode) mode.style.display = (id === 'self' || id === 'you') ? 'none' : '';
     // The per-persona voice picker belongs to persona views only (selectSystem hides it).
     const vb = document.getElementById('st-voicebar'); if (vb) vb.style.display = '';
     if (id === 'persona') { if (temp) temp.hidden = false; if (gen) gen.hidden = true; }
-    else { if (temp) temp.hidden = true; if (gen) gen.hidden = false; if (id === 'self') renderSelf(); else renderGeneric(id); }
+    else { if (temp) temp.hidden = true; if (gen) gen.hidden = false; if (id === 'self') renderSelf(); else if (id === 'you') renderSenseOfYou(); else renderGeneric(id); }
     refreshManualUI();   // restore this persona's manual/guided gate (was forced editable in system view)
     if (scroll) scroll.scrollTop = 0;
   }
