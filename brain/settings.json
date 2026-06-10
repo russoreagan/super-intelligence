@@ -272,7 +272,7 @@
   "colony_trail_gain": 0.05,
   "colony_trail_clamp": 0.5,
   "colony_trail_half_life_s": 120.0,
-  "cross_learning": 0,
+  "cross_learning": 1,
   "flock_dynamics": 1,
   "flock_rum_w_cort_vel": 0.6,
   "flock_rum_w_ne_vel": 0.4,
@@ -297,5 +297,6 @@
   "trading_compaction_batch_size": 20,
   "trading_journal_md_max_kb": 512,
   "trading_stream_enabled": 0,
-  "trading_alert_cooldown_min": 30
+  "trading_alert_cooldown_min": 30,
+  "vocal_events": 1
 }
