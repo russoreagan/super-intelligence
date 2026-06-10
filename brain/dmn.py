@@ -794,10 +794,11 @@ class DefaultModeNetwork:
                     {
                         "org_id": uid,
                         "persona": persona,
+                        "end_user_id": "",
                         "novelty_cache": payload,
                         "updated_at": "now()",
                     },
-                    on_conflict="user_id,persona",
+                    on_conflict="org_id,persona,end_user_id",
                 ).execute()
             except Exception as e:
                 logger.warning("[DMN] Could not persist novelty state to Supabase: %s", e)
@@ -3182,10 +3183,11 @@ class DefaultModeNetwork:
                     {
                         "org_id": uid,
                         "persona": persona,
+                        "end_user_id": "",
                         "routing_weights": self._routing_weights,
                         "updated_at": "now()",
                     },
-                    on_conflict="user_id,persona",
+                    on_conflict="org_id,persona,end_user_id",
                 ).execute()
             except Exception as e:
                 logger.warning("[DMN] Could not persist routing weights to Supabase: %s", e)

@@ -27,8 +27,10 @@ development only.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
+import time
 from typing import Any
 
 import httpx
@@ -200,18 +202,52 @@ async def request_password_reset(email: str, redirect_to: str | None = None) -> 
         logger.error("[auth] password recovery request failed: %s", e)
 
 
+# Single-flight refresh. A page load fires many parallel requests; when the
+# access token has just expired they would each POST grant_type=refresh_token
+# with the SAME refresh token. GoTrue rotates refresh tokens and rate-limits,
+# so the stampede yields 429s and the losers surface as spurious 401s in the
+# UI. One request does the refresh; the rest reuse the result via this cache.
+_refresh_lock: asyncio.Lock | None = None
+_refresh_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+_REFRESH_CACHE_TTL = 60.0  # seconds — well under the access token's lifetime
+
+
 async def _refresh(refresh_token: str) -> dict[str, Any] | None:
-    url = f"{_base()}/auth/v1/token?grant_type=refresh_token"
-    headers = {"apikey": _anon(), "Content-Type": "application/json"}
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            r = await client.post(url, headers=headers, json={"refresh_token": refresh_token})
-    except httpx.HTTPError as e:
-        logger.error("[auth] GoTrue refresh request failed: %s", e)
-        return None
-    if r.status_code != 200:
-        return None
-    return r.json()
+    global _refresh_lock
+    if _refresh_lock is None:
+        _refresh_lock = asyncio.Lock()
+
+    cached = _refresh_cache.get(refresh_token)
+    if cached and time.monotonic() - cached[0] < _REFRESH_CACHE_TTL:
+        return cached[1]
+
+    async with _refresh_lock:
+        cached = _refresh_cache.get(refresh_token)
+        if cached and time.monotonic() - cached[0] < _REFRESH_CACHE_TTL:
+            return cached[1]
+        url = f"{_base()}/auth/v1/token?grant_type=refresh_token"
+        headers = {"apikey": _anon(), "Content-Type": "application/json"}
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                r = await client.post(
+                    url, headers=headers, json={"refresh_token": refresh_token}
+                )
+        except httpx.HTTPError as e:
+            logger.error("[auth] GoTrue refresh request failed: %s", e)
+            return None
+        if r.status_code != 200:
+            logger.warning("[auth] GoTrue refresh rejected (%s)", r.status_code)
+            return None
+        session = r.json()
+        # Key the result by the OLD token: concurrent requests still carry it in
+        # their cookies. Prune expired entries so the dict can't grow unbounded.
+        now = time.monotonic()
+        for k in [
+            k for k, (ts, _) in _refresh_cache.items() if now - ts >= _REFRESH_CACHE_TTL
+        ]:
+            _refresh_cache.pop(k, None)
+        _refresh_cache[refresh_token] = (now, session)
+        return session
 
 
 # ── token verification ───────────────────────────────────────────────────────

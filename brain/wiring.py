@@ -276,7 +276,7 @@ class Wiring:
             ]
             if rows:
                 sb.table("wiring_edges").upsert(
-                    rows, on_conflict="user_id,persona,source,target"
+                    rows, on_conflict="org_id,persona,source,target"
                 ).execute()
         except Exception as e:
             logger.warning("Supabase wiring save failed: %s", e)
