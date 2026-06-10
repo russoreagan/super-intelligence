@@ -792,6 +792,11 @@ DEFAULTS: dict[str, float | int | str] = {
     "motor_self_writes": 0,  # 1 = self-directed jobs may write files / run mutating commands
     "motor_self_network": 1,  # 1 = self-directed jobs may fetch_url
     "motor_self_cloud": "ro",  # cloud_action when self-directed: full | ro | off
+    # motor_self_connectors: connector allowlist for self-directed cloud work,
+    #   one name per line (as shown in the executor's connector summary, e.g.
+    #   "github"). Empty = all configured connectors. User-commanded tasks
+    #   always get the full connector set.
+    "motor_self_connectors": "",
     # ── Section: API keys (user-supplied, set via the Settings → API Keys page) ─
     # Empty = fall back to the platform-provided env var (the resolution chain is
     # user key → platform default → none). When a value is set here it is applied

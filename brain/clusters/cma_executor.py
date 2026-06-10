@@ -97,6 +97,10 @@ class CMAExecutor(ExecutorCommon):
         self._model = str(settings.get("cma_model") or "claude-opus-4-6")
         self._state = self._load_state()
         self._mcp_servers = self._load_mcp_config()
+        # Optional connector allowlist (lowercased names) set per-dispatch by the
+        # motor cortex — None = all configured connectors. Lets self-directed
+        # work run with a narrower connector set than user-commanded work.
+        self._connector_filter: set[str] | None = None
 
         logger.info(
             "[CMAExecutor] initialized (user=%s, model=%s, connectors=%s)",
@@ -275,17 +279,31 @@ class CMAExecutor(ExecutorCommon):
         self._state["seeded_mcp"] = sorted(seeded)
         self._save_state()
 
+    def set_connector_filter(self, names: set[str] | None) -> None:
+        """Restrict which MCP connectors the NEXT agent session may use.
+        None = all. Filter participates in the config hash, so a warm session
+        built with broader connectors is never reused for a narrower policy."""
+        self._connector_filter = {n.strip().lower() for n in names} if names else None
+
+    def _active_mcp_servers(self) -> list[dict]:
+        if self._connector_filter is None:
+            return self._mcp_servers
+        return [s for s in self._mcp_servers if s["name"].strip().lower() in self._connector_filter]
+
     def _agent_tools(self, write_allowed: bool) -> list[dict]:
         toolset: dict = {"type": _AGENT_TOOLSET, "default_config": {"enabled": True}}
         if not write_allowed:
             toolset["configs"] = [{"name": n, "enabled": False} for n in _READ_DISABLED_TOOLS]
         tools: list[dict] = [toolset]
-        for srv in self._mcp_servers:
+        for srv in self._active_mcp_servers():
             tools.append({"type": "mcp_toolset", "mcp_server_name": srv["name"]})
         return tools
 
     def _mcp_server_decls(self) -> list[dict]:
-        return [{"name": s["name"], "type": "url", "url": s["url"]} for s in self._mcp_servers]
+        return [
+            {"name": s["name"], "type": "url", "url": s["url"]}
+            for s in self._active_mcp_servers()
+        ]
 
     def _config_hash(self) -> str:
         blob = json.dumps(

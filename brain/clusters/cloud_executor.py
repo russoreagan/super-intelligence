@@ -258,6 +258,13 @@ class CloudExecutor:
         tools += self._mcp_allow_patterns()
         return ",".join(tools)
 
+    _connector_filter: set | None = None
+
+    def set_connector_filter(self, names: set | None) -> None:
+        """Restrict which MCP servers get --allowedTools grants on the next
+        subprocess call. None = all configured servers."""
+        self._connector_filter = {n.strip().lower() for n in names} if names else None
+
     def _mcp_allow_patterns(self) -> list[str]:
         """Server-level --allowedTools grants for connected MCP servers.
 
@@ -276,6 +283,11 @@ class CloudExecutor:
                 if not isinstance(obj, dict):
                     return
                 for name in obj.get("mcpServers", {}):
+                    if (
+                        self._connector_filter is not None
+                        and name.strip().lower() not in self._connector_filter
+                    ):
+                        continue
                     patterns.add(f"mcp__{name}")
                     patterns.add(f"mcp__claude_ai_{name[:1].upper()}{name[1:]}")
                 for v in obj.values():

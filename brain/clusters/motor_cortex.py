@@ -1878,6 +1878,21 @@ class MotorCortexCluster:
 
         # Self-directed autonomy policy: the user can grant themselves broad
         # cloud access while keeping the brain's own initiative narrower.
+        # Connector allowlist: when self-directed and the user listed specific
+        # connectors, the cloud session is built with ONLY those — anything
+        # else (email, calendar, …) simply doesn't exist for this task.
+        if hasattr(self._cloud, "set_connector_filter"):
+            _names = None
+            if self._self_mode:
+                from brain.settings import settings as _s
+
+                _listed = {
+                    n.strip().lower()
+                    for n in str(_s.get("motor_self_connectors", "") or "").splitlines()
+                    if n.strip()
+                }
+                _names = _listed or None
+            self._cloud.set_connector_filter(_names)
         if self._self_mode:
             _pol = self._self_policy()["cloud"]
             if _pol == "off" or (_pol == "ro" and is_write):

@@ -484,6 +484,7 @@ window.SETTINGS = {
             { type: 'toggle', key: 'motor_self_network', label: 'Network Fetch', hint: 'allow self-directed jobs to fetch public web pages', def: 1 },
             { type: 'select', key: 'motor_self_cloud', label: 'Cloud Actions', hint: 'connected-service access for self-initiated work — read-only lets it look things up but never act', def: 'ro',
               options: [ { v: 'full', l: 'Full (writes still confirmed)' }, { v: 'ro', l: 'Read-only' }, { v: 'off', l: 'Off' } ] },
+            { type: 'text', key: 'motor_self_connectors', label: 'Allowed Connectors', hint: 'one connector name per line (e.g. github) — when set, self-initiated cloud sessions are built with ONLY these services; email, calendar, and everything else simply don’t exist for that task. Empty = all configured connectors. Your own commands always get the full set.', rows: 3, placeholder: 'github', def: '' },
           ],
           advanced: [],
         },
