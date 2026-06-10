@@ -785,7 +785,14 @@ DEFAULTS: dict[str, float | int | str] = {
     # motor_allowed_commands: shell command allowlist, one binary name per line.
     #   Empty = the built-in DEFAULT_COMMANDS set. BRAIN_MOTOR_COMMANDS env wins.
     "motor_allowed_commands": "",
-    # ── Self-directed autonomy policy ──────────────────────────────────────────
+    # ── Autonomy policy: user-directed column ─────────────────────────────────
+    # Same structure as the motor_self_* column below — applied when the motor
+    # executes a live user command. Defaults are wide open (current behavior).
+    "motor_user_writes": 1,
+    "motor_user_network": 1,
+    "motor_user_cloud": "full",  # full | ro | off
+    "motor_user_connectors": "",  # one per line; empty = all configured
+    # ── Autonomy policy: self-directed column ─────────────────────────────────
     # Applied ONLY when the motor runs a task the brain initiated itself (DMN
     # self-tasks, recovery jobs) — tasks executing a live user command keep the
     # full grants above. Read each dispatch, so changes apply without restart.

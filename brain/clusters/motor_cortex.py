@@ -1845,15 +1845,28 @@ class MotorCortexCluster:
     def exit_self_mode(self) -> None:
         self._self_mode = False
 
-    @staticmethod
-    def _self_policy() -> dict:
-        """Live read of the self-directed autonomy policy (no restart needed)."""
+    def _mode_policy(self) -> dict:
+        """Live read of the active autonomy policy. The same permission
+        structure exists twice — motor_user_* (executing a live command) and
+        motor_self_* (the brain's own initiative) — and the task worker's
+        self-mode flag picks the column. Read per dispatch: no restart needed."""
         from brain.settings import settings as _s
 
+        if self._self_mode:
+            prefix, label, w_def, c_def = "motor_self_", "self-directed", 0, "ro"
+        else:
+            prefix, label, w_def, c_def = "motor_user_", "user-directed", 1, "full"
+        connectors = {
+            n.strip().lower()
+            for n in str(_s.get(prefix + "connectors", "") or "").splitlines()
+            if n.strip()
+        }
         return {
-            "writes": bool(int(_s.get("motor_self_writes", 0) or 0)),
-            "network": bool(int(_s.get("motor_self_network", 1) or 0)),
-            "cloud": str(_s.get("motor_self_cloud", "ro") or "ro").lower(),
+            "label": label,
+            "writes": bool(int(_s.get(prefix + "writes", w_def) or 0)),
+            "network": bool(int(_s.get(prefix + "network", 1) or 0)),
+            "cloud": str(_s.get(prefix + "cloud", c_def) or c_def).lower(),
+            "connectors": connectors or None,
         }
 
     async def _dispatch_cloud(self, args: dict, turn_id: str) -> dict | None:
@@ -1876,40 +1889,33 @@ class MotorCortexCluster:
         context_facts = args.get("context_facts", [])
         description = args.get("description", task)
 
-        # Self-directed autonomy policy: the user can grant themselves broad
-        # cloud access while keeping the brain's own initiative narrower.
-        # Connector allowlist: when self-directed and the user listed specific
-        # connectors, the cloud session is built with ONLY those — anything
+        # Autonomy policy — the same structure governs both columns; the mode
+        # flag picks user-directed vs self-directed dials. Connector allowlist:
+        # the cloud session is built with ONLY the listed connectors — anything
         # else (email, calendar, …) simply doesn't exist for this task.
+        _mp = self._mode_policy()
         if hasattr(self._cloud, "set_connector_filter"):
-            _names = None
-            if self._self_mode:
-                from brain.settings import settings as _s
-
-                _listed = {
-                    n.strip().lower()
-                    for n in str(_s.get("motor_self_connectors", "") or "").splitlines()
-                    if n.strip()
-                }
-                _names = _listed or None
-            self._cloud.set_connector_filter(_names)
-        if self._self_mode:
-            _pol = self._self_policy()["cloud"]
-            if _pol == "off" or (_pol == "ro" and is_write):
-                output = (
-                    "[blocked] Cloud actions are restricted for self-directed work "
-                    f"(policy: {_pol}). This task was not requested by the user — "
-                    "either complete it with local read tools, or note it as a "
-                    "suggestion the user can approve in conversation."
+            self._cloud.set_connector_filter(_mp["connectors"])
+        if _mp["cloud"] == "off" or (_mp["cloud"] == "ro" and is_write):
+            output = (
+                f"[blocked] Cloud actions are restricted for {_mp['label']} work "
+                f"(policy: {_mp['cloud']})."
+                + (
+                    " This task was not requested by the user — either complete it "
+                    "with local read tools, or note it as a suggestion the user can "
+                    "approve in conversation."
+                    if self._self_mode
+                    else " The user can loosen this in Settings → Motor Permissions."
                 )
-                result = {
-                    "tool": "cloud_action",
-                    "args": args,
-                    "output": output,
-                    "success": False,
-                }
-                await self._bus.publish_dict("motor.result", result, source=CLUSTER)
-                return result
+            )
+            result = {
+                "tool": "cloud_action",
+                "args": args,
+                "output": output,
+                "success": False,
+            }
+            await self._bus.publish_dict("motor.result", result, source=CLUSTER)
+            return result
 
         # Guardrail 3: confirmation gate — write actions need explicit user sign-off
         if is_write:
@@ -1984,32 +1990,31 @@ class MotorCortexCluster:
 
     async def _dispatch_once(self, tool: str, args: dict) -> str:
         """Single (non-retrying) tool dispatch. Called by _dispatch."""
-        if self._self_mode:
-            _pol = self._self_policy()
-            if not _pol["writes"] and tool in ("write_file", "append_file"):
-                return (
-                    "[blocked] File writes are disabled for self-directed work "
-                    "(Settings → Motor Permissions → When Acting On Its Own)."
-                )
-            if not _pol["writes"] and tool == "run_command":
-                from brain.clusters.motor_dispatcher import READONLY_COMMANDS
-                import shlex as _shlex
+        _pol = self._mode_policy()
+        if not _pol["writes"] and tool in ("write_file", "append_file"):
+            return (
+                f"[blocked] File writes are disabled for {_pol['label']} work "
+                "(Settings → Motor Permissions)."
+            )
+        if not _pol["writes"] and tool == "run_command":
+            from brain.clusters.motor_dispatcher import READONLY_COMMANDS
+            import shlex as _shlex
 
-                try:
-                    _base = os.path.basename(_shlex.split(args.get("cmd", ""))[0])
-                except (ValueError, IndexError):
-                    _base = ""
-                if _base not in READONLY_COMMANDS:
-                    return (
-                        f"[blocked] '{_base or args.get('cmd', '')}' is not allowed for "
-                        "self-directed work — only inspection commands "
-                        f"({sorted(READONLY_COMMANDS)}) run without a user request."
-                    )
-            if not _pol["network"] and tool == "fetch_url":
+            try:
+                _base = os.path.basename(_shlex.split(args.get("cmd", ""))[0])
+            except (ValueError, IndexError):
+                _base = ""
+            if _base not in READONLY_COMMANDS:
                 return (
-                    "[blocked] Network fetch is disabled for self-directed work "
-                    "(Settings → Motor Permissions → When Acting On Its Own)."
+                    f"[blocked] '{_base or args.get('cmd', '')}' is not allowed for "
+                    f"{_pol['label']} work — only inspection commands "
+                    f"({sorted(READONLY_COMMANDS)}) are permitted under this policy."
                 )
+        if not _pol["network"] and tool == "fetch_url":
+            return (
+                f"[blocked] Network fetch is disabled for {_pol['label']} work "
+                "(Settings → Motor Permissions)."
+            )
         try:
             if tool == "read_file":
                 return await asyncio.get_event_loop().run_in_executor(
