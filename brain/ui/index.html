@@ -2028,9 +2028,51 @@ details[open].turn-log summary::before { transform: rotate(90deg); }
   50%       { box-shadow: 0 0 0 6px oklch(from var(--danger) l c h / 0); }
 }
 
+/* Column wrapper so the always-on toggle sits centered above the PTT button */
+#ptt-stack {
+  display: none;
+  flex: 1;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+#always-on-toggle {
+  align-self: center;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid oklch(0.38 0.04 250);
+  background: transparent;
+  color: var(--fg-faint);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: border-color 150ms, color 150ms;
+}
+#always-on-toggle:hover { border-color: oklch(0.52 0.06 250); color: var(--fg-dim); }
+#always-on-toggle .aot-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: oklch(0.45 0.02 250);
+  transition: background 150ms, box-shadow 150ms;
+}
+#always-on-toggle.on { border-color: oklch(0.62 0.14 145 / 0.6); color: oklch(0.78 0.12 145); }
+#always-on-toggle.on .aot-dot {
+  background: oklch(0.72 0.18 145);
+  box-shadow: 0 0 6px oklch(0.72 0.18 145 / 0.8);
+}
+[data-theme="atlas"] #always-on-toggle { border-color: var(--line); color: var(--ink-4); }
+[data-theme="atlas"] #always-on-toggle.on { border-color: oklch(0.55 0.12 145 / 0.7); color: oklch(0.50 0.12 145); }
+
 /* Mic input mode: swap textarea+send for PTT button */
 .input-wrap.mic-mode #msg-input { display: none; }
 .input-wrap.mic-mode #send-btn  { display: none; }
+.input-wrap.mic-mode #ptt-stack { display: flex; }
 .input-wrap.mic-mode #ptt-btn   { display: flex; }
 [data-theme="atlas"] #ptt-btn { border-color: var(--line); color: var(--ink-4); }
 [data-theme="atlas"] #ptt-btn:hover { border-color: var(--ink-3); color: var(--ink-2); }
@@ -4299,14 +4341,20 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
             <img id="img-preview-thumb" alt="attached image">
             <button id="img-remove-btn" title="Remove image">×</button>
           </div>
-          <button id="ptt-btn" type="button" aria-label="Hold to talk">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="9" y="2" width="6" height="12" rx="3"/>
-              <path d="M5 10v2a7 7 0 0 0 14 0v-2"/>
-              <line x1="12" y1="19" x2="12" y2="22"/>
-            </svg>
-            <span id="ptt-label">Push to Talk</span>
-          </button>
+          <div id="ptt-stack">
+            <button id="always-on-toggle" type="button" aria-pressed="false"
+                    title="Hands-free: mic stays open, speech is detected automatically">
+              <span class="aot-dot"></span><span>Always On</span>
+            </button>
+            <button id="ptt-btn" type="button" aria-label="Hold to talk">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="9" y="2" width="6" height="12" rx="3"/>
+                <path d="M5 10v2a7 7 0 0 0 14 0v-2"/>
+                <line x1="12" y1="19" x2="12" y2="22"/>
+              </svg>
+              <span id="ptt-label">Push to Talk</span>
+            </button>
+          </div>
           <textarea id="msg-input" rows="4" placeholder="Speak, or write a line…"></textarea>
           <button id="send-btn" disabled title="Send (Enter)">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
@@ -5078,13 +5126,17 @@ function sendMessage(text) {
     if (micActive && micState === 'off') {
       clearTimeout(voiceRestartTimer);
       _voiceSessionStop();
-      // Fallback for text-only mode where no speaking event fires:
-      // reopen after 5 s if the brain hasn't started TTS by then.
-      voiceRestartTimer = setTimeout(() => {
-        if (micActive && micState === 'off' && !brainIsSpeaking) {
-          _voiceSessionStart();
-        }
-      }, 5000);
+      if (alwaysOnMode) {
+        VAD.reset();
+      } else {
+        // Fallback for text-only mode where no speaking event fires:
+        // reopen after 5 s if the brain hasn't started TTS by then.
+        voiceRestartTimer = setTimeout(() => {
+          if (micActive && micState === 'off' && !brainIsSpeaking) {
+            _voiceSessionStart();
+          }
+        }, 5000);
+      }
     }
   } else if (demoMode) {
     demoRespond(text);
@@ -5270,9 +5322,12 @@ function handle(msg) {
           // TTS starting — close Deepgram. The session was already closed by
           // sendMessage, but guard here too for any edge-case path that skips it.
           _voiceSessionStop();
-        } else {
+          if (alwaysOnMode) VAD.reset();
+        } else if (!alwaysOnMode) {
           // TTS ended — reopen Deepgram after a brief audio-settle delay.
           // This is the primary auto-resume mechanism between turns.
+          // (Always-on skips this: the VAD opens a session at speech onset,
+          // so nothing idles into Deepgram's no-audio timeout.)
           voiceRestartTimer = setTimeout(() => {
             if (micActive && micState === 'off') {
               _voiceSessionStart();
@@ -6025,8 +6080,7 @@ async function _startPcmCapture(stream) {
     let off = 0;
     for (const b of pending) { all.set(b, off); off += b.length; }
     pending = []; pendingLen = 0;
-    if (!voiceSessionOpen || !ws || ws.readyState !== WebSocket.OPEN) return;
-    ws.send(_downsampleToInt16(all, srcRate).buffer);
+    _handlePcmBatch(all, srcRate);
   };
 
   if (_pcmCtx.audioWorklet) {
@@ -6068,6 +6122,131 @@ function _voiceSessionStop() {
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ type: 'voice_stop' }));
   }
+}
+
+function _sendPcm(f32, srcRate) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(_downsampleToInt16(f32, srcRate).buffer);
+}
+
+/* ---- Always-on mode: energy-gated hands-free capture ----------------------
+   Capture runs continuously, but audio only streams to the server during
+   speech bursts. An adaptive noise floor (fast-down / slow-up) sets the gate,
+   so a persistently noisy room raises the bar instead of streaming 24/7. The
+   Deepgram session is opened at burst onset (pre-roll included so the first
+   word isn't clipped) and closed after the burst tail — silence costs nothing
+   and background noise below the gate can never reach transcription. */
+let alwaysOnMode = localStorage.getItem('brain_always_on') === '1';
+
+const VAD = {
+  // Batches are ~250ms each (see flushAt in _startPcmCapture).
+  HANG_BATCHES: 5,      // ~1.25s of quiet before a burst is considered over
+  TAIL_BATCHES: 3,      // ~0.75s of trailing audio so Deepgram endpointing fires
+  PREROLL_BATCHES: 2,   // ~0.5s kept before speech onset
+  MIN_THRESHOLD: 0.010, // absolute RMS gate — sub-breath room tone never opens
+  MAX_FLAT_BURST: 60,   // ~15s with no pauses = steady noise, not speech
+  floor: 0.004,
+  state: 'idle',        // idle | talking | closing
+  quiet: 0,
+  tail: 0,
+  preRoll: [],
+  burstLen: 0,
+  burstQuiet: 0,
+  burstEma: 0,
+  reset() {
+    this.state = 'idle';
+    this.quiet = 0;
+    this.tail = 0;
+    this.preRoll = [];
+    this.burstLen = 0;
+    this.burstQuiet = 0;
+    this.burstEma = 0;
+    _setBurstUI(false);
+  },
+};
+
+function _vadProcess(f32, srcRate) {
+  let sum = 0;
+  for (let i = 0; i < f32.length; i++) sum += f32[i] * f32[i];
+  const rms = Math.sqrt(sum / f32.length);
+
+  // Noise-floor tracker: drops fast, rises slowly — a burst of speech can't
+  // drag the floor up, but a steadily noisy room does. Frozen while the brain
+  // is speaking so TTS bleed doesn't poison the estimate, and while a burst
+  // is active so the floor stays a true between-speech baseline.
+  if (VAD.state === 'idle' && !brainIsSpeaking) {
+    VAD.floor += (rms - VAD.floor) * (rms < VAD.floor ? 0.4 : 0.02);
+    VAD.floor = Math.min(Math.max(VAD.floor, 0.0005), 0.05);
+  }
+  const threshold = Math.max(VAD.floor * 3, VAD.floor + 0.006, VAD.MIN_THRESHOLD);
+  const isSpeech = !brainIsSpeaking && rms > threshold;
+
+  if (VAD.state === 'idle') {
+    if (isSpeech) {
+      VAD.state = 'talking';
+      VAD.quiet = 0;
+      if (!voiceSessionOpen) _voiceSessionStart();
+      for (const b of VAD.preRoll) _sendPcm(b, srcRate);
+      VAD.preRoll = [];
+      _sendPcm(f32, srcRate);
+      _setBurstUI(true);
+    } else {
+      VAD.preRoll.push(f32);
+      if (VAD.preRoll.length > VAD.PREROLL_BATCHES) VAD.preRoll.shift();
+    }
+    return;
+  }
+
+  // talking / closing: stream everything, including quiet batches — Deepgram
+  // needs the trailing silence to endpoint and emit the final transcript.
+  _sendPcm(f32, srcRate);
+  VAD.burstLen++;
+  if (!isSpeech) VAD.burstQuiet++;
+  VAD.burstEma = VAD.burstEma ? VAD.burstEma * 0.9 + rms * 0.1 : rms;
+
+  // Steady-noise breaker: real speech always has short pauses; a long burst
+  // with virtually none is a fan/AC/hum that cleared the gate. Absorb it
+  // into the noise floor (raising the bar above it) and close the session.
+  if (
+    VAD.state === 'talking'
+    && VAD.burstLen >= VAD.MAX_FLAT_BURST
+    && VAD.burstQuiet <= VAD.burstLen * 0.1
+  ) {
+    VAD.floor = Math.min(Math.max(VAD.floor, VAD.burstEma * 0.8), 0.05);
+    _voiceSessionStop();
+    VAD.reset();
+    return;
+  }
+
+  if (isSpeech) {
+    VAD.state = 'talking';
+    VAD.quiet = 0;
+    return;
+  }
+  if (VAD.state === 'talking') {
+    if (++VAD.quiet >= VAD.HANG_BATCHES) {
+      VAD.state = 'closing';
+      VAD.tail = VAD.TAIL_BATCHES;
+      _setBurstUI(false);
+    }
+  } else if (--VAD.tail <= 0) {
+    _voiceSessionStop();
+    VAD.reset();
+  }
+}
+
+function _handlePcmBatch(f32, srcRate) {
+  if (alwaysOnMode) {
+    _vadProcess(f32, srcRate);
+  } else if (voiceSessionOpen) {
+    _sendPcm(f32, srcRate);
+  }
+}
+
+function _setBurstUI(active) {
+  if (!alwaysOnMode) return;
+  pttBtn.classList.toggle('recording', active);
+  pttLabel.textContent = active ? 'Hearing you…' : 'Always Listening';
 }
 
 // Single source of truth for mic state: 'off' | 'muted' | 'active'
@@ -6153,6 +6332,12 @@ function handleMicState(status) {
   } else {
     // 'off' — restore to inputMode state
     setInputMode(inputMode);
+    // Resume hands-free capture on connect/reconnect: mic_state is part of
+    // the server's WS hello, so this fires exactly once per (re)connection.
+    if (alwaysOnMode && inputMode === 'mic' && !micActive
+        && ws && ws.readyState === WebSocket.OPEN) {
+      startListening();
+    }
   }
 }
 
@@ -6194,7 +6379,11 @@ async function startListening() {
     return;
   }
   try {
-    micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    // Explicit DSP constraints: echoCancellation keeps TTS playback out of
+    // the capture, noiseSuppression keeps the VAD noise floor honest.
+    micStream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+    });
   } catch (err) {
     transcriptText.textContent = 'Microphone access denied.';
     transcriptBar.classList.add('visible');
@@ -6202,7 +6391,13 @@ async function startListening() {
     return;
   }
 
-  _voiceSessionStart();
+  if (alwaysOnMode) {
+    // Hands-free: the VAD opens a session at speech onset; don't hold one
+    // open through silence (it would just idle into Deepgram's 1011 timeout).
+    VAD.reset();
+  } else {
+    _voiceSessionStart();
+  }
   finalTranscript = '';
   msgInput.value = '';
 
@@ -6224,8 +6419,9 @@ async function startListening() {
   micBtn.classList.add('listening');
   micBtn.title = 'Listening…';
   msgInput.classList.add('voice-listening');
-  transcriptText.textContent = 'Listening…';
+  transcriptText.textContent = alwaysOnMode ? 'Hands-free — speak anytime' : 'Listening…';
   transcriptBar.classList.add('visible');
+  if (alwaysOnMode) pttLabel.textContent = 'Always Listening';
 }
 
 function stopListening(autoSend = false) {
@@ -6318,11 +6514,15 @@ function handleTranscriptError(msg) {
     // still running. Clear the dead server session and open a fresh one;
     // raw PCM frames are stateless so the new session decodes mid-stream.
     _voiceSessionStop();
-    setTimeout(() => {
-      if (micActive && micState === 'off') {
-        _voiceSessionStart();
-      }
-    }, 300);
+    if (alwaysOnMode) {
+      VAD.reset();  // next speech onset opens a fresh session
+    } else {
+      setTimeout(() => {
+        if (micActive && micState === 'off') {
+          _voiceSessionStart();
+        }
+      }, 300);
+    }
   } else {
     stopListening(false);
   }
@@ -6338,6 +6538,12 @@ micBtn.addEventListener('click', () => {
 let pttRecording = false;
 
 function pttToggle() {
+  if (alwaysOnMode) {
+    // In hands-free mode the big button is a status surface; tapping it is
+    // the quickest way back to push-to-talk.
+    setAlwaysOn(false);
+    return;
+  }
   if (!pttRecording) {
     // Start
     pttRecording = true;
@@ -6365,6 +6571,41 @@ function pttToggle() {
   }
 }
 pttBtn.addEventListener('click', pttToggle);
+
+/* ---- Always-on toggle ---- */
+const aotBtn = document.getElementById('always-on-toggle');
+
+function setAlwaysOn(on) {
+  alwaysOnMode = on;
+  localStorage.setItem('brain_always_on', on ? '1' : '0');
+  aotBtn.classList.toggle('on', on);
+  aotBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  if (on) {
+    if (inputMode !== 'mic') setInputMode('mic');
+    VAD.reset();
+    if (!micActive && micState === 'off' && ws && ws.readyState === WebSocket.OPEN) {
+      startListening();
+    } else if (micActive) {
+      // Already capturing via PTT — hand the open session to the VAD's
+      // lifecycle so it closes on the next silence instead of staying open.
+      pttRecording = false;
+      pttBtn.classList.remove('recording');
+      pttLabel.textContent = 'Always Listening';
+      if (voiceSessionOpen) VAD.state = 'talking';
+    }
+  } else {
+    if (micActive) stopListening(false);  // stops capture + closes the session
+    pttLabel.textContent = 'Push to Talk';
+  }
+}
+aotBtn.addEventListener('click', () => setAlwaysOn(!alwaysOnMode));
+
+// Restore the persisted state visually; capture itself starts once the server
+// reports mic_state (see handleMicState) — the WS isn't open yet at load.
+if (alwaysOnMode) {
+  aotBtn.classList.add('on');
+  aotBtn.setAttribute('aria-pressed', 'true');
+}
 
 const interruptBtn = document.getElementById('interrupt-btn');
 interruptBtn.addEventListener('click', () => {
