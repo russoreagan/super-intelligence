@@ -741,6 +741,20 @@
     const stored = personaStore[id] && personaStore[id].selfMd;
     const txt = (typeof stored === 'string') ? stored : buildSelf(id);
     selfStore[id] = txt; selfSaved[id] = txt;
+    // Hosted source of truth: pull the persona's stored self.md from the server
+    // and replace the local template/persona_store copy — unless the user has
+    // already started editing this persona's seed in this session.
+    fetch('/self-model?persona=' + encodeURIComponent(id))
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        const remote = data && data.content && data.content.trim();
+        if (!remote) return;
+        if (selfStore[id] !== selfSaved[id]) return; // dirty — don't clobber edits
+        if (selfStore[id] === remote) return;
+        selfStore[id] = remote; selfSaved[id] = remote;
+        if (persona === id && activeTab === 'self' && selfPage === 'seed') renderSelf();
+      })
+      .catch(() => {});
   }
   function selfDirtyCount() { return Object.keys(selfStore).filter(id => selfStore[id] !== selfSaved[id]).length; }
 
@@ -871,7 +885,7 @@
     const foot = document.createElement('div'); foot.className = 'self-foot';
     foot.innerHTML = `${moonSvg}<span>The brain wrote this for itself — revised over sleep passes. It's read here, not edited: the brain owns this document. To change where it starts from, edit the <b>Seed</b> — it grows from there.</span>`;
     host.appendChild(foot);
-    fetch('/self-model').then(r => r.ok ? r.json() : null).then(data => {
+    fetch('/self-model?persona=' + encodeURIComponent(persona)).then(r => r.ok ? r.json() : null).then(data => {
       const bodyEl = ed.querySelector('#self-living-body');
       const metaEl = ed.querySelector('#self-living-meta');
       const content = (data && data.content) ? data.content.trim() : '';

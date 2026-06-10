@@ -493,7 +493,12 @@ class UIServer:
             from brain.settings import settings
             from fastapi.responses import JSONResponse
 
-            persona_name = str(settings.get("persona_name", ""))
+            # The settings UI can view any persona's Sense of Self, not just the
+            # active one — honor ?persona=<display name> (SchemaStore slugifies).
+            persona_name = str(
+                request.query_params.get("persona", "").strip()
+                or settings.get("persona_name", "")
+            )
             content = ""
             try:
                 from brain.second_brain.store import SchemaStore
