@@ -399,6 +399,63 @@ def test_partner_keys_owner_only(monkeypatch):
     assert r.status_code == 200 and r.json()["token"] == "sk_secret"
 
 
+def test_turn_stream_emits_inner_life_then_done():
+    import asyncio
+
+    class _Source:
+        def __init__(self):
+            self.taps = set()
+
+        def add_tap(self, q):
+            self.taps.add(q)
+
+        def remove_tap(self, q):
+            self.taps.discard(q)
+
+        def push(self, ev):
+            for q in list(self.taps):
+                q.put_nowait(ev)
+
+    source = _Source()
+
+    async def runner(message, end_user_id, mandate_id=None):
+        for ev in (
+            {"type": "turn_start", "turn_id": "t1", "user_input": message},
+            {"type": "stream_thought", "thought": "thinking it over"},
+            {"type": "emotion", "emotion": "warm"},
+            {"type": "turn_end", "turn_id": "t1", "response": "hello there"},
+        ):
+            source.push(ev)
+            await asyncio.sleep(0)
+        return ("hello there", {"emotion": "warm"})
+
+    keys = {"sk_test_123"}
+    registry = ApiSessionRegistry(id_fn=lambda: "ss")
+    app = FastAPI()
+    app.include_router(build_api_router(runner, registry, auth=lambda h: _ok(h, keys), event_source=source))
+    c = TestClient(app)
+    registry.create("c1")
+    with c.stream("POST", "/v1/sessions/ss/turns/stream", json={"message": "hi"}, headers=_AUTH) as r:
+        assert r.status_code == 200
+        assert "text/event-stream" in r.headers["content-type"]
+        body = "".join(r.iter_text())
+    assert "event: stream_thought" in body
+    assert "event: emotion" in body
+    assert "event: done" in body
+    assert "hello there" in body
+    assert not source.taps  # tap removed after the stream closes
+
+
+def test_turn_stream_unavailable_without_source():
+    # No event_source and no emitter import path resolvable in the router → 501.
+    c = _client(_FakeRunner())
+    sid = c.post("/v1/sessions", json={"end_user_id": "c1"}, headers=_AUTH).json()["session_id"]
+    # The real emitter singleton may import; accept either streaming (200) or 501,
+    # but a missing-source build must not 500.
+    with c.stream("POST", f"/v1/sessions/{sid}/turns/stream", json={"message": "hi"}, headers=_AUTH) as r:
+        assert r.status_code in (200, 501)
+
+
 def test_apiserver_app_serves_routes_with_env_key(monkeypatch):
     """End-to-end against the real ApiServer app + the default env-based auth."""
     monkeypatch.setenv("BRAIN_API_KEY", "sk_live_xyz")

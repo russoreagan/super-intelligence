@@ -351,7 +351,10 @@ class MotorCortexCluster:
         # autonomous jobs could run up cost. These cap how many jobs can run per
         # session, per rolling window, and concurrently. Cloud spend is ALSO
         # bounded independently by bg_cloud_token_rate + cloud_daily_usd_budget.
-        self._job_start_times: list[float] = []  # monotonic timestamps, pruned per check
+        # Wall-clock timestamps, persisted so the rolling-window cap survives a
+        # restart (a redeploy can't reset the rate limit). Session/concurrent
+        # counts are process-scoped by design and start fresh each process.
+        self._job_start_times: list[float] = self._load_job_starts()
         self._session_job_count: int = 0
         self._active_job_count: int = 0
 
@@ -651,16 +654,36 @@ class MotorCortexCluster:
 
         return last_result
 
-    def _check_job_rate_limit(self) -> str | None:
-        """Return a human-readable decline reason if a new motor job would exceed
-        any configured cap, else None. Caps: concurrent, rolling-window, session."""
-        import time as _t
-
-        now = _t.monotonic()
+    def _job_caps(self) -> tuple[float, int, int, int]:
+        """(window_s, max_window, max_session, max_concurrent). When an agent is
+        bound, its effective (tighter) caps win — an agent can narrow the rate
+        limit within the account ceiling, never widen it."""
         window_s = float(_brain_settings.get("motor_job_window_s") or 3600.0)
         max_window = int(_brain_settings.get("motor_max_jobs_per_window") or 10)
         max_session = int(_brain_settings.get("motor_max_jobs_per_session") or 30)
         max_concurrent = int(_brain_settings.get("motor_max_concurrent_jobs") or 1)
+        perms = self._bound_agent_perms()
+        if perms:
+            def _cap(key, cur):
+                v = perms.get(key)
+                try:
+                    return min(cur, int(v)) if v not in (None, "") else cur
+                except (TypeError, ValueError):
+                    return cur
+            max_window = _cap("motor_max_jobs_per_window", max_window)
+            max_session = _cap("motor_max_jobs_per_session", max_session)
+            max_concurrent = _cap("motor_max_concurrent_jobs", max_concurrent)
+        return window_s, max_window, max_session, max_concurrent
+
+    def _check_job_rate_limit(self) -> str | None:
+        """Return a human-readable decline reason if a new motor job would exceed
+        any configured cap, else None. Caps: concurrent, rolling-window, session.
+        Window timestamps are wall-clock + persisted, so the rolling-window cap
+        survives a process restart (it can't be reset by redeploying)."""
+        import time as _t
+
+        now = _t.time()
+        window_s, max_window, max_session, max_concurrent = self._job_caps()
         # Prune timestamps outside the rolling window
         self._job_start_times = [t for t in self._job_start_times if now - t <= window_s]
         if self._active_job_count >= max_concurrent:
@@ -670,6 +693,51 @@ class MotorCortexCluster:
         if self._session_job_count >= max_session:
             return f"session limit reached ({max_session} jobs)"
         return None
+
+    @staticmethod
+    def _job_rate_persist() -> bool:
+        """Persist the rolling window only in hosted/multitenant mode — there a
+        redeploy mustn't reset rate limits. Companion/local/tests stay ephemeral
+        (a fresh process starts with an empty window), so test isolation holds."""
+        import os
+
+        return bool(os.environ.get("BRAIN_MULTITENANT"))
+
+    def _job_rate_path(self) -> str:
+        import os
+
+        root = os.environ.get(
+            "SECOND_BRAIN_PATH", os.path.join(os.path.dirname(__file__), "..", "..", "second_brain")
+        )
+        return os.path.join(root, "job_rate.json")
+
+    def _load_job_starts(self) -> list[float]:
+        """Load the persisted rolling-window job timestamps, already pruned. Empty
+        on first run / no volume / companion mode."""
+        import json
+        import time as _t
+
+        if not self._job_rate_persist():
+            return []
+        try:
+            with open(self._job_rate_path()) as f:
+                data = json.load(f)
+            window_s = float(_brain_settings.get("motor_job_window_s") or 3600.0)
+            now = _t.time()
+            return [float(t) for t in data.get("window_starts", []) if now - float(t) <= window_s]
+        except Exception:
+            return []
+
+    def _save_job_starts(self) -> None:
+        import json
+
+        if not self._job_rate_persist():
+            return
+        try:
+            with open(self._job_rate_path(), "w") as f:
+                json.dump({"window_starts": self._job_start_times}, f)
+        except Exception:
+            pass
 
     # ── Internal-directive entry point ─────────────────────────────────────
     async def execute_internal_job(self, goal: str, turn_id: str, budget: int = 0) -> dict:
@@ -711,10 +779,12 @@ class MotorCortexCluster:
                 "error": "rate_limited",
             }
 
-        # Accepted: record for the limiter and mark one job active.
+        # Accepted: record for the limiter and mark one job active. Wall-clock +
+        # persist so the rolling-window count outlives a restart.
         import time as _t
 
-        self._job_start_times.append(_t.monotonic())
+        self._job_start_times.append(_t.time())
+        self._save_job_starts()
         self._session_job_count += 1
         self._active_job_count += 1
 

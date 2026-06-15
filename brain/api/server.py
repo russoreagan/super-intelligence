@@ -35,6 +35,18 @@ ConfirmRunner = Callable[[dict, str, "str | None", bool], Awaitable[tuple[str, d
 PurgeRunner = Callable[[str], Awaitable[dict]]
 
 
+# Event types forwarded over the SSE stream (the brain's per-turn inner life).
+_STREAMED_TYPES = frozenset(
+    {"turn_start", "activation", "stream_thought", "neuromod", "hormonal", "emotion", "user_emotion", "turn_end"}
+)
+
+
+def _sse(name: str, obj: dict) -> str:
+    import json
+
+    return f"event: {name}\ndata: {json.dumps(obj)}\n\n"
+
+
 def _mood_from_affect(affect: dict | None) -> dict:
     """Curate the public mood view from the internal affect dict — emotion + the
     hormonal layer, never internal fields (enrollment, appraisal, etc.)."""
@@ -55,6 +67,7 @@ def build_api_router(
     confirm_runner: ConfirmRunner | None = None,
     purge_runner: PurgeRunner | None = None,
     resolver: "Callable[[str | None], dict | None] | None" = None,
+    event_source=None,
 ) -> APIRouter:
     registry = registry or ApiSessionRegistry()
     router = APIRouter(prefix="/v1")
@@ -143,6 +156,74 @@ def build_api_router(
                 "description": pending.get("description") or pending.get("task"),
             }
         return resp
+
+    @router.post("/sessions/{session_id}/turns/stream")
+    async def run_turn_stream(
+        session_id: str, body: dict, authorization: str | None = Header(default=None)
+    ):
+        ctx = _require(authorization)
+        s = registry.get(session_id)
+        if s is None:
+            raise HTTPException(status_code=404, detail="unknown session_id")
+        if not _owns(ctx, s):
+            raise HTTPException(status_code=403, detail="session belongs to another partner")
+        message = (body or {}).get("message")
+        if not isinstance(message, str) or not message.strip():
+            raise HTTPException(status_code=400, detail="message (non-empty string) is required")
+
+        source = event_source
+        if source is None:
+            try:
+                from brain.ui.emitter import emitter as source  # process singleton
+            except Exception:
+                source = None
+        if source is None:
+            raise HTTPException(status_code=501, detail="event streaming is not available on this server")
+
+        import asyncio
+        from fastapi.responses import StreamingResponse
+
+        async def _gen():
+            tap: asyncio.Queue = asyncio.Queue(maxsize=512)
+            source.add_tap(tap)
+            # Tap is live BEFORE the turn starts so turn_start isn't missed.
+            turn_task = asyncio.create_task(turn_runner(message, s.end_user_id, s.mandate_id))
+            try:
+                yield _sse("open", {"session_id": session_id, "end_user_id": s.end_user_id})
+                saw_end = False
+                while not saw_end:
+                    try:
+                        ev = await asyncio.wait_for(tap.get(), timeout=0.5)
+                    except (asyncio.TimeoutError, TimeoutError):
+                        if turn_task.done():
+                            break
+                        yield ": keep-alive\n\n"
+                        continue
+                    etype = ev.get("type")
+                    if etype in _STREAMED_TYPES:
+                        yield _sse(etype, ev)
+                    if etype == "turn_end":
+                        saw_end = True
+                # The turn's authoritative result (curated mood + any pending write).
+                text, affect = await turn_task
+                final = {"response": text, "mood": _mood_from_affect(affect)}
+                pending = affect.get("pending") if isinstance(affect, dict) else None
+                if pending:
+                    s.pending = pending
+                    registry.update(s)
+                    final["confirmation"] = {
+                        "required": True,
+                        "description": pending.get("description") or pending.get("task"),
+                    }
+                yield _sse("done", final)
+            except Exception as e:  # noqa: BLE001 — surface as a stream error frame
+                yield _sse("error", {"detail": str(e)})
+            finally:
+                source.remove_tap(tap)
+                if not turn_task.done():
+                    turn_task.cancel()
+
+        return StreamingResponse(_gen(), media_type="text/event-stream")
 
     @router.post("/sessions/{session_id}/confirm")
     async def confirm_action(
