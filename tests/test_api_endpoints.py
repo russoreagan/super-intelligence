@@ -356,6 +356,49 @@ def test_end_user_purge_requires_auth():
     assert TestClient(app).delete("/v1/end_users/x").status_code == 401
 
 
+def _partner_resolver(authorization):
+    tok = authorization[7:].strip() if authorization and authorization.lower().startswith("bearer ") else authorization
+    return {
+        "ka": {"partner_id": "A", "owner": False},
+        "kb": {"partner_id": "B", "owner": False},
+        "ko": {"partner_id": None, "owner": True},
+    }.get(tok)
+
+
+def _scoped_client(runner=None):
+    registry = ApiSessionRegistry(id_fn=lambda: "sx")
+    app = FastAPI()
+    app.include_router(build_api_router(
+        runner or _FakeRunner(), registry,
+        auth=lambda h: _partner_resolver(h) is not None, resolver=_partner_resolver))
+    return TestClient(app)
+
+
+def test_partner_can_only_drive_own_sessions():
+    c = _scoped_client()
+    A = {"Authorization": "Bearer ka"}
+    B = {"Authorization": "Bearer kb"}
+    O = {"Authorization": "Bearer ko"}
+    sid = c.post("/v1/sessions", json={"end_user_id": "c1"}, headers=A).json()["session_id"]
+    assert c.post(f"/v1/sessions/{sid}/turns", json={"message": "hi"}, headers=A).status_code == 200
+    assert c.post(f"/v1/sessions/{sid}/turns", json={"message": "hi"}, headers=B).status_code == 403
+    assert c.post(f"/v1/sessions/{sid}/turns", json={"message": "hi"}, headers=O).status_code == 200  # owner sees all
+
+
+def test_partner_keys_owner_only(monkeypatch):
+    from brain.api import auth as _a
+    from brain.second_brain import supabase_client
+
+    monkeypatch.setattr(supabase_client, "is_enabled", lambda: True)
+    monkeypatch.setattr(_a, "mint_partner_key", lambda pid, label=None: {"id": "k1", "partner_id": pid, "token": "sk_secret"})
+    c = _scoped_client()
+    # a partner key cannot mint
+    assert c.post("/v1/partner_keys", json={"partner_id": "X"}, headers={"Authorization": "Bearer ka"}).status_code == 403
+    # the owner can, and gets the plaintext token once
+    r = c.post("/v1/partner_keys", json={"partner_id": "X"}, headers={"Authorization": "Bearer ko"})
+    assert r.status_code == 200 and r.json()["token"] == "sk_secret"
+
+
 def test_apiserver_app_serves_routes_with_env_key(monkeypatch):
     """End-to-end against the real ApiServer app + the default env-based auth."""
     monkeypatch.setenv("BRAIN_API_KEY", "sk_live_xyz")

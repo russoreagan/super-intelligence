@@ -54,17 +54,30 @@ def build_api_router(
     auth: Callable[[str | None], bool] = check_bearer,
     confirm_runner: ConfirmRunner | None = None,
     purge_runner: PurgeRunner | None = None,
+    resolver: "Callable[[str | None], dict | None] | None" = None,
 ) -> APIRouter:
     registry = registry or ApiSessionRegistry()
     router = APIRouter(prefix="/v1")
+    if resolver is None:
+        from brain.api.auth import resolve_partner
 
-    def _require(authorization: str | None) -> None:
+        resolver = resolve_partner
+
+    def _require(authorization: str | None) -> dict:
+        """Gate on the key, return the caller's partner context. A fake bool ``auth``
+        (tests) that passes while the real resolver finds nothing → org owner."""
         if not auth(authorization):
             raise HTTPException(status_code=401, detail="invalid or missing API key")
+        return resolver(authorization) or {"partner_id": None, "owner": True}
+
+    def _owns(ctx: dict, s) -> bool:
+        # The org owner sees everything; a partner only its own sessions. Legacy
+        # sessions with no partner_id are owner-scoped.
+        return bool(ctx.get("owner")) or s.partner_id is None or s.partner_id == ctx.get("partner_id")
 
     @router.post("/sessions")
     async def create_session(body: dict, authorization: str | None = Header(default=None)):
-        _require(authorization)
+        ctx = _require(authorization)
         end_user_id = (body or {}).get("end_user_id")
         if not isinstance(end_user_id, str) or not end_user_id.strip():
             raise HTTPException(status_code=400, detail="end_user_id (non-empty string) is required")
@@ -90,7 +103,7 @@ def build_api_router(
                 raise HTTPException(status_code=404, detail=str(e)) from e
             except MandateError as e:
                 raise HTTPException(status_code=400, detail=str(e)) from e
-        s = registry.create(end_user_id.strip(), agent_id, mandate_id)
+        s = registry.create(end_user_id.strip(), agent_id, mandate_id, partner_id=ctx.get("partner_id"))
         return {
             "session_id": s.session_id,
             "end_user_id": s.end_user_id,
@@ -102,10 +115,12 @@ def build_api_router(
     async def run_turn(
         session_id: str, body: dict, authorization: str | None = Header(default=None)
     ):
-        _require(authorization)
+        ctx = _require(authorization)
         s = registry.get(session_id)
         if s is None:
             raise HTTPException(status_code=404, detail="unknown session_id")
+        if not _owns(ctx, s):
+            raise HTTPException(status_code=403, detail="session belongs to another partner")
         message = (body or {}).get("message")
         if not isinstance(message, str) or not message.strip():
             raise HTTPException(status_code=400, detail="message (non-empty string) is required")
@@ -133,12 +148,14 @@ def build_api_router(
     async def confirm_action(
         session_id: str, body: dict | None = None, authorization: str | None = Header(default=None)
     ):
-        _require(authorization)
+        ctx = _require(authorization)
         if confirm_runner is None:
             raise HTTPException(status_code=501, detail="confirmation is not available on this server")
         s = registry.get(session_id)
         if s is None:
             raise HTTPException(status_code=404, detail="unknown session_id")
+        if not _owns(ctx, s):
+            raise HTTPException(status_code=403, detail="session belongs to another partner")
         if not s.pending:
             raise HTTPException(status_code=409, detail="no action awaiting confirmation")
         approve = bool((body or {}).get("approve", True))
@@ -329,7 +346,9 @@ def build_api_router(
     # process's in-memory caches (ops / GDPR right-to-erasure).
     @router.delete("/end_users/{end_user_id}")
     async def purge_end_user(end_user_id: str, authorization: str | None = Header(default=None)):
-        _require(authorization)
+        ctx = _require(authorization)
+        if not ctx.get("owner"):
+            raise HTTPException(status_code=403, detail="owner key required")
         if purge_runner is None:
             raise HTTPException(status_code=501, detail="end-user purge is not available on this server")
         if not end_user_id.strip():
@@ -338,6 +357,47 @@ def build_api_router(
         # half-erased customer.
         registry.forget_end_user(end_user_id)
         return await purge_runner(end_user_id)
+
+    # ── Per-partner key management (owner-only) ───────────────────────────────
+    def _require_owner(authorization: str | None) -> dict:
+        ctx = _require(authorization)
+        if not ctx.get("owner"):
+            raise HTTPException(status_code=403, detail="owner key required")
+        return ctx
+
+    @router.get("/partner_keys")
+    async def list_partner_keys_route(authorization: str | None = Header(default=None)):
+        _require_owner(authorization)
+        _guard()
+        from brain.api import auth as _a
+
+        return {"keys": _a.list_partner_keys()}
+
+    @router.post("/partner_keys")
+    async def mint_partner_key_route(
+        body: dict, authorization: str | None = Header(default=None)
+    ):
+        _require_owner(authorization)
+        _guard()
+        from brain.api import auth as _a
+
+        partner_id = (body or {}).get("partner_id")
+        if not isinstance(partner_id, str) or not partner_id.strip():
+            raise HTTPException(status_code=400, detail="partner_id (non-empty string) is required")
+        try:
+            return _a.mint_partner_key(partner_id.strip(), (body or {}).get("label"))
+        except (ValueError, RuntimeError) as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+    @router.delete("/partner_keys/{key_id}")
+    async def revoke_partner_key_route(key_id: str, authorization: str | None = Header(default=None)):
+        _require_owner(authorization)
+        _guard()
+        from brain.api import auth as _a
+
+        if not _a.revoke_partner_key(key_id):
+            raise HTTPException(status_code=404, detail="unknown key id")
+        return {"ok": True, "id": key_id, "active": False}
 
     return router
 

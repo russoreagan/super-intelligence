@@ -6,14 +6,22 @@ A partner's backend authenticates with a bearer key — the *runtime* credential
 nothing else. Fail-closed: if no keys are configured, every request is denied, so
 an accidentally-exposed server is not open by default.
 
-Keys come from BRAIN_API_KEYS (comma-separated) or BRAIN_API_KEY (single), or the
-``api_keys`` setting. Plaintext-compare for v1; hashing/rotation/per-partner scoping
-is a follow-on for the full engine layer.
+Two key kinds:
+  • The ORG OWNER key — BRAIN_API_KEYS / BRAIN_API_KEY env or the ``api_keys``
+    setting. Plaintext compare. Full access (partner_id = None, owner = True).
+  • PER-PARTNER keys — rows in the ``api_keys`` table (011), each mapped to a
+    partner_id. Only the SHA-256 hash is stored; the token is shown once at mint.
+    Scoped: a partner can only drive sessions it opened.
+
+``resolve_partner`` returns the partner context for a bearer token; ``check_bearer``
+is the boolean gate built on it (so both key kinds authenticate).
 """
 
 from __future__ import annotations
 
+import hashlib
 import os
+import secrets
 
 
 def configured_keys() -> set[str]:
@@ -37,11 +45,114 @@ def _extract_token(authorization: str | None) -> str | None:
     return auth or None
 
 
-def check_bearer(authorization: str | None) -> bool:
-    """True iff the Authorization header carries a configured key. Fail-closed:
-    no configured keys → always False."""
-    keys = configured_keys()
-    if not keys:
-        return False
+def _hash(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def resolve_partner(authorization: str | None) -> dict | None:
+    """Return the caller's partner context, or None if the token is invalid.
+
+    {"partner_id": str | None, "owner": bool}. The org owner's key → owner=True,
+    partner_id=None (full access). A per-partner table key → owner=False with its
+    partner_id. Fail-closed: unknown token → None."""
     token = _extract_token(authorization)
-    return token is not None and token in keys
+    if not token:
+        return None
+    owner_keys = configured_keys()
+    if owner_keys and token in owner_keys:
+        return {"partner_id": None, "owner": True}
+    row = _lookup_partner_key(token)
+    if row:
+        return {"partner_id": row.get("partner_id"), "owner": False}
+    return None
+
+
+def _lookup_partner_key(token: str) -> dict | None:
+    try:
+        from brain.second_brain import supabase_client
+
+        if not supabase_client.is_enabled():
+            return None
+        client = supabase_client.get_client()
+        org = supabase_client.get_org_id()
+        res = (
+            client.table("api_keys")
+            .select("partner_id, active")
+            .eq("org_id", org)
+            .eq("key_hash", _hash(token))
+            .eq("active", True)
+            .execute()
+        )
+        rows = res.data or []
+        return rows[0] if rows else None
+    except Exception:
+        return None
+
+
+def check_bearer(authorization: str | None) -> bool:
+    """True iff the Authorization header carries a valid owner or partner key.
+    Fail-closed: no match → False."""
+    return resolve_partner(authorization) is not None
+
+
+# ── key management (owner-only; used by the engine API mint/revoke routes) ─────
+
+
+def mint_partner_key(partner_id: str, label: str | None = None) -> dict:
+    """Create a per-partner key. Returns {id, partner_id, token} — the plaintext
+    ``token`` is shown ONCE and never stored (only its hash is). Requires Supabase."""
+    from brain.second_brain import supabase_client
+
+    if not supabase_client.is_enabled():
+        raise RuntimeError("per-partner keys require the Supabase storage backend")
+    pid = str(partner_id or "").strip()
+    if not pid:
+        raise ValueError("partner_id required")
+    token = "sk_" + secrets.token_urlsafe(32)
+    key_id = secrets.token_hex(8)
+    client = supabase_client.get_client()
+    org = supabase_client.get_org_id()
+    client.table("api_keys").insert(
+        {
+            "org_id": org,
+            "id": key_id,
+            "key_hash": _hash(token),
+            "partner_id": pid,
+            "label": label,
+            "active": True,
+        }
+    ).execute()
+    return {"id": key_id, "partner_id": pid, "label": label, "token": token}
+
+
+def list_partner_keys() -> list[dict]:
+    """Key metadata (never the token/hash) for the org."""
+    from brain.second_brain import supabase_client
+
+    if not supabase_client.is_enabled():
+        return []
+    client = supabase_client.get_client()
+    org = supabase_client.get_org_id()
+    res = (
+        client.table("api_keys")
+        .select("id, partner_id, label, active, created_ts")
+        .eq("org_id", org)
+        .order("created_ts")
+        .execute()
+    )
+    return list(res.data or [])
+
+
+def revoke_partner_key(key_id: str) -> bool:
+    """Deactivate a key by its public id. Returns False if not found."""
+    from brain.second_brain import supabase_client
+
+    if not supabase_client.is_enabled():
+        return False
+    client = supabase_client.get_client()
+    org = supabase_client.get_org_id()
+    existing = client.table("api_keys").select("id").eq("org_id", org).eq("id", key_id).execute()
+    if not (existing.data or []):
+        return False
+    client.table("api_keys").update({"active": False}).eq("org_id", org).eq("id", key_id).execute()
+    return True
