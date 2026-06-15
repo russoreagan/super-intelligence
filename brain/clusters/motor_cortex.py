@@ -1930,6 +1930,20 @@ class MotorCortexCluster:
         p = a.get("permissions")
         return p if isinstance(p, dict) else {}
 
+    def _auto_confirm_writes(self) -> bool:
+        """Whether cloud writes may execute without a confirmation handshake. Org
+        ceiling AND (for engine turns) the bound agent — an agent can only enable
+        it if the account already allows it. Off in companion mode by default."""
+        from brain.settings import settings as _s
+
+        org = bool(int(_s.get("motor_auto_confirm_writes", 0) or 0))
+        if not org:
+            return False
+        perms = self._bound_agent_perms()
+        if perms is not None and "motor_auto_confirm_writes" in perms:
+            return bool(int(perms.get("motor_auto_confirm_writes") or 0))
+        return org
+
     async def _dispatch_cloud(self, args: dict, turn_id: str) -> dict | None:
         """Route to CloudExecutor, applying the confirmation gate for write actions."""
         if not self._cloud or not self._cloud.available:
@@ -1978,11 +1992,18 @@ class MotorCortexCluster:
             await self._bus.publish_dict("motor.result", result, source=CLUSTER)
             return result
 
-        # Guardrail 3: confirmation gate — write actions need explicit user sign-off
+        # Guardrail 3: confirmation gate — write actions need explicit sign-off,
+        # UNLESS auto-confirm is enabled (org ceiling AND, for engine turns, the
+        # bound agent's permission). A trusted agent can then write autonomously.
         if is_write:
             self._cloud.set_pending(
                 {"task": task, "context_facts": context_facts, "description": description}
             )
+            if self._auto_confirm_writes():
+                logger.info("[MotorCortex] Auto-confirming write action: %s", description)
+                result = await self._cloud.execute_pending(turn_id)
+                await self._bus.publish_dict("motor.result", result, source=CLUSTER)
+                return result
             await self._bus.publish_dict(
                 "motor.confirmation_needed",
                 {"description": description, "task": task},

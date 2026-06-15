@@ -61,6 +61,7 @@ _FLAG_KEYS = (
     "motor_enable_shell",
     "motor_enable_network",
     "motor_enable_cloud_actions",
+    "motor_auto_confirm_writes",
     "motor_user_writes",
     "motor_user_network",
     "motor_self_writes",

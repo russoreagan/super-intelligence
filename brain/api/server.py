@@ -29,6 +29,8 @@ from brain.api.sessions import ApiSessionRegistry
 logger = logging.getLogger(__name__)
 
 TurnRunner = Callable[[str, str, "str | None"], Awaitable[tuple[str, dict]]]
+# (pending_action, end_user_id, mandate_id, approve) -> (text, affect)
+ConfirmRunner = Callable[[dict, str, "str | None", bool], Awaitable[tuple[str, dict]]]
 
 
 def _mood_from_affect(affect: dict | None) -> dict:
@@ -48,6 +50,7 @@ def build_api_router(
     registry: ApiSessionRegistry | None = None,
     *,
     auth: Callable[[str | None], bool] = check_bearer,
+    confirm_runner: ConfirmRunner | None = None,
 ) -> APIRouter:
     registry = registry or ApiSessionRegistry()
     router = APIRouter(prefix="/v1")
@@ -104,9 +107,46 @@ def build_api_router(
         if not isinstance(message, str) or not message.strip():
             raise HTTPException(status_code=400, detail="message (non-empty string) is required")
         text, affect = await turn_runner(message, s.end_user_id, s.mandate_id)
+        resp = {
+            "session_id": session_id,
+            "end_user_id": s.end_user_id,
+            "response": text,
+            "mood": _mood_from_affect(affect),
+        }
+        # A cloud write awaiting sign-off — park it on the session and tell the
+        # partner. They approve via POST /sessions/{id}/confirm. (Auto-confirmed
+        # agents never reach here; the write already ran.)
+        pending = affect.get("pending") if isinstance(affect, dict) else None
+        if pending:
+            s.pending = pending
+            registry.update(s)
+            resp["confirmation"] = {
+                "required": True,
+                "description": pending.get("description") or pending.get("task"),
+            }
+        return resp
+
+    @router.post("/sessions/{session_id}/confirm")
+    async def confirm_action(
+        session_id: str, body: dict | None = None, authorization: str | None = Header(default=None)
+    ):
+        _require(authorization)
+        if confirm_runner is None:
+            raise HTTPException(status_code=501, detail="confirmation is not available on this server")
+        s = registry.get(session_id)
+        if s is None:
+            raise HTTPException(status_code=404, detail="unknown session_id")
+        if not s.pending:
+            raise HTTPException(status_code=409, detail="no action awaiting confirmation")
+        approve = bool((body or {}).get("approve", True))
+        pending = s.pending
+        text, affect = await confirm_runner(pending, s.end_user_id, s.mandate_id, approve)
+        s.pending = None
+        registry.update(s)
         return {
             "session_id": session_id,
             "end_user_id": s.end_user_id,
+            "approved": approve,
             "response": text,
             "mood": _mood_from_affect(affect),
         }
@@ -288,10 +328,18 @@ class ApiServer:
     """Standalone uvicorn server exposing the engine API on its own port. Off
     unless started; the brain only starts it when an API key is configured."""
 
-    def __init__(self, turn_runner: TurnRunner, *, registry: ApiSessionRegistry | None = None) -> None:
+    def __init__(
+        self,
+        turn_runner: TurnRunner,
+        *,
+        registry: ApiSessionRegistry | None = None,
+        confirm_runner: ConfirmRunner | None = None,
+    ) -> None:
         self._registry = registry or ApiSessionRegistry()
         self._app = FastAPI(docs_url="/v1/docs", redoc_url=None)
-        self._app.include_router(build_api_router(turn_runner, self._registry))
+        self._app.include_router(
+            build_api_router(turn_runner, self._registry, confirm_runner=confirm_runner)
+        )
 
     @property
     def app(self) -> FastAPI:

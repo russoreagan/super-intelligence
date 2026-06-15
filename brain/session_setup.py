@@ -275,7 +275,7 @@ class _SetupMixin:
             return
         from brain.api import ApiServer
 
-        self._api_server = ApiServer(self.api_turn)
+        self._api_server = ApiServer(self.api_turn, confirm_runner=self.api_confirm)
         self.brainstem.register_loop(
             "api_server", lambda: self._api_server.start(), restart_on_crash=False
         )

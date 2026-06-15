@@ -782,6 +782,10 @@ DEFAULTS: dict[str, float | int | str] = {
     "motor_enable_shell": 1,  # run_command tool (shell execution)
     "motor_enable_network": 1,  # fetch_url tool (outbound HTTP)
     "motor_enable_cloud_actions": 1,  # cloud_action tool (Claude CLI / CMA executor)
+    # Auto-confirm cloud WRITE actions instead of holding them for confirmation.
+    # Off by default (writes pause for a human/API confirm). Engine mode: an agent
+    # may enable it WITHIN this org ceiling for trusted autonomous writes.
+    "motor_auto_confirm_writes": 0,
     # motor_allowed_commands: shell command allowlist, one binary name per line.
     #   Empty = the built-in DEFAULT_COMMANDS set. BRAIN_MOTOR_COMMANDS env wins.
     "motor_allowed_commands": "",

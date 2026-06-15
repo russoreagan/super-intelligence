@@ -59,6 +59,17 @@ def test_capability_flag_is_and():
     assert effective_permissions(org2, {"motor_enable_network": 1})["motor_enable_network"] == 0
 
 
+def test_auto_confirm_writes_is_bounded_flag():
+    org = {**_org(), "motor_auto_confirm_writes": 1}
+    # agent inherits org when unset
+    assert effective_permissions(org, {})["motor_auto_confirm_writes"] == 1
+    # agent can turn it off
+    assert effective_permissions(org, {"motor_auto_confirm_writes": 0})["motor_auto_confirm_writes"] == 0
+    # agent cannot enable it when the account disallows
+    org_off = {**_org(), "motor_auto_confirm_writes": 0}
+    assert effective_permissions(org_off, {"motor_auto_confirm_writes": 1})["motor_auto_confirm_writes"] == 0
+
+
 def test_cloud_level_most_restrictive():
     org = _org()
     assert effective_permissions(org, {"motor_user_cloud": "ro"})["motor_user_cloud"] == "ro"

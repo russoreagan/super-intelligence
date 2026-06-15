@@ -279,6 +279,49 @@ def test_agent_delete(monkeypatch):
     assert c.delete("/v1/agents/the_analyst.ghost", headers=_AUTH).status_code == 404
 
 
+class _PendingRunner:
+    """Returns a turn whose affect parks a pending cloud write."""
+
+    async def __call__(self, message, end_user_id, mandate_id=None):
+        return ("I need your OK to send that email.",
+                {"emotion": "attentive", "pending": {"task": "send email", "description": "Email Bob", "is_write": True}})
+
+
+def _client2(turn_runner, confirm_runner=None, keys=None):
+    keys = keys or {"sk_test_123"}
+    registry = ApiSessionRegistry(now_fn=lambda: 1.0, id_fn=lambda: "sess_p")
+    app = FastAPI()
+    app.include_router(build_api_router(turn_runner, registry, auth=lambda h: _ok(h, keys), confirm_runner=confirm_runner))
+    return TestClient(app)
+
+
+def test_pending_write_surfaces_confirmation_then_confirms():
+    confirms = {}
+
+    async def _confirm(pending, end_user_id, mandate_id, approve):
+        confirms["called"] = (pending["task"], approve)
+        return ("Sent." if approve else "Cancelled.", {"emotion": "neutral"})
+
+    c = _client2(_PendingRunner(), confirm_runner=_confirm)
+    sid = c.post("/v1/sessions", json={"end_user_id": "c1"}, headers=_AUTH).json()["session_id"]
+    r = c.post(f"/v1/sessions/{sid}/turns", json={"message": "email bob"}, headers=_AUTH)
+    assert r.json()["confirmation"]["required"] is True
+    assert r.json()["confirmation"]["description"] == "Email Bob"
+    # approve it
+    r2 = c.post(f"/v1/sessions/{sid}/confirm", json={"approve": True}, headers=_AUTH)
+    assert r2.status_code == 200 and r2.json()["response"] == "Sent."
+    assert confirms["called"] == ("send email", True)
+    # nothing pending now → 409
+    assert c.post(f"/v1/sessions/{sid}/confirm", json={}, headers=_AUTH).status_code == 409
+
+
+def test_confirm_unavailable_without_runner():
+    c = _client2(_PendingRunner(), confirm_runner=None)
+    sid = c.post("/v1/sessions", json={"end_user_id": "c1"}, headers=_AUTH).json()["session_id"]
+    c.post(f"/v1/sessions/{sid}/turns", json={"message": "x"}, headers=_AUTH)
+    assert c.post(f"/v1/sessions/{sid}/confirm", json={}, headers=_AUTH).status_code == 501
+
+
 def test_apiserver_app_serves_routes_with_env_key(monkeypatch):
     """End-to-end against the real ApiServer app + the default env-based auth."""
     monkeypatch.setenv("BRAIN_API_KEY", "sk_live_xyz")

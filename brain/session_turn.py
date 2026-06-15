@@ -74,9 +74,54 @@ class _TurnMixin:
         if lock is None:
             lock = self._api_turn_lock = asyncio.Lock()
         async with lock:
-            return await self.process_turn(
+            text, affect = await self.process_turn(
                 message, end_user_id=end_user_id, mandate_id=mandate_id
             )
+            # A cloud WRITE that needs confirmation parks itself on the executor's
+            # process-global pending slot. Move that pending action out to the
+            # caller (the API stores it on the durable session) and clear the slot,
+            # so concurrent sessions never collide on it. Auto-confirmed writes
+            # already executed, so nothing is pending for them.
+            cloud = getattr(getattr(self, "motor", None), "_cloud", None)
+            if cloud is not None and getattr(cloud, "has_pending", False):
+                affect = dict(affect) if isinstance(affect, dict) else {}
+                affect["pending"] = cloud.get_pending()
+                cloud.clear_pending()
+            return text, affect
+
+    async def api_confirm(
+        self,
+        pending: dict,
+        end_user_id: str,
+        mandate_id: str | None = None,
+        approve: bool = True,
+    ) -> tuple[str, dict]:
+        """Resolve a session's parked cloud-write. approve=True re-injects the
+        pending action into the executor and runs it (under the session's agent
+        scope); approve=False discards it. Serialized on the same turn lock."""
+        lock = getattr(self, "_api_turn_lock", None)
+        if lock is None:
+            lock = self._api_turn_lock = asyncio.Lock()
+        async with lock:
+            cloud = getattr(getattr(self, "motor", None), "_cloud", None)
+            if not approve or cloud is None or not pending:
+                return ("Discarded the pending action.", {"emotion": "neutral"})
+            cloud.set_pending(pending)
+            agent_id = None
+            if mandate_id:
+                try:
+                    from brain.second_brain.store import _persona_key, _resolve_persona
+
+                    agent_id = f"{_persona_key(_resolve_persona(''))}.{mandate_id}"
+                except Exception:
+                    agent_id = None
+            from brain.agent_ctx import bind_agent
+
+            with bind_agent(agent_id):
+                result = await cloud.execute_pending("api-confirm")
+            output = (result or {}).get("output", "") if isinstance(result, dict) else ""
+            success = bool((result or {}).get("success", False)) if isinstance(result, dict) else False
+            return (output or "Done.", {"emotion": "neutral", "action_success": success})
 
     def _engine_user_model(self, end_user_id: str) -> str:
         """The customer's user-model for an engine turn — their per-speaker schema
