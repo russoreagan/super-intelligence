@@ -1257,10 +1257,18 @@
   function renderPersonaRail() {
     const rail = document.getElementById('rail-nav'); if (!rail) return;
     rail.innerHTML = '';
-    rail.appendChild(renderModeSwitch());
-    if (mode === 'agents') renderAgentsRail(rail);
-    else if (mode === 'api') renderApiRail(rail);
-    else renderLabsRail(rail);
+    // Settings is now persona-config only — Agents/API/Roles/Account-Limits live
+    // in the top-level workspaces (workspaces.js), and provider keys in the
+    // account menu. The rail = personas + the System (Operational) page.
+    renderLabsRail(rail);
+    if (isAdmin) {
+      const sys = document.createElement('div'); sys.className = 'pmenu-system';
+      const sh = document.createElement('div'); sh.className = 'pmenu-syshead'; sh.textContent = 'System'; sys.appendChild(sh);
+      const ops = document.createElement('button'); ops.className = 'pmenu-item sys'; ops.dataset.sys = 'operational';
+      ops.innerHTML = '<div class="pmenu-name">Operational</div><div class="pmenu-tag">Perception · resources · maintenance</div>';
+      ops.addEventListener('click', () => selectSystem('operational')); sys.appendChild(ops);
+      rail.appendChild(sys);
+    }
     syncRailSel();
   }
 
@@ -1864,7 +1872,13 @@
     scroll = document.getElementById('scroll');
     if (saveBtn) saveBtn.addEventListener('click', doSave);
     if (resetBtn) resetBtn.addEventListener('click', () => { if (confirm('Reset ALL settings across every category to their defaults?')) doResetAll(); });
-    window.__settingsUI = { open: loadFromServer, reload: loadFromServer };
+    // openApiKeys: provider keys are account-level (reached from the account menu).
+    // Load fresh, then render the API Keys page in the settings surface.
+    window.__settingsUI = {
+      open: loadFromServer,
+      reload: loadFromServer,
+      openApiKeys: async () => { await loadFromServer(); selectSystem('apikeys'); },
+    };
     loadFromServer();
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
