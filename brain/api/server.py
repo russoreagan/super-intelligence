@@ -215,6 +215,72 @@ def build_api_router(
             raise HTTPException(status_code=404, detail="no such assignment")
         return {"ok": True, "persona": persona, "mandate_id": mandate_id}
 
+    # ── Agents (the persona×role pairing as a first-class resource) ────────────
+    # The `/personas/{persona}/mandates` routes above are the low-level assignment
+    # primitive; these speak "agent": list by derived agent_id, and set the name +
+    # per-agent permission narrowing a partner syncs from their own app. Same
+    # bearer auth; agents are org-level data so management spans all personas (the
+    # process's own persona only matters for runtime resolve()).
+
+    @router.get("/agents")
+    async def list_agents_route(authorization: str | None = Header(default=None)):
+        _require(authorization)
+        _guard()
+        from brain import agents as _ag
+        from brain.settings import settings as _s
+
+        agents = _run(lambda: _ag.list_agents())
+        ceilings = {k: _s.get(k) for k in _ag.PERMISSION_KEYS}
+        return {"agents": agents, "ceilings": ceilings}
+
+    @router.get("/agents/{agent_id}")
+    async def get_agent_route(agent_id: str, authorization: str | None = Header(default=None)):
+        _require(authorization)
+        _guard()
+        from brain import agents as _ag
+
+        row = _run(lambda: _ag.get(agent_id))
+        if not row:
+            raise HTTPException(status_code=404, detail="unknown agent")
+        return row
+
+    @router.put("/agents/{agent_id}")
+    async def upsert_agent_route(
+        agent_id: str, body: dict | None = None, authorization: str | None = Header(default=None)
+    ):
+        _require(authorization)
+        _guard()
+        from brain import agents as _ag
+        from brain import mandates
+
+        body = body or {}
+
+        def _do():
+            persona, _, mid = str(agent_id).partition(".")
+            mandates.assign(persona, mid)  # create-or-enable the pairing (idempotent)
+            if "name" in body:
+                _ag.set_name(agent_id, body.get("name"))
+            if "permissions" in body:
+                _ag.set_permissions(agent_id, body.get("permissions") or {})
+            return _ag.get(agent_id)
+
+        return _run(_do)
+
+    @router.delete("/agents/{agent_id}")
+    async def delete_agent_route(agent_id: str, authorization: str | None = Header(default=None)):
+        _require(authorization)
+        _guard()
+        from brain import mandates
+
+        def _do():
+            persona, _, mid = str(agent_id).partition(".")
+            return mandates.unassign(persona, mid)
+
+        ok = _run(_do)
+        if not ok:
+            raise HTTPException(status_code=404, detail="unknown agent")
+        return {"ok": True, "agent_id": agent_id}
+
     return router
 
 

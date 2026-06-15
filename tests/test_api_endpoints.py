@@ -220,6 +220,65 @@ def test_agent_id_unknown_404(monkeypatch):
     assert r.status_code == 404
 
 
+def test_agents_list_and_ceilings(monkeypatch):
+    from brain import agents
+    from brain.second_brain import supabase_client
+
+    monkeypatch.setattr(supabase_client, "is_enabled", lambda: True)
+    monkeypatch.setattr(
+        agents, "list_agents",
+        lambda: [{"agent_id": "the_analyst.billing", "persona": "the_analyst", "mandate_id": "billing", "permissions": {}}],
+    )
+    c = _client(_FakeRunner())
+    r = c.get("/v1/agents", headers=_AUTH)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["agents"][0]["agent_id"] == "the_analyst.billing"
+    assert "cloud_daily_usd_budget" in body["ceilings"]  # org ceiling exposed
+
+
+def test_agents_503_when_storage_off(monkeypatch):
+    from brain.second_brain import supabase_client
+
+    monkeypatch.setattr(supabase_client, "is_enabled", lambda: False)
+    c = _client(_FakeRunner())
+    assert c.get("/v1/agents", headers=_AUTH).status_code == 503
+
+
+def test_agent_upsert_sets_name_and_permissions(monkeypatch):
+    from brain import agents, mandates
+    from brain.second_brain import supabase_client
+
+    monkeypatch.setattr(supabase_client, "is_enabled", lambda: True)
+    calls = {}
+    monkeypatch.setattr(mandates, "assign", lambda p, m, *a, **k: calls.setdefault("assign", (p, m)))
+    monkeypatch.setattr(agents, "set_name", lambda aid, n: calls.setdefault("name", (aid, n)))
+    monkeypatch.setattr(agents, "set_permissions", lambda aid, perms: calls.setdefault("perms", (aid, perms)))
+    monkeypatch.setattr(agents, "get", lambda aid: {"agent_id": aid, "name": "Billing", "permissions": {"cloud_daily_usd_budget": 20000}})
+
+    c = _client(_FakeRunner())
+    r = c.put(
+        "/v1/agents/the_analyst.billing",
+        json={"name": "Billing", "permissions": {"cloud_daily_usd_budget": 20000}},
+        headers=_AUTH,
+    )
+    assert r.status_code == 200
+    assert r.json()["name"] == "Billing"
+    assert calls["assign"] == ("the_analyst", "billing")  # pairing created
+    assert calls["perms"][1]["cloud_daily_usd_budget"] == 20000
+
+
+def test_agent_delete(monkeypatch):
+    from brain import mandates
+    from brain.second_brain import supabase_client
+
+    monkeypatch.setattr(supabase_client, "is_enabled", lambda: True)
+    monkeypatch.setattr(mandates, "unassign", lambda p, m: (p, m) == ("the_analyst", "billing"))
+    c = _client(_FakeRunner())
+    assert c.delete("/v1/agents/the_analyst.billing", headers=_AUTH).status_code == 200
+    assert c.delete("/v1/agents/the_analyst.ghost", headers=_AUTH).status_code == 404
+
+
 def test_apiserver_app_serves_routes_with_env_key(monkeypatch):
     """End-to-end against the real ApiServer app + the default env-based auth."""
     monkeypatch.setenv("BRAIN_API_KEY", "sk_live_xyz")

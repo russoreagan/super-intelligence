@@ -116,11 +116,11 @@ def resolve(agent_id: str) -> tuple[str, str]:
 
 
 def get(agent_id: str) -> dict | None:
-    """Full agent row (incl. name + permissions) for THIS process's persona, or
-    None if it doesn't exist. Does not require the agent to be enabled."""
+    """Full agent row (incl. name + permissions) or None if it doesn't exist.
+    Org-scoped (RLS), NOT restricted to this process's persona — agents are
+    org-level data the admin/partner manages regardless of which persona the
+    process is currently serving. Runtime persona-binding is resolve()'s job."""
     persona_slug, mandate_id = _split(agent_id)
-    if persona_slug != _persona(""):
-        return None
     sb, org = _sb()
     res = (
         sb.table("agents")
