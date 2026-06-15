@@ -177,6 +177,12 @@ class ClientChemRegistry:
             return
         self._store.save(self._key(end_user_id), pair.snapshot(), self._now())
 
+    def forget(self, end_user_id: str) -> None:
+        """Drop a customer's live mood + interaction mass (lifecycle purge). The
+        durable snapshot is removed separately by the caller."""
+        self._live.pop(end_user_id, None)
+        self._mass.pop(end_user_id, None)
+
     def weighted_average(self) -> dict | None:
         """Interaction-mass-weighted mean of the live customers' moods, as a
         snapshot ({"neuromod": {...}, "hormonal": {...}}). The persona's overall

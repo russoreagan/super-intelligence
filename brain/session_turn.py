@@ -123,6 +123,59 @@ class _TurnMixin:
             success = bool((result or {}).get("success", False)) if isinstance(result, dict) else False
             return (output or "Done.", {"emotion": "neutral", "action_success": success})
 
+    async def api_purge_end_user(self, end_user_id: str) -> dict:
+        """Erase one end-user's footprint (ops / GDPR): their durable rows across
+        every per-end-user table, plus this process's in-memory caches for them.
+        Returns a per-table deleted summary. Serialized on the turn lock so a purge
+        can't race a turn for the same customer."""
+        end_user_id = (end_user_id or "").strip()
+        if not end_user_id:
+            return {"ok": False, "error": "end_user_id required"}
+        lock = getattr(self, "_api_turn_lock", None)
+        if lock is None:
+            lock = self._api_turn_lock = asyncio.Lock()
+        async with lock:
+            # In-process caches first (so a concurrent reload can't repopulate from
+            # a row we're about to delete).
+            reg = getattr(self, "_client_chem", None)
+            if reg is not None:
+                try:
+                    reg.forget(end_user_id)
+                except Exception:
+                    pass
+            um = getattr(self, "_engine_um_cache", None)
+            if isinstance(um, dict):
+                um.pop(end_user_id, None)
+
+            deleted: dict = {}
+            try:
+                from brain.second_brain import supabase_client
+
+                if supabase_client.is_enabled():
+                    client = supabase_client.get_client()
+                    org = supabase_client.get_org_id()
+                    # Every table carrying end_user_id. brain_schemas rows keyed by a
+                    # non-empty end_user_id are the per-speaker model; the persona's
+                    # own self.md/user.md use end_user_id='' and are untouched.
+                    for table in (
+                        "episodes", "tasks", "dmn_state", "speaker_profiles",
+                        "brain_schemas", "api_sessions",
+                    ):
+                        try:
+                            res = (
+                                client.table(table)
+                                .delete()
+                                .eq("org_id", org)
+                                .eq("end_user_id", end_user_id)
+                                .execute()
+                            )
+                            deleted[table] = len(res.data or [])
+                        except Exception as e:
+                            deleted[table] = f"error: {e}"
+            except Exception as e:
+                return {"ok": False, "error": str(e)}
+            return {"ok": True, "end_user_id": end_user_id, "deleted": deleted}
+
     def _engine_user_model(self, end_user_id: str) -> str:
         """The customer's user-model for an engine turn — their per-speaker schema
         (the same store the relationship/sleep system already populates), cached per

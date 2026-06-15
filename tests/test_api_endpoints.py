@@ -322,6 +322,40 @@ def test_confirm_unavailable_without_runner():
     assert c.post(f"/v1/sessions/{sid}/confirm", json={}, headers=_AUTH).status_code == 501
 
 
+def test_end_user_purge_routes_to_runner():
+    purged = {}
+
+    async def _purge(end_user_id):
+        purged["id"] = end_user_id
+        return {"ok": True, "end_user_id": end_user_id, "deleted": {"episodes": 3}}
+
+    keys = {"sk_test_123"}
+    registry = ApiSessionRegistry(id_fn=lambda: "s1")
+    app = FastAPI()
+    app.include_router(build_api_router(_FakeRunner(), registry, auth=lambda h: _ok(h, keys), purge_runner=_purge))
+    c = TestClient(app)
+    # an open session for this end_user should be evicted from the registry
+    registry.create("cust-9")
+    r = c.delete("/v1/end_users/cust-9", headers=_AUTH)
+    assert r.status_code == 200 and r.json()["deleted"]["episodes"] == 3
+    assert purged["id"] == "cust-9"
+    assert registry.get("s1") is None  # forgotten
+
+
+def test_end_user_purge_unavailable_without_runner():
+    c = _client(_FakeRunner())
+    assert c.delete("/v1/end_users/x", headers=_AUTH).status_code == 501
+
+
+def test_end_user_purge_requires_auth():
+    async def _purge(e):
+        return {}
+    keys = {"sk_test_123"}
+    app = FastAPI()
+    app.include_router(build_api_router(_FakeRunner(), ApiSessionRegistry(), auth=lambda h: _ok(h, keys), purge_runner=_purge))
+    assert TestClient(app).delete("/v1/end_users/x").status_code == 401
+
+
 def test_apiserver_app_serves_routes_with_env_key(monkeypatch):
     """End-to-end against the real ApiServer app + the default env-based auth."""
     monkeypatch.setenv("BRAIN_API_KEY", "sk_live_xyz")

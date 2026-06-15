@@ -31,6 +31,8 @@ logger = logging.getLogger(__name__)
 TurnRunner = Callable[[str, str, "str | None"], Awaitable[tuple[str, dict]]]
 # (pending_action, end_user_id, mandate_id, approve) -> (text, affect)
 ConfirmRunner = Callable[[dict, str, "str | None", bool], Awaitable[tuple[str, dict]]]
+# (end_user_id) -> deletion summary
+PurgeRunner = Callable[[str], Awaitable[dict]]
 
 
 def _mood_from_affect(affect: dict | None) -> dict:
@@ -51,6 +53,7 @@ def build_api_router(
     *,
     auth: Callable[[str | None], bool] = check_bearer,
     confirm_runner: ConfirmRunner | None = None,
+    purge_runner: PurgeRunner | None = None,
 ) -> APIRouter:
     registry = registry or ApiSessionRegistry()
     router = APIRouter(prefix="/v1")
@@ -321,6 +324,21 @@ def build_api_router(
             raise HTTPException(status_code=404, detail="unknown agent")
         return {"ok": True, "agent_id": agent_id}
 
+    # ── End-user lifecycle ────────────────────────────────────────────────────
+    # Erase one customer's footprint across every per-end-user table + the
+    # process's in-memory caches (ops / GDPR right-to-erasure).
+    @router.delete("/end_users/{end_user_id}")
+    async def purge_end_user(end_user_id: str, authorization: str | None = Header(default=None)):
+        _require(authorization)
+        if purge_runner is None:
+            raise HTTPException(status_code=501, detail="end-user purge is not available on this server")
+        if not end_user_id.strip():
+            raise HTTPException(status_code=400, detail="end_user_id required")
+        # Drop any cached sessions for this end_user so a later turn can't run as a
+        # half-erased customer.
+        registry.forget_end_user(end_user_id)
+        return await purge_runner(end_user_id)
+
     return router
 
 
@@ -334,11 +352,15 @@ class ApiServer:
         *,
         registry: ApiSessionRegistry | None = None,
         confirm_runner: ConfirmRunner | None = None,
+        purge_runner: PurgeRunner | None = None,
     ) -> None:
         self._registry = registry or ApiSessionRegistry()
         self._app = FastAPI(docs_url="/v1/docs", redoc_url=None)
         self._app.include_router(
-            build_api_router(turn_runner, self._registry, confirm_runner=confirm_runner)
+            build_api_router(
+                turn_runner, self._registry,
+                confirm_runner=confirm_runner, purge_runner=purge_runner,
+            )
         )
 
     @property

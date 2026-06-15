@@ -84,6 +84,12 @@ class ApiSessionRegistry:
         self._sessions[session.session_id] = session
         self._persist(session)
 
+    def forget_end_user(self, end_user_id: str) -> None:
+        """Drop in-memory sessions bound to this end_user (lifecycle purge). The
+        durable api_sessions rows are removed by the purge's table sweep."""
+        for sid in [k for k, s in self._sessions.items() if s.end_user_id == end_user_id]:
+            self._sessions.pop(sid, None)
+
     # ── persistence (best-effort, Supabase-backed) ────────────────────────────
 
     def _persist(self, s: ApiSession) -> None:
