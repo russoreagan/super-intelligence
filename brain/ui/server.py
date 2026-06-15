@@ -361,13 +361,16 @@ class UIServer:
                 import re as _re
 
                 _dir = HTML_PATH.parent
+                _assets = (
+                    "settings.css", "settings-data.js", "settings-ui.js",
+                    "workspaces.css", "workspaces.js",
+                )
                 _stamp = max(
-                    int((_dir / f).stat().st_mtime)
-                    for f in ("settings.css", "settings-data.js", "settings-ui.js")
+                    int((_dir / f).stat().st_mtime) for f in _assets if (_dir / f).exists()
                 )
                 html = _re.sub(
-                    r"(settings(?:-data|-ui)?\.(?:css|js))\?v=\d+",
-                    rf"\1?v={_stamp}",
+                    r"(settings(?:-data|-ui)?|workspaces)\.(css|js)\?v=\d+",
+                    rf"\1.\2?v={_stamp}",
                     html,
                 )
             except Exception as _cb_err:
@@ -898,6 +901,54 @@ class UIServer:
                 raise HTTPException(status_code=400, detail=str(e)) from e
             if not ok:
                 raise HTTPException(status_code=404, detail="unknown agent")
+            return JSONResponse({"ok": True})
+
+        # ── Partner keys (admin UI; the engine /v1/partner_keys is bearer-only) ──
+        @app.get("/partner_keys")
+        async def list_partner_keys_ui(request: Request):
+            from fastapi.responses import JSONResponse
+
+            from brain.second_brain import supabase_client
+
+            claims = getattr(request.state, "user", None) or {}
+            is_admin = ui_auth.is_disabled() or ui_auth.is_admin(claims)
+            if not (is_admin and supabase_client.is_enabled()):
+                return JSONResponse({"enabled": False, "keys": []})
+            from brain.api import auth as _a
+
+            try:
+                return JSONResponse({"enabled": True, "keys": _a.list_partner_keys()})
+            except Exception as e:
+                logger.warning("[partner_keys] list failed: %s", e)
+                return JSONResponse({"enabled": True, "keys": []})
+
+        @app.post("/partner_keys")
+        async def mint_partner_key_ui(request: Request):
+            from fastapi import HTTPException
+            from fastapi.responses import JSONResponse
+
+            _mandate_admin_or_403(request)
+            body = await request.json()
+            partner_id = str((body or {}).get("partner_id", "")).strip()
+            if not partner_id:
+                raise HTTPException(status_code=400, detail="partner_id is required")
+            from brain.api import auth as _a
+
+            try:
+                return JSONResponse(_a.mint_partner_key(partner_id, (body or {}).get("label")))
+            except (ValueError, RuntimeError) as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
+
+        @app.delete("/partner_keys/{key_id}")
+        async def revoke_partner_key_ui(key_id: str, request: Request):
+            from fastapi import HTTPException
+            from fastapi.responses import JSONResponse
+
+            _mandate_admin_or_403(request)
+            from brain.api import auth as _a
+
+            if not _a.revoke_partner_key(key_id):
+                raise HTTPException(status_code=404, detail="unknown key id")
             return JSONResponse({"ok": True})
 
         @app.get("/wiring")
