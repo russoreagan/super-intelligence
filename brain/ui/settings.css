@@ -751,5 +751,36 @@ input[type=range].es-range::-moz-range-thumb { width: 14px; height: 14px; border
 .self-ro { display: inline-flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 9px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--ink-4); border: 1px solid var(--line); border-radius: 999px; padding: 3px 9px 3px 8px; }
 .self-ro svg { width: 11px; height: 11px; }
 .self-preview em { color: var(--signal-deep); font-style: italic; }
+
+/* ---- Roles (org-level role library + role↔persona assignment matrix) ---- */
+.mandate-list { display: flex; flex-direction: column; gap: 9px; }
+.mandate-card { border: 1px solid var(--line-soft); border-radius: var(--r-2); background: var(--plate); transition: border-color 140ms; }
+.mandate-card.on { border-color: var(--signal-deep); }
+.mandate-row { display: flex; align-items: center; gap: 10px; padding: 9px 10px; }
+.mandate-row .mandate-open { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; flex: 1; min-width: 0; text-align: left; background: none; border: 0; padding: 0; cursor: pointer; }
+.mandate-id { display: inline-flex; align-items: center; gap: 7px; font-family: var(--serif); font-size: 13px; color: var(--ink); }
+.mandate-id svg { width: 13px; height: 13px; color: var(--ink-4); flex-shrink: 0; }
+.mandate-id b { font-weight: 600; }
+.mandate-meta { font-family: var(--mono); font-size: 9px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--ink-4); }
+.mandate-del { width: 24px; height: 24px; border-radius: 6px; border: 1px solid var(--line-soft); background: var(--paper-2); color: var(--ink-4); font-size: 15px; line-height: 1; cursor: pointer; flex-shrink: 0; transition: color 140ms, border-color 140ms; }
+.mandate-del:hover { color: var(--warn); border-color: var(--warn); }
+.mandate-personas { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 0 10px 10px; }
+.mandate-personas-lbl { font-family: var(--mono); font-size: 8.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-4); margin-right: 3px; }
+.mandate-pchip { font-family: var(--mono); font-size: 10px; letter-spacing: 0.02em; color: var(--ink-3); padding: 3px 9px; border: 1px solid var(--line-soft); border-radius: 999px; background: var(--paper-2); cursor: pointer; transition: color 120ms, border-color 120ms, background 120ms; }
+.mandate-pchip:hover { color: var(--ink-2); border-color: var(--line); }
+.mandate-pchip.on { color: var(--ink); border-color: var(--signal-deep); background: var(--signal-soft); }
+.mandate-pchip.on::before { content: "✓ "; color: var(--signal-deep); }
+
+/* ---- Three-mode workspace switch (Labs / Agents / API) ---- */
+.mode-seg { display: flex; gap: 4px; padding: 8px 8px 10px; border-bottom: 1px solid var(--line-soft); margin-bottom: 6px; }
+.mode-seg-btn { flex: 1; padding: 7px 0; border: 1px solid var(--line-soft); border-radius: var(--r-2); background: var(--plate); color: var(--ink-3); font-family: var(--mono); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; cursor: pointer; transition: color 140ms, border-color 140ms, background 140ms; }
+.mode-seg-btn:hover:not(:disabled) { color: var(--ink-2); border-color: var(--line); }
+.mode-seg-btn.on { color: var(--ink); border-color: var(--signal-deep); background: var(--signal-soft); }
+.mode-seg-btn:disabled { opacity: .4; cursor: not-allowed; }
+.pmenu-item.agent .pmenu-name { font-family: var(--serif); }
+.pmenu-item.agent.off { opacity: .5; }
+
+/* ---- agent detail text/number inputs ---- */
+.es-textinput { min-width: 200px; padding: 6px 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.15); background: rgba(255,255,255,0.05); color: inherit; font: inherit; }
 </style>
 

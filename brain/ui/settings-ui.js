@@ -179,6 +179,7 @@
   // REST_WEIGHTS). Built once from ALL_DIALS below.
   const _posedDialIds = new Set();
   const resetSvg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.5 15a9 9 0 1 0 2.1-9.4L1 10"/></svg>';
+  const checkSvgM = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
   const fileSvg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3v5h5"/><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg>';
   const moonSvg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>';
   const pencilSvg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>';
@@ -210,6 +211,18 @@
   const values = {}, saved = {}, refDefault = {}, dialCenter = {}, dial = {}, rest = {};
   let secretsSet = {};
   let isAdmin = false;                   // from /auth/me — gates the operational/system pages
+  let mandatesEnabled = false;           // from GET /mandates — false in companion/local mode → hide Roles
+  // Three top-level modes (ElevenLabs-style): Labs (build personas) · Agents
+  // (roles + agents + per-agent limits) · API (provider keys + reference).
+  let mode = 'labs';                     // labs | agents | api
+  let agentsData = null;                 // {enabled, agents:[...], roles:[...], ceilings:{}}
+  let agentSel = null;                   // open agent_id in Agents mode
+  // Mandate library + per-persona assignments, lazy-loaded from /mandates.
+  let mandateLib = null;                 // [{id, role_text, version, active, updated_at}]
+  let mandateAssigned = {};              // { mandate_id: Set(personaSlug) } — the role↔persona matrix
+  const mandateStore = {}, mandateSaved = {}; // id -> role_text (editor buffers)
+  let mandateSel = null;                 // currently-open mandate id in the editor
+  let mandateMode = 'edit';              // edit | preview
   let persona = PERSONAS[0].id;
   let activeTab = 'persona';
   let view = 'persona';                 // 'persona' | 'system'
@@ -360,6 +373,12 @@
       const me = await fetch('/auth/me');
       if (me.ok) { isAdmin = !!(await me.json()).is_admin; }
     } catch (e) { isAdmin = false; }
+    // Roles tab visibility: only when the Supabase backend is on (companion/local
+    // mode has no mandate store). Cheap probe; the full library loads on demand.
+    try {
+      const mr = await fetch('/mandates?persona=' + encodeURIComponent(persona));
+      if (mr.ok) { mandatesEnabled = !!(await mr.json()).enabled; }
+    } catch (e) { mandatesEnabled = false; }
     // seed every known key from server (fallback to row default)
     Object.keys(rowMeta).forEach(k => {
       const def = (k in d) ? d[k] : rowMeta[k].def;
@@ -975,6 +994,182 @@
   }
 
   /* =====================================================================
+     ROLES — the org's role library + role↔persona assignment matrix
+     A role (mandate) is org-level: its own instructions, authored once and
+     mapped to ANY number of personas (and a persona may hold any number of
+     roles — a true many-to-many). Lives on a System page, not inside a persona.
+     Saving writes the row immediately (versioned); the live brain picks it up
+     on its next reply.
+     ===================================================================== */
+  const MANDATE_ID_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+  // Mirror the backend _persona_key slug so UI persona ids ('The Visionary')
+  // match the persona column the assignment rows are keyed by ('the_visionary').
+  function personaSlug(id) { return String(id || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'default'; }
+
+  async function loadMandates() {
+    const res = await fetch('/mandates');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    mandatesEnabled = !!data.enabled;
+    mandateLib = data.mandates || [];
+    // assignments is a flat list of {persona(slug), mandate_id, enabled}. Build
+    // mandate_id -> Set(persona slug) so each role knows every persona it maps to.
+    mandateAssigned = {};
+    (data.assignments || []).forEach(a => {
+      if (a.enabled === false) return;
+      (mandateAssigned[a.mandate_id] || (mandateAssigned[a.mandate_id] = new Set())).add(a.persona);
+    });
+    mandateLib.forEach(m => {
+      if (!(m.id in mandateStore)) { mandateStore[m.id] = m.role_text || ''; mandateSaved[m.id] = m.role_text || ''; }
+    });
+  }
+
+  function renderMandates() {
+    const wrap = document.getElementById('tab-generic'); if (!wrap) return;
+    wrap.innerHTML = ''; Object.keys(genReg).forEach(k => delete genReg[k]);
+    const host = document.createElement('div'); host.id = 'mandate-host';
+    host.innerHTML = `<div class="empty" style="padding:1.2rem">Loading roles…</div>`;
+    wrap.appendChild(host);
+    loadMandates().then(() => { if (systemPage === 'roles') paintMandates(host); })
+      .catch(e => { host.innerHTML = `<div class="empty" style="padding:1.2rem">Could not load roles (${e.message}).</div>`; });
+  }
+
+  function paintMandates(host) {
+    host.innerHTML = '';
+    const listWrap = document.createElement('div'); listWrap.className = 'mandate-list';
+    if (!mandateLib.length) {
+      const e = document.createElement('div'); e.className = 'empty'; e.style.padding = '1rem 0';
+      e.textContent = 'No roles yet. Add one to define a job that can be mapped to your personas.';
+      listWrap.appendChild(e);
+    }
+    mandateLib.forEach(m => {
+      const dirty = mandateStore[m.id] !== mandateSaved[m.id];
+      const txt = mandateStore[m.id] || '';
+      const assignedSet = mandateAssigned[m.id] || new Set();
+      const card = document.createElement('div'); card.className = 'mandate-card' + (mandateSel === m.id ? ' on' : '');
+
+      const row = document.createElement('div'); row.className = 'mandate-row';
+      row.innerHTML =
+        `<button type="button" class="mandate-open">` +
+          `<span class="mandate-id">${fileSvg}<b>${m.id}</b></span>` +
+          `<span class="mandate-meta">v${m.version} · ${(txt.length).toLocaleString()} chars · ${assignedSet.size} persona${assignedSet.size === 1 ? '' : 's'}${dirty ? ' · <i style="color:var(--accent)">edited</i>' : ''}</span>` +
+        `</button>` +
+        `<button type="button" class="mandate-del" title="Deactivate role">×</button>`;
+      row.querySelector('.mandate-open').addEventListener('click', () => { mandateSel = (mandateSel === m.id ? null : m.id); paintMandates(host); });
+      row.querySelector('.mandate-del').addEventListener('click', () => deactivateMandate(m.id, host));
+      card.appendChild(row);
+
+      // Persona assignment matrix — one toggle chip per persona.
+      const chips = document.createElement('div'); chips.className = 'mandate-personas';
+      const lbl = document.createElement('span'); lbl.className = 'mandate-personas-lbl'; lbl.textContent = 'Mapped to';
+      chips.appendChild(lbl);
+      PERSONAS.forEach(p => {
+        const slug = personaSlug(p.id);
+        const on = assignedSet.has(slug);
+        const chip = document.createElement('button'); chip.type = 'button';
+        chip.className = 'mandate-pchip' + (on ? ' on' : ''); chip.textContent = p.name;
+        chip.addEventListener('click', () => toggleAssign(m.id, p.id, !on, host));
+        chips.appendChild(chip);
+      });
+      card.appendChild(chips);
+
+      if (mandateSel === m.id && mandateStore[m.id] !== undefined) card.appendChild(buildMandateEditor(m.id, host));
+      listWrap.appendChild(card);
+    });
+    const add = document.createElement('button'); add.className = 'pmenu-add'; add.style.marginTop = '.6rem';
+    add.innerHTML = '<span>+</span> Add role';
+    add.addEventListener('click', () => addMandate(host));
+    listWrap.appendChild(add);
+    host.appendChild(listWrap);
+
+    const foot = document.createElement('div'); foot.className = 'self-foot';
+    foot.innerHTML = `${pencilSvg}<span>A role directs the job a persona is doing — it sits on top of identity and safety principles, which always take precedence. One role can be mapped to many personas and a persona can hold many roles. Saving updates the live brain on its next reply; the first reply after a change re-primes the model's prompt cache.</span>`;
+    host.appendChild(foot);
+  }
+
+  function buildMandateEditor(id, host) {
+    const ed = document.createElement('div'); ed.className = 'self-editor'; ed.style.margin = '0 10px 12px';
+    ed.innerHTML =
+      `<div class="self-bar">` +
+        `<span class="self-file">${fileSvg}<b>${id}</b> · <span style="color:var(--ink-4)">role</span></span>` +
+        `<span class="self-modepill" id="mandate-dirty"><i></i>edited</span>` +
+        `<span class="spacer"></span>` +
+        `<span class="self-meta" id="mandate-count"></span>` +
+        `<div class="self-seg" id="mandate-seg"><button type="button" data-m="edit">Edit</button><button type="button" data-m="preview">Preview</button></div>` +
+        `<button class="self-revert" id="mandate-save">${checkSvgM}Save</button>` +
+      `</div>` +
+      `<textarea class="self-area" id="mandate-area" spellcheck="false" placeholder="Describe this role — the job, tone, and rules for it…"></textarea>` +
+      `<div class="self-preview" id="mandate-preview" hidden></div>`;
+    const area = ed.querySelector('#mandate-area'), preview = ed.querySelector('#mandate-preview');
+    const count = ed.querySelector('#mandate-count'), dpill = ed.querySelector('#mandate-dirty');
+    const saveBtn = ed.querySelector('#mandate-save');
+    area.value = mandateStore[id];
+    const updateMeta = () => {
+      const t = mandateStore[id] || '';
+      count.textContent = `${t.length.toLocaleString()} chars`;
+      const dirty = mandateStore[id] !== mandateSaved[id];
+      dpill.classList.toggle('on', dirty);
+      saveBtn.disabled = !dirty;
+    };
+    const applyMode = () => {
+      const pre = mandateMode === 'preview';
+      area.hidden = pre; preview.hidden = !pre;
+      if (pre) preview.innerHTML = mdToHtml(mandateStore[id]);
+      ed.querySelectorAll('#mandate-seg button').forEach(b => b.classList.toggle('on', b.dataset.m === mandateMode));
+    };
+    updateMeta(); applyMode();
+    area.addEventListener('input', () => { mandateStore[id] = area.value; updateMeta(); });
+    ed.querySelectorAll('#mandate-seg button').forEach(b => b.addEventListener('click', () => { mandateMode = b.dataset.m; applyMode(); }));
+    saveBtn.addEventListener('click', () => saveMandate(id, host));
+    return ed;
+  }
+
+  async function saveMandate(id, host) {
+    try {
+      const res = await fetch('/mandates', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, role_text: mandateStore[id] }) });
+      if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.detail || ('HTTP ' + res.status)); }
+      mandateSaved[id] = mandateStore[id];
+      await loadMandates(); if (systemPage === 'roles') paintMandates(host);
+    } catch (e) { window.alert('Could not save role: ' + e.message); }
+  }
+
+  async function addMandate(host) {
+    const raw = (window.prompt('New role id (lowercase letters, digits, "_" or "-"):', '') || '').trim();
+    if (!raw) return;
+    if (!MANDATE_ID_RE.test(raw)) { window.alert('Invalid id. Use 1–64 chars: lowercase letters, digits, "_" or "-", starting with a letter or digit.'); return; }
+    if (mandateLib.some(m => m.id === raw)) { mandateSel = raw; paintMandates(host); return; }
+    try {
+      const res = await fetch('/mandates', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: raw, role_text: '' }) });
+      if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.detail || ('HTTP ' + res.status)); }
+      mandateStore[raw] = ''; mandateSaved[raw] = ''; mandateSel = raw;
+      await loadMandates(); if (systemPage === 'roles') paintMandates(host);
+    } catch (e) { window.alert('Could not create role: ' + e.message); }
+  }
+
+  // Map/unmap a role to one persona (the matrix cell). persona is the UI id; the
+  // backend slugifies it to match the persona_mandates key.
+  async function toggleAssign(id, personaId, assigned, host) {
+    try {
+      const res = await fetch('/mandates/' + encodeURIComponent(id) + '/assign', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ persona: personaId, assigned }) });
+      if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.detail || ('HTTP ' + res.status)); }
+      await loadMandates(); if (systemPage === 'roles') paintMandates(host);
+    } catch (e) { window.alert('Could not change assignment: ' + e.message); await loadMandates(); if (systemPage === 'roles') paintMandates(host); }
+  }
+
+  async function deactivateMandate(id, host) {
+    if (!window.confirm(`Deactivate role "${id}"? It will be removed from the library and unassigned from every persona. (Conversations that named it fall back to no role.)`)) return;
+    try {
+      const res = await fetch('/mandates/' + encodeURIComponent(id), { method: 'DELETE' });
+      if (!res.ok && res.status !== 404) { const j = await res.json().catch(() => ({})); throw new Error(j.detail || ('HTTP ' + res.status)); }
+      if (mandateSel === id) mandateSel = null;
+      await loadMandates(); if (systemPage === 'roles') paintMandates(host);
+    } catch (e) { window.alert('Could not deactivate role: ' + e.message); }
+  }
+
+  /* =====================================================================
      SCAFFOLD + TABS + RAIL + HEAD
      ===================================================================== */
   function buildScaffold() {
@@ -1062,7 +1257,37 @@
   function renderPersonaRail() {
     const rail = document.getElementById('rail-nav'); if (!rail) return;
     rail.innerHTML = '';
-    // scrollable persona list (so a long list never pushes System off-screen)
+    rail.appendChild(renderModeSwitch());
+    if (mode === 'agents') renderAgentsRail(rail);
+    else if (mode === 'api') renderApiRail(rail);
+    else renderLabsRail(rail);
+    syncRailSel();
+  }
+
+  // Three-mode workspace switch. Agents needs admin + the supabase backend.
+  function renderModeSwitch() {
+    const wrap = document.createElement('div'); wrap.className = 'mode-seg';
+    [['labs', 'Labs'], ['agents', 'Agents'], ['api', 'API']].forEach(([m, label]) => {
+      const b = document.createElement('button'); b.className = 'mode-seg-btn' + (mode === m ? ' on' : ''); b.textContent = label; b.dataset.mode = m;
+      // Agents mode holds the account limits (admin-only). Roles + the agent list
+      // inside it additionally need the hosted backend; companion/local admins
+      // still get Account Limits.
+      if (m === 'agents' && !isAdmin) { b.disabled = true; b.title = 'Agents are admin-only'; }
+      b.addEventListener('click', () => setMode(m));
+      wrap.appendChild(b);
+    });
+    return wrap;
+  }
+  function setMode(m) {
+    if (m === mode) return;
+    mode = m; agentSel = null;
+    if (m === 'labs') { renderPersonaRail(); selectPersona(persona); }
+    else if (m === 'api') { renderPersonaRail(); selectSystem('apikeys'); }
+    else { renderPersonaRail(); loadAgents().then(() => { renderPersonaRail(); selectSystem(mandatesEnabled ? 'roles' : 'limits'); }); }
+  }
+
+  // Labs — the persona studio (the unique craft, unchanged).
+  function renderLabsRail(rail) {
     const list = document.createElement('div'); list.className = 'pmenu-list pmenu-scroll';
     PERSONAS.forEach(p => {
       const custom = !isBuiltin(p.id);
@@ -1079,32 +1304,67 @@
     add.addEventListener('click', createPersona);
     list.appendChild(add);
     rail.appendChild(list);
-    // pinned System section (stays put below the scrolling persona list)
+  }
+
+  // API — provider keys + reference.
+  function renderApiRail(rail) {
     const sys = document.createElement('div'); sys.className = 'pmenu-system';
-    const sh = document.createElement('div'); sh.className = 'pmenu-syshead'; sh.textContent = 'System'; sys.appendChild(sh);
     const api = document.createElement('button'); api.className = 'pmenu-item sys'; api.dataset.sys = 'apikeys';
     api.innerHTML = '<div class="pmenu-name">API Keys</div><div class="pmenu-tag">Models · voice · services</div>';
     api.addEventListener('click', () => selectSystem('apikeys')); sys.appendChild(api);
     const apidocs = document.createElement('button'); apidocs.className = 'pmenu-item sys'; apidocs.dataset.sys = 'apidocs';
     apidocs.innerHTML = '<div class="pmenu-name">API Reference</div><div class="pmenu-tag">Endpoints · auth · WebSocket</div>';
     apidocs.addEventListener('click', () => selectSystem('apidocs')); sys.appendChild(apidocs);
-    // Operational page (perception · compute budgets · motor/maintenance) is
-    // admin-only — these are system-wide, security-sensitive controls (e.g. the
-    // motor filesystem allowlist) that a normal hosted user shouldn't touch.
-    if (isAdmin) {
-      const mot = document.createElement('button'); mot.className = 'pmenu-item sys'; mot.dataset.sys = 'motor';
-      mot.innerHTML = '<div class="pmenu-name">Motor Permissions</div><div class="pmenu-tag">Filesystem · capabilities · job limits</div>';
-      mot.addEventListener('click', () => selectSystem('motor')); sys.appendChild(mot);
-      const ops = document.createElement('button'); ops.className = 'pmenu-item sys'; ops.dataset.sys = 'operational';
-      ops.innerHTML = '<div class="pmenu-name">Operational</div><div class="pmenu-tag">Perception · resources · maintenance</div>';
-      ops.addEventListener('click', () => selectSystem('operational')); sys.appendChild(ops);
-    }
     rail.appendChild(sys);
-    syncRailSel();
   }
+
+  // Agents — roles, account ceilings, and the persona×role agents.
+  function renderAgentsRail(rail) {
+    const top = document.createElement('div'); top.className = 'pmenu-system';
+    const lim = document.createElement('button'); lim.className = 'pmenu-item sys'; lim.dataset.sys = 'limits';
+    lim.innerHTML = '<div class="pmenu-name">Account Limits</div><div class="pmenu-tag">Motor · operational ceilings</div>';
+    lim.addEventListener('click', () => selectSystem('limits')); top.appendChild(lim);
+    if (mandatesEnabled) {
+      const rl = document.createElement('button'); rl.className = 'pmenu-item sys'; rl.dataset.sys = 'roles';
+      rl.innerHTML = '<div class="pmenu-name">Roles</div><div class="pmenu-tag">Reusable job instructions</div>';
+      rl.addEventListener('click', () => selectSystem('roles')); top.appendChild(rl);
+    }
+    rail.appendChild(top);
+
+    // The agent list needs the hosted backend (personas×roles live in Supabase).
+    if (!mandatesEnabled) return;
+    const list = document.createElement('div'); list.className = 'pmenu-list pmenu-scroll';
+    const head = document.createElement('div'); head.className = 'pmenu-syshead'; head.textContent = 'Agents'; list.appendChild(head);
+    const ags = (agentsData && agentsData.agents) || [];
+    if (!ags.length) {
+      const e = document.createElement('div'); e.className = 'pmenu-tag'; e.style.padding = '6px 12px'; e.style.opacity = '.6';
+      e.textContent = 'No agents yet — pair a persona with a role.'; list.appendChild(e);
+    }
+    ags.forEach(a => {
+      const pmeta = personaMeta(_personaIdForSlug(a.persona));
+      const c = document.createElement('button'); c.className = 'pmenu-item agent' + (a.enabled === false ? ' off' : ''); c.dataset.agent = a.agent_id;
+      c.innerHTML = `<div class="pmenu-name">${a.name || a.agent_id}</div><div class="pmenu-tag">${pmeta.name} · ${a.mandate_id}</div>`;
+      c.addEventListener('click', () => selectAgent(a.agent_id));
+      list.appendChild(c);
+    });
+    const add = document.createElement('button'); add.className = 'pmenu-add'; add.innerHTML = '<span>+</span> New agent';
+    add.addEventListener('click', createAgent);
+    list.appendChild(add);
+    rail.appendChild(list);
+  }
+
+  async function loadAgents() {
+    try {
+      const r = await fetch('/agents');
+      if (r.ok) { agentsData = await r.json(); mandatesEnabled = mandatesEnabled || !!agentsData.enabled; }
+    } catch (e) { agentsData = { enabled: false, agents: [], roles: [], ceilings: {} }; }
+  }
+  function _personaIdForSlug(slug) { return (PERSONAS.find(p => personaSlug(p.id) === slug) || {}).id || slug; }
+
   function syncRailSel() {
-    document.querySelectorAll('#rail-nav .pmenu-item:not(.sys)').forEach(c => c.classList.toggle('sel', view === 'persona' && c.dataset.p === persona));
+    document.querySelectorAll('#rail-nav .pmenu-item:not(.sys):not(.agent)').forEach(c => c.classList.toggle('sel', view === 'persona' && c.dataset.p === persona));
     document.querySelectorAll('#rail-nav .pmenu-item.sys').forEach(c => c.classList.toggle('sel', view === 'system' && c.dataset.sys === systemPage));
+    document.querySelectorAll('#rail-nav .pmenu-item.agent').forEach(c => c.classList.toggle('sel', view === 'system' && systemPage === 'agent' && c.dataset.agent === agentSel));
   }
 
   function syncPersonaHead() {
@@ -1261,14 +1521,24 @@
     const tb = document.getElementById('st-tabbar'); if (tb) tb.hidden = true;
     const temp = document.getElementById('tab-temperament'); if (temp) temp.hidden = true;
     const gen = document.getElementById('tab-generic'); if (gen) gen.hidden = false;
-    const mode = document.getElementById('st-mode'); if (mode) mode.style.display = 'none';
+    const modeEl = document.getElementById('st-mode'); if (modeEl) modeEl.style.display = 'none';
     // System pages share the persona scaffold head — hide the per-persona voice picker here.
     const vb = document.getElementById('st-voicebar'); if (vb) vb.style.display = 'none';
     const sp = document.getElementById('settings-page'); if (sp) { sp.classList.remove('manual'); sp.classList.add('system'); }
     manualOpen = true;   // system settings are always editable (no per-persona gate)
     const set = (id, t) => { const el = document.getElementById(id); if (el) el.textContent = t; };
     const bt = document.getElementById('bar-title'), bb = document.getElementById('bar-blurb');
-    if (which === 'motor') {
+    if (which === 'limits') {
+      set('st-eyebrow', 'Agents'); set('st-name', 'Account Limits'); set('st-tag', '');
+      set('st-note', 'The account-wide ceiling for what any agent may do — motor authorization and operational budgets. Each agent can tighten these for itself, but never exceed them. Set the org-level maximums here.');
+      if (bt) bt.textContent = 'Account Limits'; if (bb) bb.textContent = 'Agents · org ceiling';
+      renderAccountLimits();
+    } else if (which === 'roles') {
+      set('st-eyebrow', 'System'); set('st-name', 'Roles'); set('st-tag', '');
+      set('st-note', 'Assignable jobs, defined once and mapped to any personas. A role is a set of instructions for a kind of work — separate from who a persona is. Roles and personas are many-to-many: one role can be given to several personas, and a persona can hold several roles. A conversation names which assigned role is active; identity and safety principles always take precedence over it.');
+      if (bt) bt.textContent = 'Roles'; if (bb) bb.textContent = 'System · assignable jobs';
+      renderMandates();
+    } else if (which === 'motor') {
       set('st-eyebrow', 'System'); set('st-name', 'Motor Permissions'); set('st-tag', '');
       set('st-note', 'What the brain is authorized to do with its motor cortex — which directories it may read or write, which tool families are enabled, and how much autonomous work may run. Applies to every persona.');
       if (bt) bt.textContent = 'Motor Permissions'; if (bb) bb.textContent = 'System · authorization';
@@ -1362,6 +1632,191 @@
       wrap.appendChild(h);
       (cat.sections || []).forEach(sec => wrap.appendChild(genSection(sec)));
     });
+  }
+
+  /* =====================================================================
+     AGENTS — account ceilings, agent detail (bounded narrowing), creation
+     ===================================================================== */
+  // The account ceiling = motor + operational settings in one page (org level).
+  function renderAccountLimits() {
+    const wrap = document.getElementById('tab-generic'); if (!wrap) return;
+    wrap.innerHTML = ''; Object.keys(genReg).forEach(k => delete genReg[k]);
+    const note = document.createElement('div'); note.className = 'es-cat-blurb';
+    note.textContent = 'The maximum any agent may be granted. Agents narrow within these; they can never exceed them.';
+    wrap.appendChild(note);
+    SET.categories.filter(c => c.motor || c.system).forEach(cat => {
+      const h = document.createElement('div'); h.className = 'es-group';
+      h.innerHTML = `<span>${cat.name}</span>` + (cat.blurb ? `<em>${cat.blurb}</em>` : '');
+      wrap.appendChild(h);
+      (cat.sections || []).forEach(sec => wrap.appendChild(genSection(sec)));
+    });
+    upgradeConnectorRows();
+  }
+
+  // The per-agent permission fields exposed in v1 (the high-value narrowings).
+  const AGENT_PERM_FIELDS = [
+    { key: 'cloud_daily_usd_budget', label: 'Daily cloud spend cap (USD)', type: 'num' },
+    { key: 'motor_enable_shell', label: 'Shell commands', type: 'bool' },
+    { key: 'motor_enable_network', label: 'Network fetch', type: 'bool' },
+    { key: 'motor_enable_cloud_actions', label: 'Cloud actions', type: 'bool' },
+    { key: 'motor_user_cloud', label: 'Cloud grant (user-directed)', type: 'cloud' },
+    { key: 'motor_allowed_dirs', label: 'Filesystem roots (one per line)', type: 'dirs' },
+  ];
+  const _CLOUD_RANK = { off: 0, ro: 1, full: 2 };
+
+  // Build a settings-style row: label/hint block + a control on the right.
+  function _fieldRow(label, hint, ctrlEl) {
+    const row = document.createElement('div'); row.className = 'es-row';
+    row.innerHTML = `<div class="es-row-meta"><span class="es-lab">${label}</span>` + (hint ? `<span class="es-hint">${hint}</span>` : '') + `</div>`;
+    const ctrl = document.createElement('div'); ctrl.className = 'es-row-ctrl'; ctrl.appendChild(ctrlEl);
+    row.appendChild(ctrl); return row;
+  }
+
+  function selectAgent(agentId) {
+    agentSel = agentId; view = 'system'; systemPage = 'agent'; syncRailSel();
+    const tb = document.getElementById('st-tabbar'); if (tb) tb.hidden = true;
+    const temp = document.getElementById('tab-temperament'); if (temp) temp.hidden = true;
+    const gen = document.getElementById('tab-generic'); if (gen) gen.hidden = false;
+    const me = document.getElementById('st-mode'); if (me) me.style.display = 'none';
+    const vb = document.getElementById('st-voicebar'); if (vb) vb.style.display = 'none';
+    const sp = document.getElementById('settings-page'); if (sp) { sp.classList.remove('manual'); sp.classList.add('system'); }
+    renderAgentDetail(agentId);
+    if (scroll) scroll.scrollTop = 0;
+  }
+
+  function renderAgentDetail(agentId) {
+    const ag = ((agentsData && agentsData.agents) || []).find(a => a.agent_id === agentId);
+    const ceilings = (agentsData && agentsData.ceilings) || {};
+    const wrap = document.getElementById('tab-generic'); if (!wrap) return;
+    wrap.innerHTML = ''; Object.keys(genReg).forEach(k => delete genReg[k]);
+    if (!ag) { wrap.innerHTML = '<div class="empty" style="padding:1.2rem">Agent not found.</div>'; return; }
+    const pid = _personaIdForSlug(ag.persona); const pmeta = personaMeta(pid);
+    const set = (id, t) => { const el = document.getElementById(id); if (el) el.textContent = t; };
+    set('st-eyebrow', 'Agent'); set('st-name', ag.name || ag.agent_id); set('st-tag', `${pmeta.name} · ${ag.mandate_id}`);
+    set('st-note', 'An agent is this persona doing this role. Its identity and temperament are the persona (edit in Labs); its job is the role; its permissions narrow within the account limits.');
+    const bt = document.getElementById('bar-title'), bb = document.getElementById('bar-blurb');
+    if (bt) bt.textContent = ag.name || ag.agent_id; if (bb) bb.textContent = `Agent · ${pmeta.name} · ${ag.mandate_id}`;
+
+    const perms = (ag.permissions && typeof ag.permissions === 'object') ? { ...ag.permissions } : {};
+
+    // Bridge + identity row.
+    const idCard = document.createElement('div'); idCard.className = 'es-cat-blurb'; idCard.style.display = 'flex'; idCard.style.gap = '10px'; idCard.style.alignItems = 'center';
+    idCard.innerHTML = `<span style="flex:1">Built on persona <b>${pmeta.name}</b> · role <b>${ag.mandate_id}</b></span>`;
+    const openP = document.createElement('button'); openP.className = 'self-revert'; openP.textContent = 'Open persona in Labs';
+    openP.addEventListener('click', () => { setMode('labs'); selectPersona(pid); });
+    idCard.appendChild(openP); wrap.appendChild(idCard);
+
+    // Name field.
+    const nameIn = document.createElement('input'); nameIn.type = 'text'; nameIn.className = 'es-textinput'; nameIn.value = ag.name || ''; nameIn.placeholder = ag.agent_id;
+    nameIn.addEventListener('change', () => saveAgentName(agentId, nameIn.value.trim()));
+    wrap.appendChild(_fieldRow('Display name', `Optional — defaults to ${ag.agent_id}`, nameIn));
+
+    // Permission narrowing fields, each bounded by the account ceiling.
+    const grp = document.createElement('div'); grp.className = 'es-group'; grp.innerHTML = '<span>Permissions</span><em>within the account ceiling — leave blank to inherit</em>';
+    wrap.appendChild(grp);
+    AGENT_PERM_FIELDS.forEach(f => wrap.appendChild(_agentPermRow(f, perms, ceilings)));
+
+    const bar = document.createElement('div'); bar.style.display = 'flex'; bar.style.gap = '8px'; bar.style.marginTop = '14px';
+    const save = document.createElement('button'); save.className = 'self-revert'; save.innerHTML = `${checkSvgM}Save permissions`;
+    save.addEventListener('click', () => saveAgentPermissions(agentId, perms));
+    const del = document.createElement('button'); del.className = 'mandate-del'; del.style.width = 'auto'; del.style.padding = '0 12px'; del.textContent = 'Remove agent';
+    del.addEventListener('click', () => removeAgent(agentId));
+    bar.appendChild(save); bar.appendChild(del); wrap.appendChild(bar);
+  }
+
+  function _agentPermRow(f, perms, ceilings) {
+    const ceil = ceilings[f.key];
+    const ceilTxt = (f.type === 'bool') ? (ceil ? 'account: allowed' : 'account: disabled') : `account: ${ceil === '' || ceil == null ? '—' : ceil}`;
+    let input;
+    if (f.type === 'bool') {
+      input = document.createElement('input'); input.type = 'checkbox';
+      const ceilOn = !!(typeof ceil === 'string' ? +ceil : ceil);
+      input.disabled = !ceilOn;  // can't enable what the account disabled
+      input.checked = (f.key in perms) ? !!(+perms[f.key]) : ceilOn;
+      input.addEventListener('change', () => { perms[f.key] = input.checked ? 1 : 0; });
+    } else if (f.type === 'cloud') {
+      input = document.createElement('select'); input.className = 'es-select'; input.style.cssText = 'min-width:160px;padding:6px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:inherit;font:inherit;';
+      const ceilRank = _CLOUD_RANK[String(ceil || 'off')] ?? 0;
+      [['off', 'Off'], ['ro', 'Read-only'], ['full', 'Full']].forEach(([v, t]) => {
+        const o = document.createElement('option'); o.value = v; o.textContent = t;
+        if ((_CLOUD_RANK[v] ?? 0) > ceilRank) o.disabled = true;  // can't exceed ceiling
+        input.appendChild(o);
+      });
+      input.value = (f.key in perms) ? perms[f.key] : (ceil || 'off');
+      input.addEventListener('change', () => { perms[f.key] = input.value; });
+    } else if (f.type === 'dirs') {
+      input = document.createElement('textarea'); input.className = 'es-textarea'; input.rows = 3; input.spellcheck = false;
+      input.style.cssText = 'flex:1 1 100%;min-width:220px;resize:vertical;font-family:var(--mono);';
+      input.placeholder = 'inherit account roots'; input.value = perms[f.key] || '';
+      input.addEventListener('input', () => { if (input.value.trim()) perms[f.key] = input.value; else delete perms[f.key]; });
+    } else { // num
+      input = document.createElement('input'); input.type = 'number'; input.className = 'es-textinput'; input.step = 'any';
+      if (ceil !== '' && ceil != null) input.max = ceil;
+      input.placeholder = `inherit (${ceil ?? '—'})`; input.value = (f.key in perms) ? perms[f.key] : '';
+      input.addEventListener('input', () => { if (input.value !== '') perms[f.key] = +input.value; else delete perms[f.key]; });
+    }
+    return _fieldRow(f.label, ceilTxt, input);
+  }
+
+  async function saveAgentName(agentId, name) {
+    try { await fetch('/agents/' + encodeURIComponent(agentId) + '/name', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) }); await loadAgents(); }
+    catch (e) { window.alert('Could not save name: ' + e.message); }
+  }
+  async function saveAgentPermissions(agentId, perms) {
+    try {
+      const r = await fetch('/agents/' + encodeURIComponent(agentId) + '/permissions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ permissions: perms }) });
+      if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.detail || ('HTTP ' + r.status)); }
+      await loadAgents(); renderPersonaRail(); selectAgent(agentId);
+    } catch (e) { window.alert('Could not save permissions: ' + e.message); }
+  }
+  async function removeAgent(agentId) {
+    if (!window.confirm(`Remove agent "${agentId}"? The persona and role are unaffected — only this pairing is deleted.`)) return;
+    try {
+      const r = await fetch('/agents/' + encodeURIComponent(agentId), { method: 'DELETE' });
+      if (!r.ok && r.status !== 404) { const j = await r.json().catch(() => ({})); throw new Error(j.detail || ('HTTP ' + r.status)); }
+      agentSel = null; await loadAgents(); renderPersonaRail(); selectSystem('roles');
+    } catch (e) { window.alert('Could not remove agent: ' + e.message); }
+  }
+
+  function createAgent() {
+    view = 'system'; systemPage = 'agent-new'; agentSel = null; syncRailSel();
+    const tb = document.getElementById('st-tabbar'); if (tb) tb.hidden = true;
+    const temp = document.getElementById('tab-temperament'); if (temp) temp.hidden = true;
+    const gen = document.getElementById('tab-generic'); if (gen) gen.hidden = false;
+    const me = document.getElementById('st-mode'); if (me) me.style.display = 'none';
+    const vb = document.getElementById('st-voicebar'); if (vb) vb.style.display = 'none';
+    const sp = document.getElementById('settings-page'); if (sp) { sp.classList.remove('manual'); sp.classList.add('system'); }
+    const set = (id, t) => { const el = document.getElementById(id); if (el) el.textContent = t; };
+    set('st-eyebrow', 'Agent'); set('st-name', 'New agent'); set('st-tag', '');
+    set('st-note', 'Pair a persona with a role to create an agent. The same role can power many personas, and a persona can hold many roles.');
+    const wrap = document.getElementById('tab-generic'); if (!wrap) return;
+    wrap.innerHTML = ''; Object.keys(genReg).forEach(k => delete genReg[k]);
+    const roles = (agentsData && agentsData.roles) || [];
+    if (!roles.length) { wrap.innerHTML = '<div class="empty" style="padding:1.2rem">No roles yet — create one under <b>Roles</b> first.</div>'; return; }
+
+    const _selCss = 'min-width:200px;padding:6px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:inherit;font:inherit;';
+    const pSel = document.createElement('select'); pSel.className = 'es-select'; pSel.style.cssText = _selCss;
+    PERSONAS.forEach(p => { const o = document.createElement('option'); o.value = p.id; o.textContent = p.name; pSel.appendChild(o); });
+    pSel.value = persona; wrap.appendChild(_fieldRow('Persona', 'Who the agent is', pSel));
+
+    const rSel = document.createElement('select'); rSel.className = 'es-select'; rSel.style.cssText = _selCss;
+    roles.forEach(r => { const o = document.createElement('option'); o.value = r.id; o.textContent = r.id; rSel.appendChild(o); });
+    wrap.appendChild(_fieldRow('Role', 'The job it does', rSel));
+
+    const nIn = document.createElement('input'); nIn.type = 'text'; nIn.className = 'es-textinput'; nIn.placeholder = 'e.g. Billing Specialist';
+    wrap.appendChild(_fieldRow('Name', 'Optional display label', nIn));
+
+    const create = document.createElement('button'); create.className = 'self-revert'; create.style.marginTop = '14px'; create.innerHTML = `${checkSvgM}Create agent`;
+    create.addEventListener('click', async () => {
+      try {
+        const r = await fetch('/agents', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ persona: pSel.value, mandate_id: rSel.value, name: nIn.value.trim() || null }) });
+        if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.detail || ('HTTP ' + r.status)); }
+        const j = await r.json(); const newId = (j.agent && j.agent.agent_id) || (personaSlug(pSel.value) + '.' + rSel.value);
+        await loadAgents(); renderPersonaRail(); selectAgent(newId);
+      } catch (e) { window.alert('Could not create agent: ' + e.message); }
+    });
+    wrap.appendChild(create);
+    if (scroll) scroll.scrollTop = 0;
   }
 
   /* =====================================================================

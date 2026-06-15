@@ -413,6 +413,15 @@ class _TurnMixin:
         if mandate_id:
             features = dict(features) if isinstance(features, dict) else {}
             features["mandate_id"] = mandate_id
+            # The agent IS (this process's persona, mandate). Derive its id here so
+            # the motor layer can resolve per-agent permissions at enforcement time
+            # (Phase 3). One process = one persona, so the persona half is implicit.
+            try:
+                from brain.second_brain.store import _persona_key, _resolve_persona
+
+                features["agent_id"] = f"{_persona_key(_resolve_persona(''))}.{mandate_id}"
+            except Exception:
+                pass
 
         # ── Default speaker for typed input ───────────────────────────────────
         # When ears are off (or no diarization arrived) there is no voice-based

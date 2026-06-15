@@ -59,7 +59,7 @@ def test_create_session_and_run_turn_routes_end_user_id():
     runner = _FakeRunner()
     c = _client(runner)
 
-    r = c.post("/v1/sessions", json={"end_user_id": "cust-1", "agent_id": "empath"}, headers=_AUTH)
+    r = c.post("/v1/sessions", json={"end_user_id": "cust-1"}, headers=_AUTH)
     assert r.status_code == 200
     sid = r.json()["session_id"]
     assert sid == "sess_abc"
@@ -132,6 +132,92 @@ def test_fail_closed_when_no_keys_configured(monkeypatch):
     c = TestClient(app)
     # no BRAIN_API_KEY in env → fail closed even with a bearer header
     assert c.post("/v1/sessions", json={"end_user_id": "x"}, headers=_AUTH).status_code == 401
+
+
+def test_mandate_routes_require_api_key():
+    c = _client(_FakeRunner())
+    assert c.get("/v1/mandates").status_code == 401
+    assert c.put("/v1/mandates/x", json={"role_text": "y"}).status_code == 401
+
+
+def test_mandate_routes_503_when_storage_off(monkeypatch):
+    from brain.second_brain import supabase_client
+
+    monkeypatch.setattr(supabase_client, "is_enabled", lambda: False)
+    c = _client(_FakeRunner())
+    assert c.get("/v1/mandates", headers=_AUTH).status_code == 503
+    assert c.put("/v1/mandates/x", json={"role_text": "y"}, headers=_AUTH).status_code == 503
+
+
+def test_mandate_crud_routes_with_fake_backend(monkeypatch):
+    from brain import mandates
+    from brain.mandates import MandateError
+    from brain.second_brain import supabase_client
+
+    monkeypatch.setattr(supabase_client, "is_enabled", lambda: True)
+    store = {}
+
+    def _upsert(mid, role_text, conduct_rules=None, reward_weights=None):
+        if not mandates.MANDATE_ID_RE.match(mid):
+            raise MandateError("bad id")
+        row = {"id": mid, "role_text": role_text, "version": store.get(mid, 0) + 1, "active": True}
+        store[mid] = row["version"]
+        return row
+
+    monkeypatch.setattr(mandates, "upsert_mandate", _upsert)
+    monkeypatch.setattr(mandates, "list_mandates", lambda include_inactive=False: [{"id": k} for k in store])
+    monkeypatch.setattr(mandates, "assign", lambda persona, mid, sort_order=0: {"persona": persona, "mandate_id": mid})
+
+    c = _client(_FakeRunner())
+    # missing role_text → 400
+    assert c.put("/v1/mandates/billing", json={}, headers=_AUTH).status_code == 400
+    # valid create → version 1, re-PUT → version 2
+    assert c.put("/v1/mandates/billing", json={"role_text": "a"}, headers=_AUTH).json()["version"] == 1
+    assert c.put("/v1/mandates/billing", json={"role_text": "b"}, headers=_AUTH).json()["version"] == 2
+    # bad slug → MandateError → 400
+    assert c.put("/v1/mandates/Bad Slug", json={"role_text": "a"}, headers=_AUTH).status_code == 400
+    # assignment route
+    r = c.put("/v1/personas/the_analyst/mandates/billing", json={}, headers=_AUTH)
+    assert r.status_code == 200 and r.json()["mandate_id"] == "billing"
+
+
+def test_agent_id_resolves_to_mandate(monkeypatch):
+    """agent_id is resolved to (persona, mandate); the session runs that mandate."""
+    from brain import agents
+
+    monkeypatch.setattr(agents, "resolve", lambda aid: ("the_analyst", "billing"))
+    runner = _FakeRunner()
+    c = _client(runner)
+    r = c.post("/v1/sessions", json={"end_user_id": "c1", "agent_id": "the_analyst.billing"}, headers=_AUTH)
+    assert r.status_code == 200
+    assert r.json()["mandate_id"] == "billing"
+    sid = r.json()["session_id"]
+    c.post(f"/v1/sessions/{sid}/turns", json={"message": "hi"}, headers=_AUTH)
+    assert runner.calls == [("hi", "c1", "billing")]
+
+
+def test_agent_id_cross_persona_409(monkeypatch):
+    from brain import agents
+
+    def _boom(aid):
+        raise agents.AgentPersonaMismatch("wrong persona")
+
+    monkeypatch.setattr(agents, "resolve", _boom)
+    c = _client(_FakeRunner())
+    r = c.post("/v1/sessions", json={"end_user_id": "c1", "agent_id": "other.billing"}, headers=_AUTH)
+    assert r.status_code == 409
+
+
+def test_agent_id_unknown_404(monkeypatch):
+    from brain import agents
+
+    def _boom(aid):
+        raise agents.AgentNotFound("nope")
+
+    monkeypatch.setattr(agents, "resolve", _boom)
+    c = _client(_FakeRunner())
+    r = c.post("/v1/sessions", json={"end_user_id": "c1", "agent_id": "the_analyst.ghost"}, headers=_AUTH)
+    assert r.status_code == 404
 
 
 def test_apiserver_app_serves_routes_with_env_key(monkeypatch):

@@ -682,6 +682,224 @@ class UIServer:
                 logger.warning("[user-model] read failed: %s", _e)
             return JSONResponse({"content": content, "persona": persona_name})
 
+        # ── Roles / mandates: the org's role library + per-persona assignments ──
+        # Reads are open to any member; writes are admin-gated (mirrors the Motor
+        # Permissions gate). When the Supabase backend is off the section reports
+        # enabled:false so the UI hides the tab.
+        def _mandate_admin_or_403(request: Request) -> None:
+            if ui_auth.is_disabled():
+                return
+            claims = getattr(request.state, "user", None) or {}
+            if not ui_auth.is_admin(claims):
+                from fastapi import HTTPException
+
+                raise HTTPException(status_code=403, detail="admin only")
+
+        @app.get("/mandates")
+        async def list_mandates_ui(request: Request):
+            from fastapi.responses import JSONResponse
+
+            from brain.second_brain import supabase_client
+
+            claims = getattr(request.state, "user", None) or {}
+            is_admin = ui_auth.is_disabled() or ui_auth.is_admin(claims)
+            if not supabase_client.is_enabled():
+                return JSONResponse(
+                    {"enabled": False, "mandates": [], "assignments": {}, "is_admin": is_admin}
+                )
+            from brain import mandates
+
+            # Roles are org-level and many-to-many with personas; return the whole
+            # library plus every pairing so the UI can render the full matrix.
+            try:
+                lib = mandates.list_mandates(include_inactive=False)
+                assigns = mandates.list_all_assignments()
+            except Exception as e:
+                logger.warning("[mandates] list failed: %s", e)
+                return JSONResponse(
+                    {"enabled": True, "mandates": [], "assignments": [], "is_admin": is_admin}
+                )
+            return JSONResponse(
+                {
+                    "enabled": True,
+                    "is_admin": is_admin,
+                    "mandates": lib,
+                    "assignments": assigns,
+                }
+            )
+
+        @app.post("/mandates")
+        async def upsert_mandate_ui(request: Request):
+            from fastapi import HTTPException
+            from fastapi.responses import JSONResponse
+
+            from brain.mandates import MandateError
+
+            _mandate_admin_or_403(request)
+            body = await request.json()
+            mid = str((body or {}).get("id", "")).strip()
+            role_text = (body or {}).get("role_text", "")
+            if not isinstance(role_text, str):
+                raise HTTPException(status_code=400, detail="role_text (string) is required")
+            try:
+                from brain import mandates
+
+                row = mandates.upsert_mandate(mid, role_text)
+            except MandateError as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
+            return JSONResponse({"ok": True, "mandate": row})
+
+        @app.delete("/mandates/{mandate_id}")
+        async def deactivate_mandate_ui(mandate_id: str, request: Request):
+            from fastapi import HTTPException
+            from fastapi.responses import JSONResponse
+
+            from brain.mandates import MandateError
+
+            _mandate_admin_or_403(request)
+            try:
+                from brain import mandates
+
+                ok = mandates.deactivate_mandate(mandate_id)
+            except MandateError as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
+            if not ok:
+                raise HTTPException(status_code=404, detail="unknown mandate id")
+            return JSONResponse({"ok": True})
+
+        @app.post("/mandates/{mandate_id}/assign")
+        async def assign_mandate_ui(mandate_id: str, request: Request):
+            from fastapi import HTTPException
+            from fastapi.responses import JSONResponse
+
+            from brain.mandates import MandateError
+
+            _mandate_admin_or_403(request)
+            body = await request.json()
+            persona = (body or {}).get("persona")
+            assigned = bool((body or {}).get("assigned", True))
+            try:
+                from brain import mandates
+
+                if assigned:
+                    mandates.assign(persona, mandate_id)
+                else:
+                    mandates.unassign(persona, mandate_id)
+            except MandateError as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
+            return JSONResponse({"ok": True, "assigned": assigned})
+
+        # ── Agents: the (persona, role) pairings + per-agent permission narrowing ──
+        # An agent is created by assigning a role to a persona; its permissions are
+        # a narrowing WITHIN the org/account ceiling (settings.json). Admin-gated.
+        @app.get("/agents")
+        async def list_agents_ui(request: Request):
+            from fastapi.responses import JSONResponse
+
+            from brain.second_brain import supabase_client
+
+            claims = getattr(request.state, "user", None) or {}
+            is_admin = ui_auth.is_disabled() or ui_auth.is_admin(claims)
+            if not supabase_client.is_enabled():
+                return JSONResponse(
+                    {"enabled": False, "agents": [], "roles": [], "ceilings": {}, "is_admin": is_admin}
+                )
+            from brain import agents as _agents
+            from brain import mandates
+            from brain.settings import settings as _s
+
+            try:
+                ags = _agents.list_agents()
+                roles = mandates.list_mandates(include_inactive=False)
+            except Exception as e:
+                logger.warning("[agents] list failed: %s", e)
+                return JSONResponse(
+                    {"enabled": True, "agents": [], "roles": [], "ceilings": {}, "is_admin": is_admin}
+                )
+            ceilings = {k: _s.get(k) for k in _agents.PERMISSION_KEYS}
+            return JSONResponse(
+                {"enabled": True, "is_admin": is_admin, "agents": ags, "roles": roles, "ceilings": ceilings}
+            )
+
+        @app.post("/agents")
+        async def create_agent_ui(request: Request):
+            from fastapi import HTTPException
+            from fastapi.responses import JSONResponse
+
+            from brain.mandates import MandateError
+
+            _mandate_admin_or_403(request)
+            body = await request.json()
+            persona = (body or {}).get("persona")
+            mandate_id = str((body or {}).get("mandate_id", "")).strip()
+            name = (body or {}).get("name")
+            try:
+                from brain import agents as _agents
+                from brain import mandates
+
+                mandates.assign(persona, mandate_id)  # creating an agent = the pairing
+                agent_id = f"{mandates._persona(persona)}.{mandate_id}"
+                if name:
+                    _agents.set_name(agent_id, str(name))
+                row = _agents.get(agent_id) or {}
+            except MandateError as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
+            return JSONResponse({"ok": True, "agent": row})
+
+        @app.post("/agents/{agent_id}/permissions")
+        async def set_agent_permissions_ui(agent_id: str, request: Request):
+            from fastapi import HTTPException
+            from fastapi.responses import JSONResponse
+
+            from brain.mandates import MandateError
+
+            _mandate_admin_or_403(request)
+            body = await request.json()
+            perms = (body or {}).get("permissions") or {}
+            try:
+                from brain import agents as _agents
+
+                row = _agents.set_permissions(agent_id, perms)
+            except MandateError as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
+            return JSONResponse({"ok": True, "agent": row})
+
+        @app.post("/agents/{agent_id}/name")
+        async def set_agent_name_ui(agent_id: str, request: Request):
+            from fastapi import HTTPException
+            from fastapi.responses import JSONResponse
+
+            from brain.mandates import MandateError
+
+            _mandate_admin_or_403(request)
+            body = await request.json()
+            try:
+                from brain import agents as _agents
+
+                row = _agents.set_name(agent_id, (body or {}).get("name"))
+            except MandateError as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
+            return JSONResponse({"ok": True, "agent": row})
+
+        @app.delete("/agents/{agent_id}")
+        async def delete_agent_ui(agent_id: str, request: Request):
+            from fastapi import HTTPException
+            from fastapi.responses import JSONResponse
+
+            from brain.mandates import MandateError
+
+            _mandate_admin_or_403(request)
+            try:
+                from brain import mandates
+
+                persona, _, mid = str(agent_id).partition(".")
+                ok = mandates.unassign(persona, mid)
+            except MandateError as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
+            if not ok:
+                raise HTTPException(status_code=404, detail="unknown agent")
+            return JSONResponse({"ok": True})
+
         @app.get("/wiring")
         async def get_wiring():
             w = self._wiring

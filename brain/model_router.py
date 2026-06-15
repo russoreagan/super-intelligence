@@ -551,6 +551,18 @@ class ModelRouter:
                 self._cloud_usd_date = today_str
                 self._cloud_usd_today = self._load_cloud_usd_today()
             daily_cap = float(_s("cloud_daily_usd_budget") or 0.0)
+            # A bound agent may carry a tighter spend cap WITHIN the org ceiling
+            # (e.g. org $100k, this agent $20k) — the lower of the two wins.
+            try:
+                from brain.agent_ctx import current_agent
+
+                _a = current_agent()
+                _ac = (_a or {}).get("permissions", {}).get("cloud_daily_usd_budget") if _a else None
+                if _ac not in (None, ""):
+                    _acf = float(_ac)
+                    daily_cap = _acf if daily_cap <= 0 else min(daily_cap, _acf)
+            except Exception:
+                pass
             if daily_cap > 0 and self._cloud_usd_today >= daily_cap:
                 logger.warning(
                     "[Resource] Daily cloud USD cap reached ($%.4f / $%.2f) "

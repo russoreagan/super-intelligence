@@ -470,6 +470,15 @@ class MotorCortexCluster:
     # ── Public entry point ─────────────────────────────────────────────────────
 
     async def execute(self, features: dict, turn_id: str) -> dict | None:
+        """Bind the active agent (engine mode) so per-agent motor permissions are
+        in scope for the whole dispatch, then run. No agent_id → no-op bind →
+        global config (companion/local), unchanged."""
+        from brain.agent_ctx import bind_agent
+
+        with bind_agent((features or {}).get("agent_id")):
+            return await self._execute_inner(features, turn_id)
+
+    async def _execute_inner(self, features: dict, turn_id: str) -> dict | None:
         """
         Plan and execute tools based on the user's request.
 
@@ -1860,7 +1869,11 @@ class MotorCortexCluster:
         """Live read of the active autonomy policy. The same permission
         structure exists twice — motor_user_* (executing a live command) and
         motor_self_* (the brain's own initiative) — and the task worker's
-        self-mode flag picks the column. Read per dispatch: no restart needed."""
+        self-mode flag picks the column. Read per dispatch: no restart needed.
+
+        When an agent is bound (engine mode), its permissions NARROW this org
+        ceiling — writes/network AND, cloud most-restrictive, connectors
+        intersection. The agent can only tighten, never loosen."""
         from brain.settings import settings as _s
 
         if self._self_mode:
@@ -1872,13 +1885,50 @@ class MotorCortexCluster:
             for n in str(_s.get(prefix + "connectors", "") or "").splitlines()
             if n.strip()
         }
+        writes = bool(int(_s.get(prefix + "writes", w_def) or 0))
+        network = bool(int(_s.get(prefix + "network", 1) or 0))
+        cloud = str(_s.get(prefix + "cloud", c_def) or c_def).lower()
+
+        perms = self._bound_agent_perms()
+        if perms is not None:
+            if prefix + "writes" in perms:
+                writes = writes and bool(int(perms.get(prefix + "writes") or 0))
+            if prefix + "network" in perms:
+                network = network and bool(int(perms.get(prefix + "network") or 0))
+            if perms.get(prefix + "cloud"):
+                _rank = {"off": 0, "ro": 1, "full": 2}
+                cloud = {0: "off", 1: "ro", 2: "full"}[
+                    min(_rank.get(cloud, 0), _rank.get(str(perms.get(prefix + "cloud")), 0))
+                ]
+            agent_conn = {
+                n.strip().lower()
+                for n in str(perms.get(prefix + "connectors") or "").splitlines()
+                if n.strip()
+            }
+            if agent_conn:
+                # Intersection; empty org connectors means "all", so agent set wins.
+                connectors = (connectors & agent_conn) if connectors else agent_conn
+
         return {
             "label": label,
-            "writes": bool(int(_s.get(prefix + "writes", w_def) or 0)),
-            "network": bool(int(_s.get(prefix + "network", 1) or 0)),
-            "cloud": str(_s.get(prefix + "cloud", c_def) or c_def).lower(),
+            "writes": writes,
+            "network": network,
+            "cloud": cloud,
             "connectors": connectors or None,
         }
+
+    @staticmethod
+    def _bound_agent_perms() -> dict | None:
+        try:
+            from brain.agent_ctx import current_agent
+
+            a = current_agent()
+        except Exception:
+            return None
+        if not a:
+            return None
+        p = a.get("permissions")
+        return p if isinstance(p, dict) else {}
 
     async def _dispatch_cloud(self, args: dict, turn_id: str) -> dict | None:
         """Route to CloudExecutor, applying the confirmation gate for write actions."""

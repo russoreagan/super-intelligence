@@ -115,6 +115,73 @@ class ToolDispatcher:
         self._enable_shell = bool(enable_shell)
         self._enable_network = bool(enable_network)
 
+    # ── Per-agent effective config ─────────────────────────────────────────────
+    # The baked instance fields are the org/process CEILING. When an agent is bound
+    # (engine mode), it may NARROW within that ceiling — never widen. No agent
+    # bound (companion/local, or a self-directed job) → the baked values verbatim,
+    # so behaviour is identical to before.
+
+    def _agent_perms(self) -> dict | None:
+        try:
+            from brain.agent_ctx import current_agent
+
+            a = current_agent()
+        except Exception:
+            a = None
+        if not a:
+            return None
+        p = a.get("permissions")
+        return p if isinstance(p, dict) else {}
+
+    @staticmethod
+    def _narrow_dirs(ceiling: list[str], agent_value) -> list[str]:
+        """Keep only agent roots that resolve inside a ceiling root (sub-scoping)."""
+        agent_dirs = [ln.strip() for ln in str(agent_value or "").splitlines() if ln.strip()]
+        if not agent_dirs:
+            return ceiling
+        kept = []
+        for d in agent_dirs:
+            try:
+                rd = str(Path(d).resolve())
+            except Exception:
+                continue
+            if any(rd == c or rd.startswith(c + os.sep) for c in ceiling):
+                kept.append(rd)
+        return kept
+
+    def _eff_allowed_paths(self) -> list[str]:
+        perms = self._agent_perms()
+        if perms is None or "motor_allowed_dirs" not in perms:
+            return self._allowed_paths
+        return self._narrow_dirs(self._allowed_paths, perms.get("motor_allowed_dirs"))
+
+    def _eff_ro_paths(self) -> list[str]:
+        perms = self._agent_perms()
+        if perms is None or "motor_read_only_dirs" not in perms:
+            return self._ro_paths
+        return self._narrow_dirs(self._ro_paths, perms.get("motor_read_only_dirs"))
+
+    def _eff_commands(self) -> set[str]:
+        perms = self._agent_perms()
+        if perms is None or "motor_allowed_commands" not in perms:
+            return self._allowed_commands
+        agent_cmds = {ln.strip() for ln in str(perms.get("motor_allowed_commands") or "").splitlines() if ln.strip()}
+        if not agent_cmds:
+            return self._allowed_commands
+        return self._allowed_commands & agent_cmds  # intersection — can only narrow
+
+    def _eff_enable_shell(self) -> bool:
+        perms = self._agent_perms()
+        if perms is None or "motor_enable_shell" not in perms:
+            return self._enable_shell
+        return self._enable_shell and bool(int(perms.get("motor_enable_shell") or 0))
+
+    def _eff_enable_network(self) -> bool:
+        perms = self._agent_perms()
+        if perms is None or "motor_enable_network" not in perms:
+            return self._enable_network
+        return self._enable_network and bool(int(perms.get("motor_enable_network") or 0))
+
     # ── Path / command safety ──────────────────────────────────────────────────
 
     def _validate_path(self, path: str, write: bool = False) -> tuple[bool, str]:
@@ -122,7 +189,9 @@ class ToolDispatcher:
 
         write=True restricts the match to read/write roots; read-only roots
         satisfy reads but reject writes with an explanatory message."""
-        if not self._allowed_paths and not self._ro_paths:
+        allowed_paths = self._eff_allowed_paths()
+        ro_paths = self._eff_ro_paths()
+        if not allowed_paths and not ro_paths:
             return False, "No paths configured. Set BRAIN_MOTOR_PATHS env var."
         if not path:
             return False, "Empty path."
@@ -130,26 +199,26 @@ class ToolDispatcher:
             resolved = str(Path(path).resolve())
         except Exception as e:
             return False, f"Invalid path '{path}': {e}"
-        for allowed in self._allowed_paths:
+        for allowed in allowed_paths:
             if resolved == allowed or resolved.startswith(allowed + os.sep):
                 return True, resolved
-        for ro in self._ro_paths:
+        for ro in ro_paths:
             if resolved == ro or resolved.startswith(ro + os.sep):
                 if write:
                     return False, (
                         f"Path '{resolved}' is in a READ-ONLY area — writes are not "
                         "permitted there. Read/write roots: "
-                        f"{self._allowed_paths or '(none)'}"
+                        f"{allowed_paths or '(none)'}"
                     )
                 return True, resolved
         return False, (
             f"Path '{path}' (resolved: {resolved}) is outside allowed roots: "
-            f"rw={self._allowed_paths} ro={self._ro_paths}"
+            f"rw={allowed_paths} ro={ro_paths}"
         )
 
     def _is_rw(self, resolved: str) -> bool:
         return any(
-            resolved == a or resolved.startswith(a + os.sep) for a in self._allowed_paths
+            resolved == a or resolved.startswith(a + os.sep) for a in self._eff_allowed_paths()
         )
 
     def _validate_command(self, cmd: str) -> tuple[bool, str]:
@@ -161,10 +230,11 @@ class ToolDispatcher:
         if not parts:
             return False, "Empty command."
         base = os.path.basename(parts[0])
-        if base not in self._allowed_commands:
+        allowed_commands = self._eff_commands()
+        if base not in allowed_commands:
             return False, (
                 f"Command '{base}' is not in the allowed list. "
-                f"Allowed: {sorted(self._allowed_commands)}"
+                f"Allowed: {sorted(allowed_commands)}"
             )
         return True, ""
 
@@ -227,7 +297,7 @@ class ToolDispatcher:
             return f"[error] Permission denied: {resolved}"
 
     async def _run_command(self, cmd: str, cwd: str = "") -> str:
-        if not self._enable_shell:
+        if not self._eff_enable_shell():
             return "[blocked] Shell commands are disabled (Settings → Motor Permissions)."
         safe_cmd, err = self._validate_command(cmd)
         if not safe_cmd:
@@ -239,10 +309,13 @@ class ToolDispatcher:
             if not safe_cwd:
                 return f"[blocked] cwd: {resolved_cwd}"
             cwd_resolved = resolved_cwd
-        elif self._allowed_paths:
-            cwd_resolved = self._allowed_paths[0]
-        elif self._ro_paths:
-            cwd_resolved = self._ro_paths[0]
+        else:
+            eff_allowed = self._eff_allowed_paths()
+            eff_ro = self._eff_ro_paths()
+            if eff_allowed:
+                cwd_resolved = eff_allowed[0]
+            elif eff_ro:
+                cwd_resolved = eff_ro[0]
 
         # In a read-only working directory only inspection commands may run —
         # a shell can mutate anything its cwd can reach.
@@ -312,7 +385,7 @@ class ToolDispatcher:
             return f"[error] Permission denied: {resolved}"
 
     async def _fetch_url(self, url: str, max_chars: int = 8000) -> str:
-        if not self._enable_network:
+        if not self._eff_enable_network():
             return "[blocked] Network fetch is disabled (Settings → Motor Permissions)."
         import ipaddress
         import socket

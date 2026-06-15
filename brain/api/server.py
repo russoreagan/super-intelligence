@@ -65,11 +65,31 @@ def build_api_router(
         mandate_id = (body or {}).get("mandate_id")
         if mandate_id is not None and not isinstance(mandate_id, str):
             raise HTTPException(status_code=400, detail="mandate_id must be a string")
-        s = registry.create(end_user_id.strip(), (body or {}).get("agent_id"), mandate_id)
+        agent_id = (body or {}).get("agent_id")
+        if agent_id is not None and not isinstance(agent_id, str):
+            raise HTTPException(status_code=400, detail="agent_id must be a string")
+        # An agent IS a (persona, role) pairing. Resolving agent_id picks the role
+        # (mandate) for this process's persona — the single handle a partner passes
+        # instead of juggling persona + mandate_id. Cross-persona agents live in a
+        # different process (the gateway routes there) → 409.
+        if agent_id:
+            from brain.agents import AgentNotFound, AgentPersonaMismatch, resolve
+            from brain.mandates import MandateError
+
+            try:
+                _persona, mandate_id = resolve(agent_id)
+            except AgentPersonaMismatch as e:
+                raise HTTPException(status_code=409, detail=str(e)) from e
+            except AgentNotFound as e:
+                raise HTTPException(status_code=404, detail=str(e)) from e
+            except MandateError as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
+        s = registry.create(end_user_id.strip(), agent_id, mandate_id)
         return {
             "session_id": s.session_id,
             "end_user_id": s.end_user_id,
             "agent_id": s.agent_id,
+            "mandate_id": s.mandate_id,
         }
 
     @router.post("/sessions/{session_id}/turns")
@@ -90,6 +110,110 @@ def build_api_router(
             "response": text,
             "mood": _mood_from_affect(affect),
         }
+
+    # ── Mandate management (the partner's role library + persona assignments) ──
+    # The bearer key is the partner's backend credential: the same caller that can
+    # open a session naming any mandate_id already controls which role text applies,
+    # so these reuse it rather than inventing a separate admin scope.
+    #
+    # conduct_rules / reward_weights are accepted and stored (so a partner whose
+    # source-of-truth lives in their own app can sync full rows) but the brain does
+    # not consume them yet.
+
+    def _guard():
+        from brain.second_brain import supabase_client
+
+        if not supabase_client.is_enabled():
+            raise HTTPException(status_code=503, detail="mandates require the Supabase storage backend")
+
+    def _run(fn):
+        from brain.mandates import MandateError
+
+        try:
+            return fn()
+        except MandateError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+    @router.get("/mandates")
+    async def list_mandates_route(
+        include_inactive: bool = False, authorization: str | None = Header(default=None)
+    ):
+        _require(authorization)
+        _guard()
+        from brain import mandates
+
+        return {"mandates": _run(lambda: mandates.list_mandates(include_inactive))}
+
+    @router.put("/mandates/{mandate_id}")
+    async def upsert_mandate_route(
+        mandate_id: str, body: dict, authorization: str | None = Header(default=None)
+    ):
+        _require(authorization)
+        _guard()
+        from brain import mandates
+
+        body = body or {}
+        role_text = body.get("role_text")
+        if not isinstance(role_text, str):
+            raise HTTPException(status_code=400, detail="role_text (string) is required")
+        return _run(
+            lambda: mandates.upsert_mandate(
+                mandate_id,
+                role_text,
+                body.get("conduct_rules"),
+                body.get("reward_weights"),
+            )
+        )
+
+    @router.delete("/mandates/{mandate_id}")
+    async def deactivate_mandate_route(
+        mandate_id: str, authorization: str | None = Header(default=None)
+    ):
+        _require(authorization)
+        _guard()
+        from brain import mandates
+
+        ok = _run(lambda: mandates.deactivate_mandate(mandate_id))
+        if not ok:
+            raise HTTPException(status_code=404, detail="unknown mandate id")
+        return {"ok": True, "mandate_id": mandate_id, "active": False}
+
+    @router.get("/personas/{persona}/mandates")
+    async def list_assignments_route(
+        persona: str, authorization: str | None = Header(default=None)
+    ):
+        _require(authorization)
+        _guard()
+        from brain import mandates
+
+        return {"persona": persona, "assignments": _run(lambda: mandates.list_assignments(persona))}
+
+    @router.put("/personas/{persona}/mandates/{mandate_id}")
+    async def assign_route(
+        persona: str,
+        mandate_id: str,
+        body: dict | None = None,
+        authorization: str | None = Header(default=None),
+    ):
+        _require(authorization)
+        _guard()
+        from brain import mandates
+
+        sort_order = int((body or {}).get("sort_order", 0) or 0)
+        return _run(lambda: mandates.assign(persona, mandate_id, sort_order))
+
+    @router.delete("/personas/{persona}/mandates/{mandate_id}")
+    async def unassign_route(
+        persona: str, mandate_id: str, authorization: str | None = Header(default=None)
+    ):
+        _require(authorization)
+        _guard()
+        from brain import mandates
+
+        ok = _run(lambda: mandates.unassign(persona, mandate_id))
+        if not ok:
+            raise HTTPException(status_code=404, detail="no such assignment")
+        return {"ok": True, "persona": persona, "mandate_id": mandate_id}
 
     return router
 
