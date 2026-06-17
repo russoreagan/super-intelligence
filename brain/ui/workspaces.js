@@ -490,6 +490,7 @@
   function boot() {
     if (!document.getElementById('ws-switch')) return;
     window.setWorkspace = setWorkspace;       // let other code drive it
+    window.getWorkspace = () => workspace;    // so closeSettings can restore context
     wireSwitcher();
     loadGating();
   }

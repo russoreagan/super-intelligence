@@ -415,6 +415,15 @@ DEFAULTS: dict[str, float | int | str] = {
     "motor_max_jobs_per_window": 10,  # ≤ this many job starts per window
     "motor_job_window_s": 3600.0,  # rolling window = 1 hour
     "motor_max_jobs_per_session": 30,  # absolute ceiling per process lifetime
+    # ── Engine API audio quotas (per-partner cost guard) ─────────────────────
+    # STT/TTS hit paid third parties (Deepgram/ElevenLabs), so a partner key's
+    # audio usage is metered the way those services bill: TTS by characters
+    # synthesised, STT by input audio-seconds. Each is a rolling-window ceiling
+    # per partner_id. 0 = unlimited (default → inert until an operator sets a
+    # cap). Owner-key calls are never metered. See brain/api/audio_quota.py.
+    "audio_tts_chars_per_window": 0,  # 0 = unlimited
+    "audio_stt_seconds_per_window": 0,  # 0 = unlimited
+    "audio_quota_window_s": 86400.0,  # rolling window = 1 day
     # ── Section: Cloud call timeouts (anti-hang) ─────────────────────────────
     # Bound every Anthropic call so a stalled connection can't freeze a motor
     # job at the strategic-plan step. read timeout bounds long generations;

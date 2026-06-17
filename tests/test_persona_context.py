@@ -11,9 +11,11 @@ def _fence(label, content, nonce):
     return f"<{label}:{nonce}>{content}</{label}:{nonce}>"
 
 
+# Catalog entries are now {"text": ..., "conduct": ...} dicts (plain strings still
+# accepted for backward compat with tests that don't exercise conduct rules).
 _CATALOG = {
-    "billing": "You are Acme's billing support agent.",
-    "tech": "You are Acme's technical support agent.",
+    "billing": {"text": "You are Acme's billing support agent.", "conduct": None},
+    "tech": {"text": "You are Acme's technical support agent.", "conduct": None},
 }
 
 
@@ -38,9 +40,72 @@ def test_catalog_framing_states_precedence_subordinate_to_identity_and_safety():
 
 
 def test_catalog_skips_blank_entries():
-    block = mandate_catalog_block({"a": "  ", "b": "real"}, _fence, "n1")
+    cat = {"a": {"text": "  ", "conduct": None}, "b": {"text": "real", "conduct": None}}
+    block = mandate_catalog_block(cat, _fence, "n1")
     assert "[b]" in block
     assert "[a]" not in block
+
+
+# ── conduct rules ─────────────────────────────────────────────────────────────
+
+
+def test_conduct_scalar_values_rendered_as_key_value_bullets():
+    cat = {
+        "support": {
+            "text": "You are a support agent.",
+            "conduct": {"tone": "Always respond formally.", "scope": "Billing topics only."},
+        }
+    }
+    block = mandate_catalog_block(cat, _fence, "n1")
+    assert "Conduct rules:" in block
+    assert "• tone: Always respond formally." in block
+    assert "• scope: Billing topics only." in block
+
+
+def test_conduct_appears_after_role_text():
+    cat = {
+        "support": {
+            "text": "You are a support agent.",
+            "conduct": {"tone": "Be formal."},
+        }
+    }
+    block = mandate_catalog_block(cat, _fence, "n1")
+    role_pos = block.index("<assignment_support")
+    conduct_pos = block.index("Conduct rules:")
+    assert conduct_pos > role_pos
+
+
+def test_conduct_list_values_exploded_without_key_label():
+    cat = {
+        "agent": {
+            "text": "You help customers.",
+            "conduct": {"rules": ["Be concise.", "Never discuss competitors."]},
+        }
+    }
+    block = mandate_catalog_block(cat, _fence, "n1")
+    assert "• Be concise." in block
+    assert "• Never discuss competitors." in block
+    assert "• rules:" not in block  # key not used as a bullet label when value is a list
+
+
+def test_conduct_absent_when_none():
+    block = mandate_catalog_block(_CATALOG, _fence, "n1")
+    assert "Conduct rules:" not in block
+
+
+def test_conduct_absent_when_empty_dict():
+    cat = {"agent": {"text": "You help customers.", "conduct": {}}}
+    block = mandate_catalog_block(cat, _fence, "n1")
+    assert "Conduct rules:" not in block
+
+
+def test_catalog_accepts_plain_string_values_backward_compat():
+    """Plain string catalog values still render; no conduct section produced."""
+    cat = {"legacy": "You are a legacy agent."}
+    block = mandate_catalog_block(cat, _fence, "n1")
+    assert "[legacy]" in block
+    assert "You are a legacy agent." in block
+    assert "Conduct rules:" not in block
 
 
 # ── selector (per-turn) ───────────────────────────────────────────────────────
@@ -55,5 +120,5 @@ def test_selector_names_active_id():
 def test_selector_empty_for_unknown_or_missing_id():
     assert mandate_selector(None, _CATALOG) == ""
     assert mandate_selector("", _CATALOG) == ""
-    assert mandate_selector("nonexistent", _CATALOG) == ""  # unknown id → silent fallback
+    assert mandate_selector("nonexistent", _CATALOG) == ""
     assert mandate_selector("billing", {}) == ""

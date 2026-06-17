@@ -33,15 +33,24 @@ _CATALOG_FRAMING = (
 def mandate_catalog_block(catalog: dict | None, fence_fn: FenceFn, nonce: str) -> str:
     """Render the partner's full assignment catalog for the CACHED context block —
     static across the process, so it's cached once and reused for every customer.
-    Each assignment's text is fenced as content. "" when the catalog is empty
-    (companion mode → no change)."""
+    Each assignment's role text is fenced as content; conduct rules (if any) are
+    rendered as a plain instruction list directly after. "" when catalog is empty."""
     if not catalog:
         return ""
     lines = [_CATALOG_FRAMING]
-    for mid, text in catalog.items():
-        body = str(text or "").strip()
-        if body:
-            lines.append(f"[{mid}]\n{fence_fn('assignment_' + str(mid), body, nonce)}")
+    for mid, entry in catalog.items():
+        if isinstance(entry, dict):
+            body = str(entry.get("text") or "").strip()
+            conduct = entry.get("conduct") or {}
+        else:
+            body = str(entry or "").strip()
+            conduct = {}
+        if not body:
+            continue
+        lines.append(f"[{mid}]\n{fence_fn('assignment_' + str(mid), body, nonce)}")
+        conduct_lines = _render_conduct(conduct)
+        if conduct_lines:
+            lines.append("Conduct rules:\n" + "\n".join(f"• {ln}" for ln in conduct_lines))
     return "\n".join(lines) if len(lines) > 1 else ""
 
 
@@ -55,3 +64,22 @@ def mandate_selector(mandate_id: str | None, catalog: dict | None) -> str:
         f"Your assignment for this conversation is [{mandate_id}] — follow that assignment from "
         "the Assignments block above (within your identity and principles, which take precedence)."
     )
+
+
+def _render_conduct(conduct: dict) -> list[str]:
+    """Flatten a conduct_rules dict into a list of instruction strings.
+
+    Values that are lists are exploded (one item per bullet); scalar values are
+    formatted as 'key: value'. Empty/whitespace entries are dropped."""
+    lines: list[str] = []
+    for k, v in (conduct or {}).items():
+        if isinstance(v, list):
+            for item in v:
+                s = str(item).strip()
+                if s:
+                    lines.append(s)
+        else:
+            s = str(v).strip()
+            if s:
+                lines.append(f"{k}: {s}")
+    return lines

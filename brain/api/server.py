@@ -8,15 +8,21 @@ with a fake. ``ApiServer`` wraps the router in its own FastAPI app on its own po
 
 Endpoints (all bearer-key authed, fail-closed):
   POST /v1/sessions                 {end_user_id, agent_id?} -> {session_id, ...}
-  POST /v1/sessions/{id}/turns      {message}               -> {response, mood, ...}
+  POST /v1/sessions/{id}/turns      {message | audio_input} -> {response, affect, mood, transcript?}
+  POST /v1/sessions/{id}/turns/stream  {message | audio_input, audio?} -> SSE inner-life + done [+ audio]
+  POST /v1/tts                      {text, ...}      -> {format, data, segments, ...}
+  POST /v1/stt                      {audio, ...}     -> {transcript, words, segments}
 
-The turn response surfaces the persona's mood — the differentiator a raw LLM API
-can't offer. Token streaming (SSE) is a later enhancement: process_turn returns a
-finished response, not a token stream, so v1 returns JSON.
+The turn response surfaces the persona's mood + a structured ``affect`` block
+(clean display text, per-segment mood/tag) — the differentiator a raw LLM API
+can't offer, and the handle a partner needs to drive their own TTS while ours
+(POST /v1/tts) stays strictly better via the affect→voice mapping. Audio is
+optional and self-gates on provider keys; see brain/api/audio.py.
 """
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 from collections.abc import Awaitable, Callable
@@ -33,11 +39,23 @@ TurnRunner = Callable[[str, str, "str | None"], Awaitable[tuple[str, dict]]]
 ConfirmRunner = Callable[[dict, str, "str | None", bool], Awaitable[tuple[str, dict]]]
 # (end_user_id) -> deletion summary
 PurgeRunner = Callable[[str], Awaitable[dict]]
+# (text, **opts) -> audio result dict ; (audio_bytes, **opts) -> transcript dict
+TtsRunner = Callable[..., Awaitable[dict]]
+SttRunner = Callable[..., Awaitable[dict]]
+# (text, **opts) -> async iterator of ("meta"|"chunk"|"end", payload) tuples
+TtsStreamRunner = Callable[..., object]
 
 
 # Event types forwarded over the SSE stream (the brain's per-turn inner life).
+# audio_meta/audio_chunk/audio_end are reserved for the streamed-audio path
+# (emitted only when a turn requests audio); listing them here keeps the
+# transport-neutral event vocabulary in one place.
 _STREAMED_TYPES = frozenset(
-    {"turn_start", "activation", "stream_thought", "neuromod", "hormonal", "emotion", "user_emotion", "turn_end"}
+    {
+        "turn_start", "activation", "stream_thought", "neuromod", "hormonal",
+        "emotion", "user_emotion", "turn_end",
+        "audio_meta", "audio_chunk", "audio_end",
+    }
 )
 
 
@@ -45,6 +63,69 @@ def _sse(name: str, obj: dict) -> str:
     import json
 
     return f"event: {name}\ndata: {json.dumps(obj)}\n\n"
+
+
+async def _stream_audio(tts_stream_runner, text, affect, audio_opt, turn_id,
+                        *, partner_id=None, quota=None):
+    """Yield SSE audio frames (audio_meta / audio_chunk* / audio_end) for a turn
+    that requested audio. Self-contained so a synth failure degrades to an
+    audio_error frame without aborting the already-sent text. Every frame carries
+    ``turn_id`` (reserved for a future realtime transport that multiplexes turns
+    over one socket).
+
+    Metered against the partner's TTS-char quota like POST /v1/tts: refuse up
+    front when already over, record the actual characters synthesised after."""
+    if tts_stream_runner is None:
+        yield _sse("audio_error", {"type": "audio_error", "turn_id": turn_id,
+                                   "detail": "audio is not available on this server"})
+        return
+    from brain.api.audio_quota import TTS_CHARS
+
+    if quota is not None and partner_id:
+        reason = quota.check(partner_id, TTS_CHARS)
+        if reason:
+            yield _sse("audio_error", {"type": "audio_error", "turn_id": turn_id, "detail": reason})
+            return
+    _names = {"meta": "audio_meta", "chunk": "audio_chunk", "end": "audio_end"}
+    chars = 0
+    try:
+        from brain.api.audio import AudioError
+
+        async for kind, payload in tts_stream_runner(
+            text,
+            affect=affect,
+            voice_id=audio_opt.get("voice_id"),
+            model=audio_opt.get("model"),
+            fmt=audio_opt.get("format"),
+            provider=audio_opt.get("provider"),
+        ):
+            if kind == "end":
+                chars = payload.get("chars") or 0
+            name = _names.get(kind)
+            if name:
+                yield _sse(name, {"type": name, "turn_id": turn_id, **payload})
+    except AudioError as ae:
+        yield _sse("audio_error", {"type": "audio_error", "turn_id": turn_id, "detail": ae.detail})
+    except Exception as ae:  # noqa: BLE001 — audio is best-effort; text already sent
+        logger.warning("audio stream failed: %s", ae, exc_info=True)
+        yield _sse("audio_error", {"type": "audio_error", "turn_id": turn_id, "detail": str(ae)})
+    else:
+        if quota is not None and partner_id and chars:
+            quota.record(partner_id, TTS_CHARS, chars)
+
+
+def _affect_view(text: str, affect: dict | None) -> tuple[str, dict]:
+    """Clean display text + structured affect block for a turn response. Lazy
+    import keeps the router free of the PNS dependency at module load; on any
+    failure fall back to the raw text with an empty affect block so a turn never
+    500s over presentation."""
+    try:
+        from brain.api.audio import affect_view
+
+        return affect_view(text, affect)
+    except Exception:  # noqa: BLE001 — presentation must never break a turn
+        logger.warning("affect_view failed; returning raw text", exc_info=True)
+        return text, {"base_tag": None, "segments": []}
 
 
 def _mood_from_affect(affect: dict | None) -> dict:
@@ -66,7 +147,11 @@ def build_api_router(
     auth: Callable[[str | None], bool] = check_bearer,
     confirm_runner: ConfirmRunner | None = None,
     purge_runner: PurgeRunner | None = None,
-    resolver: "Callable[[str | None], dict | None] | None" = None,
+    tts_runner: TtsRunner | None = None,
+    stt_runner: SttRunner | None = None,
+    tts_stream_runner: TtsStreamRunner | None = None,
+    audio_quota=None,
+    resolver: Callable[[str | None], dict | None] | None = None,
     event_source=None,
 ) -> APIRouter:
     registry = registry or ApiSessionRegistry()
@@ -87,6 +172,68 @@ def build_api_router(
         # The org owner sees everything; a partner only its own sessions. Legacy
         # sessions with no partner_id are owner-scoped.
         return bool(ctx.get("owner")) or s.partner_id is None or s.partner_id == ctx.get("partner_id")
+
+    async def _resolve_input(body: dict) -> tuple[str, str | None]:
+        """Resolve a turn's text input. Returns ``(message, transcript)`` —
+        ``transcript`` is non-None (and echoed in the response) when the caller
+        sent ``audio_input`` instead of ``message``. The two are mutually
+        exclusive; audio_input is transcribed via the STT runner (the same
+        commodity path as POST /v1/stt), keeping voice-in a distinct channel."""
+        body = body or {}
+        message = body.get("message")
+        audio_input = body.get("audio_input")
+        if audio_input is not None and message is not None:
+            raise HTTPException(status_code=400, detail="provide either message or audio_input, not both")
+        if audio_input is None:
+            if not isinstance(message, str) or not message.strip():
+                raise HTTPException(status_code=400, detail="message (non-empty string) is required")
+            return message, None
+        # ── voice-in: transcribe, then run the turn on the transcript ──
+        if stt_runner is None:
+            raise HTTPException(status_code=501, detail="speech-to-text is not available on this server")
+        if not isinstance(audio_input, dict):
+            raise HTTPException(status_code=400, detail="audio_input must be an object")
+        data_b64 = audio_input.get("data")
+        if not isinstance(data_b64, str) or not data_b64.strip():
+            raise HTTPException(status_code=400, detail="audio_input.data (base64 string) is required")
+        import base64
+        import binascii
+
+        from brain.api.audio import AudioError
+
+        try:
+            audio = base64.b64decode(data_b64, validate=True)
+        except (binascii.Error, ValueError) as e:
+            raise HTTPException(status_code=400, detail="audio_input.data must be valid base64") from e
+        try:
+            result = await stt_runner(
+                audio,
+                mimetype=audio_input.get("mimetype") or "audio/wav",
+                diarize=False,
+                model=audio_input.get("model"),
+            )
+        except AudioError as e:
+            raise HTTPException(status_code=e.status, detail=e.detail) from e
+        transcript = ((result or {}).get("transcript") or "").strip()
+        if not transcript:
+            raise HTTPException(status_code=422, detail="no speech detected in audio_input")
+        return transcript, transcript
+
+    def _enforce_quota(ctx: dict, meter: str) -> None:
+        """Refuse (429) when the partner is already at/over the meter's window cap.
+        Owner keys and an unconfigured quota are never metered."""
+        if audio_quota is None or ctx.get("owner"):
+            return
+        reason = audio_quota.check(ctx.get("partner_id"), meter)
+        if reason:
+            raise HTTPException(status_code=429, detail=reason)
+
+    def _record_quota(ctx: dict, meter: str, amount) -> None:
+        """Log actual usage after a successful call (best-effort; never raises)."""
+        if audio_quota is None or ctx.get("owner") or not amount:
+            return
+        with contextlib.suppress(TypeError, ValueError):
+            audio_quota.record(ctx.get("partner_id"), meter, float(amount))
 
     @router.post("/sessions")
     async def create_session(body: dict, authorization: str | None = Header(default=None)):
@@ -134,16 +281,21 @@ def build_api_router(
             raise HTTPException(status_code=404, detail="unknown session_id")
         if not _owns(ctx, s):
             raise HTTPException(status_code=403, detail="session belongs to another partner")
-        message = (body or {}).get("message")
-        if not isinstance(message, str) or not message.strip():
-            raise HTTPException(status_code=400, detail="message (non-empty string) is required")
+        message, transcript = await _resolve_input(body)
         text, affect = await turn_runner(message, s.end_user_id, s.mandate_id)
+        # The turn returns TTS-ready text (still carrying [mood:X] markup + bare
+        # reaction tags). Hand partners clean display text + the structured affect
+        # that drives prosody — never the raw markup as the response.
+        display, affect_block = _affect_view(text, affect)
         resp = {
             "session_id": session_id,
             "end_user_id": s.end_user_id,
-            "response": text,
+            "response": display,
+            "affect": affect_block,
             "mood": _mood_from_affect(affect),
         }
+        if transcript is not None:
+            resp["transcript"] = transcript  # echo what we heard (voice-in)
         # A cloud write awaiting sign-off — park it on the session and tell the
         # partner. They approve via POST /sessions/{id}/confirm. (Auto-confirmed
         # agents never reach here; the write already ran.)
@@ -167,9 +319,10 @@ def build_api_router(
             raise HTTPException(status_code=404, detail="unknown session_id")
         if not _owns(ctx, s):
             raise HTTPException(status_code=403, detail="session belongs to another partner")
-        message = (body or {}).get("message")
-        if not isinstance(message, str) or not message.strip():
-            raise HTTPException(status_code=400, detail="message (non-empty string) is required")
+        message, transcript = await _resolve_input(body)
+        audio_opt = (body or {}).get("audio")
+        if audio_opt is not None and not isinstance(audio_opt, dict):
+            raise HTTPException(status_code=400, detail="audio must be an object")
 
         source = event_source
         if source is None:
@@ -189,8 +342,12 @@ def build_api_router(
             # Tap is live BEFORE the turn starts so turn_start isn't missed.
             turn_task = asyncio.create_task(turn_runner(message, s.end_user_id, s.mandate_id))
             try:
-                yield _sse("open", {"session_id": session_id, "end_user_id": s.end_user_id})
+                _open = {"session_id": session_id, "end_user_id": s.end_user_id}
+                if transcript is not None:
+                    _open["transcript"] = transcript  # echo what we heard (voice-in)
+                yield _sse("open", _open)
                 saw_end = False
+                turn_id = None
                 while not saw_end:
                     try:
                         ev = await asyncio.wait_for(tap.get(), timeout=0.5)
@@ -200,13 +357,16 @@ def build_api_router(
                         yield ": keep-alive\n\n"
                         continue
                     etype = ev.get("type")
+                    if etype in ("turn_start", "turn_end"):
+                        turn_id = ev.get("turn_id", turn_id)
                     if etype in _STREAMED_TYPES:
                         yield _sse(etype, ev)
                     if etype == "turn_end":
                         saw_end = True
                 # The turn's authoritative result (curated mood + any pending write).
                 text, affect = await turn_task
-                final = {"response": text, "mood": _mood_from_affect(affect)}
+                display, affect_block = _affect_view(text, affect)
+                final = {"response": display, "affect": affect_block, "mood": _mood_from_affect(affect)}
                 pending = affect.get("pending") if isinstance(affect, dict) else None
                 if pending:
                     s.pending = pending
@@ -215,7 +375,18 @@ def build_api_router(
                         "required": True,
                         "description": pending.get("description") or pending.get("task"),
                     }
+                # Text first (done) so the client renders without waiting on audio;
+                # audio chunks follow and stream in as each segment synthesises. An
+                # audio client keeps reading until audio_end. TTS uses the RAW text
+                # (markup intact) so mood spans drive per-chunk prosody.
                 yield _sse("done", final)
+                if isinstance(audio_opt, dict) and audio_opt.get("enabled"):
+                    _pid = None if ctx.get("owner") else ctx.get("partner_id")
+                    async for frame in _stream_audio(
+                        tts_stream_runner, text, affect, audio_opt, turn_id,
+                        partner_id=_pid, quota=audio_quota,
+                    ):
+                        yield frame
             except Exception as e:  # noqa: BLE001 — surface as a stream error frame
                 yield _sse("error", {"detail": str(e)})
             finally:
@@ -251,6 +422,73 @@ def build_api_router(
             "response": text,
             "mood": _mood_from_affect(affect),
         }
+
+    # ── Audio (optional, partner-gated) ───────────────────────────────────────
+    # Stateless: no session needed. TTS exposes the affect→voice mapping (the
+    # differentiated half — a partner can't replicate mood-driven prosody client
+    # side); STT is the commodity convenience path. Both 501 when no runner is
+    # wired and 503 (via AudioError) when the provider key isn't configured.
+    @router.post("/tts")
+    async def tts_route(body: dict, authorization: str | None = Header(default=None)):
+        ctx = _require(authorization)
+        if tts_runner is None:
+            raise HTTPException(status_code=501, detail="text-to-speech is not available on this server")
+        from brain.api.audio import AudioError
+        from brain.api.audio_quota import TTS_CHARS
+
+        body = body or {}
+        text = body.get("text")
+        if not isinstance(text, str) or not text.strip():
+            raise HTTPException(status_code=400, detail="text (non-empty string) is required")
+        affect = body.get("affect")
+        if affect is not None and not isinstance(affect, dict):
+            raise HTTPException(status_code=400, detail="affect must be an object")
+        _enforce_quota(ctx, TTS_CHARS)
+        try:
+            result = await tts_runner(
+                text,
+                affect=affect,
+                voice_id=body.get("voice_id"),
+                model=body.get("model"),
+                fmt=body.get("format"),
+                provider=body.get("provider"),
+            )
+        except AudioError as e:
+            raise HTTPException(status_code=e.status, detail=e.detail) from e
+        _record_quota(ctx, TTS_CHARS, (result or {}).get("chars"))
+        return result
+
+    @router.post("/stt")
+    async def stt_route(body: dict, authorization: str | None = Header(default=None)):
+        ctx = _require(authorization)
+        if stt_runner is None:
+            raise HTTPException(status_code=501, detail="speech-to-text is not available on this server")
+        import base64
+        import binascii
+
+        from brain.api.audio import AudioError
+        from brain.api.audio_quota import STT_SECONDS
+
+        body = body or {}
+        audio_b64 = body.get("audio")
+        if not isinstance(audio_b64, str) or not audio_b64.strip():
+            raise HTTPException(status_code=400, detail="audio (base64 string) is required")
+        try:
+            audio = base64.b64decode(audio_b64, validate=True)
+        except (binascii.Error, ValueError) as e:
+            raise HTTPException(status_code=400, detail="audio must be valid base64") from e
+        _enforce_quota(ctx, STT_SECONDS)
+        try:
+            result = await stt_runner(
+                audio,
+                mimetype=body.get("mimetype") or "audio/wav",
+                diarize=bool(body.get("diarize", False)),
+                model=body.get("model"),
+            )
+        except AudioError as e:
+            raise HTTPException(status_code=e.status, detail=e.detail) from e
+        _record_quota(ctx, STT_SECONDS, (result or {}).get("duration_s"))
+        return result
 
     # ── Mandate management (the partner's role library + persona assignments) ──
     # The bearer key is the partner's backend credential: the same caller that can
@@ -494,13 +732,32 @@ class ApiServer:
         registry: ApiSessionRegistry | None = None,
         confirm_runner: ConfirmRunner | None = None,
         purge_runner: PurgeRunner | None = None,
+        tts_runner: TtsRunner | None = None,
+        stt_runner: SttRunner | None = None,
+        tts_stream_runner: TtsStreamRunner | None = None,
+        audio_quota=None,
     ) -> None:
         self._registry = registry or ApiSessionRegistry()
+        # Default the audio runners to the stateless synth/transcribe helpers.
+        # They self-gate (503) when ELEVENLABS/OPENAI/DEEPGRAM keys aren't set,
+        # so wiring them unconditionally is safe — the routes just report 503.
+        if tts_runner is None or stt_runner is None or tts_stream_runner is None:
+            from brain.api import audio as _audio
+
+            tts_runner = tts_runner or _audio.synthesize
+            stt_runner = stt_runner or _audio.transcribe
+            tts_stream_runner = tts_stream_runner or _audio.synthesize_stream
+        if audio_quota is None:
+            from brain.api.audio_quota import AudioQuota
+
+            audio_quota = AudioQuota()  # inert until settings caps are set
         self._app = FastAPI(docs_url="/v1/docs", redoc_url=None)
         self._app.include_router(
             build_api_router(
                 turn_runner, self._registry,
                 confirm_runner=confirm_runner, purge_runner=purge_runner,
+                tts_runner=tts_runner, stt_runner=stt_runner,
+                tts_stream_runner=tts_stream_runner, audio_quota=audio_quota,
             )
         )
 

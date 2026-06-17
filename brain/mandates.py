@@ -40,7 +40,7 @@ MAX_ASSIGNED_PER_PERSONA = 16
 MAX_CATALOG_CHARS = 24_000
 _MAX_JSON_BYTES = 2_048  # conduct_rules / reward_weights are opaque-but-bounded
 
-_catalog: dict[str, str] | None = None
+_catalog: dict[str, dict] | None = None
 
 
 class MandateError(Exception):
@@ -50,15 +50,16 @@ class MandateError(Exception):
 # ── live catalog (read by the prompt layer) ───────────────────────────────────
 
 
-def catalog() -> dict[str, str]:
-    """Return {mandate_id: role_text} for the active (org, persona), cached."""
+def catalog() -> dict[str, dict]:
+    """Return {mandate_id: {"text": role_text, "conduct": conduct_rules}} for the
+    active (org, persona), cached."""
     global _catalog
     if _catalog is None:
         _catalog = _load()
     return _catalog
 
 
-def refresh() -> dict[str, str]:
+def refresh() -> dict[str, dict]:
     """Drop the cache and reload — call after any catalog or assignment edit so the
     next turn rebuilds the cached context block."""
     global _catalog
@@ -66,7 +67,7 @@ def refresh() -> dict[str, str]:
     return catalog()
 
 
-def _load() -> dict[str, str]:
+def _load() -> dict[str, dict]:
     try:
         sb, org = _sb()
         persona = _active_persona()
@@ -86,15 +87,21 @@ def _load() -> dict[str, str]:
             return {}
         lib = (
             sb.table("mandates")
-            .select("id, role_text")
+            .select("id, role_text, conduct_rules")
             .eq("org_id", org)
             .in_("id", ids)
             .eq("active", True)
             .execute()
         )
-        texts = {str(r["id"]): str(r.get("role_text") or "") for r in (lib.data or [])}
+        entries = {
+            str(r["id"]): {
+                "text": str(r.get("role_text") or ""),
+                "conduct": r.get("conduct_rules") or None,
+            }
+            for r in (lib.data or [])
+        }
         # Preserve assignment order; drop ids whose library row is missing/inactive.
-        cat = {i: texts[i] for i in ids if i in texts}
+        cat = {i: entries[i] for i in ids if i in entries}
         if cat:
             logger.info("[Mandates] Loaded %d mandate(s) for persona %s", len(cat), persona)
         return cat
