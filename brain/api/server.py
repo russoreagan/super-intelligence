@@ -27,7 +27,7 @@ import logging
 import os
 from collections.abc import Awaitable, Callable
 
-from fastapi import APIRouter, FastAPI, Header, HTTPException
+from fastapi import APIRouter, FastAPI, Header, HTTPException, WebSocket
 
 from brain.api.auth import check_bearer
 from brain.api.sessions import ApiSessionRegistry
@@ -44,6 +44,8 @@ TtsRunner = Callable[..., Awaitable[dict]]
 SttRunner = Callable[..., Awaitable[dict]]
 # (text, **opts) -> async iterator of ("meta"|"chunk"|"end", payload) tuples
 TtsStreamRunner = Callable[..., object]
+# () -> DeepgramLiveSession (factory so each WS connection gets a fresh instance)
+SttLiveRunner = Callable[[], object]
 
 
 # Event types forwarded over the SSE stream (the brain's per-turn inner life).
@@ -150,6 +152,7 @@ def build_api_router(
     tts_runner: TtsRunner | None = None,
     stt_runner: SttRunner | None = None,
     tts_stream_runner: TtsStreamRunner | None = None,
+    stt_live_runner: SttLiveRunner | None = None,
     audio_quota=None,
     resolver: Callable[[str | None], dict | None] | None = None,
     event_source=None,
@@ -334,6 +337,7 @@ def build_api_router(
             raise HTTPException(status_code=501, detail="event streaming is not available on this server")
 
         import asyncio
+
         from fastapi.responses import StreamingResponse
 
         async def _gen():
@@ -351,7 +355,7 @@ def build_api_router(
                 while not saw_end:
                     try:
                         ev = await asyncio.wait_for(tap.get(), timeout=0.5)
-                    except (asyncio.TimeoutError, TimeoutError):
+                    except TimeoutError:
                         if turn_task.done():
                             break
                         yield ": keep-alive\n\n"
@@ -395,6 +399,45 @@ def build_api_router(
                     turn_task.cancel()
 
         return StreamingResponse(_gen(), media_type="text/event-stream")
+
+    @router.websocket("/sessions/{session_id}/stream")
+    async def ws_turn_stream(session_id: str, websocket: WebSocket):
+        """Realtime WebSocket — persistent duplex connection for a session.
+
+        Supports streaming audio in (PCM16 → Deepgram live STT), inner-life
+        event forwarding, and TTS chunk streaming back. See brain/api/ws.py and
+        the message-protocol reference for the full frame vocabulary.
+
+        Auth is checked via the ``Authorization`` header of the upgrade request
+        BEFORE accept(); unknown or unauthorised connections are closed 1008."""
+        authorization = websocket.headers.get("authorization")
+        try:
+            ctx = _require(authorization)
+        except HTTPException:
+            await websocket.close(code=1008)
+            return
+
+        s = registry.get(session_id)
+        if s is None or not _owns(ctx, s):
+            await websocket.close(code=1008)
+            return
+
+        source = event_source
+        if source is None:
+            with contextlib.suppress(Exception):
+                from brain.ui.emitter import emitter as _em  # noqa: F841
+                source = _em  # type: ignore[assignment]
+
+        from brain.api.ws import WsSession
+        await WsSession(
+            websocket, s, ctx,
+            turn_runner=turn_runner,
+            registry=registry,
+            tts_stream_runner=tts_stream_runner,
+            audio_quota=audio_quota,
+            event_source=source,
+            stt_live_factory=stt_live_runner,
+        ).run()
 
     @router.post("/sessions/{session_id}/confirm")
     async def confirm_action(
@@ -735,6 +778,7 @@ class ApiServer:
         tts_runner: TtsRunner | None = None,
         stt_runner: SttRunner | None = None,
         tts_stream_runner: TtsStreamRunner | None = None,
+        stt_live_runner: SttLiveRunner | None = None,
         audio_quota=None,
     ) -> None:
         self._registry = registry or ApiSessionRegistry()
@@ -747,6 +791,10 @@ class ApiServer:
             tts_runner = tts_runner or _audio.synthesize
             stt_runner = stt_runner or _audio.transcribe
             tts_stream_runner = tts_stream_runner or _audio.synthesize_stream
+        if stt_live_runner is None:
+            from brain.api.stt_live import DeepgramLiveSession
+
+            stt_live_runner = DeepgramLiveSession
         if audio_quota is None:
             from brain.api.audio_quota import AudioQuota
 
@@ -757,7 +805,8 @@ class ApiServer:
                 turn_runner, self._registry,
                 confirm_runner=confirm_runner, purge_runner=purge_runner,
                 tts_runner=tts_runner, stt_runner=stt_runner,
-                tts_stream_runner=tts_stream_runner, audio_quota=audio_quota,
+                tts_stream_runner=tts_stream_runner, stt_live_runner=stt_live_runner,
+                audio_quota=audio_quota,
             )
         )
 
