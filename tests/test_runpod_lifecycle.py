@@ -181,3 +181,55 @@ def test_live_count_excludes_dead_unreaped_procs():
     assert prov.live_count() == 2
     prov._procs = {}
     assert prov.live_count() == 0
+
+
+# ── boot-status surface (UI messaging) ──────────────────────────────────────
+
+
+def test_status_starts_off():
+    m = _mgr()
+    s = m.status()
+    assert s["state"] == "off"
+    assert "elapsed_s" in s and "detail" in s
+
+
+def test_set_status_resets_elapsed_only_on_change():
+    m = _mgr()
+    m._set_status("resuming", "starting GPU pod")
+    assert m.status()["state"] == "resuming"
+    assert m.status()["detail"] == "starting GPU pod"
+    # same state again must NOT reset the phase clock (elapsed keeps growing)
+    e1 = m._status_since
+    m._set_status("resuming", "starting GPU pod")
+    assert m._status_since == e1
+    # a real transition resets it
+    m._set_status("warming")
+    assert m._status_since != e1
+
+
+def test_pause_sets_status_off():
+    m = _mgr()
+    m._pod_id = "podX"
+    m._set_status("ready")
+
+    async def fake_stop(_pid):
+        pass
+
+    m._stop_pod = fake_stop  # type: ignore[assignment]
+    asyncio.run(m.pause())
+    assert m.status()["state"] == "off"
+
+
+def test_ensure_running_failure_reports_failed_state():
+    m = _mgr()
+
+    async def no_pods():
+        return []
+
+    async def no_gpus():
+        return []
+
+    m._find_existing_pods = no_pods  # type: ignore[assignment]
+    m._fetch_gpu_types = no_gpus  # type: ignore[assignment]
+    assert asyncio.run(m.ensure_running()) is False
+    assert m.status()["state"] == "failed"

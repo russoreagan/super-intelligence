@@ -24,8 +24,18 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 
 logger = logging.getLogger(__name__)
+
+# Pod boot phases surfaced to the UI so a user can tell progress from a hang.
+#   off      — no pod held (paused / no demand). Inference runs on cloud.
+#   resuming — pod resume/create issued; waiting for it to come up.
+#   pulling  — downloading a model onto the pod (only on a fresh pod).
+#   warming  — pod is serving; loading the model into VRAM.
+#   ready    — pod serving + model resident (cheap local inference live).
+#   failed   — couldn't bring the pod up; staying on cloud fallback.
+POD_STATES = ("off", "resuming", "pulling", "warming", "ready", "failed")
 
 _API_URL = "https://api.runpod.io/graphql"
 _POD_NAME = "ollama-brain"
@@ -78,6 +88,10 @@ class RunPodManager:
         self._warmup_task: asyncio.Task | None = None
         self._watchdog_proc = None  # subprocess.Popen — stops pod if brain process dies
         self._lifecycle_lock = asyncio.Lock()  # serialize ensure_running/pause
+        # Boot-progress state surfaced to the UI (see POD_STATES).
+        self._status: str = "off"
+        self._status_since: float = time.time()
+        self._status_detail: str = ""
         self._http = None  # httpx.AsyncClient, created lazily in _get_http()
         # Consumer mode (multi-tenant tenant pointing at a shared pod): never owns
         # or stops the pod. Set in start() when BRAIN_MULTITENANT + RUNPOD_HOST.
@@ -245,6 +259,7 @@ class RunPodManager:
                 logger.info("[RunPod] Model %s already present", model)
                 continue
             logger.info("[RunPod] Pulling %s (this may take a few minutes)...", model)
+            self._set_status("pulling", f"downloading {base}")
             try:
                 async with self._get_http().stream(
                     "POST",
@@ -262,6 +277,7 @@ class RunPodManager:
                                 break
                             if d.get("total") and d.get("completed"):
                                 pct = d["completed"] / d["total"] * 100
+                                self._set_status("pulling", f"downloading {base} {pct:.0f}%")
                                 logger.debug("[RunPod] %s: %.1f%%", model, pct)
                         except Exception:
                             pass
@@ -338,6 +354,7 @@ class RunPodManager:
                     loaded = {m.get("name", "").split(":")[0] for m in r.json().get("models", [])}
                     if base in loaded:
                         logger.info("[RunPod] Model %s warm and resident (%.0fs)", model, elapsed)
+                        self._set_status("ready")
                         return
             except Exception:
                 pass
@@ -349,6 +366,9 @@ class RunPodManager:
             model,
             _WARMUP_TIMEOUT_S,
         )
+        # Pod is serving; the model just loads on first use. Report ready (not stuck)
+        # so the UI clears the boot banner — inference works, the first call is slow.
+        self._set_status("ready", "model loads on first use")
 
     def _spawn_watchdog(self, pod_id: str) -> None:
         """Start a detached watchdog subprocess that stops the pod if this process dies."""
@@ -376,10 +396,15 @@ class RunPodManager:
     async def _activate_pod(self, pod_id: str) -> bool:
         """Wait for pod, pull models, warm up, apply host. Returns True on full success."""
         if not await self._wait_until_ready(pod_id):
+            self._set_status("failed", "pod did not come up")
             return False
         host = self._pod_host(pod_id)
         if not await self._pull_models(host):
+            self._set_status("failed", "model download failed")
             return False
+        # Pod is serving; warmup (model → VRAM) runs in the background and flips the
+        # status to "ready" when resident. Surface "warming" meanwhile.
+        self._set_status("warming", "loading model into memory")
         self._schedule_warmup(host)
         self._apply_host(pod_id)
         self._spawn_watchdog(pod_id)
@@ -533,6 +558,8 @@ class RunPodManager:
         async with self._lifecycle_lock:
             # Already holding a pod that's actually serving — nothing to do.
             if self._pod_id is not None and await self._probe_alive(self._pod_id):
+                if self._status not in ("warming", "ready"):
+                    self._set_status("ready")
                 return True
             # Resume the known pod if we have one; else find/create.
             pod_id = self._known_pod_id
@@ -545,6 +572,7 @@ class RunPodManager:
                     self._known_pod_id = pod_id
             if pod_id is not None:
                 try:
+                    self._set_status("resuming", "starting GPU pod")
                     await self._resume_pod(pod_id)
                     self._pod_id = pod_id
                     if await self._activate_pod(pod_id):
@@ -556,9 +584,11 @@ class RunPodManager:
                 self._pod_id = None
             # No known/resumable pod — create one on the best GPU.
             try:
+                self._set_status("resuming", "provisioning a GPU")
                 ranked = self._rank_gpus(await self._fetch_gpu_types())
             except Exception as e:
                 logger.warning("[RunPod] ensure_running GPU fetch failed: %s", e)
+                self._set_status("failed", "GPU lookup failed")
                 return False
             for gpu in ranked:
                 new_id = await self._create_pod(gpu["id"])
@@ -573,6 +603,7 @@ class RunPodManager:
                     await self._stop_pod(new_id)
                     self._pod_id = None
             logger.warning("[RunPod] ensure_running could not bring up a pod — cloud fallback")
+            self._set_status("failed", "no GPU available — using cloud")
             return False
 
     async def pause(self) -> None:
@@ -593,6 +624,24 @@ class RunPodManager:
                 await self._stop_pod(self._pod_id)
                 logger.info("[RunPod] Pod %s paused (no live brains)", self._pod_id)
                 self._pod_id = None
+            self._set_status("off")
+
+    def _set_status(self, state: str, detail: str = "") -> None:
+        """Record a boot-phase transition (timestamped) for the UI poller."""
+        if state != self._status:
+            self._status = state
+            self._status_since = time.time()
+            logger.info("[RunPod] status → %s%s", state, f" ({detail})" if detail else "")
+        self._status_detail = detail
+
+    def status(self) -> dict:
+        """Current pod boot phase + seconds in this phase. Consumed by the gateway
+        /__pod_status endpoint and rendered in the UI."""
+        return {
+            "state": self._status,
+            "detail": self._status_detail,
+            "elapsed_s": round(max(0.0, time.time() - self._status_since), 1),
+        }
 
     def _start_watcher(self) -> None:
         if self._watcher_task is None or self._watcher_task.done():

@@ -256,6 +256,14 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
             return JSONResponse({"ok": False, "error": "could not delete key"}, status_code=502)
         return JSONResponse({"ok": True})
 
+    def _kick_pod() -> None:
+        """Fire-and-forget: start resuming the shared pod NOW (don't wait for the
+        reconciler's next tick) so its boot overlaps the brain boot and the UI
+        shows progress immediately. Idempotent — ensure_running() no-ops if alive."""
+        runpod = runpod_holder[0] if runpod_holder else None
+        if runpod is not None:
+            asyncio.create_task(_safe_pod_ensure(runpod))
+
     # ── Readiness poll for the interstitial ─────────────────────────────────
     @app.get("/__brain_status")
     async def brain_status(request: Request):
@@ -266,8 +274,20 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
         st = provisioner.status(tenant)
         if st is None:
             asyncio.create_task(_safe_ensure(provisioner, tenant))
+            _kick_pod()  # warm the shared pod in parallel with the brain boot
             return JSONResponse({"ready": False, "state": "starting"})
         return JSONResponse({"ready": (not st["booting"]), "state": "booting" if st["booting"] else "ready"})
+
+    # ── Shared-pod boot status (polled by the in-app banner) ────────────────
+    @app.get("/__pod_status")
+    async def pod_status(request: Request):
+        if getattr(request.state, "user", None) is None:
+            return JSONResponse({"state": "unknown"}, status_code=401)
+        runpod = runpod_holder[0] if runpod_holder else None
+        if runpod is None:
+            # No pod manager (no RunPod key / local-only) — nothing to show.
+            return JSONResponse({"state": "off", "detail": "", "elapsed_s": 0})
+        return JSONResponse(runpod.status())
 
     # ── WebSocket proxy ─────────────────────────────────────────────────────
     @app.websocket("/ws")
@@ -350,6 +370,7 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
             return JSONResponse({"error": "no_anthropic_key"}, status_code=403)
         if st is None:
             asyncio.create_task(_safe_ensure(provisioner, tenant))
+            _kick_pod()  # warm the shared pod in parallel with the brain boot
         if _wants_html(request):
             return HTMLResponse(INTERSTITIAL_HTML.read_text(encoding="utf-8"), status_code=200)
         return JSONResponse({"status": "booting"}, status_code=503)
@@ -374,6 +395,13 @@ async def _safe_ensure(provisioner: Provisioner, uid: str) -> None:
         await provisioner.ensure(uid)
     except Exception as e:
         logger.error("[gateway] ensure failed for %s: %s", uid[:8], e)
+
+
+async def _safe_pod_ensure(runpod) -> None:
+    try:
+        await runpod.ensure_running()
+    except Exception as e:
+        logger.warning("[gateway] pod ensure failed: %s", e)
 
 
 async def _proxy_http(request: Request, port: int) -> Response:

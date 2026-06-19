@@ -577,6 +577,41 @@ input, select, textarea { font: inherit; color: inherit; background: none; borde
 }
 .status-row-dot.up   { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
 .status-row-dot.down { background: oklch(0.55 0.18 25); }
+/* Local-model (shared pod) phases: amber = booting, green = ready, red = failed,
+   faint = off (no pod / cloud only). */
+.status-row-dot.booting { background: oklch(0.74 0.15 75); box-shadow: 0 0 6px oklch(0.74 0.15 75 / 0.6); }
+.status-row-dot.ready   { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
+.status-row-dot.failed  { background: oklch(0.55 0.18 25); }
+.status-row-dot.off     { background: var(--fg-faint); }
+
+/* Non-blocking pod-boot banner: sits atop the conversation, shown only while the
+   shared GPU pod is booting (or failed). The app stays usable on cloud meanwhile. */
+.pod-banner {
+  display: none;
+  align-items: center;
+  gap: 9px;
+  margin: 0 0 8px;
+  padding: 7px 12px;
+  border: 1px solid oklch(0.74 0.15 75 / 0.35);
+  border-radius: 8px;
+  background: oklch(0.74 0.15 75 / 0.08);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  color: var(--fg-dim);
+}
+.pod-banner.visible { display: flex; }
+.pod-banner.failed  { border-color: oklch(0.55 0.18 25 / 0.4); background: oklch(0.55 0.18 25 / 0.08); }
+.pod-banner-text { flex: 1; }
+.pod-banner-time { font-variant-numeric: tabular-nums; color: var(--fg-faint); font-size: 10px; }
+.pod-banner-ring {
+  width: 12px; height: 12px; flex-shrink: 0;
+  border-radius: 50%;
+  border: 2px solid oklch(0.74 0.15 75 / 0.25);
+  border-top-color: oklch(0.74 0.15 75);
+  animation: spin 0.9s linear infinite;
+}
+.pod-banner.failed .pod-banner-ring { animation: none; border: none; background: oklch(0.55 0.18 25); }
+@keyframes spin { to { transform: rotate(360deg); } }
 
 /* ---------- MAIN ---------- */
 #main {
@@ -4296,6 +4331,7 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
           <div class="status-row"><span>Meta</span><span class="status-row-dot" id="sub-meta"></span></div>
           <div class="status-row"><span>Voice</span><span class="status-row-dot" id="sub-voice"></span></div>
           <div class="status-row"><span>Ears</span><span class="status-row-dot" id="sub-ears"></span></div>
+          <div class="status-row"><span>Local model</span><span class="status-row-dot" id="sub-pod" title=""></span></div>
         </div>
       </div>
       <div class="user-menu" id="user-menu">
@@ -4458,6 +4494,13 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
           <span class="convo-sub">Voice · text · transcribed</span>
         </div>
       </header>
+
+      <!-- shared GPU pod boot status — non-blocking; visible only while booting/failed -->
+      <div id="pod-banner" class="pod-banner" role="status" aria-live="polite">
+        <span class="pod-banner-ring"></span>
+        <span class="pod-banner-text" id="pod-banner-text"></span>
+        <span class="pod-banner-time" id="pod-banner-time"></span>
+      </div>
 
       <div class="pane-body" id="messages-wrap">
         <div id="messages">
@@ -7635,10 +7678,76 @@ document.getElementById('tasks-clear-btn')?.addEventListener('click', () => {
   _updateTaskBadge();
 });
 
+// ── Shared GPU pod boot status ─────────────────────────────────────────────
+// Polls the gateway's /__pod_status and shows a non-blocking banner while the
+// shared pod is booting, so a user can tell progress from a hang. The app runs
+// on cloud inference throughout — this is purely informational. Endpoint 404s in
+// single-brain/local mode, so the banner simply stays hidden there.
+const POD_PHASE_TEXT = {
+  resuming: 'Starting the local GPU…',
+  pulling:  'Downloading the local model…',
+  warming:  'Loading the local model into memory…',
+  failed:   'Local model unavailable — running on cloud',
+};
+function fmtPodElapsed(s) {
+  s = Math.max(0, Math.round(s));
+  if (s < 60) return s + 's';
+  const m = Math.floor(s / 60), r = s % 60;
+  return m + 'm' + (r ? ' ' + r + 's' : '');
+}
+function renderPodStatus(d) {
+  const banner = document.getElementById('pod-banner');
+  const textEl = document.getElementById('pod-banner-text');
+  const timeEl = document.getElementById('pod-banner-time');
+  const dot    = document.getElementById('sub-pod');
+  if (!banner || !dot) return;
+  const state   = (d && d.state) || 'off';
+  const elapsed = (d && d.elapsed_s) || 0;
+  const detail  = (d && d.detail) || '';
+  const booting = (state === 'resuming' || state === 'pulling' || state === 'warming');
+
+  // Tooltip dot reflects the phase at a glance.
+  const dotClass = state === 'ready' ? 'ready'
+                 : state === 'failed' ? 'failed'
+                 : booting ? 'booting' : 'off';
+  dot.className = 'status-row-dot ' + dotClass;
+  dot.title = state === 'ready' ? 'Local model ready'
+            : state === 'failed' ? ('Local model failed' + (detail ? ' — ' + detail : ''))
+            : booting ? (POD_PHASE_TEXT[state] || 'Booting')
+            : 'No local model — using cloud';
+
+  if (booting || state === 'failed') {
+    let label = POD_PHASE_TEXT[state] || 'Booting the local model…';
+    if (state === 'pulling' && detail) label = 'Downloading the local model — ' + detail.replace('downloading ', '');
+    // Stall hint: a long phase says so rather than looking frozen/dead.
+    if (booting && elapsed > 240) label = label.replace(/…$/, '') + ' — slower than usual, still working…';
+    textEl.textContent = label;
+    timeEl.textContent = booting ? fmtPodElapsed(elapsed) : '';
+    banner.classList.toggle('failed', state === 'failed');
+    banner.classList.add('visible');
+  } else {
+    banner.classList.remove('visible', 'failed');  // ready / off → hide
+  }
+}
+async function podStatusLoop() {
+  let nextMs = 4000;
+  try {
+    const r = await fetch('/__pod_status', { headers: { accept: 'application/json' } });
+    if (r.ok) {
+      const d = await r.json();
+      renderPodStatus(d);
+      const booting = d && ['resuming', 'pulling', 'warming'].includes(d.state);
+      nextMs = booting ? 3000 : 15000;  // fast while booting, slow when steady
+    }
+  } catch (e) { /* keep polling */ }
+  setTimeout(podStatusLoop, nextMs);
+}
+
 renderRegionList();
 setMoodBackground('neutral');
 loadVoices();
 connect();
+podStatusLoop();
 
 // fall back to demo mode if WS hasn't connected in 1.5s
 setTimeout(() => {
