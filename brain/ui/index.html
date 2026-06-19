@@ -2353,6 +2353,17 @@ body.sleeping .icon-btn-sleep {
 .sleep-step.done .sleep-step-dot { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
 .sleep-step.error { color: oklch(0.74 0.15 30); }
 .sleep-step.error .sleep-step-dot { background: oklch(0.60 0.20 30); box-shadow: 0 0 6px oklch(0.60 0.20 30 / 0.6); }
+/* descriptive sub-list under an active step (what that phase actually does) */
+.sleep-substeps { display: none; flex-direction: column; gap: 4px; margin: 1px 0 3px 15px; }
+.sleep-substeps.show { display: flex; }
+.sleep-substep {
+  display: flex; align-items: center; gap: 7px;
+  font-size: 11px; color: var(--fg-faint); line-height: 1.35;
+}
+.sleep-substep::before {
+  content: ''; width: 3px; height: 3px; border-radius: 50%;
+  background: oklch(0.62 0.10 280 / 0.65); flex-shrink: 0;
+}
 /* final confirmation line, shown once asleep */
 .sleep-done {
   display: none; align-items: center; gap: 8px; margin-top: 10px;
@@ -7204,7 +7215,16 @@ let sleeping = false;
 // shutdown reads as progress and a failure reads as an error (not a silent hang).
 const SLEEP_PHASES = ['consolidating', 'stopping', 'pausing_pod', 'asleep'];
 const SLEEP_STEP_DEFS = [
-  { phase: 'consolidating', id: 'consolidate', label: 'Saving the session to long-term memory' },
+  // The consolidating phase runs the brain's full end-of-session pass; these
+  // sub-items describe what that single (gateway-observable) phase actually does.
+  { phase: 'consolidating', id: 'consolidate', label: 'Consolidating the session into memory',
+    subs: [
+      'Summarising what it learned about you',
+      'Updating its self-model and journal (self.md)',
+      'Strengthening the neural connections that worked',
+      'Resolving idle thoughts into open questions',
+      'Filing away any new skills it picked up',
+    ] },
   { phase: 'stopping',      id: 'stop',        label: 'Stopping background thinking' },
   { phase: 'pausing_pod',   id: 'pod',         label: 'Ending the GPU pod to save cost' },
 ];
@@ -7248,7 +7268,13 @@ function enterSleepState() {
             '<div class="sleep-step" id="sleep-step-' + s.id + '">' +
               '<span class="sleep-step-dot"></span><span class="sleep-step-label">' + s.label + '</span>' +
               '<span class="sleep-step-time"></span>' +
-            '</div>').join('') +
+            '</div>' +
+            (s.subs
+              ? '<div class="sleep-substeps" id="sleep-substeps-' + s.id + '">' +
+                  s.subs.map(t => '<div class="sleep-substep">' + t + '</div>').join('') +
+                '</div>'
+              : '')
+          ).join('') +
         '</div>' +
         '<div class="sleep-done" id="sleep-done">' +
           '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>' +
@@ -7299,6 +7325,9 @@ function renderSleepStatus(d) {
     } else {
       el.classList.add('pending');
     }
+    // Reveal a step's descriptive sub-list only while that step is active.
+    const subsEl = document.getElementById('sleep-substeps-' + s.id);
+    if (subsEl) subsEl.classList.toggle('show', el.classList.contains('active'));
   });
 
   const head = document.querySelector('.sleep-consolidate-head span');
