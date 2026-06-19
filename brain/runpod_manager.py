@@ -68,6 +68,7 @@ class RunPodManager:
         self._current_price: float | None = None
         self._watcher_task: asyncio.Task | None = None
         self._warmup_task: asyncio.Task | None = None
+        self._watchdog_proc = None  # subprocess.Popen — stops pod if brain process dies
         self._http = None  # httpx.AsyncClient, created lazily in _get_http()
         # Consumer mode (multi-tenant tenant pointing at a shared pod): never owns
         # or stops the pod. Set in start() when BRAIN_MULTITENANT + RUNPOD_HOST.
@@ -340,6 +341,29 @@ class RunPodManager:
             _WARMUP_TIMEOUT_S,
         )
 
+    def _spawn_watchdog(self, pod_id: str) -> None:
+        """Start a detached watchdog subprocess that stops the pod if this process dies."""
+        import subprocess
+        import sys
+
+        max_hours = float(os.environ.get("RUNPOD_MAX_HOURS", "8"))
+        watchdog_script = os.path.join(os.path.dirname(__file__), "runpod_watchdog.py")
+        if not os.path.exists(watchdog_script):
+            logger.warning("[RunPod] Watchdog script not found at %s — skipping", watchdog_script)
+            return
+        try:
+            proc = subprocess.Popen(
+                [sys.executable, watchdog_script, pod_id, str(os.getpid()),
+                 self._api_key, str(int(max_hours * 3600))],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,  # detach from parent's process group
+            )
+            self._watchdog_proc = proc
+            logger.info("[RunPod] Watchdog started (pid=%d, max_hours=%.1f)", proc.pid, max_hours)
+        except Exception as e:
+            logger.warning("[RunPod] Failed to spawn watchdog: %s", e)
+
     async def _activate_pod(self, pod_id: str) -> bool:
         """Wait for pod, pull models, warm up, apply host. Returns True on full success."""
         if not await self._wait_until_ready(pod_id):
@@ -349,6 +373,7 @@ class RunPodManager:
             return False
         self._schedule_warmup(host)
         self._apply_host(pod_id)
+        self._spawn_watchdog(pod_id)
         return True
 
     # ── Public API ────────────────────────────────────────────────────────────
@@ -478,6 +503,15 @@ class RunPodManager:
         if self._warmup_task:
             self._warmup_task.cancel()
             self._warmup_task = None
+        # Tell the watchdog to exit cleanly (SIGTERM = "stop without stopping pod").
+        # We're about to call podStop ourselves, so the watchdog must not race us.
+        if self._watchdog_proc is not None:
+            try:
+                import signal as _signal
+                self._watchdog_proc.send_signal(_signal.SIGTERM)
+            except Exception:
+                pass
+            self._watchdog_proc = None
         if self._pod_id:
             await self._stop_pod(self._pod_id)
             self._pod_id = None

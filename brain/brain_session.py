@@ -16,6 +16,7 @@ import contextlib
 import logging
 import os
 import re
+import signal
 import time
 import uuid
 
@@ -176,6 +177,15 @@ class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
 
     async def run(self) -> None:
         logger.info("Session %s starting", self.session_id)
+
+        # Make SIGTERM cooperatively cancel this task so _shutdown() (pod stop,
+        # sleep consolidation) always runs on the Sleep button. Without this the
+        # OS default C-level handler fires immediately and skips all Python cleanup.
+        _loop = asyncio.get_running_loop()
+        _main_task = asyncio.current_task()
+        if _main_task is not None:
+            _loop.add_signal_handler(signal.SIGTERM, _main_task.cancel)
+
         await self._setup_core()
         await self._setup_runpod()
         await self._setup_wiring()
@@ -227,14 +237,15 @@ class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
                 }
             )
 
-        if self.args.message:
-            await self._run_single_message()
-        elif self._ui_enabled:
-            await self._run_ui_loop()
-        else:
-            await self._run_cli_loop()
-
-        await self._shutdown()
+        try:
+            if self.args.message:
+                await self._run_single_message()
+            elif self._ui_enabled:
+                await self._run_ui_loop()
+            else:
+                await self._run_cli_loop()
+        finally:
+            await self._shutdown()
 
     # ── Run modes ─────────────────────────────────────────────────────────────
 

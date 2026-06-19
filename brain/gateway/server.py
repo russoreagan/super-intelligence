@@ -80,7 +80,7 @@ def _tenant_for(uid: str) -> str:
     return t
 
 
-def build_gateway_app(provisioner: Provisioner) -> FastAPI:
+def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = None) -> FastAPI:
     app = FastAPI(docs_url=None, redoc_url=None)
 
     # ── Auth gate ───────────────────────────────────────────────────────────
@@ -292,6 +292,43 @@ def build_gateway_app(provisioner: Provisioner) -> FastAPI:
         provisioner.touch(tenant)  # a live client connection counts as activity
         await _proxy_ws(client_ws, st["port"], on_activity=lambda: provisioner.touch(tenant))
 
+    # ── Sleep (shutdown brain + pause pod) ─────────────────────────────────
+    @app.post("/shutdown")
+    async def sleep_brain(request: Request):
+        user = getattr(request.state, "user", None)
+        if user is None:
+            return JSONResponse({"error": "unauthorized"}, status_code=401)
+        tenant = _tenant_for(user["sub"])
+        # Forward to the brain subprocess so it can run sleep consolidation.
+        st = provisioner.status(tenant)
+        if st and not st["booting"]:
+            try:
+                async with httpx.AsyncClient(timeout=5.0) as _c:
+                    await _c.post(f"http://127.0.0.1:{st['port']}/shutdown")
+            except Exception:
+                pass
+        # Stop the shared RunPod pod — the brain subprocess is a consumer and
+        # cannot do this itself. Schedule it so the brain gets a moment to
+        # save state (consolidation uses Anthropic API, not the pod) before
+        # the pod stops. The watcher task is cancelled so it won't restart it.
+        runpod = runpod_holder[0] if runpod_holder else None
+        if runpod is not None and not getattr(runpod, "_consumer", False):
+            async def _pause_pod():
+                await asyncio.sleep(5.0)
+                try:
+                    if getattr(runpod, "_watcher_task", None):
+                        runpod._watcher_task.cancel()
+                        runpod._watcher_task = None
+                    pod_id = getattr(runpod, "_pod_id", None)
+                    if pod_id:
+                        await runpod._stop_pod(pod_id)
+                        runpod._pod_id = None
+                        logger.info("[gateway] shared RunPod pod paused on sleep")
+                except Exception as _e:
+                    logger.warning("[gateway] pod pause failed: %s", _e)
+            asyncio.create_task(_pause_pod())
+        return JSONResponse({"ok": True})
+
     # ── HTTP catch-all → ensure + proxy (authed) ────────────────────────────
     @app.api_route(
         "/{path:path}",
@@ -442,17 +479,16 @@ def main() -> None:
     logging.basicConfig(level=os.environ.get("BRAIN_LOG_LEVEL", "INFO"))
 
     provisioner = Provisioner()
-    app = build_gateway_app(provisioner)
+    runpod_holder: list = [None]
+    app = build_gateway_app(provisioner, runpod_holder)
 
     # The gateway is the SINGLE owner of the shared RunPod pod. Tenant children
     # run in consumer mode (BRAIN_MULTITENANT + RUNPOD_HOST → no lifecycle), so
     # something has to keep the shared pod alive and recover it when it 502s.
     # That's the gateway: one RunPodManager, one watcher, no per-tenant races.
-    runpod = None
 
     @app.on_event("startup")
     async def _startup():
-        nonlocal runpod
         await provisioner.start()
         logger.info("[gateway] provisioner started")
         try:
@@ -468,6 +504,7 @@ def main() -> None:
             host = str(_s.get("runpod_host") or "").strip()
             if ok and host and "localhost" not in host:
                 os.environ["RUNPOD_HOST"] = host
+                runpod_holder[0] = runpod
                 logger.info("[gateway] shared RunPod pod ready — RUNPOD_HOST=%s", host)
             else:
                 logger.warning("[gateway] no shared RunPod pod — tenants will lack local inference")
@@ -479,6 +516,7 @@ def main() -> None:
         await provisioner.stop()
         # Leave the shared pod RUNNING across gateway redeploys (warm restart);
         # just cancel the watcher task so it doesn't outlive the process.
+        runpod = runpod_holder[0]
         if runpod is not None and getattr(runpod, "_watcher_task", None):
             runpod._watcher_task.cancel()
 
