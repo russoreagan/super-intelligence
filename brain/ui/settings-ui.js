@@ -1134,18 +1134,66 @@
     } catch (e) { window.alert('Could not save role: ' + e.message); }
   }
 
-  async function addMandate(host) {
-    const raw = (window.prompt('New role id (lowercase letters, digits, "_" or "-"):', '') || '').trim();
-    if (!raw) return;
-    if (!MANDATE_ID_RE.test(raw)) { window.alert('Invalid id. Use 1–64 chars: lowercase letters, digits, "_" or "-", starting with a letter or digit.'); return; }
-    if (mandateLib.some(m => m.id === raw)) { mandateSel = raw; paintMandates(host); return; }
-    try {
-      const res = await fetch('/mandates', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: raw, role_text: '' }) });
-      if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.detail || ('HTTP ' + res.status)); }
-      mandateStore[raw] = ''; mandateSaved[raw] = ''; mandateSel = raw;
-      await loadMandates(); if (systemPage === 'roles') paintMandates(host);
-    } catch (e) { window.alert('Could not create role: ' + e.message); }
+  function addMandate(host) {
+    const slugify = s => s.toLowerCase().trim().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+    const veil = document.createElement('div');
+    veil.style.cssText = 'position:fixed;inset:0;background:rgba(40,30,20,0.32);z-index:900;display:flex;align-items:center;justify-content:center;';
+    veil.innerHTML = `<div style="width:420px;max-width:92vw;background:var(--bg-1,#1a1814);border:1px solid var(--line,rgba(255,255,255,.12));border-radius:10px;padding:24px;box-shadow:0 30px 70px -30px rgba(40,30,20,.55);">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+        <div style="font-size:17px;font-weight:600;letter-spacing:-.01em;">New role</div>
+        <button id="am-x" style="background:none;border:none;cursor:pointer;color:var(--fg,#e0d8cc);padding:4px;line-height:0;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+      </div>
+      <p style="font-size:13px;opacity:.6;margin:0 0 20px;">Give this role a friendly name — the system id is generated automatically.</p>
+      <div style="margin-bottom:14px;">
+        <div style="font-size:10px;letter-spacing:.08em;text-transform:uppercase;opacity:.55;margin-bottom:6px;">Name</div>
+        <input id="am-name" type="text" placeholder="e.g. Personal Assistant" autocomplete="off"
+          style="width:100%;box-sizing:border-box;background:none;border:none;border-bottom:1.5px solid var(--line,rgba(255,255,255,.12));padding:6px 0;font-size:13px;color:inherit;font-family:inherit;outline:none;" />
+      </div>
+      <div style="margin-bottom:6px;">
+        <div style="font-size:10px;letter-spacing:.08em;text-transform:uppercase;opacity:.55;margin-bottom:6px;">System id <span style="font-size:9px;text-transform:none;letter-spacing:0;opacity:.7;">· editable</span></div>
+        <input id="am-id" type="text" placeholder="personal_assistant" autocomplete="off"
+          style="width:100%;box-sizing:border-box;background:none;border:none;border-bottom:1.5px solid var(--line,rgba(255,255,255,.12));padding:6px 0;font-size:13px;color:inherit;font-family:var(--mono,monospace);outline:none;" />
+      </div>
+      <div id="am-err" style="font-size:10px;font-family:var(--mono,monospace);color:#c84;min-height:16px;margin-bottom:12px;"></div>
+      <div style="display:flex;justify-content:flex-end;gap:10px;">
+        <button id="am-cancel" style="font-family:var(--mono,monospace);font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;background:none;border:1px solid var(--line,rgba(255,255,255,.18));color:inherit;border-radius:5px;padding:8px 14px;cursor:pointer;">Cancel</button>
+        <button id="am-create" disabled style="font-family:var(--mono,monospace);font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;background:var(--fg,#e0d8cc);border:1px solid var(--fg,#e0d8cc);color:var(--bg,#121010);border-radius:5px;padding:8px 14px;cursor:pointer;opacity:.35;">Create role</button>
+      </div></div>`;
+    document.body.appendChild(veil);
+    const nameIn = veil.querySelector('#am-name');
+    const idIn = veil.querySelector('#am-id');
+    const errDiv = veil.querySelector('#am-err');
+    const createBtn = veil.querySelector('#am-create');
+    let idEdited = false;
+    const validate = () => {
+      const id = idIn.value.trim();
+      if (!id) { errDiv.textContent = ''; createBtn.disabled = true; createBtn.style.opacity = '.35'; return; }
+      if (!MANDATE_ID_RE.test(id)) { errDiv.textContent = 'Use lowercase letters, digits, _ or - (must start with a letter or digit)'; createBtn.disabled = true; createBtn.style.opacity = '.35'; }
+      else { errDiv.textContent = ''; createBtn.disabled = false; createBtn.style.opacity = '1'; }
+    };
+    nameIn.addEventListener('input', () => { if (!idEdited) idIn.value = slugify(nameIn.value); validate(); });
+    idIn.addEventListener('input', () => { idEdited = true; validate(); });
+    const close = () => veil.remove();
+    const submit = async () => {
+      const raw = idIn.value.trim();
+      if (!raw || !MANDATE_ID_RE.test(raw)) return;
+      if (mandateLib.some(m => m.id === raw)) { close(); mandateSel = raw; paintMandates(host); return; }
+      close();
+      try {
+        const res = await fetch('/mandates', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: raw, role_text: '' }) });
+        if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.detail || ('HTTP ' + res.status)); }
+        mandateStore[raw] = ''; mandateSaved[raw] = ''; mandateSel = raw;
+        await loadMandates(); if (systemPage === 'roles') paintMandates(host);
+      } catch (e) { window.alert('Could not create role: ' + e.message); }
+    };
+    veil.querySelector('#am-x').addEventListener('click', close);
+    veil.querySelector('#am-cancel').addEventListener('click', close);
+    createBtn.addEventListener('click', submit);
+    nameIn.addEventListener('keydown', e => { if (e.key === 'Enter') idIn.focus(); });
+    idIn.addEventListener('keydown', e => { if (e.key === 'Enter' && !createBtn.disabled) submit(); });
+    veil.addEventListener('click', e => { if (e.target === veil) close(); });
+    nameIn.focus();
   }
 
   // Map/unmap a role to one persona (the matrix cell). persona is the UI id; the

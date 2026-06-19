@@ -115,6 +115,7 @@
   }
   // which sub-view is active in Agents
   let agView = 'list';
+  let agRoleSel = null; // persists selected role across reloads
   function paintAgents() {
     const host = document.getElementById('ws-agents');
     const ags = (agentsData && agentsData.agents) || [];
@@ -282,30 +283,92 @@
         <button class="btn" id="role-new"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg> New role</button>
       </div>
       <div id="role-editor"></div></div>`;
-    main.querySelectorAll('.role-pick').forEach(p => p.addEventListener('click', () => { main.querySelectorAll('.role-pick').forEach(x => x.classList.remove('on')); p.classList.add('on'); openRole(main, p.dataset.id); }));
-    main.querySelector('#role-new').addEventListener('click', () => {
-      const id = (window.prompt('New role id (lowercase letters, digits, "_" or "-"):', '') || '').trim();
-      if (!id) return;
-      if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(id)) { window.alert('Invalid id.'); return; }
-      openRole(main, id, '');
-    });
-    if (roles.length) { main.querySelector('.role-pick')?.classList.add('on'); openRole(main, roles[0].id); }
+    main.querySelectorAll('.role-pick').forEach(p => p.addEventListener('click', () => { agRoleSel = p.dataset.id; main.querySelectorAll('.role-pick').forEach(x => x.classList.remove('on')); p.classList.add('on'); openRole(main, p.dataset.id); }));
+    main.querySelector('#role-new').addEventListener('click', () => openNewRole(main));
+    const toOpen = (agRoleSel && roles.find(r => r.id === agRoleSel)) ? agRoleSel : (roles[0] ? roles[0].id : null);
+    if (toOpen) { main.querySelector(`.role-pick[data-id="${CSS.escape(toOpen)}"]`)?.classList.add('on'); openRole(main, toOpen); }
+  }
+  function openNewRole(main) {
+    const modal = document.getElementById('ws-new-agent-modal');
+    const VALID_ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+    const slugify = s => s.toLowerCase().trim().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+    modal.innerHTML = `<div class="modal">
+      <div class="modal-head"><div class="serif-h" style="font-size:19px;">New role</div><button class="tool-x" id="nr-x"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>
+      <p class="page-lede" style="margin-top:4px; font-size:14px;">Give this role a friendly name — the system id is generated automatically.</p>
+      <div style="margin-top:20px;">
+        <div class="label" style="margin-bottom:6px;">Name</div>
+        <div class="input-line"><input id="nr-name" type="text" placeholder="e.g. Personal Assistant" autocomplete="off" /></div>
+        <div class="label" style="margin:16px 0 6px;">System id <span style="opacity:.5; font-size:10px; text-transform:none; letter-spacing:0;">· editable</span></div>
+        <div class="input-line"><input id="nr-id" type="text" placeholder="personal_assistant" autocomplete="off" /></div>
+        <div id="nr-err" style="color:#c84; font-family:var(--mono); font-size:10px; margin-top:8px; min-height:14px;"></div>
+      </div>
+      <div class="row" style="justify-content:flex-end; margin-top:18px; gap:10px;">
+        <button class="btn" id="nr-cancel">Cancel</button>
+        <button class="btn btn-primary" id="nr-create" disabled>Create role</button>
+      </div></div>`;
+    const nameIn = modal.querySelector('#nr-name');
+    const idIn = modal.querySelector('#nr-id');
+    const errDiv = modal.querySelector('#nr-err');
+    const createBtn = modal.querySelector('#nr-create');
+    let idEdited = false;
+    const validate = () => {
+      const id = idIn.value.trim();
+      if (!id) { errDiv.textContent = ''; createBtn.disabled = true; return; }
+      if (!VALID_ID.test(id)) { errDiv.textContent = 'Use lowercase letters, digits, _ or - (must start with a letter or digit)'; createBtn.disabled = true; }
+      else { errDiv.textContent = ''; createBtn.disabled = false; }
+    };
+    nameIn.addEventListener('input', () => { if (!idEdited) idIn.value = slugify(nameIn.value); validate(); });
+    idIn.addEventListener('input', () => { idEdited = true; validate(); });
+    const close = () => { modal.classList.remove('open'); modal.innerHTML = ''; };
+    const create = () => { const id = idIn.value.trim(); if (!id || !VALID_ID.test(id)) return; close(); openRole(main, id, ''); };
+    modal.querySelector('#nr-x').addEventListener('click', close);
+    modal.querySelector('#nr-cancel').addEventListener('click', close);
+    createBtn.addEventListener('click', create);
+    nameIn.addEventListener('keydown', e => { if (e.key === 'Enter') idIn.focus(); });
+    idIn.addEventListener('keydown', e => { if (e.key === 'Enter' && !createBtn.disabled) create(); });
+    modal.classList.add('open');
+    modal.addEventListener('click', e => { if (e.target === modal) close(); });
+    nameIn.focus();
   }
   function openRole(main, id, forceText) {
+    agRoleSel = id;
     const roles = (agentsData && agentsData.roles) || [];
     const role = roles.find(r => r.id === id);
-    const text = forceText != null ? forceText : (role ? role.role_text || '' : '');
+    const savedText = forceText != null ? forceText : (role ? role.role_text || '' : '');
+    const _check = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+    const _file  = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3v5h5"/><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg>';
     const ed = main.querySelector('#role-editor');
-    ed.innerHTML = `<div class="md-editor">
-      <div class="md-bar"><span class="data" style="font-size:9px;">${esc(id)}.md</span><button class="btn btn-sm" id="role-save">Save role</button></div>
-      <textarea class="md-area" id="role-text" spellcheck="false" placeholder="Describe this role — the job, tone, and rules for it…">${esc(text)}</textarea>
+    ed.innerHTML = `<div class="self-editor" style="margin-top:22px;">
+      <div class="self-bar">
+        <span class="self-file">${_file}<b>${esc(id)}</b> · <span style="color:var(--ink-4)">role</span></span>
+        <span class="self-modepill" id="role-dirty"><i></i>edited</span>
+        <span class="spacer"></span>
+        <span class="self-meta" id="role-count"></span>
+        <button class="self-revert" id="role-save">${_check}<span>Save</span></button>
+      </div>
+      <textarea class="self-area" id="role-text" spellcheck="false" placeholder="Describe this role — the job, tone, and rules for it…">${esc(savedText)}</textarea>
     </div>`;
-    ed.querySelector('#role-save').addEventListener('click', async () => {
+    const area = ed.querySelector('#role-text');
+    const countEl = ed.querySelector('#role-count');
+    const dirtyPill = ed.querySelector('#role-dirty');
+    const saveBtn = ed.querySelector('#role-save');
+    const updateMeta = () => {
+      const t = area.value;
+      countEl.textContent = `${t.length.toLocaleString()} chars`;
+      const dirty = t !== savedText;
+      dirtyPill.classList.toggle('on', dirty);
+      saveBtn.disabled = !dirty && !!role; // allow save for new (unsaved) roles even if empty
+    };
+    area.addEventListener('input', updateMeta);
+    updateMeta();
+    saveBtn.addEventListener('click', async () => {
+      const lbl = saveBtn.querySelector('span');
+      lbl.textContent = 'Saving…'; saveBtn.disabled = true;
       try {
-        const r = await fetch('/mandates', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, role_text: ed.querySelector('#role-text').value }) });
+        const r = await fetch('/mandates', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, role_text: area.value }) });
         if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.detail || ('HTTP ' + r.status)); }
-        await loadAgents();
-      } catch (e) { window.alert('Could not save role: ' + e.message); }
+        await loadAgents(); // agRoleSel re-selects this role after re-render
+      } catch (e) { lbl.textContent = 'Save'; saveBtn.disabled = false; window.alert('Could not save role: ' + e.message); }
     });
   }
 
