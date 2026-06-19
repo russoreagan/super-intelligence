@@ -183,6 +183,17 @@ def test_live_count_excludes_dead_unreaped_procs():
     assert prov.live_count() == 0
 
 
+def test_is_running_tracks_per_tenant_liveness():
+    prov = pv.Provisioner()
+    prov._procs = {
+        "a": pv._Proc(_FakeProc(True), 9001),
+        "b": pv._Proc(_FakeProc(False), 9002),  # exited (e.g. graceful sleep)
+    }
+    assert prov.is_running("a") is True
+    assert prov.is_running("b") is False
+    assert prov.is_running("missing") is False
+
+
 # ── boot-status surface (UI messaging) ──────────────────────────────────────
 
 

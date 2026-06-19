@@ -140,6 +140,13 @@ class Provisioner:
             return None
         return {"port": p.port, "booting": p.booting, "pid": p.proc.pid}
 
+    def is_running(self, user_id: str) -> bool:
+        """True if this user's brain process exists and is still alive. Used by the
+        gateway's sleep flow to wait for a graceful self-shutdown (consolidation)
+        before force-reaping."""
+        p = self._procs.get(user_id)
+        return bool(p and p.proc.poll() is None)
+
     def live_count(self) -> int:
         """Number of tenant brain processes currently alive (booting or serving).
 

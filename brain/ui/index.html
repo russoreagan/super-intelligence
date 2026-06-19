@@ -2331,12 +2331,36 @@ body.sleeping .icon-btn-sleep {
 }
 .sleep-consolidate-head svg { animation: sleep-breathe 4s ease-in-out infinite; }
 .sleep-consolidate-sub { font-size: 12px; line-height: 1.5; color: var(--fg-mute); }
-.sleep-steps { display: flex; flex-direction: column; gap: 6px; margin-top: 2px; }
-.sleep-step { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--fg-mute); }
-.sleep-step .sleep-step-dot {
-  width: 5px; height: 5px; border-radius: 50%;
-  background: oklch(0.62 0.10 280); flex-shrink: 0;
+.sleep-steps { display: flex; flex-direction: column; gap: 7px; margin-top: 2px; }
+.sleep-step {
+  display: flex; align-items: center; gap: 8px; font-size: 12px;
+  color: var(--fg-faint); transition: color 300ms ease;
 }
+.sleep-step .sleep-step-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--fg-faint); flex-shrink: 0;
+  transition: background 300ms ease, box-shadow 300ms ease;
+}
+.sleep-step .sleep-step-time { margin-left: auto; font-size: 10px; font-variant-numeric: tabular-nums; color: var(--fg-faint); }
+/* pending = faint (default above); active = pulsing indigo; done = green; error = red */
+.sleep-step.active { color: oklch(0.80 0.07 280); }
+.sleep-step.active .sleep-step-dot {
+  background: oklch(0.62 0.10 280);
+  box-shadow: 0 0 8px oklch(0.62 0.10 280 / 0.7);
+  animation: sleep-breathe 2.2s ease-in-out infinite;
+}
+.sleep-step.done { color: var(--fg-mute); }
+.sleep-step.done .sleep-step-dot { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
+.sleep-step.error { color: oklch(0.74 0.15 30); }
+.sleep-step.error .sleep-step-dot { background: oklch(0.60 0.20 30); box-shadow: 0 0 6px oklch(0.60 0.20 30 / 0.6); }
+/* final confirmation line, shown once asleep */
+.sleep-done {
+  display: none; align-items: center; gap: 8px; margin-top: 10px;
+  padding-top: 9px; border-top: 1px solid var(--line);
+  font-size: 12px; color: oklch(0.74 0.08 280);
+}
+.sleep-done.visible { display: flex; }
+.sleep-done svg { flex-shrink: 0; }
 
 /* Gear button in header */
 .icon-btn {
@@ -7175,6 +7199,22 @@ restartBtn.addEventListener('click', () => doRestart(restartBtn));
 // Sleep: shut the brain's thoughts down and end the pod (does NOT log out).
 let sleeping = false;
 
+// Sleep shutdown is reported by the gateway: consolidating → stopping →
+// pausing_pod → asleep. Each maps to a step the user watches light up, so a slow
+// shutdown reads as progress and a failure reads as an error (not a silent hang).
+const SLEEP_PHASES = ['consolidating', 'stopping', 'pausing_pod', 'asleep'];
+const SLEEP_STEP_DEFS = [
+  { phase: 'consolidating', id: 'consolidate', label: 'Saving the session to long-term memory' },
+  { phase: 'stopping',      id: 'stop',        label: 'Stopping background thinking' },
+  { phase: 'pausing_pod',   id: 'pod',         label: 'Ending the GPU pod to save cost' },
+];
+let _sleepPollTimer = null;
+
+function fmtSleepElapsed(s) {
+  s = Math.max(0, Math.round(s));
+  return s < 60 ? s + 's' : Math.floor(s / 60) + 'm ' + (s % 60) + 's';
+}
+
 function enterSleepState() {
   sleeping = true;
   document.body.classList.add('sleeping');
@@ -7193,42 +7233,127 @@ function enterSleepState() {
   if (lbl) lbl.textContent = 'Sleeping';
   if (ind) ind.classList.remove('connected', 'degraded');
 
-  // Idle thoughts → what's happening during consolidation
+  // Idle thoughts → live shutdown checklist (driven by /__sleep_status)
   const feed = document.getElementById('thoughts-feed');
   if (feed) {
     feed.innerHTML =
       '<div class="sleep-consolidate">' +
         '<div class="sleep-consolidate-head">' +
           '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>' +
-          '<span>Consolidating…</span>' +
+          '<span>Going to sleep…</span>' +
         '</div>' +
         '<div class="sleep-consolidate-sub">Winding down the day\'s thinking and writing it into long-term memory.</div>' +
         '<div class="sleep-steps">' +
-          '<div class="sleep-step"><span class="sleep-step-dot"></span>Summarising what was learned this session</div>' +
-          '<div class="sleep-step"><span class="sleep-step-dot"></span>Updating the self-model</div>' +
-          '<div class="sleep-step"><span class="sleep-step-dot"></span>Strengthening the connections that worked</div>' +
-          '<div class="sleep-step"><span class="sleep-step-dot"></span>Ending the pod to save cost</div>' +
+          SLEEP_STEP_DEFS.map(s =>
+            '<div class="sleep-step" id="sleep-step-' + s.id + '">' +
+              '<span class="sleep-step-dot"></span><span class="sleep-step-label">' + s.label + '</span>' +
+              '<span class="sleep-step-time"></span>' +
+            '</div>').join('') +
+        '</div>' +
+        '<div class="sleep-done" id="sleep-done">' +
+          '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>' +
+          '<span id="sleep-done-text">Asleep.</span>' +
         '</div>' +
       '</div>';
   }
+  startSleepPolling();
+}
+
+function renderSleepStatus(d) {
+  const state = (d && d.state) || 'consolidating';
+  const elapsed = (d && d.elapsed_s) || 0;
+  if (state === 'awake') return;  // woken out from under us — connect() handles it
+  const curIdx = SLEEP_PHASES.indexOf(state);
+  const errored = state === 'error';
+  // On error, blame the phase the backend reported failing (falls back to first).
+  const errIdx = errored ? Math.max(0, SLEEP_PHASES.indexOf((d && d.at) || 'consolidating')) : -1;
+
+  SLEEP_STEP_DEFS.forEach((s, i) => {
+    const el = document.getElementById('sleep-step-' + s.id);
+    if (!el) return;
+    const timeEl = el.querySelector('.sleep-step-time');
+    el.classList.remove('pending', 'active', 'done', 'error');
+    if (errored && i === errIdx) {
+      el.classList.add('error');
+    } else if (errored && i < errIdx) {
+      el.classList.add('done');  // earlier phases completed before the failure
+    } else if (state === 'asleep') {
+      // Pod step: only a "done" if we actually paused it; otherwise a neutral note.
+      if (s.id === 'pod' && d && d.pod && d.pod !== 'paused') {
+        el.classList.add('done');
+        const lblEl = el.querySelector('.sleep-step-label');
+        if (lblEl) lblEl.textContent = d.pod === 'kept'
+          ? 'GPU pod kept for other active sessions'
+          : 'No GPU pod to end';
+      } else {
+        el.classList.add('done');
+      }
+      if (timeEl) timeEl.textContent = '';
+    } else if (curIdx > i) {
+      el.classList.add('done');
+      if (timeEl) timeEl.textContent = '';
+    } else if (curIdx === i) {
+      el.classList.add('active');
+      // Stall hint: a long phase shows elapsed so it reads as working, not stuck.
+      if (timeEl) timeEl.textContent = elapsed > 8 ? fmtSleepElapsed(elapsed) : '';
+    } else {
+      el.classList.add('pending');
+    }
+  });
+
+  const head = document.querySelector('.sleep-consolidate-head span');
+  const done = document.getElementById('sleep-done');
+  const doneText = document.getElementById('sleep-done-text');
+  if (errored) {
+    if (head) head.textContent = 'Shutdown hit a snag';
+    if (done) { done.classList.add('visible'); done.style.color = 'oklch(0.74 0.15 30)'; }
+    if (doneText) doneText.textContent = (d && d.detail)
+      ? 'Couldn’t finish cleanly — ' + d.detail
+      : 'Couldn’t finish cleanly. Send a message to wake and retry.';
+    stopSleepPolling();
+  } else if (state === 'asleep') {
+    if (head) head.textContent = 'Asleep';
+    if (done) done.classList.add('visible');
+    if (doneText) doneText.textContent = 'Asleep — resting safely. Send a message to wake it.';
+    stopSleepPolling();
+  }
+}
+
+async function pollSleepStatus() {
+  try {
+    const r = await fetch('/__sleep_status', { headers: { accept: 'application/json' } });
+    if (r.ok) renderSleepStatus(await r.json());
+  } catch (_) { /* keep polling — a transient gateway hiccup isn't "done" */ }
+}
+
+function startSleepPolling() {
+  stopSleepPolling();
+  pollSleepStatus();
+  _sleepPollTimer = setInterval(pollSleepStatus, 1500);
+}
+function stopSleepPolling() {
+  if (_sleepPollTimer) { clearInterval(_sleepPollTimer); _sleepPollTimer = null; }
 }
 
 function exitSleepState() {
   if (!sleeping) return;
   sleeping = false;
+  stopSleepPolling();
   document.body.classList.remove('sleeping');
   const active = document.getElementById('active-label');
   if (active) active.textContent = 'awaiting input';
   const feed = document.getElementById('thoughts-feed');
   if (feed) feed.innerHTML = '<div class="log-empty">No thoughts yet…</div>';
+  // Re-arm the Sleep button so it works again after waking.
+  if (sleepBtn) { sleepBtn.disabled = false; sleepBtn.style.opacity = ''; }
 }
 
 sleepBtn.addEventListener('click', async () => {
   if (!confirm('Put the brain to sleep? This shuts down its thoughts and ends the pod. You stay logged in.')) return;
   sleepBtn.disabled = true;
   sleepBtn.style.opacity = '0.5';
+  enterSleepState();  // show the checklist immediately, then kick the shutdown
   try { await fetch('/shutdown', { method: 'POST' }); } catch (_) {}
-  enterSleepState();
 });
 
 // User / account menu — logout operates independently of sleep.

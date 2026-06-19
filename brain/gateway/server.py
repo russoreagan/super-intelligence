@@ -46,6 +46,11 @@ _HOP_BY_HOP = {
     "te", "trailers", "transfer-encoding", "upgrade", "host", "content-length",
 }
 
+# How long to let a brain consolidate (end-of-session memory write) on Sleep
+# before force-reaping it. Consolidation uses the cloud LLM and usually finishes
+# in a few seconds, but a long session can take longer — don't cut it short.
+SLEEP_CONSOLIDATE_WAIT_S = float(os.environ.get("BRAIN_SLEEP_CONSOLIDATE_WAIT_S", "90"))
+
 
 def _wants_html(request: Request) -> bool:
     return "text/html" in request.headers.get("accept", "")
@@ -82,6 +87,10 @@ def _tenant_for(uid: str) -> str:
 
 def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = None) -> FastAPI:
     app = FastAPI(docs_url=None, redoc_url=None)
+
+    # Per-tenant sleep progress (tenant → {state, since, ...}), surfaced via
+    # /__sleep_status. Cleared when the tenant's brain (re)spawns = it woke.
+    sleep_status: dict = {}
 
     # ── Auth gate ───────────────────────────────────────────────────────────
     @app.middleware("http")
@@ -273,6 +282,7 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
         tenant = _tenant_for(user["sub"])
         st = provisioner.status(tenant)
         if st is None:
+            sleep_status.pop(tenant, None)  # respawning = waking up
             asyncio.create_task(_safe_ensure(provisioner, tenant))
             _kick_pod()  # warm the shared pod in parallel with the brain boot
             return JSONResponse({"ready": False, "state": "starting"})
@@ -313,6 +323,12 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
         await _proxy_ws(client_ws, st["port"], on_activity=lambda: provisioner.touch(tenant))
 
     # ── Sleep (shutdown brain + pause pod when last one sleeps) ─────────────
+    # Per-tenant sleep progress, polled by the UI's /__sleep_status so a user can
+    # confirm shutdown is progressing (not stuck). Phases:
+    #   consolidating → stopping → pausing_pod → asleep   (or error)
+    def _set_sleep(tenant: str, state: str, **extra) -> None:
+        sleep_status[tenant] = {"state": state, "since": time.time(), **extra}
+
     @app.post("/shutdown")
     async def sleep_brain(request: Request):
         user = getattr(request.state, "user", None)
@@ -321,28 +337,69 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
         tenant = _tenant_for(user["sub"])
 
         async def _sleep():
-            # Forward to the brain so it runs end-of-session consolidation, then
-            # stop its process. Consolidation uses the Anthropic API (cloud), not
-            # the pod, so it completes fine even after the pod is paused.
-            st = provisioner.status(tenant)
-            if st and not st["booting"]:
-                try:
-                    async with httpx.AsyncClient(timeout=30.0) as _c:
-                        await _c.post(f"http://127.0.0.1:{st['port']}/shutdown")
-                except Exception:
-                    pass
-            # Ensure the process is actually gone (the /shutdown above is graceful;
-            # this is the backstop) so it stops counting toward live_count().
-            await provisioner.stop_user(tenant)
-            # Pause the shared pod only if NO other brain still needs it. The brain
-            # subprocess is a consumer and cannot stop the pod itself.
-            runpod = runpod_holder[0] if runpod_holder else None
-            if runpod is not None and provisioner.live_count() == 0:
-                await runpod.pause()
-                logger.info("[gateway] last brain slept — shared pod paused")
+            phase = "consolidating"  # tracked so an error names the step that failed
+            try:
+                # 1. Consolidate: ask the brain to shut itself down gracefully — its
+                # SIGTERM handler runs end-of-session memory consolidation. Wait for
+                # the process to actually exit so we don't force-kill it mid-write.
+                _set_sleep(tenant, "consolidating")
+                st = provisioner.status(tenant)
+                if st and not st["booting"]:
+                    try:
+                        async with httpx.AsyncClient(timeout=10.0) as _c:
+                            await _c.post(f"http://127.0.0.1:{st['port']}/shutdown")
+                    except Exception:
+                        pass
+                    deadline = time.time() + SLEEP_CONSOLIDATE_WAIT_S
+                    while time.time() < deadline and provisioner.is_running(tenant):
+                        await asyncio.sleep(1.0)
+
+                # 2. Stop: reap the process (no-op if it already exited gracefully).
+                phase = "stopping"
+                _set_sleep(tenant, "stopping")
+                await provisioner.stop_user(tenant)
+
+                # 3. Pause the shared pod — only if NO other brain still needs it.
+                # The brain subprocess is a consumer and can't stop the pod itself.
+                phase = "pausing_pod"
+                runpod = runpod_holder[0] if runpod_holder else None
+                if runpod is None:
+                    pod = "none"
+                elif provisioner.live_count() == 0:
+                    _set_sleep(tenant, "pausing_pod")
+                    await runpod.pause()
+                    logger.info("[gateway] last brain slept — shared pod paused")
+                    pod = "paused"
+                else:
+                    pod = "kept"  # other sessions still using the pod
+
+                _set_sleep(tenant, "asleep", pod=pod)
+            except Exception as e:
+                logger.error("[gateway] sleep failed for %s at %s: %s", tenant[:8], phase, e)
+                _set_sleep(tenant, "error", at=phase, detail=str(e)[:120])
 
         asyncio.create_task(_sleep())
         return JSONResponse({"ok": True})
+
+    # ── Sleep progress (polled by the UI sleep panel) ───────────────────────
+    @app.get("/__sleep_status")
+    async def sleep_status_ep(request: Request):
+        user = getattr(request.state, "user", None)
+        if user is None:
+            return JSONResponse({"state": "awake"}, status_code=401)
+        tenant = _tenant_for(user["sub"])
+        s = sleep_status.get(tenant)
+        if not s:
+            return JSONResponse({"state": "awake"})
+        return JSONResponse(
+            {
+                "state": s["state"],
+                "detail": s.get("detail", ""),
+                "pod": s.get("pod", ""),
+                "at": s.get("at", ""),
+                "elapsed_s": round(max(0.0, time.time() - s["since"]), 1),
+            }
+        )
 
     # ── HTTP catch-all → ensure + proxy (authed) ────────────────────────────
     @app.api_route(
@@ -369,6 +426,7 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
                 return RedirectResponse("/keys", status_code=303)
             return JSONResponse({"error": "no_anthropic_key"}, status_code=403)
         if st is None:
+            sleep_status.pop(tenant, None)  # respawning = waking up
             asyncio.create_task(_safe_ensure(provisioner, tenant))
             _kick_pod()  # warm the shared pod in parallel with the brain boot
         if _wants_html(request):
