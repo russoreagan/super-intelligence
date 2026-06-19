@@ -3,12 +3,14 @@ Provision an invite-only Elyceum account.
 
 The UI has no public sign-up — accounts are created here (or in the Supabase
 dashboard) using the service-role key. The user is created already-confirmed so
-they can sign in immediately.
+they can sign in immediately, and a personal org + admin membership are created
+so they can actually log in.
 
 Usage:
-    python -m scripts.create_user EMAIL [PASSWORD]
+    python -m scripts.create_user EMAIL [PASSWORD] [--admin]
 
 If PASSWORD is omitted, a strong one is generated and printed once.
+Pass --admin to set the is_admin flag (grants access to the API workspace).
 
 Requires SUPABASE_URL and SUPABASE_SERVICE_KEY in the environment (.env).
 """
@@ -30,14 +32,25 @@ except ImportError:
 import os
 
 
+def _headers(service_key: str) -> dict:
+    return {
+        "apikey": service_key,
+        "Authorization": f"Bearer {service_key}",
+        "Content-Type": "application/json",
+    }
+
+
 def main(argv: list[str]) -> int:
     if not argv:
         print(__doc__)
         return 2
 
-    email = argv[0].strip()
-    password = argv[1] if len(argv) > 1 else secrets.token_urlsafe(16)
-    generated = len(argv) <= 1
+    args = [a for a in argv if a != "--admin"]
+    is_admin = "--admin" in argv
+
+    email = args[0].strip()
+    password = args[1] if len(args) > 1 else secrets.token_urlsafe(16)
+    generated = len(args) <= 1
 
     url = os.environ.get("SUPABASE_URL", "").rstrip("/")
     service_key = os.environ.get("SUPABASE_SERVICE_KEY", "")
@@ -45,14 +58,17 @@ def main(argv: list[str]) -> int:
         print("ERROR: SUPABASE_URL and SUPABASE_SERVICE_KEY must be set.", file=sys.stderr)
         return 1
 
+    hdrs = _headers(service_key)
+
+    # 1. Create the auth user.
+    user_payload: dict = {"email": email, "password": password, "email_confirm": True}
+    if is_admin:
+        user_payload["app_metadata"] = {"is_admin": True}
+
     resp = httpx.post(
         f"{url}/auth/v1/admin/users",
-        headers={
-            "apikey": service_key,
-            "Authorization": f"Bearer {service_key}",
-            "Content-Type": "application/json",
-        },
-        json={"email": email, "password": password, "email_confirm": True},
+        headers=hdrs,
+        json=user_payload,
         timeout=15.0,
     )
 
@@ -62,8 +78,37 @@ def main(argv: list[str]) -> int:
         return 1
 
     user = resp.json()
+    user_id = user["id"]
+
+    # 2. Create a personal org (id == user_id, same pattern as migration 006 seed).
+    resp2 = httpx.post(
+        f"{url}/rest/v1/organizations",
+        headers=hdrs,
+        json={"id": user_id, "name": f"{email} (personal)", "plan": "platform"},
+        timeout=15.0,
+    )
+    if resp2.status_code not in (200, 201):
+        print(f"ERROR: failed to create org (status {resp2.status_code}):", file=sys.stderr)
+        print(resp2.text, file=sys.stderr)
+        return 1
+
+    # 3. Add user as admin member of their org.
+    resp3 = httpx.post(
+        f"{url}/rest/v1/memberships",
+        headers=hdrs,
+        json={"user_id": user_id, "org_id": user_id, "role": "admin"},
+        timeout=15.0,
+    )
+    if resp3.status_code not in (200, 201):
+        print(f"ERROR: failed to create membership (status {resp3.status_code}):", file=sys.stderr)
+        print(resp3.text, file=sys.stderr)
+        return 1
+
     print(f"✓ Created user {email}")
-    print(f"  id: {user.get('id')}")
+    print(f"  id:  {user_id}")
+    print(f"  org: {user_id} (personal)")
+    if is_admin:
+        print("  role: admin (is_admin=true)")
     if generated:
         print(f"  password: {password}")
         print("  (shown once — store it securely)")
