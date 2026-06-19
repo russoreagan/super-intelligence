@@ -35,7 +35,7 @@ MANDATE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 # The ASSIGNED catalog rides every cached context block, so its size is a
 # recurring prompt-cache cost. Cap per-mandate text, per-persona count, and the
 # combined assigned text.
-MAX_ROLE_TEXT_CHARS = 4_000
+MAX_ROLE_TEXT_CHARS = 16_000
 MAX_ASSIGNED_PER_PERSONA = 16
 MAX_CATALOG_CHARS = 24_000
 _MAX_JSON_BYTES = 2_048  # conduct_rules / reward_weights are opaque-but-bounded
