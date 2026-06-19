@@ -89,6 +89,63 @@ def _lookup_partner_key(token: str) -> dict | None:
         return None
 
 
+def resolve_partner_org(authorization: str | None) -> str | None:
+    """GATEWAY-side: map a bearer token to the org (tenant) that owns it, ACROSS all
+    orgs — so the multi-tenant gateway can route a partner request to the right
+    brain. Requires service-role Supabase (the gateway has it). Returns the org_id,
+    or None for an unknown/inactive token. Fail-closed.
+
+    Per-partner table keys only — owner keys (env BRAIN_API_KEYS) are per-tenant and
+    not resolvable here; they're for single-tenant/standalone deployments."""
+    token = _extract_token(authorization)
+    if not token:
+        return None
+    try:
+        from brain.second_brain import supabase_client
+
+        if not supabase_client.is_enabled():
+            return None
+        client = supabase_client.get_client()
+        res = (
+            client.table("api_keys")
+            .select("org_id")
+            .eq("key_hash", _hash(token))
+            .eq("active", True)
+            .limit(1)
+            .execute()
+        )
+        rows = res.data or []
+        return rows[0]["org_id"] if rows else None
+    except Exception:
+        return None
+
+
+def has_any_api_keys() -> bool:
+    """BRAIN-side (org-scoped): does THIS org have any active per-partner key? Lets a
+    tenant brain decide to start its engine API server even when no owner env key is
+    set (the multi-tenant B2B path keys live in the api_keys table, not env)."""
+    if configured_keys():
+        return True
+    try:
+        from brain.second_brain import supabase_client
+
+        if not supabase_client.is_enabled():
+            return False
+        client = supabase_client.get_client()
+        org = supabase_client.get_org_id()
+        res = (
+            client.table("api_keys")
+            .select("id")
+            .eq("org_id", org)
+            .eq("active", True)
+            .limit(1)
+            .execute()
+        )
+        return bool(res.data)
+    except Exception:
+        return False
+
+
 def check_bearer(authorization: str | None) -> bool:
     """True iff the Authorization header carries a valid owner or partner key.
     Fail-closed: no match → False."""

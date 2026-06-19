@@ -73,6 +73,10 @@ def is_configured() -> bool:
 
 
 def is_public_path(path: str) -> bool:
+    # /v1/* is the engine API: bearer-key authed by the API layer itself, so it must
+    # bypass the cookie/session gate (the gateway's /v1 proxy does its own bearer auth).
+    if path == "/v1" or path.startswith("/v1/"):
+        return True
     return path in PUBLIC_PATHS
 
 

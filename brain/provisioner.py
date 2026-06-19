@@ -63,9 +63,10 @@ _BUNDLED_SETTINGS = Path(__file__).resolve().parent / "settings.json"
 
 
 class _Proc:
-    def __init__(self, proc, port: int) -> None:
+    def __init__(self, proc, port: int, api_port: int | None = None) -> None:
         self.proc = proc
         self.port = port
+        self.api_port = api_port  # tenant's engine-API port (for /v1 gateway routing)
         self.last_active: float = time.time()
         self.booting: bool = True
 
@@ -138,7 +139,7 @@ class Provisioner:
         p = self._procs.get(user_id)
         if not p:
             return None
-        return {"port": p.port, "booting": p.booting, "pid": p.proc.pid}
+        return {"port": p.port, "api_port": p.api_port, "booting": p.booting, "pid": p.proc.pid}
 
     def is_running(self, user_id: str) -> bool:
         """True if this user's brain process exists and is still alive. Used by the
@@ -194,6 +195,9 @@ class Provisioner:
 
     async def _spawn_once(self, user_id: str) -> int:
         port = _free_port()
+        api_port = _free_port()  # engine API on its own port (distinct from the UI port)
+        while api_port == port:
+            api_port = _free_port()
         root = TENANTS_DIR / user_id
         (root / "second_brain").mkdir(parents=True, exist_ok=True)
         settings_path = root / "settings.json"
@@ -237,6 +241,9 @@ class Provisioner:
                 # streamed to the client (voice silently no-ops on hosted).
                 "BRAIN_AUDIO_OUTPUT_DEVICE": "browser",
                 "PORT": str(port),
+                # Engine API binds here; the gateway proxies /v1 partner traffic to it
+                # (the brain only starts the API server if the org has partner keys).
+                "BRAIN_API_PORT": str(api_port),
             }
         )
         if persona_name:
@@ -307,7 +314,7 @@ class Provisioner:
         import subprocess
 
         proc = subprocess.Popen(cmd, cwd=str(_REPO_ROOT), env=env)
-        entry = _Proc(proc, port)
+        entry = _Proc(proc, port, api_port=api_port)
         self._procs[user_id] = entry
 
         ok = await self._wait_health(port, proc)

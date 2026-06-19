@@ -265,13 +265,13 @@ class _SetupMixin:
         await self._emitter.emit_emotion(_emotion)
 
     async def _setup_api(self) -> None:
-        """Start the standalone engine API server iff a runtime API key is
-        configured. OFF by default — the deployed companion product sets no key, so
-        this is fully inert there. When enabled, a partner's backend opens sessions
-        and runs turns against this persona process (see brain/api/)."""
-        from brain.api.auth import configured_keys
+        """Start the engine API server iff this org has a runtime key — an owner env
+        key (BRAIN_API_KEYS) OR per-partner keys in the api_keys table (the
+        multi-tenant B2B path the gateway routes /v1 to). OFF by default: the
+        companion product sets no key and provisions none, so it stays inert there."""
+        from brain.api.auth import has_any_api_keys
 
-        if not configured_keys():
+        if not has_any_api_keys():
             return
         from brain.api import ApiServer
 

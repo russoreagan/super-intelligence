@@ -401,6 +401,55 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
             }
         )
 
+    # ── Engine API (/v1) → partner-key routing + on-demand spawn + pod kick ──
+    # Bearer key → org (cross-org lookup), then spawn the org's brain (which runs
+    # its API server) and warm the pod, exactly like the UI path does. This is what
+    # makes partner API traffic spin the pod up. Streamed so SSE turns pass through.
+    @app.api_route(
+        "/v1/{path:path}",
+        methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
+    )
+    async def engine_api_proxy(request: Request, path: str):
+        from brain.api import auth as _api_auth
+
+        org = _api_auth.resolve_partner_org(request.headers.get("authorization"))
+        if org is None:
+            return JSONResponse({"error": "unauthorized"}, status_code=401)
+        st = provisioner.status(org)
+        if st and not st["booting"] and st.get("api_port"):
+            provisioner.touch(org)
+            return await _proxy_http_stream(request, st["api_port"])
+        # Brain not up yet: spawn it (starts its API server) + warm the pod, and tell
+        # the partner to retry. Idempotent — concurrent calls await one spawn.
+        if st is None:
+            sleep_status.pop(org, None)
+            asyncio.create_task(_safe_ensure(provisioner, org))
+            _kick_pod()
+        return JSONResponse({"status": "booting"}, status_code=503)
+
+    @app.websocket("/v1/sessions/{session_id}/stream")
+    async def engine_api_ws(client_ws: WebSocket, session_id: str):
+        from brain.api import auth as _api_auth
+
+        org = _api_auth.resolve_partner_org(client_ws.headers.get("authorization"))
+        if org is None:
+            await client_ws.close(code=1008)
+            return
+        st = provisioner.status(org)
+        if not st or st["booting"] or not st.get("api_port"):
+            if st is None:
+                asyncio.create_task(_safe_ensure(provisioner, org))
+                _kick_pod()
+            await client_ws.close(code=1013)  # not ready — partner retries
+            return
+        provisioner.touch(org)
+        await _proxy_ws(
+            client_ws, st["api_port"],
+            upstream_path=f"/v1/sessions/{session_id}/stream",
+            extra_headers={"Authorization": client_ws.headers.get("authorization", "")},
+            on_activity=lambda: provisioner.touch(org),
+        )
+
     # ── HTTP catch-all → ensure + proxy (authed) ────────────────────────────
     @app.api_route(
         "/{path:path}",
@@ -480,16 +529,56 @@ async def _proxy_http(request: Request, port: int) -> Response:
     return Response(content=up.content, status_code=up.status_code, headers=resp_headers)
 
 
-async def _proxy_ws(client_ws: WebSocket, port: int, on_activity=None) -> None:
+async def _proxy_http_stream(request: Request, port: int) -> Response:
+    """Stream a proxied response through unbuffered — required for SSE turn streams
+    (POST /v1/.../turns/stream) so the partner gets inner-life events as they happen,
+    not all at once at the end. Works for plain JSON too (just one chunk)."""
+    from fastapi.responses import StreamingResponse
+
+    url = f"http://127.0.0.1:{port}{request.url.path}"
+    if request.url.query:
+        url += "?" + request.url.query
+    headers = {k: v for k, v in request.headers.items() if k.lower() not in _HOP_BY_HOP}
+    body = await request.body()
+    client = httpx.AsyncClient(timeout=None)
+    try:
+        up = await client.send(
+            client.build_request(request.method, url, headers=headers, content=body),
+            stream=True,
+        )
+    except Exception as e:
+        logger.error("[gateway] /v1 proxy error: %s", e)
+        await client.aclose()
+        return JSONResponse({"error": "bad_gateway"}, status_code=502)
+    resp_headers = {k: v for k, v in up.headers.items() if k.lower() not in _HOP_BY_HOP}
+
+    async def _body():
+        try:
+            async for chunk in up.aiter_raw():
+                yield chunk
+        finally:
+            await up.aclose()
+            await client.aclose()
+
+    return StreamingResponse(_body(), status_code=up.status_code, headers=resp_headers)
+
+
+async def _proxy_ws(
+    client_ws: WebSocket, port: int, on_activity=None,
+    upstream_path: str = "/ws", extra_headers: dict | None = None,
+) -> None:
     import websockets
 
     await client_ws.accept()
+    hdrs = dict(extra_headers or {})
     cookie = client_ws.headers.get("cookie", "")
-    upstream_url = f"ws://127.0.0.1:{port}/ws"
+    if cookie and "Cookie" not in hdrs:
+        hdrs["Cookie"] = cookie
+    upstream_url = f"ws://127.0.0.1:{port}{upstream_path}"
     try:
         upstream = await websockets.connect(
             upstream_url,
-            additional_headers={"Cookie": cookie} if cookie else None,
+            additional_headers=hdrs or None,
             max_size=None,
             open_timeout=20,
         )
