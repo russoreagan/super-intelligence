@@ -59,6 +59,15 @@ _READY_TIMEOUT_S = 300.0  # 5 min max for pod to come up
 # symptom; 2 min keeps recovery responsive.
 _LIVENESS_POLL_S = 120.0
 
+# A pod can serve /api/tags (looks "alive") while running the model entirely on CPU
+# (size_vram == 0) — e.g. when ollama can't see the GPU. That gives ~0.25 tok/s and
+# every DMN/inference call times out (silent total failure). Require the model to be
+# (almost) fully resident in VRAM before a pod is considered healthy/ready.
+_MIN_GPU_FRACTION = 0.9
+# After failing to bring up any healthy pod, wait this long before trying again so a
+# systemic fault (e.g. a bad image) can't churn create→terminate every tick.
+_UNHEALTHY_COOLDOWN_S = 1800.0
+
 # Warmup runs in the background (never blocks boot). Loading a 32B model from disk
 # routinely exceeds the RunPod proxy's request timeout, so we kick the load and then
 # poll /api/ps — fast requests — until the model is resident.
@@ -93,6 +102,11 @@ class RunPodManager:
         self._status_since: float = time.time()
         self._status_detail: str = ""
         self._http = None  # httpx.AsyncClient, created lazily in _get_http()
+        # Pods we proved unhealthy (CPU-only) this session — never resume them again.
+        self._unhealthy: set[str] = set()
+        # After we fail to bring up ANY healthy pod, back off creating for a while so
+        # a systemic problem doesn't churn create→terminate every reconciler tick.
+        self._cooldown_until: float = 0.0
         # Consumer mode (multi-tenant tenant pointing at a shared pod): never owns
         # or stops the pod. Set in start() when BRAIN_MULTITENANT + RUNPOD_HOST.
         self._consumer = False
@@ -298,6 +312,28 @@ class RunPodManager:
         except Exception:
             return False
 
+    async def _model_on_gpu(self, host: str) -> bool:
+        """True only if the inference model is resident AND (almost) fully on the GPU.
+
+        /api/ps reports a model as loaded even when it's running on CPU (size_vram==0);
+        that pod is useless (~0.25 tok/s → every call times out). This is the real
+        health signal, not /api/tags."""
+        model = os.environ.get("RUNPOD_MODEL", "qwen2.5:32b")
+        base = model.split(":")[0]
+        try:
+            r = await self._get_http().get(f"{host}/api/ps", timeout=10.0)
+            if r.status_code != 200:
+                return False
+            for m in r.json().get("models", []):
+                if m.get("name", "").split(":")[0] != base:
+                    continue
+                size = m.get("size", 0) or 0
+                vram = m.get("size_vram", 0) or 0
+                return size > 0 and (vram / size) >= _MIN_GPU_FRACTION
+        except Exception:
+            return False
+        return False
+
     def _apply_host(self, pod_id: str) -> None:
         from brain.settings import settings
 
@@ -312,30 +348,21 @@ class RunPodManager:
         settings.update({"runpod_host": local_host})
         logger.info("[RunPod] runpod_host → local Ollama (%s)", local_host)
 
-    def _schedule_warmup(self, host: str) -> None:
-        """Warm the model in the background so boot (UI + DMN) is never blocked on it.
+    async def _warmup_model(self, host: str) -> bool:
+        """Load the model into VRAM and confirm it's actually on the GPU.
 
-        Warming a 32B model takes minutes; awaiting it here held back _setup_ui and
-        _setup_dmn — the whole brain — for the full duration. It's already declared
-        non-fatal (cells cold-load on miss), so nothing downstream needs the result.
-        """
-        self._warmup_task = asyncio.create_task(self._warmup_model(host))
-
-    async def _warmup_model(self, host: str) -> None:
-        """Preload the inference model into VRAM before cells start hitting it.
+        Returns True only when the model is resident with (almost) all weights in
+        VRAM — the health signal that distinguishes a working pod from a CPU-only one
+        (which serves /api/tags fine but runs at ~0.25 tok/s and times out every call).
 
         Loading a 32B model from disk routinely exceeds the RunPod proxy's request
-        timeout (~100s): a single blocking /api/generate gets killed with a 524 even
-        though Ollama keeps loading server-side. So we kick the load off (tolerating
-        the proxy timeout) and then poll /api/ps — which returns fast — until the
-        model is actually resident.
+        timeout (~100s): a blocking /api/generate gets killed with a 524 even though
+        ollama keeps loading server-side. So we kick the load (tolerating the proxy
+        timeout) and poll /api/ps — fast requests — until weights are on the GPU.
         """
         model = os.environ.get("RUNPOD_MODEL", "qwen2.5:32b")
-        base = model.split(":")[0]
-        logger.info("[RunPod] Warming up %s into VRAM (background)...", model)
+        logger.info("[RunPod] Warming up %s into VRAM...", model)
 
-        # Kick the load. The proxy may 524 before the model finishes loading; that's
-        # expected and harmless — Ollama keeps loading on the pod regardless.
         try:
             await self._get_http().post(
                 f"{host}/api/generate",
@@ -345,30 +372,23 @@ class RunPodManager:
         except Exception as e:
             logger.debug("[RunPod] Warmup kick returned %s (load continues server-side)", e)
 
-        # Poll /api/ps until the model shows as resident (each request is fast).
         elapsed = 0.0
         while elapsed < _WARMUP_TIMEOUT_S:
-            try:
-                r = await self._get_http().get(f"{host}/api/ps", timeout=10.0)
-                if r.status_code == 200:
-                    loaded = {m.get("name", "").split(":")[0] for m in r.json().get("models", [])}
-                    if base in loaded:
-                        logger.info("[RunPod] Model %s warm and resident (%.0fs)", model, elapsed)
-                        self._set_status("ready")
-                        return
-            except Exception:
-                pass
+            if await self._model_on_gpu(host):
+                logger.info("[RunPod] Model %s warm and on GPU (%.0fs)", model, elapsed)
+                self._set_status("ready")
+                return True
             await asyncio.sleep(_WARMUP_POLL_S)
             elapsed += _WARMUP_POLL_S
+
         logger.warning(
-            "[RunPod] Model %s not confirmed resident after %.0fs "
-            "(non-fatal — cells will cold-load)",
+            "[RunPod] Model %s not resident on GPU after %.0fs — pod is unhealthy "
+            "(likely running on CPU). Will replace it.",
             model,
             _WARMUP_TIMEOUT_S,
         )
-        # Pod is serving; the model just loads on first use. Report ready (not stuck)
-        # so the UI clears the boot banner — inference works, the first call is slow.
-        self._set_status("ready", "model loads on first use")
+        self._set_status("failed", "GPU not engaged — replacing pod")
+        return False
 
     def _spawn_watchdog(self, pod_id: str) -> None:
         """Start a detached watchdog subprocess that stops the pod if this process dies."""
@@ -394,7 +414,10 @@ class RunPodManager:
             logger.warning("[RunPod] Failed to spawn watchdog: %s", e)
 
     async def _activate_pod(self, pod_id: str) -> bool:
-        """Wait for pod, pull models, warm up, apply host. Returns True on full success."""
+        """Bring a pod into service: wait for ollama, pull models, warm the model ONTO
+        THE GPU, then apply host + watchdog. Returns True only if the model is actually
+        GPU-resident — a CPU-only pod fails here so the caller stops it and tries
+        another (rather than silently serving ~0.25 tok/s)."""
         if not await self._wait_until_ready(pod_id):
             self._set_status("failed", "pod did not come up")
             return False
@@ -402,10 +425,13 @@ class RunPodManager:
         if not await self._pull_models(host):
             self._set_status("failed", "model download failed")
             return False
-        # Pod is serving; warmup (model → VRAM) runs in the background and flips the
-        # status to "ready" when resident. Surface "warming" meanwhile.
+        # Health gate: await warmup and confirm the model is on the GPU. This blocks
+        # for up to the warmup timeout, which is fine — _activate_pod runs in a
+        # background lifecycle task, never under an HTTP request. The UI shows
+        # "warming" throughout (honest), and a CPU-only pod is rejected here.
         self._set_status("warming", "loading model into memory")
-        self._schedule_warmup(host)
+        if not await self._warmup_model(host):
+            return False  # unhealthy (CPU-only / never resident) — caller replaces it
         self._apply_host(pod_id)
         self._spawn_watchdog(pod_id)
         return True
@@ -448,13 +474,12 @@ class RunPodManager:
                 logger.info("[RunPod] Pod %s already running", pod_id)
                 self._pod_id = pod_id
                 self._known_pod_id = pod_id
-                host = self._pod_host(pod_id)
-                await self._pull_models(host)
-                self._schedule_warmup(host)
-                self._apply_host(pod_id)
-                self._spawn_watchdog(pod_id)  # B4: backstop was missing on this path
-                self._start_watcher()
-                return True
+                # Health-gate even an already-running pod (it may be CPU-only).
+                if await self._activate_pod(pod_id):
+                    self._start_watcher()
+                    return True
+                await self._stop_pod(pod_id)
+                self._pod_id = None  # fall through to resume/create a healthy one
 
             for pod in stopped:
                 pod_id = pod["id"]
@@ -548,41 +573,65 @@ class RunPodManager:
         return host
 
     async def ensure_running(self) -> bool:
-        """Resume-or-create the shared pod and make it serve. Idempotent.
+        """Resume-or-create a HEALTHY shared pod and make it serve. Idempotent.
 
-        Called by the gateway reconciler when ≥1 brain is alive. No-op (returns
-        True) if we already hold a live pod. Starts the liveness watcher + watchdog
-        on the transition to holding a pod."""
+        Called by the gateway reconciler when ≥1 brain is alive. No-op (returns True)
+        only when the held pod has the model resident ON THE GPU. A pod that serves
+        /api/tags but runs the model on CPU is retired (terminated) and replaced —
+        otherwise inference silently times out. After a full failure we cool down so a
+        systemic fault doesn't churn create→terminate every tick."""
         if self._consumer or not self._api_key:
             return False
         async with self._lifecycle_lock:
-            # Already holding a pod that's actually serving — nothing to do.
-            if self._pod_id is not None and await self._probe_alive(self._pod_id):
-                if self._status not in ("warming", "ready"):
-                    self._set_status("ready")
+            host = self._pod_host(self._pod_id) if self._pod_id else None
+            # Fast-path: only a no-op if the model is actually on the GPU.
+            if host and await self._model_on_gpu(host):
+                self._set_status("ready")
                 return True
-            # Resume the known pod if we have one; else find/create.
-            pod_id = self._known_pod_id
-            if pod_id is None:
+            # Held pod is alive but CPU-only (or dead): retire it before replacing.
+            if self._pod_id is not None:
+                if await self._probe_alive(self._pod_id):
+                    logger.warning("[RunPod] Held pod %s is CPU-only — retiring", self._pod_id)
+                    await self._retire_unhealthy(self._pod_id)
+                else:
+                    self._cancel_watcher()
+                    self._pod_id = None
+
+            if time.time() < self._cooldown_until:
+                self._set_status("failed", "GPU unavailable — using cloud (cooling down)")
+                return False
+
+            # Pick a pod to bring up: the known-good one, else a discovered one,
+            # skipping any we've proven unhealthy this session.
+            candidates: list[str] = []
+            if self._known_pod_id and self._known_pod_id not in self._unhealthy:
+                candidates.append(self._known_pod_id)
+            else:
                 existing = await self._find_existing_pods()
-                if existing:
-                    pod_id = (
-                        [p for p in existing if p.get("runtime")] or existing
-                    )[0]["id"]
-                    self._known_pod_id = pod_id
-            if pod_id is not None:
+                ordered = [p for p in existing if p.get("runtime")] + [
+                    p for p in existing if not p.get("runtime")
+                ]
+                for p in ordered:
+                    if p["id"] not in self._unhealthy:
+                        candidates.append(p["id"])
+                        break
+
+            for pod_id in candidates:
                 try:
                     self._set_status("resuming", "starting GPU pod")
                     await self._resume_pod(pod_id)
                     self._pod_id = pod_id
+                    self._known_pod_id = pod_id
                     if await self._activate_pod(pod_id):
                         self._start_watcher()
                         logger.info("[RunPod] Pod %s ensured running (demand>0)", pod_id)
                         return True
+                    await self._retire_unhealthy(pod_id)  # CPU-only / never resident
                 except Exception as e:
                     logger.warning("[RunPod] ensure_running resume of %s failed: %s", pod_id, e)
-                self._pod_id = None
-            # No known/resumable pod — create one on the best GPU.
+                    self._pod_id = None
+
+            # Nothing healthy to resume — create on the best GPU.
             try:
                 self._set_status("resuming", "provisioning a GPU")
                 ranked = self._rank_gpus(await self._fetch_gpu_types())
@@ -600,10 +649,14 @@ class RunPodManager:
                         self._start_watcher()
                         logger.info("[RunPod] Pod %s created + running (demand>0)", new_id)
                         return True
-                    await self._stop_pod(new_id)
-                    self._pod_id = None
-            logger.warning("[RunPod] ensure_running could not bring up a pod — cloud fallback")
-            self._set_status("failed", "no GPU available — using cloud")
+                    await self._retire_unhealthy(new_id)  # delete the dud, try next GPU
+
+            logger.warning(
+                "[RunPod] No healthy GPU pod could be brought up — cloud fallback, "
+                "cooling down %.0fmin", _UNHEALTHY_COOLDOWN_S / 60,
+            )
+            self._cooldown_until = time.time() + _UNHEALTHY_COOLDOWN_S
+            self._set_status("failed", "no healthy GPU pod — using cloud")
             return False
 
     async def pause(self) -> None:
@@ -675,6 +728,27 @@ class RunPodManager:
             logger.info("[RunPod] Pod %s stopped", pod_id)
         except Exception as e:
             logger.warning("[RunPod] Failed to stop pod %s: %s", pod_id, e)
+
+    async def _terminate_pod(self, pod_id: str) -> None:
+        """Permanently delete a pod (frees its volume → stops storage charges). Used
+        for confirmed-unhealthy pods so they aren't rediscovered or billed."""
+        try:
+            await self._gql(
+                "mutation($id: String!) { podTerminate(input: {podId: $id}) }",
+                {"id": pod_id},
+            )
+            logger.info("[RunPod] Pod %s terminated", pod_id)
+        except Exception as e:
+            logger.warning("[RunPod] Failed to terminate pod %s: %s", pod_id, e)
+
+    async def _retire_unhealthy(self, pod_id: str) -> None:
+        """Mark a pod unhealthy and delete it so we never resume it again."""
+        self._unhealthy.add(pod_id)
+        await self._terminate_pod(pod_id)
+        if self._pod_id == pod_id:
+            self._pod_id = None
+        if self._known_pod_id == pod_id:
+            self._known_pod_id = None
 
     async def stop(self) -> None:
         """Stop the active pod (preserves volume) and cancel the watcher.

@@ -40,15 +40,51 @@ def test_ensure_running_consumer_is_noop():
     assert m._pod_id is None
 
 
-def test_ensure_running_idempotent_when_alive():
+def test_ensure_running_idempotent_when_model_on_gpu():
     m = _mgr()
     m._pod_id = "podX"
+
+    async def on_gpu(_host):
+        return True
+
+    m._model_on_gpu = on_gpu  # type: ignore[assignment]
+    assert asyncio.run(m.ensure_running()) is True
+
+
+def test_ensure_running_retires_cpu_only_pod():
+    """A held pod that serves /api/tags but runs on CPU must be terminated and
+    replaced, not treated as ready (that was the silent 'no idle thoughts' bug)."""
+    m = _mgr()
+    m._pod_id = "podCPU"
+    m._known_pod_id = "podCPU"
+    terminated: list[str] = []
+
+    async def not_on_gpu(_host):
+        return False
 
     async def alive(_pid):
         return True
 
+    async def fake_terminate(pid):
+        terminated.append(pid)
+
+    async def no_pods():
+        return []
+
+    async def no_gpus():
+        return []
+
+    m._model_on_gpu = not_on_gpu  # type: ignore[assignment]
     m._probe_alive = alive  # type: ignore[assignment]
-    assert asyncio.run(m.ensure_running()) is True
+    m._terminate_pod = fake_terminate  # type: ignore[assignment]
+    m._find_existing_pods = no_pods  # type: ignore[assignment]
+    m._fetch_gpu_types = no_gpus  # type: ignore[assignment]
+
+    assert asyncio.run(m.ensure_running()) is False
+    assert "podCPU" in terminated, "CPU-only pod must be terminated"
+    assert "podCPU" in m._unhealthy
+    assert m._pod_id is None and m._known_pod_id is None
+    assert m.status()["state"] == "failed"
 
 
 def test_ensure_running_resumes_known_pod_not_create():
