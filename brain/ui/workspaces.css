@@ -205,6 +205,15 @@
 .workspace .mint-reveal { display: none; margin-top: 22px; padding: 18px 20px; border-radius: var(--r-3); background: var(--signal-soft); border: 1px solid color-mix(in oklch, var(--signal) 28%, transparent); }
 .workspace .mint-reveal.on { display: block; }
 
+/* connector permission pills */
+.workspace .connector-grid { display: flex; flex-wrap: wrap; gap: 7px; padding-top: 4px; }
+.workspace .connector-check { display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px 5px 8px;
+  border: 1px solid var(--line); border-radius: 999px; font-family: var(--mono); font-size: 9.5px;
+  color: var(--ink-3); cursor: pointer; transition: border-color 140ms, background 140ms, color 140ms; user-select: none; }
+.workspace .connector-check:hover { border-color: var(--ink-4); color: var(--ink); }
+.workspace .connector-check input[type=checkbox] { width: 11px; height: 11px; accent-color: var(--signal); flex-shrink: 0; cursor: pointer; }
+.workspace .connector-check:has(input:checked) { border-color: var(--signal-deep); background: var(--signal-soft); color: var(--ink); }
+
 /* responsive: stack the rail above the main column on narrow screens */
 @media (max-width: 820px) {
   .workspace .ws-grid { grid-template-columns: 1fr !important; grid-template-rows: auto minmax(0,1fr); }

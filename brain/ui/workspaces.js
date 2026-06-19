@@ -23,6 +23,7 @@
   let agentsData = null;      // { agents, roles, ceilings }
   let agentSel = null;        // open agent_id
   let partnerKeys = null;
+  let connectorsCache = null;
 
   // ── masthead dropdown ────────────────────────────────────────────────────
   function closeMenu() {
@@ -102,6 +103,15 @@
     { key: 'motor_allowed_dirs', label: 'Filesystem roots', hint: 'one path per line — within the org roots', type: 'dirs' },
   ];
   const CLOUD_RANK = { off: 0, ro: 1, full: 2 };
+
+  async function fetchConnectors() {
+    if (connectorsCache !== null) return connectorsCache;
+    try {
+      const r = await fetch('/connectors');
+      connectorsCache = r.ok ? (await r.json()).connectors || [] : [];
+    } catch (e) { connectorsCache = []; }
+    return connectorsCache;
+  }
 
   function ensureAgents() { if (!agentsData) loadAgents(); else paintAgents(); }
   async function loadAgents() {
@@ -209,12 +219,57 @@
         <div class="card-head"><span class="ch-num">02</span><div><div class="ch-title">Capabilities &amp; limits · motor cortex</div><div class="ch-desc">bounded by the account ceiling</div></div></div>
         <div class="card-body" id="ag-perm-body"></div>
       </div>
+      <div class="card">
+        <div class="card-head"><span class="ch-num">03</span><div><div class="ch-title">Connectors</div><div class="ch-desc">MCP server access per task type · all checked = inherit org default</div></div></div>
+        <div class="card-body" id="ag-connectors-body"><div class="ctrl"><div class="ctrl-meta"><div class="hint" style="padding:4px 0;">Loading connectors…</div></div></div></div>
+      </div>
       <div class="row" style="margin-top:16px; gap:10px;">
         <button class="btn btn-primary" id="ag-save"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg> Save</button>
         <button class="btn" id="ag-remove">Remove agent</button>
       </div></div>`;
     const body = main.querySelector('#ag-perm-body');
     AGENT_PERM_FIELDS.forEach(f => body.appendChild(permRow(f, perms, ceilings)));
+
+    (async () => {
+      const connectors = await fetchConnectors();
+      const cbody = main.querySelector('#ag-connectors-body');
+      if (!cbody) return;
+      if (!connectors.length) {
+        cbody.innerHTML = '<div class="ctrl"><div class="ctrl-meta"><div class="hint" style="padding:4px 0;">No MCP connectors configured on this org.</div></div></div>';
+        return;
+      }
+      cbody.innerHTML = '';
+      const parseList = v => v ? String(v).split('\n').map(s => s.trim()).filter(Boolean) : [];
+      [
+        { key: 'motor_user_connectors', lab: 'User-directed tasks', hint: 'connectors available when user triggers a motor action' },
+        { key: 'motor_self_connectors', lab: 'Self-directed tasks',  hint: 'connectors available during autonomous / background runs' },
+      ].forEach(({ key, lab, hint }) => {
+        const cur = parseList(perms[key]);
+        const allInherited = cur.length === 0;
+        const row = document.createElement('div');
+        row.className = 'ctrl';
+        row.style.cssText = 'flex-direction:column; align-items:stretch; gap:10px;';
+        const meta = document.createElement('div'); meta.className = 'ctrl-meta';
+        meta.innerHTML = `<div class="lab">${lab}</div><div class="hint">${hint}</div>`;
+        row.appendChild(meta);
+        const grid = document.createElement('div'); grid.className = 'connector-grid';
+        connectors.forEach(name => {
+          const checked = allInherited || cur.includes(name);
+          const lbl = document.createElement('label'); lbl.className = 'connector-check';
+          const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = checked; cb.dataset.connector = name;
+          lbl.appendChild(cb); lbl.append(' ' + name);
+          grid.appendChild(lbl);
+        });
+        grid.addEventListener('change', () => {
+          const on = [...grid.querySelectorAll('input')].filter(c => c.checked).map(c => c.dataset.connector);
+          if (on.length === connectors.length || on.length === 0) delete perms[key];
+          else perms[key] = on.join('\n');
+        });
+        row.appendChild(grid);
+        cbody.appendChild(row);
+      });
+    })();
+
     main.querySelector('.ag-back').addEventListener('click', () => { agView = 'list'; agentSel = null; paintAgents(); });
     main.querySelector('#ag-view-persona').addEventListener('click', () => {
       setWorkspace('labs');
