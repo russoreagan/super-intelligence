@@ -329,56 +329,58 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
     def _set_sleep(tenant: str, state: str, **extra) -> None:
         sleep_status[tenant] = {"state": state, "since": time.time(), **extra}
 
+    async def _do_sleep(tenant: str) -> None:
+        """Sleep one org's brain and release its cost: consolidate → stop the process
+        → pause the shared pod if no other brain needs it. Shared by the UI Sleep
+        button and the engine API POST /v1/sleep, with progress in sleep_status."""
+        phase = "consolidating"  # tracked so an error names the step that failed
+        try:
+            # 1. Consolidate: ask the brain to shut itself down gracefully — its
+            # SIGTERM handler runs end-of-session memory consolidation. Wait for
+            # the process to actually exit so we don't force-kill it mid-write.
+            _set_sleep(tenant, "consolidating")
+            st = provisioner.status(tenant)
+            if st and not st["booting"]:
+                try:
+                    async with httpx.AsyncClient(timeout=10.0) as _c:
+                        await _c.post(f"http://127.0.0.1:{st['port']}/shutdown")
+                except Exception:
+                    pass
+                deadline = time.time() + SLEEP_CONSOLIDATE_WAIT_S
+                while time.time() < deadline and provisioner.is_running(tenant):
+                    await asyncio.sleep(1.0)
+
+            # 2. Stop: reap the process (no-op if it already exited gracefully).
+            phase = "stopping"
+            _set_sleep(tenant, "stopping")
+            await provisioner.stop_user(tenant)
+
+            # 3. Pause the shared pod — only if NO other brain still needs it.
+            # The brain subprocess is a consumer and can't stop the pod itself.
+            phase = "pausing_pod"
+            runpod = runpod_holder[0] if runpod_holder else None
+            if runpod is None:
+                pod = "none"
+            elif provisioner.live_count() == 0:
+                _set_sleep(tenant, "pausing_pod")
+                await runpod.pause()
+                logger.info("[gateway] last brain slept — shared pod paused")
+                pod = "paused"
+            else:
+                pod = "kept"  # other sessions still using the pod
+
+            _set_sleep(tenant, "asleep", pod=pod)
+        except Exception as e:
+            logger.error("[gateway] sleep failed for %s at %s: %s", tenant[:8], phase, e)
+            _set_sleep(tenant, "error", at=phase, detail=str(e)[:120])
+
     @app.post("/shutdown")
     async def sleep_brain(request: Request):
         user = getattr(request.state, "user", None)
         if user is None:
             return JSONResponse({"error": "unauthorized"}, status_code=401)
         tenant = _tenant_for(user["sub"])
-
-        async def _sleep():
-            phase = "consolidating"  # tracked so an error names the step that failed
-            try:
-                # 1. Consolidate: ask the brain to shut itself down gracefully — its
-                # SIGTERM handler runs end-of-session memory consolidation. Wait for
-                # the process to actually exit so we don't force-kill it mid-write.
-                _set_sleep(tenant, "consolidating")
-                st = provisioner.status(tenant)
-                if st and not st["booting"]:
-                    try:
-                        async with httpx.AsyncClient(timeout=10.0) as _c:
-                            await _c.post(f"http://127.0.0.1:{st['port']}/shutdown")
-                    except Exception:
-                        pass
-                    deadline = time.time() + SLEEP_CONSOLIDATE_WAIT_S
-                    while time.time() < deadline and provisioner.is_running(tenant):
-                        await asyncio.sleep(1.0)
-
-                # 2. Stop: reap the process (no-op if it already exited gracefully).
-                phase = "stopping"
-                _set_sleep(tenant, "stopping")
-                await provisioner.stop_user(tenant)
-
-                # 3. Pause the shared pod — only if NO other brain still needs it.
-                # The brain subprocess is a consumer and can't stop the pod itself.
-                phase = "pausing_pod"
-                runpod = runpod_holder[0] if runpod_holder else None
-                if runpod is None:
-                    pod = "none"
-                elif provisioner.live_count() == 0:
-                    _set_sleep(tenant, "pausing_pod")
-                    await runpod.pause()
-                    logger.info("[gateway] last brain slept — shared pod paused")
-                    pod = "paused"
-                else:
-                    pod = "kept"  # other sessions still using the pod
-
-                _set_sleep(tenant, "asleep", pod=pod)
-            except Exception as e:
-                logger.error("[gateway] sleep failed for %s at %s: %s", tenant[:8], phase, e)
-                _set_sleep(tenant, "error", at=phase, detail=str(e)[:120])
-
-        asyncio.create_task(_sleep())
+        asyncio.create_task(_do_sleep(tenant))
         return JSONResponse({"ok": True})
 
     # ── Sleep progress (polled by the UI sleep panel) ───────────────────────
@@ -398,6 +400,44 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
                 "pod": s.get("pod", ""),
                 "at": s.get("at", ""),
                 "elapsed_s": round(max(0.0, time.time() - s["since"]), 1),
+            }
+        )
+
+    # ── Engine API cost control: sleep + status (partner-key authed) ─────────
+    # A partner can turn off the cost-generating parts (brain process + GPU pod) for
+    # their org, and inspect cost state, without the UI. Registered BEFORE the /v1
+    # catch-all proxy so they're handled at the gateway (which owns the pod), not
+    # forwarded to the brain (a pod consumer that can't pause it). Waking is implicit
+    # — any other /v1 call respawns the brain + kicks the pod on demand.
+    @app.post("/v1/sleep")
+    async def engine_api_sleep(request: Request):
+        from brain.api import auth as _api_auth
+
+        org = _api_auth.resolve_partner_org(request.headers.get("authorization"))
+        if org is None:
+            return JSONResponse({"error": "unauthorized"}, status_code=401)
+        asyncio.create_task(_do_sleep(org))
+        return JSONResponse({"ok": True, "state": "sleeping"})
+
+    @app.get("/v1/status")
+    async def engine_api_status(request: Request):
+        from brain.api import auth as _api_auth
+
+        org = _api_auth.resolve_partner_org(request.headers.get("authorization"))
+        if org is None:
+            return JSONResponse({"error": "unauthorized"}, status_code=401)
+        st = provisioner.status(org)
+        awake = bool(st and not st["booting"])
+        runpod = runpod_holder[0] if runpod_holder else None
+        sl = sleep_status.get(org)
+        return JSONResponse(
+            {
+                # Is this org's brain process running (the per-request compute)?
+                "brain": "awake" if awake else ("booting" if st else "asleep"),
+                # Shared GPU pod state (the main cost): off/resuming/warming/ready/...
+                "pod": (runpod.status() if runpod else {"state": "off"}),
+                # Last sleep transition for this org, if any (asleep/consolidating/...).
+                "sleep": ({"state": sl["state"], "pod": sl.get("pod", "")} if sl else None),
             }
         )
 

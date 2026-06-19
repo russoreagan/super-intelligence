@@ -18,9 +18,11 @@ from brain.ui import auth as ui_auth
 
 
 class _FakeProv:
-    def __init__(self, status=None):
+    def __init__(self, status=None, live=None):
         self._status = status
+        self._live = live
         self.ensured: list[str] = []
+        self.stopped: list[str] = []
 
     async def start(self):  # pragma: no cover
         pass
@@ -34,20 +36,35 @@ class _FakeProv:
     async def ensure(self, t):
         self.ensured.append(t)
 
+    async def stop_user(self, t):
+        self.stopped.append(t)
+
+    def is_running(self, t):
+        return False
+
     def touch(self, t):
         pass
 
     def live_count(self):
+        if self._live is not None:
+            return self._live
         return 1 if self._status else 0
 
 
 class _FakeRunpod:
     def __init__(self):
         self.ensured = False
+        self.paused = False
 
     async def ensure_running(self):
         self.ensured = True
         return True
+
+    async def pause(self):
+        self.paused = True
+
+    def status(self):
+        return {"state": "ready", "detail": "", "elapsed_s": 1}
 
     def published_host(self):
         return None
@@ -115,6 +132,57 @@ def test_v1_routes_to_tenant_api_port_when_up(monkeypatch):
     r = asyncio.run(_post_v1(app, {"authorization": "Bearer good"}))
     assert r.status_code == 200
     assert seen.get("port") == 9777, "must proxy to the tenant's API port, not the UI port"
+
+
+# ── cost control: /v1/sleep + /v1/status ────────────────────────────────────
+
+
+def test_v1_sleep_unauthorized(monkeypatch):
+    _patch(monkeypatch, None)
+    app = gw.build_gateway_app(_FakeProv(), [_FakeRunpod()])
+
+    async def run():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+            return await c.post("/v1/sleep", headers={"authorization": "Bearer nope"})
+
+    assert asyncio.run(run()).status_code == 401
+
+
+def test_v1_sleep_stops_brain_and_pauses_pod(monkeypatch):
+    _patch(monkeypatch, "org-1")
+    # booting=True makes _do_sleep skip the brain HTTP call; live=0 → pod paused.
+    prov = _FakeProv(status={"port": 0, "api_port": 1, "booting": True, "pid": 1}, live=0)
+    runpod = _FakeRunpod()
+    app = gw.build_gateway_app(prov, [runpod])
+
+    async def run():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+            r = await c.post("/v1/sleep", headers={"authorization": "Bearer good"})
+        for _ in range(10):  # let the background _do_sleep task finish
+            await asyncio.sleep(0)
+        return r
+
+    r = asyncio.run(run())
+    assert r.status_code == 200 and r.json()["state"] == "sleeping"
+    assert "org-1" in prov.stopped, "the org's brain must be stopped"
+    assert runpod.paused is True, "the pod must be paused when no brain remains"
+
+
+def test_v1_status_reports_cost_state(monkeypatch):
+    _patch(monkeypatch, "org-1")
+    prov = _FakeProv(status={"port": 0, "api_port": 1, "booting": False, "pid": 1})
+    app = gw.build_gateway_app(prov, [_FakeRunpod()])
+
+    async def run():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+            return await c.get("/v1/status", headers={"authorization": "Bearer good"})
+
+    d = asyncio.run(run()).json()
+    assert d["brain"] == "awake"
+    assert d["pod"]["state"] == "ready"
 
 
 # ── auth helpers (mocked Supabase) ──────────────────────────────────────────
