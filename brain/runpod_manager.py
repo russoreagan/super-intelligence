@@ -303,6 +303,14 @@ class RunPodManager:
     def _pod_host(self, pod_id: str) -> str:
         return f"https://{pod_id}-{_PORT}.proxy.runpod.net"
 
+    def published_host(self) -> str | None:
+        """The proxy host tenant brains should point at (RUNPOD_HOST). Reflects the
+        pod we hold (or the known pod we'll resume — stable id → stable host), so the
+        gateway can keep RUNPOD_HOST in sync as the pod identity changes and never
+        leave tenants pointed at a dead pod."""
+        pid = self._pod_id or self._known_pod_id
+        return self._pod_host(pid) if pid else None
+
     async def _probe_alive(self, pod_id: str) -> bool:
         """Best-effort liveness probe — same check as readiness (/api/tags 200)."""
         host = self._pod_host(pod_id)

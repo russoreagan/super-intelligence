@@ -219,6 +219,15 @@ def test_live_count_excludes_dead_unreaped_procs():
     assert prov.live_count() == 0
 
 
+def test_published_host_tracks_pod_identity():
+    m = _mgr()
+    assert m.published_host() is None
+    m._known_pod_id = "abc"
+    assert m.published_host() == "https://abc-11434.proxy.runpod.net"
+    m._pod_id = "live"  # held pod wins over known
+    assert m.published_host() == "https://live-11434.proxy.runpod.net"
+
+
 def test_is_running_tracks_per_tenant_liveness():
     prov = pv.Provisioner()
     prov._procs = {

@@ -575,6 +575,16 @@ def main() -> None:
     pod_idle_grace_s = float(os.environ.get("BRAIN_POD_IDLE_GRACE_S", "600"))
     reconcile_interval_s = float(os.environ.get("BRAIN_POD_RECONCILE_S", "60"))
 
+    def _sync_runpod_host(runpod):
+        """Keep RUNPOD_HOST pointed at the live pod so every NEW tenant spawn inherits
+        the right host. Without this, a stale value (e.g. a baked-in env var for a
+        terminated pod, or the host changing when a fresh pod is created) leaves
+        tenants pointed at a dead pod until a gateway restart."""
+        host = runpod.published_host()
+        if host and "localhost" not in host and os.environ.get("RUNPOD_HOST") != host:
+            os.environ["RUNPOD_HOST"] = host
+            logger.info("[gateway] RUNPOD_HOST synced → %s", host)
+
     async def _pod_reconciler(runpod):
         zero_since: float | None = None
         while True:
@@ -584,6 +594,7 @@ def main() -> None:
                 if live > 0:
                     zero_since = None
                     await runpod.ensure_running()
+                    _sync_runpod_host(runpod)
                 else:
                     if zero_since is None:
                         zero_since = time.time()
@@ -614,7 +625,13 @@ def main() -> None:
                 os.environ["RUNPOD_HOST"] = host
                 logger.info("[gateway] shared pod host published — RUNPOD_HOST=%s", host)
             else:
-                logger.warning("[gateway] no shared RunPod pod discovered")
+                # No live pod to point at. Clear any baked-in RUNPOD_HOST (e.g. a stale
+                # Railway var for a terminated pod) so tenants don't inherit a dead host
+                # — they use cloud until the reconciler brings a pod up and re-syncs.
+                if os.environ.pop("RUNPOD_HOST", None):
+                    logger.warning("[gateway] cleared stale RUNPOD_HOST (no pod discovered)")
+                else:
+                    logger.warning("[gateway] no shared RunPod pod discovered")
             runpod_holder[0] = runpod
             reconciler_task[0] = asyncio.create_task(_pod_reconciler(runpod))
         except Exception as e:
