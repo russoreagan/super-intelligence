@@ -9,8 +9,14 @@ Startup:  try to resume any stopped "ollama-brain" pod (multiple supported —
 Shutdown: stop (not terminate) the active pod — volume and models persist for
           the next session.
 
-Watcher:  when no pod is running, polls every 5 min for available capacity and
-          spins one up automatically. Stops once a pod is acquired.
+Watcher:  liveness-only. While a pod is HELD it's probed every couple minutes and
+          resumed if it stopped responding. It NEVER speculatively creates a pod
+          when none is held — that resurrected paused pods and burned money with no
+          consumer. Acquisition is demand-driven via ensure_running().
+
+Demand-driven (gateway): the gateway owns the shared pod and drives ensure_running()
+          / pause() off the live tenant-brain count, so the pod runs only while a
+          brain needs it and is paused the moment the last one sleeps or is reaped.
 """
 
 from __future__ import annotations
@@ -34,16 +40,13 @@ _MIN_MEMORY_GB = 15
 # GPU selection policy
 _VRAM_FLOOR_GB = 24  # minimum acceptable VRAM
 _PRICE_CEILING = 0.50  # max $/hr — hard cutoff
-_MIGRATE_THRESHOLD = 0.20  # log a suggestion if new option is 20%+ cheaper
 
 _POLL_S = 5.0
 _READY_TIMEOUT_S = 300.0  # 5 min max for pod to come up
-_WATCHER_INTERVAL_S = 1800.0  # check for a CHEAPER GPU every 30 min (pod running)
-_CAPACITY_POLL_S = 300.0  # retry every 5 min when on local fallback
-# Liveness of a HELD pod is probed far more often than the cheaper-GPU migration
-# check — a dead pod must be detected and recovered fast, or idle DMN thinking
-# (its cells are model="runpod") goes silent for the whole gap. 30 min of silence
-# was the "idle thoughts freeze" symptom; 2 min keeps recovery responsive.
+# Liveness of a HELD pod is probed every couple minutes — a dead pod must be
+# detected and recovered fast, or idle DMN thinking (its cells are model="runpod")
+# goes silent for the whole gap. 30 min of silence was the "idle thoughts freeze"
+# symptom; 2 min keeps recovery responsive.
 _LIVENESS_POLL_S = 120.0
 
 # Warmup runs in the background (never blocks boot). Loading a 32B model from disk
@@ -64,11 +67,17 @@ def _required_models() -> list[str]:
 class RunPodManager:
     def __init__(self, api_key: str | None = None) -> None:
         self._api_key = api_key or os.environ.get("RUNPOD_API_KEY", "")
+        # _pod_id: the pod we are actively HOLDING and serving (None = not holding).
+        # _known_pod_id: the persistent ollama-brain pod id, even while stopped — so
+        # ensure_running() resumes the SAME pod (stable host) rather than creating a
+        # new one each cycle. Set by discover_and_publish_host()/ensure_running().
         self._pod_id: str | None = None
+        self._known_pod_id: str | None = None
         self._current_price: float | None = None
         self._watcher_task: asyncio.Task | None = None
         self._warmup_task: asyncio.Task | None = None
         self._watchdog_proc = None  # subprocess.Popen — stops pod if brain process dies
+        self._lifecycle_lock = asyncio.Lock()  # serialize ensure_running/pause
         self._http = None  # httpx.AsyncClient, created lazily in _get_http()
         # Consumer mode (multi-tenant tenant pointing at a shared pod): never owns
         # or stops the pod. Set in start() when BRAIN_MULTITENANT + RUNPOD_HOST.
@@ -413,11 +422,13 @@ class RunPodManager:
                 pod_id = running[0]["id"]
                 logger.info("[RunPod] Pod %s already running", pod_id)
                 self._pod_id = pod_id
+                self._known_pod_id = pod_id
                 host = self._pod_host(pod_id)
                 await self._pull_models(host)
                 self._schedule_warmup(host)
                 self._apply_host(pod_id)
-                self._watcher_task = asyncio.create_task(self._watch())
+                self._spawn_watchdog(pod_id)  # B4: backstop was missing on this path
+                self._start_watcher()
                 return True
 
             for pod in stopped:
@@ -426,7 +437,8 @@ class RunPodManager:
                     await self._resume_pod(pod_id)
                     self._pod_id = pod_id
                     if await self._activate_pod(pod_id):
-                        self._watcher_task = asyncio.create_task(self._watch())
+                        self._known_pod_id = pod_id
+                        self._start_watcher()
                         return True
                     self._pod_id = None
                 except Exception as e:
@@ -436,12 +448,8 @@ class RunPodManager:
             gpu_types = await self._fetch_gpu_types()
             ranked = self._rank_gpus(gpu_types)
             if not ranked:
-                logger.warning(
-                    "[RunPod] No suitable GPU available — using local Ollama, will retry every %.0fs",
-                    _CAPACITY_POLL_S,
-                )
+                logger.warning("[RunPod] No suitable GPU available — using local Ollama")
                 self._clear_host()
-                self._watcher_task = asyncio.create_task(self._watch())
                 return False
 
             for gpu in ranked:
@@ -456,28 +464,156 @@ class RunPodManager:
                     self._pod_id = pod_id
                     self._current_price = gpu["_price"]
                     if await self._activate_pod(pod_id):
-                        self._watcher_task = asyncio.create_task(self._watch())
+                        self._known_pod_id = pod_id
+                        self._start_watcher()
                         return True
                     await self._stop_pod(pod_id)
                     self._pod_id = None
 
-            logger.warning(
-                "[RunPod] All GPU options failed — using local Ollama, will retry every %.0fs",
-                _CAPACITY_POLL_S,
-            )
+            logger.warning("[RunPod] All GPU options failed — using local Ollama")
             self._clear_host()
-            self._watcher_task = asyncio.create_task(self._watch())
             return False
 
         except Exception as e:
-            logger.warning(
-                "[RunPod] Startup failed — using local Ollama, will retry every %.0fs: %s",
-                _CAPACITY_POLL_S,
-                e,
-            )
+            logger.warning("[RunPod] Startup failed — using local Ollama: %s", e)
             self._clear_host()
-            self._watcher_task = asyncio.create_task(self._watch())
             return False
+
+    # ── Demand-driven lifecycle (gateway-owned shared pod) ──────────────────────
+    #
+    # The gateway drives these off the live tenant-brain count (provisioner). The
+    # pod runs ONLY while ≥1 brain needs it; it is paused the moment the last brain
+    # is slept or reaped. This is the contract that prevents an orphaned pod from
+    # burning money with no consumer (and no DMN) for days.
+
+    async def discover_and_publish_host(self) -> str | None:
+        """Find the persistent ollama-brain pod and publish its stable proxy host
+        to settings/RUNPOD_HOST WITHOUT resuming it.
+
+        The host is deterministic from the pod id and stable across stop/resume, so
+        publishing it up front lets every tenant spawn inherit the right host even
+        while the pod is paused — the model router fails over to cloud until the pod
+        answers, then transparently uses it once ensure_running() brings it up.
+        Returns the host, or None if there's no pod / no API key."""
+        if not self._api_key:
+            return None
+        try:
+            existing = await self._find_existing_pods()
+        except Exception as e:
+            logger.warning("[RunPod] discover failed: %s", e)
+            return None
+        if not existing:
+            logger.info("[RunPod] No existing ollama-brain pod to discover")
+            return None
+        running = [p for p in existing if p.get("runtime")]
+        pod = (running or existing)[0]
+        self._known_pod_id = pod["id"]
+        if running:
+            self._pod_id = pod["id"]  # already serving — adopt it
+        host = self._pod_host(self._known_pod_id)
+        from brain.settings import settings
+
+        settings.update({"runpod_host": host})
+        logger.info(
+            "[RunPod] Discovered pod %s (%s) — host published: %s",
+            self._known_pod_id,
+            "running" if running else "stopped",
+            host,
+        )
+        return host
+
+    async def ensure_running(self) -> bool:
+        """Resume-or-create the shared pod and make it serve. Idempotent.
+
+        Called by the gateway reconciler when ≥1 brain is alive. No-op (returns
+        True) if we already hold a live pod. Starts the liveness watcher + watchdog
+        on the transition to holding a pod."""
+        if self._consumer or not self._api_key:
+            return False
+        async with self._lifecycle_lock:
+            # Already holding a pod that's actually serving — nothing to do.
+            if self._pod_id is not None and await self._probe_alive(self._pod_id):
+                return True
+            # Resume the known pod if we have one; else find/create.
+            pod_id = self._known_pod_id
+            if pod_id is None:
+                existing = await self._find_existing_pods()
+                if existing:
+                    pod_id = (
+                        [p for p in existing if p.get("runtime")] or existing
+                    )[0]["id"]
+                    self._known_pod_id = pod_id
+            if pod_id is not None:
+                try:
+                    await self._resume_pod(pod_id)
+                    self._pod_id = pod_id
+                    if await self._activate_pod(pod_id):
+                        self._start_watcher()
+                        logger.info("[RunPod] Pod %s ensured running (demand>0)", pod_id)
+                        return True
+                except Exception as e:
+                    logger.warning("[RunPod] ensure_running resume of %s failed: %s", pod_id, e)
+                self._pod_id = None
+            # No known/resumable pod — create one on the best GPU.
+            try:
+                ranked = self._rank_gpus(await self._fetch_gpu_types())
+            except Exception as e:
+                logger.warning("[RunPod] ensure_running GPU fetch failed: %s", e)
+                return False
+            for gpu in ranked:
+                new_id = await self._create_pod(gpu["id"])
+                if new_id:
+                    self._pod_id = new_id
+                    self._known_pod_id = new_id
+                    self._current_price = gpu["_price"]
+                    if await self._activate_pod(new_id):
+                        self._start_watcher()
+                        logger.info("[RunPod] Pod %s created + running (demand>0)", new_id)
+                        return True
+                    await self._stop_pod(new_id)
+                    self._pod_id = None
+            logger.warning("[RunPod] ensure_running could not bring up a pod — cloud fallback")
+            return False
+
+    async def pause(self) -> None:
+        """Stop the shared pod (preserves volume) when no brain needs it.
+
+        Cancels the liveness watcher FIRST so it can't resume the pod we're about
+        to stop, then stops the pod and the crash-watchdog. _known_pod_id is kept
+        so a later ensure_running() resumes the SAME pod (stable host)."""
+        if self._consumer:
+            return
+        async with self._lifecycle_lock:
+            self._cancel_watcher()
+            if self._warmup_task:
+                self._warmup_task.cancel()
+                self._warmup_task = None
+            self._stop_watchdog()
+            if self._pod_id:
+                await self._stop_pod(self._pod_id)
+                logger.info("[RunPod] Pod %s paused (no live brains)", self._pod_id)
+                self._pod_id = None
+
+    def _start_watcher(self) -> None:
+        if self._watcher_task is None or self._watcher_task.done():
+            self._watcher_task = asyncio.create_task(self._watch())
+
+    def _cancel_watcher(self) -> None:
+        if self._watcher_task:
+            self._watcher_task.cancel()
+            self._watcher_task = None
+
+    def _stop_watchdog(self) -> None:
+        # SIGTERM = "exit without stopping the pod" — we (or the gateway) own the
+        # podStop, so the watchdog must not race us.
+        if self._watchdog_proc is not None:
+            try:
+                import signal as _signal
+
+                self._watchdog_proc.send_signal(_signal.SIGTERM)
+            except Exception:
+                pass
+            self._watchdog_proc = None
 
     async def _stop_pod(self, pod_id: str) -> None:
         try:
@@ -492,153 +628,58 @@ class RunPodManager:
             logger.warning("[RunPod] Failed to stop pod %s: %s", pod_id, e)
 
     async def stop(self) -> None:
-        """Stop the active pod (preserves volume) and cancel the watcher."""
+        """Stop the active pod (preserves volume) and cancel the watcher.
+
+        Used by the single-brain (non-gateway) path on shutdown. The gateway uses
+        pause() instead. Delegates to the same teardown."""
         # Consumer (tenant) never owns the shared pod — stopping it would kill
         # inference for every other tenant. Nothing to tear down.
         if self._consumer:
             return
-        if self._watcher_task:
-            self._watcher_task.cancel()
-            self._watcher_task = None
-        if self._warmup_task:
-            self._warmup_task.cancel()
-            self._warmup_task = None
-        # Tell the watchdog to exit cleanly (SIGTERM = "stop without stopping pod").
-        # We're about to call podStop ourselves, so the watchdog must not race us.
-        if self._watchdog_proc is not None:
-            try:
-                import signal as _signal
-                self._watchdog_proc.send_signal(_signal.SIGTERM)
-            except Exception:
-                pass
-            self._watchdog_proc = None
-        if self._pod_id:
-            await self._stop_pod(self._pod_id)
-            self._pod_id = None
+        await self.pause()
 
-    # ── Background watcher ────────────────────────────────────────────────────
+    # ── Background watcher (liveness-only) ──────────────────────────────────────
 
     async def _watch(self) -> None:
+        """Keep the HELD pod alive — recover it if it stops responding.
+
+        Liveness-only by design: this NEVER speculatively creates a pod when none
+        is held. Spinning one up on a timer (the old behavior) meant a paused pod
+        resurrected itself within minutes and burned money with no consumer. When
+        the held pod is unrecoverable we release it and exit; the gateway reconciler
+        re-engages ensure_running() only when a brain actually needs it.
         """
-        No pod running: poll every 5 min, spin one up when capacity appears.
-        Pod running: probe liveness every 2 min (recover fast if it died) and
-        log if a meaningfully cheaper option appears every 30 min.
-        """
-        last_migration_check = 0.0
-        loop = asyncio.get_event_loop()
         while True:
-            # Held pod → fast liveness cadence; no pod → capacity-retry cadence.
-            interval = _LIVENESS_POLL_S if self._pod_id else _CAPACITY_POLL_S
-            await asyncio.sleep(interval)
+            if self._pod_id is None:
+                return  # nothing held — gateway decides when to acquire
+            await asyncio.sleep(_LIVENESS_POLL_S)
+            if self._pod_id is None:
+                return
             try:
-                # Liveness recovery FIRST and on every fast tick — it must not wait
-                # on the (slow, rate-limited) GPU-type query, which is only needed
-                # for the cheaper-GPU migration check below.
-                if self._pod_id is not None:
-                    if not await self._probe_alive(self._pod_id):
-                        logger.warning(
-                            "[RunPod] Held pod %s not responding — attempting recovery",
-                            self._pod_id,
-                        )
-                        recovered = False
-                        try:
-                            await self._resume_pod(self._pod_id)
-                            recovered = await self._activate_pod(self._pod_id)
-                        except Exception as e:
-                            logger.warning(
-                                "[RunPod] Recovery of %s failed: %s", self._pod_id, e
-                            )
-                        if recovered:
-                            logger.info(
-                                "[RunPod] Pod %s recovered — cheap local inference restored",
-                                self._pod_id,
-                            )
-                        else:
-                            logger.warning(
-                                "[RunPod] Pod %s unrecoverable — releasing; acquire path "
-                                "will re-engage next tick",
-                                self._pod_id,
-                            )
-                            self._pod_id = None
-                        continue
-                    # Pod is alive — only run the (slow) cheaper-GPU comparison
-                    # every _WATCHER_INTERVAL_S, not on every liveness tick.
-                    now = loop.time()
-                    if now - last_migration_check < _WATCHER_INTERVAL_S:
-                        continue
-                    last_migration_check = now
-
-                gpu_types = await self._fetch_gpu_types()
-                ranked = self._rank_gpus(gpu_types)
-                if not ranked:
+                if await self._probe_alive(self._pod_id):
                     continue
-
-                if self._pod_id is None:
+                logger.warning(
+                    "[RunPod] Held pod %s not responding — attempting recovery", self._pod_id
+                )
+                recovered = False
+                try:
+                    await self._resume_pod(self._pod_id)
+                    recovered = await self._activate_pod(self._pod_id)
+                except Exception as e:
+                    logger.warning("[RunPod] Recovery of %s failed: %s", self._pod_id, e)
+                if recovered:
                     logger.info(
-                        "[RunPod] Capacity check — trying %s (%dGB, $%.2f/hr)",
-                        ranked[0]["displayName"],
-                        ranked[0]["memoryInGb"],
-                        ranked[0]["_price"],
+                        "[RunPod] Pod %s recovered — cheap local inference restored", self._pod_id
                     )
-                    for gpu in ranked:
-                        pod_id = await self._create_pod(gpu["id"])
-                        if pod_id:
-                            self._pod_id = pod_id
-                            self._current_price = gpu["_price"]
-                            if await self._activate_pod(pod_id):
-                                logger.info(
-                                    "[RunPod] Pod acquired mid-session — cells switching from local to RunPod"
-                                )
-                                return  # stop looking
-                            await self._stop_pod(pod_id)
-                            self._pod_id = None
                 else:
-                    # Liveness recovery. The acquire path only runs while no pod
-                    # is held; once one is, nothing re-checks it. runpod_watchdog
-                    # can stop it, it can go idle, or RunPod can evict it — and in
-                    # every case runpod_host keeps pointing at a dead pod (or was
-                    # reset to localhost), so DMN/local calls fail over to cloud
-                    # forever. Probe it; resume + re-apply host on failure, and if
-                    # that doesn't work, release _pod_id so the acquire path above
-                    # re-engages on the next tick. Best-effort, never fatal.
-                    if not await self._probe_alive(self._pod_id):
-                        logger.warning(
-                            "[RunPod] Held pod %s not responding — attempting recovery",
-                            self._pod_id,
-                        )
-                        recovered = False
-                        try:
-                            await self._resume_pod(self._pod_id)
-                            recovered = await self._activate_pod(self._pod_id)
-                        except Exception as e:
-                            logger.warning(
-                                "[RunPod] Recovery of %s failed: %s", self._pod_id, e
-                            )
-                        if recovered:
-                            logger.info(
-                                "[RunPod] Pod %s recovered — cheap local inference restored",
-                                self._pod_id,
-                            )
-                        else:
-                            logger.warning(
-                                "[RunPod] Pod %s unrecoverable — releasing; acquire path "
-                                "will re-engage next tick",
-                                self._pod_id,
-                            )
-                            self._pod_id = None
-                        continue
-
-                    best = ranked[0]
-                    if self._current_price and best["_price"] < self._current_price * (
-                        1 - _MIGRATE_THRESHOLD
-                    ):
-                        logger.info(
-                            "[RunPod] Better GPU available: %s (%dGB, $%.2f/hr vs current $%.2f/hr)"
-                            " — restart to switch.",
-                            best["displayName"],
-                            best["memoryInGb"],
-                            best["_price"],
-                            self._current_price,
-                        )
+                    logger.warning(
+                        "[RunPod] Pod %s unrecoverable — releasing (cloud fallback). "
+                        "Reconciler will retry on demand.",
+                        self._pod_id,
+                    )
+                    self._pod_id = None
+                    return
+            except asyncio.CancelledError:
+                return
             except Exception as e:
                 logger.debug("[RunPod] Watcher error: %s", e)

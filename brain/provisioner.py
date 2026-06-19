@@ -140,6 +140,15 @@ class Provisioner:
             return None
         return {"port": p.port, "booting": p.booting, "pid": p.proc.pid}
 
+    def live_count(self) -> int:
+        """Number of tenant brain processes currently alive (booting or serving).
+
+        The gateway uses this to drive the shared RunPod pod's lifecycle: the pod
+        only needs to run while ≥1 brain is alive to use it. A brain that died
+        (proc.poll() set) but hasn't been reaped yet does NOT count — it has no
+        DMN running, so keeping the pod up for it is pure waste."""
+        return sum(1 for p in self._procs.values() if p.proc.poll() is None)
+
     async def ensure(self, user_id: str) -> int:
         """Resume-or-spawn this user's brain process; return its localhost port.
 
