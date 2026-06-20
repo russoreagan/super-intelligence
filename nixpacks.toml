@@ -1,0 +1,12 @@
+# Pin where uv installs the project virtualenv.
+#
+# nixpacks bootstraps a venv at /opt/venv (pip + uv only) and then runs
+# `uv sync`. Without this variable, uv sync targets its own project environment
+# rather than the activated /opt/venv, so the app's dependencies (httpx, etc.)
+# never land in /opt/venv — the gateway then crashes at startup with
+# `ModuleNotFoundError: No module named 'httpx'`, even though the build "succeeds".
+#
+# Forcing UV_PROJECT_ENVIRONMENT=/opt/venv makes `uv sync` populate /opt/venv,
+# which is exactly where railway.toml's startCommand (/opt/venv/bin/python) looks.
+[variables]
+UV_PROJECT_ENVIRONMENT = "/opt/venv"
