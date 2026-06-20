@@ -7,8 +7,14 @@ builder = "nixpacks"
 # --motor), reverse-proxies to it, and owns the shared RunPod pod. The gateway
 # binds /health immediately, so the healthcheck passes well before any tenant
 # boots. To revert to a single shared brain, restore:
-#   /app/.venv/bin/python -m brain.run --ui --dmn --metacognition --ears --voice --motor
-startCommand = "/app/.venv/bin/python -m brain.gateway"
+#   /opt/venv/bin/python -m brain.run --ui --dmn --metacognition --ears --voice --motor
+#
+# Venv path: nixpacks builds the project venv at /opt/venv (its
+# `python -m venv /opt/venv && uv sync` step), NOT /app/.venv. This has
+# flip-flopped across nixpacks versions — if start fails with
+# "/opt/venv/bin/python: No such file", read the build log for the actual
+# `python -m venv <path>` line and match startCommand to it.
+startCommand = "/opt/venv/bin/python -m brain.gateway"
 healthcheckPath = "/health"
 # Gateway binds fast, but keep the generous window for the heavy import graph.
 healthcheckTimeout = 300
