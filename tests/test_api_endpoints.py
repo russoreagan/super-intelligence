@@ -26,7 +26,12 @@ class _FakeRunner:
         self.calls.append((message, end_user_id, mandate_id))
         return (
             f"echo: {message}",
-            {"emotion": "warm", "user_emotion": "curious", "hormonal": {"OXT": 0.3}, "appraisal": "SECRET"},
+            {
+                "emotion": "warm",
+                "user_emotion": "curious",
+                "hormonal": {"OXT": 0.3},
+                "appraisal": "SECRET",
+            },
         )
 
 
@@ -42,7 +47,9 @@ def _client(runner, *, keys=None):
 def _ok(authorization, keys):
     if not authorization:
         return False
-    tok = authorization[7:].strip() if authorization.lower().startswith("bearer ") else authorization
+    tok = (
+        authorization[7:].strip() if authorization.lower().startswith("bearer ") else authorization
+    )
     return tok in keys
 
 
@@ -52,7 +59,14 @@ _AUTH = {"Authorization": "Bearer sk_test_123"}
 def test_requires_api_key():
     c = _client(_FakeRunner())
     assert c.post("/v1/sessions", json={"end_user_id": "cust-1"}).status_code == 401
-    assert c.post("/v1/sessions", json={"end_user_id": "cust-1"}, headers={"Authorization": "Bearer wrong"}).status_code == 401
+    assert (
+        c.post(
+            "/v1/sessions",
+            json={"end_user_id": "cust-1"},
+            headers={"Authorization": "Bearer wrong"},
+        ).status_code
+        == 401
+    )
 
 
 def test_create_session_and_run_turn_routes_end_user_id():
@@ -114,7 +128,10 @@ def test_validation_errors():
     assert c.post("/v1/sessions", json={}, headers=_AUTH).status_code == 400
     sid = c.post("/v1/sessions", json={"end_user_id": "cust-1"}, headers=_AUTH).json()["session_id"]
     # empty message
-    assert c.post(f"/v1/sessions/{sid}/turns", json={"message": "  "}, headers=_AUTH).status_code == 400
+    assert (
+        c.post(f"/v1/sessions/{sid}/turns", json={"message": "  "}, headers=_AUTH).status_code
+        == 400
+    )
 
 
 def test_fail_closed_when_no_keys_configured(monkeypatch):
@@ -165,15 +182,25 @@ def test_mandate_crud_routes_with_fake_backend(monkeypatch):
         return row
 
     monkeypatch.setattr(mandates, "upsert_mandate", _upsert)
-    monkeypatch.setattr(mandates, "list_mandates", lambda include_inactive=False: [{"id": k} for k in store])
-    monkeypatch.setattr(mandates, "assign", lambda persona, mid, sort_order=0: {"persona": persona, "mandate_id": mid})
+    monkeypatch.setattr(
+        mandates, "list_mandates", lambda include_inactive=False: [{"id": k} for k in store]
+    )
+    monkeypatch.setattr(
+        mandates,
+        "assign",
+        lambda persona, mid, sort_order=0: {"persona": persona, "mandate_id": mid},
+    )
 
     c = _client(_FakeRunner())
     # missing role_text → 400
     assert c.put("/v1/mandates/billing", json={}, headers=_AUTH).status_code == 400
     # valid create → version 1, re-PUT → version 2
-    assert c.put("/v1/mandates/billing", json={"role_text": "a"}, headers=_AUTH).json()["version"] == 1
-    assert c.put("/v1/mandates/billing", json={"role_text": "b"}, headers=_AUTH).json()["version"] == 2
+    assert (
+        c.put("/v1/mandates/billing", json={"role_text": "a"}, headers=_AUTH).json()["version"] == 1
+    )
+    assert (
+        c.put("/v1/mandates/billing", json={"role_text": "b"}, headers=_AUTH).json()["version"] == 2
+    )
     # bad slug → MandateError → 400
     assert c.put("/v1/mandates/Bad Slug", json={"role_text": "a"}, headers=_AUTH).status_code == 400
     # assignment route
@@ -188,7 +215,9 @@ def test_agent_id_resolves_to_mandate(monkeypatch):
     monkeypatch.setattr(agents, "resolve", lambda aid: ("the_analyst", "billing"))
     runner = _FakeRunner()
     c = _client(runner)
-    r = c.post("/v1/sessions", json={"end_user_id": "c1", "agent_id": "the_analyst.billing"}, headers=_AUTH)
+    r = c.post(
+        "/v1/sessions", json={"end_user_id": "c1", "agent_id": "the_analyst.billing"}, headers=_AUTH
+    )
     assert r.status_code == 200
     assert r.json()["mandate_id"] == "billing"
     sid = r.json()["session_id"]
@@ -204,7 +233,9 @@ def test_agent_id_cross_persona_409(monkeypatch):
 
     monkeypatch.setattr(agents, "resolve", _boom)
     c = _client(_FakeRunner())
-    r = c.post("/v1/sessions", json={"end_user_id": "c1", "agent_id": "other.billing"}, headers=_AUTH)
+    r = c.post(
+        "/v1/sessions", json={"end_user_id": "c1", "agent_id": "other.billing"}, headers=_AUTH
+    )
     assert r.status_code == 409
 
 
@@ -216,7 +247,9 @@ def test_agent_id_unknown_404(monkeypatch):
 
     monkeypatch.setattr(agents, "resolve", _boom)
     c = _client(_FakeRunner())
-    r = c.post("/v1/sessions", json={"end_user_id": "c1", "agent_id": "the_analyst.ghost"}, headers=_AUTH)
+    r = c.post(
+        "/v1/sessions", json={"end_user_id": "c1", "agent_id": "the_analyst.ghost"}, headers=_AUTH
+    )
     assert r.status_code == 404
 
 
@@ -226,8 +259,16 @@ def test_agents_list_and_ceilings(monkeypatch):
 
     monkeypatch.setattr(supabase_client, "is_enabled", lambda: True)
     monkeypatch.setattr(
-        agents, "list_agents",
-        lambda: [{"agent_id": "the_analyst.billing", "persona": "the_analyst", "mandate_id": "billing", "permissions": {}}],
+        agents,
+        "list_agents",
+        lambda: [
+            {
+                "agent_id": "the_analyst.billing",
+                "persona": "the_analyst",
+                "mandate_id": "billing",
+                "permissions": {},
+            }
+        ],
     )
     c = _client(_FakeRunner())
     r = c.get("/v1/agents", headers=_AUTH)
@@ -251,10 +292,22 @@ def test_agent_upsert_sets_name_and_permissions(monkeypatch):
 
     monkeypatch.setattr(supabase_client, "is_enabled", lambda: True)
     calls = {}
-    monkeypatch.setattr(mandates, "assign", lambda p, m, *a, **k: calls.setdefault("assign", (p, m)))
+    monkeypatch.setattr(
+        mandates, "assign", lambda p, m, *a, **k: calls.setdefault("assign", (p, m))
+    )
     monkeypatch.setattr(agents, "set_name", lambda aid, n: calls.setdefault("name", (aid, n)))
-    monkeypatch.setattr(agents, "set_permissions", lambda aid, perms: calls.setdefault("perms", (aid, perms)))
-    monkeypatch.setattr(agents, "get", lambda aid: {"agent_id": aid, "name": "Billing", "permissions": {"cloud_daily_usd_budget": 20000}})
+    monkeypatch.setattr(
+        agents, "set_permissions", lambda aid, perms: calls.setdefault("perms", (aid, perms))
+    )
+    monkeypatch.setattr(
+        agents,
+        "get",
+        lambda aid: {
+            "agent_id": aid,
+            "name": "Billing",
+            "permissions": {"cloud_daily_usd_budget": 20000},
+        },
+    )
 
     c = _client(_FakeRunner())
     r = c.put(
@@ -283,15 +336,24 @@ class _PendingRunner:
     """Returns a turn whose affect parks a pending cloud write."""
 
     async def __call__(self, message, end_user_id, mandate_id=None):
-        return ("I need your OK to send that email.",
-                {"emotion": "attentive", "pending": {"task": "send email", "description": "Email Bob", "is_write": True}})
+        return (
+            "I need your OK to send that email.",
+            {
+                "emotion": "attentive",
+                "pending": {"task": "send email", "description": "Email Bob", "is_write": True},
+            },
+        )
 
 
 def _client2(turn_runner, confirm_runner=None, keys=None):
     keys = keys or {"sk_test_123"}
     registry = ApiSessionRegistry(now_fn=lambda: 1.0, id_fn=lambda: "sess_p")
     app = FastAPI()
-    app.include_router(build_api_router(turn_runner, registry, auth=lambda h: _ok(h, keys), confirm_runner=confirm_runner))
+    app.include_router(
+        build_api_router(
+            turn_runner, registry, auth=lambda h: _ok(h, keys), confirm_runner=confirm_runner
+        )
+    )
     return TestClient(app)
 
 
@@ -332,7 +394,9 @@ def test_end_user_purge_routes_to_runner():
     keys = {"sk_test_123"}
     registry = ApiSessionRegistry(id_fn=lambda: "s1")
     app = FastAPI()
-    app.include_router(build_api_router(_FakeRunner(), registry, auth=lambda h: _ok(h, keys), purge_runner=_purge))
+    app.include_router(
+        build_api_router(_FakeRunner(), registry, auth=lambda h: _ok(h, keys), purge_runner=_purge)
+    )
     c = TestClient(app)
     # an open session for this end_user should be evicted from the registry
     registry.create("cust-9")
@@ -350,14 +414,23 @@ def test_end_user_purge_unavailable_without_runner():
 def test_end_user_purge_requires_auth():
     async def _purge(e):
         return {}
+
     keys = {"sk_test_123"}
     app = FastAPI()
-    app.include_router(build_api_router(_FakeRunner(), ApiSessionRegistry(), auth=lambda h: _ok(h, keys), purge_runner=_purge))
+    app.include_router(
+        build_api_router(
+            _FakeRunner(), ApiSessionRegistry(), auth=lambda h: _ok(h, keys), purge_runner=_purge
+        )
+    )
     assert TestClient(app).delete("/v1/end_users/x").status_code == 401
 
 
 def _partner_resolver(authorization):
-    tok = authorization[7:].strip() if authorization and authorization.lower().startswith("bearer ") else authorization
+    tok = (
+        authorization[7:].strip()
+        if authorization and authorization.lower().startswith("bearer ")
+        else authorization
+    )
     return {
         "ka": {"partner_id": "A", "owner": False},
         "kb": {"partner_id": "B", "owner": False},
@@ -368,9 +441,14 @@ def _partner_resolver(authorization):
 def _scoped_client(runner=None):
     registry = ApiSessionRegistry(id_fn=lambda: "sx")
     app = FastAPI()
-    app.include_router(build_api_router(
-        runner or _FakeRunner(), registry,
-        auth=lambda h: _partner_resolver(h) is not None, resolver=_partner_resolver))
+    app.include_router(
+        build_api_router(
+            runner or _FakeRunner(),
+            registry,
+            auth=lambda h: _partner_resolver(h) is not None,
+            resolver=_partner_resolver,
+        )
+    )
     return TestClient(app)
 
 
@@ -378,11 +456,14 @@ def test_partner_can_only_drive_own_sessions():
     c = _scoped_client()
     A = {"Authorization": "Bearer ka"}
     B = {"Authorization": "Bearer kb"}
-    O = {"Authorization": "Bearer ko"}
+    OWNER = {"Authorization": "Bearer ko"}
     sid = c.post("/v1/sessions", json={"end_user_id": "c1"}, headers=A).json()["session_id"]
     assert c.post(f"/v1/sessions/{sid}/turns", json={"message": "hi"}, headers=A).status_code == 200
     assert c.post(f"/v1/sessions/{sid}/turns", json={"message": "hi"}, headers=B).status_code == 403
-    assert c.post(f"/v1/sessions/{sid}/turns", json={"message": "hi"}, headers=O).status_code == 200  # owner sees all
+    assert (
+        c.post(f"/v1/sessions/{sid}/turns", json={"message": "hi"}, headers=OWNER).status_code
+        == 200
+    )  # owner sees all
 
 
 def test_partner_keys_owner_only(monkeypatch):
@@ -390,10 +471,19 @@ def test_partner_keys_owner_only(monkeypatch):
     from brain.second_brain import supabase_client
 
     monkeypatch.setattr(supabase_client, "is_enabled", lambda: True)
-    monkeypatch.setattr(_a, "mint_partner_key", lambda pid, label=None: {"id": "k1", "partner_id": pid, "token": "sk_secret"})
+    monkeypatch.setattr(
+        _a,
+        "mint_partner_key",
+        lambda pid, label=None: {"id": "k1", "partner_id": pid, "token": "sk_secret"},
+    )
     c = _scoped_client()
     # a partner key cannot mint
-    assert c.post("/v1/partner_keys", json={"partner_id": "X"}, headers={"Authorization": "Bearer ka"}).status_code == 403
+    assert (
+        c.post(
+            "/v1/partner_keys", json={"partner_id": "X"}, headers={"Authorization": "Bearer ka"}
+        ).status_code
+        == 403
+    )
     # the owner can, and gets the plaintext token once
     r = c.post("/v1/partner_keys", json={"partner_id": "X"}, headers={"Authorization": "Bearer ko"})
     assert r.status_code == 200 and r.json()["token"] == "sk_secret"
@@ -432,10 +522,14 @@ def test_turn_stream_emits_inner_life_then_done():
     keys = {"sk_test_123"}
     registry = ApiSessionRegistry(id_fn=lambda: "ss")
     app = FastAPI()
-    app.include_router(build_api_router(runner, registry, auth=lambda h: _ok(h, keys), event_source=source))
+    app.include_router(
+        build_api_router(runner, registry, auth=lambda h: _ok(h, keys), event_source=source)
+    )
     c = TestClient(app)
     registry.create("c1")
-    with c.stream("POST", "/v1/sessions/ss/turns/stream", json={"message": "hi"}, headers=_AUTH) as r:
+    with c.stream(
+        "POST", "/v1/sessions/ss/turns/stream", json={"message": "hi"}, headers=_AUTH
+    ) as r:
         assert r.status_code == 200
         assert "text/event-stream" in r.headers["content-type"]
         body = "".join(r.iter_text())
@@ -452,7 +546,9 @@ def test_turn_stream_unavailable_without_source():
     sid = c.post("/v1/sessions", json={"end_user_id": "c1"}, headers=_AUTH).json()["session_id"]
     # The real emitter singleton may import; accept either streaming (200) or 501,
     # but a missing-source build must not 500.
-    with c.stream("POST", f"/v1/sessions/{sid}/turns/stream", json={"message": "hi"}, headers=_AUTH) as r:
+    with c.stream(
+        "POST", f"/v1/sessions/{sid}/turns/stream", json={"message": "hi"}, headers=_AUTH
+    ) as r:
         assert r.status_code in (200, 501)
 
 

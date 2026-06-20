@@ -95,7 +95,8 @@ class HypothesisStore:
 
     @staticmethod
     def _hyp_id(content_key: str) -> str:
-        return hashlib.sha1(content_key.encode()).hexdigest()[:12]
+        # Content-addressed id, not a security digest.
+        return hashlib.sha1(content_key.encode(), usedforsecurity=False).hexdigest()[:12]
 
     def add(self, principle: str, source_id: str) -> Hypothesis:
         """Record a gate-admitted principle, corroborated by ``source_id``. Same
@@ -168,7 +169,9 @@ class HypothesisStore:
 
     @classmethod
     def from_dict(cls, data: dict, *, salt: str = "", now_fn=time.time) -> HypothesisStore:
-        store = cls(promote_k=int(data.get("promote_k", _DEFAULT_PROMOTE_K)), salt=salt, now_fn=now_fn)
+        store = cls(
+            promote_k=int(data.get("promote_k", _DEFAULT_PROMOTE_K)), salt=salt, now_fn=now_fn
+        )
         for rec in data.get("hypotheses", []):
             hyp = Hypothesis(
                 id=rec["id"],

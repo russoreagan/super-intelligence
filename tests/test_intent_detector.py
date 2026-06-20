@@ -15,8 +15,8 @@ from brain.settings import settings
 # Controlled embedding space. Phrases map to 3-D vectors; cosine is exact.
 _VECS = {
     "remind me": [1.0, 0.0, 0.0],
-    "can you jog my memory": [0.95, 0.05, 0.0],   # paraphrase — near "remind me"
-    "the sky is blue today": [0.0, 0.0, 1.0],     # unrelated — orthogonal
+    "can you jog my memory": [0.95, 0.05, 0.0],  # paraphrase — near "remind me"
+    "the sky is blue today": [0.0, 0.0, 1.0],  # unrelated — orthogonal
     "we went over this earlier": [0.9, 0.1, 0.0],  # paraphrase the LLM will confirm
 }
 
@@ -86,8 +86,10 @@ def test_no_learning_when_detector_already_fired(tmp_path):
 
 def test_falls_back_to_literal_without_embedder(tmp_path):
     d = _det(tmp_path)
-    assert _run(d.detect_all("remind me please", None))["epistemic_action"] is True   # literal
-    assert _run(d.detect_all("can you jog my memory", None))["epistemic_action"] is False  # no embed → miss
+    assert _run(d.detect_all("remind me please", None))["epistemic_action"] is True  # literal
+    assert (
+        _run(d.detect_all("can you jog my memory", None))["epistemic_action"] is False
+    )  # no embed → miss
 
 
 def test_disabled_uses_literal_only(tmp_path):

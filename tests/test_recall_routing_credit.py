@@ -34,7 +34,11 @@ def test_episode_side_credited_when_episodes_drove_recall():
     before_grep = w.get_edge_weight("mem.recall", "hippocampus.schema_grep")
     n = upd._apply_recall_credit(
         _trace({"schema": 0, "episode": 4}),
-        outcome=0.6, plasticity=1.0, turn_plast=1.0, gainers=[], losers=[],
+        outcome=0.6,
+        plasticity=1.0,
+        turn_plast=1.0,
+        gainers=[],
+        losers=[],
     )
     assert n == 2  # cosine_recall + time_filter (episode side)
     assert w.get_edge_weight("mem.recall", "hippocampus.cosine_recall") > before_cos
@@ -49,7 +53,11 @@ def test_split_shifts_toward_the_bigger_contributor():
     upd = HebbianUpdater(w)
     upd._apply_recall_credit(
         _trace({"schema": 1, "episode": 3}),
-        outcome=0.8, plasticity=1.0, turn_plast=1.0, gainers=[], losers=[],
+        outcome=0.8,
+        plasticity=1.0,
+        turn_plast=1.0,
+        gainers=[],
+        losers=[],
     )
     episode_gain = w.get_edge_weight("mem.recall", "hippocampus.cosine_recall") - 1.0
     schema_gain = w.get_edge_weight("mem.recall", "hippocampus.schema_grep") - 1.0
@@ -63,7 +71,11 @@ def test_credit_sign_follows_outcome():
     before = w.get_edge_weight("mem.recall", "hippocampus.cosine_recall")
     upd._apply_recall_credit(
         _trace({"schema": 0, "episode": 4}),
-        outcome=-0.6, plasticity=1.0, turn_plast=1.0, gainers=[], losers=[],
+        outcome=-0.6,
+        plasticity=1.0,
+        turn_plast=1.0,
+        gainers=[],
+        losers=[],
     )
     assert w.get_edge_weight("mem.recall", "hippocampus.cosine_recall") < before
 
@@ -87,7 +99,11 @@ def test_flag_off_disables_credit():
     try:
         n = upd._apply_recall_credit(
             _trace({"schema": 2, "episode": 2}),
-            outcome=0.6, plasticity=1.0, turn_plast=1.0, gainers=[], losers=[],
+            outcome=0.6,
+            plasticity=1.0,
+            turn_plast=1.0,
+            gainers=[],
+            losers=[],
         )
         assert n == 0
     finally:

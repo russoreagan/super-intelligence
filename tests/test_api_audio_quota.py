@@ -87,8 +87,15 @@ _AUTH_OWNER = {"Authorization": "Bearer ko"}
 
 
 def _resolver(authorization):
-    tok = authorization[7:].strip() if authorization and authorization.lower().startswith("bearer ") else authorization
-    return {"ka": {"partner_id": "A", "owner": False}, "ko": {"partner_id": None, "owner": True}}.get(tok)
+    tok = (
+        authorization[7:].strip()
+        if authorization and authorization.lower().startswith("bearer ")
+        else authorization
+    )
+    return {
+        "ka": {"partner_id": "A", "owner": False},
+        "ko": {"partner_id": None, "owner": True},
+    }.get(tok)
 
 
 async def _tts_runner(text, **kw):
@@ -103,9 +110,13 @@ def _client(quota):
     app = FastAPI()
     app.include_router(
         build_api_router(
-            lambda *a, **k: None, ApiSessionRegistry(),
-            auth=lambda h: _resolver(h) is not None, resolver=_resolver,
-            tts_runner=_tts_runner, stt_runner=_stt_runner, audio_quota=quota,
+            lambda *a, **k: None,
+            ApiSessionRegistry(),
+            auth=lambda h: _resolver(h) is not None,
+            resolver=_resolver,
+            tts_runner=_tts_runner,
+            stt_runner=_stt_runner,
+            audio_quota=quota,
         )
     )
     return TestClient(app)
@@ -127,7 +138,10 @@ def test_owner_bypasses_route_quota(monkeypatch):
     c = _client(AudioQuota(now_fn=_Clock()))
     # owner key, even over a tiny cap, is never metered
     for _ in range(3):
-        assert c.post("/v1/tts", json={"text": "a long line of text"}, headers=_AUTH_OWNER).status_code == 200
+        assert (
+            c.post("/v1/tts", json={"text": "a long line of text"}, headers=_AUTH_OWNER).status_code
+            == 200
+        )
 
 
 def test_stt_route_blocks_when_over(monkeypatch):
@@ -144,7 +158,12 @@ def test_no_enforcement_when_caps_zero(monkeypatch):
     _set_caps(monkeypatch, tts=0, stt=0)
     c = _client(AudioQuota(now_fn=_Clock()))
     for _ in range(5):
-        assert c.post("/v1/tts", json={"text": "lots and lots of text here"}, headers=_AUTH_A).status_code == 200
+        assert (
+            c.post(
+                "/v1/tts", json={"text": "lots and lots of text here"}, headers=_AUTH_A
+            ).status_code
+            == 200
+        )
 
 
 def test_turn_audio_blocked_by_quota_emits_audio_error(monkeypatch):
@@ -185,15 +204,22 @@ def test_turn_audio_blocked_by_quota_emits_audio_error(monkeypatch):
     app = FastAPI()
     app.include_router(
         build_api_router(
-            runner, registry, auth=lambda h: _resolver(h) is not None, resolver=_resolver,
-            event_source=source, tts_stream_runner=_stream_runner, audio_quota=quota,
+            runner,
+            registry,
+            auth=lambda h: _resolver(h) is not None,
+            resolver=_resolver,
+            event_source=source,
+            tts_stream_runner=_stream_runner,
+            audio_quota=quota,
         )
     )
     registry.create("c1")
     c = TestClient(app)
     with c.stream(
-        "POST", "/v1/sessions/ss/turns/stream",
-        json={"message": "hi", "audio": {"enabled": True}}, headers=_AUTH_A,
+        "POST",
+        "/v1/sessions/ss/turns/stream",
+        json={"message": "hi", "audio": {"enabled": True}},
+        headers=_AUTH_A,
     ) as r:
         body = "".join(r.iter_text())
     assert "event: done" in body  # text still delivered

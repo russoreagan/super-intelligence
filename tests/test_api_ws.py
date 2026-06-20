@@ -19,7 +19,6 @@ from starlette.websockets import WebSocketDisconnect
 from brain.api.server import build_api_router
 from brain.api.sessions import ApiSessionRegistry
 
-
 # ── helpers / fakes ──────────────────────────────────────────────────────────
 
 
@@ -65,7 +64,9 @@ def _stt_factory(transcripts: list[tuple[str, bool, float]]):
     return factory, session
 
 
-async def _fake_tts_stream(text, *, affect=None, voice_id=None, model=None, fmt=None, provider=None):
+async def _fake_tts_stream(
+    text, *, affect=None, voice_id=None, model=None, fmt=None, provider=None
+):
     """Fake TTS that yields meta → one chunk → end."""
     audio_b64 = base64.b64encode(b"\x00" * 32).decode()
     yield "meta", {"format": "mp3", "sample_rate": 24000}
@@ -73,7 +74,9 @@ async def _fake_tts_stream(text, *, affect=None, voice_id=None, model=None, fmt=
     yield "end", {"chunks": 1, "duration_s": 0.1, "chars": len(text)}
 
 
-async def _slow_tts_stream(text, *, affect=None, voice_id=None, model=None, fmt=None, provider=None):
+async def _slow_tts_stream(
+    text, *, affect=None, voice_id=None, model=None, fmt=None, provider=None
+):
     """TTS that yields many chunks with asyncio yields so barge-in can fire."""
     audio_b64 = base64.b64encode(b"\x00" * 32).decode()
     yield "meta", {"format": "mp3", "sample_rate": 24000}
@@ -86,7 +89,9 @@ async def _slow_tts_stream(text, *, affect=None, voice_id=None, model=None, fmt=
 def _ok(authorization, keys):
     if not authorization:
         return False
-    tok = authorization[7:].strip() if authorization.lower().startswith("bearer ") else authorization
+    tok = (
+        authorization[7:].strip() if authorization.lower().startswith("bearer ") else authorization
+    )
     return tok in keys
 
 
@@ -114,6 +119,7 @@ _AUTH = {"Authorization": "Bearer sk_test_123"}
 def _make_session(registry):
     """Create a session and return its id."""
     from brain.api.sessions import ApiSession
+
     s = ApiSession(session_id="sess_abc", end_user_id="cust-1", partner_id="p1")
     registry._sessions["sess_abc"] = s  # type: ignore[attr-defined]
     return "sess_abc"
@@ -124,27 +130,33 @@ def _make_session(registry):
 
 def test_ws_rejects_missing_auth():
     c, _ = _client()
-    with pytest.raises(WebSocketDisconnect) as exc_info:
-        with c.websocket_connect("/v1/sessions/sess_abc/stream"):
-            pass
+    with (
+        pytest.raises(WebSocketDisconnect) as exc_info,
+        c.websocket_connect("/v1/sessions/sess_abc/stream"),
+    ):
+        pass
     assert exc_info.value.code == 1008
 
 
 def test_ws_rejects_bad_token():
     c, _ = _client()
-    with pytest.raises(WebSocketDisconnect) as exc_info:
-        with c.websocket_connect(
+    with (
+        pytest.raises(WebSocketDisconnect) as exc_info,
+        c.websocket_connect(
             "/v1/sessions/sess_abc/stream", headers={"Authorization": "Bearer bad"}
-        ):
-            pass
+        ),
+    ):
+        pass
     assert exc_info.value.code == 1008
 
 
 def test_ws_rejects_unknown_session():
     c, _ = _client()
-    with pytest.raises(WebSocketDisconnect) as exc_info:
-        with c.websocket_connect("/v1/sessions/no_such_id/stream", headers=_AUTH):
-            pass
+    with (
+        pytest.raises(WebSocketDisconnect) as exc_info,
+        c.websocket_connect("/v1/sessions/no_such_id/stream", headers=_AUTH),
+    ):
+        pass
     assert exc_info.value.code == 1008
 
 
@@ -211,11 +223,13 @@ def test_text_with_audio_enabled_streams_tts():
     _make_session(reg)
     with c.websocket_connect("/v1/sessions/sess_abc/stream", headers=_AUTH) as ws:
         ws.receive_json()  # ready
-        ws.send_json({
-            "type": "text",
-            "message": "speak",
-            "audio": {"enabled": True, "format": "mp3"},
-        })
+        ws.send_json(
+            {
+                "type": "text",
+                "message": "speak",
+                "audio": {"enabled": True, "format": "mp3"},
+            }
+        )
         frames = []
         while True:
             f = ws.receive_json()
@@ -312,7 +326,7 @@ def _partner_resolver(authorization):
 
 
 def test_stt_quota_exceeded_returns_error_no_turn(monkeypatch):
-    from brain.api.audio_quota import AudioQuota, STT_SECONDS
+    from brain.api.audio_quota import STT_SECONDS, AudioQuota
     from brain.settings import settings
 
     monkeypatch.setitem(settings._data, "audio_stt_seconds_per_window", 1)
@@ -325,8 +339,11 @@ def test_stt_quota_exceeded_returns_error_no_turn(monkeypatch):
     runner = _FakeTurnRunner()
 
     from brain.api.sessions import ApiSession
+
     reg2 = ApiSessionRegistry(now_fn=lambda: 1000.0, id_fn=lambda: "sess_abc")
-    reg2._sessions["sess_abc"] = ApiSession(session_id="sess_abc", end_user_id="cust-1", partner_id="p1")  # type: ignore[attr-defined]
+    reg2._sessions["sess_abc"] = ApiSession(
+        session_id="sess_abc", end_user_id="cust-1", partner_id="p1"
+    )  # type: ignore[attr-defined]
 
     app2 = FastAPI()
     app2.include_router(
@@ -355,7 +372,7 @@ def test_stt_quota_exceeded_returns_error_no_turn(monkeypatch):
 
 
 def test_tts_quota_exceeded_delivers_done_then_audio_error(monkeypatch):
-    from brain.api.audio_quota import AudioQuota, TTS_CHARS
+    from brain.api.audio_quota import TTS_CHARS, AudioQuota
     from brain.settings import settings
 
     monkeypatch.setitem(settings._data, "audio_tts_chars_per_window", 1)
@@ -367,7 +384,10 @@ def test_tts_quota_exceeded_delivers_done_then_audio_error(monkeypatch):
     runner = _FakeTurnRunner(text="will not speak")
     reg2 = ApiSessionRegistry(now_fn=lambda: 1000.0, id_fn=lambda: "sess_abc")
     from brain.api.sessions import ApiSession
-    reg2._sessions["sess_abc"] = ApiSession(session_id="sess_abc", end_user_id="cust-1", partner_id="p1")  # type: ignore[attr-defined]
+
+    reg2._sessions["sess_abc"] = ApiSession(
+        session_id="sess_abc", end_user_id="cust-1", partner_id="p1"
+    )  # type: ignore[attr-defined]
 
     app2 = FastAPI()
     app2.include_router(
@@ -384,11 +404,13 @@ def test_tts_quota_exceeded_delivers_done_then_audio_error(monkeypatch):
 
     with c2.websocket_connect("/v1/sessions/sess_abc/stream", headers=_AUTH) as ws:
         ws.receive_json()  # ready
-        ws.send_json({
-            "type": "text",
-            "message": "say something",
-            "audio": {"enabled": True},
-        })
+        ws.send_json(
+            {
+                "type": "text",
+                "message": "say something",
+                "audio": {"enabled": True},
+            }
+        )
         frames = {}
         for _ in range(3):
             f = ws.receive_json()

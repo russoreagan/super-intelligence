@@ -82,7 +82,8 @@ def _ensure_checkpoint() -> str | None:
     tmp = path.with_suffix(".pth.partial")
     logger.info("Vocal events: downloading PANNs CNN14 checkpoint (~312 MB, one-time) …")
     try:
-        urllib.request.urlretrieve(_CKPT_URL, tmp)
+        # _CKPT_URL is a hardcoded https constant (the PANNs checkpoint), not user input.
+        urllib.request.urlretrieve(_CKPT_URL, tmp)  # nosec B310
         if tmp.stat().st_size != _CKPT_BYTES:
             raise OSError(f"downloaded {tmp.stat().st_size} bytes, expected {_CKPT_BYTES}")
         tmp.replace(path)

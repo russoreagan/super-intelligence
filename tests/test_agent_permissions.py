@@ -42,9 +42,14 @@ def test_empty_agent_reproduces_org():
 def test_numeric_cap_takes_the_tighter():
     org = _org()
     # agent asks for less → honored
-    assert effective_permissions(org, {"cloud_daily_usd_budget": 2.0})["cloud_daily_usd_budget"] == 2.0
+    assert (
+        effective_permissions(org, {"cloud_daily_usd_budget": 2.0})["cloud_daily_usd_budget"] == 2.0
+    )
     # agent asks for MORE → clamped to org (cannot widen)
-    assert effective_permissions(org, {"cloud_daily_usd_budget": 100.0})["cloud_daily_usd_budget"] == 5.0
+    assert (
+        effective_permissions(org, {"cloud_daily_usd_budget": 100.0})["cloud_daily_usd_budget"]
+        == 5.0
+    )
     # int caps stay ints
     eff = effective_permissions(org, {"ralph_max_total_attempts": 3})
     assert eff["ralph_max_total_attempts"] == 3 and isinstance(eff["ralph_max_total_attempts"], int)
@@ -64,10 +69,18 @@ def test_auto_confirm_writes_is_bounded_flag():
     # agent inherits org when unset
     assert effective_permissions(org, {})["motor_auto_confirm_writes"] == 1
     # agent can turn it off
-    assert effective_permissions(org, {"motor_auto_confirm_writes": 0})["motor_auto_confirm_writes"] == 0
+    assert (
+        effective_permissions(org, {"motor_auto_confirm_writes": 0})["motor_auto_confirm_writes"]
+        == 0
+    )
     # agent cannot enable it when the account disallows
     org_off = {**_org(), "motor_auto_confirm_writes": 0}
-    assert effective_permissions(org_off, {"motor_auto_confirm_writes": 1})["motor_auto_confirm_writes"] == 0
+    assert (
+        effective_permissions(org_off, {"motor_auto_confirm_writes": 1})[
+            "motor_auto_confirm_writes"
+        ]
+        == 0
+    )
 
 
 def test_cloud_level_most_restrictive():

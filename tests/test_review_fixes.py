@@ -263,7 +263,12 @@ def test_persona_surfaces_in_sync():
     from pathlib import Path
 
     from brain.neuron import _PERSONA_REWARD_WEIGHTS
-    from brain.persona_chem import CHANNELS, PERSONA_CHEMISTRY, PERSONA_TRAIT_DEFAULTS
+    from brain.persona_chem import (
+        _NONCHEM_DIAL_MAP,
+        CHANNELS,
+        PERSONA_CHEMISTRY,
+        PERSONA_COG_POSITIONS,
+    )
 
     def slug(name: str) -> str:
         return re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
@@ -291,26 +296,35 @@ def test_persona_surfaces_in_sync():
     for name in chem_names:
         assert f"id: '{name}'" in data, f"{name} missing from settings-data.js personas"
 
-    # 4. Trait defaults only reference real settings keys.
+    # 4. Cognitive dials only reference real settings keys, and every persona's
+    #    cog positions only reference real dials (persona-system v2 mechanism).
     from brain.settings import DEFAULTS
 
-    for name, overrides in PERSONA_TRAIT_DEFAULTS.items():
-        assert name in chem_names, f"trait defaults for unknown persona {name}"
-        for key in overrides:
-            assert key in DEFAULTS, f"{name} trait default {key} not in settings DEFAULTS"
+    for dial_id, rows in _NONCHEM_DIAL_MAP.items():
+        for key, *_rest in rows:
+            assert key in DEFAULTS, f"dial {dial_id} references unknown settings key {key}"
+    for name, positions in PERSONA_COG_POSITIONS.items():
+        assert name in chem_names, f"cog positions for unknown persona {name}"
+        for dial_id in positions:
+            assert dial_id in _NONCHEM_DIAL_MAP, f"{name} references unknown dial {dial_id}"
 
 
 def test_persona_trait_defaults_materialize(tmp_path, monkeypatch):
     import brain.persona_chem as pc
 
     monkeypatch.setattr(pc, "_PERSONAS_ROOT", tmp_path)
+    # The Poet's high lingering dial (0.88) shifts affect_carryover_da_threshold
+    # below its 0.10 default: 0.10 - 0.06·(0.88-0.5)·2 = 0.0544.
     out = pc.materialize_into_settings("The Poet", {})
-    assert out["affect_carryover_da_threshold"] == 0.06
+    assert out["affect_carryover_da_threshold"] == 0.0544
+    # The Stoic is the flat-neutral control — absent from PERSONA_COG_POSITIONS,
+    # so no cognitive-dial keys are materialized at all.
     out2 = pc.materialize_into_settings("The Stoic", {})
-    assert out2["affect_carryover_da_threshold"] == 0.25
-    # Personas without overrides leave the key untouched.
+    assert "affect_carryover_da_threshold" not in out2
+    # The Visionary's lingering dial sits at the neutral midpoint (0.50) → the key
+    # is written at its base default with zero offset.
     out3 = pc.materialize_into_settings("The Visionary", {})
-    assert "affect_carryover_da_threshold" not in out3
+    assert out3["affect_carryover_da_threshold"] == 0.10
 
 
 # ── OpenAI provider integration (router remap + dispatch) ─────────────────────
@@ -390,7 +404,9 @@ def _parse_js_dial_maps(js: str) -> dict:
     for m in re.finditer(r"\{\s*id:\s*'([a-z-]+)'.*?map:\s*\[(.*?)\]", js, re.S):
         did, body = m.group(1), m.group(2)
         entries = {}
-        for e in re.finditer(r"\{\s*key:\s*'([A-Za-z_0-9]+)',\s*dir:\s*([+-]?\d+),\s*span:\s*([0-9.]+)", body):
+        for e in re.finditer(
+            r"\{\s*key:\s*'([A-Za-z_0-9]+)',\s*dir:\s*([+-]?\d+),\s*span:\s*([0-9.]+)", body
+        ):
             entries[e.group(1)] = (int(e.group(2)), float(e.group(3)))
         if entries:
             out[did] = entries
@@ -408,9 +424,7 @@ def test_cognitive_dial_map_js_python_sync():
         assert dial_id in js_maps, f"{dial_id} missing from settings-ui.js dial maps"
         py = {key: (d, s) for (key, d, s, _lo, _hi) in rows}
         js_entry = js_maps[dial_id]
-        assert set(py) == set(js_entry), (
-            f"{dial_id} key drift: python={set(py)} js={set(js_entry)}"
-        )
+        assert set(py) == set(js_entry), f"{dial_id} key drift: python={set(py)} js={set(js_entry)}"
         for key, (pd, ps) in py.items():
             jd, jsp = js_entry[key]
             assert pd == jd, f"{dial_id}.{key} dir drift: py={pd} js={jd}"

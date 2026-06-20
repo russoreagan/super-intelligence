@@ -13,8 +13,6 @@ from __future__ import annotations
 
 import asyncio
 
-import pytest
-
 import brain.provisioner as pv
 import brain.runpod_manager as rm
 
@@ -28,7 +26,11 @@ def _mgr(api_key="key", consumer=False):
 # ── ensure_running: never spends without reason ────────────────────────────
 
 
-def test_ensure_running_no_key_is_noop():
+def test_ensure_running_no_key_is_noop(monkeypatch):
+    # Hermetic: the manager falls back to RUNPOD_API_KEY when given an empty key,
+    # so clear any ambient value (leaked from .env or another test) to isolate the
+    # genuine no-key path.
+    monkeypatch.delenv("RUNPOD_API_KEY", raising=False)
     m = _mgr(api_key="")
     assert asyncio.run(m.ensure_running()) is False
     assert m._pod_id is None

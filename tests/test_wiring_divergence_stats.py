@@ -32,10 +32,14 @@ def test_tv_distance():
 
 
 def test_divergence_within_vs_across():
-    same = [{"probe": "p", "rep": 0, "o": ["x", "y", "z"]},
-            {"probe": "p", "rep": 1, "o": ["x", "y", "z"]}]
-    rev = [{"probe": "p", "rep": 0, "o": ["z", "y", "x"]},
-           {"probe": "p", "rep": 1, "o": ["z", "y", "x"]}]
+    same = [
+        {"probe": "p", "rep": 0, "o": ["x", "y", "z"]},
+        {"probe": "p", "rep": 1, "o": ["x", "y", "z"]},
+    ]
+    rev = [
+        {"probe": "p", "rep": 0, "o": ["z", "y", "x"]},
+        {"probe": "p", "rep": 1, "o": ["z", "y", "x"]},
+    ]
     assert _divergence(same, same, "o", _kendall_tau, within=True) == 0.0
     assert _divergence(same, rev, "o", _kendall_tau, within=False) == 1.0
 

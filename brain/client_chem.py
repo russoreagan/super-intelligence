@@ -86,7 +86,10 @@ class FileChemStore:
         self._root.mkdir(parents=True, exist_ok=True)
 
     def _path(self, key: str) -> Path:
-        return self._root / (hashlib.sha1(key.encode()).hexdigest()[:20] + ".json")
+        # Content-addressed filename, not a security digest.
+        return self._root / (
+            hashlib.sha1(key.encode(), usedforsecurity=False).hexdigest()[:20] + ".json"
+        )
 
     def load(self, key: str) -> tuple[dict | None, float | None]:
         path = self._path(key)

@@ -290,9 +290,7 @@ class _SetupMixin:
         self.brainstem.register_loop(
             "api_server", lambda: self._api_server.start(), restart_on_crash=False
         )
-        logger.info(
-            "Engine API enabled on port %s", os.environ.get("BRAIN_API_PORT", "8780")
-        )
+        logger.info("Engine API enabled on port %s", os.environ.get("BRAIN_API_PORT", "8780"))
 
     async def _setup_motor(self) -> None:
         if not (self.args.motor or os.environ.get("BRAIN_MOTOR", "false").lower() == "true"):
@@ -366,7 +364,7 @@ class _SetupMixin:
             )
             logger.info(
                 "Motor cortex: using provider-agnostic generic executor (model=%s)",
-                settings.get("motor_model") or "gpt",
+                _settings.get("motor_model") or "gpt",
             )
         else:
             from brain.clusters.cloud_executor import CloudExecutor

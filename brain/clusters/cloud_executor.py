@@ -22,7 +22,6 @@ import json
 import logging
 import os
 import time
-from datetime import datetime
 from pathlib import Path
 
 from brain.bus import Bus
@@ -79,9 +78,7 @@ SUBPROCESS_TIMEOUT = 120  # seconds — cloud ops can be slow
 # Per-tenant on hosted: resolve under SECOND_BRAIN_PATH, not the shared cwd
 # (every tenant runs with cwd=repo_root, so a relative path collides).
 _SECOND_BRAIN_ROOT = Path(
-    os.environ.get(
-        "SECOND_BRAIN_PATH", str(Path(__file__).parent.parent.parent / "second_brain")
-    )
+    os.environ.get("SECOND_BRAIN_PATH", str(Path(__file__).parent.parent.parent / "second_brain"))
 )
 RESEARCH_DIR = _SECOND_BRAIN_ROOT / "research"
 _RESEARCH_MAX_AGE_DAYS = 2
@@ -523,7 +520,10 @@ class CloudExecutor:
         from brain.clusters._executor_common import append_tool_log_entry
 
         await append_tool_log_entry(
-            task, output, success, "CloudExecutor",
+            task,
+            output,
+            success,
+            "CloudExecutor",
             end_user_id=getattr(self, "_current_end_user_id", None),
         )
 

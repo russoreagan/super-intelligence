@@ -168,8 +168,11 @@ class Provisioner:
                 p.last_active = time.time()
                 return p.port
             if p and p.proc.poll() is not None:
-                logger.warning("[provisioner] %s process exited (code %s) — respawning",
-                               user_id[:8], p.proc.poll())
+                logger.warning(
+                    "[provisioner] %s process exited (code %s) — respawning",
+                    user_id[:8],
+                    p.proc.poll(),
+                )
                 self._procs.pop(user_id, None)
             return await self._spawn(user_id)
 
@@ -377,6 +380,9 @@ class Provisioner:
             now = time.time()
             for uid, p in list(self._procs.items()):
                 if not p.booting and (now - p.last_active) > IDLE_TIMEOUT_S:
-                    logger.info("[provisioner] reaping abandoned tenant %s (no connection in %.0fh)",
-                                uid[:8], (now - p.last_active) / 3600)
+                    logger.info(
+                        "[provisioner] reaping abandoned tenant %s (no connection in %.0fh)",
+                        uid[:8],
+                        (now - p.last_active) / 3600,
+                    )
                     await self.stop_user(uid)

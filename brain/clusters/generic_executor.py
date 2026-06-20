@@ -37,7 +37,6 @@ No MCP connectors (that is CMA's domain): connectors_summary reports none.
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import time
@@ -249,7 +248,7 @@ class GenericExecutor(ExecutorCommon):
         max_steps = max(1, int(settings.get("ralph_max_total_attempts") or 12))
 
         transcript: list[str] = []
-        for step in range(max_steps):
+        for _step in range(max_steps):
             call = await self._router.call_structured_any(
                 self._model_key,
                 system,

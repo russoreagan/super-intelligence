@@ -69,18 +69,20 @@ class WsSession:
         # Set by barge-in; _ws_stream_audio polls this between chunks.
         self._tts_cancel: asyncio.Event = asyncio.Event()
         self._active_turn_id: str | None = None
-        self._dg_session = None          # DeepgramLiveSession | None
-        self._audio_opts: dict = {}      # last audio config from client
-        self._transcript_seq: int = 0    # monotonic counter for transcript frames
+        self._dg_session = None  # DeepgramLiveSession | None
+        self._audio_opts: dict = {}  # last audio config from client
+        self._transcript_seq: int = 0  # monotonic counter for transcript frames
 
     async def run(self) -> None:
         """Accept the connection, send ready, run until disconnect."""
         await self._ws.accept()
-        await self._ws.send_json({
-            "type": "ready",
-            "session_id": self._session.session_id,
-            "expects": "pcm_16000",
-        })
+        await self._ws.send_json(
+            {
+                "type": "ready",
+                "session_id": self._session.session_id,
+                "expects": "pcm_16000",
+            }
+        )
 
         source = self._event_source
         if source is None:
@@ -137,13 +139,21 @@ class WsSession:
         try:
             pcm_bytes = base64.b64decode(data_b64)
         except Exception:
-            await self._send({"type": "error", "detail": "audio.data must be valid base64", "code": 400})
+            await self._send(
+                {"type": "error", "detail": "audio.data must be valid base64", "code": 400}
+            )
             return
 
         # Open a Deepgram session on the first audio chunk; check quota once here.
         if self._dg_session is None:
             if self._stt_live_factory is None:
-                await self._send({"type": "error", "detail": "live STT is not available on this server", "code": 501})
+                await self._send(
+                    {
+                        "type": "error",
+                        "detail": "live STT is not available on this server",
+                        "code": 501,
+                    }
+                )
                 return
             if self._audio_quota and not self._ctx.get("owner"):
                 reason = self._audio_quota.check(self._ctx.get("partner_id"), STT_SECONDS)
@@ -151,6 +161,7 @@ class WsSession:
                     await self._send({"type": "error", "detail": reason, "code": 429})
                     return
             from brain.api.audio import AudioError
+
             session = self._stt_live_factory()
             try:
                 await session.open(self._on_transcript)
@@ -169,7 +180,9 @@ class WsSession:
     async def _handle_text(self, msg: dict) -> None:
         message = str(msg.get("message") or "").strip()
         if not message:
-            await self._send({"type": "error", "detail": "message (non-empty string) is required", "code": 400})
+            await self._send(
+                {"type": "error", "detail": "message (non-empty string) is required", "code": 400}
+            )
             return
         audio = msg.get("audio")
         if audio is not None and isinstance(audio, dict):
@@ -195,6 +208,7 @@ class WsSession:
         # Record STT quota on the final result (duration_s is populated).
         if duration_s > 0 and self._audio_quota and not self._ctx.get("owner"):
             from brain.api.audio_quota import STT_SECONDS
+
             with contextlib.suppress(Exception):
                 self._audio_quota.record(self._ctx.get("partner_id"), STT_SECONDS, duration_s)
 
@@ -279,8 +293,13 @@ class WsSession:
         chunks so a barge-in can abort mid-stream without waiting for the full
         synthesis to complete."""
         if self._tts_stream_runner is None:
-            await self._send({"type": "audio_error", "turn_id": turn_id,
-                              "detail": "audio is not available on this server"})
+            await self._send(
+                {
+                    "type": "audio_error",
+                    "turn_id": turn_id,
+                    "detail": "audio is not available on this server",
+                }
+            )
             return
 
         from brain.api.audio_quota import TTS_CHARS
@@ -307,8 +326,9 @@ class WsSession:
             ):
                 # Barge-in: stop streaming if new speech started.
                 if self._tts_cancel.is_set():
-                    await self._send({"type": "audio_end", "turn_id": turn_id,
-                                      "chunks": 0, "cancelled": True})
+                    await self._send(
+                        {"type": "audio_end", "turn_id": turn_id, "chunks": 0, "cancelled": True}
+                    )
                     return
                 if kind == "end":
                     chars = payload.get("chars") or 0
@@ -341,6 +361,7 @@ class WsSession:
 def _affect_view(text: str, affect: dict | None) -> tuple[str, dict]:
     try:
         from brain.api.audio import affect_view
+
         return affect_view(text, affect)
     except Exception:
         return text, {"base_tag": None, "segments": []}
