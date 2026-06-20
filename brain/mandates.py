@@ -118,9 +118,11 @@ def _load() -> dict[str, dict]:
 def list_mandates(include_inactive: bool = False) -> list[dict]:
     """Full library rows for the org, ordered by id. Active-only unless asked."""
     sb, org = _sb()
-    q = sb.table("mandates").select(
-        "id, role_text, conduct_rules, reward_weights, version, active, updated_at"
-    ).eq("org_id", org)
+    q = (
+        sb.table("mandates")
+        .select("id, role_text, conduct_rules, reward_weights, version, active, updated_at")
+        .eq("org_id", org)
+    )
     if not include_inactive:
         q = q.eq("active", True)
     res = q.order("id").execute()
@@ -140,18 +142,14 @@ def upsert_mandate(
     mid = _valid_id(mandate_id)
     text = str(role_text or "")
     if len(text) > MAX_ROLE_TEXT_CHARS:
-        raise MandateError(
-            f"role_text exceeds {MAX_ROLE_TEXT_CHARS} chars ({len(text)})"
-        )
+        raise MandateError(f"role_text exceeds {MAX_ROLE_TEXT_CHARS} chars ({len(text)})")
     cr = _valid_json("conduct_rules", conduct_rules)
     rw = _valid_json("reward_weights", reward_weights)
 
     # Read-then-write version bump. One process per org and a single editor in
     # practice, so the race window is acceptable.
-    existing = (
-        sb.table("mandates").select("version").eq("org_id", org).eq("id", mid).execute()
-    )
-    prior = (existing.data or [])
+    existing = sb.table("mandates").select("version").eq("org_id", org).eq("id", mid).execute()
+    prior = existing.data or []
     row = {
         "org_id": org,
         "id": mid,
@@ -171,9 +169,7 @@ def deactivate_mandate(mandate_id: str) -> bool:
     the id). Returns False if the id wasn't found."""
     sb, org = _sb()
     mid = _valid_id(mandate_id)
-    existing = (
-        sb.table("mandates").select("version").eq("org_id", org).eq("id", mid).execute()
-    )
+    existing = sb.table("mandates").select("version").eq("org_id", org).eq("id", mid).execute()
     prior = existing.data or []
     if not prior:
         return False
@@ -226,13 +222,7 @@ def assign(persona: str | None, mandate_id: str, sort_order: int = 0) -> dict:
     p = _persona(persona)
     mid = _valid_id(mandate_id)
 
-    lib = (
-        sb.table("mandates")
-        .select("role_text, active")
-        .eq("org_id", org)
-        .eq("id", mid)
-        .execute()
-    )
+    lib = sb.table("mandates").select("role_text, active").eq("org_id", org).eq("id", mid).execute()
     librow = lib.data or []
     if not librow or not librow[0].get("active"):
         raise MandateError(f"mandate '{mid}' does not exist or is inactive")
@@ -263,9 +253,7 @@ def assign(persona: str | None, mandate_id: str, sort_order: int = 0) -> dict:
         )
         total += sum(len(str(r.get("role_text") or "")) for r in (others.data or []))
     if total > MAX_CATALOG_CHARS:
-        raise MandateError(
-            f"assigned catalog would exceed {MAX_CATALOG_CHARS} chars ({total})"
-        )
+        raise MandateError(f"assigned catalog would exceed {MAX_CATALOG_CHARS} chars ({total})")
 
     row = {
         "org_id": org,
@@ -295,9 +283,7 @@ def unassign(persona: str | None, mandate_id: str) -> bool:
     )
     if not (existing.data or []):
         return False
-    sb.table("agents").delete().eq("org_id", org).eq("persona", p).eq(
-        "mandate_id", mid
-    ).execute()
+    sb.table("agents").delete().eq("org_id", org).eq("persona", p).eq("mandate_id", mid).execute()
     refresh()
     return True
 

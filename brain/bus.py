@@ -171,8 +171,7 @@ class Neuromodulators:
         from brain.settings import settings as _s
 
         self._baseline = {
-            ch: float(_s.get(f"chem_baseline_{ch}", self._DEF_BASELINE[ch]))
-            for ch in self.CHANNELS
+            ch: float(_s.get(f"chem_baseline_{ch}", self._DEF_BASELINE[ch])) for ch in self.CHANNELS
         }
 
 
@@ -261,8 +260,7 @@ class HormonalState:
         from brain.settings import settings as _s
 
         self._baseline = {
-            ch: float(_s.get(f"chem_baseline_{ch}", self._DEF_BASELINE[ch]))
-            for ch in self.CHANNELS
+            ch: float(_s.get(f"chem_baseline_{ch}", self._DEF_BASELINE[ch])) for ch in self.CHANNELS
         }
 
     # ── Modulation helpers (used by hypothalamus) ─────────────────────────────

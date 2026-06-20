@@ -59,7 +59,7 @@ def sandbox(tmp_path, monkeypatch):
 
 def _wiring_with_path(names: list[str]) -> Wiring:
     w = Wiring()
-    for a, b in zip(names, names[1:]):
+    for a, b in zip(names, names[1:], strict=False):
         w.add(a, b)
     return w
 
@@ -124,10 +124,7 @@ async def test_consolidation_end_to_end_invariants(sandbox, fake_schema_store):
     sleep = _scripted_sleep(router, fake_schema_store, EpisodicStore(), wiring)
 
     # Alternating reward/punish DA so updates flow both directions.
-    full = [
-        _trace(i, names, da=0.6 if i % 2 else 0.4, da_prior=0.45)
-        for i in range(20)
-    ]
+    full = [_trace(i, names, da=0.6 if i % 2 else 0.4, da_prior=0.45) for i in range(20)]
     await sleep.consolidate("harness", _session_traces(20), full_traces=full)
 
     # 1. Every weight stays inside the structural clamp.
@@ -137,8 +134,7 @@ async def test_consolidation_end_to_end_invariants(sandbox, fake_schema_store):
 
     # 2. Learning happened: at least one edge moved off its starting weight.
     moved = any(
-        abs(wiring.get_edge_weight(src, tgt) - prev) > 1e-6
-        for (src, tgt), prev in before.items()
+        abs(wiring.get_edge_weight(src, tgt) - prev) > 1e-6 for (src, tgt), prev in before.items()
     )
     assert moved, "20 outcome-bearing turns produced zero wiring movement"
 

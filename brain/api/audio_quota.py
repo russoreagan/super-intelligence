@@ -126,11 +126,7 @@ class AudioQuota:
             now = self._now()
             for flat_key, events in (data or {}).items():
                 partner_id, _, meter = str(flat_key).partition("::")
-                kept = [
-                    (float(t), float(a))
-                    for t, a in events
-                    if now - float(t) <= window_s
-                ]
+                kept = [(float(t), float(a)) for t, a in events if now - float(t) <= window_s]
                 if kept:
                     self._events[(partner_id, meter)] = kept
         except Exception:  # noqa: BLE001 — missing/corrupt file → start empty

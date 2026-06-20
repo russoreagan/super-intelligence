@@ -227,7 +227,13 @@ class HebbianUpdater:
     _CREDITED_SWITCHES = {"template_match", "self_reference", "epistemic_action"}
 
     def _apply_switch_routing_credit(
-        self, trace, outcome: float, plasticity: float, turn_plast: float, gainers: list, losers: list
+        self,
+        trace,
+        outcome: float,
+        plasticity: float,
+        turn_plast: float,
+        gainers: list,
+        losers: list,
     ) -> int:
         if not settings.get("switch_routing_credit", 1):
             return 0
@@ -289,7 +295,13 @@ class HebbianUpdater:
     }
 
     def _apply_recall_credit(
-        self, trace, outcome: float, plasticity: float, turn_plast: float, gainers: list, losers: list
+        self,
+        trace,
+        outcome: float,
+        plasticity: float,
+        turn_plast: float,
+        gainers: list,
+        losers: list,
     ) -> int:
         if not settings.get("recall_routing_credit", 1):
             return 0

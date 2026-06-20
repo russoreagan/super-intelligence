@@ -10,7 +10,6 @@ Covers:
 
 from __future__ import annotations
 
-import asyncio
 from collections import deque
 from unittest.mock import AsyncMock, MagicMock
 
@@ -48,7 +47,9 @@ def test_reward_weight_known_personas():
 
 
 def test_reward_weight_accepts_display_name_or_slug():
-    assert reward_weight("The Analyst", "correctness") == reward_weight("the_analyst", "correctness")
+    assert reward_weight("The Analyst", "correctness") == reward_weight(
+        "the_analyst", "correctness"
+    )
 
 
 def test_reward_weight_identity_fallback():
@@ -297,7 +298,9 @@ def _make_dmn_idle(persona: str):
 def test_idle_thought_quality_rewards_novel_thought():
     dmn, nm = _make_dmn_idle("The Visionary")
     # Novel thought: low overlap, low cosine → high quality → DA reward.
-    dmn._reward_idle_thought_quality("a genuinely fresh and reasonably detailed idle reflection here", 0.05, 0.1)
+    dmn._reward_idle_thought_quality(
+        "a genuinely fresh and reasonably detailed idle reflection here", 0.05, 0.1
+    )
     assert nm.deltas.get("DA", 0.0) > 0.0
     settings._data.pop("persona_name", None)
 

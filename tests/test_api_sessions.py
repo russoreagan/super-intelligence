@@ -31,8 +31,11 @@ class _FakeTable:
             self._rows[key] = self._pending
             self._pending = None
             return type("R", (), {"data": []})()
-        match = [r for r in self._rows.values()
-                 if r["org_id"] == self._f.get("org_id") and r["session_id"] == self._f.get("session_id")]
+        match = [
+            r
+            for r in self._rows.values()
+            if r["org_id"] == self._f.get("org_id") and r["session_id"] == self._f.get("session_id")
+        ]
         return type("R", (), {"data": match})()
 
 
@@ -56,7 +59,7 @@ def test_create_persists_and_survives_memory_loss(monkeypatch):
     rows = {}
     _enable(monkeypatch, rows)
     reg = ApiSessionRegistry(now_fn=lambda: 1.0, id_fn=lambda: "sess1")
-    s = reg.create("cust-1", agent_id="the_analyst.billing", mandate_id="billing")
+    reg.create("cust-1", agent_id="the_analyst.billing", mandate_id="billing")
     assert ("org-1", "sess1") in rows  # write-through happened
 
     # Simulate a redeploy: a brand-new registry with empty memory.
@@ -74,7 +77,7 @@ def test_companion_mode_in_memory_only(monkeypatch):
     monkeypatch.setattr(supabase_client, "is_enabled", lambda: False)
     reg = ApiSessionRegistry(id_fn=lambda: "s2")
     reg.create("c2")
-    assert reg.get("s2") is not None          # served from memory
+    assert reg.get("s2") is not None  # served from memory
     assert ApiSessionRegistry().get("s2") is None  # nothing persisted
 
 

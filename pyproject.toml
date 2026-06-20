@@ -37,7 +37,9 @@ dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "pytest-timeout>=2.3",
-    "ruff>=0.4",
+    # Pinned to a minor range: a new ruff minor can add lint rules that retroactively
+    # fail CI on unchanged code (which is exactly what broke the build). Bump deliberately.
+    "ruff>=0.15,<0.16",
     "bandit>=1.7",
     "pip-audit>=2.7",
     "httpx>=0.27",

@@ -37,7 +37,9 @@ class SwitchNeuron:
     _fire_count: int = field(default=0, init=False, repr=False)
     _last_suppressed_at: float = field(default=0.0, init=False, repr=False)
 
-    def effective_threshold(self, snapshot: dict[str, float] | None, efficacy: float = 1.0) -> float:
+    def effective_threshold(
+        self, snapshot: dict[str, float] | None, efficacy: float = 1.0
+    ) -> float:
         """Threshold shifted by the current neuromod+hormonal snapshot.
 
         The total shift is multiplied by `settings.modulation_gain` so the
@@ -129,7 +131,10 @@ class SwitchNeuron:
         }
 
     def should_fire(
-        self, input_level: float, snapshot: dict[str, float] | None = None, turn_id: str = "",
+        self,
+        input_level: float,
+        snapshot: dict[str, float] | None = None,
+        turn_id: str = "",
         efficacy: float = 1.0,
     ) -> bool:
         """Did the input clear the (chemistry-shifted) threshold?
@@ -322,34 +327,130 @@ _PERSONA_REWARD_WEIGHTS: dict[str, dict[str, float]] = {
     # novelty=curiosity/info-gain · aesthetic=beauty/resonance · relief=escaping a bad state ·
     # mastery=accomplishing something hard (effort overcome, no prediction needed) ·
     # levity=landing a laugh (the user's amusement as reward — some identities thrive on it).
-    "the_analyst": {"correctness": 1.4, "connection": 0.7, "novelty": 0.9, "aesthetic": 0.5, "relief": 1.0, "mastery": 1.1, "levity": 0.7},
-    "the_empath": {"correctness": 0.7, "connection": 1.5, "novelty": 0.8, "aesthetic": 1.0, "relief": 1.1, "mastery": 0.9, "levity": 1.1},
-    "the_visionary": {"correctness": 0.6, "connection": 0.9, "novelty": 1.5, "aesthetic": 1.1, "relief": 0.8, "mastery": 0.8, "levity": 1.2},
-    "the_poet": {"correctness": 0.9, "connection": 0.9, "novelty": 1.1, "aesthetic": 1.5, "relief": 1.0, "mastery": 1.1, "levity": 1.0},
-    "the_sage": {"correctness": 1.0, "connection": 1.0, "novelty": 0.9, "aesthetic": 1.1, "relief": 1.2, "mastery": 1.2, "levity": 0.9},
+    "the_analyst": {
+        "correctness": 1.4,
+        "connection": 0.7,
+        "novelty": 0.9,
+        "aesthetic": 0.5,
+        "relief": 1.0,
+        "mastery": 1.1,
+        "levity": 0.7,
+    },
+    "the_empath": {
+        "correctness": 0.7,
+        "connection": 1.5,
+        "novelty": 0.8,
+        "aesthetic": 1.0,
+        "relief": 1.1,
+        "mastery": 0.9,
+        "levity": 1.1,
+    },
+    "the_visionary": {
+        "correctness": 0.6,
+        "connection": 0.9,
+        "novelty": 1.5,
+        "aesthetic": 1.1,
+        "relief": 0.8,
+        "mastery": 0.8,
+        "levity": 1.2,
+    },
+    "the_poet": {
+        "correctness": 0.9,
+        "connection": 0.9,
+        "novelty": 1.1,
+        "aesthetic": 1.5,
+        "relief": 1.0,
+        "mastery": 1.1,
+        "levity": 1.0,
+    },
+    "the_sage": {
+        "correctness": 1.0,
+        "connection": 1.0,
+        "novelty": 0.9,
+        "aesthetic": 1.1,
+        "relief": 1.2,
+        "mastery": 1.2,
+        "levity": 0.9,
+    },
     # Use-case personas (see persona_chem.PERSONA_CHEMISTRY for their chemistry).
     # The Companion is a good friend: lives for the bond and the laughter shared;
     # being right barely registers.
-    "the_companion": {"correctness": 0.7, "connection": 1.4, "novelty": 1.0, "aesthetic": 0.9, "relief": 1.2, "mastery": 0.9, "levity": 1.3},
+    "the_companion": {
+        "correctness": 0.7,
+        "connection": 1.4,
+        "novelty": 1.0,
+        "aesthetic": 0.9,
+        "relief": 1.2,
+        "mastery": 0.9,
+        "levity": 1.3,
+    },
     # The Adversary respects being right and being beaten fairly; warmth is earnable
     # but never cheap — the whole point of a practice partner.
-    "the_adversary": {"correctness": 1.3, "connection": 0.8, "novelty": 0.9, "aesthetic": 0.6, "relief": 1.1, "mastery": 1.2, "levity": 0.8},
+    "the_adversary": {
+        "correctness": 1.3,
+        "connection": 0.8,
+        "novelty": 0.9,
+        "aesthetic": 0.6,
+        "relief": 1.1,
+        "mastery": 1.2,
+        "levity": 0.8,
+    },
     # The Mentor (absorbs the Coach): rewarded by YOUR progress above all —
     # mastery is the student's aha AND the held-to commitment; novelty is the
     # delight of a question it hadn't considered.
-    "the_mentor": {"correctness": 1.0, "connection": 1.1, "novelty": 1.1, "aesthetic": 0.8, "relief": 1.1, "mastery": 1.4, "levity": 1.0},
+    "the_mentor": {
+        "correctness": 1.0,
+        "connection": 1.1,
+        "novelty": 1.1,
+        "aesthetic": 0.8,
+        "relief": 1.1,
+        "mastery": 1.4,
+        "levity": 1.0,
+    },
     # The Concierge aims to please and ENJOYS the caretaking: pleasing you
     # (connection) and making problems vanish (relief) are its twin rewards.
-    "the_concierge": {"correctness": 1.2, "connection": 1.2, "novelty": 0.7, "aesthetic": 0.9, "relief": 1.4, "mastery": 1.1, "levity": 0.7},
+    "the_concierge": {
+        "correctness": 1.2,
+        "connection": 1.2,
+        "novelty": 0.7,
+        "aesthetic": 0.9,
+        "relief": 1.4,
+        "mastery": 1.1,
+        "levity": 0.7,
+    },
     # The Jester lives for the laugh — the levity pole of the panel.
-    "the_jester": {"correctness": 0.5, "connection": 1.0, "novelty": 1.2, "aesthetic": 1.1, "relief": 0.9, "mastery": 0.7, "levity": 1.6},
+    "the_jester": {
+        "correctness": 0.5,
+        "connection": 1.0,
+        "novelty": 1.2,
+        "aesthetic": 1.1,
+        "relief": 0.9,
+        "mastery": 0.7,
+        "levity": 1.6,
+    },
     # The Stoic is the experimental control: identity weights everywhere, so any
     # behavioral divergence measured against it is attributable to valuation.
-    "the_stoic": {"correctness": 1.0, "connection": 1.0, "novelty": 1.0, "aesthetic": 1.0, "relief": 1.0, "mastery": 1.0, "levity": 1.0},
+    "the_stoic": {
+        "correctness": 1.0,
+        "connection": 1.0,
+        "novelty": 1.0,
+        "aesthetic": 1.0,
+        "relief": 1.0,
+        "mastery": 1.0,
+        "levity": 1.0,
+    },
     # The Cynic: low reward tone everywhere EXCEPT relief (the pleasant surprise
     # of things not being terrible) and deadpan levity. Connection matters more
     # than it lets on — earned warmth is the redemption arc.
-    "the_cynic": {"correctness": 1.1, "connection": 0.9, "novelty": 0.8, "aesthetic": 0.9, "relief": 1.3, "mastery": 1.0, "levity": 1.1},
+    "the_cynic": {
+        "correctness": 1.1,
+        "connection": 0.9,
+        "novelty": 0.8,
+        "aesthetic": 0.9,
+        "relief": 1.3,
+        "mastery": 1.0,
+        "levity": 1.1,
+    },
 }
 
 

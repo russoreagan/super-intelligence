@@ -375,9 +375,7 @@ def _route_persona_state() -> None:
         if tenant_settings.exists():
             try:
                 persona = str(
-                    json.loads(tenant_settings.read_text(encoding="utf-8")).get(
-                        "persona_name", ""
-                    )
+                    json.loads(tenant_settings.read_text(encoding="utf-8")).get("persona_name", "")
                 )
             except Exception:
                 persona = ""

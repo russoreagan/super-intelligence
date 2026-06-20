@@ -913,8 +913,13 @@ class TestGradedHostilityRelease:
         hypo = HypothalamusCluster(bus)
         base = bus.neuromod.snapshot()["GABA"]
         await hypo.process(
-            {"sentiment": 0.0, "hostility": hostility, "salience": 0.3,
-             "surprise_score": 0.0, "topic_summary": "t"}
+            {
+                "sentiment": 0.0,
+                "hostility": hostility,
+                "salience": 0.3,
+                "surprise_score": 0.0,
+                "topic_summary": "t",
+            }
         )
         return bus.neuromod.snapshot()["GABA"] - base
 
@@ -945,8 +950,14 @@ class TestGradedHostilityRelease:
             hypo = HypothalamusCluster(bus)
             base = bus.neuromod.snapshot()["Glu"]
             await hypo.process(
-                {"sentiment": 0.0, "hostility": hostility, "salience": 0.3,
-                 "surprise_score": 0.0, "intent": "hostile", "topic_summary": "t"}
+                {
+                    "sentiment": 0.0,
+                    "hostility": hostility,
+                    "salience": 0.3,
+                    "surprise_score": 0.0,
+                    "intent": "hostile",
+                    "topic_summary": "t",
+                }
             )
             return bus.neuromod.snapshot()["Glu"] - base
 
@@ -980,8 +991,13 @@ class TestGradedProsodyRelease:
             )
             base = bus.neuromod.snapshot()["GABA"]
             await hypo.process(
-                {"sentiment": 0.0, "hostility": 0.0, "salience": 0.1,
-                 "surprise_score": 0.0, "topic_summary": "t"}
+                {
+                    "sentiment": 0.0,
+                    "hostility": 0.0,
+                    "salience": 0.1,
+                    "surprise_score": 0.0,
+                    "topic_summary": "t",
+                }
             )
             return bus.neuromod.snapshot()["GABA"] - base
         finally:
@@ -1014,14 +1030,24 @@ class TestGradedProsodyRelease:
             hypo = HypothalamusCluster(bus)
             await bus.publish_dict(
                 "auditory.speech_dynamics",
-                {"pace_label": "rushed", "pace_strength": pace_strength,
-                 "hesitant": False, "burst_score": 0.0, "long_pause_count": 0},
+                {
+                    "pace_label": "rushed",
+                    "pace_strength": pace_strength,
+                    "hesitant": False,
+                    "burst_score": 0.0,
+                    "long_pause_count": 0,
+                },
                 source="test",
             )
             base = bus.neuromod.snapshot()["Glu"]
             await hypo.process(
-                {"sentiment": 0.0, "hostility": 0.0, "salience": 0.1,
-                 "surprise_score": 0.0, "topic_summary": "t"}
+                {
+                    "sentiment": 0.0,
+                    "hostility": 0.0,
+                    "salience": 0.1,
+                    "surprise_score": 0.0,
+                    "topic_summary": "t",
+                }
             )
             return bus.neuromod.snapshot()["Glu"] - base
 

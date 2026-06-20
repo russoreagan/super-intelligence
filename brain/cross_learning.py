@@ -71,9 +71,7 @@ async def learn_from_private(
 
 def _default_store_path() -> Path:
     root = Path(
-        os.environ.get(
-            "SECOND_BRAIN_PATH", str(Path(__file__).parent.parent / "second_brain")
-        )
+        os.environ.get("SECOND_BRAIN_PATH", str(Path(__file__).parent.parent / "second_brain"))
     )
     return root / "hypotheses.json"
 

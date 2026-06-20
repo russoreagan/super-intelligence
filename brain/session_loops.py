@@ -645,9 +645,7 @@ class _LoopsMixin:
                     except asyncio.CancelledError:
                         if getattr(self, "_tasks_kill_requested", False):
                             self._tasks_kill_requested = False
-                            logger.info(
-                                "[TaskWorker] Task [%s] killed by user", task.id
-                            )
+                            logger.info("[TaskWorker] Task [%s] killed by user", task.id)
                         else:
                             raise  # session shutdown — propagate
                     finally:

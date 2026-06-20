@@ -75,6 +75,7 @@ def _remap_cloud_provider(model_id: str, cluster: str) -> str:
         return model_id
     return MODEL_MAP["gpt-mini"] if "haiku" in model_id else MODEL_MAP["gpt"]
 
+
 # Embedding dim must match EpisodicStore table schema (see brain/second_brain/store.py).
 # nomic-embed-text and gemini-embedding-001 both produce 768-dim vectors.
 EMBEDDING_DIM = 768
@@ -103,6 +104,8 @@ _HOSTED_LOCAL_FALLBACK_MODEL = os.environ.get(
 def _host_is_local(host: str) -> bool:
     """True if a host URL points at a local Ollama (localhost/127.0.0.1)."""
     return ("localhost" in host) or ("127.0.0.1" in host)
+
+
 RUNPOD_MODEL = os.environ.get("RUNPOD_MODEL", "qwen2.5:32b")
 RUNPOD_HTTP_TIMEOUT = float(os.environ.get("RUNPOD_HTTP_TIMEOUT_SECONDS", "180"))
 RUNPOD_KEEP_ALIVE = os.environ.get("RUNPOD_KEEP_ALIVE", "30m")
@@ -557,7 +560,9 @@ class ModelRouter:
                 from brain.agent_ctx import current_agent
 
                 _a = current_agent()
-                _ac = (_a or {}).get("permissions", {}).get("cloud_daily_usd_budget") if _a else None
+                _ac = (
+                    (_a or {}).get("permissions", {}).get("cloud_daily_usd_budget") if _a else None
+                )
                 if _ac not in (None, ""):
                     _acf = float(_ac)
                     daily_cap = _acf if daily_cap <= 0 else min(daily_cap, _acf)
@@ -866,7 +871,9 @@ class ModelRouter:
                 'Reply with ONE JSON object: {"tool":"<name>","args":{...}} to call a tool, '
                 'or {"text":"<one-line summary>"} when the task is done. JSON only.'
             )
-            text, _i, _o = await self._call_local(sys2, messages, max_tokens, local_variant=model_id)
+            text, _i, _o = await self._call_local(
+                sys2, messages, max_tokens, local_variant=model_id
+            )
             from brain.utils import safe_json_parse
 
             parsed = safe_json_parse(text) or {}
@@ -922,8 +929,15 @@ class ModelRouter:
 
         if _provider_for(model_id) == "openai":
             return await self._call_structured_openai(
-                model_id, system_prompt, messages, tool_name, tool_description, tool_schema,
-                cluster=cluster, cell=cell, max_tokens=max_tokens,
+                model_id,
+                system_prompt,
+                messages,
+                tool_name,
+                tool_description,
+                tool_schema,
+                cluster=cluster,
+                cell=cell,
+                max_tokens=max_tokens,
             )
 
         try:
@@ -1109,9 +1123,7 @@ class ModelRouter:
         for m in messages:
             content = m["content"]
             if isinstance(content, list):  # flatten Anthropic-style blocks
-                content = "\n".join(
-                    str(b.get("text", "")) for b in content if isinstance(b, dict)
-                )
+                content = "\n".join(str(b.get("text", "")) for b in content if isinstance(b, dict))
             oai_msgs.append({"role": m["role"], "content": content})
         kwargs: dict = {
             "model": model_id,

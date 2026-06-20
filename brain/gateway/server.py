@@ -42,8 +42,16 @@ INTERSTITIAL_HTML = _GW_DIR / "interstitial.html"
 
 # Hop-by-hop headers must not be forwarded through a proxy.
 _HOP_BY_HOP = {
-    "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
-    "te", "trailers", "transfer-encoding", "upgrade", "host", "content-length",
+    "connection",
+    "keep-alive",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "te",
+    "trailers",
+    "transfer-encoding",
+    "upgrade",
+    "host",
+    "content-length",
 }
 
 # How long to let a brain consolidate (end-of-session memory write) on Sleep
@@ -105,8 +113,9 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
             return ui_auth.unauthorized_response(request)
         request.state.user = claims
         request.state.access_token = (
-            (refreshed or {}).get("access_token") if refreshed else
-            request.cookies.get(ui_auth.ACCESS_COOKIE, "")
+            (refreshed or {}).get("access_token")
+            if refreshed
+            else request.cookies.get(ui_auth.ACCESS_COOKIE, "")
         )
         response = await call_next(request)
         if refreshed:
@@ -156,15 +165,21 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
     @app.post("/auth/login")
     async def auth_login(request: Request):
         if not ui_auth.is_configured():
-            return JSONResponse({"ok": False, "error": "Authentication is not configured."}, status_code=503)
+            return JSONResponse(
+                {"ok": False, "error": "Authentication is not configured."}, status_code=503
+            )
         body = await request.json()
         email = str(body.get("email", "")).strip()
         password = str(body.get("password", ""))
         if not email or not password:
-            return JSONResponse({"ok": False, "error": "Email and password are required."}, status_code=400)
+            return JSONResponse(
+                {"ok": False, "error": "Email and password are required."}, status_code=400
+            )
         session = await ui_auth.password_login(email, password)
         if not session or not session.get("access_token"):
-            return JSONResponse({"ok": False, "error": "Invalid email or password."}, status_code=401)
+            return JSONResponse(
+                {"ok": False, "error": "Invalid email or password."}, status_code=401
+            )
         remember = bool(body.get("remember", True))
         resp = JSONResponse({"ok": True, "next": ui_auth.safe_next(body.get("next"))})
         ui_auth.set_session_cookies(resp, session, remember=remember)
@@ -175,7 +190,9 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
         if ui_auth.is_configured():
             body = await request.json()
             reset_url = str(request.base_url).rstrip("/") + "/auth/reset"
-            await ui_auth.request_password_reset(str(body.get("email", "")).strip(), redirect_to=reset_url)
+            await ui_auth.request_password_reset(
+                str(body.get("email", "")).strip(), redirect_to=reset_url
+            )
         return JSONResponse({"ok": True})
 
     @app.get("/auth/reset")
@@ -198,24 +215,21 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
         safe_applicant = html_escape(applicant)
         note_html = (
             f"<p style='margin:16px 0 0;color:#52525b'><strong>Note:</strong> {html_escape(note)}</p>"
-            if note else ""
+            if note
+            else ""
         )
         html_body = (
-            "<div style=\"font-family:-apple-system,Segoe UI,Roboto,sans-serif;max-width:520px;"
+            '<div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;max-width:520px;'
             "margin:0 auto;color:#18181b\"><h2 style='font-weight:600'>New Elyceum admission request</h2>"
             f"<p style='color:#52525b'><strong>{safe_applicant}</strong> has requested admission to "
             f"Elyceum.</p>{note_html}<p style='margin-top:24px;color:#71717a;font-size:13px'>Provision via "
             "<code>scripts/create_user.py</code> if approved.</p></div>"
         )
-        text_body = f"New Elyceum admission request from {applicant}." + (f"\n\nNote: {note}" if note else "")
+        text_body = f"New Elyceum admission request from {applicant}." + (
+            f"\n\nNote: {note}" if note else ""
+        )
         await mailer.send_email(to, "Elyceum — new admission request", html_body, text=text_body)
         return JSONResponse({"ok": True})
-
-    @app.post("/auth/logout")
-    async def auth_logout():
-        resp = JSONResponse({"ok": True})
-        ui_auth.clear_session_cookies(resp)
-        return resp
 
     # ── Keys page + Vault API (authed) ──────────────────────────────────────
     @app.get("/keys")
@@ -286,7 +300,9 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
             asyncio.create_task(_safe_ensure(provisioner, tenant))
             _kick_pod()  # warm the shared pod in parallel with the brain boot
             return JSONResponse({"ready": False, "state": "starting"})
-        return JSONResponse({"ready": (not st["booting"]), "state": "booting" if st["booting"] else "ready"})
+        return JSONResponse(
+            {"ready": (not st["booting"]), "state": "booting" if st["booting"] else "ready"}
+        )
 
     # ── Shared-pod boot status (polled by the in-app banner) ────────────────
     @app.get("/__pod_status")
@@ -484,7 +500,8 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
             return
         provisioner.touch(org)
         await _proxy_ws(
-            client_ws, st["api_port"],
+            client_ws,
+            st["api_port"],
             upstream_path=f"/v1/sessions/{session_id}/stream",
             extra_headers={"Authorization": client_ws.headers.get("authorization", "")},
             on_activity=lambda: provisioner.touch(org),
@@ -580,7 +597,8 @@ async def _proxy_http_stream(request: Request, port: int) -> Response:
         url += "?" + request.url.query
     headers = {k: v for k, v in request.headers.items() if k.lower() not in _HOP_BY_HOP}
     body = await request.body()
-    client = httpx.AsyncClient(timeout=None)
+    # Reverse proxy: upstream responses (SSE/long polls) are intentionally unbounded.
+    client = httpx.AsyncClient(timeout=None)  # nosec B113
     try:
         up = await client.send(
             client.build_request(request.method, url, headers=headers, content=body),
@@ -604,8 +622,11 @@ async def _proxy_http_stream(request: Request, port: int) -> Response:
 
 
 async def _proxy_ws(
-    client_ws: WebSocket, port: int, on_activity=None,
-    upstream_path: str = "/ws", extra_headers: dict | None = None,
+    client_ws: WebSocket,
+    port: int,
+    on_activity=None,
+    upstream_path: str = "/ws",
+    extra_headers: dict | None = None,
 ) -> None:
     import websockets
 
@@ -780,7 +801,7 @@ def main() -> None:
             runpod._cancel_watcher()
 
     port = int(os.environ.get("PORT", "8765"))
-    host = "0.0.0.0" if os.environ.get("RAILWAY_ENVIRONMENT") else "127.0.0.1"
+    host = "0.0.0.0" if os.environ.get("RAILWAY_ENVIRONMENT") else "127.0.0.1"  # nosec B104
     logger.info("[gateway] listening on %s:%d", host, port)
     uvicorn.run(app, host=host, port=port, log_level="warning")
 

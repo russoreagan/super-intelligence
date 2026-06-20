@@ -121,7 +121,9 @@ class ApiSessionRegistry:
             client, org = sb
             res = (
                 client.table("api_sessions")
-                .select("session_id, end_user_id, agent_id, mandate_id, partner_id, pending, created_ts")
+                .select(
+                    "session_id, end_user_id, agent_id, mandate_id, partner_id, pending, created_ts"
+                )
                 .eq("org_id", org)
                 .eq("session_id", session_id)
                 .execute()

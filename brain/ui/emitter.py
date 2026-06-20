@@ -70,9 +70,7 @@ class ActivationEmitter:
         energy = RMS loudness, pace = speech rate (onsets/sec). The UI
         normalizes these to its segmented bars."""
         with contextlib.suppress(asyncio.QueueFull):
-            self._put(
-                {"type": "user_prosody", "energy": round(energy, 4), "pace": round(pace, 3)}
-            )
+            self._put({"type": "user_prosody", "energy": round(energy, 4), "pace": round(pace, 3)})
 
     async def emit_turn_start(self, turn_id: str, user_input: str, session_id: str = "") -> None:
         with contextlib.suppress(asyncio.QueueFull):
