@@ -1,12 +1,15 @@
-# Pin where uv installs the project virtualenv.
+# Control where uv installs the project virtualenv.
 #
-# nixpacks bootstraps a venv at /opt/venv (pip + uv only) and then runs
-# `uv sync`. Without this variable, uv sync targets its own project environment
-# rather than the activated /opt/venv, so the app's dependencies (httpx, etc.)
-# never land in /opt/venv — the gateway then crashes at startup with
-# `ModuleNotFoundError: No module named 'httpx'`, even though the build "succeeds".
+# nixpacks bootstraps a venv at /opt/venv (pip + uv) and activates it, then runs
+# `uv sync`. But uv IGNORES the activated VIRTUAL_ENV and installs into its own
+# project env (`.venv`) instead — leaving /opt/venv without the app's deps, so the
+# gateway crashes at startup with `ModuleNotFoundError: No module named 'httpx'`
+# (the build "succeeds" because uv sync itself runs fine).
 #
-# Forcing UV_PROJECT_ENVIRONMENT=/opt/venv makes `uv sync` populate /opt/venv,
-# which is exactly where railway.toml's startCommand (/opt/venv/bin/python) looks.
-[variables]
-UV_PROJECT_ENVIRONMENT = "/opt/venv"
+# We override the install phase to add `--active`, which makes uv sync populate the
+# activated /opt/venv — exactly where railway.toml's startCommand
+# (/opt/venv/bin/python) looks. (`--no-dev --frozen` mirror nixpacks' defaults.)
+[phases.install]
+cmds = [
+  "python -m venv --copies /opt/venv && . /opt/venv/bin/activate && pip install uv==0.10.7 && uv sync --no-dev --frozen --active",
+]
