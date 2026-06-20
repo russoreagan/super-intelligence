@@ -17,8 +17,11 @@ FastAPI on top of Supabase GoTrue):
 
 Tokens live in httpOnly, SameSite=Lax cookies (never localStorage), so the
 FastAPI gate can validate them and JS can't exfiltrate them. Access tokens are
-verified locally via the project JWT secret when SUPABASE_JWT_SECRET is set
-(fast, offline); otherwise they're validated against GoTrue's /user endpoint.
+verified LOCALLY and offline: asymmetric ES256/RS256 tokens (Supabase's default)
+against the project's cached JWKS public key, or legacy HS256 against
+SUPABASE_JWT_SECRET. A remote GoTrue /user check is only a last resort for when
+local verification is impossible (e.g. JWKS unreachable) — never per request in
+the healthy path, so auth latency can't wedge the gateway.
 
 Fail-closed: if Supabase isn't configured, every gated route is denied rather
 than served publicly. Set BRAIN_AUTH_DISABLED=true to bypass the gate for local
@@ -152,6 +155,79 @@ def _jwt_secret() -> str:
     return os.environ.get("SUPABASE_JWT_SECRET", "")
 
 
+# ── shared HTTP client ─────────────────────────────────────────────────────────
+# One reused AsyncClient for every Supabase call. A *new* client per request (the
+# old behaviour) meant each auth check paid a fresh TLS + pool setup, so when the
+# verify path fell back to a remote call on every request it could exhaust
+# connections and wedge the whole gateway. Reusing one pooled client + short
+# timeouts means a slow auth dependency degrades gracefully instead of hanging.
+_http: httpx.AsyncClient | None = None
+_HTTP_TIMEOUT = httpx.Timeout(5.0, connect=3.0)
+
+
+def _client() -> httpx.AsyncClient:
+    global _http
+    if _http is None or _http.is_closed:
+        _http = httpx.AsyncClient(timeout=_HTTP_TIMEOUT)
+    return _http
+
+
+# ── JWKS (asymmetric signing keys) ─────────────────────────────────────────────
+# Supabase signs access tokens with asymmetric keys (ES256 by default); the
+# public keys are published at the JWKS endpoint. We fetch them ONCE and cache, so
+# the common verify path is a local crypto check with NO network call per request.
+_jwks_lock: asyncio.Lock | None = None
+_jwks_cache: dict[str, Any] = {}  # kid -> jwt.PyJWK
+_jwks_fetched_at: float = 0.0
+_JWKS_TTL = 600.0  # re-fetch at most every 10 min (covers key rotation)
+
+
+def _jwks_url() -> str:
+    return f"{_base()}/auth/v1/.well-known/jwks.json"
+
+
+async def _refresh_jwks() -> None:
+    """Fetch the project's JWKS and rebuild the {kid: PyJWK} cache (single-flight)."""
+    global _jwks_lock, _jwks_fetched_at, _jwks_cache
+    if _jwks_lock is None:
+        _jwks_lock = asyncio.Lock()
+    async with _jwks_lock:
+        # A waiter that blocked on the lock may find the cache already refreshed.
+        if _jwks_cache and time.monotonic() - _jwks_fetched_at < _JWKS_TTL:
+            return
+        try:
+            r = await _client().get(_jwks_url(), headers={"apikey": _anon()})
+            r.raise_for_status()
+            keys = r.json().get("keys", [])
+        except Exception as e:
+            logger.warning("[auth] JWKS fetch failed: %s", e)
+            return
+        import jwt
+
+        cache: dict[str, Any] = {}
+        for jwk in keys:
+            kid = jwk.get("kid")
+            if not kid:
+                continue
+            try:
+                cache[kid] = jwt.PyJWK(jwk)
+            except Exception as e:
+                logger.warning("[auth] skipping unusable JWK %s: %s", kid, e)
+        if cache:
+            _jwks_cache = cache
+            _jwks_fetched_at = time.monotonic()
+
+
+async def _jwks_key_for(kid: str | None):
+    """Return the cached PyJWK for this key id, refreshing the JWKS if needed."""
+    if not kid:
+        return None
+    if kid in _jwks_cache and time.monotonic() - _jwks_fetched_at < _JWKS_TTL:
+        return _jwks_cache[kid]
+    await _refresh_jwks()
+    return _jwks_cache.get(kid)
+
+
 def safe_next(value: str | None) -> str:
     """Only allow same-site relative redirects (defends against open-redirect)."""
     if not value or not value.startswith("/") or value.startswith("//"):
@@ -167,8 +243,7 @@ async def password_login(email: str, password: str) -> dict[str, Any] | None:
     url = f"{_base()}/auth/v1/token?grant_type=password"
     headers = {"apikey": _anon(), "Content-Type": "application/json"}
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            r = await client.post(url, headers=headers, json={"email": email, "password": password})
+        r = await _client().post(url, headers=headers, json={"email": email, "password": password})
     except httpx.HTTPError as e:
         logger.error("[auth] GoTrue login request failed: %s", e)
         return None
@@ -197,8 +272,7 @@ async def request_password_reset(email: str, redirect_to: str | None = None) -> 
         url = f"{url}?redirect_to={quote(redirect_to, safe='')}"
     headers = {"apikey": _anon(), "Content-Type": "application/json"}
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            await client.post(url, headers=headers, json={"email": email})
+        await _client().post(url, headers=headers, json={"email": email})
     except httpx.HTTPError as e:
         logger.error("[auth] password recovery request failed: %s", e)
 
@@ -229,8 +303,7 @@ async def _refresh(refresh_token: str) -> dict[str, Any] | None:
         url = f"{_base()}/auth/v1/token?grant_type=refresh_token"
         headers = {"apikey": _anon(), "Content-Type": "application/json"}
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                r = await client.post(url, headers=headers, json={"refresh_token": refresh_token})
+            r = await _client().post(url, headers=headers, json={"refresh_token": refresh_token})
         except httpx.HTTPError as e:
             logger.error("[auth] GoTrue refresh request failed: %s", e)
             return None
@@ -251,39 +324,57 @@ async def _refresh(refresh_token: str) -> dict[str, Any] | None:
 
 
 async def _verify_access(token: str) -> dict[str, Any] | None:
-    """Return JWT claims if the access token is valid and unexpired, else None."""
-    secret = _jwt_secret()
-    if secret:
-        import jwt
+    """Return JWT claims if the access token is valid and unexpired, else None.
 
-        try:
-            return jwt.decode(
-                token,
-                secret,
-                algorithms=["HS256"],
-                audience="authenticated",
-            )
-        except jwt.ExpiredSignatureError:
-            return None  # genuinely expired — let the refresh path handle it
-        except jwt.PyJWTError as e:
-            # Signature/format mismatch — e.g. the project rotated to Supabase's
-            # asymmetric signing keys and the legacy HS256 secret no longer
-            # matches. Returning None here would shunt EVERY request into the
-            # refresh path (token churn + lost app_metadata → admin pages
-            # vanish). Fall through and let GoTrue judge the token instead.
-            logger.warning(
-                "[auth] Local JWT verify failed (%s) — falling back to GoTrue /user. "
-                "Check SUPABASE_JWT_SECRET matches the project's signing key.",
-                e,
-            )
+    Verified LOCALLY in the common case — no network call per request:
+      • asymmetric tokens (ES256/RS256, Supabase's default) against the cached
+        JWKS public key;
+      • legacy symmetric tokens (HS256) against SUPABASE_JWT_SECRET.
+    A remote GoTrue /user check is a LAST resort, used only when local verification
+    is impossible (e.g. the JWKS endpoint is unreachable) — never per request in
+    the healthy path. A token we can verify locally and find invalid is rejected
+    outright (no round-trip), since GoTrue would reject it too.
+    """
+    import jwt
 
-    # No local secret (or local verify inconclusive) → ask GoTrue. One network
-    # hop, but correct.
+    try:
+        header = jwt.get_unverified_header(token)
+    except jwt.PyJWTError:
+        return None
+    alg = header.get("alg", "")
+
+    if alg == "HS256":
+        secret = _jwt_secret()
+        if secret:
+            try:
+                return jwt.decode(token, secret, algorithms=["HS256"], audience="authenticated")
+            except jwt.ExpiredSignatureError:
+                return None
+            except jwt.PyJWTError as e:
+                # Secret wrong/rotated — let GoTrue judge rather than churning the
+                # refresh path (which would drop app_metadata → admin pages vanish).
+                logger.warning("[auth] HS256 verify failed (%s) — checking GoTrue.", e)
+    elif alg in ("ES256", "ES384", "ES512", "RS256", "RS384", "RS512"):
+        key = await _jwks_key_for(header.get("kid"))
+        if key is not None:
+            try:
+                return jwt.decode(token, key.key, algorithms=[alg], audience="authenticated")
+            except jwt.ExpiredSignatureError:
+                return None
+            except jwt.PyJWTError as e:
+                logger.warning("[auth] JWKS verify rejected token (%s)", e)
+                return None  # definitive — bad signature/claims; no remote fallback
+        # JWKS unavailable for this kid → fall through to the remote check.
+
+    return await _verify_remote(token)
+
+
+async def _verify_remote(token: str) -> dict[str, Any] | None:
+    """Last-resort token validation via GoTrue /user. One pooled network hop."""
     url = f"{_base()}/auth/v1/user"
     headers = {"apikey": _anon(), "Authorization": f"Bearer {token}"}
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            r = await client.get(url, headers=headers)
+        r = await _client().get(url, headers=headers)
     except httpx.HTTPError as e:
         logger.error("[auth] GoTrue user lookup failed: %s", e)
         return None
