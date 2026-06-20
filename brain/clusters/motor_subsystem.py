@@ -52,9 +52,7 @@ class MotorSubsystem(ABC):
         """
         return None
 
-    async def suggest_chunk(
-        self, recent_tools: list[str], last_args: dict
-    ) -> list[dict] | None:
+    async def suggest_chunk(self, recent_tools: list[str], last_args: dict) -> list[dict] | None:
         """Given the tools executed so far this turn, return a list of remaining
         steps to fire ballistically (an over-learned tool chunk), or None.
 

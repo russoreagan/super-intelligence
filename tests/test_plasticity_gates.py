@@ -54,7 +54,7 @@ def test_turn_plasticity_continuous_in_gaba():
     """No cliff: adjacent grid points (Δ=0.05 GABA) move plasticity smoothly."""
     u = _updater()
     vals = [u._turn_plasticity(_trace(g)) for g in GABA_GRID]
-    for a, b in zip(vals, vals[1:]):
+    for a, b in zip(vals, vals[1:], strict=False):
         assert abs(b - a) < 0.15, f"plasticity cliff: {a} → {b}"
 
 
@@ -64,7 +64,7 @@ def test_turn_plasticity_descending_limb_descends():
     knee = float(settings.get("plasticity_stress_knee", 0.7))
     above = [g for g in GABA_GRID if g >= knee]
     vals = [u._turn_plasticity(_trace(g)) for g in above]
-    for a, b in zip(vals, vals[1:]):
+    for a, b in zip(vals, vals[1:], strict=False):
         assert b <= a + 1e-9, "plasticity rose on the descending limb"
 
 

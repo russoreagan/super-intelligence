@@ -83,7 +83,7 @@ async def test_ruminate_applies_distinct_selected_skills(monkeypatch):
     # (b) each worker was given skills=[that skill] and the skill name reached its prompt.
     workers = _RecordingCell.created
     assert [w.skills for w in workers] == [[s] for s in _SEQUENCE]
-    for w, skill in zip(workers, _SEQUENCE):
+    for w, skill in zip(workers, _SEQUENCE, strict=False):
         assert skill in w.system_prompt
 
 
@@ -107,7 +107,7 @@ async def test_category_cap_forces_lens_change(monkeypatch):
     # ...and never ran the same category more than the cap consecutively.
     cap = s._MAX_CONSEC_CATEGORY
     run = 1
-    for a, b in zip(cats, cats[1:]):
+    for a, b in zip(cats, cats[1:], strict=False):
         run = run + 1 if a == b else 1
         assert run <= cap, f"category {b!r} ran {run} in a row (cap {cap})"
 

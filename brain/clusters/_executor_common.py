@@ -13,7 +13,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from datetime import datetime
 from pathlib import Path
 
 from brain.security import fence, screen_input
@@ -62,9 +61,7 @@ _DENY_WORDS = frozenset(
 # process cwd — every tenant shares cwd=repo_root, so a relative path would make
 # all tenants append to one shared audit log.
 _SECOND_BRAIN_ROOT = Path(
-    os.environ.get(
-        "SECOND_BRAIN_PATH", str(Path(__file__).parent.parent.parent / "second_brain")
-    )
+    os.environ.get("SECOND_BRAIN_PATH", str(Path(__file__).parent.parent.parent / "second_brain"))
 )
 _TOOL_LOG_PATH = _SECOND_BRAIN_ROOT / "schema" / "tool_log.md"
 

@@ -13,8 +13,6 @@ from __future__ import annotations
 
 import asyncio
 
-import pytest
-
 import brain.provisioner as pv
 import brain.runpod_manager as rm
 

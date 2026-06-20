@@ -106,7 +106,9 @@ class DeepgramLiveSession:
         self._reader_task = asyncio.create_task(self._read_loop())
         logger.debug(
             "[SttLive] session open (nova-3 lang=%s endpointing=%dms utterance_end=%dms)",
-            language, endpointing_ms, utterance_end_ms,
+            language,
+            endpointing_ms,
+            utterance_end_ms,
         )
 
     async def send(self, pcm_bytes: bytes) -> None:
@@ -173,13 +175,15 @@ class DeepgramLiveSession:
                 return
             if is_final:
                 # Accumulate words for the final UtteranceEnd assembly.
-                for w in (getattr(alt, "words", None) or []):
-                    word = (getattr(w, "word", "") or getattr(w, "punctuated_word", "") or "")
-                    self._pending_words.append({
-                        "word": word,
-                        "start": float(getattr(w, "start", 0.0)),
-                        "end": float(getattr(w, "end", 0.0)),
-                    })
+                for w in getattr(alt, "words", None) or []:
+                    word = getattr(w, "word", "") or getattr(w, "punctuated_word", "") or ""
+                    self._pending_words.append(
+                        {
+                            "word": word,
+                            "start": float(getattr(w, "start", 0.0)),
+                            "end": float(getattr(w, "end", 0.0)),
+                        }
+                    )
             # Forward all results (interim and final segment) as non-final UX
             # hints. The authoritative is_final=True fires on UtteranceEnd.
             if self._on_transcript:
@@ -192,7 +196,11 @@ class DeepgramLiveSession:
         if not words:
             return
         last_end = float(getattr(message, "last_word_end", 0.0))
-        start = self._utterance_start_s if self._utterance_start_s is not None else words[0].get("start", 0.0)
+        start = (
+            self._utterance_start_s
+            if self._utterance_start_s is not None
+            else words[0].get("start", 0.0)
+        )
         text = " ".join(w["word"] for w in words if w.get("word")).strip()
         duration_s = round(max(0.0, last_end - float(start)), 3)
         self._pending_words = []

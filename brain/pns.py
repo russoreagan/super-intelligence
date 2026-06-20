@@ -441,16 +441,31 @@ class PNS:
     # state gets its own settings instead of snapping to one of four. Voice values
     # mirror the per-chunk _BUCKETS so the base and [mood:X] overrides agree.
     _VOICE_ANCHORS = (
-        ("bright", {"DA": 0.78, "Glu": 0.60, "GABA": 0.08, "NE": 0.45},
-         {"stability": 0.35, "style": 0.55, "speed": 1.05}),
-        ("warm", {"DA": 0.62, "Glu": 0.30, "GABA": 0.12, "NE": 0.25},
-         {"stability": 0.50, "style": 0.35, "speed": 1.00}),
-        ("calm", {"DA": 0.45, "Glu": 0.25, "GABA": 0.30, "NE": 0.25},
-         {"stability": 0.55, "style": 0.25, "speed": 0.93}),
-        ("tense", {"DA": 0.35, "Glu": 0.58, "GABA": 0.65, "NE": 0.62},
-         {"stability": 0.65, "style": 0.25, "speed": 0.97}),
-        ("low", {"DA": 0.20, "Glu": 0.25, "GABA": 0.30, "NE": 0.30},
-         {"stability": 0.60, "style": 0.15, "speed": 0.90}),
+        (
+            "bright",
+            {"DA": 0.78, "Glu": 0.60, "GABA": 0.08, "NE": 0.45},
+            {"stability": 0.35, "style": 0.55, "speed": 1.05},
+        ),
+        (
+            "warm",
+            {"DA": 0.62, "Glu": 0.30, "GABA": 0.12, "NE": 0.25},
+            {"stability": 0.50, "style": 0.35, "speed": 1.00},
+        ),
+        (
+            "calm",
+            {"DA": 0.45, "Glu": 0.25, "GABA": 0.30, "NE": 0.25},
+            {"stability": 0.55, "style": 0.25, "speed": 0.93},
+        ),
+        (
+            "tense",
+            {"DA": 0.35, "Glu": 0.58, "GABA": 0.65, "NE": 0.62},
+            {"stability": 0.65, "style": 0.25, "speed": 0.97},
+        ),
+        (
+            "low",
+            {"DA": 0.20, "Glu": 0.25, "GABA": 0.30, "NE": 0.30},
+            {"stability": 0.60, "style": 0.15, "speed": 0.90},
+        ),
     )
 
     @staticmethod
@@ -473,7 +488,7 @@ class PNS:
             weights.append(math.exp(-d2 / tau))
         z = sum(weights) or 1.0
         out = {"stability": 0.0, "style": 0.0, "speed": 0.0}
-        for w, (_n, _c, voice) in zip(weights, PNS._VOICE_ANCHORS):
+        for w, (_n, _c, voice) in zip(weights, PNS._VOICE_ANCHORS, strict=False):
             f = w / z
             for k in out:
                 out[k] += f * voice[k]
@@ -640,9 +655,7 @@ class PNS:
             cluster = PNS._FLASH_EMOTION_CLUSTERS.get(emotion) or lookup_with_inheritance(
                 emotion, PNS._FLASH_EMOTION_CLUSTERS
             )
-        return PNS._OPENAI_TTS_INSTRUCTIONS.get(
-            cluster or "", PNS._OPENAI_TTS_DEFAULT_INSTRUCTION
-        )
+        return PNS._OPENAI_TTS_INSTRUCTIONS.get(cluster or "", PNS._OPENAI_TTS_DEFAULT_INSTRUCTION)
 
     def _openai_chunk_instructions(
         self, text: str, affect: dict, deliberate_emotion: str | None
@@ -725,12 +738,10 @@ class PNS:
         mood_spans = PNS._extract_mood_map(text)  # in clean-text coordinates
 
         boundaries = sorted(
-            {0, len(clean)}
-            | {s for s, _, _ in mood_spans}
-            | {e for _, e, _ in mood_spans}
+            {0, len(clean)} | {s for s, _, _ in mood_spans} | {e for _, e, _ in mood_spans}
         )
         result: list[tuple[str, str | None]] = []
-        for seg_start, seg_end in zip(boundaries, boundaries[1:]):
+        for seg_start, seg_end in zip(boundaries, boundaries[1:], strict=False):
             segment = clean[seg_start:seg_end].strip()
             if not segment:
                 continue
@@ -797,7 +808,9 @@ class PNS:
         api_key = os.environ.get("ELEVENLABS_API_KEY", "")
         _openai_key = os.environ.get("OPENAI_API_KEY", "")
         if _tts_provider == "openai" and not _openai_key:
-            logger.warning("[I/O] tts_provider=openai but OPENAI_API_KEY not set — using ElevenLabs")
+            logger.warning(
+                "[I/O] tts_provider=openai but OPENAI_API_KEY not set — using ElevenLabs"
+            )
             _tts_provider = "elevenlabs"
         if _tts_provider != "openai" and not api_key:
             if _openai_key:
@@ -1334,7 +1347,9 @@ class PNS:
 
             _dg_key = os.environ.get("DEEPGRAM_API_KEY", "")
             if not _dg_key:
-                logger.warning("[I/O] mic_listen: DEEPGRAM_API_KEY not set — skipping transcription")
+                logger.warning(
+                    "[I/O] mic_listen: DEEPGRAM_API_KEY not set — skipping transcription"
+                )
                 return ""
             client = DeepgramClient(_dg_key)
             response = await client.listen.asyncprerecorded.v("1").transcribe_file(

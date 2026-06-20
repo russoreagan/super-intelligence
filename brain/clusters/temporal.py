@@ -757,10 +757,12 @@ class TemporalCluster:
         # embedding match missed this turn, add the phrasing to the bank so it is
         # recognized cheaply next time. Reuses the vector detect_all already computed,
         # and reads the integrator's judgment before it is merged with our own below.
-        self._intent.learn_from_llm({
-            "self_reference": features.get("intent") == "self_inquiry",
-            "epistemic_action": bool(features.get("epistemic_action", False)),
-        })
+        self._intent.learn_from_llm(
+            {
+                "self_reference": features.get("intent") == "self_inquiry",
+                "epistemic_action": bool(features.get("epistemic_action", False)),
+            }
+        )
         features["self_reference"] = self_ref or features.get("intent") == "self_inquiry"
         features["epistemic_action"] = epistemic or features.get("epistemic_action", False)
         features["stop_work"] = stop_work

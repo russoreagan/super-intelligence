@@ -438,9 +438,7 @@ def _overshoot(value: float, threshold: float) -> float:
     return max(0.0, min(1.0, (value - threshold) / threshold))
 
 
-def prosody_tone_strength(
-    features: dict, label: str, baseline: dict | None = None
-) -> float:
+def prosody_tone_strength(features: dict, label: str, baseline: dict | None = None) -> float:
     """Normalized [0,1] intensity of a prosodic tone — how far the feature(s)
     that *define* `label` exceed the threshold that produced it.
 
@@ -503,10 +501,7 @@ def laughter_likelihood(features: dict, baseline: dict | None = None) -> float:
         f0_std_thresh = max(f0_std_thresh, baseline.get("f0_std", 0.0) * 1.5)
 
     # Rhythmic syllable bursts peaked at ~5 Hz, zero outside ~3.5–7 Hz.
-    if 3.5 <= rate <= 7.0:
-        rhythm = max(0.0, 1.0 - abs(rate - 5.0) / 2.0)
-    else:
-        rhythm = 0.0
+    rhythm = max(0.0, 1.0 - abs(rate - 5.0) / 2.0) if 3.5 <= rate <= 7.0 else 0.0
     burst = _overshoot(e_std, energy_std_thresh)
     voiced = max(0.0, min(1.0, (vf - 0.5) / 0.3))
     # Pitch component requires elevated mean f0 — laughter sits above the

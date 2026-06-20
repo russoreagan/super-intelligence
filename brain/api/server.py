@@ -54,9 +54,17 @@ SttLiveRunner = Callable[[], object]
 # transport-neutral event vocabulary in one place.
 _STREAMED_TYPES = frozenset(
     {
-        "turn_start", "activation", "stream_thought", "neuromod", "hormonal",
-        "emotion", "user_emotion", "turn_end",
-        "audio_meta", "audio_chunk", "audio_end",
+        "turn_start",
+        "activation",
+        "stream_thought",
+        "neuromod",
+        "hormonal",
+        "emotion",
+        "user_emotion",
+        "turn_end",
+        "audio_meta",
+        "audio_chunk",
+        "audio_end",
     }
 )
 
@@ -67,8 +75,9 @@ def _sse(name: str, obj: dict) -> str:
     return f"event: {name}\ndata: {json.dumps(obj)}\n\n"
 
 
-async def _stream_audio(tts_stream_runner, text, affect, audio_opt, turn_id,
-                        *, partner_id=None, quota=None):
+async def _stream_audio(
+    tts_stream_runner, text, affect, audio_opt, turn_id, *, partner_id=None, quota=None
+):
     """Yield SSE audio frames (audio_meta / audio_chunk* / audio_end) for a turn
     that requested audio. Self-contained so a synth failure degrades to an
     audio_error frame without aborting the already-sent text. Every frame carries
@@ -78,8 +87,14 @@ async def _stream_audio(tts_stream_runner, text, affect, audio_opt, turn_id,
     Metered against the partner's TTS-char quota like POST /v1/tts: refuse up
     front when already over, record the actual characters synthesised after."""
     if tts_stream_runner is None:
-        yield _sse("audio_error", {"type": "audio_error", "turn_id": turn_id,
-                                   "detail": "audio is not available on this server"})
+        yield _sse(
+            "audio_error",
+            {
+                "type": "audio_error",
+                "turn_id": turn_id,
+                "detail": "audio is not available on this server",
+            },
+        )
         return
     from brain.api.audio_quota import TTS_CHARS
 
@@ -174,7 +189,9 @@ def build_api_router(
     def _owns(ctx: dict, s) -> bool:
         # The org owner sees everything; a partner only its own sessions. Legacy
         # sessions with no partner_id are owner-scoped.
-        return bool(ctx.get("owner")) or s.partner_id is None or s.partner_id == ctx.get("partner_id")
+        return (
+            bool(ctx.get("owner")) or s.partner_id is None or s.partner_id == ctx.get("partner_id")
+        )
 
     async def _resolve_input(body: dict) -> tuple[str, str | None]:
         """Resolve a turn's text input. Returns ``(message, transcript)`` —
@@ -186,19 +203,27 @@ def build_api_router(
         message = body.get("message")
         audio_input = body.get("audio_input")
         if audio_input is not None and message is not None:
-            raise HTTPException(status_code=400, detail="provide either message or audio_input, not both")
+            raise HTTPException(
+                status_code=400, detail="provide either message or audio_input, not both"
+            )
         if audio_input is None:
             if not isinstance(message, str) or not message.strip():
-                raise HTTPException(status_code=400, detail="message (non-empty string) is required")
+                raise HTTPException(
+                    status_code=400, detail="message (non-empty string) is required"
+                )
             return message, None
         # ── voice-in: transcribe, then run the turn on the transcript ──
         if stt_runner is None:
-            raise HTTPException(status_code=501, detail="speech-to-text is not available on this server")
+            raise HTTPException(
+                status_code=501, detail="speech-to-text is not available on this server"
+            )
         if not isinstance(audio_input, dict):
             raise HTTPException(status_code=400, detail="audio_input must be an object")
         data_b64 = audio_input.get("data")
         if not isinstance(data_b64, str) or not data_b64.strip():
-            raise HTTPException(status_code=400, detail="audio_input.data (base64 string) is required")
+            raise HTTPException(
+                status_code=400, detail="audio_input.data (base64 string) is required"
+            )
         import base64
         import binascii
 
@@ -207,7 +232,9 @@ def build_api_router(
         try:
             audio = base64.b64decode(data_b64, validate=True)
         except (binascii.Error, ValueError) as e:
-            raise HTTPException(status_code=400, detail="audio_input.data must be valid base64") from e
+            raise HTTPException(
+                status_code=400, detail="audio_input.data must be valid base64"
+            ) from e
         try:
             result = await stt_runner(
                 audio,
@@ -243,7 +270,9 @@ def build_api_router(
         ctx = _require(authorization)
         end_user_id = (body or {}).get("end_user_id")
         if not isinstance(end_user_id, str) or not end_user_id.strip():
-            raise HTTPException(status_code=400, detail="end_user_id (non-empty string) is required")
+            raise HTTPException(
+                status_code=400, detail="end_user_id (non-empty string) is required"
+            )
         mandate_id = (body or {}).get("mandate_id")
         if mandate_id is not None and not isinstance(mandate_id, str):
             raise HTTPException(status_code=400, detail="mandate_id must be a string")
@@ -266,7 +295,9 @@ def build_api_router(
                 raise HTTPException(status_code=404, detail=str(e)) from e
             except MandateError as e:
                 raise HTTPException(status_code=400, detail=str(e)) from e
-        s = registry.create(end_user_id.strip(), agent_id, mandate_id, partner_id=ctx.get("partner_id"))
+        s = registry.create(
+            end_user_id.strip(), agent_id, mandate_id, partner_id=ctx.get("partner_id")
+        )
         return {
             "session_id": s.session_id,
             "end_user_id": s.end_user_id,
@@ -334,7 +365,9 @@ def build_api_router(
             except Exception:
                 source = None
         if source is None:
-            raise HTTPException(status_code=501, detail="event streaming is not available on this server")
+            raise HTTPException(
+                status_code=501, detail="event streaming is not available on this server"
+            )
 
         import asyncio
 
@@ -370,7 +403,11 @@ def build_api_router(
                 # The turn's authoritative result (curated mood + any pending write).
                 text, affect = await turn_task
                 display, affect_block = _affect_view(text, affect)
-                final = {"response": display, "affect": affect_block, "mood": _mood_from_affect(affect)}
+                final = {
+                    "response": display,
+                    "affect": affect_block,
+                    "mood": _mood_from_affect(affect),
+                }
                 pending = affect.get("pending") if isinstance(affect, dict) else None
                 if pending:
                     s.pending = pending
@@ -387,8 +424,13 @@ def build_api_router(
                 if isinstance(audio_opt, dict) and audio_opt.get("enabled"):
                     _pid = None if ctx.get("owner") else ctx.get("partner_id")
                     async for frame in _stream_audio(
-                        tts_stream_runner, text, affect, audio_opt, turn_id,
-                        partner_id=_pid, quota=audio_quota,
+                        tts_stream_runner,
+                        text,
+                        affect,
+                        audio_opt,
+                        turn_id,
+                        partner_id=_pid,
+                        quota=audio_quota,
                     ):
                         yield frame
             except Exception as e:  # noqa: BLE001 — surface as a stream error frame
@@ -426,11 +468,15 @@ def build_api_router(
         if source is None:
             with contextlib.suppress(Exception):
                 from brain.ui.emitter import emitter as _em  # noqa: F841
+
                 source = _em  # type: ignore[assignment]
 
         from brain.api.ws import WsSession
+
         await WsSession(
-            websocket, s, ctx,
+            websocket,
+            s,
+            ctx,
             turn_runner=turn_runner,
             registry=registry,
             tts_stream_runner=tts_stream_runner,
@@ -445,7 +491,9 @@ def build_api_router(
     ):
         ctx = _require(authorization)
         if confirm_runner is None:
-            raise HTTPException(status_code=501, detail="confirmation is not available on this server")
+            raise HTTPException(
+                status_code=501, detail="confirmation is not available on this server"
+            )
         s = registry.get(session_id)
         if s is None:
             raise HTTPException(status_code=404, detail="unknown session_id")
@@ -475,7 +523,9 @@ def build_api_router(
     async def tts_route(body: dict, authorization: str | None = Header(default=None)):
         ctx = _require(authorization)
         if tts_runner is None:
-            raise HTTPException(status_code=501, detail="text-to-speech is not available on this server")
+            raise HTTPException(
+                status_code=501, detail="text-to-speech is not available on this server"
+            )
         from brain.api.audio import AudioError
         from brain.api.audio_quota import TTS_CHARS
 
@@ -505,7 +555,9 @@ def build_api_router(
     async def stt_route(body: dict, authorization: str | None = Header(default=None)):
         ctx = _require(authorization)
         if stt_runner is None:
-            raise HTTPException(status_code=501, detail="speech-to-text is not available on this server")
+            raise HTTPException(
+                status_code=501, detail="speech-to-text is not available on this server"
+            )
         import base64
         import binascii
 
@@ -546,7 +598,9 @@ def build_api_router(
         from brain.second_brain import supabase_client
 
         if not supabase_client.is_enabled():
-            raise HTTPException(status_code=503, detail="mandates require the Supabase storage backend")
+            raise HTTPException(
+                status_code=503, detail="mandates require the Supabase storage backend"
+            )
 
     def _run(fn):
         from brain.mandates import MandateError
@@ -712,7 +766,9 @@ def build_api_router(
         if not ctx.get("owner"):
             raise HTTPException(status_code=403, detail="owner key required")
         if purge_runner is None:
-            raise HTTPException(status_code=501, detail="end-user purge is not available on this server")
+            raise HTTPException(
+                status_code=501, detail="end-user purge is not available on this server"
+            )
         if not end_user_id.strip():
             raise HTTPException(status_code=400, detail="end_user_id required")
         # Drop any cached sessions for this end_user so a later turn can't run as a
@@ -736,9 +792,7 @@ def build_api_router(
         return {"keys": _a.list_partner_keys()}
 
     @router.post("/partner_keys")
-    async def mint_partner_key_route(
-        body: dict, authorization: str | None = Header(default=None)
-    ):
+    async def mint_partner_key_route(body: dict, authorization: str | None = Header(default=None)):
         _require_owner(authorization)
         _guard()
         from brain.api import auth as _a
@@ -752,7 +806,9 @@ def build_api_router(
             raise HTTPException(status_code=400, detail=str(e)) from e
 
     @router.delete("/partner_keys/{key_id}")
-    async def revoke_partner_key_route(key_id: str, authorization: str | None = Header(default=None)):
+    async def revoke_partner_key_route(
+        key_id: str, authorization: str | None = Header(default=None)
+    ):
         _require_owner(authorization)
         _guard()
         from brain.api import auth as _a
@@ -770,7 +826,9 @@ def build_api_router(
         from brain.second_brain import supabase_client
 
         if not supabase_client.is_enabled():
-            raise HTTPException(status_code=503, detail="MCP token storage requires the Supabase backend")
+            raise HTTPException(
+                status_code=503, detail="MCP token storage requires the Supabase backend"
+            )
         return supabase_client.get_client()
 
     @router.post("/mcp/tokens")
@@ -782,13 +840,19 @@ def build_api_router(
         server_url = body.get("server_url")
         access_token = body.get("access_token")
         if not isinstance(end_user_id, str) or not end_user_id.strip():
-            raise HTTPException(status_code=400, detail="end_user_id (non-empty string) is required")
+            raise HTTPException(
+                status_code=400, detail="end_user_id (non-empty string) is required"
+            )
         if not isinstance(server_name, str) or not server_name.strip():
-            raise HTTPException(status_code=400, detail="server_name (non-empty string) is required")
+            raise HTTPException(
+                status_code=400, detail="server_name (non-empty string) is required"
+            )
         if not isinstance(server_url, str) or not server_url.strip():
             raise HTTPException(status_code=400, detail="server_url (non-empty string) is required")
         if not isinstance(access_token, str) or not access_token.strip():
-            raise HTTPException(status_code=400, detail="access_token (non-empty string) is required")
+            raise HTTPException(
+                status_code=400, detail="access_token (non-empty string) is required"
+            )
         expires_at = body.get("expires_at")
         try:
             _sb_client().rpc(
@@ -809,9 +873,13 @@ def build_api_router(
     async def list_mcp_tokens(end_user_id: str, authorization: str | None = Header(default=None)):
         _require(authorization)
         try:
-            resp = _sb_client().table("end_user_mcp_tokens").select(
-                "server_name, server_url, expires_at"
-            ).eq("end_user_id", end_user_id).execute()
+            resp = (
+                _sb_client()
+                .table("end_user_mcp_tokens")
+                .select("server_name, server_url, expires_at")
+                .eq("end_user_id", end_user_id)
+                .execute()
+            )
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"failed to list tokens: {e}") from e
         return {"end_user_id": end_user_id, "connections": resp.data or []}
@@ -822,10 +890,14 @@ def build_api_router(
     ):
         _require(authorization)
         try:
-            resp = _sb_client().rpc(
-                "delete_end_user_mcp_token",
-                {"p_end_user_id": end_user_id, "p_server_name": server_name},
-            ).execute()
+            resp = (
+                _sb_client()
+                .rpc(
+                    "delete_end_user_mcp_token",
+                    {"p_end_user_id": end_user_id, "p_server_name": server_name},
+                )
+                .execute()
+            )
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"failed to delete token: {e}") from e
         if not resp.data:
@@ -873,10 +945,14 @@ class ApiServer:
         self._app = FastAPI(docs_url="/v1/docs", redoc_url=None)
         self._app.include_router(
             build_api_router(
-                turn_runner, self._registry,
-                confirm_runner=confirm_runner, purge_runner=purge_runner,
-                tts_runner=tts_runner, stt_runner=stt_runner,
-                tts_stream_runner=tts_stream_runner, stt_live_runner=stt_live_runner,
+                turn_runner,
+                self._registry,
+                confirm_runner=confirm_runner,
+                purge_runner=purge_runner,
+                tts_runner=tts_runner,
+                stt_runner=stt_runner,
+                tts_stream_runner=tts_stream_runner,
+                stt_live_runner=stt_live_runner,
                 audio_quota=audio_quota,
             )
         )
@@ -890,6 +966,8 @@ class ApiServer:
 
         _port = port or int(os.environ.get("BRAIN_API_PORT", "8780"))
         _host = host or ("0.0.0.0" if os.environ.get("RAILWAY_ENVIRONMENT") else "127.0.0.1")  # nosec B104
-        config = uvicorn.Config(self._app, host=_host, port=_port, log_level="warning", access_log=False)
+        config = uvicorn.Config(
+            self._app, host=_host, port=_port, log_level="warning", access_log=False
+        )
         logger.info("Engine API starting at http://%s:%d/v1", _host, _port)
         await uvicorn.Server(config).serve()

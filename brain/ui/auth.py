@@ -91,8 +91,7 @@ def owner_mismatch(claims: dict[str, Any] | None) -> bool:
     multi-member org pays a membership lookup. No-op when neither id is set
     (single-user / dev)."""
     org_id = (
-        os.environ.get("BRAIN_ORG_ID", "").strip()
-        or os.environ.get("BRAIN_USER_ID", "").strip()
+        os.environ.get("BRAIN_ORG_ID", "").strip() or os.environ.get("BRAIN_USER_ID", "").strip()
     )
     if not org_id:
         return False
@@ -169,9 +168,7 @@ async def password_login(email: str, password: str) -> dict[str, Any] | None:
     headers = {"apikey": _anon(), "Content-Type": "application/json"}
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
-            r = await client.post(
-                url, headers=headers, json={"email": email, "password": password}
-            )
+            r = await client.post(url, headers=headers, json={"email": email, "password": password})
     except httpx.HTTPError as e:
         logger.error("[auth] GoTrue login request failed: %s", e)
         return None
@@ -233,9 +230,7 @@ async def _refresh(refresh_token: str) -> dict[str, Any] | None:
         headers = {"apikey": _anon(), "Content-Type": "application/json"}
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
-                r = await client.post(
-                    url, headers=headers, json={"refresh_token": refresh_token}
-                )
+                r = await client.post(url, headers=headers, json={"refresh_token": refresh_token})
         except httpx.HTTPError as e:
             logger.error("[auth] GoTrue refresh request failed: %s", e)
             return None
@@ -246,9 +241,7 @@ async def _refresh(refresh_token: str) -> dict[str, Any] | None:
         # Key the result by the OLD token: concurrent requests still carry it in
         # their cookies. Prune expired entries so the dict can't grow unbounded.
         now = time.monotonic()
-        for k in [
-            k for k, (ts, _) in _refresh_cache.items() if now - ts >= _REFRESH_CACHE_TTL
-        ]:
+        for k in [k for k, (ts, _) in _refresh_cache.items() if now - ts >= _REFRESH_CACHE_TTL]:
             _refresh_cache.pop(k, None)
         _refresh_cache[refresh_token] = (now, session)
         return session
@@ -361,7 +354,7 @@ def set_session_cookies(response: Any, session: dict[str, Any], remember: bool =
     # remember=False → omit max_age entirely so these are session cookies the
     # browser discards on close. The access-token JWT still self-expires either
     # way; this only controls whether the browser keeps it across restarts.
-    common = dict(httponly=True, secure=secure, samesite="lax", path="/")
+    common = {"httponly": True, "secure": secure, "samesite": "lax", "path": "/"}
     response.set_cookie(
         ACCESS_COOKIE,
         access,

@@ -39,6 +39,7 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+
 def _persona_dial_positions() -> dict:
     """Per-persona non-chemistry dial positions for the settings UI.
     Cognitive + lingering: the authored fingerprint (persona_chem). Motivation
@@ -61,7 +62,7 @@ def _persona_dial_positions() -> dict:
         for name, cog in PERSONA_COG_POSITIONS.items():
             out[name] = dict(cog)
         # Add motivation positions for every persona that has reward weights.
-        for name in set(list(out) + [p for p in _reward_persona_names()]):
+        for name in set(list(out) + list(_reward_persona_names())):
             rw = _PERSONA_REWARD_WEIGHTS.get(_slug(name), {})
             if rw:
                 out.setdefault(name, {})
@@ -124,7 +125,9 @@ class UIServer:
         self._on_interrupt = on_interrupt
         self._on_tasks_clear = on_tasks_clear  # () -> stats dict; kills self-directed work
         self._connectors_fn = connectors_fn  # () -> configured cloud connector names
-        self._connector_reload_fn = connector_reload_fn  # () -> None; hot-reload after register/remove
+        self._connector_reload_fn = (
+            connector_reload_fn  # () -> None; hot-reload after register/remove
+        )
         self._clients: set = set()
         self._last_neuromod: dict = {}
         self._last_hormonal: dict = {}
@@ -228,9 +231,7 @@ class UIServer:
 
             response = await call_next(request)
             if is_secure and _HSTS_MAX_AGE != "0":
-                response.headers.setdefault(
-                    "Strict-Transport-Security", f"max-age={_HSTS_MAX_AGE}"
-                )
+                response.headers.setdefault("Strict-Transport-Security", f"max-age={_HSTS_MAX_AGE}")
             return response
 
         @app.get("/login")
@@ -310,8 +311,8 @@ class UIServer:
                 else ""
             )
             html_body = (
-                "<div style=\"font-family:-apple-system,Segoe UI,Roboto,sans-serif;"
-                "max-width:520px;margin:0 auto;color:#18181b\">"
+                '<div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;'
+                'max-width:520px;margin:0 auto;color:#18181b">'
                 "<h2 style='font-weight:600'>New Elyceum admission request</h2>"
                 f"<p style='color:#52525b'><strong>{safe_applicant}</strong> "
                 "has requested admission to Elyceum.</p>"
@@ -320,9 +321,8 @@ class UIServer:
                 "Provision the account via <code>scripts/create_user.py</code> if approved.</p>"
                 "</div>"
             )
-            text_body = (
-                f"New Elyceum admission request from {applicant}."
-                + (f"\n\nNote: {note}" if note else "")
+            text_body = f"New Elyceum admission request from {applicant}." + (
+                f"\n\nNote: {note}" if note else ""
             )
             await mailer.send_email(
                 to,
@@ -364,8 +364,11 @@ class UIServer:
 
                 _dir = HTML_PATH.parent
                 _assets = (
-                    "settings.css", "settings-data.js", "settings-ui.js",
-                    "workspaces.css", "workspaces.js",
+                    "settings.css",
+                    "settings-data.js",
+                    "settings-ui.js",
+                    "workspaces.css",
+                    "workspaces.js",
                 )
                 _stamp = max(
                     int((_dir / f).stat().st_mtime) for f in _assets if (_dir / f).exists()
@@ -398,9 +401,7 @@ class UIServer:
 
                     st = vault.get_status(token)
                     vault_status = {
-                        f"api_key_{p}": bool(v)
-                        for p, v in st.items()
-                        if p in vault.VALID_PROVIDERS
+                        f"api_key_{p}": bool(v) for p, v in st.items() if p in vault.VALID_PROVIDERS
                     }
                 except Exception as e:
                     logger.warning("[settings] vault status unavailable: %s", e)
@@ -418,6 +419,7 @@ class UIServer:
             self_md = ""
             try:
                 from brain.second_brain.store import SchemaStore
+
                 self_md = SchemaStore(persona=str(s.get("persona_name", ""))).read("self.md")
             except Exception as _sm_err:
                 logger.warning("[settings] self.md read failed: %s", _sm_err)
@@ -497,6 +499,7 @@ class UIServer:
                     )
                     try:
                         from brain.second_brain.store import SchemaStore
+
                         SchemaStore(persona=_persona_name).write("self.md", _self_md)
                     except Exception as _sm_err:
                         logger.warning("[settings] self.md write failed: %s", _sm_err)
@@ -523,11 +526,17 @@ class UIServer:
                     if _new and not persona_chem.exists(_new):
                         persona_chem.save_resting(
                             _new,
-                            {ch: float(settings.get(f"chem_baseline_{ch}")) for ch in persona_chem.CHANNELS},
+                            {
+                                ch: float(settings.get(f"chem_baseline_{ch}"))
+                                for ch in persona_chem.CHANNELS
+                            },
                         )
                         persona_chem.save_current(
                             _new,
-                            {ch: float(settings.get(f"chem_init_{ch}")) for ch in persona_chem.CHANNELS},
+                            {
+                                ch: float(settings.get(f"chem_init_{ch}"))
+                                for ch in persona_chem.CHANNELS
+                            },
                             {},
                         )
                 # If the user edited resting/boot chemistry sliders, persist them
@@ -644,6 +653,7 @@ class UIServer:
 
                     raise HTTPException(status_code=403, detail="admin only")
                 from brain.clusters.cma_executor import is_env_managed, list_connector_details
+
                 try:
                     return {
                         "connectors": names,
@@ -678,12 +688,14 @@ class UIServer:
                 except Exception as _rl_err:
                     logger.warning("[connectors] reload after register failed: %s", _rl_err)
             env_key = name.upper().replace("-", "_")
-            return JSONResponse({
-                "name": name,
-                "secret": secret,
-                "brain_env_var": f"BRAIN_CMA_MCP_{env_key}_TOKEN",
-                "app_env_var": f"{env_key}_MCP_SECRET",
-            })
+            return JSONResponse(
+                {
+                    "name": name,
+                    "secret": secret,
+                    "brain_env_var": f"BRAIN_CMA_MCP_{env_key}_TOKEN",
+                    "app_env_var": f"{env_key}_MCP_SECRET",
+                }
+            )
 
         @app.delete("/connectors/{name}")
         async def remove_connector_ui(name: str, request: Request):
@@ -715,18 +727,19 @@ class UIServer:
 
         @app.get("/self-model")
         async def get_self_model(request: Request):
-            from brain.settings import settings
             from fastapi.responses import JSONResponse
+
+            from brain.settings import settings
 
             # The settings UI can view any persona's Sense of Self, not just the
             # active one — honor ?persona=<display name> (SchemaStore slugifies).
             persona_name = str(
-                request.query_params.get("persona", "").strip()
-                or settings.get("persona_name", "")
+                request.query_params.get("persona", "").strip() or settings.get("persona_name", "")
             )
             content = ""
             try:
                 from brain.second_brain.store import SchemaStore
+
                 content = SchemaStore(persona=persona_name).read("self.md")
             except Exception as _e:
                 logger.warning("[self-model] read failed: %s", _e)
@@ -734,19 +747,20 @@ class UIServer:
 
         @app.get("/user-model")
         async def get_user_model(request: Request):
-            from brain.settings import settings
             from fastapi.responses import JSONResponse
+
+            from brain.settings import settings
 
             # Read-only "Sense of You" tab: the persona's model of the user
             # (user.md), written during sleep consolidation. Same persona
             # resolution as /self-model.
             persona_name = str(
-                request.query_params.get("persona", "").strip()
-                or settings.get("persona_name", "")
+                request.query_params.get("persona", "").strip() or settings.get("persona_name", "")
             )
             content = ""
             try:
                 from brain.second_brain.store import SchemaStore
+
                 content = SchemaStore(persona=persona_name).read("user.md")
             except Exception as _e:
                 logger.warning("[user-model] read failed: %s", _e)
@@ -872,7 +886,13 @@ class UIServer:
             is_admin = ui_auth.is_disabled() or ui_auth.is_admin(claims)
             if not supabase_client.is_enabled():
                 return JSONResponse(
-                    {"enabled": False, "agents": [], "roles": [], "ceilings": {}, "is_admin": is_admin}
+                    {
+                        "enabled": False,
+                        "agents": [],
+                        "roles": [],
+                        "ceilings": {},
+                        "is_admin": is_admin,
+                    }
                 )
             from brain import agents as _agents
             from brain import mandates
@@ -884,11 +904,23 @@ class UIServer:
             except Exception as e:
                 logger.warning("[agents] list failed: %s", e)
                 return JSONResponse(
-                    {"enabled": True, "agents": [], "roles": [], "ceilings": {}, "is_admin": is_admin}
+                    {
+                        "enabled": True,
+                        "agents": [],
+                        "roles": [],
+                        "ceilings": {},
+                        "is_admin": is_admin,
+                    }
                 )
             ceilings = {k: _s.get(k) for k in _agents.PERMISSION_KEYS}
             return JSONResponse(
-                {"enabled": True, "is_admin": is_admin, "agents": ags, "roles": roles, "ceilings": ceilings}
+                {
+                    "enabled": True,
+                    "is_admin": is_admin,
+                    "agents": ags,
+                    "roles": roles,
+                    "ceilings": ceilings,
+                }
             )
 
         @app.post("/agents")

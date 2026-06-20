@@ -591,7 +591,9 @@ class MotorCortexCluster:
             self._calls_this_turn += 1
 
             if tool == "cloud_action":
-                last_result = await self._dispatch_cloud(args, turn_id, end_user_id=self._current_end_user_id)
+                last_result = await self._dispatch_cloud(
+                    args, turn_id, end_user_id=self._current_end_user_id
+                )
                 output = (last_result or {}).get("output", "")
             elif tool in ("recall_memory", "analyze_image"):
                 output = await self._dispatch_lobe(tool, args, turn_id)
@@ -666,12 +668,14 @@ class MotorCortexCluster:
         max_concurrent = int(_brain_settings.get("motor_max_concurrent_jobs") or 1)
         perms = self._bound_agent_perms()
         if perms:
+
             def _cap(key, cur):
                 v = perms.get(key)
                 try:
                     return min(cur, int(v)) if v not in (None, "") else cur
                 except (TypeError, ValueError):
                     return cur
+
             max_window = _cap("motor_max_jobs_per_window", max_window)
             max_session = _cap("motor_max_jobs_per_session", max_session)
             max_concurrent = _cap("motor_max_concurrent_jobs", max_concurrent)
@@ -1195,7 +1199,9 @@ class MotorCortexCluster:
                 )
 
                 if tool == "cloud_action":
-                    last_result = await self._dispatch_cloud(args, job_id, end_user_id=self._current_end_user_id)
+                    last_result = await self._dispatch_cloud(
+                        args, job_id, end_user_id=self._current_end_user_id
+                    )
                     output = (last_result or {}).get("output", "")
                 elif tool in ("recall_memory", "analyze_image"):
                     output = await self._dispatch_lobe(tool, args, job_id)
@@ -1516,13 +1522,13 @@ class MotorCortexCluster:
         result = safe_json_parse(raw) or {}
         return bool(result.get("approved", True)), result.get("issues", "")
 
-    async def _run_tool(
-        self, tool: str, args: dict, reason: str, turn_id: str
-    ) -> tuple[str, dict]:
+    async def _run_tool(self, tool: str, args: dict, reason: str, turn_id: str) -> tuple[str, dict]:
         """Dispatch a single tool call and return (output, last_result).
         Shared by ballistic chunk firing; mirrors the main loop's dispatch branch."""
         if tool == "cloud_action":
-            last_result = await self._dispatch_cloud(args, turn_id, end_user_id=self._current_end_user_id)
+            last_result = await self._dispatch_cloud(
+                args, turn_id, end_user_id=self._current_end_user_id
+            )
             output = (last_result or {}).get("output", "")
             return output, (last_result or {})
         if tool in ("recall_memory", "analyze_image"):
@@ -1659,7 +1665,9 @@ class MotorCortexCluster:
             self._calls_this_turn += 1
 
             if tool == "cloud_action":
-                last_result = await self._dispatch_cloud(args, turn_id, end_user_id=self._current_end_user_id)
+                last_result = await self._dispatch_cloud(
+                    args, turn_id, end_user_id=self._current_end_user_id
+                )
                 output = (last_result or {}).get("output", "")
             elif tool in ("recall_memory", "analyze_image"):
                 output = await self._dispatch_lobe(tool, args, turn_id)
@@ -2093,7 +2101,9 @@ class MotorCortexCluster:
             }
 
         # Read action — execute immediately
-        result = await self._cloud.execute_read(task, context_facts, turn_id, end_user_id=end_user_id)
+        result = await self._cloud.execute_read(
+            task, context_facts, turn_id, end_user_id=end_user_id
+        )
         await self._bus.publish_dict("motor.result", result, source=CLUSTER)
         return result
 
@@ -2153,8 +2163,9 @@ class MotorCortexCluster:
                 "(Settings → Motor Permissions)."
             )
         if not _pol["writes"] and tool == "run_command":
-            from brain.clusters.motor_dispatcher import READONLY_COMMANDS
             import shlex as _shlex
+
+            from brain.clusters.motor_dispatcher import READONLY_COMMANDS
 
             try:
                 _base = os.path.basename(_shlex.split(args.get("cmd", ""))[0])

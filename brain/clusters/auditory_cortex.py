@@ -399,9 +399,8 @@ class AuditoryCluster:
 
             # Merge vocal-event classifier probabilities (flag-gated tier 3)
             # into the prosody payload so hypothalamus sees one voice-affect dict.
-            if vocal_result is not None and not isinstance(vocal_result, BaseException):
-                if vocal_result:
-                    pros_result["vocal_events"] = vocal_result
+            if vocal_result and not isinstance(vocal_result, BaseException):
+                pros_result["vocal_events"] = vocal_result
 
             logger.debug(
                 "Auditory: prosody tone=%s f0=%.0f energy=%.3f voiced=%.2f laugh=%.2f",

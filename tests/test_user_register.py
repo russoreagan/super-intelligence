@@ -86,7 +86,7 @@ def test_update_register_profile_drifts():
 def test_dominant_register_flat_is_no_signal():
     # Empty profile, and a profile too flat to call, both read as no signal.
     assert dominant_register({}) == ""
-    flat = {c: 0.25 for c in REGISTER_CATEGORIES}
+    flat = dict.fromkeys(REGISTER_CATEGORIES, 0.25)
     assert dominant_register(flat) == ""
 
 

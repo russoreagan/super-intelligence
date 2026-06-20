@@ -24,7 +24,9 @@ _AUTH = {"Authorization": "Bearer sk_test_123"}
 def _ok(authorization, keys):
     if not authorization:
         return False
-    tok = authorization[7:].strip() if authorization.lower().startswith("bearer ") else authorization
+    tok = (
+        authorization[7:].strip() if authorization.lower().startswith("bearer ") else authorization
+    )
     return tok in keys
 
 
@@ -34,9 +36,11 @@ def _client(runner, *, tts_runner=None, stt_runner=None):
     app = FastAPI()
     app.include_router(
         build_api_router(
-            runner, registry,
+            runner,
+            registry,
             auth=lambda h: _ok(h, keys),
-            tts_runner=tts_runner, stt_runner=stt_runner,
+            tts_runner=tts_runner,
+            stt_runner=stt_runner,
         )
     )
     return TestClient(app)
@@ -103,6 +107,7 @@ def test_tts_501_without_runner():
 def test_tts_requires_auth():
     async def _tts(text, **kw):
         return {"data": "x"}
+
     c = _client(_MarkupRunner(), tts_runner=_tts)
     assert c.post("/v1/tts", json={"text": "hi"}).status_code == 401
 
@@ -110,6 +115,7 @@ def test_tts_requires_auth():
 def test_tts_validates_text():
     async def _tts(text, **kw):
         return {"data": "x"}
+
     c = _client(_MarkupRunner(), tts_runner=_tts)
     assert c.post("/v1/tts", json={"text": "  "}, headers=_AUTH).status_code == 400
     assert c.post("/v1/tts", json={"text": "hi", "affect": "bad"}, headers=_AUTH).status_code == 400
@@ -136,6 +142,7 @@ def test_tts_passes_opts_and_returns_result():
 def test_tts_audioerror_maps_to_status():
     async def _tts(text, **kw):
         raise AudioError("ELEVENLABS_API_KEY is not configured", status=503)
+
     c = _client(_MarkupRunner(), tts_runner=_tts)
     r = c.post("/v1/tts", json={"text": "hi"}, headers=_AUTH)
     assert r.status_code == 503
@@ -152,6 +159,7 @@ def test_stt_501_without_runner():
 def test_stt_rejects_bad_base64():
     async def _stt(audio, **kw):
         return {"transcript": ""}
+
     c = _client(_MarkupRunner(), stt_runner=_stt)
     assert c.post("/v1/stt", json={"audio": "!!!not base64!!!"}, headers=_AUTH).status_code == 400
     assert c.post("/v1/stt", json={"audio": ""}, headers=_AUTH).status_code == 400
@@ -168,7 +176,11 @@ class _RecordingRunner:
 
 
 async def _fake_stt(audio, *, mimetype="audio/wav", diarize=False, model=None):
-    return {"transcript": "transcribed words", "words": [], "segments": [{"transcript": "transcribed words", "is_final": True}]}
+    return {
+        "transcript": "transcribed words",
+        "words": [],
+        "segments": [{"transcript": "transcribed words", "is_final": True}],
+    }
 
 
 def _b64(b: bytes) -> str:
@@ -204,16 +216,21 @@ def test_turn_rejects_both_message_and_audio_input():
 def test_turn_audio_input_501_without_stt_runner():
     c = _client(_RecordingRunner())  # no stt_runner
     sid = c.post("/v1/sessions", json={"end_user_id": "c1"}, headers=_AUTH).json()["session_id"]
-    r = c.post(f"/v1/sessions/{sid}/turns", json={"audio_input": {"data": _b64(b"x")}}, headers=_AUTH)
+    r = c.post(
+        f"/v1/sessions/{sid}/turns", json={"audio_input": {"data": _b64(b"x")}}, headers=_AUTH
+    )
     assert r.status_code == 501
 
 
 def test_turn_audio_input_422_on_empty_transcript():
     async def _silent_stt(audio, **kw):
         return {"transcript": "   "}
+
     c = _client(_RecordingRunner(), stt_runner=_silent_stt)
     sid = c.post("/v1/sessions", json={"end_user_id": "c1"}, headers=_AUTH).json()["session_id"]
-    r = c.post(f"/v1/sessions/{sid}/turns", json={"audio_input": {"data": _b64(b"x")}}, headers=_AUTH)
+    r = c.post(
+        f"/v1/sessions/{sid}/turns", json={"audio_input": {"data": _b64(b"x")}}, headers=_AUTH
+    )
     assert r.status_code == 422
 
 
@@ -240,15 +257,20 @@ def test_stream_audio_input_echoes_transcript_in_open():
     app = FastAPI()
     app.include_router(
         build_api_router(
-            runner, registry, auth=lambda h: _ok(h, keys),
-            event_source=source, stt_runner=_fake_stt,
+            runner,
+            registry,
+            auth=lambda h: _ok(h, keys),
+            event_source=source,
+            stt_runner=_fake_stt,
         )
     )
     registry.create("c1")
     c = TestClient(app)
     with c.stream(
-        "POST", "/v1/sessions/ss/turns/stream",
-        json={"audio_input": {"data": _b64(b"PCM")}}, headers=_AUTH,
+        "POST",
+        "/v1/sessions/ss/turns/stream",
+        json={"audio_input": {"data": _b64(b"PCM")}},
+        headers=_AUTH,
     ) as r:
         assert r.status_code == 200
         body = "".join(r.iter_text())
@@ -265,9 +287,14 @@ def _stub_iter(monkeypatch):
     async def _fake(chunks, affect, voice_id, model_id, output_format):
         for i, (chunk, mood) in enumerate(chunks):
             raw = f"pcm{i}".encode()
-            yield {"seq": i, "text": chunk, "mood": mood,
-                   "voice_settings": {"stability": 0.5}, "_bytes": raw,
-                   "data": __import__("base64").b64encode(raw).decode()}
+            yield {
+                "seq": i,
+                "text": chunk,
+                "mood": mood,
+                "voice_settings": {"stability": 0.5},
+                "_bytes": raw,
+                "data": __import__("base64").b64encode(raw).decode(),
+            }
 
     monkeypatch.setattr(audio, "_iter_elevenlabs", _fake)
     monkeypatch.setenv("ELEVENLABS_API_KEY", "x")  # passes the gate (stub ignores it)
@@ -340,16 +367,29 @@ def _stream_client(*, tts_stream_runner=None):
     app = FastAPI()
     app.include_router(
         build_api_router(
-            runner, registry, auth=lambda h: _ok(h, keys),
-            event_source=source, tts_stream_runner=tts_stream_runner,
+            runner,
+            registry,
+            auth=lambda h: _ok(h, keys),
+            event_source=source,
+            tts_stream_runner=tts_stream_runner,
         )
     )
     registry.create("c1")
     return TestClient(app)
 
 
-async def _fake_tts_stream(text, *, affect=None, voice_id=None, model=None, fmt=None, provider=None):
-    yield "meta", {"format": "pcm_22050", "voice_id": "v1", "model": "eleven_flash_v2_5", "sample_rate": 22050}
+async def _fake_tts_stream(
+    text, *, affect=None, voice_id=None, model=None, fmt=None, provider=None
+):
+    yield (
+        "meta",
+        {
+            "format": "pcm_22050",
+            "voice_id": "v1",
+            "model": "eleven_flash_v2_5",
+            "sample_rate": 22050,
+        },
+    )
     yield "chunk", {"seq": 0, "text": "Sure.", "mood": None, "data": "AAA="}
     yield "chunk", {"seq": 1, "text": "No.", "mood": "angry", "data": "BBB="}
     yield "end", {"chunks": 2, "duration_s": 1.0}
@@ -358,7 +398,8 @@ async def _fake_tts_stream(text, *, affect=None, voice_id=None, model=None, fmt=
 def test_stream_emits_audio_after_done_when_requested():
     c = _stream_client(tts_stream_runner=_fake_tts_stream)
     with c.stream(
-        "POST", "/v1/sessions/ss/turns/stream",
+        "POST",
+        "/v1/sessions/ss/turns/stream",
         json={"message": "hi", "audio": {"enabled": True, "format": "pcm_22050"}},
         headers=_AUTH,
     ) as r:
@@ -375,8 +416,10 @@ def test_stream_emits_audio_after_done_when_requested():
 def test_stream_no_audio_frames_when_not_requested():
     c = _stream_client(tts_stream_runner=_fake_tts_stream)
     with c.stream(
-        "POST", "/v1/sessions/ss/turns/stream",
-        json={"message": "hi"}, headers=_AUTH,
+        "POST",
+        "/v1/sessions/ss/turns/stream",
+        json={"message": "hi"},
+        headers=_AUTH,
     ) as r:
         body = "".join(r.iter_text())
     assert "event: done" in body
@@ -386,8 +429,10 @@ def test_stream_no_audio_frames_when_not_requested():
 def test_stream_audio_error_when_no_runner_but_still_done():
     c = _stream_client(tts_stream_runner=None)
     with c.stream(
-        "POST", "/v1/sessions/ss/turns/stream",
-        json={"message": "hi", "audio": {"enabled": True}}, headers=_AUTH,
+        "POST",
+        "/v1/sessions/ss/turns/stream",
+        json={"message": "hi", "audio": {"enabled": True}},
+        headers=_AUTH,
     ) as r:
         body = "".join(r.iter_text())
     assert "event: done" in body
@@ -402,8 +447,10 @@ def test_stream_audio_error_on_synth_failure_does_not_kill_stream():
 
     c = _stream_client(tts_stream_runner=_boom)
     with c.stream(
-        "POST", "/v1/sessions/ss/turns/stream",
-        json={"message": "hi", "audio": {"enabled": True}}, headers=_AUTH,
+        "POST",
+        "/v1/sessions/ss/turns/stream",
+        json={"message": "hi", "audio": {"enabled": True}},
+        headers=_AUTH,
     ) as r:
         body = "".join(r.iter_text())
     assert "event: done" in body
@@ -415,15 +462,25 @@ def test_stt_decodes_and_returns_transcript():
 
     async def _stt(audio, *, mimetype="audio/wav", diarize=False, model=None):
         seen.update(audio=audio, mimetype=mimetype, diarize=diarize)
-        return {"transcript": "hello world", "words": [], "segments": [{"transcript": "hello world", "is_final": True}]}
+        return {
+            "transcript": "hello world",
+            "words": [],
+            "segments": [{"transcript": "hello world", "is_final": True}],
+        }
 
     c = _client(_MarkupRunner(), stt_runner=_stt)
     r = c.post(
         "/v1/stt",
-        json={"audio": base64.b64encode(b"PCMDATA").decode(), "mimetype": "audio/webm", "diarize": True},
+        json={
+            "audio": base64.b64encode(b"PCMDATA").decode(),
+            "mimetype": "audio/webm",
+            "diarize": True,
+        },
         headers=_AUTH,
     )
     assert r.status_code == 200
     assert r.json()["transcript"] == "hello world"
     assert r.json()["segments"][0]["is_final"] is True
-    assert seen["audio"] == b"PCMDATA" and seen["mimetype"] == "audio/webm" and seen["diarize"] is True
+    assert (
+        seen["audio"] == b"PCMDATA" and seen["mimetype"] == "audio/webm" and seen["diarize"] is True
+    )

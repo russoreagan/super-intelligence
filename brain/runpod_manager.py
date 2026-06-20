@@ -410,8 +410,14 @@ class RunPodManager:
             return
         try:
             proc = subprocess.Popen(
-                [sys.executable, watchdog_script, pod_id, str(os.getpid()),
-                 self._api_key, str(int(max_hours * 3600))],
+                [
+                    sys.executable,
+                    watchdog_script,
+                    pod_id,
+                    str(os.getpid()),
+                    self._api_key,
+                    str(int(max_hours * 3600)),
+                ],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 start_new_session=True,  # detach from parent's process group
@@ -661,7 +667,8 @@ class RunPodManager:
 
             logger.warning(
                 "[RunPod] No healthy GPU pod could be brought up — cloud fallback, "
-                "cooling down %.0fmin", _UNHEALTHY_COOLDOWN_S / 60,
+                "cooling down %.0fmin",
+                _UNHEALTHY_COOLDOWN_S / 60,
             )
             self._cooldown_until = time.time() + _UNHEALTHY_COOLDOWN_S
             self._set_status("failed", "no healthy GPU pod — using cloud")

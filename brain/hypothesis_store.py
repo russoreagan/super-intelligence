@@ -168,7 +168,9 @@ class HypothesisStore:
 
     @classmethod
     def from_dict(cls, data: dict, *, salt: str = "", now_fn=time.time) -> HypothesisStore:
-        store = cls(promote_k=int(data.get("promote_k", _DEFAULT_PROMOTE_K)), salt=salt, now_fn=now_fn)
+        store = cls(
+            promote_k=int(data.get("promote_k", _DEFAULT_PROMOTE_K)), salt=salt, now_fn=now_fn
+        )
         for rec in data.get("hypotheses", []):
             hyp = Hypothesis(
                 id=rec["id"],

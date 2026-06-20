@@ -418,7 +418,9 @@ class MetacognitionCell:
 
                 _w = reward_weight(str(settings.get("persona_name", "")), "relief")
                 _er = float(settings.get("emotional_reactivity_scale"))
-                self._bus.neuromod.add("DA", float(settings.get("correctness_self_base")) * _w * _er)
+                self._bus.neuromod.add(
+                    "DA", float(settings.get("correctness_self_base")) * _w * _er
+                )
         try:
             await self._bus.publish_dict(
                 "meta.emotion_override",

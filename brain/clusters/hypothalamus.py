@@ -203,7 +203,11 @@ class HypothalamusCluster:
         # approval — scaled by how much this persona draws reward from it. The hostility term is
         # punishment, not a reward source, so it is left unscaled by the valuation weight.
         valence_delta = (
-            sentiment * settings.get("sentiment_DA_weight") * er_scale * _affect_gain * _connection_value
+            sentiment
+            * settings.get("sentiment_DA_weight")
+            * er_scale
+            * _affect_gain
+            * _connection_value
         ) - (hostility * settings.get("hostility_DA_weight"))
         nm.add("DA", valence_delta * turns)
 

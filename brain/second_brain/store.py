@@ -458,7 +458,9 @@ class EpisodicStore:
                 continue
             sim = _signature_cosine(current_sig, sig)
             overlap = sum(
-                1 for t in ep.get("topic_tags", []) if t.startswith("approach:") and t in approach_set
+                1
+                for t in ep.get("topic_tags", [])
+                if t.startswith("approach:") and t in approach_set
             )
             ep["cog_sim"] = round(sim, 4)
             ep["approach_overlap"] = overlap

@@ -43,8 +43,8 @@ def test_agent_dir_narrowing_blocks_sibling():
         with bind_agent("p.role", {"motor_allowed_dirs": sub}):
             ok_sub, _ = d._validate_path(sub)
             ok_other, _ = d._validate_path(other)
-        assert ok_sub is True       # within the agent's narrowed root
-        assert ok_other is False    # sibling under the org root, but outside the agent
+        assert ok_sub is True  # within the agent's narrowed root
+        assert ok_other is False  # sibling under the org root, but outside the agent
 
 
 def test_agent_cannot_escape_org_root():

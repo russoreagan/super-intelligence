@@ -104,9 +104,7 @@ def affect_view(raw_text: str, affect: dict | None) -> tuple[str, dict]:
 def _resolve_format(fmt: str | None) -> tuple[str, int | None]:
     key = (fmt or _DEFAULT_FORMAT).strip()
     if key not in _OUTPUT_FORMATS:
-        raise AudioError(
-            f"unknown audio format {key!r}; supported: {sorted(_OUTPUT_FORMATS)}"
-        )
+        raise AudioError(f"unknown audio format {key!r}; supported: {sorted(_OUTPUT_FORMATS)}")
     return _OUTPUT_FORMATS[key]
 
 
@@ -202,11 +200,14 @@ async def synthesize_stream(
             total_chars += len(payload.get("text") or "")
             count += 1
             yield "chunk", payload
-    yield "end", {
-        "chunks": count,
-        "duration_s": round(total_bytes / (2 * rate), 3) if rate else None,
-        "chars": total_chars,  # provider-billed unit (for quota accounting)
-    }
+    yield (
+        "end",
+        {
+            "chunks": count,
+            "duration_s": round(total_bytes / (2 * rate), 3) if rate else None,
+            "chars": total_chars,  # provider-billed unit (for quota accounting)
+        },
+    )
 
 
 async def _segment_stream(
@@ -234,24 +235,30 @@ async def _segment_stream(
 
     if provider == "openai":
         # OpenAI TTS is 24 kHz PCM resampled to 22050 by _pcm_resample.
-        yield "meta", {
-            "format": "pcm_22050",
-            "voice_id": os.environ.get("OPENAI_TTS_VOICE", "alloy"),
-            "model": os.environ.get("OPENAI_TTS_MODEL", "gpt-4o-mini-tts"),
-            "sample_rate": 22050,
-        }
+        yield (
+            "meta",
+            {
+                "format": "pcm_22050",
+                "voice_id": os.environ.get("OPENAI_TTS_VOICE", "alloy"),
+                "model": os.environ.get("OPENAI_TTS_MODEL", "gpt-4o-mini-tts"),
+                "sample_rate": 22050,
+            },
+        )
         async for seg in _iter_openai(chunks, affect):
             yield "chunk", seg
         return
 
     resolved_model = _resolve_model(model)
     resolved_voice = voice_id or os.environ.get("ELEVENLABS_VOICE_ID") or "21m00Tcm4TlvDq8ikWAM"
-    yield "meta", {
-        "format": el_format,
-        "voice_id": resolved_voice,
-        "model": resolved_model,
-        "sample_rate": pcm_rate,
-    }
+    yield (
+        "meta",
+        {
+            "format": el_format,
+            "voice_id": resolved_voice,
+            "model": resolved_model,
+            "sample_rate": pcm_rate,
+        },
+    )
     async for seg in _iter_elevenlabs(chunks, affect, resolved_voice, resolved_model, el_format):
         yield "chunk", seg
 
@@ -330,12 +337,13 @@ async def _iter_openai(chunks: list[tuple[str, str | None]], affect: dict):
     voice = os.environ.get("OPENAI_TTS_VOICE", "alloy")
 
     for i, (chunk, mood) in enumerate(chunks):
-        instructions = (
-            PNS._openai_instruction_from_emotion(mood) if mood else base_instruction
-        )
+        instructions = PNS._openai_instruction_from_emotion(mood) if mood else base_instruction
         resp = await client.audio.speech.create(
-            model=model, voice=voice, input=chunk,
-            instructions=instructions, response_format="pcm",
+            model=model,
+            voice=voice,
+            input=chunk,
+            instructions=instructions,
+            response_format="pcm",
         )
         data = await resp.aread() if hasattr(resp, "aread") else resp.read()
         data = PNS._pcm_resample(data)  # 24 kHz → 22050, matching the playback path

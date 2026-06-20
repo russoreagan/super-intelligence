@@ -1279,9 +1279,7 @@ class DefaultModeNetwork:
         # the identity document would both duplicate it and eat the 8000-char
         # snippet budget.
         if self_schema:
-            self_schema = re.sub(
-                r"(?ms)^## Thinking frameworks\n.*?(?=^## |\Z)", "", self_schema
-            )
+            self_schema = re.sub(r"(?ms)^## Thinking frameworks\n.*?(?=^## |\Z)", "", self_schema)
             self._last_self_schema = self_schema[:8000]
         # Rebuild context blob with the LIVE parietal + most recent schema.
         from brain.dmn_prompts import FRAMEWORKS_CATALOG
@@ -2115,7 +2113,9 @@ class DefaultModeNetwork:
             cap = float(settings.get("prediction_reward_turn_cap"))
             self._bus.neuromod.add("DA", max(-cap, min(cap, delta)))
 
-    def _reward_idle_thought_quality(self, thought: str, max_overlap: float, max_cos: float) -> None:
+    def _reward_idle_thought_quality(
+        self, thought: str, max_overlap: float, max_cos: float
+    ) -> None:
         """Stage 7 Gap 2: cheap heuristic quality (novelty + length sanity, NO LLM) → DA reward
         for a good idle thought, persona-scaled by the 'novelty' valuation (curiosity-driven
         personas get more). Threshold-gated so filler earns nothing. Best-effort."""
@@ -2160,7 +2160,11 @@ class DefaultModeNetwork:
         the phasic worry/interest drive (which decays to ~0 at rest). Two terms, persona-scaled by
         a chemistry-derived ruminative disposition (high ACh + low 5HT + CORT → chews more; Poet
         most, Sage least), so deep idle itself can carry the entity over the rumination threshold."""
-        boredom = min(1.0, max(0.0, idle - idle_threshold) / max(1.0, float(settings.get("rum_idle_saturation_s") or 300.0)))
+        boredom = min(
+            1.0,
+            max(0.0, idle - idle_threshold)
+            / max(1.0, float(settings.get("rum_idle_saturation_s") or 300.0)),
+        )
         try:
             max_adv = max((int(getattr(t, "advances", 0)) for t in self._open_threads), default=0)
         except Exception:

@@ -78,9 +78,7 @@ def test_changing_only_topic_leaves_signature_unchanged():
 
 def test_structure_flags_are_problem_shape_not_domain():
     c = _cluster()
-    flags = c._structure_flags(
-        {"intent": "task", "requires_action": True, "salience": 0.9}
-    )
+    flags = c._structure_flags({"intent": "task", "requires_action": True, "salience": 0.9})
     assert flags["requires_decomposition"] == 1.0
     assert flags["high_stakes"] == 1.0
     # A pure chitchat question is open-ended, needs no decomposition.
@@ -130,7 +128,7 @@ def _store_with_rows(rows):
 def test_structural_match_finds_domainA_by_signature_not_topic():
     """A domain-A episode with a matching signature is returned for a domain-B
     query; an episode whose signature is far is not surfaced (low cosine)."""
-    sig_match = {k: 0.5 for k in SIGNATURE_KEYS}
+    sig_match = dict.fromkeys(SIGNATURE_KEYS, 0.5)
     sig_far = {k: (0.0 if i % 2 else 1.0) for i, k in enumerate(SIGNATURE_KEYS)}
     rows = [
         {
@@ -154,7 +152,7 @@ def test_structural_match_finds_domainA_by_signature_not_topic():
     ]
     store = _store_with_rows(rows)
     out = store.recall_structural(
-        {k: 0.5 for k in SIGNATURE_KEYS},
+        dict.fromkeys(SIGNATURE_KEYS, 0.5),
         approach_tags=["approach:decomposed-into-steps"],
         limit=3,
         exclude_session="current",
@@ -168,10 +166,20 @@ def test_structural_match_finds_domainA_by_signature_not_topic():
 
 def test_structural_excludes_current_session_and_empty_signatures():
     rows = [
-        {"session_id": "current", "topic_tags": "[]", "entities": "[]",
-         "neuromod_snapshot": "{}", "cog_signature": '{"DA": 0.5}'},
-        {"session_id": "old", "topic_tags": "[]", "entities": "[]",
-         "neuromod_snapshot": "{}", "cog_signature": "{}"},  # empty sig → skipped
+        {
+            "session_id": "current",
+            "topic_tags": "[]",
+            "entities": "[]",
+            "neuromod_snapshot": "{}",
+            "cog_signature": '{"DA": 0.5}',
+        },
+        {
+            "session_id": "old",
+            "topic_tags": "[]",
+            "entities": "[]",
+            "neuromod_snapshot": "{}",
+            "cog_signature": "{}",
+        },  # empty sig → skipped
     ]
     store = _store_with_rows(rows)
     out = store.recall_structural({"DA": 0.5}, exclude_session="current")
@@ -230,8 +238,14 @@ def test_structural_pathway_credited_by_its_share():
     upd = HebbianUpdater(w)
     before = w.get_edge_weight("mem.recall", "hippocampus.structural_recall")
     upd._apply_recall_credit(
-        types.SimpleNamespace(recall_contrib={"schema": 0, "episode": 0, "structural": 3}, turn_id="t"),
-        outcome=0.7, plasticity=1.0, turn_plast=1.0, gainers=[], losers=[],
+        types.SimpleNamespace(
+            recall_contrib={"schema": 0, "episode": 0, "structural": 3}, turn_id="t"
+        ),
+        outcome=0.7,
+        plasticity=1.0,
+        turn_plast=1.0,
+        gainers=[],
+        losers=[],
     )
     assert w.get_edge_weight("mem.recall", "hippocampus.structural_recall") > before
 
@@ -243,6 +257,10 @@ def test_structural_share_does_not_break_schema_episode_split():
     upd = HebbianUpdater(w)
     n = upd._apply_recall_credit(
         types.SimpleNamespace(recall_contrib={"schema": 0, "episode": 4}, turn_id="t"),
-        outcome=0.6, plasticity=1.0, turn_plast=1.0, gainers=[], losers=[],
+        outcome=0.6,
+        plasticity=1.0,
+        turn_plast=1.0,
+        gainers=[],
+        losers=[],
     )
     assert n == 2  # episode side only (cosine_recall + time_filter)

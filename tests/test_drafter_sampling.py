@@ -50,7 +50,7 @@ def test_learned_ranking_flips_the_mix():
         return {i: c[i] / n for i in range(5)}
 
     warm = [1.08, 1.17, 0.84, 1.0, 1.0]  # B>A
-    ana = [1.15, 1.09, 0.84, 1.0, 1.0]   # A>B
+    ana = [1.15, 1.09, 0.84, 1.0, 1.0]  # A>B
     fw, fa = freq(warm, 3), freq(ana, 3)
-    assert fw[1] > fa[1]   # warm picks drafter_B (idx1) more than analytical does
-    assert fa[0] > fw[0]   # analytical picks drafter_A (idx0) more than warm does
+    assert fw[1] > fa[1]  # warm picks drafter_B (idx1) more than analytical does
+    assert fa[0] > fw[0]  # analytical picks drafter_A (idx0) more than warm does

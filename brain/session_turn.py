@@ -120,7 +120,9 @@ class _TurnMixin:
             with bind_agent(agent_id):
                 result = await cloud.execute_pending("api-confirm")
             output = (result or {}).get("output", "") if isinstance(result, dict) else ""
-            success = bool((result or {}).get("success", False)) if isinstance(result, dict) else False
+            success = (
+                bool((result or {}).get("success", False)) if isinstance(result, dict) else False
+            )
             return (output or "Done.", {"emotion": "neutral", "action_success": success})
 
     async def api_purge_end_user(self, end_user_id: str) -> dict:
@@ -139,10 +141,8 @@ class _TurnMixin:
             # a row we're about to delete).
             reg = getattr(self, "_client_chem", None)
             if reg is not None:
-                try:
+                with contextlib.suppress(Exception):
                     reg.forget(end_user_id)
-                except Exception:
-                    pass
             um = getattr(self, "_engine_um_cache", None)
             if isinstance(um, dict):
                 um.pop(end_user_id, None)
@@ -158,8 +158,12 @@ class _TurnMixin:
                     # non-empty end_user_id are the per-speaker model; the persona's
                     # own self.md/user.md use end_user_id='' and are untouched.
                     for table in (
-                        "episodes", "tasks", "dmn_state", "speaker_profiles",
-                        "brain_schemas", "api_sessions",
+                        "episodes",
+                        "tasks",
+                        "dmn_state",
+                        "speaker_profiles",
+                        "brain_schemas",
+                        "api_sessions",
                     ):
                         try:
                             res = (
@@ -319,7 +323,7 @@ class _TurnMixin:
             vp = await self.router.embed(predicted_text)
             if not va or not vp:
                 return
-            dot = sum(a * b for a, b in zip(va, vp))
+            dot = sum(a * b for a, b in zip(va, vp, strict=False))
             na = math.sqrt(sum(a * a for a in va)) or 1.0
             nb = math.sqrt(sum(b * b for b in vp)) or 1.0
             sim = dot / (na * nb)
@@ -1031,11 +1035,17 @@ class _TurnMixin:
                     # guilt component). Flavor — brooding vs bristling — comes from resting chem.
                     self.bus.neuromod.add("GABA", 0.06)
                     self.bus.neuromod.add("NE", 0.04)
-                    self.bus.neuromod.add("DA", -float(settings.get("correctness_penalty_base")) * _w * _er)
-                    self.bus.neuromod.add("5HT", -float(settings.get("correctness_5ht_drain")) * _w * _er)
+                    self.bus.neuromod.add(
+                        "DA", -float(settings.get("correctness_penalty_base")) * _w * _er
+                    )
+                    self.bus.neuromod.add(
+                        "5HT", -float(settings.get("correctness_5ht_drain")) * _w * _er
+                    )
                     _trigger = "draft_quality_low"
                 elif overall > 0.7:
-                    self.bus.neuromod.add("DA", float(settings.get("correctness_self_base")) * _w * _er)
+                    self.bus.neuromod.add(
+                        "DA", float(settings.get("correctness_self_base")) * _w * _er
+                    )
                     _trigger = "draft_quality_high"
                 else:
                     _trigger = None
@@ -1459,9 +1469,7 @@ class _TurnMixin:
         # so re-triggering while one runs is a no-op.
         _trace_cap = int(settings.get("session_trace_cap", 300))
         if _trace_cap > 0 and len(self._session_traces) >= _trace_cap:
-            logger.warning(
-                "[Sleep] Trace buffer hit cap (%d) — forcing consolidation", _trace_cap
-            )
+            logger.warning("[Sleep] Trace buffer hit cap (%d) — forcing consolidation", _trace_cap)
             asyncio.create_task(self.consolidate_now("trace_cap"))
 
         await self._emit("hippocampus", 0.45, "encoding episode", turn_id)
@@ -1803,7 +1811,9 @@ class _TurnMixin:
         if success is False:
             self.bus.neuromod.add("GABA", 0.08)
             self.bus.neuromod.add("NE", 0.06)
-            self.bus.neuromod.add("DA", -float(settings.get("correctness_penalty_base")) * _tw * _ter)
+            self.bus.neuromod.add(
+                "DA", -float(settings.get("correctness_penalty_base")) * _tw * _ter
+            )
             self.bus.neuromod.add("5HT", -float(settings.get("correctness_5ht_drain")) * _tw * _ter)
         elif success:
             self.bus.neuromod.add("DA", float(settings.get("correctness_reward_base")) * _tw * _ter)

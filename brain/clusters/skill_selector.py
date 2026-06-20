@@ -771,9 +771,7 @@ class SkillSelector:
         rumination loop still progresses in the right register. Honors the category cap."""
         pool = self._ANXIOUS_SKILLS if flavor == "anxious" else self._ENGAGED_SKILLS
         available = [
-            n
-            for n in pool
-            if n in self._index._by_name and self._skill_category(n) != blocked_cat
+            n for n in pool if n in self._index._by_name and self._skill_category(n) != blocked_cat
         ]
         if available:
             return random.choice(available)
@@ -800,9 +798,7 @@ class SkillSelector:
         # drop the over-used category (consecutive-category cap) to force a fresh lens.
         blocked_cat = self._blocked_category(chain)
         pool = [
-            s
-            for s in self._index.skills
-            if not s["is_router"] and s["category"] != blocked_cat
+            s for s in self._index.skills if not s["is_router"] and s["category"] != blocked_cat
         ]
         random.shuffle(pool)
         lines, budget = [], 0

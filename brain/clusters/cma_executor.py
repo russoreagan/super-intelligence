@@ -98,7 +98,9 @@ def _b64url_nopad(raw: bytes) -> str:
     return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
 
 
-def mint_end_user_token(end_user_id: str, secret: str, *, now_ms: int, ttl_s: int = 3600) -> tuple[str, int]:
+def mint_end_user_token(
+    end_user_id: str, secret: str, *, now_ms: int, ttl_s: int = 3600
+) -> tuple[str, int]:
     """Return (token, exp_ms) for an end-user, HMAC-signed with the connector secret."""
     import hashlib
     import hmac
@@ -107,7 +109,9 @@ def mint_end_user_token(end_user_id: str, secret: str, *, now_ms: int, ttl_s: in
     body = _b64url_nopad(
         json.dumps({"eu": end_user_id, "exp": exp_ms}, separators=(",", ":")).encode("utf-8")
     )
-    sig = _b64url_nopad(hmac.new(secret.encode("utf-8"), body.encode("ascii"), hashlib.sha256).digest())
+    sig = _b64url_nopad(
+        hmac.new(secret.encode("utf-8"), body.encode("ascii"), hashlib.sha256).digest()
+    )
     return f"{_MCPU_PREFIX}{body}.{sig}", exp_ms
 
 
@@ -127,7 +131,11 @@ def _normalize_url(url: str) -> str:
 
 def _read_mcp_config() -> dict:
     try:
-        return json.loads(_MCP_CONFIG_PATH.read_text(encoding="utf-8")) if _MCP_CONFIG_PATH.exists() else {"servers": []}
+        return (
+            json.loads(_MCP_CONFIG_PATH.read_text(encoding="utf-8"))
+            if _MCP_CONFIG_PATH.exists()
+            else {"servers": []}
+        )
     except Exception:
         return {"servers": []}
 
@@ -140,10 +148,14 @@ def _write_mcp_config(cfg: dict) -> None:
 def register_connector(name: str, url: str, display_name: str = "") -> str:
     """Generate a shared secret, register the connector (Supabase or file), return it once."""
     if is_env_managed():
-        raise ValueError("connectors are pinned via BRAIN_CMA_MCP_SERVERS and cannot be edited here")
+        raise ValueError(
+            "connectors are pinned via BRAIN_CMA_MCP_SERVERS and cannot be edited here"
+        )
     name = name.strip().lower()
     if not _CONNECTOR_NAME_RE.match(name):
-        raise ValueError("name must be lowercase letters/digits/underscore/hyphen, starting with a letter or digit")
+        raise ValueError(
+            "name must be lowercase letters/digits/underscore/hyphen, starting with a letter or digit"
+        )
     url = _normalize_url(url)
     display_name = (display_name or "").strip()
     secret = _secrets_mod.token_hex(32)
@@ -154,7 +166,12 @@ def register_connector(name: str, url: str, display_name: str = "") -> str:
         try:
             supabase_client.get_client().rpc(
                 "register_mcp_connector",
-                {"p_name": name, "p_url": url, "p_secret": secret, "p_display_name": display_name or None},
+                {
+                    "p_name": name,
+                    "p_url": url,
+                    "p_secret": secret,
+                    "p_display_name": display_name or None,
+                },
             ).execute()
         except Exception as e:
             # The RPC raises on duplicate name; surface a clean message.
@@ -180,13 +197,17 @@ def register_connector(name: str, url: str, display_name: str = "") -> str:
 def remove_connector(name: str) -> bool:
     """Remove a connector by name. Returns True if it existed."""
     if is_env_managed():
-        raise ValueError("connectors are pinned via BRAIN_CMA_MCP_SERVERS and cannot be edited here")
+        raise ValueError(
+            "connectors are pinned via BRAIN_CMA_MCP_SERVERS and cannot be edited here"
+        )
     name = name.strip().lower()
     if _supabase_enabled():
         from brain.second_brain import supabase_client
 
         try:
-            resp = supabase_client.get_client().rpc("delete_mcp_connector", {"p_name": name}).execute()
+            resp = (
+                supabase_client.get_client().rpc("delete_mcp_connector", {"p_name": name}).execute()
+            )
             return bool(resp.data)
         except Exception as e:
             logger.warning("[CMAExecutor] delete_mcp_connector failed for %s: %s", name, e)
@@ -245,6 +266,7 @@ def list_connector_details() -> list[dict]:
         for s in servers
         if s.get("name")
     ]
+
 
 _AGENT_TOOLSET = "agent_toolset_20260401"
 # Tools withheld from the read agent (the write agent gets the full toolset).
@@ -502,13 +524,17 @@ class CMAExecutor(ExecutorCommon):
 
             if not supabase_client.is_enabled():
                 return []
-            resp = supabase_client.get_client().rpc(
-                "get_end_user_mcp_tokens", {"p_end_user_id": end_user_id}
-            ).execute()
+            resp = (
+                supabase_client.get_client()
+                .rpc("get_end_user_mcp_tokens", {"p_end_user_id": end_user_id})
+                .execute()
+            )
             data = resp.data
             return data if isinstance(data, list) else []
         except Exception as e:
-            logger.warning("[CMAExecutor] could not fetch end-user tokens for %s: %s", end_user_id, e)
+            logger.warning(
+                "[CMAExecutor] could not fetch end-user tokens for %s: %s", end_user_id, e
+            )
             return []
 
     def _identity_connectors(self) -> list[dict]:
@@ -561,7 +587,9 @@ class CMAExecutor(ExecutorCommon):
             except Exception as e:
                 logger.warning(
                     "[CMAExecutor] seeding user OAuth credential %s/%s: %s",
-                    end_user_id, tok["server_name"], e,
+                    end_user_id,
+                    tok["server_name"],
+                    e,
                 )
 
         cred_ids: dict[str, str] = {}  # connector url -> static_bearer credential id
@@ -579,7 +607,9 @@ class CMAExecutor(ExecutorCommon):
             except Exception as e:
                 logger.warning(
                     "[CMAExecutor] seeding user identity credential %s/%s: %s",
-                    end_user_id, srv["name"], e,
+                    end_user_id,
+                    srv["name"],
+                    e,
                 )
 
         self._user_vault_cache[end_user_id] = {
@@ -590,7 +620,9 @@ class CMAExecutor(ExecutorCommon):
         logger.info("[CMAExecutor] provisioned per-user vault %s for %s", vault_id, end_user_id)
         return vault_id
 
-    async def _refresh_user_identity_tokens(self, end_user_id: str, cached: dict, now_ms: int) -> None:
+    async def _refresh_user_identity_tokens(
+        self, end_user_id: str, cached: dict, now_ms: int
+    ) -> None:
         """Re-mint and update-in-place each identity connector's static_bearer cred."""
         vault_id = cached["vault_id"]
         cred_ids: dict = cached.get("cred_ids", {})
@@ -610,7 +642,9 @@ class CMAExecutor(ExecutorCommon):
             except Exception as e:
                 logger.warning(
                     "[CMAExecutor] refreshing user identity credential %s/%s: %s",
-                    end_user_id, srv["name"], e,
+                    end_user_id,
+                    srv["name"],
+                    e,
                 )
         cached["mcpu_exp_ms"] = min_exp_ms
 
@@ -653,8 +687,7 @@ class CMAExecutor(ExecutorCommon):
 
     def _mcp_server_decls(self) -> list[dict]:
         return [
-            {"name": s["name"], "type": "url", "url": s["url"]}
-            for s in self._active_mcp_servers()
+            {"name": s["name"], "type": "url", "url": s["url"]} for s in self._active_mcp_servers()
         ]
 
     def _config_hash(self) -> str:
@@ -707,7 +740,9 @@ class CMAExecutor(ExecutorCommon):
         self, task: str, context_facts: list[str], turn_id: str = "", end_user_id: str | None = None
     ) -> dict:
         self._current_end_user_id = end_user_id
-        return await self._run(task, context_facts, turn_id=turn_id, write_allowed=False, end_user_id=end_user_id)
+        return await self._run(
+            task, context_facts, turn_id=turn_id, write_allowed=False, end_user_id=end_user_id
+        )
 
     async def execute_pending(self, turn_id: str = "") -> dict | None:
         if not self._pending:
@@ -715,8 +750,10 @@ class CMAExecutor(ExecutorCommon):
         action = self._pending
         self._pending = None
         return await self._run(
-            action["task"], action.get("context_facts", []),
-            turn_id=turn_id, write_allowed=True,
+            action["task"],
+            action.get("context_facts", []),
+            turn_id=turn_id,
+            write_allowed=True,
             end_user_id=self._current_end_user_id,
         )
 
@@ -791,7 +828,11 @@ class CMAExecutor(ExecutorCommon):
                         return sid
                 except Exception:
                     pass
-            kwargs: dict = {"agent": want_agent, "environment_id": self._env_id, "title": "brain-user"}
+            kwargs: dict = {
+                "agent": want_agent,
+                "environment_id": self._env_id,
+                "title": "brain-user",
+            }
             kwargs["vault_ids"] = [user_vault_id]
             s = await self._client.beta.sessions.create(**kwargs)
             self._user_sessions[key] = s.id
@@ -815,7 +856,11 @@ class CMAExecutor(ExecutorCommon):
         return s.id
 
     async def _drive_task(
-        self, task: str, context_facts: list[str], write_allowed: bool, user_vault_id: str | None = None
+        self,
+        task: str,
+        context_facts: list[str],
+        write_allowed: bool,
+        user_vault_id: str | None = None,
     ) -> str:
         sid = await self._ensure_session(write_allowed, user_vault_id=user_vault_id)
         text = await self._consume(sid, self._compose_task(task, context_facts))
@@ -837,7 +882,10 @@ class CMAExecutor(ExecutorCommon):
                         await self._client.beta.sessions.events.send(
                             sid,
                             events=[
-                                {"type": "user.message", "content": [{"type": "text", "text": message}]}
+                                {
+                                    "type": "user.message",
+                                    "content": [{"type": "text", "text": message}],
+                                }
                             ],
                         )
                         sent = True

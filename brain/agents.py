@@ -233,10 +233,7 @@ def _combine_flag(org_v, agent_v):
 
 def _combine_cloud(org_v, agent_v):
     o = _CLOUD_RANK.get(str(org_v or "off"), 0)
-    if agent_v is None or agent_v == "":
-        rank = o
-    else:
-        rank = min(o, _CLOUD_RANK.get(str(agent_v), 0))
+    rank = o if agent_v is None or agent_v == "" else min(o, _CLOUD_RANK.get(str(agent_v), 0))
     return {0: "off", 1: "ro", 2: "full"}[rank]
 
 

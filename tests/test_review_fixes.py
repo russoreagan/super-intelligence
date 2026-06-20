@@ -390,7 +390,9 @@ def _parse_js_dial_maps(js: str) -> dict:
     for m in re.finditer(r"\{\s*id:\s*'([a-z-]+)'.*?map:\s*\[(.*?)\]", js, re.S):
         did, body = m.group(1), m.group(2)
         entries = {}
-        for e in re.finditer(r"\{\s*key:\s*'([A-Za-z_0-9]+)',\s*dir:\s*([+-]?\d+),\s*span:\s*([0-9.]+)", body):
+        for e in re.finditer(
+            r"\{\s*key:\s*'([A-Za-z_0-9]+)',\s*dir:\s*([+-]?\d+),\s*span:\s*([0-9.]+)", body
+        ):
             entries[e.group(1)] = (int(e.group(2)), float(e.group(3)))
         if entries:
             out[did] = entries
@@ -408,9 +410,7 @@ def test_cognitive_dial_map_js_python_sync():
         assert dial_id in js_maps, f"{dial_id} missing from settings-ui.js dial maps"
         py = {key: (d, s) for (key, d, s, _lo, _hi) in rows}
         js_entry = js_maps[dial_id]
-        assert set(py) == set(js_entry), (
-            f"{dial_id} key drift: python={set(py)} js={set(js_entry)}"
-        )
+        assert set(py) == set(js_entry), f"{dial_id} key drift: python={set(py)} js={set(js_entry)}"
         for key, (pd, ps) in py.items():
             jd, jsp = js_entry[key]
             assert pd == jd, f"{dial_id}.{key} dir drift: py={pd} js={jd}"

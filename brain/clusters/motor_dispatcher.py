@@ -83,7 +83,19 @@ DEFAULT_COMMANDS = {
 # Commands safe to run with a read-only working directory: they inspect, never
 # mutate. Anything else (interpreters, package managers, editors, rm/mv/cp …)
 # requires the cwd to be under a read/write root.
-READONLY_COMMANDS = {"ls", "find", "grep", "cat", "head", "tail", "wc", "sort", "uniq", "diff", "echo"}
+READONLY_COMMANDS = {
+    "ls",
+    "find",
+    "grep",
+    "cat",
+    "head",
+    "tail",
+    "wc",
+    "sort",
+    "uniq",
+    "diff",
+    "echo",
+}
 
 
 class ToolDispatcher:
@@ -165,7 +177,11 @@ class ToolDispatcher:
         perms = self._agent_perms()
         if perms is None or "motor_allowed_commands" not in perms:
             return self._allowed_commands
-        agent_cmds = {ln.strip() for ln in str(perms.get("motor_allowed_commands") or "").splitlines() if ln.strip()}
+        agent_cmds = {
+            ln.strip()
+            for ln in str(perms.get("motor_allowed_commands") or "").splitlines()
+            if ln.strip()
+        }
         if not agent_cmds:
             return self._allowed_commands
         return self._allowed_commands & agent_cmds  # intersection — can only narrow
@@ -233,8 +249,7 @@ class ToolDispatcher:
         allowed_commands = self._eff_commands()
         if base not in allowed_commands:
             return False, (
-                f"Command '{base}' is not in the allowed list. "
-                f"Allowed: {sorted(allowed_commands)}"
+                f"Command '{base}' is not in the allowed list. Allowed: {sorted(allowed_commands)}"
             )
         return True, ""
 

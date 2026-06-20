@@ -609,9 +609,7 @@ class FrontalCluster:
                     # Stage 5 Tier A: self-verified correctness. A confident, NON-trivial
                     # prediction the integrator then confirmed is intrinsic competence — reward
                     # it (no user needed); a confident-wrong one dips DA. Guards in the helper.
-                    self._emit_prediction_reward(
-                        confidence, predicted == shadow_actual, exec_sig
-                    )
+                    self._emit_prediction_reward(confidence, predicted == shadow_actual, exec_sig)
 
         if instruction is None:
             instruction, actual = await self._run_executive_llm(
@@ -645,9 +643,7 @@ class FrontalCluster:
 
         return instruction
 
-    def _emit_prediction_reward(
-        self, confidence: float, correct: bool, exec_sig: tuple
-    ) -> None:
+    def _emit_prediction_reward(self, confidence: float, correct: bool, exec_sig: tuple) -> None:
         """Stage 5 Tier A helper: convert a confirmed/refuted executive prediction into an
         intrinsic correctness DA delta — self-verified, no user. Gated + capped in
         neuron.prediction_reward / settings; persona-scaled by how much this identity values
@@ -900,9 +896,7 @@ class FrontalCluster:
         # Hebbian outcome signal is worth paying for. Phasic sampling — spend the
         # critic budget where something happened, not uniformly.
         _verdict_tone = str(features.get("user_tone_toward_ai") or "").lower()
-        _da_dev = abs(
-            float(chem.get("DA", 0.5)) - float(settings.get("chem_baseline_DA") or 0.5)
-        )
+        _da_dev = abs(float(chem.get("DA", 0.5)) - float(settings.get("chem_baseline_DA") or 0.5))
         critic_force = (
             _verdict_tone in ("praising", "critical", "mocking", "dismissive", "grateful")
             or float(chem.get("NE", 0.0)) >= float(settings.get("critic_force_ne", 0.7))

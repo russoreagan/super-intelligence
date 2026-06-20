@@ -28,17 +28,13 @@ def _from_address() -> str:
     return os.environ.get("EMAIL_FROM", "").strip() or _DEFAULT_FROM
 
 
-async def send_email(
-    to: str, subject: str, html: str, text: str | None = None
-) -> bool:
+async def send_email(to: str, subject: str, html: str, text: str | None = None) -> bool:
     """Send one email via Resend. Returns True on send (or dev-mode log), False
     only on an actual delivery error. Never raises."""
     api_key = os.environ.get("RESEND_API_KEY", "").strip()
     if not api_key:
         # Dev / unconfigured: log instead of sending (matches thegaim.app).
-        logger.info(
-            "[mail] RESEND_API_KEY unset — would send to=%s subject=%r", to, subject
-        )
+        logger.info("[mail] RESEND_API_KEY unset — would send to=%s subject=%r", to, subject)
         return True
 
     payload: dict[str, object] = {

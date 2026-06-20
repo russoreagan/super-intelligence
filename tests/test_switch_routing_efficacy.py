@@ -103,4 +103,6 @@ def test_credit_sign_follows_outcome():
     upd._apply_switch_routing_credit(
         _trace(fired), outcome=-0.6, plasticity=1.0, turn_plast=1.0, gainers=[], losers=[]
     )
-    assert w.get_edge_weight("sensory.text", "temporal.epistemic_action") < before  # negative → weakens
+    assert (
+        w.get_edge_weight("sensory.text", "temporal.epistemic_action") < before
+    )  # negative → weakens

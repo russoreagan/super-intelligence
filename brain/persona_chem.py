@@ -245,17 +245,116 @@ PERSONA_CHEMISTRY: dict[str, dict[str, float]] = {
 PERSONA_COG_POSITIONS: dict[str, dict[str, float]] = {
     # dial ids: learning-rate · focus · curiosity · introspection · memory ·
     #           emotionality · hindsight · lingering
-    "The Visionary": {"learning-rate": 0.70, "focus": 0.30, "curiosity": 0.85, "introspection": 0.50, "memory": 0.50, "emotionality": 0.65, "hindsight": 0.50, "lingering": 0.50},
-    "The Empath":    {"learning-rate": 0.60, "focus": 0.50, "curiosity": 0.50, "introspection": 0.70, "memory": 0.72, "emotionality": 0.80, "hindsight": 0.65, "lingering": 0.70},
-    "The Analyst":   {"learning-rate": 0.60, "focus": 0.85, "curiosity": 0.55, "introspection": 0.60, "memory": 0.65, "emotionality": 0.25, "hindsight": 0.72, "lingering": 0.40},
-    "The Poet":      {"learning-rate": 0.65, "focus": 0.40, "curiosity": 0.70, "introspection": 0.88, "memory": 0.70, "emotionality": 0.92, "hindsight": 0.60, "lingering": 0.88},
-    "The Sage":      {"learning-rate": 0.45, "focus": 0.70, "curiosity": 0.60, "introspection": 0.85, "memory": 0.80, "emotionality": 0.40, "hindsight": 0.82, "lingering": 0.30},
-    "The Companion": {"learning-rate": 0.60, "focus": 0.45, "curiosity": 0.60, "introspection": 0.50, "memory": 0.78, "emotionality": 0.70, "hindsight": 0.60, "lingering": 0.60},
-    "The Adversary": {"learning-rate": 0.55, "focus": 0.80, "curiosity": 0.50, "introspection": 0.55, "memory": 0.72, "emotionality": 0.35, "hindsight": 0.75, "lingering": 0.58},
-    "The Mentor":    {"learning-rate": 0.70, "focus": 0.65, "curiosity": 0.80, "introspection": 0.70, "memory": 0.75, "emotionality": 0.55, "hindsight": 0.85, "lingering": 0.50},
-    "The Concierge": {"learning-rate": 0.55, "focus": 0.82, "curiosity": 0.45, "introspection": 0.50, "memory": 0.85, "emotionality": 0.40, "hindsight": 0.70, "lingering": 0.40},
-    "The Jester":    {"learning-rate": 0.60, "focus": 0.30, "curiosity": 0.80, "introspection": 0.40, "memory": 0.50, "emotionality": 0.78, "hindsight": 0.45, "lingering": 0.52},
-    "The Cynic":     {"learning-rate": 0.50, "focus": 0.65, "curiosity": 0.40, "introspection": 0.72, "memory": 0.70, "emotionality": 0.45, "hindsight": 0.70, "lingering": 0.62},
+    "The Visionary": {
+        "learning-rate": 0.70,
+        "focus": 0.30,
+        "curiosity": 0.85,
+        "introspection": 0.50,
+        "memory": 0.50,
+        "emotionality": 0.65,
+        "hindsight": 0.50,
+        "lingering": 0.50,
+    },
+    "The Empath": {
+        "learning-rate": 0.60,
+        "focus": 0.50,
+        "curiosity": 0.50,
+        "introspection": 0.70,
+        "memory": 0.72,
+        "emotionality": 0.80,
+        "hindsight": 0.65,
+        "lingering": 0.70,
+    },
+    "The Analyst": {
+        "learning-rate": 0.60,
+        "focus": 0.85,
+        "curiosity": 0.55,
+        "introspection": 0.60,
+        "memory": 0.65,
+        "emotionality": 0.25,
+        "hindsight": 0.72,
+        "lingering": 0.40,
+    },
+    "The Poet": {
+        "learning-rate": 0.65,
+        "focus": 0.40,
+        "curiosity": 0.70,
+        "introspection": 0.88,
+        "memory": 0.70,
+        "emotionality": 0.92,
+        "hindsight": 0.60,
+        "lingering": 0.88,
+    },
+    "The Sage": {
+        "learning-rate": 0.45,
+        "focus": 0.70,
+        "curiosity": 0.60,
+        "introspection": 0.85,
+        "memory": 0.80,
+        "emotionality": 0.40,
+        "hindsight": 0.82,
+        "lingering": 0.30,
+    },
+    "The Companion": {
+        "learning-rate": 0.60,
+        "focus": 0.45,
+        "curiosity": 0.60,
+        "introspection": 0.50,
+        "memory": 0.78,
+        "emotionality": 0.70,
+        "hindsight": 0.60,
+        "lingering": 0.60,
+    },
+    "The Adversary": {
+        "learning-rate": 0.55,
+        "focus": 0.80,
+        "curiosity": 0.50,
+        "introspection": 0.55,
+        "memory": 0.72,
+        "emotionality": 0.35,
+        "hindsight": 0.75,
+        "lingering": 0.58,
+    },
+    "The Mentor": {
+        "learning-rate": 0.70,
+        "focus": 0.65,
+        "curiosity": 0.80,
+        "introspection": 0.70,
+        "memory": 0.75,
+        "emotionality": 0.55,
+        "hindsight": 0.85,
+        "lingering": 0.50,
+    },
+    "The Concierge": {
+        "learning-rate": 0.55,
+        "focus": 0.82,
+        "curiosity": 0.45,
+        "introspection": 0.50,
+        "memory": 0.85,
+        "emotionality": 0.40,
+        "hindsight": 0.70,
+        "lingering": 0.40,
+    },
+    "The Jester": {
+        "learning-rate": 0.60,
+        "focus": 0.30,
+        "curiosity": 0.80,
+        "introspection": 0.40,
+        "memory": 0.50,
+        "emotionality": 0.78,
+        "hindsight": 0.45,
+        "lingering": 0.52,
+    },
+    "The Cynic": {
+        "learning-rate": 0.50,
+        "focus": 0.65,
+        "curiosity": 0.40,
+        "introspection": 0.72,
+        "memory": 0.70,
+        "emotionality": 0.45,
+        "hindsight": 0.70,
+        "lingering": 0.62,
+    },
     # The Stoic intentionally omitted — flat-neutral control.
 }
 
@@ -267,27 +366,42 @@ PERSONA_COG_POSITIONS: dict[str, dict[str, float]] = {
 # major behavioral switches per persona is not something a style dial should do.
 _NONCHEM_DIAL_MAP: dict[str, list[tuple[str, int, float, float, float]]] = {
     "learning-rate": [
-        ("hebbian_delta", +1, 0.08, 0.0, 0.5), ("hebbian_outcome_delta", +1, 0.08, 0.0, 0.5),
-        ("decay_toward_rest_rate", -1, 0.008, 0.0, 0.2), ("plasticity_arousal_weight", +1, 0.30, 0.0, 1.0),
-        ("plasticity_intensity_weight", +1, 0.30, 0.0, 1.0), ("plasticity_turn_max", +1, 0.40, 1.0, 2.0),
-        ("weight_max", +1, 1.50, 0.5, 6.0), ("sleep_min_turns", -1, 3, 2, 40),
+        ("hebbian_delta", +1, 0.08, 0.0, 0.5),
+        ("hebbian_outcome_delta", +1, 0.08, 0.0, 0.5),
+        ("decay_toward_rest_rate", -1, 0.008, 0.0, 0.2),
+        ("plasticity_arousal_weight", +1, 0.30, 0.0, 1.0),
+        ("plasticity_intensity_weight", +1, 0.30, 0.0, 1.0),
+        ("plasticity_turn_max", +1, 0.40, 1.0, 2.0),
+        ("weight_max", +1, 1.50, 0.5, 6.0),
+        ("sleep_min_turns", -1, 3, 2, 40),
         ("colony_trail_gain", +1, 0.10, 0.0, 0.5),
     ],
     "focus": [
-        ("ne_scatter_threshold", +1, 0.10, 0.5, 1.0), ("topic_activation_decay", +1, 0.12, 0.3, 0.99),
-        ("dmn_overlap_threshold", +1, 0.10, 0.1, 0.8), ("salience_workspace_threshold", +1, 0.12, 0.2, 0.95),
+        ("ne_scatter_threshold", +1, 0.10, 0.5, 1.0),
+        ("topic_activation_decay", +1, 0.12, 0.3, 0.99),
+        ("dmn_overlap_threshold", +1, 0.10, 0.1, 0.8),
+        ("salience_workspace_threshold", +1, 0.12, 0.2, 0.95),
     ],
     "curiosity": [
-        ("frontal_ach_weight", +1, 0.15, 0.0, 0.6), ("surprise_threshold", -1, 0.12, 0.1, 0.9),
+        ("frontal_ach_weight", +1, 0.15, 0.0, 0.6),
+        ("surprise_threshold", -1, 0.12, 0.1, 0.9),
         ("salience_ACh_weight", +1, 0.06, 0.0, 0.4),
     ],
     "introspection": [("meta_interval", -1, 15, 5, 120), ("meta_cooldown_turns", -1, 1.5, 0, 10)],
-    "memory": [("hippocampus_priority_base", +1, 0.18, 0.0, 1.0), ("topic_activation_decay", +1, 0.10, 0.3, 0.99)],
-    "emotionality": [
-        ("flock_sigma_target_low", +1, 0.05, 0.70, 0.98), ("flock_gain_max", +1, 0.30, 1.0, 2.5),
-        ("flock_gain_min", +1, 0.20, 0.2, 0.9), ("modulation_gain", +1, 1.0, 0.0, 2.0),
+    "memory": [
+        ("hippocampus_priority_base", +1, 0.18, 0.0, 1.0),
+        ("topic_activation_decay", +1, 0.10, 0.3, 0.99),
     ],
-    "hindsight": [("eligibility_lookback", +1, 2, 0, 5), ("eligibility_tau_turns", +1, 1.2, 0.5, 5.0)],
+    "emotionality": [
+        ("flock_sigma_target_low", +1, 0.05, 0.70, 0.98),
+        ("flock_gain_max", +1, 0.30, 1.0, 2.5),
+        ("flock_gain_min", +1, 0.20, 0.2, 0.9),
+        ("modulation_gain", +1, 1.0, 0.0, 2.0),
+    ],
+    "hindsight": [
+        ("eligibility_lookback", +1, 2, 0, 5),
+        ("eligibility_tau_turns", +1, 1.2, 0.5, 5.0),
+    ],
     "lingering": [("affect_carryover_da_threshold", -1, 0.06, 0.02, 0.40)],
 }
 # Keys that are INTEGERS in settings.DEFAULTS — round materialized values for these.
@@ -319,15 +433,15 @@ def _apply_cog_positions(settings_data: dict, persona: str) -> None:
             val = max(lo, min(hi, val))
         settings_data[key] = round(val) if key in _NONCHEM_INT_KEYS else round(val, 5)
 
+
 # Resolve under SECOND_BRAIN_PATH so each hosted tenant's chemistry lives on its
 # own per-user volume. Falling back to __file__-relative would make every tenant
 # on the same persona share one chemistry.json (cross-contaminating their live
 # emotional state and losing it on redeploy) — see store.py for the same pattern.
-_PERSONAS_ROOT = Path(
-    os.environ.get(
-        "SECOND_BRAIN_PATH", str(Path(__file__).parent.parent / "second_brain")
-    )
-) / "personas"
+_PERSONAS_ROOT = (
+    Path(os.environ.get("SECOND_BRAIN_PATH", str(Path(__file__).parent.parent / "second_brain")))
+    / "personas"
+)
 
 
 def _slug(persona: str) -> str:
@@ -421,8 +535,12 @@ def _merge_write(persona: str, *, resting: dict | None = None, current: dict | N
     files, not lost updates)."""
     with _WRITE_LOCK:
         existing = load(persona) or {}
-        new_resting = _only_channels(resting) if resting is not None else existing.get("resting", {})
-        new_current = _only_channels(current) if current is not None else existing.get("current", {})
+        new_resting = (
+            _only_channels(resting) if resting is not None else existing.get("resting", {})
+        )
+        new_current = (
+            _only_channels(current) if current is not None else existing.get("current", {})
+        )
         payload = {
             "resting": new_resting,
             "current": new_current,
