@@ -226,6 +226,13 @@ class _SetupMixin:
             connectors_fn=lambda: (
                 self.motor.list_connectors() if getattr(self, "motor", None) else []
             ),
+            connector_reload_fn=lambda: (
+                self.motor._cloud.reload_mcp_config()
+                if getattr(self, "motor", None)
+                and getattr(getattr(self, "motor", None), "_cloud", None) is not None
+                and hasattr(getattr(self, "motor", None)._cloud, "reload_mcp_config")
+                else None
+            ),
             wiring=self.wiring,
             bus=self.bus,
         )

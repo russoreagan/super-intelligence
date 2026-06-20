@@ -482,7 +482,7 @@ class TestMotorCloudDispatch:
         cloud._pending = None
         cloud._calls = []
 
-        async def _fake_execute_read(task, ctx, turn_id=""):
+        async def _fake_execute_read(task, ctx, turn_id="", end_user_id=None):
             cloud._calls.append(("read", task))
             return {"tool": "cloud_action", "output": "result", "success": True}
 
