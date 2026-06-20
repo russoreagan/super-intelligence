@@ -761,6 +761,77 @@ def build_api_router(
             raise HTTPException(status_code=404, detail="unknown key id")
         return {"ok": True, "id": key_id, "active": False}
 
+    # ── Per-end-user MCP tokens ───────────────────────────────────────────────
+    # Partners call these after completing an OAuth flow for their end-users so
+    # CMAExecutor can create per-user Anthropic Vaults with the right credentials.
+    # Tokens are vault-encrypted at rest; GET endpoints return metadata only.
+
+    def _sb_client():
+        from brain.second_brain import supabase_client
+
+        if not supabase_client.is_enabled():
+            raise HTTPException(status_code=503, detail="MCP token storage requires the Supabase backend")
+        return supabase_client.get_client()
+
+    @router.post("/mcp/tokens")
+    async def store_mcp_token(body: dict, authorization: str | None = Header(default=None)):
+        _require(authorization)
+        body = body or {}
+        end_user_id = body.get("end_user_id")
+        server_name = body.get("server_name")
+        server_url = body.get("server_url")
+        access_token = body.get("access_token")
+        if not isinstance(end_user_id, str) or not end_user_id.strip():
+            raise HTTPException(status_code=400, detail="end_user_id (non-empty string) is required")
+        if not isinstance(server_name, str) or not server_name.strip():
+            raise HTTPException(status_code=400, detail="server_name (non-empty string) is required")
+        if not isinstance(server_url, str) or not server_url.strip():
+            raise HTTPException(status_code=400, detail="server_url (non-empty string) is required")
+        if not isinstance(access_token, str) or not access_token.strip():
+            raise HTTPException(status_code=400, detail="access_token (non-empty string) is required")
+        expires_at = body.get("expires_at")
+        try:
+            _sb_client().rpc(
+                "set_end_user_mcp_token",
+                {
+                    "p_end_user_id": end_user_id.strip(),
+                    "p_server_name": server_name.strip(),
+                    "p_server_url": server_url.strip(),
+                    "p_token": access_token.strip(),
+                    "p_expires_at": expires_at,
+                },
+            ).execute()
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"failed to store token: {e}") from e
+        return {"ok": True, "end_user_id": end_user_id.strip(), "server_name": server_name.strip()}
+
+    @router.get("/mcp/tokens/{end_user_id}")
+    async def list_mcp_tokens(end_user_id: str, authorization: str | None = Header(default=None)):
+        _require(authorization)
+        try:
+            resp = _sb_client().table("end_user_mcp_tokens").select(
+                "server_name, server_url, expires_at"
+            ).eq("end_user_id", end_user_id).execute()
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"failed to list tokens: {e}") from e
+        return {"end_user_id": end_user_id, "connections": resp.data or []}
+
+    @router.delete("/mcp/tokens/{end_user_id}/{server_name}")
+    async def delete_mcp_token(
+        end_user_id: str, server_name: str, authorization: str | None = Header(default=None)
+    ):
+        _require(authorization)
+        try:
+            resp = _sb_client().rpc(
+                "delete_end_user_mcp_token",
+                {"p_end_user_id": end_user_id, "p_server_name": server_name},
+            ).execute()
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"failed to delete token: {e}") from e
+        if not resp.data:
+            raise HTTPException(status_code=404, detail="token not found")
+        return {"ok": True, "end_user_id": end_user_id, "server_name": server_name}
+
     return router
 
 

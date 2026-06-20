@@ -245,6 +245,7 @@ class MotorCortexCluster:
         # initiated itself (vs a live user command). Tightens tool access per
         # the motor_self_* settings — set by the task worker around each job.
         self._self_mode = False
+        self._current_end_user_id: str | None = None
 
         self._dispatcher = ToolDispatcher(
             allowed_paths,
@@ -490,6 +491,7 @@ class MotorCortexCluster:
           or the 3-call budget is exhausted. Fires after_job hooks on completion.
         - Reactive mode: no task goal → single tool call, return result immediately.
         """
+        self._current_end_user_id = (features or {}).get("end_user_id")
         chem = self._chem_snapshot()
         if not self._action_gate.should_fire(1.0, chem, turn_id):
             return None
@@ -589,7 +591,7 @@ class MotorCortexCluster:
             self._calls_this_turn += 1
 
             if tool == "cloud_action":
-                last_result = await self._dispatch_cloud(args, turn_id)
+                last_result = await self._dispatch_cloud(args, turn_id, end_user_id=self._current_end_user_id)
                 output = (last_result or {}).get("output", "")
             elif tool in ("recall_memory", "analyze_image"):
                 output = await self._dispatch_lobe(tool, args, turn_id)
@@ -1193,7 +1195,7 @@ class MotorCortexCluster:
                 )
 
                 if tool == "cloud_action":
-                    last_result = await self._dispatch_cloud(args, job_id)
+                    last_result = await self._dispatch_cloud(args, job_id, end_user_id=self._current_end_user_id)
                     output = (last_result or {}).get("output", "")
                 elif tool in ("recall_memory", "analyze_image"):
                     output = await self._dispatch_lobe(tool, args, job_id)
@@ -1520,7 +1522,7 @@ class MotorCortexCluster:
         """Dispatch a single tool call and return (output, last_result).
         Shared by ballistic chunk firing; mirrors the main loop's dispatch branch."""
         if tool == "cloud_action":
-            last_result = await self._dispatch_cloud(args, turn_id)
+            last_result = await self._dispatch_cloud(args, turn_id, end_user_id=self._current_end_user_id)
             output = (last_result or {}).get("output", "")
             return output, (last_result or {})
         if tool in ("recall_memory", "analyze_image"):
@@ -1657,7 +1659,7 @@ class MotorCortexCluster:
             self._calls_this_turn += 1
 
             if tool == "cloud_action":
-                last_result = await self._dispatch_cloud(args, turn_id)
+                last_result = await self._dispatch_cloud(args, turn_id, end_user_id=self._current_end_user_id)
                 output = (last_result or {}).get("output", "")
             elif tool in ("recall_memory", "analyze_image"):
                 output = await self._dispatch_lobe(tool, args, turn_id)
@@ -2014,7 +2016,9 @@ class MotorCortexCluster:
             return bool(int(perms.get("motor_auto_confirm_writes") or 0))
         return org
 
-    async def _dispatch_cloud(self, args: dict, turn_id: str) -> dict | None:
+    async def _dispatch_cloud(
+        self, args: dict, turn_id: str, end_user_id: str | None = None
+    ) -> dict | None:
         """Route to CloudExecutor, applying the confirmation gate for write actions."""
         if not self._cloud or not self._cloud.available:
             # The hosted default executor is CMA (Managed Agents), which only needs
@@ -2089,7 +2093,7 @@ class MotorCortexCluster:
             }
 
         # Read action — execute immediately
-        result = await self._cloud.execute_read(task, context_facts, turn_id)
+        result = await self._cloud.execute_read(task, context_facts, turn_id, end_user_id=end_user_id)
         await self._bus.publish_dict("motor.result", result, source=CLUSTER)
         return result
 

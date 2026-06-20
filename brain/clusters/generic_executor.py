@@ -185,7 +185,10 @@ class GenericExecutor(ExecutorCommon):
 
     # ── Public execution paths (CloudExecutor-compatible) ─────────────────────
 
-    async def execute_read(self, task: str, context_facts: list[str], turn_id: str = "") -> dict:
+    async def execute_read(
+        self, task: str, context_facts: list[str], turn_id: str = "", end_user_id: str | None = None
+    ) -> dict:
+        self._current_end_user_id = end_user_id
         return await self._run(task, context_facts, turn_id=turn_id, write_allowed=False)
 
     async def execute_pending(self, turn_id: str = "") -> dict | None:

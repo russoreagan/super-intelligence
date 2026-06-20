@@ -93,6 +93,14 @@ class CMAExecutor(ExecutorCommon):
         self._session_id: str | None = None
         self._session_agent: str | None = None
 
+        # Per-end-user vault + session cache (in-memory; survives the process lifetime).
+        # Keyed by end_user_id; values are Anthropic Vault IDs.
+        self._user_vault_cache: dict[str, str] = {}
+        # Per-user CMA sessions keyed by f"{agent_id}:{vault_id}" — kept separate
+        # from the org-level warm session so users get credential-isolated sessions.
+        self._user_sessions: dict[str, str] = {}
+        self._current_end_user_id: str | None = None
+
         self._user_id = os.environ.get("BRAIN_USER_ID", "").strip()
         self._model = str(settings.get("cma_model") or "claude-opus-4-6")
         self._state = self._load_state()
@@ -279,6 +287,66 @@ class CMAExecutor(ExecutorCommon):
         self._state["seeded_mcp"] = sorted(seeded)
         self._save_state()
 
+    # ── Per-end-user vault provisioning ───────────────────────────────────────
+
+    async def _fetch_end_user_tokens(self, end_user_id: str) -> list[dict]:
+        """Return [{server_name, server_url, token, expires_at}] from Supabase,
+        or [] when the backend is disabled or no tokens are stored."""
+        try:
+            from brain.second_brain import supabase_client
+
+            if not supabase_client.is_enabled():
+                return []
+            resp = supabase_client.get_client().rpc(
+                "get_end_user_mcp_tokens", {"p_end_user_id": end_user_id}
+            ).execute()
+            data = resp.data
+            return data if isinstance(data, list) else []
+        except Exception as e:
+            logger.warning("[CMAExecutor] could not fetch end-user tokens for %s: %s", end_user_id, e)
+            return []
+
+    async def _ensure_user_vault(self, end_user_id: str) -> str | None:
+        """Return the Anthropic Vault ID for this end-user, creating it lazily if
+        tokens are present.  Returns None when no tokens are stored (caller falls
+        back to org-level vault / no-vault behaviour)."""
+        if end_user_id in self._user_vault_cache:
+            return self._user_vault_cache[end_user_id]
+
+        tokens = await self._fetch_end_user_tokens(end_user_id)
+        if not tokens:
+            return None
+
+        vault_name = f"brain-cma-{self._user_id or 'local'}-{end_user_id}"
+        try:
+            v = await self._client.beta.vaults.create(display_name=vault_name)
+            vault_id = v.id
+        except Exception as e:
+            logger.warning("[CMAExecutor] user vault creation failed for %s: %s", end_user_id, e)
+            return None
+
+        for tok in tokens:
+            auth: dict = {
+                "type": "mcp_oauth",
+                "mcp_server_url": tok["server_url"],
+                "access_token": tok["token"],
+            }
+            if tok.get("expires_at"):
+                auth["expires_at"] = tok["expires_at"]
+            try:
+                await self._client.beta.vaults.credentials.create(
+                    vault_id, auth=auth, display_name=tok["server_name"]
+                )
+            except Exception as e:
+                logger.warning(
+                    "[CMAExecutor] seeding user credential %s/%s: %s",
+                    end_user_id, tok["server_name"], e,
+                )
+
+        self._user_vault_cache[end_user_id] = vault_id
+        logger.info("[CMAExecutor] provisioned per-user vault %s for %s", vault_id, end_user_id)
+        return vault_id
+
     def connector_names(self) -> list[str]:
         """All configured connector names (unfiltered) — for the settings UI."""
         return sorted({s["name"] for s in self._mcp_servers})
@@ -355,8 +423,11 @@ class CMAExecutor(ExecutorCommon):
 
     # ── Public execution paths (CloudExecutor-compatible) ──────────────────────
 
-    async def execute_read(self, task: str, context_facts: list[str], turn_id: str = "") -> dict:
-        return await self._run(task, context_facts, turn_id=turn_id, write_allowed=False)
+    async def execute_read(
+        self, task: str, context_facts: list[str], turn_id: str = "", end_user_id: str | None = None
+    ) -> dict:
+        self._current_end_user_id = end_user_id
+        return await self._run(task, context_facts, turn_id=turn_id, write_allowed=False, end_user_id=end_user_id)
 
     async def execute_pending(self, turn_id: str = "") -> dict | None:
         if not self._pending:
@@ -364,11 +435,18 @@ class CMAExecutor(ExecutorCommon):
         action = self._pending
         self._pending = None
         return await self._run(
-            action["task"], action.get("context_facts", []), turn_id=turn_id, write_allowed=True
+            action["task"], action.get("context_facts", []),
+            turn_id=turn_id, write_allowed=True,
+            end_user_id=self._current_end_user_id,
         )
 
     async def _run(
-        self, task: str, context_facts: list[str], turn_id: str = "", write_allowed: bool = False
+        self,
+        task: str,
+        context_facts: list[str],
+        turn_id: str = "",
+        write_allowed: bool = False,
+        end_user_id: str | None = None,
     ) -> dict:
         if not self.available:
             return {
@@ -379,9 +457,15 @@ class CMAExecutor(ExecutorCommon):
         start = time.time()
         try:
             await self._ensure_ready()
+            # Resolve per-end-user vault (if any tokens are stored for this user).
+            # Falls back to None → org-level vault used in _ensure_session.
+            user_vault_id: str | None = None
+            if end_user_id:
+                user_vault_id = await self._ensure_user_vault(end_user_id)
             timeout = float(settings.get("cma_task_timeout_s") or 120.0)
             raw = await asyncio.wait_for(
-                self._drive_task(task, context_facts, write_allowed), timeout=timeout
+                self._drive_task(task, context_facts, write_allowed, user_vault_id=user_vault_id),
+                timeout=timeout,
             )
         except TimeoutError:
             logger.warning("[CMAExecutor] task timed out after %.1fs", time.time() - start)
@@ -412,8 +496,28 @@ class CMAExecutor(ExecutorCommon):
                 parts.append(f"Context: {facts_str}")
         return "\n".join(parts)
 
-    async def _ensure_session(self, write_allowed: bool) -> str:
+    async def _ensure_session(self, write_allowed: bool, user_vault_id: str | None = None) -> str:
         want_agent = self._write_agent_id if write_allowed else self._read_agent_id
+
+        if user_vault_id:
+            # Per-end-user session — keyed in memory by (agent, vault) so each
+            # end-user's credentials stay isolated.
+            key = f"{want_agent}:{user_vault_id}"
+            sid = self._user_sessions.get(key)
+            if sid:
+                try:
+                    s = await self._client.beta.sessions.retrieve(sid)
+                    if getattr(s, "status", None) != "terminated":
+                        return sid
+                except Exception:
+                    pass
+            kwargs: dict = {"agent": want_agent, "environment_id": self._env_id, "title": "brain-user"}
+            kwargs["vault_ids"] = [user_vault_id]
+            s = await self._client.beta.sessions.create(**kwargs)
+            self._user_sessions[key] = s.id
+            return s.id
+
+        # Org-level warm session (existing behaviour, unchanged).
         reuse = bool(int(settings.get("cma_session_warm_reuse") or 1))
         if reuse and self._session_id and self._session_agent == want_agent:
             try:
@@ -422,7 +526,7 @@ class CMAExecutor(ExecutorCommon):
                     return self._session_id
             except Exception:
                 pass
-        kwargs: dict = {"agent": want_agent, "environment_id": self._env_id, "title": "brain-warm"}
+        kwargs = {"agent": want_agent, "environment_id": self._env_id, "title": "brain-warm"}
         if self._vault_id:
             kwargs["vault_ids"] = [self._vault_id]
         s = await self._client.beta.sessions.create(**kwargs)
@@ -430,8 +534,10 @@ class CMAExecutor(ExecutorCommon):
         self._session_agent = want_agent
         return s.id
 
-    async def _drive_task(self, task: str, context_facts: list[str], write_allowed: bool) -> str:
-        sid = await self._ensure_session(write_allowed)
+    async def _drive_task(
+        self, task: str, context_facts: list[str], write_allowed: bool, user_vault_id: str | None = None
+    ) -> str:
+        sid = await self._ensure_session(write_allowed, user_vault_id=user_vault_id)
         text = await self._consume(sid, self._compose_task(task, context_facts))
         return text or "(no output)"
 

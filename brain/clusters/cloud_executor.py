@@ -371,10 +371,13 @@ class CloudExecutor:
 
     # ── Main execution paths ───────────────────────────────────────────────────
 
-    async def execute_read(self, task: str, context_facts: list[str], turn_id: str = "") -> dict:
+    async def execute_read(
+        self, task: str, context_facts: list[str], turn_id: str = "", end_user_id: str | None = None
+    ) -> dict:
         """Execute immediately — READ-ONLY. The subprocess is granted only read
         tools (web/file reads + MCP servers); write-capable built-ins (Write,
         Edit, Bash) are withheld so a read task can't mutate anything."""
+        self._current_end_user_id = end_user_id
         return await self._run(task, context_facts, turn_id=turn_id, write_allowed=False)
 
     async def execute_pending(self, turn_id: str = "") -> dict | None:
@@ -519,7 +522,10 @@ class CloudExecutor:
         """Append one entry to schema/tool_log.md via the active storage backend."""
         from brain.clusters._executor_common import append_tool_log_entry
 
-        await append_tool_log_entry(task, output, success, "CloudExecutor")
+        await append_tool_log_entry(
+            task, output, success, "CloudExecutor",
+            end_user_id=getattr(self, "_current_end_user_id", None),
+        )
 
     @property
     def available(self) -> bool:

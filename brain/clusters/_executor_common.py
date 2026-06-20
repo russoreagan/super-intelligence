@@ -73,7 +73,9 @@ _TOOL_LOG_PATH = _SECOND_BRAIN_ROOT / "schema" / "tool_log.md"
 _tool_log_lock = asyncio.Lock()
 
 
-async def append_tool_log_entry(task: str, output: str, success: bool, tag: str) -> None:
+async def append_tool_log_entry(
+    task: str, output: str, success: bool, tag: str, end_user_id: str | None = None
+) -> None:
     """Append one audit entry to schema/tool_log.md via the active storage backend.
 
     Hosted (BRAIN_STORAGE_BACKEND=supabase): goes through SchemaStore so the log
@@ -88,7 +90,8 @@ async def append_tool_log_entry(task: str, output: str, success: bool, tag: str)
         preview = output[:200].replace("\n", " ").strip()
         if len(output) > 200:
             preview += "..."
-        entry = f"\n## {ts} {status}\n**Task:** {task}\n**Result:** {preview}\n"
+        user_line = f"\n**User:** {end_user_id}" if end_user_id else ""
+        entry = f"\n## {ts} {status}\n**Task:** {task}{user_line}\n**Result:** {preview}\n"
         async with _tool_log_lock:
             if os.environ.get("BRAIN_STORAGE_BACKEND", "local").lower() == "supabase":
                 from brain.second_brain.store import SchemaStore
@@ -160,4 +163,5 @@ class ExecutorCommon:
 
     async def _append_tool_log(self, task: str, output: str, success: bool) -> None:
         """Append one entry to schema/tool_log.md (fire-and-forget)."""
-        await append_tool_log_entry(task, output, success, "executor")
+        end_user_id = getattr(self, "_current_end_user_id", None)
+        await append_tool_log_entry(task, output, success, "executor", end_user_id=end_user_id)
