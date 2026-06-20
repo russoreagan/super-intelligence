@@ -106,6 +106,7 @@ class UIServer:
         on_interrupt: Callable[[], None] | None = None,
         on_tasks_clear: Callable[[], dict] | None = None,
         connectors_fn: Callable[[], list] | None = None,
+        connector_reload_fn: Callable[[], None] | None = None,
         wiring=None,
         bus=None,
     ) -> None:
@@ -123,6 +124,7 @@ class UIServer:
         self._on_interrupt = on_interrupt
         self._on_tasks_clear = on_tasks_clear  # () -> stats dict; kills self-directed work
         self._connectors_fn = connectors_fn  # () -> configured cloud connector names
+        self._connector_reload_fn = connector_reload_fn  # () -> None; hot-reload after register/remove
         self._clients: set = set()
         self._last_neuromod: dict = {}
         self._last_hormonal: dict = {}
@@ -626,14 +628,79 @@ class UIServer:
             return {"ok": True, "settings": settings.all()}
 
         @app.get("/connectors")
-        async def list_connectors():
+        async def list_connectors(request: Request):
             names: list = []
             if self._connectors_fn is not None:
                 try:
                     names = list(self._connectors_fn() or [])
                 except Exception as _cn_err:
                     logger.debug("[connectors] list failed: %s", _cn_err)
+            # The full view (URLs + env-managed flag) is admin-only; bare names are
+            # needed by any admin for the per-agent connector permission grid.
+            if request.query_params.get("full"):
+                claims = getattr(request.state, "user", None) or {}
+                if not (ui_auth.is_disabled() or ui_auth.is_admin(claims)):
+                    from fastapi import HTTPException
+
+                    raise HTTPException(status_code=403, detail="admin only")
+                from brain.clusters.cma_executor import is_env_managed, list_connector_details
+                try:
+                    return {
+                        "connectors": names,
+                        "details": list_connector_details(),
+                        "env_managed": is_env_managed(),
+                    }
+                except Exception:
+                    pass
             return {"connectors": names}
+
+        @app.post("/connectors")
+        async def register_connector_ui(request: Request):
+            from fastapi import HTTPException
+            from fastapi.responses import JSONResponse
+
+            _mandate_admin_or_403(request)
+            body = await request.json()
+            name = str((body or {}).get("name", "")).strip()
+            url = str((body or {}).get("url", "")).strip()
+            display_name = str((body or {}).get("display_name", "")).strip()
+            if not name or not url:
+                raise HTTPException(status_code=400, detail="name and url are required")
+            from brain.clusters.cma_executor import register_connector
+
+            try:
+                secret = register_connector(name, url, display_name)
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
+            if self._connector_reload_fn is not None:
+                try:
+                    self._connector_reload_fn()
+                except Exception as _rl_err:
+                    logger.warning("[connectors] reload after register failed: %s", _rl_err)
+            env_key = name.upper().replace("-", "_")
+            return JSONResponse({
+                "name": name,
+                "secret": secret,
+                "brain_env_var": f"BRAIN_CMA_MCP_{env_key}_TOKEN",
+                "app_env_var": f"{env_key}_MCP_SECRET",
+            })
+
+        @app.delete("/connectors/{name}")
+        async def remove_connector_ui(name: str, request: Request):
+            from fastapi import HTTPException
+            from fastapi.responses import JSONResponse
+
+            _mandate_admin_or_403(request)
+            from brain.clusters.cma_executor import remove_connector
+
+            if not remove_connector(name):
+                raise HTTPException(status_code=404, detail="connector not found")
+            if self._connector_reload_fn is not None:
+                try:
+                    self._connector_reload_fn()
+                except Exception as _rl_err:
+                    logger.warning("[connectors] reload after remove failed: %s", _rl_err)
+            return JSONResponse({"ok": True})
 
         @app.post("/tasks/clear")
         async def tasks_clear():

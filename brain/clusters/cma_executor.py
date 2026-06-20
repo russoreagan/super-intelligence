@@ -36,6 +36,9 @@ import hashlib
 import json
 import logging
 import os
+import re
+import secrets as _secrets_mod
+import threading
 import time
 from pathlib import Path
 
@@ -52,6 +55,196 @@ _SECOND_BRAIN_ROOT = Path(
 )
 _STATE_PATH = _SECOND_BRAIN_ROOT / "cma_state.json"
 _MCP_CONFIG_PATH = _SECOND_BRAIN_ROOT / "cma_mcp.json"
+
+# ── Module-level connector registry ───────────────────────────────────────────
+# The registry is ORG-LEVEL, not persona-level, so it must NOT live in the
+# persona-namespaced second_brain volume. Two backends:
+#   • Supabase (hosted, BRAIN_STORAGE_BACKEND=supabase): table public.mcp_connectors
+#     with the secret in Supabase Vault, scoped by org via RLS. Survives persona
+#     switches and is shared across all of an org's agents.
+#   • Local file fallback (cma_mcp.json) when Supabase is off.
+# When BRAIN_CMA_MCP_SERVERS is set, the registry is read-only (env-managed) and
+# registration/removal are rejected.
+
+_CONNECTOR_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+_connector_file_lock = threading.Lock()  # guards read-modify-write of cma_mcp.json (local fallback)
+
+
+def _supabase_enabled() -> bool:
+    try:
+        from brain.second_brain import supabase_client
+
+        return supabase_client.is_enabled()
+    except Exception:
+        return False
+
+
+# Per-end-user identity token. Mirrors the app-side verifier in lib/mcp/identity.ts
+# EXACTLY (do not change the encoding without updating both):
+#   token = "mcpu_" + base64url(JSON({eu, exp})) + "." + base64url(HMAC_SHA256(body, secret))
+#   eu  = the engine session's end_user_id
+#   exp = epoch MILLISECONDS expiry (Date.now() + ttl*1000 on the JS side)
+# The connector verifies the HMAC with its shared secret, so only the brain (which
+# holds the secret) can mint a given end-user's identity — the agent cannot forge it.
+_MCPU_PREFIX = "mcpu_"
+# Refresh the minted token this many seconds BEFORE expiry, so an active end-user's
+# in-place credential is rotated well within the 1-hour TTL.
+_MCPU_REFRESH_BUFFER_S = 600
+
+
+def _b64url_nopad(raw: bytes) -> str:
+    import base64
+
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+
+
+def mint_end_user_token(end_user_id: str, secret: str, *, now_ms: int, ttl_s: int = 3600) -> tuple[str, int]:
+    """Return (token, exp_ms) for an end-user, HMAC-signed with the connector secret."""
+    import hashlib
+    import hmac
+
+    exp_ms = now_ms + ttl_s * 1000
+    body = _b64url_nopad(
+        json.dumps({"eu": end_user_id, "exp": exp_ms}, separators=(",", ":")).encode("utf-8")
+    )
+    sig = _b64url_nopad(hmac.new(secret.encode("utf-8"), body.encode("ascii"), hashlib.sha256).digest())
+    return f"{_MCPU_PREFIX}{body}.{sig}", exp_ms
+
+
+def is_env_managed() -> bool:
+    """True when connectors are pinned via BRAIN_CMA_MCP_SERVERS (registry is read-only)."""
+    return bool(os.environ.get("BRAIN_CMA_MCP_SERVERS", "").strip())
+
+
+def _normalize_url(url: str) -> str:
+    url = (url or "").strip()
+    if not url:
+        raise ValueError("url is required")
+    if not re.match(r"^https?://", url, re.IGNORECASE):
+        raise ValueError("url must start with http:// or https://")
+    return url
+
+
+def _read_mcp_config() -> dict:
+    try:
+        return json.loads(_MCP_CONFIG_PATH.read_text(encoding="utf-8")) if _MCP_CONFIG_PATH.exists() else {"servers": []}
+    except Exception:
+        return {"servers": []}
+
+
+def _write_mcp_config(cfg: dict) -> None:
+    _MCP_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _MCP_CONFIG_PATH.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+
+
+def register_connector(name: str, url: str, display_name: str = "") -> str:
+    """Generate a shared secret, register the connector (Supabase or file), return it once."""
+    if is_env_managed():
+        raise ValueError("connectors are pinned via BRAIN_CMA_MCP_SERVERS and cannot be edited here")
+    name = name.strip().lower()
+    if not _CONNECTOR_NAME_RE.match(name):
+        raise ValueError("name must be lowercase letters/digits/underscore/hyphen, starting with a letter or digit")
+    url = _normalize_url(url)
+    display_name = (display_name or "").strip()
+    secret = _secrets_mod.token_hex(32)
+
+    if _supabase_enabled():
+        from brain.second_brain import supabase_client
+
+        try:
+            supabase_client.get_client().rpc(
+                "register_mcp_connector",
+                {"p_name": name, "p_url": url, "p_secret": secret, "p_display_name": display_name or None},
+            ).execute()
+        except Exception as e:
+            # The RPC raises on duplicate name; surface a clean message.
+            msg = str(e)
+            if "already exists" in msg:
+                raise ValueError(f"connector '{name}' already exists") from e
+            raise
+        return secret
+
+    with _connector_file_lock:
+        cfg = _read_mcp_config()
+        servers = cfg.setdefault("servers", [])
+        if any(s.get("name") == name for s in servers):
+            raise ValueError(f"connector '{name}' already exists")
+        entry: dict = {"name": name, "url": url, "access_token": secret}
+        if display_name:
+            entry["display_name"] = display_name
+        servers.append(entry)
+        _write_mcp_config(cfg)
+    return secret
+
+
+def remove_connector(name: str) -> bool:
+    """Remove a connector by name. Returns True if it existed."""
+    if is_env_managed():
+        raise ValueError("connectors are pinned via BRAIN_CMA_MCP_SERVERS and cannot be edited here")
+    name = name.strip().lower()
+    if _supabase_enabled():
+        from brain.second_brain import supabase_client
+
+        try:
+            resp = supabase_client.get_client().rpc("delete_mcp_connector", {"p_name": name}).execute()
+            return bool(resp.data)
+        except Exception as e:
+            logger.warning("[CMAExecutor] delete_mcp_connector failed for %s: %s", name, e)
+            return False
+
+    with _connector_file_lock:
+        cfg = _read_mcp_config()
+        before = len(cfg.get("servers", []))
+        cfg["servers"] = [s for s in cfg.get("servers", []) if s.get("name") != name]
+        if len(cfg["servers"]) == before:
+            return False
+        _write_mcp_config(cfg)
+    return True
+
+
+def _load_connectors_from_supabase() -> list[dict]:
+    """Return [{name, url, access_token, display_name}] from Supabase, or []."""
+    from brain.second_brain import supabase_client
+
+    try:
+        resp = supabase_client.get_client().rpc("get_mcp_connectors", {}).execute()
+        rows = resp.data if isinstance(resp.data, list) else []
+    except Exception as e:
+        logger.warning("[CMAExecutor] could not load connectors from Supabase: %s", e)
+        return []
+    out: list[dict] = []
+    for r in rows:
+        name = (r or {}).get("name")
+        url = (r or {}).get("url")
+        if not name or not url:
+            continue
+        # Registry connectors carry OUR shared secret, so they are always
+        # identity-aware: per-end-user turns get a minted HMAC bearer instead of
+        # the static secret (single-user fallback is used only when no end-user).
+        srv: dict = {"name": name, "url": url, "identity": True}
+        if r.get("token"):
+            srv["access_token"] = r["token"]
+        if r.get("display_name"):
+            srv["display_name"] = r["display_name"]
+        out.append(srv)
+    return out
+
+
+def list_connector_details() -> list[dict]:
+    """Return [{name, url, display_name}] without secrets — for the UI."""
+    if _supabase_enabled() and not is_env_managed():
+        servers = _load_connectors_from_supabase()
+    else:
+        servers = _read_mcp_config().get("servers", [])
+    return [
+        {
+            "name": s["name"],
+            "url": s.get("url", ""),
+            "display_name": s.get("display_name") or s["name"],
+        }
+        for s in servers
+        if s.get("name")
+    ]
 
 _AGENT_TOOLSET = "agent_toolset_20260401"
 # Tools withheld from the read agent (the write agent gets the full toolset).
@@ -94,8 +287,8 @@ class CMAExecutor(ExecutorCommon):
         self._session_agent: str | None = None
 
         # Per-end-user vault + session cache (in-memory; survives the process lifetime).
-        # Keyed by end_user_id; values are Anthropic Vault IDs.
-        self._user_vault_cache: dict[str, str] = {}
+        # Keyed by end_user_id; values are {vault_id, mcpu_exp_ms, cred_ids:{url:id}}.
+        self._user_vault_cache: dict[str, dict] = {}
         # Per-user CMA sessions keyed by f"{agent_id}:{vault_id}" — kept separate
         # from the org-level warm session so users get credential-isolated sessions.
         self._user_sessions: dict[str, str] = {}
@@ -148,7 +341,10 @@ class CMAExecutor(ExecutorCommon):
     def _load_mcp_config(self) -> list[dict]:
         """Load remote MCP server list (+ optional OAuth creds) for v1 seeding.
 
-        Sources, in order: BRAIN_CMA_MCP_SERVERS (JSON), then cma_mcp.json.
+        Sources, in order: BRAIN_CMA_MCP_SERVERS (JSON) → Supabase mcp_connectors
+        (hosted, org-scoped) → cma_mcp.json (local fallback). Connectors are an
+        ORG-level concept, so the Supabase registry is the source of truth on
+        hosted — never the persona-namespaced volume file.
         Each server: {"name","url"} with optional "access_token"/"expires_at"/
         "refresh"; tokens may also come from env BRAIN_CMA_MCP_<NAME>_TOKEN /
         _REFRESH_TOKEN / _CLIENT_ID / _TOKEN_ENDPOINT. This is the seam where the
@@ -162,6 +358,10 @@ class CMAExecutor(ExecutorCommon):
                 data = json.loads(raw)
             except Exception as e:
                 logger.warning("[CMAExecutor] bad BRAIN_CMA_MCP_SERVERS JSON: %s", e)
+        if data is None and _supabase_enabled():
+            sb = _load_connectors_from_supabase()
+            if sb:
+                data = {"servers": sb}
         if data is None and _MCP_CONFIG_PATH.exists():
             try:
                 data = json.loads(_MCP_CONFIG_PATH.read_text(encoding="utf-8"))
@@ -177,6 +377,11 @@ class CMAExecutor(ExecutorCommon):
             if not name or not url:
                 continue
             srv: dict = {"name": name, "url": url}
+            # Identity-aware = brain mints a per-end-user HMAC bearer from our shared
+            # secret. Supabase rows and locally-registered file entries carry our
+            # secret (default on); env-pinned connectors may carry a real OAuth bearer
+            # instead, so they default OFF unless the JSON sets "identity": true.
+            srv["identity"] = bool(it.get("identity", not is_env_managed()))
             env_key = name.upper().replace("-", "_")
             token = it.get("access_token") or os.environ.get(f"BRAIN_CMA_MCP_{env_key}_TOKEN")
             if token:
@@ -306,15 +511,31 @@ class CMAExecutor(ExecutorCommon):
             logger.warning("[CMAExecutor] could not fetch end-user tokens for %s: %s", end_user_id, e)
             return []
 
-    async def _ensure_user_vault(self, end_user_id: str) -> str | None:
-        """Return the Anthropic Vault ID for this end-user, creating it lazily if
-        tokens are present.  Returns None when no tokens are stored (caller falls
-        back to org-level vault / no-vault behaviour)."""
-        if end_user_id in self._user_vault_cache:
-            return self._user_vault_cache[end_user_id]
+    def _identity_connectors(self) -> list[dict]:
+        """Configured connectors that take a brain-minted per-end-user HMAC bearer."""
+        return [s for s in self._mcp_servers if s.get("identity") and s.get("access_token")]
 
-        tokens = await self._fetch_end_user_tokens(end_user_id)
-        if not tokens:
+    async def _ensure_user_vault(self, end_user_id: str) -> str | None:
+        """Return the Anthropic Vault ID for this end-user, provisioning lazily.
+
+        The per-user vault holds two credential kinds:
+          • partner-stored OAuth tokens (end_user_mcp_tokens) → mcp_oauth creds
+          • brain-minted HMAC identity tokens for identity-aware connectors →
+            static_bearer creds (refreshed in place before the 1-hour TTL lapses)
+        Returns None when neither applies (caller falls back to the org vault)."""
+        now_ms = int(time.time() * 1000)
+        cached = self._user_vault_cache.get(end_user_id)
+        if cached:
+            # Refresh minted identity tokens in place if they're near expiry — no
+            # new vault, just an update to each static_bearer credential.
+            if cached.get("mcpu_exp_ms", 0) - now_ms > _MCPU_REFRESH_BUFFER_S * 1000:
+                return cached["vault_id"]
+            await self._refresh_user_identity_tokens(end_user_id, cached, now_ms)
+            return cached["vault_id"]
+
+        oauth_tokens = await self._fetch_end_user_tokens(end_user_id)
+        identity_conns = self._identity_connectors()
+        if not oauth_tokens and not identity_conns:
             return None
 
         vault_name = f"brain-cma-{self._user_id or 'local'}-{end_user_id}"
@@ -325,7 +546,7 @@ class CMAExecutor(ExecutorCommon):
             logger.warning("[CMAExecutor] user vault creation failed for %s: %s", end_user_id, e)
             return None
 
-        for tok in tokens:
+        for tok in oauth_tokens:
             auth: dict = {
                 "type": "mcp_oauth",
                 "mcp_server_url": tok["server_url"],
@@ -339,17 +560,76 @@ class CMAExecutor(ExecutorCommon):
                 )
             except Exception as e:
                 logger.warning(
-                    "[CMAExecutor] seeding user credential %s/%s: %s",
+                    "[CMAExecutor] seeding user OAuth credential %s/%s: %s",
                     end_user_id, tok["server_name"], e,
                 )
 
-        self._user_vault_cache[end_user_id] = vault_id
+        cred_ids: dict[str, str] = {}  # connector url -> static_bearer credential id
+        min_exp_ms = now_ms + 3600 * 1000
+        for srv in identity_conns:
+            token, exp_ms = mint_end_user_token(end_user_id, srv["access_token"], now_ms=now_ms)
+            min_exp_ms = min(min_exp_ms, exp_ms)
+            try:
+                cred = await self._client.beta.vaults.credentials.create(
+                    vault_id,
+                    auth={"type": "static_bearer", "mcp_server_url": srv["url"], "token": token},
+                    display_name=srv["name"],
+                )
+                cred_ids[srv["url"]] = cred.id
+            except Exception as e:
+                logger.warning(
+                    "[CMAExecutor] seeding user identity credential %s/%s: %s",
+                    end_user_id, srv["name"], e,
+                )
+
+        self._user_vault_cache[end_user_id] = {
+            "vault_id": vault_id,
+            "mcpu_exp_ms": min_exp_ms,
+            "cred_ids": cred_ids,
+        }
         logger.info("[CMAExecutor] provisioned per-user vault %s for %s", vault_id, end_user_id)
         return vault_id
+
+    async def _refresh_user_identity_tokens(self, end_user_id: str, cached: dict, now_ms: int) -> None:
+        """Re-mint and update-in-place each identity connector's static_bearer cred."""
+        vault_id = cached["vault_id"]
+        cred_ids: dict = cached.get("cred_ids", {})
+        min_exp_ms = now_ms + 3600 * 1000
+        for srv in self._identity_connectors():
+            cid = cred_ids.get(srv["url"])
+            if not cid:
+                continue
+            token, exp_ms = mint_end_user_token(end_user_id, srv["access_token"], now_ms=now_ms)
+            min_exp_ms = min(min_exp_ms, exp_ms)
+            try:
+                await self._client.beta.vaults.credentials.update(
+                    cid,
+                    vault_id=vault_id,
+                    auth={"type": "static_bearer", "mcp_server_url": srv["url"], "token": token},
+                )
+            except Exception as e:
+                logger.warning(
+                    "[CMAExecutor] refreshing user identity credential %s/%s: %s",
+                    end_user_id, srv["name"], e,
+                )
+        cached["mcpu_exp_ms"] = min_exp_ms
 
     def connector_names(self) -> list[str]:
         """All configured connector names (unfiltered) — for the settings UI."""
         return sorted({s["name"] for s in self._mcp_servers})
+
+    def reload_mcp_config(self) -> None:
+        """Reload the connector registry into memory. Call after register/remove."""
+        self._mcp_servers = self._load_mcp_config()
+        # Force agent re-creation on next task (config hash will differ).
+        self._ready = False
+        # Drop per-end-user vault + session caches so a newly registered connector
+        # is seeded into already-provisioned per-user vaults on their next turn
+        # (otherwise the cached vault id is reused and the new credential is never
+        # added until process restart).
+        self._user_vault_cache.clear()
+        self._user_sessions.clear()
+        logger.info("[CMAExecutor] MCP config reloaded (%d connectors)", len(self._mcp_servers))
 
     def set_connector_filter(self, names: set[str] | None) -> None:
         """Restrict which MCP connectors the NEXT agent session may use.

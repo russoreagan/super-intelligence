@@ -113,7 +113,7 @@
     return connectorsCache;
   }
 
-  function ensureAgents() { if (!agentsData) loadAgents(); else paintAgents(); }
+  function ensureAgents() { if (!agentsData) loadAgents(); else { if (!connectorsDetails) loadConnectorDetails().then(paintAgents); else paintAgents(); } }
   async function loadAgents() {
     const host = document.getElementById('ws-agents');
     host.innerHTML = '<div class="ws-grid"><div class="ws-main"><div class="main-pad"><div class="empty"><h3>Loading…</h3></div></div></div></div>';
@@ -121,11 +121,14 @@
       const r = await fetch('/agents');
       agentsData = r.ok ? await r.json() : { enabled: false, agents: [], roles: [], ceilings: {} };
     } catch (e) { agentsData = { enabled: false, agents: [], roles: [], ceilings: {} }; }
+    await loadConnectorDetails();
     paintAgents();
   }
   // which sub-view is active in Agents
   let agView = 'list';
   let agRoleSel = null; // persists selected role across reloads
+  let connectorsDetails = null; // [{name, url, display_name}]
+  let connectorsEnvManaged = false; // true → registry pinned via BRAIN_CMA_MCP_SERVERS
   function paintAgents() {
     const host = document.getElementById('ws-agents');
     const ags = (agentsData && agentsData.agents) || [];
@@ -135,7 +138,7 @@
         <div class="ws-rail">
           <div class="rail-head"><h2>Agents</h2><span class="n">admin</span></div>
           <div class="rail-sect-lab" style="padding-left:22px;">Governance</div>
-          <div class="rail-sect"><button class="rail-item ag-nav ${agView==='limits'?'on':''}" data-view="limits"><span class="ri-name">Account Limits</span><span class="ri-meta">org ceilings · motor + spend</span></button></div>
+          <div class="rail-sect"><button class="rail-item ag-nav ${agView==='limits'?'on':''}" data-view="limits"><span class="ri-name">Account Limits</span><span class="ri-meta">org ceilings · motor + spend</span></button><button class="rail-item ag-nav ${agView==='connectors'?'on':''}" data-view="connectors"><span class="ri-name">Connectors</span><span class="ri-meta">MCP servers · register + manage</span></button></div>
           <div class="rail-sect-lab" style="padding-left:22px;">Library</div>
           <div class="rail-sect"><button class="rail-item ag-nav ${agView==='roles'?'on':''}" data-view="roles"><span class="ri-name">Roles</span><span class="ri-meta">${roles.length} reusable job spec${roles.length===1?'':'s'}</span></button></div>
           <div class="rail-sect-lab" style="padding-left:22px; display:flex; justify-content:space-between; padding-right:18px;"><span>Agents</span><span class="n">${ags.length}</span></div>
@@ -152,6 +155,7 @@
     if (agView === 'detail' && agentSel) renderAgentDetail(main);
     else if (agView === 'roles') renderRoles(main);
     else if (agView === 'limits') renderAccountLimits(main);
+    else if (agView === 'connectors') renderConnectors(main);
     else renderAgentsList(main);
   }
   function railAgent(a) {
@@ -425,6 +429,125 @@
         await loadAgents(); // agRoleSel re-selects this role after re-render
       } catch (e) { lbl.textContent = 'Save'; saveBtn.disabled = false; window.alert('Could not save role: ' + e.message); }
     });
+  }
+
+  async function loadConnectorDetails() {
+    try {
+      const r = await fetch('/connectors?full=1');
+      if (r.ok) { const d = await r.json(); connectorsDetails = d.details || []; connectorsCache = d.connectors || []; connectorsEnvManaged = !!d.env_managed; }
+    } catch (e) { connectorsDetails = []; }
+  }
+  function renderConnectors(main) {
+    const rows = (connectorsDetails || []);
+    const envManaged = connectorsEnvManaged;
+    const _plus = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>';
+    const _trash = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg>';
+    const _info = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 16v-4M12 8h.01"/><circle cx="12" cy="12" r="10"/></svg>';
+    main.innerHTML = `<div class="main-pad" style="max-width:760px;">
+      <div class="between"><div><div class="page-eyebrow">Governance · MCP</div><div class="page-title">Connectors</div>
+      <p class="page-lede">MCP servers the brain's agent can call. Registering a connector generates a shared secret — copy it to both Railway and your app. The secret is shown once.</p></div>
+      ${envManaged ? '' : `<button class="btn btn-primary" id="conn-register" style="margin-top:8px;">${_plus} Register connector</button>`}</div>
+      ${envManaged ? `<div class="note" style="margin-top:18px;">${_info}<p>Connectors are pinned via <b>BRAIN_CMA_MCP_SERVERS</b> and are read-only here. Unset that environment variable to manage connectors from this page.</p></div>` : ''}
+      <div class="mint-reveal" id="conn-reveal"></div>
+      <div class="ag-table" style="margin-top:24px;">
+        <div class="ag-table-head" style="grid-template-columns:1fr 2fr 1fr 60px;"><span>Name</span><span>URL</span><span>Env vars</span><span></span></div>
+        ${rows.length ? rows.map(c => {
+          const ek = esc(c.name.toUpperCase().replace(/-/g,'_'));
+          return `<div class="ag-row" style="grid-template-columns:1fr 2fr 1fr 60px; cursor:default;">
+            <span><span class="serif-h" style="font-size:14px;">${esc(c.display_name||c.name)}</span><span class="data" style="font-size:9px;display:block;margin-top:2px;">${esc(c.name)}</span></span>
+            <span class="data" style="font-size:11px;word-break:break-all;">${esc(c.url)}</span>
+            <span class="data" style="font-size:9px;line-height:1.8;opacity:.7;">BRAIN_CMA_MCP_${ek}_TOKEN<br>${ek}_MCP_SECRET</span>
+            <span>${envManaged ? '' : `<button class="link conn-remove" data-name="${esc(c.name)}" style="color:var(--ink-4);">${_trash}</button>`}</span>
+          </div>`;
+        }).join('') : '<div style="padding:22px;text-align:center;" class="data">No connectors registered yet.</div>'}
+      </div></div>`;
+    main.querySelector('#conn-register')?.addEventListener('click', () => openRegisterConnector(main));
+    main.querySelectorAll('.conn-remove').forEach(b => b.addEventListener('click', () => removeConnectorUI(b.dataset.name, main)));
+  }
+  async function removeConnectorUI(name, main) {
+    if (!window.confirm(`Remove connector "${name}"? The agent will no longer be able to call it.`)) return;
+    try {
+      const r = await fetch('/connectors/' + encodeURIComponent(name), { method: 'DELETE' });
+      if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.detail || ('HTTP ' + r.status)); }
+      connectorsCache = null; connectorsDetails = null;
+      await loadConnectorDetails();
+      renderConnectors(main);
+    } catch (e) { window.alert('Could not remove connector: ' + e.message); }
+  }
+  function openRegisterConnector(main) {
+    const modal = document.getElementById('ws-new-agent-modal');
+    const VALID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+    const slugify = s => s.toLowerCase().trim().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+    modal.innerHTML = `<div class="modal" style="width:520px;">
+      <div class="modal-head"><div class="serif-h" style="font-size:19px;">Register connector</div><button class="tool-x" id="rc-x"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>
+      <p class="page-lede" style="margin-top:4px;font-size:14px;">A shared secret is generated and shown once. Set it on both sides.</p>
+      <div style="margin-top:20px;">
+        <div class="label" style="margin-bottom:6px;">URL</div>
+        <div class="input-line"><input id="rc-url" type="url" placeholder="https://your-app.up.railway.app/api/mcp" autocomplete="off"/></div>
+        <div class="label" style="margin:16px 0 6px;">Connector name <span style="opacity:.5;font-size:10px;text-transform:none;letter-spacing:0;">· auto-generated from URL, editable</span></div>
+        <div class="input-line"><input id="rc-name" type="text" placeholder="my_connector" autocomplete="off"/></div>
+        <div class="label" style="margin:16px 0 6px;">Display name <span style="opacity:.5;font-size:10px;text-transform:none;letter-spacing:0;">· optional, shown in the list</span></div>
+        <div class="input-line"><input id="rc-display" type="text" placeholder="My Connector" autocomplete="off"/></div>
+        <div id="rc-err" style="color:#c84;font-family:var(--mono);font-size:10px;margin-top:8px;min-height:14px;"></div>
+      </div>
+      <div class="row" style="justify-content:flex-end;margin-top:18px;gap:10px;">
+        <button class="btn" id="rc-cancel">Cancel</button>
+        <button class="btn btn-primary" id="rc-create" disabled>Register</button>
+      </div></div>`;
+    const urlIn = modal.querySelector('#rc-url');
+    const nameIn = modal.querySelector('#rc-name');
+    const displayIn = modal.querySelector('#rc-display');
+    const errDiv = modal.querySelector('#rc-err');
+    const createBtn = modal.querySelector('#rc-create');
+    let nameEdited = false;
+    const validate = () => {
+      const n = nameIn.value.trim();
+      if (!n) { errDiv.textContent = ''; createBtn.disabled = true; return; }
+      if (!VALID.test(n)) { errDiv.textContent = 'Lowercase letters, digits, _ or - only (must start with letter or digit)'; createBtn.disabled = true; }
+      else { errDiv.textContent = ''; createBtn.disabled = !urlIn.value.trim(); }
+    };
+    const guessName = url => {
+      try { const h = new URL(url).hostname; return slugify(h.split('.')[0]) || ''; } catch { return ''; }
+    };
+    urlIn.addEventListener('input', () => { if (!nameEdited) nameIn.value = guessName(urlIn.value); validate(); });
+    nameIn.addEventListener('input', () => { nameEdited = true; validate(); });
+    const close = () => { modal.classList.remove('open'); modal.innerHTML = ''; };
+    const create = async () => {
+      const name = nameIn.value.trim(), url = urlIn.value.trim(), display_name = displayIn.value.trim();
+      if (!name || !url || !VALID.test(name)) return;
+      createBtn.disabled = true; createBtn.textContent = 'Registering…';
+      try {
+        const r = await fetch('/connectors', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, url, display_name }) });
+        if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.detail || ('HTTP ' + r.status)); }
+        const j = await r.json();
+        close();
+        connectorsCache = null; connectorsDetails = null;
+        await loadConnectorDetails();
+        renderConnectors(main);
+        const reveal = main.querySelector('#conn-reveal');
+        if (reveal && j.secret) {
+          reveal.classList.add('on');
+          reveal.innerHTML = `<div class="row" style="gap:9px;margin-bottom:10px;"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--signal-deep)" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg><span class="serif-h" style="font-size:16px;">"${esc(j.name)}" registered</span></div>
+            <p style="font-size:13px;color:var(--ink-2);line-height:1.5;">Set this secret on <b>your app</b> — <b>it won't be shown again.</b> The brain already stores it securely; nothing to set on the brain side.</p>
+            <div class="token-box" style="flex-direction:column;align-items:stretch;gap:10px;">
+              <div class="row" style="justify-content:space-between;gap:12px;"><span class="data" style="font-size:12px;word-break:break-all;color:var(--ink);">${esc(j.secret)}</span><button class="btn btn-sm" id="conn-copy">Copy</button></div>
+              <div style="font-family:var(--mono);font-size:10px;color:var(--ink-3);line-height:2;border-top:1px solid var(--line-faint);padding-top:10px;">
+                Your app &nbsp;→&nbsp; <b style="color:var(--ink);">${esc(j.app_env_var)}</b>
+              </div>
+            </div>`;
+          reveal.querySelector('#conn-copy').addEventListener('click', () => navigator.clipboard?.writeText(j.secret));
+          reveal.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      } catch (e) { createBtn.disabled = false; createBtn.textContent = 'Register'; errDiv.textContent = e.message; }
+    };
+    modal.querySelector('#rc-x').addEventListener('click', close);
+    modal.querySelector('#rc-cancel').addEventListener('click', close);
+    createBtn.addEventListener('click', create);
+    urlIn.addEventListener('keydown', e => { if (e.key === 'Enter') nameIn.focus(); });
+    nameIn.addEventListener('keydown', e => { if (e.key === 'Enter' && !createBtn.disabled) create(); });
+    modal.classList.add('open');
+    modal.addEventListener('click', e => { if (e.target === modal) close(); });
+    urlIn.focus();
   }
 
   const LIMIT_FIELDS = [
