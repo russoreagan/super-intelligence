@@ -59,6 +59,23 @@ _HOP_BY_HOP = {
 # in a few seconds, but a long session can take longer — don't cut it short.
 SLEEP_CONSOLIDATE_WAIT_S = float(os.environ.get("BRAIN_SLEEP_CONSOLIDATE_WAIT_S", "90"))
 
+# Multi-persona routing (Path A). When on, the /v1 engine API routes each request to
+# the persona named in the X-Brain-Persona header, so one tenant can run several
+# persona processes at once (e.g. a six-persona debate). Off → every request uses the
+# tenant's single process (original behavior) and the header is ignored.
+_MULTI_PERSONA = os.environ.get("BRAIN_MULTI_PERSONA", "").lower() in ("1", "true", "yes")
+_PERSONA_HEADER = "x-brain-persona"
+
+
+def _persona_header(headers) -> str | None:
+    """The target persona for a request, or None to use the tenant's default process.
+    Honored only when multi-persona routing is enabled, so the default deployment is
+    byte-for-byte unchanged."""
+    if not _MULTI_PERSONA:
+        return None
+    p = (headers.get(_PERSONA_HEADER) or "").strip()
+    return p or None
+
 
 def _wants_html(request: Request) -> bool:
     return "text/html" in request.headers.get("accept", "")
@@ -471,15 +488,16 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
         org = _api_auth.resolve_partner_org(request.headers.get("authorization"))
         if org is None:
             return JSONResponse({"error": "unauthorized"}, status_code=401)
-        st = provisioner.status(org)
+        persona = _persona_header(request.headers)  # None unless multi-persona is on
+        st = provisioner.status(org, persona)
         if st and not st["booting"] and st.get("api_port"):
-            provisioner.touch(org)
+            provisioner.touch(org, persona)
             return await _proxy_http_stream(request, st["api_port"])
         # Brain not up yet: spawn it (starts its API server) + warm the pod, and tell
         # the partner to retry. Idempotent — concurrent calls await one spawn.
         if st is None:
             sleep_status.pop(org, None)
-            asyncio.create_task(_safe_ensure(provisioner, org))
+            asyncio.create_task(_safe_ensure(provisioner, org, persona))
             _kick_pod()
         return JSONResponse({"status": "booting"}, status_code=503)
 
@@ -491,14 +509,15 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
         if org is None:
             await client_ws.close(code=1008)
             return
-        st = provisioner.status(org)
+        persona = _persona_header(client_ws.headers)  # None unless multi-persona is on
+        st = provisioner.status(org, persona)
         if not st or st["booting"] or not st.get("api_port"):
             if st is None:
-                asyncio.create_task(_safe_ensure(provisioner, org))
+                asyncio.create_task(_safe_ensure(provisioner, org, persona))
                 _kick_pod()
             await client_ws.close(code=1013)  # not ready — partner retries
             return
-        provisioner.touch(org)
+        provisioner.touch(org, persona)
         await _proxy_ws(
             client_ws,
             st["api_port"],
@@ -544,21 +563,29 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
 
 # ── helpers ─────────────────────────────────────────────────────────────────
 async def _has_anthropic(request: Request) -> bool:
+    # Check via the SERVICE ROLE keyed by the tenant id — the same path the
+    # provisioner uses to inject the tenant's keys (vault.fetch_user_keys). The
+    # earlier user-token status RPC (get_my_api_key_status) could report no key
+    # even when one is on file (auth.uid() edge cases under asymmetric tokens),
+    # which silently blocked every spawn and left the UI stuck on the interstitial.
+    user = getattr(request.state, "user", None)
+    if not user:
+        return False
     from brain import vault
 
     try:
-        status = vault.get_status(_access_token(request))
-        return bool(status.get("anthropic"))
+        keys = vault.fetch_user_keys(_tenant_for(user["sub"]))
+        return bool((keys or {}).get("anthropic"))
     except Exception as e:
         logger.error("[gateway] anthropic-key check failed: %s", e)
         return False
 
 
-async def _safe_ensure(provisioner: Provisioner, uid: str) -> None:
+async def _safe_ensure(provisioner: Provisioner, uid: str, persona: str | None = None) -> None:
     try:
-        await provisioner.ensure(uid)
+        await provisioner.ensure(uid, persona)
     except Exception as e:
-        logger.error("[gateway] ensure failed for %s: %s", uid[:8], e)
+        logger.error("[gateway] ensure failed for %s/%s: %s", uid[:8], persona or "-", e)
 
 
 async def _safe_pod_ensure(runpod) -> None:
