@@ -203,11 +203,13 @@ def test_session_metrics_routing_and_chunk_surfaces():
 def test_mint_org_token_claims(monkeypatch):
     import jwt as pyjwt
 
-    from brain.gateway.org_token import mint_org_token
+    from brain.gateway import org_token
 
     monkeypatch.setenv("SUPABASE_JWT_SECRET", "test-secret")
+    # Legacy HS256 project (symmetric secret still accepted): a token is minted.
+    monkeypatch.setattr(org_token, "_uses_asymmetric_signing", lambda: False)
     org = "11111111-2222-3333-4444-555555555555"
-    tok = mint_org_token(org)
+    tok = org_token.mint_org_token(org)
     claims = pyjwt.decode(tok, "test-secret", algorithms=["HS256"], audience="authenticated")
     assert claims["sub"] == org
     assert claims["role"] == "authenticated"
@@ -219,6 +221,50 @@ def test_mint_org_token_empty_without_secret(monkeypatch):
 
     monkeypatch.delenv("SUPABASE_JWT_SECRET", raising=False)
     assert mint_org_token("some-org") == ""
+
+
+def test_mint_org_token_empty_under_asymmetric_signing(monkeypatch):
+    """When the project signs JWTs asymmetrically the legacy HS256 secret is inert,
+    so no token is minted — the tenant falls back to the service-role key instead of
+    booting with a credential Supabase rejects (the gateway-wedge / stuck-load bug)."""
+    from brain.gateway import org_token
+
+    monkeypatch.setenv("SUPABASE_JWT_SECRET", "test-secret")
+    monkeypatch.setattr(org_token, "_uses_asymmetric_signing", lambda: True)
+    assert org_token.mint_org_token("some-org") == ""
+
+
+def _mock_jwks(monkeypatch, keys):
+    from brain.gateway import org_token
+
+    monkeypatch.setenv("SUPABASE_URL", "https://proj.supabase.co")
+    monkeypatch.setattr(org_token, "_asymmetric", None)  # reset cache
+
+    class _Resp:
+        def read(self_inner):
+            return json.dumps({"keys": keys}).encode()
+
+        def __enter__(self_inner):
+            return self_inner
+
+        def __exit__(self_inner, *a):
+            return False
+
+    monkeypatch.setattr(org_token.urllib.request, "urlopen", lambda req, timeout=5: _Resp())
+
+
+def test_uses_asymmetric_signing_true_for_ec_keys(monkeypatch):
+    from brain.gateway import org_token
+
+    _mock_jwks(monkeypatch, [{"kty": "EC", "alg": "ES256", "kid": "k1"}])
+    assert org_token._uses_asymmetric_signing() is True
+
+
+def test_uses_asymmetric_signing_false_when_no_asymmetric_keys(monkeypatch):
+    from brain.gateway import org_token
+
+    _mock_jwks(monkeypatch, [])  # legacy HS256 project publishes no JWKS keys
+    assert org_token._uses_asymmetric_signing() is False
 
 
 def test_mandate_catalog_empty_in_local_mode(monkeypatch):

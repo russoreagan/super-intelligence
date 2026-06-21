@@ -103,6 +103,15 @@ class Provisioner:
         self._cmd_builder = cmd_builder or self._default_cmd
 
     @staticmethod
+    def _key(user_id: str, persona: str | None = None) -> str:
+        """Process key. Without a persona it's just the tenant id (the original
+        single-persona-per-tenant behavior, byte-for-byte). With a persona it's a
+        composite so one tenant can run several personas concurrently, each its own
+        process — Path A multi-persona. The gateway passes the target persona; older
+        callers that pass none keep the tenant-only key."""
+        return user_id if not persona else f"{user_id}::{persona}"
+
+    @staticmethod
     def _default_cmd(port: int, env: dict) -> list[str]:
         # BRAIN_TENANT_CMD overrides the spawn command (shlex-split; "{port}" is
         # substituted). Used by integration tests and as an ops escape hatch;
@@ -121,31 +130,32 @@ class Provisioner:
     async def stop(self) -> None:
         if self._reaper_task:
             self._reaper_task.cancel()
-        for uid in list(self._procs):
-            await self.stop_user(uid)
+        for key in list(self._procs):
+            await self._stop_key(key)
 
-    def _lock_for(self, user_id: str) -> asyncio.Lock:
-        lock = self._locks.get(user_id)
+    def _lock_for(self, user_id: str, persona: str | None = None) -> asyncio.Lock:
+        key = self._key(user_id, persona)
+        lock = self._locks.get(key)
         if lock is None:
-            lock = self._locks[user_id] = asyncio.Lock()
+            lock = self._locks[key] = asyncio.Lock()
         return lock
 
-    def touch(self, user_id: str) -> None:
-        p = self._procs.get(user_id)
+    def touch(self, user_id: str, persona: str | None = None) -> None:
+        p = self._procs.get(self._key(user_id, persona))
         if p:
             p.last_active = time.time()
 
-    def status(self, user_id: str) -> dict | None:
-        p = self._procs.get(user_id)
+    def status(self, user_id: str, persona: str | None = None) -> dict | None:
+        p = self._procs.get(self._key(user_id, persona))
         if not p:
             return None
         return {"port": p.port, "api_port": p.api_port, "booting": p.booting, "pid": p.proc.pid}
 
-    def is_running(self, user_id: str) -> bool:
-        """True if this user's brain process exists and is still alive. Used by the
-        gateway's sleep flow to wait for a graceful self-shutdown (consolidation)
-        before force-reaping."""
-        p = self._procs.get(user_id)
+    def is_running(self, user_id: str, persona: str | None = None) -> bool:
+        """True if this (user, persona) brain process exists and is still alive. Used
+        by the gateway's sleep flow to wait for a graceful self-shutdown
+        (consolidation) before force-reaping."""
+        p = self._procs.get(self._key(user_id, persona))
         return bool(p and p.proc.poll() is None)
 
     def live_count(self) -> int:
@@ -157,27 +167,31 @@ class Provisioner:
         DMN running, so keeping the pod up for it is pure waste."""
         return sum(1 for p in self._procs.values() if p.proc.poll() is None)
 
-    async def ensure(self, user_id: str) -> int:
-        """Resume-or-spawn this user's brain process; return its localhost port.
+    async def ensure(self, user_id: str, persona: str | None = None) -> int:
+        """Resume-or-spawn this (user, persona) brain process; return its localhost
+        port. With no persona this is the original tenant-only process; with one, a
+        per-persona process so a tenant can run several personas at once.
 
-        Idempotent and concurrency-safe: simultaneous callers for the same user
+        Idempotent and concurrency-safe: simultaneous callers for the same key
         await one spawn. Reuses a live process; replaces a dead one."""
-        async with self._lock_for(user_id):
-            p = self._procs.get(user_id)
+        key = self._key(user_id, persona)
+        async with self._lock_for(user_id, persona):
+            p = self._procs.get(key)
             if p and p.proc.poll() is None:
                 p.last_active = time.time()
                 return p.port
             if p and p.proc.poll() is not None:
                 logger.warning(
                     "[provisioner] %s process exited (code %s) — respawning",
-                    user_id[:8],
+                    key[:16],
                     p.proc.poll(),
                 )
-                self._procs.pop(user_id, None)
-            return await self._spawn(user_id)
+                self._procs.pop(key, None)
+            return await self._spawn(user_id, persona)
 
-    async def _spawn(self, user_id: str) -> int:
-        """Launch one brain.run subprocess for user_id and wait for /health.
+    async def _spawn(self, user_id: str, persona: str | None = None) -> int:
+        """Launch one brain.run subprocess for (user_id, persona) and wait for
+        /health.
 
         Retries once on a failed boot with a fresh port: between _free_port()'s
         probe and the child binding, another process can steal the port
@@ -185,23 +199,26 @@ class Provisioner:
         last_err: Exception | None = None
         for attempt in range(2):
             try:
-                return await self._spawn_once(user_id)
+                return await self._spawn_once(user_id, persona)
             except RuntimeError as e:
                 last_err = e
                 logger.warning(
                     "[provisioner] spawn attempt %d for %s failed: %s",
                     attempt + 1,
-                    user_id[:8],
+                    self._key(user_id, persona)[:16],
                     e,
                 )
         raise last_err if last_err else RuntimeError("tenant spawn failed")
 
-    async def _spawn_once(self, user_id: str) -> int:
+    async def _spawn_once(self, user_id: str, persona: str | None = None) -> int:
         port = _free_port()
         api_port = _free_port()  # engine API on its own port (distinct from the UI port)
         while api_port == port:
             api_port = _free_port()
-        root = TENANTS_DIR / user_id
+        # An explicit persona gets its own data dir so its settings/local caches
+        # (and local-mode wiring.json) never collide with a sibling persona under
+        # the same tenant. The default (no persona) keeps the original path.
+        root = TENANTS_DIR / user_id / "personas" / persona if persona else TENANTS_DIR / user_id
         (root / "second_brain").mkdir(parents=True, exist_ok=True)
         settings_path = root / "settings.json"
         # Seed a fresh tenant's settings.json from the bundled defaults so they
@@ -213,17 +230,28 @@ class Provisioner:
             shutil.copy(_BUNDLED_SETTINGS, tmp)
             os.replace(tmp, settings_path)
 
-        # Pin the tenant's persona name so its memory/chemistry key off the right
-        # slug from the first boot (rather than relying on run.py re-deriving it
-        # from settings.json, which falls back to "default" and cross-buckets if
-        # persona_name is empty). Read it from the just-seeded settings.json.
+        # Pin the persona name so memory/chemistry key off the right slug from the
+        # first boot (run.py prefers settings.json's persona_name over the env var
+        # and falls back to "default" if empty). For an explicit persona we FORCE it
+        # into the seeded settings so settings + env agree; for the default we read
+        # it from settings as before.
         persona_name = ""
-        try:
-            persona_name = str(
-                json.loads(settings_path.read_text(encoding="utf-8")).get("persona_name", "")
-            )
-        except Exception:
-            persona_name = ""
+        if persona:
+            persona_name = persona
+            with contextlib.suppress(Exception):
+                data = json.loads(settings_path.read_text(encoding="utf-8"))
+                if data.get("persona_name") != persona:
+                    data["persona_name"] = persona
+                    tmp = settings_path.with_suffix(".json.tmp")
+                    tmp.write_text(json.dumps(data), encoding="utf-8")
+                    os.replace(tmp, settings_path)
+        else:
+            try:
+                persona_name = str(
+                    json.loads(settings_path.read_text(encoding="utf-8")).get("persona_name", "")
+                )
+            except Exception:
+                persona_name = ""
 
         env = os.environ.copy()
         env.update(
@@ -277,9 +305,14 @@ class Provisioner:
         if org_jwt:
             env["BRAIN_SUPABASE_JWT"] = org_jwt
         else:
-            logger.warning(
-                "[provisioner] SUPABASE_JWT_SECRET unset — tenant %s falls back to "
-                "the service-role key (RLS not enforced). Set the secret in prod.",
+            # No mintable token — either SUPABASE_JWT_SECRET is unset (local dev) or
+            # the project signs JWTs asymmetrically, which makes any HS256 token we
+            # could mint inert (Supabase would 401 it). The tenant keeps the
+            # service-role key; isolation rests on the storage layer's in-query
+            # org scoping. See brain/gateway/org_token.py.
+            logger.info(
+                "[provisioner] tenant %s uses the service-role key "
+                "(no org JWT mintable under asymmetric signing / no secret).",
                 user_id[:8],
             )
         # Gateway-only secrets never belong in a tenant process: the service-role
@@ -317,17 +350,18 @@ class Provisioner:
         import subprocess
 
         proc = subprocess.Popen(cmd, cwd=str(_REPO_ROOT), env=env)
+        key = self._key(user_id, persona)
         entry = _Proc(proc, port, api_port=api_port)
-        self._procs[user_id] = entry
+        self._procs[key] = entry
 
         ok = await self._wait_health(port, proc)
         entry.booting = False
         if not ok:
             with contextlib.suppress(Exception):
                 proc.terminate()
-            self._procs.pop(user_id, None)
-            raise RuntimeError(f"tenant {user_id[:8]} failed to become healthy on :{port}")
-        logger.info("[provisioner] %s healthy on :%d", user_id[:8], port)
+            self._procs.pop(key, None)
+            raise RuntimeError(f"tenant {key[:16]} failed to become healthy on :{port}")
+        logger.info("[provisioner] %s healthy on :%d", key[:16], port)
         return port
 
     async def _wait_health(self, port: int, proc) -> bool:
@@ -347,8 +381,11 @@ class Provisioner:
                 await asyncio.sleep(1.0)
         return False
 
-    async def stop_user(self, user_id: str) -> None:
-        p = self._procs.pop(user_id, None)
+    async def stop_user(self, user_id: str, persona: str | None = None) -> None:
+        await self._stop_key(self._key(user_id, persona))
+
+    async def _stop_key(self, key: str) -> None:
+        p = self._procs.pop(key, None)
         if not p:
             return
         with contextlib.suppress(Exception):
@@ -361,7 +398,7 @@ class Provisioner:
         if p.proc.poll() is None:
             with contextlib.suppress(Exception):
                 p.proc.kill()
-        logger.info("[provisioner] stopped %s", user_id[:8])
+        logger.info("[provisioner] stopped %s", key[:16])
 
     async def _reaper_loop(self) -> None:
         # Backstop only: a brain stays awake (and keeps thinking) until the user
@@ -378,11 +415,11 @@ class Provisioner:
         while True:
             await asyncio.sleep(300)
             now = time.time()
-            for uid, p in list(self._procs.items()):
+            for key, p in list(self._procs.items()):
                 if not p.booting and (now - p.last_active) > IDLE_TIMEOUT_S:
                     logger.info(
                         "[provisioner] reaping abandoned tenant %s (no connection in %.0fh)",
-                        uid[:8],
+                        key[:16],
                         (now - p.last_active) / 3600,
                     )
-                    await self.stop_user(uid)
+                    await self._stop_key(key)
