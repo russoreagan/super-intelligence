@@ -125,7 +125,7 @@ def get(agent_id: str) -> dict | None:
     sb, org = _sb()
     res = (
         sb.table("agents")
-        .select("persona, mandate_id, name, enabled, permissions, sort_order")
+        .select("persona, mandate_id, name, enabled, permissions, sort_order, tier")
         .eq("org_id", org)
         .eq("persona", persona_slug)
         .eq("mandate_id", mandate_id)
@@ -144,7 +144,7 @@ def list_agents() -> list[dict]:
     sb, org = _sb()
     res = (
         sb.table("agents")
-        .select("persona, mandate_id, name, enabled, permissions, sort_order")
+        .select("persona, mandate_id, name, enabled, permissions, sort_order, tier")
         .eq("org_id", org)
         .order("persona")
         .order("mandate_id")
@@ -186,6 +186,42 @@ def set_permissions(agent_id: str, perms: dict) -> dict:
         "persona", persona_slug
     ).eq("mandate_id", mandate_id).execute()
     return get(agent_id) or {}
+
+
+# ── runtime tier (full = own awake-brain pod; lite = cloud-tier/ephemeral) ─────
+
+VALID_TIERS = ("lite", "full")
+
+
+def set_tier(agent_id: str, tier: str) -> dict:
+    """Set how the persona behind this agent is run. See 014_agent_tier.sql."""
+    if tier not in VALID_TIERS:
+        raise MandateError(f"tier must be one of {VALID_TIERS}, got '{tier}'")
+    sb, org = _sb()
+    persona_slug, mandate_id = _split(agent_id)
+    sb.table("agents").update({"tier": tier}).eq("org_id", org).eq(
+        "persona", persona_slug
+    ).eq("mandate_id", mandate_id).execute()
+    return get(agent_id) or {}
+
+
+def effective_tier(persona: str) -> str:
+    """A persona is one process, so it can't be both tiers at once. Its effective
+    tier is the max over its enabled agents — 'full' wins if ANY enabled agent of
+    the persona requires it, else 'lite'. The scheduler reads this to decide whether
+    to keep an awake local-thinking brain (its own pod) for the persona."""
+    persona_slug = _persona(persona)
+    sb, org = _sb()
+    res = (
+        sb.table("agents")
+        .select("tier")
+        .eq("org_id", org)
+        .eq("persona", persona_slug)
+        .eq("enabled", True)
+        .execute()
+    )
+    rows = res.data or []
+    return "full" if any((r.get("tier") or "lite") == "full" for r in rows) else "lite"
 
 
 # ── bounded permission resolution (org ceiling ∩ agent narrowing) ─────────────

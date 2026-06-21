@@ -35,6 +35,10 @@ from brain.api.sessions import ApiSessionRegistry
 logger = logging.getLogger(__name__)
 
 TurnRunner = Callable[[str, str, "str | None"], Awaitable[tuple[str, dict]]]
+# (reason) -> consolidation status dict. Runs the session-end Hebbian/sleep pass on
+# demand (checkpoint; does not tear down). Used by the debate consolidation barrier
+# and by long-running agents to persist learning before a crash can lose it.
+ConsolidateRunner = Callable[[str], Awaitable[dict]]
 # (pending_action, end_user_id, mandate_id, approve) -> (text, affect)
 ConfirmRunner = Callable[[dict, str, "str | None", bool], Awaitable[tuple[str, dict]]]
 # (end_user_id) -> deletion summary
@@ -162,6 +166,7 @@ def build_api_router(
     registry: ApiSessionRegistry | None = None,
     *,
     auth: Callable[[str | None], bool] = check_bearer,
+    consolidate_runner: ConsolidateRunner | None = None,
     confirm_runner: ConfirmRunner | None = None,
     purge_runner: PurgeRunner | None = None,
     tts_runner: TtsRunner | None = None,
@@ -342,6 +347,26 @@ def build_api_router(
                 "description": pending.get("description") or pending.get("task"),
             }
         return resp
+
+    @router.post("/sessions/{session_id}/consolidate")
+    async def consolidate_session(
+        session_id: str, body: dict | None = None, authorization: str | None = Header(default=None)
+    ):
+        """Run the session-end Hebbian/sleep consolidation now and persist learning,
+        without tearing the brain down. A checkpoint: idempotent and single-flight.
+        The orchestrator calls this for every participant at debate end; long-running
+        agents call it to durably commit learning between sessions."""
+        ctx = _require(authorization)
+        s = registry.get(session_id)
+        if s is None:
+            raise HTTPException(status_code=404, detail="unknown session_id")
+        if not _owns(ctx, s):
+            raise HTTPException(status_code=403, detail="session belongs to another partner")
+        if consolidate_runner is None:
+            raise HTTPException(status_code=501, detail="consolidation is not available on this server")
+        reason = (body or {}).get("reason") or "api"
+        result = await consolidate_runner(str(reason))
+        return {"session_id": session_id, "consolidation": result}
 
     @router.post("/sessions/{session_id}/turns/stream")
     async def run_turn_stream(
@@ -738,6 +763,8 @@ def build_api_router(
                 _ag.set_name(agent_id, body.get("name"))
             if "permissions" in body:
                 _ag.set_permissions(agent_id, body.get("permissions") or {})
+            if "tier" in body:
+                _ag.set_tier(agent_id, str(body.get("tier")))
             return _ag.get(agent_id)
 
         return _run(_do)
@@ -916,6 +943,7 @@ class ApiServer:
         turn_runner: TurnRunner,
         *,
         registry: ApiSessionRegistry | None = None,
+        consolidate_runner: ConsolidateRunner | None = None,
         confirm_runner: ConfirmRunner | None = None,
         purge_runner: PurgeRunner | None = None,
         tts_runner: TtsRunner | None = None,
@@ -947,6 +975,7 @@ class ApiServer:
             build_api_router(
                 turn_runner,
                 self._registry,
+                consolidate_runner=consolidate_runner,
                 confirm_runner=confirm_runner,
                 purge_runner=purge_runner,
                 tts_runner=tts_runner,

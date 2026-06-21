@@ -22,6 +22,9 @@ class _FakeProv:
         self._status = status
         self._live = live
         self.ensured: list[str] = []
+        self.ensured_personas: list[str | None] = []
+        self.status_calls: list[tuple[str, str | None]] = []
+        self.touched: list[tuple[str, str | None]] = []
         self.stopped: list[str] = []
 
     async def start(self):  # pragma: no cover
@@ -30,20 +33,22 @@ class _FakeProv:
     async def stop(self):  # pragma: no cover
         pass
 
-    def status(self, t):
+    def status(self, t, persona=None):
+        self.status_calls.append((t, persona))
         return self._status
 
-    async def ensure(self, t):
+    async def ensure(self, t, persona=None):
         self.ensured.append(t)
+        self.ensured_personas.append(persona)
 
-    async def stop_user(self, t):
+    async def stop_user(self, t, persona=None):
         self.stopped.append(t)
 
-    def is_running(self, t):
+    def is_running(self, t, persona=None):
         return False
 
-    def touch(self, t):
-        pass
+    def touch(self, t, persona=None):
+        self.touched.append((t, persona))
 
     def live_count(self):
         if self._live is not None:
@@ -132,6 +137,65 @@ def test_v1_routes_to_tenant_api_port_when_up(monkeypatch):
     r = asyncio.run(_post_v1(app, {"authorization": "Bearer good"}))
     assert r.status_code == 200
     assert seen.get("port") == 9777, "must proxy to the tenant's API port, not the UI port"
+
+
+# ── multi-persona routing (X-Brain-Persona) ─────────────────────────────────
+
+
+def test_v1_ignores_persona_header_when_flag_off(monkeypatch):
+    # Default deployment: the header is ignored, routing keys on the tenant only.
+    monkeypatch.setattr(gw, "_MULTI_PERSONA", False)
+    _patch(monkeypatch, "org-1")
+    prov = _FakeProv(status={"port": 9001, "api_port": 9777, "booting": False, "pid": 1})
+    app = gw.build_gateway_app(prov, [_FakeRunpod()])
+    monkeypatch.setattr(gw, "_proxy_http_stream", _fake_stream)
+
+    r = asyncio.run(_post_v1(app, {"authorization": "Bearer good", "x-brain-persona": "the_adversary"}))
+    assert r.status_code == 200
+    assert prov.status_calls[-1] == ("org-1", None)  # persona dropped
+
+
+def test_v1_routes_by_persona_header_when_flag_on(monkeypatch):
+    monkeypatch.setattr(gw, "_MULTI_PERSONA", True)
+    _patch(monkeypatch, "org-1")
+    prov = _FakeProv(status={"port": 9001, "api_port": 9777, "booting": False, "pid": 1})
+    app = gw.build_gateway_app(prov, [_FakeRunpod()])
+    monkeypatch.setattr(gw, "_proxy_http_stream", _fake_stream)
+
+    r = asyncio.run(_post_v1(app, {"authorization": "Bearer good", "x-brain-persona": "the_adversary"}))
+    assert r.status_code == 200
+    assert prov.status_calls[-1] == ("org-1", "the_adversary")
+    assert prov.touched[-1] == ("org-1", "the_adversary")
+
+
+def test_v1_cold_spawns_named_persona_when_flag_on(monkeypatch):
+    monkeypatch.setattr(gw, "_MULTI_PERSONA", True)
+    _patch(monkeypatch, "org-1")
+    prov = _FakeProv(status=None)  # brain not up for that persona yet
+    app = gw.build_gateway_app(prov, [_FakeRunpod()])
+
+    async def run():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+            r = await c.post(
+                "/v1/sessions",
+                headers={"authorization": "Bearer good", "x-brain-persona": "the_visionary"},
+                json={},
+            )
+        for _ in range(5):
+            await asyncio.sleep(0)
+        return r
+
+    r = asyncio.run(run())
+    assert r.status_code == 503
+    assert prov.ensured == ["org-1"]
+    assert prov.ensured_personas == ["the_visionary"]
+
+
+async def _fake_stream(request, port):
+    from fastapi.responses import JSONResponse
+
+    return JSONResponse({"ok": True})
 
 
 # ── cost control: /v1/sleep + /v1/status ────────────────────────────────────

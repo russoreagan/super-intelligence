@@ -552,6 +552,68 @@ def test_turn_stream_unavailable_without_source():
         assert r.status_code in (200, 501)
 
 
+class _FakeConsolidator:
+    """Records reasons it was asked to consolidate with; returns a scripted status."""
+
+    def __init__(self, result=None):
+        self.calls = []
+        self._result = result or {"ran": True, "turns": 3}
+
+    async def __call__(self, reason):
+        self.calls.append(reason)
+        return self._result
+
+
+def _client_with_consolidate(runner, consolidator, *, keys=None):
+    keys = keys or {"sk_test_123"}
+    registry = ApiSessionRegistry(now_fn=lambda: 1000.0, id_fn=lambda: "sess_abc")
+    app = FastAPI()
+    app.include_router(
+        build_api_router(
+            runner, registry, auth=lambda h: _ok(h, keys), consolidate_runner=consolidator
+        )
+    )
+    return TestClient(app)
+
+
+def test_consolidate_runs_for_session_and_passes_reason():
+    cons = _FakeConsolidator()
+    c = _client_with_consolidate(_FakeRunner(), cons)
+    sid = c.post("/v1/sessions", json={"end_user_id": "cust-1"}, headers=_AUTH).json()["session_id"]
+
+    r = c.post(f"/v1/sessions/{sid}/consolidate", json={"reason": "debate_end"}, headers=_AUTH)
+    assert r.status_code == 200
+    assert r.json()["consolidation"] == {"ran": True, "turns": 3}
+    assert cons.calls == ["debate_end"]
+
+
+def test_consolidate_defaults_reason_and_allows_empty_body():
+    cons = _FakeConsolidator()
+    c = _client_with_consolidate(_FakeRunner(), cons)
+    sid = c.post("/v1/sessions", json={"end_user_id": "c"}, headers=_AUTH).json()["session_id"]
+
+    r = c.post(f"/v1/sessions/{sid}/consolidate", headers=_AUTH)
+    assert r.status_code == 200
+    assert cons.calls == ["api"]
+
+
+def test_consolidate_requires_auth_and_known_session():
+    cons = _FakeConsolidator()
+    c = _client_with_consolidate(_FakeRunner(), cons)
+    sid = c.post("/v1/sessions", json={"end_user_id": "c"}, headers=_AUTH).json()["session_id"]
+
+    assert c.post(f"/v1/sessions/{sid}/consolidate").status_code == 401
+    assert c.post("/v1/sessions/nope/consolidate", headers=_AUTH).status_code == 404
+    assert cons.calls == []
+
+
+def test_consolidate_501_when_runner_not_wired():
+    # No consolidate_runner passed → endpoint reports unavailable, never 500.
+    c = _client(_FakeRunner())
+    sid = c.post("/v1/sessions", json={"end_user_id": "c"}, headers=_AUTH).json()["session_id"]
+    assert c.post(f"/v1/sessions/{sid}/consolidate", headers=_AUTH).status_code == 501
+
+
 def test_apiserver_app_serves_routes_with_env_key(monkeypatch):
     """End-to-end against the real ApiServer app + the default env-based auth."""
     monkeypatch.setenv("BRAIN_API_KEY", "sk_live_xyz")
