@@ -457,18 +457,34 @@ class RunPodManager:
         Try to resume any stopped ollama-brain pod, then fall back to creating
         a new one. Returns True if a pod is ready; False = using local Ollama.
         """
-        # Multi-tenant CONSUMER mode: a tenant child must never manage or stop the
-        # SHARED pod — its idle-reaper/watchdog would stop inference for every other
-        # tenant. When RUNPOD_HOST names a shared pod, tenants just point at it and
-        # skip all lifecycle (no resume/create/watch/stop/watchdog). The single
-        # gateway process owns the pod and its recovery (see brain/gateway/server).
-        shared_host = os.environ.get("RUNPOD_HOST", "").strip()
-        if os.environ.get("BRAIN_MULTITENANT", "").lower() in ("1", "true", "yes") and shared_host:
+        # Multi-tenant CONSUMER mode: a tenant child must NEVER manage a pod — its
+        # idle-reaper/watchdog would stop inference for every other tenant, and
+        # (critically) owner-mode resume/create POLLS and BLOCKS, which on a tenant's
+        # boot path stalls /health until the provisioner kills it and respawns — the
+        # exact wedge that kept the hosted app from loading. The single gateway process
+        # is the SOLE pod owner + recovery path (see brain/gateway/server).
+        #
+        # A tenant is ALWAYS a consumer, regardless of whether RUNPOD_HOST is set yet:
+        # if a shared host is known, point inference at it; if not, fall back to cloud
+        # until the gateway publishes one. NEVER provision a pod from a tenant — the
+        # old `and shared_host` guard let an empty/stale/clobbered host drop the tenant
+        # into owner mode, where it would churn GPU pods on boot.
+        if os.environ.get("BRAIN_MULTITENANT", "").lower() in ("1", "true", "yes"):
             from brain.settings import settings
 
-            settings.update({"runpod_host": shared_host})
             self._consumer = True
-            logger.info("[RunPod] Consumer mode — using shared pod %s (no lifecycle)", shared_host)
+            shared_host = os.environ.get("RUNPOD_HOST", "").strip()
+            if shared_host:
+                settings.update({"runpod_host": shared_host})
+                logger.info(
+                    "[RunPod] Consumer mode — using shared pod %s (no lifecycle)", shared_host
+                )
+            else:
+                # No host published yet: use cloud fallback, never provision a pod.
+                self._clear_host()
+                logger.info(
+                    "[RunPod] Consumer mode — no shared host yet; cloud fallback (no lifecycle)"
+                )
             return True
 
         if not self._api_key:

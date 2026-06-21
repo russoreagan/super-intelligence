@@ -235,6 +235,37 @@ class Provisioner:
         raise last_err if last_err else RuntimeError("tenant spawn failed")
 
     async def _spawn_once(self, user_id: str, persona: str | None = None) -> int:
+        """Launch one brain.run subprocess for (user_id, persona) and wait for /health.
+
+        The ENTIRE blocking prologue — network-volume file I/O (settings seed/read on
+        /data/tenants), the JWKS probe (mint_org_token), the vault RPC (fetch_user_keys),
+        and subprocess.Popen itself — runs in ONE worker thread via asyncio.to_thread.
+        This is the wedge fix: those calls used to run directly on the gateway's single
+        asyncio event loop, so a slow/stalled network-volume syscall mid-spawn froze the
+        whole gateway (every request, including /health, went dark with no traceback).
+        Only the async health poll stays on the loop."""
+        proc, port, api_port = await asyncio.to_thread(self._build_and_launch, user_id, persona)
+        key = self._key(user_id, persona)
+        entry = _Proc(proc, port, api_port=api_port)
+        self._procs[key] = entry
+
+        ok = await self._wait_health(port, proc)
+        entry.booting = False
+        if not ok:
+            with contextlib.suppress(Exception):
+                proc.terminate()
+            self._procs.pop(key, None)
+            raise RuntimeError(
+                f"tenant {key[:16]} failed to become healthy on :{port} "
+                f"(exit code: {proc.poll()})"
+            )
+        logger.info("[provisioner] %s healthy on :%d", key[:16], port)
+        return port
+
+    def _build_and_launch(self, user_id: str, persona: str | None = None):
+        """Synchronous spawn prologue — MUST be called via asyncio.to_thread (never on
+        the event loop): it does blocking network-volume file I/O, a JWKS probe, a
+        Supabase RPC, and subprocess.Popen. Returns (proc, port, api_port)."""
         port = _free_port()
         api_port = _free_port()  # engine API on its own port (distinct from the UI port)
         while api_port == port:
@@ -325,9 +356,9 @@ class Provisioner:
         # access for anything. Key changes are picked up on respawn.
         from brain.gateway.org_token import mint_org_token
 
-        # mint_org_token may do a (cached) JWKS probe over the network; run it off the
-        # event loop so a spawn never blocks the gateway from serving other requests.
-        org_jwt = await asyncio.to_thread(mint_org_token, user_id)
+        # mint_org_token may do a (cached) JWKS probe over the network. We're already
+        # in a worker thread (called via asyncio.to_thread), so call it directly.
+        org_jwt = mint_org_token(user_id)
         if org_jwt:
             env["BRAIN_SUPABASE_JWT"] = org_jwt
         else:
@@ -364,8 +395,8 @@ class Provisioner:
         try:
             from brain.vault import PROVIDER_ENV, fetch_user_keys
 
-            # Synchronous Supabase RPC (+ decrypt) — offload so it doesn't block the loop.
-            user_keys = await asyncio.to_thread(fetch_user_keys, user_id)
+            # Synchronous Supabase RPC (+ decrypt). Already in a worker thread.
+            user_keys = fetch_user_keys(user_id)
             for provider, value in (user_keys or {}).items():
                 env_name = PROVIDER_ENV.get(provider)
                 if env_name and value:
@@ -388,22 +419,7 @@ class Provisioner:
         # errors and tracebacks are visible in Railway dashboard logs (the CLI
         # doesn't surface child-process output reliably).
         _start_log_relay(proc, user_id)
-        key = self._key(user_id, persona)
-        entry = _Proc(proc, port, api_port=api_port)
-        self._procs[key] = entry
-
-        ok = await self._wait_health(port, proc)
-        entry.booting = False
-        if not ok:
-            with contextlib.suppress(Exception):
-                proc.terminate()
-            self._procs.pop(key, None)
-            raise RuntimeError(
-                f"tenant {key[:16]} failed to become healthy on :{port} "
-                f"(exit code: {proc.poll()})"
-            )
-        logger.info("[provisioner] %s healthy on :%d", key[:16], port)
-        return port
+        return proc, port, api_port
 
     async def _wait_health(self, port: int, proc) -> bool:
         url = f"http://127.0.0.1:{port}/health"

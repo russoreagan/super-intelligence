@@ -42,6 +42,39 @@ def test_ensure_running_consumer_is_noop():
     assert m._pod_id is None
 
 
+def test_multitenant_start_forces_consumer_even_without_host(monkeypatch):
+    """A tenant brain (BRAIN_MULTITENANT) must ALWAYS enter consumer mode and never
+    touch pod lifecycle — even when RUNPOD_HOST is empty/missing. Previously an empty
+    host dropped the tenant into owner mode, where start() would resume/create GPU
+    pods on boot — a blocking poll that wedged the tenant's /health (the hosted-load
+    freeze). Owner-mode entry would call _find_existing_pods; assert it never does."""
+    monkeypatch.setenv("BRAIN_MULTITENANT", "1")
+    monkeypatch.delenv("RUNPOD_HOST", raising=False)  # the trap: no host published yet
+    m = _mgr(api_key="key", consumer=False)
+
+    async def _boom():
+        raise AssertionError("tenant entered OWNER mode — tried to discover/create pods")
+
+    m._find_existing_pods = _boom  # type: ignore[assignment]
+    assert asyncio.run(m.start()) is True
+    assert m._consumer is True
+    assert m._pod_id is None
+
+
+def test_multitenant_start_consumer_uses_published_host(monkeypatch):
+    """With a shared host published, the tenant consumes it (no lifecycle)."""
+    monkeypatch.setenv("BRAIN_MULTITENANT", "1")
+    monkeypatch.setenv("RUNPOD_HOST", "https://pod-abc-11434.proxy.runpod.net")
+    m = _mgr(api_key="key", consumer=False)
+
+    async def _boom():
+        raise AssertionError("tenant entered OWNER mode despite a published host")
+
+    m._find_existing_pods = _boom  # type: ignore[assignment]
+    assert asyncio.run(m.start()) is True
+    assert m._consumer is True
+
+
 def test_ensure_running_idempotent_when_model_on_gpu():
     m = _mgr()
     m._pod_id = "podX"

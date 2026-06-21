@@ -565,6 +565,53 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
     return app
 
 
+# ── event-loop watchdog (self-heal) ──────────────────────────────────────────
+# The gateway is the single public front door; if its asyncio loop ever wedges
+# (a stray synchronous/blocking call), every request — including /health — goes
+# dark, and Railway's healthcheck runs only at deploy time so a SUCCESS deployment
+# is never auto-restarted. This watchdog makes a wedge self-healing: an async
+# heartbeat stamps a timestamp each second, a daemon thread watches it, and if the
+# loop stops ticking for BRAIN_GW_WATCHDOG_S the process force-exits so Railway's
+# restartPolicyType=on_failure brings up a fresh container. A correctly-offloaded
+# spawn never trips this; it's the backstop for the next blocker we haven't found.
+_loop_heartbeat: list[float] = [0.0]
+_WATCHDOG_THRESHOLD_S = float(os.environ.get("BRAIN_GW_WATCHDOG_S", "60"))
+
+
+async def _loop_heartbeat_task() -> None:
+    import time as _t
+
+    while True:
+        _loop_heartbeat[0] = _t.monotonic()
+        await asyncio.sleep(1.0)
+
+
+def _start_loop_watchdog() -> None:
+    import time as _t
+
+    _loop_heartbeat[0] = _t.monotonic()
+    asyncio.ensure_future(_loop_heartbeat_task())
+
+    def _watch() -> None:
+        while True:
+            _t.sleep(5.0)
+            last = _loop_heartbeat[0]
+            if last <= 0.0:
+                continue
+            lag = _t.monotonic() - last
+            if lag > _WATCHDOG_THRESHOLD_S:
+                logger.critical(
+                    "[gateway] event loop wedged for %.0fs (>%.0fs) — force-exiting so "
+                    "Railway restarts the container",
+                    lag,
+                    _WATCHDOG_THRESHOLD_S,
+                )
+                os._exit(1)
+
+    threading.Thread(target=_watch, daemon=True, name="gw-loop-watchdog").start()
+    logger.info("[gateway] loop watchdog armed (threshold %.0fs)", _WATCHDOG_THRESHOLD_S)
+
+
 # ── helpers ─────────────────────────────────────────────────────────────────
 async def _has_anthropic(request: Request, tenant: str | None = None) -> bool:
     # Check via the SERVICE ROLE keyed by the tenant id — the same path the
@@ -796,6 +843,7 @@ def main() -> None:
 
     @app.on_event("startup")
     async def _startup():
+        _start_loop_watchdog()  # self-heal: force-restart if the event loop ever wedges
         await provisioner.start()
         logger.info("[gateway] provisioner started")
         try:
