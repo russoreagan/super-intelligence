@@ -732,8 +732,10 @@ class ModelRouter:
         elif model_id.startswith("vertex-"):
             try:
                 async with self._get_cloud_semaphore():
+                    # Pass system + context separately so Claude-on-Vertex caches the
+                    # stable block (Gemini-on-Vertex folds them back together itself).
                     coro = self._call_vertex(
-                        model_id, system_with_context, messages, max_tokens
+                        model_id, system_prompt, messages, max_tokens, cached_context=cached_context
                     )
                     if bg_timeout:
                         text, in_tok, out_tok = await asyncio.wait_for(coro, timeout=bg_timeout)
@@ -1308,30 +1310,78 @@ class ModelRouter:
         return self._vertex_anthropic_client
 
     async def _call_vertex(
-        self, model_id: str, system_prompt: str, messages: list[dict], max_tokens: int = 1024
+        self,
+        model_id: str,
+        system_prompt: str,
+        messages: list[dict],
+        max_tokens: int = 1024,
+        cached_context: str = "",
     ) -> tuple[str, int, int]:
-        """Dispatch a 'vertex-' model to Gemini-on-Vertex or Claude-on-Vertex."""
+        """Dispatch a 'vertex-' model to Gemini-on-Vertex or Claude-on-Vertex.
+
+        Gemini has no prompt caching, so the per-session context is folded into the
+        system instruction (same as _call_google). Claude-on-Vertex DOES cache, so
+        the context is passed through as a dedicated cached block (see
+        _call_vertex_claude), matching the Anthropic API path."""
         real = model_id[len("vertex-") :]
         if real.startswith("gemini"):
+            sys_full = f"{system_prompt}\n\n{cached_context}" if cached_context else system_prompt
             return await self._gemini_generate(
-                self._get_vertex_gemini(), real, system_prompt, messages, max_tokens
+                self._get_vertex_gemini(), real, sys_full, messages, max_tokens
             )
-        return await self._call_vertex_claude(real, system_prompt, messages, max_tokens)
+        return await self._call_vertex_claude(
+            real, system_prompt, messages, max_tokens, cached_context=cached_context
+        )
 
     async def _call_vertex_claude(
-        self, model_id: str, system_prompt: str, messages: list[dict], max_tokens: int = 1024
+        self,
+        model_id: str,
+        system_prompt: str,
+        messages: list[dict],
+        max_tokens: int = 1024,
+        cached_context: str = "",
     ) -> tuple[str, int, int]:
+        """Claude on Vertex with prompt caching — mirrors _call_anthropic so the
+        stable system + per-session context are a cache READ on every turn after the
+        first. Cache-control on the last message lets intra-turn calls hit the cache
+        too. Without this, Vertex would re-bill the full context every turn."""
         client = self._get_vertex_anthropic()
-        anthropic_msgs = [{"role": m["role"], "content": m["content"]} for m in messages]
+
+        anthropic_msgs = []
+        for i, m in enumerate(messages):
+            content = m["content"]
+            if i == len(messages) - 1:
+                if isinstance(content, str):
+                    content = [
+                        {"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}
+                    ]
+                elif isinstance(content, list) and content:
+                    content = list(content)
+                    last = dict(content[-1])
+                    last["cache_control"] = {"type": "ephemeral"}
+                    content[-1] = last
+            anthropic_msgs.append({"role": m["role"], "content": content})
+
+        system_blocks = [
+            {"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}
+        ]
+        if cached_context:
+            system_blocks.append(
+                {"type": "text", "text": cached_context, "cache_control": {"type": "ephemeral"}}
+            )
+
         response = await client.messages.create(
             model=model_id,
             max_tokens=max_tokens,
-            system=system_prompt,
+            system=system_blocks,
             messages=anthropic_msgs,
         )
         usage = getattr(response, "usage", None)
         in_tok = getattr(usage, "input_tokens", 0) if usage else 0
         out_tok = getattr(usage, "output_tokens", 0) if usage else 0
+        cache_read = getattr(usage, "cache_read_input_tokens", 0) if usage else 0
+        if cache_read:
+            logger.debug("[Vertex] Claude cache read: %d tokens", cache_read)
         return response.content[0].text, in_tok, out_tok
 
     async def _call_google(

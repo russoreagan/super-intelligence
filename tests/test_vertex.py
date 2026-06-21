@@ -105,3 +105,76 @@ def test_materialize_skips_when_adc_already_set(monkeypatch):
     monkeypatch.setenv("GOOGLE_VERTEX_SA_JSON", '{"type":"service_account"}')
     S._materialize_vertex_credentials()
     assert os.environ["GOOGLE_APPLICATION_CREDENTIALS"] == "/preset/path/adc.json"
+
+
+# ── prompt caching (Claude on Vertex) ───────────────────────────────────────────
+def _fake_anthropic_capture(captured: dict):
+    """A stand-in AnthropicVertex client that records messages.create() kwargs."""
+
+    class _Resp:
+        content = [type("C", (), {"text": "ok"})()]
+        usage = type(
+            "U", (), {"input_tokens": 5, "output_tokens": 3, "cache_read_input_tokens": 100}
+        )()
+
+    class _Msgs:
+        async def create(self, **kw):
+            captured.update(kw)
+            return _Resp()
+
+    class _Client:
+        messages = _Msgs()
+
+    return _Client()
+
+
+def test_vertex_claude_marks_cache_control():
+    import asyncio
+
+    captured: dict = {}
+    r = ModelRouter()
+    r._vertex_anthropic_client = _fake_anthropic_capture(captured)  # bypass _get_vertex_anthropic
+    text, _i, _o = asyncio.run(
+        r._call_vertex_claude(
+            "claude-sonnet-4-5@x",
+            "SYSTEM",
+            [{"role": "user", "content": "hello"}],
+            50,
+            cached_context="CONTEXT",
+        )
+    )
+    assert text == "ok"
+    # system carries two cached blocks: identity + per-session context
+    sys_blocks = captured["system"]
+    assert [b["text"] for b in sys_blocks] == ["SYSTEM", "CONTEXT"]
+    assert all(b["cache_control"]["type"] == "ephemeral" for b in sys_blocks)
+    # last user message is cache-marked for intra-turn reuse
+    last = captured["messages"][-1]["content"]
+    assert isinstance(last, list) and last[-1]["cache_control"]["type"] == "ephemeral"
+
+
+def test_vertex_gemini_folds_context_into_system(monkeypatch):
+    import asyncio
+
+    r = ModelRouter()
+    captured: dict = {}
+
+    async def _fake_gen(client, model_id, system_prompt, messages, max_tokens):
+        captured["model"] = model_id
+        captured["system"] = system_prompt
+        return ("g", 1, 1)
+
+    monkeypatch.setattr(r, "_gemini_generate", _fake_gen)
+    monkeypatch.setattr(r, "_get_vertex_gemini", lambda: object())
+    out = asyncio.run(
+        r._call_vertex(
+            "vertex-gemini-2.5-flash",
+            "SYSTEM",
+            [{"role": "user", "content": "hi"}],
+            10,
+            cached_context="CONTEXT",
+        )
+    )
+    assert out[0] == "g"
+    assert captured["model"] == "gemini-2.5-flash"  # "vertex-" stripped
+    assert "SYSTEM" in captured["system"] and "CONTEXT" in captured["system"]

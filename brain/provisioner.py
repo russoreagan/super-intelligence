@@ -32,7 +32,9 @@ import logging
 import os
 import shutil
 import socket
+import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -55,11 +57,33 @@ PORT_RANGE_END = int(os.environ.get("BRAIN_TENANT_PORT_END", "9999"))
 TENANTS_DIR = Path(os.environ.get("BRAIN_TENANTS_DIR", "tenants")).resolve()
 # brain.run flags for tenant processes. Mirrors the shared deploy's set; override
 # via BRAIN_TENANT_ARGS (e.g. drop --ears to cut per-process RAM).
+# --ears enables server-side mic DSP (fingerprinting/speaker-ID/prosody via
+# AuditoryCluster). On hosted Railway, voice input arrives from the browser and
+# goes straight to Deepgram — there is no server-side mic, so --ears adds RAM
+# overhead with no benefit. Re-enable via BRAIN_TENANT_ARGS if needed.
 TENANT_ARGS = os.environ.get(
-    "BRAIN_TENANT_ARGS", "--ui --dmn --metacognition --ears --voice --motor"
+    "BRAIN_TENANT_ARGS", "--ui --dmn --metacognition --voice --motor"
 ).split()
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _BUNDLED_SETTINGS = Path(__file__).resolve().parent / "settings.json"
+
+
+def _start_log_relay(proc, user_id: str) -> None:
+    """Relay brain subprocess stdout+stderr through the gateway's logger.
+
+    Without this the child's output lands on inherited FDs that Railway's CLI
+    batches and drops for subprocess output. Prefixing with the tenant id makes
+    boot errors and tracebacks identifiable in the dashboard."""
+    prefix = f"[tenant:{user_id[:8]}]"
+
+    def _read():
+        try:
+            for line in proc.stdout:
+                logger.info("%s %s", prefix, line.rstrip())
+        except Exception:
+            pass
+
+    threading.Thread(target=_read, daemon=True, name=f"log-relay-{user_id[:8]}").start()
 
 
 class _Proc:
@@ -351,9 +375,19 @@ class Provisioner:
 
         cmd = self._cmd_builder(port, env)
         logger.info("[provisioner] spawning %s on :%d (%s)", user_id[:8], port, " ".join(cmd[:4]))
-        import subprocess
-
-        proc = subprocess.Popen(cmd, cwd=str(_REPO_ROOT), env=env)
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(_REPO_ROOT),
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+        # Relay the brain's stdout/stderr through the gateway's logger so boot
+        # errors and tracebacks are visible in Railway dashboard logs (the CLI
+        # doesn't surface child-process output reliably).
+        _start_log_relay(proc, user_id)
         key = self._key(user_id, persona)
         entry = _Proc(proc, port, api_port=api_port)
         self._procs[key] = entry
@@ -364,7 +398,10 @@ class Provisioner:
             with contextlib.suppress(Exception):
                 proc.terminate()
             self._procs.pop(key, None)
-            raise RuntimeError(f"tenant {key[:16]} failed to become healthy on :{port}")
+            raise RuntimeError(
+                f"tenant {key[:16]} failed to become healthy on :{port} "
+                f"(exit code: {proc.poll()})"
+            )
         logger.info("[provisioner] %s healthy on :%d", key[:16], port)
         return port
 

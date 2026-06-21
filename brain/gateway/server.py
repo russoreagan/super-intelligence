@@ -23,6 +23,7 @@ import os
 import time
 from html import escape as html_escape
 from pathlib import Path
+import threading
 
 import httpx
 from fastapi import FastAPI, Request, WebSocket
@@ -95,17 +96,20 @@ _ORG_CACHE_TTL_S = 30 * 60
 _org_cache: dict[str, tuple[str, float]] = {}
 
 
-def _tenant_for(uid: str) -> str:
+async def _tenant_for(uid: str) -> str:
     """Resolve an authenticated user to their org id (the tenant the brain process
     and all data key on). Falls back to the uid itself when there's no membership
     (pre-migration / dev) — which for a personal org is the same value, so this is
-    behavior-preserving."""
+    behavior-preserving.
+
+    The underlying Supabase query is synchronous (supabase-py sync client). Runs in
+    a thread on cache miss to avoid blocking the event loop."""
     hit = _org_cache.get(uid)
     if hit is not None and time.time() - hit[1] < _ORG_CACHE_TTL_S:
         return hit[0]
     from brain import org
 
-    t = org.org_id_for_user(uid) or uid
+    t = (await asyncio.to_thread(org.org_id_for_user, uid)) or uid
     _org_cache[uid] = (t, time.time())
     return t
 
@@ -310,7 +314,7 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
         user = getattr(request.state, "user", None)
         if user is None:  # public-path fall-through / auth-disabled edge
             return JSONResponse({"ready": False, "state": "unauthorized"}, status_code=401)
-        tenant = _tenant_for(user["sub"])
+        tenant = await _tenant_for(user["sub"])
         st = provisioner.status(tenant)
         if st is None:
             sleep_status.pop(tenant, None)  # respawning = waking up
@@ -346,7 +350,7 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
             uid = claims["sub"]
         else:
             uid = os.environ.get("BRAIN_USER_ID", "dev")
-        tenant = _tenant_for(uid)
+        tenant = await _tenant_for(uid)
         st = provisioner.status(tenant)
         if not st or st["booting"]:
             # Not ready yet — tell the client to retry (the page is on the interstitial anyway).
@@ -412,7 +416,7 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
         user = getattr(request.state, "user", None)
         if user is None:
             return JSONResponse({"error": "unauthorized"}, status_code=401)
-        tenant = _tenant_for(user["sub"])
+        tenant = await _tenant_for(user["sub"])
         asyncio.create_task(_do_sleep(tenant))
         return JSONResponse({"ok": True})
 
@@ -422,7 +426,7 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
         user = getattr(request.state, "user", None)
         if user is None:
             return JSONResponse({"state": "awake"}, status_code=401)
-        tenant = _tenant_for(user["sub"])
+        tenant = await _tenant_for(user["sub"])
         s = sleep_status.get(tenant)
         if not s:
             return JSONResponse({"state": "awake"})
@@ -540,13 +544,13 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
             if _wants_html(request):
                 return RedirectResponse("/login", status_code=303)
             return JSONResponse({"error": "unauthorized"}, status_code=401)
-        tenant = _tenant_for(user["sub"])
+        tenant = await _tenant_for(user["sub"])
         st = provisioner.status(tenant)
         if st and not st["booting"]:
             provisioner.touch(tenant)  # activity → reset the idle backstop timer
             return await _proxy_http(request, st["port"])
         # Brain not running yet: require an Anthropic key before spawning.
-        if not await _has_anthropic(request):
+        if not await _has_anthropic(request, tenant):
             if _wants_html(request):
                 return RedirectResponse("/keys", status_code=303)
             return JSONResponse({"error": "no_anthropic_key"}, status_code=403)
@@ -562,21 +566,23 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
 
 
 # ── helpers ─────────────────────────────────────────────────────────────────
-async def _has_anthropic(request: Request) -> bool:
+async def _has_anthropic(request: Request, tenant: str | None = None) -> bool:
     # Check via the SERVICE ROLE keyed by the tenant id — the same path the
     # provisioner uses to inject the tenant's keys (vault.fetch_user_keys). The
     # earlier user-token status RPC (get_my_api_key_status) could report no key
     # even when one is on file (auth.uid() edge cases under asymmetric tokens),
     # which silently blocked every spawn and left the UI stuck on the interstitial.
+    # `tenant` may be pre-resolved by the caller to avoid a second _tenant_for call.
     user = getattr(request.state, "user", None)
     if not user:
         return False
     from brain import vault
 
     try:
+        tid = tenant or (await _tenant_for(user["sub"]))
         # fetch_user_keys is a synchronous Supabase RPC (+ decrypt); run it off the
         # event loop so the key check never blocks the gateway from serving requests.
-        keys = await asyncio.to_thread(vault.fetch_user_keys, _tenant_for(user["sub"]))
+        keys = await asyncio.to_thread(vault.fetch_user_keys, tid)
         return bool((keys or {}).get("anthropic"))
     except Exception as e:
         logger.error("[gateway] anthropic-key check failed: %s", e)

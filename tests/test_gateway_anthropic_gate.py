@@ -19,10 +19,14 @@ def _req(user):
     return SimpleNamespace(state=SimpleNamespace(user=user))
 
 
+async def _async_tenant(sub):
+    return sub
+
+
 async def test_gate_true_when_service_role_finds_anthropic(monkeypatch):
     import brain.vault as vault
 
-    monkeypatch.setattr(gw, "_tenant_for", lambda sub: sub)
+    monkeypatch.setattr(gw, "_tenant_for", _async_tenant)
     monkeypatch.setattr(
         vault, "fetch_user_keys", lambda uid: {"anthropic": "sk-x", "deepgram": "d"}
     )
@@ -32,7 +36,7 @@ async def test_gate_true_when_service_role_finds_anthropic(monkeypatch):
 async def test_gate_false_when_no_anthropic_key(monkeypatch):
     import brain.vault as vault
 
-    monkeypatch.setattr(gw, "_tenant_for", lambda sub: sub)
+    monkeypatch.setattr(gw, "_tenant_for", _async_tenant)
     monkeypatch.setattr(vault, "fetch_user_keys", lambda uid: {"deepgram": "d"})
     assert await gw._has_anthropic(_req({"sub": "org-1"})) is False
 
@@ -47,6 +51,6 @@ async def test_gate_false_when_lookup_errors(monkeypatch):
     def _boom(uid):
         raise RuntimeError("supabase down")
 
-    monkeypatch.setattr(gw, "_tenant_for", lambda sub: sub)
+    monkeypatch.setattr(gw, "_tenant_for", _async_tenant)
     monkeypatch.setattr(vault, "fetch_user_keys", _boom)
     assert await gw._has_anthropic(_req({"sub": "org-1"})) is False
