@@ -301,7 +301,9 @@ class Provisioner:
         # access for anything. Key changes are picked up on respawn.
         from brain.gateway.org_token import mint_org_token
 
-        org_jwt = mint_org_token(user_id)
+        # mint_org_token may do a (cached) JWKS probe over the network; run it off the
+        # event loop so a spawn never blocks the gateway from serving other requests.
+        org_jwt = await asyncio.to_thread(mint_org_token, user_id)
         if org_jwt:
             env["BRAIN_SUPABASE_JWT"] = org_jwt
         else:
@@ -338,7 +340,9 @@ class Provisioner:
         try:
             from brain.vault import PROVIDER_ENV, fetch_user_keys
 
-            for provider, value in (fetch_user_keys(user_id) or {}).items():
+            # Synchronous Supabase RPC (+ decrypt) — offload so it doesn't block the loop.
+            user_keys = await asyncio.to_thread(fetch_user_keys, user_id)
+            for provider, value in (user_keys or {}).items():
                 env_name = PROVIDER_ENV.get(provider)
                 if env_name and value:
                     env[env_name] = value

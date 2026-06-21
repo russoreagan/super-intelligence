@@ -574,7 +574,9 @@ async def _has_anthropic(request: Request) -> bool:
     from brain import vault
 
     try:
-        keys = vault.fetch_user_keys(_tenant_for(user["sub"]))
+        # fetch_user_keys is a synchronous Supabase RPC (+ decrypt); run it off the
+        # event loop so the key check never blocks the gateway from serving requests.
+        keys = await asyncio.to_thread(vault.fetch_user_keys, _tenant_for(user["sub"]))
         return bool((keys or {}).get("anthropic"))
     except Exception as e:
         logger.error("[gateway] anthropic-key check failed: %s", e)
