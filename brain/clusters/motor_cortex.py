@@ -32,6 +32,9 @@ from brain.clusters.motor_prompts import (
 from brain.clusters.motor_prompts import (
     VERIFIER_SYSTEM as _VERIFIER_SYSTEM,
 )
+from brain.clusters.motor_prompts import (
+    WORLD_TOOLS_DOC as _WORLD_TOOLS_DOC,
+)
 from brain.clusters.motor_subsystem import MotorSubsystem
 from brain.model_router import ModelRouter
 from brain.neuron import SwitchNeuron
@@ -99,6 +102,19 @@ _JOB_TIMEOUT_S: float = float(
 # tests can shrink it.
 _JOB_HARD_TIMEOUT_GRACE_S: float = 30.0
 
+# The world-grounding tool family (Google Maps Platform). All require network +
+# the motor_enable_world capability; dispatched to ToolDispatcher._world_* handlers.
+_WORLD_TOOLS = frozenset(
+    {
+        "world_geocode",
+        "world_places",
+        "world_directions",
+        "world_weather",
+        "world_air_quality",
+        "world_timezone",
+    }
+)
+
 # Single source of truth for every tool name the motor cortex can actually
 # dispatch (local _dispatch, cloud_action, lobe-bridge, ask_user, none). Used to
 # neutralize hallucinated/typo'd expected_tool values from the strategic planner.
@@ -136,7 +152,7 @@ _DISPATCHABLE_TOOLS = frozenset(
         "start_watchlist_stream",
         "stop_watchlist_stream",
     }
-)
+) | _WORLD_TOOLS
 
 # JSON schema for the strategic planner's create_plan tool (native tool_use).
 _PLAN_SCHEMA: dict = {
@@ -160,6 +176,12 @@ _PLAN_SCHEMA: dict = {
                             "write_file",
                             "run_command",
                             "fetch_url",
+                            "world_geocode",
+                            "world_places",
+                            "world_directions",
+                            "world_weather",
+                            "world_air_quality",
+                            "world_timezone",
                             "cloud_action",
                             "query_langfuse",
                             "recall_memory",
@@ -227,6 +249,7 @@ class MotorCortexCluster:
         enable_shell: bool = True,
         enable_network: bool = True,
         enable_cloud: bool = True,
+        enable_world: bool = False,
     ) -> None:
         self._bus = bus
         self._router = router
@@ -238,6 +261,9 @@ class MotorCortexCluster:
         self._lobe_bridge = None  # set post-init via set_lobe_bridge()
         self._trading = None  # set post-init via set_trading_tools() (advise-only)
         self._trading_hint = ""  # planner doc block for trading tools, when enabled
+        # World-grounding tools advertised to the planner only when enabled.
+        self._enable_world = bool(enable_world)
+        self._world_hint = _WORLD_TOOLS_DOC if self._enable_world else ""
         self._obs = None  # set post-init via set_observability()
         self.job_store = JobStore()
         self._subsystems: list[MotorSubsystem] = []
@@ -253,6 +279,7 @@ class MotorCortexCluster:
             read_only_paths=read_only_paths,
             enable_shell=enable_shell,
             enable_network=enable_network,
+            enable_world=enable_world,
         )
 
         # Build planner prompt dynamically: include cloud connector hint if available
@@ -269,6 +296,7 @@ class MotorCortexCluster:
             cloud_connector_hint=self._cloud_hint,
             lobe_hint="Lobe capabilities (recall_memory, analyze_image) not yet configured.",
             trading_hint=self._trading_hint,
+            world_hint=self._world_hint,
         )
 
         # Planner: local Ollama — tool decisions stay on-device.
@@ -421,6 +449,7 @@ class MotorCortexCluster:
             cloud_connector_hint=self._cloud_hint,
             lobe_hint=lobe_hint,
             trading_hint=self._trading_hint,
+            world_hint=self._world_hint,
         )
         logger.info("[MotorCortex] Lobe bridge registered: %s", caps)
 
@@ -459,6 +488,7 @@ class MotorCortexCluster:
                 else "No lobe capabilities registered."
             ),
             trading_hint=self._trading_hint,
+            world_hint=self._world_hint,
         )
         logger.info("[MotorCortex] Trading tools registered (advise-only).")
 
@@ -2182,6 +2212,11 @@ class MotorCortexCluster:
                 f"[blocked] Network fetch is disabled for {_pol['label']} work "
                 "(Settings → Motor Permissions)."
             )
+        if not _pol["network"] and tool in _WORLD_TOOLS:
+            return (
+                f"[blocked] World grounding needs network, disabled for {_pol['label']} work "
+                "(Settings → Motor Permissions)."
+            )
         try:
             if tool == "read_file":
                 return await asyncio.get_event_loop().run_in_executor(
@@ -2233,6 +2268,8 @@ class MotorCortexCluster:
                 )
             elif tool == "set_mood":
                 return await self._set_mood(args.get("emotion", ""))
+            elif tool in _WORLD_TOOLS:
+                return await self._dispatch_world(tool, args)
             elif self._trading is not None and tool in self._trading.TOOL_NAMES:
                 # Advise-only trading tools — read-only analysis, never orders.
                 return await self._trading.dispatch(
@@ -2243,6 +2280,26 @@ class MotorCortexCluster:
         except Exception as e:
             logger.error("[MotorCortex] Tool %s failed: %s", tool, e)
             return f"[error] {tool} failed: {e}"
+
+    async def _dispatch_world(self, tool: str, args: dict) -> str:
+        """Route a world_* tool to its dispatcher handler. Each handler enforces
+        the motor_enable_world gate + GOOGLE_MAPS_API_KEY presence itself."""
+        d = self._dispatcher
+        if tool == "world_geocode":
+            return await d._world_geocode(args.get("query", ""))
+        if tool == "world_places":
+            return await d._world_places(args.get("query", ""), args.get("location", ""))
+        if tool == "world_directions":
+            return await d._world_directions(
+                args.get("origin", ""), args.get("destination", ""), args.get("mode", "DRIVE")
+            )
+        if tool == "world_weather":
+            return await d._world_weather(args.get("location", ""))
+        if tool == "world_air_quality":
+            return await d._world_air_quality(args.get("location", ""))
+        if tool == "world_timezone":
+            return await d._world_timezone(args.get("location", ""))
+        return f"[error] Unknown world tool: {tool}"
 
     # ── Deliberate mood control (audio + visual only) ─────────────────────────
 

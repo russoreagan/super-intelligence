@@ -47,6 +47,22 @@ _DEFAULT_FORMAT = "mp3_44100_128"
 # VoiceSettings (stability/style/speed); "v3" drives it via inline audio tags.
 _MODEL_ALIASES = {"flash": "eleven_flash_v2_5", "v3": "eleven_v3"}
 
+# Google Cloud TTS (Chirp 3 HD). Chirp3-HD honors speakingRate (not pitch), so
+# mood drives pace only. Output is LINEAR16 @ 24 kHz; the WAV header is stripped
+# to raw PCM so it concatenates like the other PCM formats.
+_GOOGLE_TTS_DEFAULT_VOICE = "en-US-Chirp3-HD-Charon"
+_GOOGLE_TTS_RATE: dict[str, float] = {
+    "excited": 1.10, "enthusiastic": 1.08, "happy": 1.06, "playful": 1.06,
+    "surprised": 1.08, "anxious": 1.08, "angry": 1.05, "frustrated": 1.04,
+    "confident": 1.03, "proud": 1.03, "warm": 0.98, "curious": 1.02,
+    "calm": 0.94, "thoughtful": 0.95, "sad": 0.90, "disappointed": 0.92,
+    "resigned": 0.92, "deadpan": 0.97, "dry": 0.97, "sarcastic": 0.98,
+}
+
+
+def _google_rate(mood: str | None) -> float:
+    return _GOOGLE_TTS_RATE.get((mood or "").strip().lower(), 1.0)
+
 
 class AudioError(Exception):
     """Raised for bad audio requests (unknown format/model, missing provider key).
@@ -248,6 +264,21 @@ async def _segment_stream(
             yield "chunk", seg
         return
 
+    if provider == "google":
+        gvoice = voice_id or os.environ.get("GOOGLE_TTS_VOICE") or _GOOGLE_TTS_DEFAULT_VOICE
+        yield (
+            "meta",
+            {
+                "format": "pcm_24000",
+                "voice_id": gvoice,
+                "model": "chirp3-hd",
+                "sample_rate": 24000,
+            },
+        )
+        async for seg in _iter_google(chunks, affect, gvoice):
+            yield "chunk", seg
+        return
+
     resolved_model = _resolve_model(model)
     resolved_voice = voice_id or os.environ.get("ELEVENLABS_VOICE_ID") or "21m00Tcm4TlvDq8ikWAM"
     yield (
@@ -357,6 +388,53 @@ async def _iter_openai(chunks: list[tuple[str, str | None]], affect: dict):
         }
 
 
+async def _iter_google(chunks: list[tuple[str, str | None]], affect: dict, voice: str):
+    """Synthesize each mood-segmented chunk via Google Cloud TTS (Chirp 3 HD).
+
+    REST + API key (vault-friendly): POST text:synthesize with LINEAR16 @ 24 kHz.
+    Mood maps to speakingRate (Chirp3-HD ignores pitch). The returned WAV header
+    is stripped so segments concatenate as raw PCM, like the OpenAI path."""
+    import base64
+
+    if not os.environ.get("GOOGLE_API_KEY"):
+        raise AudioError("GOOGLE_API_KEY is not configured", status=503)
+
+    import httpx
+
+    lang = "-".join(voice.split("-")[:2]) if voice.count("-") >= 2 else "en-US"
+    base_emotion = (affect or {}).get("emotion")
+    url = "https://texttospeech.googleapis.com/v1/text:synthesize"
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        for i, (chunk, mood) in enumerate(chunks):
+            rate = _google_rate(mood or base_emotion)
+            body = {
+                "input": {"text": chunk},
+                "voice": {"languageCode": lang, "name": voice},
+                "audioConfig": {
+                    "audioEncoding": "LINEAR16",
+                    "sampleRateHertz": 24000,
+                    "speakingRate": rate,
+                },
+            }
+            resp = await client.post(
+                url, params={"key": os.environ["GOOGLE_API_KEY"]}, json=body
+            )
+            if resp.status_code != 200:
+                detail = resp.text[:200]
+                raise AudioError(f"Google TTS failed ({resp.status_code}): {detail}", status=502)
+            wav = base64.b64decode(resp.json().get("audioContent", "") or "")
+            pcm = wav[44:] if wav[:4] == b"RIFF" else wav  # strip WAV header → raw PCM
+            yield {
+                "seq": i,
+                "text": chunk,
+                "mood": mood,
+                "voice_settings": {"speaking_rate": rate},
+                "_bytes": pcm,
+                "data": base64.b64encode(pcm).decode("ascii"),
+            }
+
+
 def _voice_settings_dict(vs) -> dict:
     """Best-effort plain-dict view of a VoiceSettings (surfaced so partners can
     render/visualise the prosody we chose)."""
@@ -375,8 +453,10 @@ async def transcribe(
     mimetype: str = "audio/wav",
     diarize: bool = False,
     model: str | None = None,
+    provider: str | None = None,
 ) -> dict:
-    """Transcribe one audio clip via Deepgram. Returns::
+    """Transcribe one audio clip. Dispatches on the STT provider (request arg →
+    ``STT_PROVIDER`` env → ``deepgram``); every provider returns the SAME shape::
 
         {
           "transcript": "...",
@@ -387,9 +467,24 @@ async def transcribe(
 
     The single ``is_final: true`` segment mirrors the shape a realtime stream
     emits (with interim ``is_final: false`` entries), so consumers written
-    against phase 1 don't change."""
+    against phase 1 don't change. Deepgram stays the default — Google is additive."""
     if not audio_bytes:
         raise AudioError("audio (non-empty) is required")
+    provider = (provider or os.environ.get("STT_PROVIDER") or "deepgram").strip().lower()
+    if provider == "google":
+        return await _transcribe_google(audio_bytes, mimetype=mimetype, diarize=diarize, model=model)
+    return await _transcribe_deepgram(
+        audio_bytes, mimetype=mimetype, diarize=diarize, model=model
+    )
+
+
+async def _transcribe_deepgram(
+    audio_bytes: bytes,
+    *,
+    mimetype: str = "audio/wav",
+    diarize: bool = False,
+    model: str | None = None,
+) -> dict:
     if not os.environ.get("DEEPGRAM_API_KEY"):
         raise AudioError("DEEPGRAM_API_KEY is not configured", status=503)
 
@@ -432,5 +527,103 @@ async def transcribe(
         "transcript": transcript,
         "words": words,
         "duration_s": duration_s,  # input audio length (quota meter for STT)
+        "segments": [{"transcript": transcript, "is_final": True}],
+    }
+
+
+def _google_stt_encoding(mimetype: str) -> tuple[str | None, int | None]:
+    """Map a request mimetype to a Google STT (encoding, sampleRateHertz). For
+    WAV/unknown we return (None, None) and let Google read the container header."""
+    m = (mimetype or "").lower()
+    if "webm" in m:
+        return "WEBM_OPUS", 48000
+    if "ogg" in m:
+        return "OGG_OPUS", 48000
+    if "flac" in m:
+        return "FLAC", None
+    if "mp3" in m or "mpeg" in m:
+        return "MP3", None
+    if "l16" in m or "pcm" in m:
+        return "LINEAR16", 16000
+    return None, None
+
+
+def _parse_g_time(t) -> float:
+    """Google word offsets look like ``'1.500s'`` (or a bare number) → seconds."""
+    if t is None:
+        return 0.0
+    s = str(t)
+    return float(s[:-1]) if s.endswith("s") else float(s)
+
+
+async def _transcribe_google(
+    audio_bytes: bytes,
+    *,
+    mimetype: str = "audio/wav",
+    diarize: bool = False,
+    model: str | None = None,
+) -> dict:
+    """Transcribe via Google Cloud Speech-to-Text v1 (REST + API key). Same return
+    shape as the Deepgram path. v1 standard models work with an API key; Chirp_2
+    needs Speech v2 + ADC — a later Vertex-auth follow-up."""
+    import base64
+
+    if not os.environ.get("GOOGLE_API_KEY"):
+        raise AudioError("GOOGLE_API_KEY is not configured", status=503)
+
+    import httpx
+
+    enc, rate = _google_stt_encoding(mimetype)
+    config: dict = {
+        "languageCode": os.environ.get("GOOGLE_STT_LANGUAGE", "en-US"),
+        "model": model or "latest_long",
+        "enableAutomaticPunctuation": True,
+    }
+    if enc:
+        config["encoding"] = enc
+    if rate:
+        config["sampleRateHertz"] = rate
+    if diarize:
+        config["diarizationConfig"] = {"enableSpeakerDiarization": True}
+        config["enableWordTimeOffsets"] = True
+
+    body = {
+        "config": config,
+        "audio": {"content": base64.b64encode(audio_bytes).decode("ascii")},
+    }
+    async with httpx.AsyncClient(timeout=60) as client:
+        resp = await client.post(
+            "https://speech.googleapis.com/v1/speech:recognize",
+            params={"key": os.environ["GOOGLE_API_KEY"]},
+            json=body,
+        )
+    if resp.status_code != 200:
+        raise AudioError(f"Google STT failed ({resp.status_code}): {resp.text[:200]}", status=502)
+    data = resp.json()
+    results = data.get("results") or []
+    transcript = " ".join(
+        (r.get("alternatives") or [{}])[0].get("transcript", "").strip() for r in results
+    ).strip()
+
+    words: list[dict] = []
+    duration_s = None
+    if results and diarize:
+        alt = (results[-1].get("alternatives") or [{}])[0]
+        for w in alt.get("words", []):
+            words.append(
+                {
+                    "word": w.get("word", ""),
+                    "start": _parse_g_time(w.get("startTime")),
+                    "end": _parse_g_time(w.get("endTime")),
+                    "speaker": int(w.get("speakerTag", 0)),
+                    "speaker_confidence": 1.0,
+                }
+            )
+        if words:
+            duration_s = words[-1]["end"]
+    return {
+        "transcript": transcript,
+        "words": words,
+        "duration_s": duration_s,
         "segments": [{"transcript": transcript, "is_final": True}],
     }

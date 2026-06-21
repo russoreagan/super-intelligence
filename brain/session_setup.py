@@ -284,6 +284,7 @@ class _SetupMixin:
 
         self._api_server = ApiServer(
             self.api_turn,
+            consolidate_runner=self.consolidate_now,
             confirm_runner=self.api_confirm,
             purge_runner=self.api_purge_end_user,
         )
@@ -335,6 +336,7 @@ class _SetupMixin:
         _motor_enable_shell = bool(int(_settings.get("motor_enable_shell", 1) or 0))
         _motor_enable_network = bool(int(_settings.get("motor_enable_network", 1) or 0))
         _motor_enable_cloud = bool(int(_settings.get("motor_enable_cloud_actions", 1) or 0))
+        _motor_enable_world = bool(int(_settings.get("motor_enable_world", 0) or 0))
         # Command allowlist: env wins, then the setting, then the built-in set.
         if _motor_cmds is None:
             _cmds_setting = {
@@ -417,6 +419,7 @@ class _SetupMixin:
             cloud._dispatcher._ro_paths = [str(_P(p).resolve()) for p in _motor_ro_paths]
             cloud._dispatcher._enable_shell = _motor_enable_shell
             cloud._dispatcher._enable_network = _motor_enable_network
+            cloud._dispatcher._enable_world = _motor_enable_world
 
         self.motor = MotorCortexCluster(
             self.bus,
@@ -428,6 +431,7 @@ class _SetupMixin:
             enable_shell=_motor_enable_shell,
             enable_network=_motor_enable_network,
             enable_cloud=_motor_enable_cloud,
+            enable_world=_motor_enable_world,
         )
         if _motor_paths:
             logger.info("Motor cortex online. Allowed paths: %s", _motor_paths)

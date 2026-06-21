@@ -72,6 +72,7 @@ Available tools:
 {cloud_connector_hint}
 {lobe_hint}
 {trading_hint}
+{world_hint}
 
 URL rule: if the user's message contains an http:// or https:// URL, call fetch_url on it.
 Only skip this if the user explicitly says not to fetch it.
@@ -87,6 +88,19 @@ If the request is conversational and needs no tool, return {{"tool": "none", "ar
 If you genuinely need information from the user to proceed and cannot reasonably guess, return
 {{"tool": "ask_user", "args": {{"question": "..."}}, "reason": "..."}} — use sparingly; only when blocked.
 Return ONLY the JSON object. No explanation."""
+
+# World-grounding tools (Google Maps Platform). Injected into the planner prompt
+# via {world_hint} ONLY when motor_enable_world is on (empty string otherwise), so
+# a disabled family is never advertised. See MotorCortexCluster._world_hint.
+WORLD_TOOLS_DOC = """  world_geocode(query)                      — resolve a place/address to coordinates + a formatted address
+  world_places(query, location)             — find real places; query e.g. "coffee"; location optional bias (address or "lat,lng")
+  world_directions(origin, destination, mode) — real travel distance + time; mode: DRIVE|WALK|BICYCLE|TRANSIT|TWO_WHEELER
+  world_weather(location)                   — current weather; location: a place name or "lat,lng"
+  world_air_quality(location)               — current air-quality index; location: a place name or "lat,lng"
+  world_timezone(location)                  — local timezone + UTC offset; location: a place name or "lat,lng"
+      The world_* tools give real-world grounding via Google Maps. Use them for questions about real
+      places, travel, weather, or environment — the results are factual data straight from Google."""
+
 
 STRATEGIC_SYSTEM = """You are the motor cortex planning a multi-step internal task.
 Use Ralph-style decomposition: break the goal into discrete stories, each with verifiable

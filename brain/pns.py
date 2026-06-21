@@ -707,6 +707,58 @@ class PNS:
         data = await resp.aread() if hasattr(resp, "aread") else resp.read()
         return self._pcm_resample(data)
 
+    # ── Google Cloud TTS (Chirp 3 HD) ─────────────────────────────────────────
+    # Twin of brain/api/audio.py's _GOOGLE_TTS_RATE — keep the two in sync.
+    # Chirp3-HD honors speakingRate (not pitch), so mood maps to pace only.
+    _GOOGLE_TTS_RATE = {
+        "excited": 1.10, "enthusiastic": 1.08, "happy": 1.06, "playful": 1.06,
+        "surprised": 1.08, "anxious": 1.08, "angry": 1.05, "frustrated": 1.04,
+        "confident": 1.03, "proud": 1.03, "warm": 0.98, "curious": 1.02,
+        "calm": 0.94, "thoughtful": 0.95, "sad": 0.90, "disappointed": 0.92,
+        "resigned": 0.92, "deadpan": 0.97, "dry": 0.97, "sarcastic": 0.98,
+    }
+
+    @staticmethod
+    def _google_tts_rate(emotion: str | None) -> float:
+        return PNS._GOOGLE_TTS_RATE.get((emotion or "").strip().lower(), 1.0)
+
+    async def _fetch_google_tts(self, sentence: str, rate: float = 1.0) -> bytes:
+        """Fetch one sentence from Google Cloud TTS (Chirp 3 HD) as 22050 PCM.
+
+        REST + API key (vault-friendly): LINEAR16 @ 22050 to match the playback
+        SAMPLE_RATE (no resample), WAV header stripped. Sentence-buffered, the same
+        shape as _fetch_openai_tts so the producer/consumer path is unchanged."""
+        import base64
+
+        import httpx
+
+        from brain.settings import settings as _settings
+
+        voice = (
+            str(_settings.get("google_tts_voice", "") or "")
+            or os.environ.get("GOOGLE_TTS_VOICE", "")
+            or "en-US-Chirp3-HD-Charon"
+        )
+        lang = "-".join(voice.split("-")[:2]) if voice.count("-") >= 2 else "en-US"
+        body = {
+            "input": {"text": sentence},
+            "voice": {"languageCode": lang, "name": voice},
+            "audioConfig": {
+                "audioEncoding": "LINEAR16",
+                "sampleRateHertz": 22050,
+                "speakingRate": rate,
+            },
+        }
+        async with httpx.AsyncClient(timeout=30) as _client:
+            resp = await _client.post(
+                "https://texttospeech.googleapis.com/v1/text:synthesize",
+                params={"key": os.environ["GOOGLE_API_KEY"]},
+                json=body,
+            )
+        resp.raise_for_status()
+        wav = base64.b64decode(resp.json().get("audioContent", "") or "")
+        return wav[44:] if wav[:4] == b"RIFF" else wav
+
     def _make_flash_chunks(
         self, text: str, base_params: dict, *, VoiceSettings
     ) -> list[tuple[str, object]]:
@@ -807,18 +859,30 @@ class PNS:
         _tts_provider = str(_tts_settings.get("tts_provider", "elevenlabs")).lower()
         api_key = os.environ.get("ELEVENLABS_API_KEY", "")
         _openai_key = os.environ.get("OPENAI_API_KEY", "")
+        _google_key = os.environ.get("GOOGLE_API_KEY", "")
+        # Resolve the provider against available keys; a missing key falls back so
+        # the reply is never silently dropped. Google is additive (Chirp 3 HD) and
+        # behaves like the OpenAI path (sentence-buffered PCM, not streamed).
         if _tts_provider == "openai" and not _openai_key:
             logger.warning(
                 "[I/O] tts_provider=openai but OPENAI_API_KEY not set — using ElevenLabs"
             )
             _tts_provider = "elevenlabs"
-        if _tts_provider != "openai" and not api_key:
+        if _tts_provider == "google" and not _google_key:
+            logger.warning(
+                "[I/O] tts_provider=google but GOOGLE_API_KEY not set — using ElevenLabs"
+            )
+            _tts_provider = "elevenlabs"
+        if _tts_provider not in ("openai", "google") and not api_key:
             if _openai_key:
                 logger.info("[I/O] ELEVENLABS_API_KEY not set — using OpenAI TTS")
                 _tts_provider = "openai"
+            elif _google_key:
+                logger.info("[I/O] ELEVENLABS_API_KEY not set — using Google TTS")
+                _tts_provider = "google"
             else:
                 logger.warning(
-                    "[I/O] No TTS key set (ELEVENLABS_API_KEY / OPENAI_API_KEY) — skipping TTS"
+                    "[I/O] No TTS key set (ELEVENLABS / OPENAI / GOOGLE) — skipping TTS"
                 )
                 return
         try:
@@ -871,8 +935,8 @@ class PNS:
             # OpenAI TTS reuses the Flash chunking (per-chunk mood resolution);
             # the VoiceSettings payloads are ignored and per-chunk `instructions`
             # carry the emotion instead (built below as _oai_instructions).
-            _is_flash = model_id.startswith("eleven_flash") or _tts_provider == "openai"
-            if model_id == "eleven_v3" and _tts_provider != "openai":
+            _is_flash = model_id.startswith("eleven_flash") or _tts_provider in ("openai", "google")
+            if model_id == "eleven_v3" and _tts_provider not in ("openai", "google"):
                 # Step 1: resolve the base (reactive) tag from affect.
                 base_tag = self._v3_audio_tag_from_affect(affect or {})
 
@@ -1026,6 +1090,22 @@ class PNS:
                     len(chunked),
                 )
 
+            # Per-chunk Google speakingRate, aligned 1:1 with `chunked` (same
+            # _mood_segmented_chunks split _make_flash_chunks uses).
+            _google_rates: list[float] = []
+            if _tts_provider == "google":
+                _g_base = deliberate_emotion or (affect or {}).get("emotion")
+                _google_rates = [
+                    self._google_tts_rate(mood or _g_base)
+                    for _, mood in self._mood_segmented_chunks(text)
+                ]
+                logger.info(
+                    "[I/O] TTS provider=google voice=%s emotion=%s chunks=%d",
+                    _tts_settings.get("google_tts_voice") or os.environ.get("GOOGLE_TTS_VOICE"),
+                    (affect or {}).get("emotion"),
+                    len(chunked),
+                )
+
             logger.debug("[I/O] TTS: %d chunk(s) for streaming", len(chunked))
 
             self._interrupt_event.clear()
@@ -1094,6 +1174,35 @@ class PNS:
                             for i, (sentence, chunk_vs) in enumerate(chunked):
                                 if self._interrupt_event.is_set():
                                     break
+                                if _tts_provider == "google":
+                                    # Sentence-buffered fetch (22050 PCM), sliced into
+                                    # ~8 KB pieces so interrupts stay responsive.
+                                    try:
+                                        _rate = _google_rates[i] if i < len(_google_rates) else 1.0
+                                        _data = await self._fetch_google_tts(sentence, _rate)
+                                        for _off in range(0, len(_data), 8192):
+                                            if self._interrupt_event.is_set():
+                                                break
+                                            await audio_queue.put(_data[_off : _off + 8192])
+                                    except Exception as _g_err:
+                                        logger.error(
+                                            "[I/O] Google TTS chunk %d/%d failed (%s: %s) — skipping",
+                                            i + 1,
+                                            len(chunked),
+                                            type(_g_err).__name__,
+                                            _g_err,
+                                        )
+                                        self._emit_tts_error(
+                                            f"Chunk {i + 1} failed: {type(_g_err).__name__}"
+                                        )
+                                    _gap_ms = int(os.environ.get("BRAIN_TTS_CHUNK_GAP_MS", "20"))
+                                    if (
+                                        _gap_ms > 0
+                                        and not self._interrupt_event.is_set()
+                                        and i < len(chunked) - 1
+                                    ):
+                                        await audio_queue.put(b"\x00" * (22050 * 2 * _gap_ms // 1000))
+                                    continue
                                 if _tts_provider == "openai":
                                     # Sentence-buffered fetch + resample; sliced into
                                     # ~8 KB pieces so interrupts stay responsive.
@@ -1276,6 +1385,10 @@ class PNS:
                     for _i, (sentence, chunk_vs) in enumerate(chunked):
                         if self._interrupt_event.is_set():
                             break
+                        if _tts_provider == "google":
+                            _rate = _google_rates[_i] if _i < len(_google_rates) else 1.0
+                            audio_bytes += await self._fetch_google_tts(sentence, _rate)
+                            continue
                         if _tts_provider == "openai":
                             audio_bytes += await self._fetch_openai_tts(
                                 sentence,

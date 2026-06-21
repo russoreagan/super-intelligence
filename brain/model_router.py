@@ -32,6 +32,16 @@ MODEL_MAP = {
     # OpenAI-compatible cloud (also Groq/Mistral/DeepSeek/Together via OPENAI_BASE_URL).
     "gpt": os.environ.get("OPENAI_MODEL", "gpt-5.1"),
     "gpt-mini": os.environ.get("OPENAI_MODEL_MINI", "gpt-5-mini"),
+    # Vertex AI (Model Garden). Resolved ids keep the "vertex-" prefix so
+    # _provider_for routes them to the Vertex client. Auth is ADC (service account
+    # / workload identity / `gcloud auth application-default login`), NOT an API
+    # key. Additive: nothing routes here unless cloud_provider=vertex or a cell
+    # explicitly names one of these keys.
+    "vertex-gemini-flash": "vertex-gemini-2.5-flash",
+    "vertex-gemini-pro": "vertex-gemini-2.5-pro",
+    "vertex-claude": "vertex-" + os.environ.get("VERTEX_CLAUDE_MODEL", "claude-sonnet-4-5@20250929"),
+    "vertex-claude-haiku": "vertex-"
+    + os.environ.get("VERTEX_CLAUDE_HAIKU_MODEL", "claude-haiku-4-5@20251001"),
 }
 
 _LOCAL_VARIANTS = frozenset(
@@ -47,12 +57,20 @@ _LOCAL_VARIANTS = frozenset(
     }
 )
 
+# A 'lite'-tier brain holds no local pod, so cell config's local routes must run on
+# cloud instead. This names the cheap cloud model_key they fall back to. The cloud-vs-
+# local TRUTH still lives in cell config + _provider_for; this is only the per-brain
+# permission gate (see ModelRouter._local_disabled).
+_LITE_CLOUD_KEY = os.environ.get("BRAIN_LITE_CLOUD_MODEL_KEY", "haiku")
+
 
 def _provider_for(model_id: str) -> str:
     """Which client a resolved model id dispatches to. Anything that isn't
     Claude/Gemini/local routes through the OpenAI-compatible client — which is
     how GPT and every base_url-compatible provider (Groq, Mistral, DeepSeek,
     Together) plug in without new client code."""
+    if model_id.startswith("vertex-"):
+        return "vertex"
     if model_id.startswith("claude"):
         return "anthropic"
     if model_id.startswith("gemini"):
@@ -71,9 +89,15 @@ def _remap_cloud_provider(model_id: str, cluster: str) -> str:
 
     if cluster == "motor" or not model_id.startswith("claude"):
         return model_id
-    if str(_settings.get("cloud_provider", "anthropic")).lower() != "openai":
-        return model_id
-    return MODEL_MAP["gpt-mini"] if "haiku" in model_id else MODEL_MAP["gpt"]
+    _cp = str(_settings.get("cloud_provider", "anthropic")).lower()
+    if _cp == "openai":
+        return MODEL_MAP["gpt-mini"] if "haiku" in model_id else MODEL_MAP["gpt"]
+    # Serve the reasoning path via Google-hosted Claude (Vertex Model Garden) when
+    # selected AND Vertex is enabled — the SAME Claude models, billed/authed through
+    # Google. Otherwise leave it on the Anthropic API.
+    if _cp == "vertex" and int(_settings.get("enable_vertex", 0) or 0):
+        return MODEL_MAP["vertex-claude-haiku"] if "haiku" in model_id else MODEL_MAP["vertex-claude"]
+    return model_id
 
 
 # Embedding dim must match EpisodicStore table schema (see brain/second_brain/store.py).
@@ -184,6 +208,8 @@ class ModelRouter:
     def __init__(self, obs=None) -> None:
         self._anthropic_client = None
         self._google_client = None
+        self._vertex_gemini_client = None  # google-genai in Vertex mode (ADC auth)
+        self._vertex_anthropic_client = None  # AnthropicVertex (Claude on Vertex)
         self._http_client = None  # persistent httpx client; reused across Ollama calls
         self._call_log: list[dict] = []
         self._obs = obs
@@ -200,6 +226,11 @@ class ModelRouter:
         # Background mode: set True while running autonomous/self-initiated work.
         # Cloud calls in this mode are budgeted and capped to prevent bill creep.
         self._bg_mode: bool = False
+        # Tier gate: a 'lite' brain has no local pod, so ALL local routing is disabled
+        # and falls back to cloud. Set from the per-brain tier injected at spawn
+        # (BRAIN_TIER). This is the single per-brain enforcement of local-permission;
+        # the cloud-vs-local truth itself still lives in cell config + _provider_for.
+        self._local_disabled: bool = os.environ.get("BRAIN_TIER", "full").strip().lower() == "lite"
         # Session-level token counter for background cloud usage (in + out combined).
         # Kept for diagnostics/logging; the rate gate uses the token bucket below.
         self._bg_cloud_tokens_used: int = 0
@@ -471,6 +502,18 @@ class ModelRouter:
             )
             return False
 
+    def _resolve_model_id(self, model_key: str, cluster: str) -> tuple[str, str]:
+        """Resolve a cell's model_key to (model_key, model_id) — the single place all
+        dispatch paths route through. Applies the cloud-provider remap AND the
+        per-brain lite gate: a 'lite' brain has no local pod, so any local route falls
+        back to cloud here. The cloud-vs-local TRUTH still lives in cell config +
+        _provider_for; this only enforces the per-brain local-permission, uniformly."""
+        model_id = _remap_cloud_provider(MODEL_MAP.get(model_key, model_key), cluster)
+        if self._local_disabled and _provider_for(model_id) == "local":
+            model_key = _LITE_CLOUD_KEY
+            model_id = _remap_cloud_provider(MODEL_MAP.get(model_key, model_key), cluster)
+        return model_key, model_id
+
     async def call(
         self,
         model_key: str,
@@ -490,7 +533,11 @@ class ModelRouter:
 
         _s = _settings.get
 
-        model_id = _remap_cloud_provider(MODEL_MAP.get(model_key, model_key), cluster)
+        model_key, model_id = self._resolve_model_id(model_key, cluster)
+        # A lite brain can't honor a local-only cell (no pod) — relax locality so the
+        # enforcement below won't force it back to a pod that doesn't exist.
+        if self._local_disabled:
+            locality = "either"
 
         # Locality enforcement: local cells must never dispatch to cloud APIs
         _is_cloud = _provider_for(model_id) != "local"
@@ -516,7 +563,7 @@ class ModelRouter:
         if self._bg_mode and _is_cloud:
             self._refill_bg_bucket()
             rate_per_hr = float(_s("bg_cloud_token_rate") or 100_000)
-            if self._bg_cloud_bucket <= 0:
+            if self._bg_cloud_bucket <= 0 and not self._local_disabled:
                 logger.warning(
                     "[Resource] Background rate-limited (bucket: %d tokens, "
                     "refilling at %.0f/hr, session total: %d) "
@@ -568,7 +615,7 @@ class ModelRouter:
                     daily_cap = _acf if daily_cap <= 0 else min(daily_cap, _acf)
             except Exception:
                 pass
-            if daily_cap > 0 and self._cloud_usd_today >= daily_cap:
+            if daily_cap > 0 and self._cloud_usd_today >= daily_cap and not self._local_disabled:
                 logger.warning(
                     "[Resource] Daily cloud USD cap reached ($%.4f / $%.2f) "
                     "— routing %s/%s to local for the rest of today.",
@@ -682,6 +729,30 @@ class ModelRouter:
                 usd,
                 self._cloud_usd_today,
             )
+        elif model_id.startswith("vertex-"):
+            try:
+                async with self._get_cloud_semaphore():
+                    coro = self._call_vertex(
+                        model_id, system_with_context, messages, max_tokens
+                    )
+                    if bg_timeout:
+                        text, in_tok, out_tok = await asyncio.wait_for(coro, timeout=bg_timeout)
+                    else:
+                        text, in_tok, out_tok = await coro
+            except TimeoutError:
+                logger.warning(
+                    "[Resource] Background cloud call %s/%s timed out after %.0fs — falling back to local.",
+                    cluster,
+                    cell,
+                    bg_timeout,
+                )
+                text, in_tok, out_tok = await self._call_local(
+                    system_with_context, messages, max_tokens
+                )
+            if self._bg_mode:
+                spent = in_tok + out_tok
+                self._bg_cloud_tokens_used += spent
+                self._bg_cloud_bucket -= spent
         elif model_id.startswith("gemini"):
             try:
                 coro = self._call_google(model_id, system_with_context, messages, max_tokens)
@@ -799,7 +870,7 @@ class ModelRouter:
         Powers GenericExecutor; budget/bg-mode caps mirror call_structured."""
         import json as _json
 
-        model_id = _remap_cloud_provider(MODEL_MAP.get(model_key, model_key), cluster)
+        model_key, model_id = self._resolve_model_id(model_key, cluster)
         provider = _provider_for(model_id)
         try:
             if provider == "anthropic":
@@ -907,7 +978,7 @@ class ModelRouter:
         from brain.settings import settings as _settings
 
         _s = _settings.get
-        model_id = _remap_cloud_provider(MODEL_MAP.get(model_key, model_key), cluster)
+        model_key, model_id = self._resolve_model_id(model_key, cluster)
         _is_cloud = _provider_for(model_id) != "local"
 
         # Background mode: apply per-hour rate limit — if exhausted, fall back gracefully.
@@ -1199,12 +1270,83 @@ class ModelRouter:
         cache_write = getattr(usage, "cache_creation_input_tokens", 0) if usage else 0
         return response.content[0].text, in_tok, out_tok, cache_read, cache_write
 
+    def _vertex_cfg(self) -> tuple[str, str]:
+        """Resolve (project, location) for Vertex. Setting → env → default."""
+        from brain.settings import settings as _s
+
+        project = str(_s.get("vertex_project") or "") or os.environ.get("GOOGLE_CLOUD_PROJECT", "")
+        location = (
+            str(_s.get("vertex_location") or "")
+            or os.environ.get("GOOGLE_CLOUD_LOCATION", "")
+            or "us-central1"
+        )
+        if not project:
+            raise RuntimeError("vertex_project not set — configure Vertex in Settings → Providers")
+        return project, location
+
+    def _get_vertex_gemini(self):
+        if self._vertex_gemini_client is None:
+            project, location = self._vertex_cfg()
+            from google import genai
+
+            self._vertex_gemini_client = genai.Client(
+                vertexai=True, project=project, location=location
+            )
+        return self._vertex_gemini_client
+
+    def _get_vertex_anthropic(self):
+        if self._vertex_anthropic_client is None:
+            from brain.settings import settings as _s
+
+            project, location = self._vertex_cfg()
+            # Claude on Vertex lives in specific regions (e.g. us-east5); allow an
+            # override separate from the Gemini location.
+            region = str(_s.get("vertex_claude_location") or "") or location
+            from anthropic import AsyncAnthropicVertex
+
+            self._vertex_anthropic_client = AsyncAnthropicVertex(project_id=project, region=region)
+        return self._vertex_anthropic_client
+
+    async def _call_vertex(
+        self, model_id: str, system_prompt: str, messages: list[dict], max_tokens: int = 1024
+    ) -> tuple[str, int, int]:
+        """Dispatch a 'vertex-' model to Gemini-on-Vertex or Claude-on-Vertex."""
+        real = model_id[len("vertex-") :]
+        if real.startswith("gemini"):
+            return await self._gemini_generate(
+                self._get_vertex_gemini(), real, system_prompt, messages, max_tokens
+            )
+        return await self._call_vertex_claude(real, system_prompt, messages, max_tokens)
+
+    async def _call_vertex_claude(
+        self, model_id: str, system_prompt: str, messages: list[dict], max_tokens: int = 1024
+    ) -> tuple[str, int, int]:
+        client = self._get_vertex_anthropic()
+        anthropic_msgs = [{"role": m["role"], "content": m["content"]} for m in messages]
+        response = await client.messages.create(
+            model=model_id,
+            max_tokens=max_tokens,
+            system=system_prompt,
+            messages=anthropic_msgs,
+        )
+        usage = getattr(response, "usage", None)
+        in_tok = getattr(usage, "input_tokens", 0) if usage else 0
+        out_tok = getattr(usage, "output_tokens", 0) if usage else 0
+        return response.content[0].text, in_tok, out_tok
+
     async def _call_google(
         self, model_id: str, system_prompt: str, messages: list[dict], max_tokens: int = 1024
     ) -> tuple[str, int, int]:
+        # Gemini Developer API client; the generate body is shared with Vertex.
+        return await self._gemini_generate(
+            self._get_google(), model_id, system_prompt, messages, max_tokens
+        )
+
+    async def _gemini_generate(
+        self, client, model_id: str, system_prompt: str, messages: list[dict], max_tokens: int = 1024
+    ) -> tuple[str, int, int]:
         from google.genai import types
 
-        client = self._get_google()
         contents = []
         for m in messages:
             role = "user" if m["role"] == "user" else "model"

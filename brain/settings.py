@@ -435,11 +435,24 @@ DEFAULTS: dict[str, float | int | str] = {
     # tool-use loop is Anthropic-shaped). OPENAI_BASE_URL points the same client
     # at Groq/Mistral/DeepSeek/Together.
     "cloud_provider": "anthropic",
+    # Vertex AI (additive, default OFF). cloud_provider="vertex" serves the reasoning
+    # path via Google-hosted Claude (Vertex Model Garden) when enable_vertex=1 — the
+    # SAME Claude models, just billed/authed through Google.
+    # Gemini-on-Vertex is reachable via the vertex-gemini-* model keys. Auth is ADC
+    # (service account / workload identity / `gcloud auth application-default login`),
+    # NOT an API key — see api_key_google_vertex_sa for the hosted SA-JSON path.
+    "enable_vertex": 0,
+    "vertex_project": "",  # GCP project id (falls back to GOOGLE_CLOUD_PROJECT env)
+    "vertex_location": "us-central1",  # region for Gemini-on-Vertex
+    "vertex_claude_location": "us-east5",  # region for Claude-on-Vertex
     # tts_provider: "elevenlabs" (default) | "openai" (gpt-4o-mini-tts — emotion
     # rides the instructions parameter instead of VoiceSettings).
     "tts_provider": "elevenlabs",
     "openai_tts_model": "gpt-4o-mini-tts",
     "openai_tts_voice": "alloy",
+    # tts_provider: also "google" (Cloud Text-to-Speech, Chirp 3 HD). Mood maps to
+    # speakingRate. google_tts_voice picks the Chirp voice; needs GOOGLE_API_KEY.
+    "google_tts_voice": "en-US-Chirp3-HD-Charon",
     # stt_provider: "deepgram" (default) | "openai" (Realtime transcription —
     # NOTE: no per-word diarization, so multi-speaker attribution degrades).
     "stt_provider": "deepgram",
@@ -791,6 +804,10 @@ DEFAULTS: dict[str, float | int | str] = {
     "motor_enable_shell": 1,  # run_command tool (shell execution)
     "motor_enable_network": 1,  # fetch_url tool (outbound HTTP)
     "motor_enable_cloud_actions": 1,  # cloud_action tool (Claude CLI / CMA executor)
+    # World-grounding tools (Google Maps Platform: geocode, places, directions,
+    #   weather, air quality, timezone). Default OFF — these bill per call and need
+    #   GOOGLE_MAPS_API_KEY. Additive: when off the brain behaves exactly as before.
+    "motor_enable_world": 0,  # world_* tools (real-world data via Google Maps Platform)
     # Auto-confirm cloud WRITE actions instead of holding them for confirmation.
     # Off by default (writes pause for a human/API confirm). Engine mode: an agent
     # may enable it WITHIN this org ceiling for trusted autonomous writes.
@@ -826,7 +843,9 @@ DEFAULTS: dict[str, float | int | str] = {
     "api_key_anthropic": "",  # → ANTHROPIC_API_KEY (required for the app to run)
     "api_key_elevenlabs": "",  # → ELEVENLABS_API_KEY (optional; enables voice output)
     "api_key_deepgram": "",  # → DEEPGRAM_API_KEY (optional; user key beats platform key)
-    "api_key_google": "",  # → GOOGLE_API_KEY (optional; enables image processing)
+    "api_key_google": "",  # → GOOGLE_API_KEY (optional; Gemini — image processing, Cloud TTS/STT)
+    "api_key_google_maps": "",  # → GOOGLE_MAPS_API_KEY (optional; world-grounding tools)
+    "api_key_google_vertex_sa": "",  # → GOOGLE_VERTEX_SA_JSON (optional; Vertex service-account JSON)
 }
 
 # Maps each user-supplied API-key setting to the env var the clients read.
@@ -835,6 +854,8 @@ API_KEY_ENV = {
     "api_key_elevenlabs": "ELEVENLABS_API_KEY",
     "api_key_deepgram": "DEEPGRAM_API_KEY",
     "api_key_google": "GOOGLE_API_KEY",
+    "api_key_google_maps": "GOOGLE_MAPS_API_KEY",
+    "api_key_google_vertex_sa": "GOOGLE_VERTEX_SA_JSON",
     "api_key_openai": "OPENAI_API_KEY",
 }
 
@@ -899,3 +920,27 @@ def apply_api_key_overrides() -> None:
         val = str(settings.get(setting_key) or "").strip()
         if val:
             os.environ[env_name] = val
+    _materialize_vertex_credentials()
+
+
+def _materialize_vertex_credentials() -> None:
+    """If a Vertex service-account JSON is provided as a string (GOOGLE_VERTEX_SA_JSON,
+    e.g. from the key vault on a hosted pod), write it to a temp file and point
+    GOOGLE_APPLICATION_CREDENTIALS at it so the Google/Anthropic-Vertex SDKs find ADC.
+    A pre-set GOOGLE_APPLICATION_CREDENTIALS (local `gcloud auth application-default
+    login`, or workload identity) always wins and is left untouched."""
+    if os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
+        return
+    sa_json = (os.environ.get("GOOGLE_VERTEX_SA_JSON") or "").strip()
+    if not sa_json:
+        return
+    try:
+        import tempfile
+
+        fd, path = tempfile.mkstemp(prefix="vertex-sa-", suffix=".json")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(sa_json)
+        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = path
+        logger.info("[Settings] Vertex SA credentials materialized to %s", path)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[Settings] Could not materialize Vertex SA credentials: %s", e)
