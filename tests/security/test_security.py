@@ -396,6 +396,8 @@ class TestLocalityEnforcement:
         real_router._call_log = []
         real_router._obs = None
         real_router._embed_backend = "ollama"
+        real_router._local_disabled = False  # per-brain lite gate (normally set in __init__)
+        real_router._bg_mode = False  # background-budget mode (normally set in __init__)
 
         async def _capture_cloud(*args, **kwargs):
             raise AssertionError("Local cell dispatched to cloud!")
@@ -439,6 +441,8 @@ class TestLocalityEnforcement:
         real_router._call_log = []
         real_router._obs = None
         real_router._embed_backend = "ollama"
+        real_router._local_disabled = False  # per-brain lite gate (normally set in __init__)
+        real_router._bg_mode = False  # background-budget mode (normally set in __init__)
         real_router._call_anthropic = _cloud_ok  # type: ignore
         real_router._call_google = _cloud_ok  # type: ignore
 
