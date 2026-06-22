@@ -578,6 +578,14 @@ class _SetupMixin:
     async def _setup_dmn(self) -> None:
         if not (self.args.dmn or os.environ.get("BRAIN_DMN", "false").lower() == "true"):
             return
+        # Lite-tier brains hold no local pod and exist only to serve on-demand turns —
+        # they must never run an autonomous idle loop. A lite brain remaps every local
+        # route to cloud (_resolve_model_id), so DMN's every-8s monologue would bill
+        # Anthropic continuously while the user is away. No idle thinking for lite brains;
+        # that absence is the whole point of the tier.
+        if getattr(self.router, "_local_disabled", False):
+            logger.info("[DMN] Skipped — lite-tier brain runs no idle thinking loop")
+            return
 
         from brain.dmn import DefaultModeNetwork
 
@@ -647,6 +655,12 @@ class _SetupMixin:
             self.args.metacognition
             or os.environ.get("BRAIN_METACOGNITION", "false").lower() == "true"
         ):
+            return
+        # Same tier gate as DMN: metacognition's periodic self-reflection is an
+        # autonomous idle loop whose calls resolve to cloud on a lite brain. Lite
+        # brains run no background thinking, so skip it.
+        if getattr(self.router, "_local_disabled", False):
+            logger.info("[Self-monitor] Skipped — lite-tier brain runs no idle reflection loop")
             return
         from brain.metacognition import MetacognitionCell
 
