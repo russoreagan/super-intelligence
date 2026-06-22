@@ -54,13 +54,15 @@ READY_TIMEOUT_S = float(os.environ.get("BRAIN_TENANT_READY_TIMEOUT_S", "180"))
 # Per-user data root on the app host. Each user: <root>/<user_id>/{settings.json,second_brain}
 TENANTS_DIR = Path(os.environ.get("BRAIN_TENANTS_DIR", "tenants")).resolve()
 # brain.run flags for tenant processes. Mirrors the shared deploy's set; override
-# via BRAIN_TENANT_ARGS (e.g. drop --ears to cut per-process RAM).
-# --ears enables server-side mic DSP (fingerprinting/speaker-ID/prosody via
-# AuditoryCluster). On hosted Railway, voice input arrives from the browser and
-# goes straight to Deepgram — there is no server-side mic, so --ears adds RAM
-# overhead with no benefit. Re-enable via BRAIN_TENANT_ARGS if needed.
+# via BRAIN_TENANT_ARGS.
+# --ears (AuditoryCluster: prosody / speaker-ID / fingerprinting) IS used on hosted:
+# the browser-capture path publishes auditory.raw_audio + auditory.diarized_audio
+# through brain/ui/server.py, so dropping --ears degrades hosted voice (the in-app
+# status flags "ears" as degraded). It was briefly dropped on a false OOM theory;
+# the auditory stack only adds ~tens of MB at import (heavy models load lazily on
+# first use), so it stays on. Override via BRAIN_TENANT_ARGS to trim if ever needed.
 TENANT_ARGS = os.environ.get(
-    "BRAIN_TENANT_ARGS", "--ui --dmn --metacognition --voice --motor"
+    "BRAIN_TENANT_ARGS", "--ui --dmn --metacognition --ears --voice --motor"
 ).split()
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _BUNDLED_SETTINGS = Path(__file__).resolve().parent / "settings.json"
