@@ -40,7 +40,10 @@ MAX_ASSIGNED_PER_PERSONA = 16
 MAX_CATALOG_CHARS = 24_000
 _MAX_JSON_BYTES = 2_048  # conduct_rules / reward_weights are opaque-but-bounded
 
-_catalog: dict[str, dict] | None = None
+# Catalog cache keyed by persona_key (Path B): one process can serve many personas,
+# each with its own byte-stable assigned-mandate catalog (so the cached prompt block
+# stays cache-friendly per persona). Empty dict = nothing loaded yet.
+_catalog: dict[str, dict[str, dict]] = {}
 
 
 class MandateError(Exception):
@@ -52,18 +55,18 @@ class MandateError(Exception):
 
 def catalog() -> dict[str, dict]:
     """Return {mandate_id: {"text": role_text, "conduct": conduct_rules}} for the
-    active (org, persona), cached."""
-    global _catalog
-    if _catalog is None:
-        _catalog = _load()
-    return _catalog
+    active (org, persona), cached per persona (Path B)."""
+    persona = _active_persona()
+    cached = _catalog.get(persona)
+    if cached is None:
+        cached = _catalog[persona] = _load()
+    return cached
 
 
 def refresh() -> dict[str, dict]:
-    """Drop the cache and reload — call after any catalog or assignment edit so the
-    next turn rebuilds the cached context block."""
-    global _catalog
-    _catalog = None
+    """Drop the cache (every persona) and reload the active one — call after any
+    catalog or assignment edit so the next turn rebuilds the cached context block."""
+    _catalog.clear()
     return catalog()
 
 

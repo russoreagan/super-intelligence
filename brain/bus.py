@@ -161,6 +161,14 @@ class Neuromodulators:
             if ch in levels:
                 self._levels[ch] = max(self._HARD_MIN[ch], min(1.0, float(levels[ch])))
 
+    def set_baseline(self, baseline: dict[str, float]) -> None:
+        """Override resting setpoints from a persona profile (per-persona chemistry,
+        multi-persona Path B). Unknown/absent channels untouched; levels unchanged —
+        call restore() for those. Mirrors the clamps decay() relaxes toward."""
+        for ch in self.CHANNELS:
+            if ch in baseline:
+                self._baseline[ch] = max(self._HARD_MIN[ch], min(1.0, float(baseline[ch])))
+
     def rebaseline(self) -> None:
         """Re-read the resting setpoints from settings. Baselines are cached at
         init for the hot decay path; without this, a temperament-dial edit to
@@ -255,6 +263,13 @@ class HormonalState:
             if ch in levels:
                 self._levels[ch] = max(self._HARD_MIN[ch], min(1.0, float(levels[ch])))
 
+    def set_baseline(self, baseline: dict[str, float]) -> None:
+        """Override resting setpoints from a persona profile (per-persona chemistry,
+        multi-persona Path B). Unknown/absent channels untouched; levels unchanged."""
+        for ch in self.CHANNELS:
+            if ch in baseline:
+                self._baseline[ch] = max(self._HARD_MIN[ch], min(1.0, float(baseline[ch])))
+
     def rebaseline(self) -> None:
         """Re-read resting setpoints from settings — see Neuromodulators.rebaseline."""
         from brain.settings import settings as _s
@@ -319,6 +334,20 @@ class ChemPair:
     def restore(self, snap: dict[str, dict[str, float]]) -> None:
         self.neuromod.restore(snap.get("neuromod") or {})
         self.hormonal.restore(snap.get("hormonal") or {})
+
+    def apply_profile(
+        self, baseline: dict[str, float] | None, levels: dict[str, float] | None
+    ) -> None:
+        """Set per-persona resting BASELINES and current LEVELS from flat channel
+        dicts (multi-persona Path B). Each layer filters to its own channels, so a
+        persona's 9-channel profile can be passed to both. Baselines make the pair
+        decay toward this persona's temperament; levels set its current mood."""
+        if baseline:
+            self.neuromod.set_baseline(baseline)
+            self.hormonal.set_baseline(baseline)
+        if levels:
+            self.neuromod.restore(levels)
+            self.hormonal.restore(levels)
 
 
 # The active chemistry binding for the current async context. ``None`` means
@@ -389,6 +418,17 @@ class Bus:
         """A fresh per-client chemistry pair seeded from the persona temperament
         baseline. Restore a returning client's snapshot onto it before binding."""
         return ChemPair.fresh()
+
+    def new_chem_for(
+        self, baseline: dict[str, float] | None = None, levels: dict[str, float] | None = None
+    ) -> ChemPair:
+        """A fresh ChemPair carrying a specific persona's resting baselines + current
+        levels (multi-persona Path B). baseline/levels are flat {channel: value} dicts
+        (a persona_chem profile); each chemistry layer filters to its own channels.
+        Lets ONE process bind a different persona's true temperament per turn."""
+        pair = ChemPair.fresh()
+        pair.apply_profile(baseline, levels)
+        return pair
 
     def rebaseline_chem(self) -> None:
         """Re-read resting setpoints from settings into every live chemistry —

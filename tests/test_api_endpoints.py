@@ -22,7 +22,7 @@ class _FakeRunner:
     def __init__(self):
         self.calls = []
 
-    async def __call__(self, message, end_user_id, mandate_id=None):
+    async def __call__(self, message, end_user_id, mandate_id=None, persona=None):
         self.calls.append((message, end_user_id, mandate_id))
         return (
             f"echo: {message}",
@@ -335,7 +335,7 @@ def test_agent_delete(monkeypatch):
 class _PendingRunner:
     """Returns a turn whose affect parks a pending cloud write."""
 
-    async def __call__(self, message, end_user_id, mandate_id=None):
+    async def __call__(self, message, end_user_id, mandate_id=None, persona=None):
         return (
             "I need your OK to send that email.",
             {
@@ -508,7 +508,7 @@ def test_turn_stream_emits_inner_life_then_done():
 
     source = _Source()
 
-    async def runner(message, end_user_id, mandate_id=None):
+    async def runner(message, end_user_id, mandate_id=None, persona=None):
         for ev in (
             {"type": "turn_start", "turn_id": "t1", "user_input": message},
             {"type": "stream_thought", "thought": "thinking it over"},

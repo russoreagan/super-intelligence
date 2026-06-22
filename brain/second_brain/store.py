@@ -12,11 +12,13 @@ When supabase, brain.second_brain.supabase_client must have user_id + persona se
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
 import re
 import time
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -46,11 +48,38 @@ def _persona_key(persona: str) -> str:
     return _PERSONA_SLUG_RE.sub("_", (persona or "").lower()).strip("_") or "default"
 
 
+# Per-turn persona override (multi-persona Path B). When a turn binds a persona, all
+# persona resolution — memory store scope, mandate catalog, agent_id derivation —
+# follows it, so ONE process can serve many personas by binding per turn (mirrors the
+# per-customer chemistry contextvar). Empty/unbound → the process persona, exactly as
+# before, so the deployed single-persona path is byte-for-byte unchanged.
+_active_persona_var: ContextVar[str] = ContextVar("brain_active_persona", default="")
+
+
+@contextlib.contextmanager
+def bind_persona(persona: str):
+    """Bind ``persona`` as the active persona for the duration of the block (and any
+    awaits in the same task). No-op for an empty persona. Resets on exit."""
+    if not (persona or "").strip():
+        yield
+        return
+    token = _active_persona_var.set(persona)
+    try:
+        yield
+    finally:
+        _active_persona_var.reset(token)
+
+
+def active_persona() -> str:
+    """The per-turn bound persona, or '' if none is bound."""
+    return _active_persona_var.get()
+
+
 def _resolve_persona(explicit: str) -> str:
     """Persona for store scoping. In multitenant mode an unresolved persona must
     never fall back to 'default' — that bucket is shared across every tenant whose
     provisioning failed the same way, i.e. silent cross-tenant contamination."""
-    raw = explicit or os.environ.get("BRAIN_PERSONA_NAME", "")
+    raw = explicit or _active_persona_var.get() or os.environ.get("BRAIN_PERSONA_NAME", "")
     if not raw.strip() and os.environ.get("BRAIN_MULTITENANT"):
         raise RuntimeError(
             "BRAIN_PERSONA_NAME is not set in multitenant mode — refusing the "

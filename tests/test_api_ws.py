@@ -28,7 +28,7 @@ class _FakeTurnRunner:
         self._text = text
         self._affect = affect or {"emotion": "warm", "user_emotion": "curious", "hormonal": {}}
 
-    async def __call__(self, message, end_user_id, mandate_id=None):
+    async def __call__(self, message, end_user_id, mandate_id=None, persona=None):
         self.calls.append((message, end_user_id, mandate_id))
         return self._text, self._affect
 

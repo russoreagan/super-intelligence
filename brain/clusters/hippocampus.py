@@ -206,6 +206,25 @@ class HippocampusCluster:
             )
         return self._core_context, recent
 
+    def _active_core_context(self) -> dict[str, str]:
+        """The self-model/core context for the persona bound on this turn (multi-
+        persona Path B), cached per persona so the prompt prefix stays byte-stable
+        for that persona. No persona bound → the boot-loaded process default,
+        unchanged. load_core_context() reads self.md via _resolve_persona, so calling
+        it under bind_persona() picks up the bound persona's files."""
+        from brain.second_brain.store import active_persona
+
+        p = active_persona()
+        if not p:
+            return self._core_context
+        cache = getattr(self, "_persona_core", None)
+        if cache is None:
+            cache = self._persona_core = {}
+        cc = cache.get(p)
+        if cc is None:
+            cc = cache[p] = self._schema.load_core_context()
+        return cc
+
     async def recall(
         self,
         query: str,
@@ -421,7 +440,7 @@ class HippocampusCluster:
         result = {
             "schema": schema_context,
             "episodes": episode_text,
-            "core": self._core_context,
+            "core": self._active_core_context(),
             # Side-granular contribution for the recall fan-out credit pass: how many
             # hits each pathway returned. schema={schema_grep,entity_tracker},
             # episode={cosine_recall,time_filter}. Drives Hebbian credit toward the

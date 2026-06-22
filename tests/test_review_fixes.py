@@ -271,9 +271,9 @@ def test_mandate_catalog_empty_in_local_mode(monkeypatch):
     import brain.mandates as mandates
 
     monkeypatch.setenv("BRAIN_STORAGE_BACKEND", "local")
-    mandates._catalog = None
+    mandates._catalog = {}  # per-persona cache (Path B); empty = nothing loaded
     assert mandates.catalog() == {}
-    mandates._catalog = None  # don't leak cache into other tests
+    mandates._catalog = {}  # don't leak cache into other tests
 
 
 def test_episode_carries_engine_fields():

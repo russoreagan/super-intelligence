@@ -81,7 +81,7 @@ def test_affect_view_handles_empty():
 
 # ── turn response now carries the affect block + clean display text ───────────
 class _MarkupRunner:
-    async def __call__(self, message, end_user_id, mandate_id=None):
+    async def __call__(self, message, end_user_id, mandate_id=None, persona=None):
         return (
             "Sure. [mood:angry] No. [/mood] Okay.",
             {"emotion": "warm", "appraisal": "SECRET"},
@@ -170,7 +170,7 @@ class _RecordingRunner:
     def __init__(self):
         self.calls = []
 
-    async def __call__(self, message, end_user_id, mandate_id=None):
+    async def __call__(self, message, end_user_id, mandate_id=None, persona=None):
         self.calls.append((message, end_user_id, mandate_id))
         return ("ok", {"emotion": "warm"})
 
@@ -246,7 +246,7 @@ def test_stream_audio_input_echoes_transcript_in_open():
 
     source = _Source()
 
-    async def runner(message, end_user_id, mandate_id=None):
+    async def runner(message, end_user_id, mandate_id=None, persona=None):
         source.push({"type": "turn_start", "turn_id": "t1"})
         source.push({"type": "turn_end", "turn_id": "t1"})
         await asyncio.sleep(0)
@@ -353,7 +353,7 @@ def _stream_client(*, tts_stream_runner=None):
 
     source = _Source()
 
-    async def runner(message, end_user_id, mandate_id=None):
+    async def runner(message, end_user_id, mandate_id=None, persona=None):
         for ev in (
             {"type": "turn_start", "turn_id": "t1", "user_input": message},
             {"type": "turn_end", "turn_id": "t1"},

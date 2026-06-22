@@ -255,8 +255,10 @@ class WsSession:
         async with self._turn_lock:
             self._tts_cancel.clear()
             s = self._session
+            # Multi-persona Path B: bind the session agent's persona for the turn.
+            _persona = s.agent_id.split(".", 1)[0] if s.agent_id and "." in s.agent_id else None
             try:
-                text, affect = await self._turn_runner(message, s.end_user_id, s.mandate_id)
+                text, affect = await self._turn_runner(message, s.end_user_id, s.mandate_id, _persona)
             except Exception as e:
                 logger.warning("[WsSession] turn error: %s", e)
                 await self._send({"type": "error", "detail": str(e), "code": 500})

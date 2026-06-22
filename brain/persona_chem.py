@@ -471,10 +471,27 @@ def _atomic_write(path: Path, payload: dict) -> None:
     os.replace(tmp, path)
 
 
+def _canonical_persona_key(persona: str) -> str | None:
+    """Map a persona arg (display name OR slug, e.g. 'The Visionary' or
+    'the_visionary') to its PERSONA_CHEMISTRY display key, or None if off-table.
+    Multi-persona Path B passes slugs (from agent_id), so the chemistry lookup must
+    accept both."""
+    if persona in PERSONA_CHEMISTRY:
+        return persona
+    from brain.second_brain.store import _persona_key
+
+    want = _persona_key(persona)
+    for k in PERSONA_CHEMISTRY:
+        if _persona_key(k) == want:
+            return k
+    return None
+
+
 def _seed_resting(persona: str) -> dict[str, float]:
     """Resting profile for a fresh persona: table -> settings.json baselines -> bus defaults."""
-    if persona in PERSONA_CHEMISTRY:
-        return _floor_resting(PERSONA_CHEMISTRY[persona])
+    _key = _canonical_persona_key(persona)
+    if _key is not None:
+        return _floor_resting(PERSONA_CHEMISTRY[_key])
     # Fallback for an off-table persona name: reuse whatever chem_baseline_* the
     # active settings already hold (preserves today's behavior), then bus defaults.
     try:

@@ -61,7 +61,7 @@ class _TurnMixin:
     # ── Turn processing ───────────────────────────────────────────────────────
 
     async def api_turn(
-        self, message: str, end_user_id: str, mandate_id: str | None = None
+        self, message: str, end_user_id: str, mandate_id: str | None = None, persona: str | None = None
     ) -> tuple[str, dict]:
         """Engine entry point: run one turn for a specific end-user (the partner's
         customer), under the assignment selected by mandate_id (the catalog is
@@ -69,13 +69,16 @@ class _TurnMixin:
         turn-execution state (brainstem, cluster integrators) is process-global even
         though chemistry is now per-client, so concurrent API requests queue rather
         than corrupt each other's turn. The customer's chemistry is bound inside
-        process_turn via end_user_id, so each queued turn runs in its own mood."""
+        process_turn via end_user_id, so each queued turn runs in its own mood.
+        `persona` (multi-persona Path B) binds that persona's memory + mandate +
+        chemistry for the turn, so one process serves many personas; None = the
+        process persona, unchanged."""
         lock = getattr(self, "_api_turn_lock", None)
         if lock is None:
             lock = self._api_turn_lock = asyncio.Lock()
         async with lock:
             text, affect = await self.process_turn(
-                message, end_user_id=end_user_id, mandate_id=mandate_id
+                message, end_user_id=end_user_id, mandate_id=mandate_id, persona=persona
             )
             # A cloud WRITE that needs confirmation parks itself on the executor's
             # process-global pending slot. Move that pending action out to the
@@ -213,19 +216,46 @@ class _TurnMixin:
             self._client_chem = reg
         return reg
 
+    def _persona_chem_pair(self, persona: str, end_user_id: str):
+        """A per-(persona, end_user) ChemPair carrying THAT persona's temperament
+        (baselines + current levels), cached for the session so its mood evolves
+        across turns (multi-persona Path B). Seeded from the persona's chemistry
+        profile, so each debate seat reasons in its own mood — the lean comes from
+        the persona, not the prompt."""
+        cache = getattr(self, "_persona_chem", None)
+        if cache is None:
+            cache = self._persona_chem = {}
+        key = f"{persona}:{end_user_id}"
+        pair = cache.get(key)
+        if pair is None:
+            from brain.persona_chem import load as _load_persona_chem
+
+            state = _load_persona_chem(persona) or {}
+            pair = self.bus.new_chem_for(state.get("resting"), state.get("current"))
+            cache[key] = pair
+        return pair
+
     async def process_turn(
         self,
         user_input: str,
         image_path: str | None = None,
         end_user_id: str | None = None,
         mandate_id: str | None = None,
+        persona: str | None = None,
     ) -> tuple[str, dict]:
-        # Engine mode: bind this customer's chemistry for the turn so their mood
-        # evolves in isolation, then persist it. Companion turns pass no
-        # end_user_id → no registry, no bind → the single resting chemistry,
-        # exactly as before (nullcontext is a true no-op).
-        registry = self._client_chem_registry() if end_user_id is not None else None
-        if registry is not None:
+        from brain.second_brain.store import bind_persona
+
+        # Multi-persona Path B: when a persona is bound, scope memory + mandate to it
+        # (via bind_persona → _resolve_persona) and bind THAT persona's own chemistry
+        # — so one process serves many personas, each in its own mood. With no persona
+        # it's the existing per-customer path; with neither it's the single resting
+        # chemistry, byte-for-byte as before (nullcontext is a true no-op).
+        persona = (persona or "").strip()
+        registry = None
+        if persona and end_user_id is not None:
+            bind_cm = self.bus.bind(self._persona_chem_pair(persona, end_user_id))
+        elif end_user_id is not None:
+            registry = self._client_chem_registry()
             pair = registry.get_or_create(end_user_id)
             registry.note_interaction(end_user_id)
             bind_cm = self.bus.bind(pair)
@@ -233,7 +263,7 @@ class _TurnMixin:
             bind_cm = contextlib.nullcontext()
 
         try:
-            with bind_cm:
+            with bind_persona(persona), bind_cm:
                 return await self._run_turn_guarded(user_input, image_path, end_user_id, mandate_id)
         finally:
             if registry is not None:
@@ -708,7 +738,7 @@ class _TurnMixin:
                 except Exception:
                     pass
         else:
-            memory = {"core": self._core_context, "schema": "", "episodes": ""}
+            memory = {"core": self.hippocampus._active_core_context(), "schema": "", "episodes": ""}
 
         if vision_features:
             memory["vision"] = (
@@ -782,7 +812,7 @@ class _TurnMixin:
             self.dmn.update_context(
                 parietal_context,
                 affect.get("emotion", "neutral"),
-                self._core_context.get("self", ""),
+                self.hippocampus._active_core_context().get("self", ""),
                 speaker_name=_speaker_name_for_dmn,
                 relationship=_relationship,
             )

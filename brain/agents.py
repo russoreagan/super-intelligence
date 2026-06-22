@@ -95,12 +95,10 @@ def resolve(agent_id: str) -> tuple[str, str]:
     different persona than this process serves (cross-persona → a different
     process; the engine API maps that to 409)."""
     persona_slug, mandate_id = _split(agent_id)
-    active = _persona("")
-    if persona_slug != active:
-        raise AgentPersonaMismatch(
-            f"agent '{agent_id}' belongs to persona '{persona_slug}', but this "
-            f"process serves '{active}'"
-        )
+    # Multi-persona Path B: one process serves ANY persona by binding it per turn, so
+    # we no longer 409 a cross-persona agent — we just verify it exists+enabled and
+    # return its persona, which the turn binds. (The old AgentPersonaMismatch is dead
+    # under Path B; kept as a class for back-compat.)
     sb, org = _sb()
     res = (
         sb.table("agents")

@@ -189,7 +189,7 @@ def test_turn_audio_blocked_by_quota_emits_audio_error(monkeypatch):
 
     source = _Source()
 
-    async def runner(message, end_user_id, mandate_id=None):
+    async def runner(message, end_user_id, mandate_id=None, persona=None):
         source.push({"type": "turn_start", "turn_id": "t1"})
         source.push({"type": "turn_end", "turn_id": "t1"})
         await asyncio.sleep(0)
