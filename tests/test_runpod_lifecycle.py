@@ -75,6 +75,45 @@ def test_multitenant_start_consumer_uses_published_host(monkeypatch):
     assert m._consumer is True
 
 
+def test_consumer_host_refresh_adopts_new_host_without_respawn(tmp_path, monkeypatch):
+    """A running consumer must pick up a new pod host the gateway publishes to the
+    shared file (BRAIN_RUNPOD_HOST_FILE) WITHOUT a respawn — closing the gap where
+    the reconciler's os.environ sync only reached new spawns. The model_router
+    re-reads settings.runpod_host each call, so updating settings is sufficient."""
+    import brain.settings as settings_mod
+
+    captured: dict = {}
+    monkeypatch.setattr(
+        settings_mod.settings, "get", lambda k, d=None: captured.get(k, "" if d is None else d)
+    )
+    monkeypatch.setattr(settings_mod.settings, "update", captured.update)
+
+    host_file = tmp_path / ".runpod_host"
+    host_file.write_text("https://newpod-11434.proxy.runpod.net", encoding="utf-8")
+    monkeypatch.setenv("BRAIN_RUNPOD_HOST_FILE", str(host_file))
+    monkeypatch.setenv("BRAIN_RUNPOD_HOST_POLL_S", "0.02")
+
+    m = _mgr(consumer=True)
+
+    async def _run():
+        task = asyncio.create_task(m._consumer_host_refresh())
+        await asyncio.sleep(0.1)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(_run())
+    assert captured.get("runpod_host") == "https://newpod-11434.proxy.runpod.net"
+
+    # A localhost/empty host must NEVER be adopted (would dead-end inference).
+    captured.clear()
+    host_file.write_text("http://localhost:11434", encoding="utf-8")
+    asyncio.run(_run())
+    assert "runpod_host" not in captured
+
+
 def test_ensure_running_idempotent_when_model_on_gpu():
     m = _mgr()
     m._pod_id = "podX"

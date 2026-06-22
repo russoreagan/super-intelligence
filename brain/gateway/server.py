@@ -809,13 +809,32 @@ def main() -> None:
 
     def _sync_runpod_host(runpod):
         """Keep RUNPOD_HOST pointed at the live pod so every NEW tenant spawn inherits
-        the right host. Without this, a stale value (e.g. a baked-in env var for a
-        terminated pod, or the host changing when a fresh pod is created) leaves
-        tenants pointed at a dead pod until a gateway restart."""
+        the right host, AND publish it to the shared host file so brains ALREADY
+        running pick it up without a respawn (they poll BRAIN_RUNPOD_HOST_FILE). Without
+        the latter, a host change (new pod after a churn/crash) left running tenants
+        calling a dead pod until they were respawned."""
         host = runpod.published_host()
-        if host and "localhost" not in host and os.environ.get("RUNPOD_HOST") != host:
-            os.environ["RUNPOD_HOST"] = host
-            logger.info("[gateway] RUNPOD_HOST synced → %s", host)
+        if host and "localhost" not in host:
+            if os.environ.get("RUNPOD_HOST") != host:
+                os.environ["RUNPOD_HOST"] = host
+                logger.info("[gateway] RUNPOD_HOST synced → %s", host)
+            _publish_host_file(host)
+
+    def _publish_host_file(host: str) -> None:
+        """Write the live pod host to the shared file running consumer brains poll.
+        Atomic (temp + rename) and idempotent (skip if unchanged)."""
+        from brain.provisioner import HOST_SYNC_FILE
+
+        try:
+            if HOST_SYNC_FILE.exists() and HOST_SYNC_FILE.read_text(encoding="utf-8").strip() == host:
+                return
+            HOST_SYNC_FILE.parent.mkdir(parents=True, exist_ok=True)
+            tmp = HOST_SYNC_FILE.with_suffix(".tmp")
+            tmp.write_text(host, encoding="utf-8")
+            os.replace(tmp, HOST_SYNC_FILE)
+            logger.info("[gateway] published live pod host to %s", HOST_SYNC_FILE.name)
+        except Exception as e:
+            logger.warning("[gateway] failed to write host file: %s", e)
 
     async def _pod_reconciler(runpod):
         zero_since: float | None = None
@@ -857,6 +876,7 @@ def main() -> None:
             if host and "localhost" not in host:
                 os.environ["RUNPOD_HOST"] = host
                 logger.info("[gateway] shared pod host published — RUNPOD_HOST=%s", host)
+                _publish_host_file(host)  # seed the file so running brains can sync
             else:
                 # No live pod to point at. Clear any baked-in RUNPOD_HOST (e.g. a stale
                 # Railway var for a terminated pod) so tenants don't inherit a dead host

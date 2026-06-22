@@ -53,6 +53,11 @@ IDLE_TIMEOUT_S = float(os.environ.get("BRAIN_SESSION_IDLE_TIMEOUT_S", "86400"))
 READY_TIMEOUT_S = float(os.environ.get("BRAIN_TENANT_READY_TIMEOUT_S", "180"))
 # Per-user data root on the app host. Each user: <root>/<user_id>/{settings.json,second_brain}
 TENANTS_DIR = Path(os.environ.get("BRAIN_TENANTS_DIR", "tenants")).resolve()
+# Shared file the gateway writes the live RunPod host into (one shared pod → one
+# file). Running consumer brains poll it (BRAIN_RUNPOD_HOST_FILE) to pick up a new
+# pod host WITHOUT a respawn — closing the gap where the reconciler's host-sync only
+# reached new spawns. All tenants share the pod, so a single file suffices.
+HOST_SYNC_FILE = TENANTS_DIR / ".runpod_host"
 # brain.run flags for tenant processes. Mirrors the shared deploy's set; override
 # via BRAIN_TENANT_ARGS.
 # --ears (AuditoryCluster: prosody / speaker-ID / fingerprinting) IS used on hosted:
@@ -350,6 +355,9 @@ class Provisioner:
                 "BRAIN_USER_ID": user_id,
                 "BRAIN_ORG_ID": user_id,
                 "BRAIN_STORAGE_BACKEND": "supabase",
+                # The consumer brain polls this file to track the live pod host the
+                # gateway publishes (recover from a pod change without respawning).
+                "BRAIN_RUNPOD_HOST_FILE": str(HOST_SYNC_FILE),
                 # Unbuffer the child's stdout/stderr so _start_log_relay streams its
                 # boot output line-by-line. Without this, Python block-buffers when
                 # stdout is a pipe (not a TTY), so the relay shows nothing until the

@@ -95,6 +95,9 @@ class RunPodManager:
         self._current_price: float | None = None
         self._watcher_task: asyncio.Task | None = None
         self._warmup_task: asyncio.Task | None = None
+        # Consumer-only: polls the gateway's shared host file to track the live pod
+        # host without a respawn (set in start() consumer branch).
+        self._consumer_sync_task: asyncio.Task | None = None
         self._watchdog_proc = None  # subprocess.Popen — stops pod if brain process dies
         self._lifecycle_lock = asyncio.Lock()  # serialize ensure_running/pause
         # Boot-progress state surfaced to the UI (see POD_STATES).
@@ -356,6 +359,40 @@ class RunPodManager:
         settings.update({"runpod_host": local_host})
         logger.info("[RunPod] runpod_host → local Ollama (%s)", local_host)
 
+    async def _consumer_host_refresh(self) -> None:
+        """Consumer-only: poll the gateway's shared host file and keep
+        settings.runpod_host current, so a running tenant recovers when the shared
+        pod's host changes (a new pod after churn/crash, or the pod coming up after
+        the brain spawned host-less) WITHOUT a respawn. The model_router re-reads
+        settings.runpod_host on every call, so the next inference uses the new host.
+
+        This completes the gateway's existing host-sync (which only reached NEW
+        spawns via os.environ): the gateway now also writes the live host to
+        BRAIN_RUNPOD_HOST_FILE, and this loop applies it in-process."""
+        from pathlib import Path
+
+        from brain.settings import settings
+
+        path = os.environ.get("BRAIN_RUNPOD_HOST_FILE", "").strip()
+        if not path:
+            return
+        host_file = Path(path)
+        interval = float(os.environ.get("BRAIN_RUNPOD_HOST_POLL_S", "30"))
+        while True:
+            try:
+                if host_file.exists():
+                    host = host_file.read_text(encoding="utf-8").strip()
+                    # Only adopt a real pod host; never clobber with empty/localhost.
+                    if host and "localhost" not in host:
+                        if str(settings.get("runpod_host") or "") != host:
+                            settings.update({"runpod_host": host})
+                            logger.info(
+                                "[RunPod] consumer host refreshed → %s (gateway pod change)", host
+                            )
+            except Exception as e:
+                logger.debug("[RunPod] consumer host refresh error: %s", e)
+            await asyncio.sleep(interval)
+
     async def _warmup_model(self, host: str) -> bool:
         """Load the model into VRAM and confirm it's actually on the GPU.
 
@@ -485,6 +522,10 @@ class RunPodManager:
                 logger.info(
                     "[RunPod] Consumer mode — no shared host yet; cloud fallback (no lifecycle)"
                 )
+            # Track the live pod host the gateway publishes (recover from a pod change
+            # — churn/crash/late-boot — without a respawn). Idempotent.
+            if self._consumer_sync_task is None or self._consumer_sync_task.done():
+                self._consumer_sync_task = asyncio.create_task(self._consumer_host_refresh())
             return True
 
         if not self._api_key:
