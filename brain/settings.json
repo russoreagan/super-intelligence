@@ -173,7 +173,7 @@
   "cloud_max_concurrent": 3,
   "bg_cloud_max_concurrent": 2,
   "cloud_daily_usd_budget": 5.0,
-  "runpod_host": "https://bkmamiu28bcqak-11434.proxy.runpod.net",
+  "runpod_host": "",
   "runpod_model": "",
   "max_runpod_hours": 8.0,
   "runpod_stream_retries": 2,
