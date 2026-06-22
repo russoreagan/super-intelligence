@@ -14,7 +14,11 @@ builder = "nixpacks"
 # flip-flopped across nixpacks versions — if start fails with
 # "/opt/venv/bin/python: No such file", read the build log for the actual
 # `python -m venv <path>` line and match startCommand to it.
-startCommand = "/opt/venv/bin/python -m brain.gateway"
+# `-u` unbuffers the gateway's own stdout/stderr. Without it Python block-buffers
+# (stdout is a pipe on Railway, not a TTY), so logs arrive late and jumbled —
+# which is why prior debugging was effectively blind. With -u, [provisioner],
+# [tenant:...] relay, and [gateway] lines stream to the dashboard in real time.
+startCommand = "/opt/venv/bin/python -u -m brain.gateway"
 healthcheckPath = "/health"
 # Gateway binds fast, but keep the generous window for the heavy import graph.
 healthcheckTimeout = 300

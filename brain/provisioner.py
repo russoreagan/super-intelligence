@@ -51,8 +51,6 @@ logger = logging.getLogger(__name__)
 # reap doesn't lose memory. Override with BRAIN_SESSION_IDLE_TIMEOUT_S if needed.
 IDLE_TIMEOUT_S = float(os.environ.get("BRAIN_SESSION_IDLE_TIMEOUT_S", "86400"))
 READY_TIMEOUT_S = float(os.environ.get("BRAIN_TENANT_READY_TIMEOUT_S", "180"))
-PORT_RANGE_START = int(os.environ.get("BRAIN_TENANT_PORT_START", "9000"))
-PORT_RANGE_END = int(os.environ.get("BRAIN_TENANT_PORT_END", "9999"))
 # Per-user data root on the app host. Each user: <root>/<user_id>/{settings.json,second_brain}
 TENANTS_DIR = Path(os.environ.get("BRAIN_TENANTS_DIR", "tenants")).resolve()
 # brain.run flags for tenant processes. Mirrors the shared deploy's set; override
@@ -96,23 +94,25 @@ class _Proc:
 
 
 def _free_port() -> int:
-    """Grab an OS-assigned free port in our range by trying binds."""
-    for _ in range(200):
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            try:
-                # 0 lets the OS pick; we then check it's in range, else retry.
-                s.bind(("127.0.0.1", 0))
-                port = s.getsockname()[1]
-            except OSError:
-                continue
-        if PORT_RANGE_START <= port <= PORT_RANGE_END:
-            return port
-    # Fall back to scanning the range explicitly.
-    for port in range(PORT_RANGE_START, PORT_RANGE_END + 1):
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            if s.connect_ex(("127.0.0.1", port)) != 0:
-                return port
-    raise RuntimeError("no free port available for tenant process")
+    """Return a free localhost TCP port assigned by the OS.
+
+    Bind to port 0 so the kernel picks an unused port, then release it and return
+    the number. Two back-to-back calls return DISTINCT ports (the kernel doesn't
+    immediately reuse a just-released ephemeral port), so the spawner can grab a UI
+    port and an API port without collision.
+
+    DO NOT reintroduce a fixed 9000-9999 range here. The previous implementation
+    probed for an OS port *inside* that range, but OS-assigned ephemeral ports are
+    never in 9000-9999 (Linux 32768+, macOS 49152+), so it always fell through to a
+    non-reserving connect_ex scan that returned the SAME port (9000) on every call.
+    That made the spawner's `while api_port == port: api_port = _free_port()` loop
+    infinite — which pegged the event loop (the hosted-load freeze) and, once the
+    spawn was offloaded to a thread, hung every tenant boot ("waking your brain"
+    forever). The gateway reaches these ports on 127.0.0.1, so any free port works."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
 
 
 class Provisioner:
@@ -304,9 +304,38 @@ class Provisioner:
             try:
                 persona_name = str(
                     json.loads(settings_path.read_text(encoding="utf-8")).get("persona_name", "")
-                )
+                ).strip()
             except Exception:
                 persona_name = ""
+            # Repair a tenant whose volume settings.json predates the persona system
+            # (or lost persona_name in a migration): a missing name would otherwise
+            # hard-fail the spawn FOREVER, leaving the user stuck on the "waking your
+            # brain" screen with no brain ever booting (the gateway stays healthy, so
+            # there's no crash — just a silent permanent stall). Seed the bundled
+            # default persona and write it back so the tenant boots and keeps a stable
+            # key thereafter. NEVER fall back to "default" (it cross-buckets tenants).
+            if not persona_name and _BUNDLED_SETTINGS.exists():
+                with contextlib.suppress(Exception):
+                    persona_name = str(
+                        json.loads(_BUNDLED_SETTINGS.read_text(encoding="utf-8")).get(
+                            "persona_name", ""
+                        )
+                    ).strip()
+                if persona_name:
+                    logger.warning(
+                        "[provisioner] tenant %s settings.json had no persona_name — "
+                        "repairing to bundled default %r so it can boot",
+                        user_id[:8],
+                        persona_name,
+                    )
+                    with contextlib.suppress(Exception):
+                        data = {}
+                        with contextlib.suppress(Exception):
+                            data = json.loads(settings_path.read_text(encoding="utf-8"))
+                        data["persona_name"] = persona_name
+                        tmp = settings_path.with_suffix(".json.tmp")
+                        tmp.write_text(json.dumps(data), encoding="utf-8")
+                        os.replace(tmp, settings_path)
 
         env = os.environ.copy()
         env.update(
@@ -319,6 +348,11 @@ class Provisioner:
                 "BRAIN_USER_ID": user_id,
                 "BRAIN_ORG_ID": user_id,
                 "BRAIN_STORAGE_BACKEND": "supabase",
+                # Unbuffer the child's stdout/stderr so _start_log_relay streams its
+                # boot output line-by-line. Without this, Python block-buffers when
+                # stdout is a pipe (not a TTY), so the relay shows nothing until the
+                # buffer fills or the process exits — i.e. boot errors stay invisible.
+                "PYTHONUNBUFFERED": "1",
                 "BRAIN_SETTINGS_PATH": str(settings_path),
                 "SECOND_BRAIN_PATH": str(root / "second_brain"),
                 # Hosted tenants render/capture audio in the browser, not via a
@@ -335,9 +369,15 @@ class Provisioner:
         if persona_name:
             env["BRAIN_PERSONA_NAME"] = persona_name
         else:
-            # run.py now hard-fails a multitenant boot without a resolvable persona
-            # (the persona='default' fallback cross-buckets tenants). Catch it here
-            # before burning a port + health-check timeout on a doomed spawn.
+            # Only reachable if even the bundled default has no persona_name (a broken
+            # build). Log loudly — a silent raise here is the difference between a
+            # diagnosable error and a user stuck forever on the booting screen.
+            logger.error(
+                "[provisioner] tenant %s: settings.json at %s has no persona_name and "
+                "bundled default repair failed — cannot spawn",
+                user_id[:8],
+                settings_path,
+            )
             raise RuntimeError(
                 f"tenant {user_id[:8]}: settings.json at {settings_path} has no "
                 "persona_name — cannot spawn without BRAIN_PERSONA_NAME"

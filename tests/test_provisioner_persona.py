@@ -6,7 +6,42 @@ and assert the lookups resolve per key, and that the no-persona path is unchange
 
 from __future__ import annotations
 
+import json
+import sys
+
 import brain.provisioner as pv
+
+
+def test_build_and_launch_repairs_missing_persona_name(tmp_path, monkeypatch):
+    """A tenant whose volume settings.json lacks persona_name must be REPAIRED
+    (seeded from the bundled default) and still boot — not hard-fail forever, which
+    left the user stuck on the 'waking your brain' screen with no brain ever booting
+    (the gateway stayed healthy, so there was no crash to see). Regression for the
+    second hosted-load failure (the first was the event-loop wedge)."""
+    import brain.gateway.org_token as ot
+    import brain.vault as vault
+
+    monkeypatch.setattr(pv, "TENANTS_DIR", tmp_path)
+    uid = "tenant-no-persona"
+    root = tmp_path / uid
+    (root / "second_brain").mkdir(parents=True)
+    # Pre-existing settings.json WITHOUT persona_name (predates the persona system).
+    (root / "settings.json").write_text(json.dumps({"some_other": 1}), encoding="utf-8")
+
+    monkeypatch.setattr(ot, "mint_org_token", lambda _uid: "")  # no network
+    monkeypatch.setattr(vault, "fetch_user_keys", lambda _uid: {})
+
+    # Inject a harmless child via cmd_builder (a LIST — avoids shlex-splitting a repo
+    # path that may contain spaces, which is a test-env quirk, not a product concern).
+    prov = pv.Provisioner(cmd_builder=lambda _port, _env: [sys.executable, "-c", "pass"])
+    proc, port, api_port = prov._build_and_launch(uid)
+    try:
+        data = json.loads((root / "settings.json").read_text(encoding="utf-8"))
+        assert data.get("persona_name")  # repaired, non-empty
+        assert data["persona_name"] != "default"  # never the cross-bucketing fallback
+        assert isinstance(port, int) and isinstance(api_port, int) and port != api_port
+    finally:
+        proc.terminate()
 
 
 class _FakeProc:
