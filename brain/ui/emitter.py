@@ -78,9 +78,12 @@ class ActivationEmitter:
         with contextlib.suppress(asyncio.QueueFull):
             self._put(event)
 
-    async def emit_emotion(self, emotion: str) -> None:
+    async def emit_emotion(self, emotion: str, intensity: float | None = None) -> None:
+        event = {"type": "emotion", "emotion": emotion}
+        if intensity is not None:
+            event["intensity"] = round(float(intensity), 3)
         with contextlib.suppress(asyncio.QueueFull):
-            self._put({"type": "emotion", "emotion": emotion})
+            self._put(event)
 
     async def emit_user_emotion(self, emotion: str) -> None:
         with contextlib.suppress(asyncio.QueueFull):

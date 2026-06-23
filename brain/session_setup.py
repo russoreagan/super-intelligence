@@ -293,7 +293,10 @@ class _SetupMixin:
         )
         await self._emitter.emit_neuromod(_nm)
         await self._emitter.emit_hormonal(_hs)
-        await self._emitter.emit_emotion(_emotion)
+        from brain.emotion_vocabulary import compute_affect_dims
+
+        _arousal0 = compute_affect_dims(_nm, _hs).get("arousal")
+        await self._emitter.emit_emotion(_emotion, _arousal0)
 
     async def _setup_api(self) -> None:
         """Start the engine API server iff this org has a runtime key — an owner env

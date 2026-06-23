@@ -5035,17 +5035,31 @@ const MOOD_BG_COLORS = {
   flat:             { l: 0.18, c: 0.015, h: 250 },
 };
 
-function setMoodBackground(emotion) {
+// Live-intensity modulation. The brain sends `intensity` (arousal, 0..1,
+// neutral ~0.25) on each emotion event; the same mood glows brighter, more
+// vivid, and fuller the harder it's felt. Missing intensity → mid strength.
+function moodStrength(intensity) {
+  const i = (typeof intensity === 'number') ? intensity : 0.45;
+  return Math.max(0, Math.min(1, (i - 0.20) / 0.50));  // 0.20→0, 0.70→1
+}
+function moodColor(cfg, s) {
+  const l = Math.max(0, Math.min(0.95, cfg.l + (s - 0.5) * 0.10));
+  const c = cfg.c * (0.65 + 0.55 * s);
+  return { l: +l.toFixed(3), c: +c.toFixed(3), h: cfg.h };
+}
+
+function setMoodBackground(emotion, intensity) {
   const moodEl = document.getElementById('mood-bg');
   if (!moodEl) return;
   if (!emotion || emotion === 'neutral' || emotion === 'flat') {
     moodEl.style.opacity = '0';
     return;
   }
-  const { l, c, h } = MOOD_BG_COLORS[emotion] || MOOD_BG_COLORS.neutral;
+  const s = moodStrength(intensity);
+  const { l, c, h } = moodColor(MOOD_BG_COLORS[emotion] || MOOD_BG_COLORS.neutral, s);
   const center = `oklch(${l} ${c} ${h})`;
   moodEl.style.background = `radial-gradient(ellipse 130% 90% at 50% 50%, ${center} 0%, transparent 65%)`;
-  moodEl.style.opacity = '1';
+  moodEl.style.opacity = (0.45 + 0.55 * s).toFixed(3);
 }
 
 /* =====================================================================
@@ -5531,9 +5545,10 @@ function handle(msg) {
     case 'emotion': {
       const badge = document.getElementById('emotion-badge');
       badge.classList.toggle('deliberate', !!msg.deliberate);
-      // Derive badge colors from MOOD_BG_COLORS so it matches the background glow
+      // Derive badge colors from MOOD_BG_COLORS so it matches the background glow,
+      // scaled by the live intensity the brain reports (brighter = felt harder).
       const moodCfg = MOOD_BG_COLORS[msg.emotion] || MOOD_BG_COLORS.neutral;
-      const { l: ml, c: mc, h: mh } = moodCfg;
+      const { l: ml, c: mc, h: mh } = moodColor(moodCfg, moodStrength(msg.intensity));
       const badgeText  = `oklch(${Math.min(ml + 0.62, 0.88)} ${Math.min(mc * 1.3, 0.20)} ${mh})`;
       badge.style.background   = `oklch(${ml} ${mc} ${mh} / 0.35)`;
       badge.style.color        = badgeText;
@@ -5555,7 +5570,7 @@ function handle(msg) {
       const dotColor = `oklch(${Math.min(ml + 0.22, 0.60)} ${Math.min(mc * 1.4, 0.19)} ${mh})`;
       moodDot.style.background = dotColor;
       moodDot.style.boxShadow  = `0 0 6px ${dotColor}`;
-      setMoodBackground(msg.emotion);
+      setMoodBackground(msg.emotion, msg.intensity);
       break;
     }
     case 'emotion_lock_cleared': {

@@ -664,7 +664,14 @@ class _TurnMixin:
                 self.ears.mark_enrollment_prompted(_s.session_key)
 
         if self._emitter and affect.get("emotion"):
-            await self._emitter.emit_emotion(affect["emotion"])
+            _arousal = (affect.get("affect_dims") or {}).get("arousal")
+            if _arousal is None:
+                from brain.emotion_vocabulary import compute_affect_dims
+
+                _arousal = compute_affect_dims(
+                    self.bus.neuromod.snapshot(), self.bus.hormonal.snapshot()
+                ).get("arousal")
+            await self._emitter.emit_emotion(affect["emotion"], _arousal)
             await self._emitter.emit_neuromod(self.bus.neuromod.snapshot())
             if affect.get("hormonal"):
                 await self._emitter.emit_hormonal(affect["hormonal"])
