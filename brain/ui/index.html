@@ -4971,47 +4971,68 @@ document.addEventListener('click', (e) => {
 });
 
 const MOOD_BG_COLORS = {
-  joy:              { l: 0.35, c: 0.14, h: 95  },
-  excitement:       { l: 0.35, c: 0.15, h: 70  },
-  enthusiasm:       { l: 0.35, c: 0.14, h: 80  },
-  content:          { l: 0.35, c: 0.11, h: 240 },
-  warm:             { l: 0.35, c: 0.12, h: 65  },
-  confident:        { l: 0.35, c: 0.12, h: 230 },
-  proud:            { l: 0.35, c: 0.13, h: 210 },
-  amused:           { l: 0.35, c: 0.12, h: 100 },
-  playful:          { l: 0.35, c: 0.13, h: 110 },
-  joking:           { l: 0.35, c: 0.11, h: 90  },
-  flirty:           { l: 0.35, c: 0.12, h: 10  },
-  tender:           { l: 0.35, c: 0.10, h: 355 },
-  affectionate:     { l: 0.35, c: 0.11, h: 5   },
-  grateful:         { l: 0.35, c: 0.11, h: 140 },
-  relieved:         { l: 0.35, c: 0.10, h: 170 },
-  sympathetic:      { l: 0.35, c: 0.10, h: 185 },
-  sad:              { l: 0.35, c: 0.11, h: 265 },
-  somber:           { l: 0.35, c: 0.10, h: 258 },
-  melancholy:       { l: 0.35, c: 0.12, h: 272 },
-  wistful:          { l: 0.35, c: 0.10, h: 278 },
-  disappointed:     { l: 0.35, c: 0.11, h: 255 },
-  embarrassed:      { l: 0.35, c: 0.10, h: 20  },
-  shy:              { l: 0.35, c: 0.09, h: 290 },
-  apologetic:       { l: 0.35, c: 0.09, h: 15  },
-  angry:            { l: 0.35, c: 0.15, h: 22  },
-  frustrated:       { l: 0.35, c: 0.13, h: 30  },
-  irritated:        { l: 0.35, c: 0.11, h: 35  },
-  agitated:         { l: 0.35, c: 0.14, h: 28  },
-  defensive:        { l: 0.35, c: 0.11, h: 40  },
-  sarcastic:        { l: 0.35, c: 0.10, h: 55  },
-  anxious:          { l: 0.35, c: 0.12, h: 45  },
-  inhibited:        { l: 0.35, c: 0.09, h: 300 },
-  surprised:        { l: 0.35, c: 0.13, h: 200 },
-  confused:         { l: 0.35, c: 0.10, h: 285 },
-  curious:          { l: 0.35, c: 0.11, h: 220 },
-  thoughtful:       { l: 0.35, c: 0.07, h: 250 },
-  'curious-uncertain': { l: 0.35, c: 0.09, h: 230 },
-  'cautious-agitated': { l: 0.35, c: 0.12, h: 38  },
-  restless:         { l: 0.35, c: 0.10, h: 50  },
-  flat:             { l: 0.28, c: 0.03, h: 250 },
-  neutral:          { l: 0.22, c: 0.01, h: 250 },
+  // 3-axis OKLch scheme: hue = emotional family, lightness = arousal/energy
+  // (bright = high-energy, dark = low-energy, grey = neutral), chroma = intensity
+  // (muted toward grey = mild, vivid = intense). The wash signals the family;
+  // the badge + dot carry the exact mood.
+
+  // High-arousal positive — bright, vivid, warm yellow-green
+  excitement:       { l: 0.68, c: 0.17, h: 70  },
+  joy:              { l: 0.64, c: 0.16, h: 95  },
+  enthusiasm:       { l: 0.58, c: 0.15, h: 82  },
+  playful:          { l: 0.56, c: 0.14, h: 110 },
+  amused:           { l: 0.52, c: 0.13, h: 100 },
+  joking:           { l: 0.50, c: 0.12, h: 92  },
+
+  // Warm / intimate — rose to amber, mid arousal
+  flirty:           { l: 0.52, c: 0.13, h: 12  },
+  affectionate:     { l: 0.46, c: 0.11, h: 8   },
+  warm:             { l: 0.44, c: 0.10, h: 60  },
+  tender:           { l: 0.42, c: 0.08, h: 356 },
+
+  // Calm-positive — green through teal to blue, low-mid arousal
+  grateful:         { l: 0.46, c: 0.10, h: 145 },
+  relieved:         { l: 0.48, c: 0.07, h: 172 },
+  sympathetic:      { l: 0.40, c: 0.07, h: 185 },
+  content:          { l: 0.40, c: 0.08, h: 235 },
+
+  // Alert / cognitive — blue, arousal sets brightness
+  surprised:        { l: 0.64, c: 0.14, h: 200 },
+  proud:            { l: 0.50, c: 0.12, h: 210 },
+  curious:          { l: 0.50, c: 0.11, h: 220 },
+  confident:        { l: 0.46, c: 0.12, h: 230 },
+  'curious-uncertain': { l: 0.42, c: 0.07, h: 225 },
+  confused:         { l: 0.40, c: 0.06, h: 285 },
+  thoughtful:       { l: 0.34, c: 0.05, h: 250 },
+
+  // Anger / tension — red-orange, high arousal, vivid
+  angry:            { l: 0.56, c: 0.19, h: 25  },
+  agitated:         { l: 0.54, c: 0.16, h: 28  },
+  anxious:          { l: 0.54, c: 0.14, h: 48  },
+  frustrated:       { l: 0.50, c: 0.16, h: 32  },
+  restless:         { l: 0.50, c: 0.11, h: 52  },
+  irritated:        { l: 0.48, c: 0.12, h: 38  },
+  'cautious-agitated': { l: 0.48, c: 0.12, h: 35  },
+  defensive:        { l: 0.45, c: 0.11, h: 42  },
+  sarcastic:        { l: 0.44, c: 0.09, h: 58  },
+
+  // Shame / withdrawn — warm flush to purple, lower arousal, muted
+  embarrassed:      { l: 0.46, c: 0.11, h: 20  },
+  apologetic:       { l: 0.38, c: 0.07, h: 16  },
+  shy:              { l: 0.34, c: 0.06, h: 292 },
+  inhibited:        { l: 0.30, c: 0.06, h: 300 },
+
+  // Sadness — blue-purple, low arousal, dark
+  disappointed:     { l: 0.34, c: 0.08, h: 255 },
+  wistful:          { l: 0.40, c: 0.05, h: 282 },
+  sad:              { l: 0.30, c: 0.12, h: 265 },
+  melancholy:       { l: 0.28, c: 0.10, h: 275 },
+  somber:           { l: 0.22, c: 0.06, h: 258 },
+
+  // Resting — chroma toward grey, lightness toward black; drives badge/dot
+  // (neutral & flat render no wash — see setMoodBackground)
+  neutral:          { l: 0.40, c: 0.012, h: 250 },
+  flat:             { l: 0.18, c: 0.015, h: 250 },
 };
 
 function setMoodBackground(emotion) {
