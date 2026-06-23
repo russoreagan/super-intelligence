@@ -142,6 +142,11 @@ class UIServer:
         self._last_thoughts: list[dict] = []
         self._chat_history: list[dict] = []  # completed turns for page-refresh replay
         self._pending_turn: dict | None = None  # turn_start awaiting its turn_end
+        # Agent-lane activity (engine-API/partner turns) kept OUT of the main feed
+        # and surfaced separately in the Agents view. Mirrors the main-chat shape:
+        # recent completed turns for replay, plus per-session turn_start awaiting end.
+        self._agent_history: list[dict] = []
+        self._agent_pending: dict[str, dict] = {}  # route_sid -> turn_start payload
         self._wiring_frozen: bool = False
         self._subsystem_status: dict[str, bool] = {}
         self._wiring = wiring
@@ -760,6 +765,23 @@ class UIServer:
                 logger.warning("[self-model] read failed: %s", _e)
             return JSONResponse({"content": content, "persona": persona_name})
 
+        @app.get("/agents/turns")
+        async def get_agent_turns(request: Request):
+            """Durable history for the Agents view — what each engine-API agent
+            (e.g. the trading app) has been asked, separate from the main chat.
+            Owner-authed by the global gate; reads the org's own agent_turns rows."""
+            from fastapi.responses import JSONResponse
+
+            from brain import agent_log
+
+            agent_id = str(request.query_params.get("agent_id", "").strip()) or None
+            try:
+                limit = int(request.query_params.get("limit", "50"))
+            except ValueError:
+                limit = 50
+            turns = await asyncio.to_thread(agent_log.recent, limit, agent_id)
+            return JSONResponse({"turns": turns})
+
         @app.get("/user-model")
         async def get_user_model(request: Request):
             from fastapi.responses import JSONResponse
@@ -1285,6 +1307,18 @@ class UIServer:
                             {
                                 "type": "chat_history",
                                 "turns": list(self._chat_history),
+                            }
+                        )
+                    )
+
+            # Replay agent-lane history so the Agents view survives a refresh too.
+            if self._agent_history:
+                with contextlib.suppress(Exception):
+                    await websocket.send_text(
+                        json.dumps(
+                            {
+                                "type": "agent_history",
+                                "turns": list(self._agent_history),
                             }
                         )
                     )
@@ -1873,11 +1907,59 @@ class UIServer:
                         dead.add(client)
                 self._clients -= dead
 
+    async def _handle_agent_event(self, event: dict) -> None:
+        """Route one agent-lane event to the Agents view (never the main feed).
+
+        Pairs turn_start/turn_end per session into a recent-history buffer — the
+        same shape the main chat keeps in ``_chat_history`` — and broadcasts every
+        agent event re-wrapped as a single ``agent_event`` type so the main chat's
+        per-type handlers can't pick it up. The buffer is replayed on reconnect so
+        the Agents view survives a page refresh, just like the main chat."""
+        sid = event.get("route_sid") or ""
+        etype = event.get("type")
+        if etype == "turn_start" and event.get("user_input"):
+            self._agent_pending[sid] = {
+                "route_sid": sid,
+                "agent_id": event.get("agent_id", ""),
+                "end_user_id": event.get("end_user_id", ""),
+                "turn_id": event.get("turn_id"),
+                "user_input": event["user_input"],
+                "ts": event.get("ts"),
+            }
+        elif etype == "turn_end" and event.get("response"):
+            pending = self._agent_pending.pop(sid, None)
+            if pending is not None:
+                self._agent_history.append(
+                    {
+                        **pending,
+                        "response": event["response"],
+                        "elapsed_s": event.get("elapsed_s"),
+                    }
+                )
+                if len(self._agent_history) > 50:
+                    self._agent_history.pop(0)
+
+        if self._clients:
+            payload = json.dumps({"type": "agent_event", "event": event})
+            dead = set()
+            for client in list(self._clients):
+                try:
+                    await client.send_text(payload)
+                except Exception:
+                    dead.add(client)
+            self._clients -= dead
+
     async def _broadcast_loop(self) -> None:
         """Drain emitter queue and broadcast to all connected clients."""
         while True:
             try:
                 event = await asyncio.wait_for(self._queue.get(), timeout=0.1)
+                # Agent-lane events (engine-API/partner turns) never touch the main
+                # feed: they're re-wrapped as a single "agent_event" type the main
+                # chat handlers don't match, and routed to the Agents view instead.
+                if event.get("channel") == "agent":
+                    await self._handle_agent_event(event)
+                    continue
                 # Cache latest neuromod + hormonal + emotion for new clients
                 if event.get("type") == "neuromod":
                     self._last_neuromod = {k: v for k, v in event.items() if k != "type"}

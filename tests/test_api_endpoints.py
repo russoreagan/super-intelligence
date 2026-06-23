@@ -503,6 +503,11 @@ def test_turn_stream_emits_inner_life_then_done():
             self.taps.discard(q)
 
         def push(self, ev):
+            # Mirror the real ActivationEmitter: stamp the routing lane (the route
+            # binds it around the turn) so the stream's per-session filter sees it.
+            from brain.ui.emitter import ActivationEmitter
+
+            ActivationEmitter._stamp_lane(ev)
             for q in list(self.taps):
                 q.put_nowait(ev)
 
