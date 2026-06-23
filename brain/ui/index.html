@@ -4764,11 +4764,17 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
           </div>
           <div class="theme-toggle-hint">Warm paper theme. Saved on this device.</div>
         </div>
-        <!-- Mood intensity — how strongly the brain's mood tints the background -->
+        <!-- Mood colour — how strongly the brain's mood colours the UI (glow +
+             saturation). Display-only; does not change what the brain feels. -->
         <div class="theme-toggle-block">
-          <div class="theme-toggle-label">Mood intensity <span id="mood-intensity-val">50%</span></div>
-          <input type="range" class="r mood-intensity-range" id="mood-intensity-slider" min="0" max="100" step="5" value="50">
-          <div class="theme-toggle-hint">How strongly the prevailing mood washes into the background paper.</div>
+          <div class="theme-toggle-label">Mood colour</div>
+          <div class="theme-seg" id="mood-intensity-seg" role="group" aria-label="Mood colour intensity">
+            <button type="button" class="theme-seg-btn" data-mood-level="off">Off</button>
+            <button type="button" class="theme-seg-btn" data-mood-level="low">Low</button>
+            <button type="button" class="theme-seg-btn" data-mood-level="medium">Med</button>
+            <button type="button" class="theme-seg-btn" data-mood-level="high">High</button>
+          </div>
+          <div class="theme-toggle-hint">How strongly the prevailing mood colours the UI — glow and saturation.</div>
         </div>
         <button class="btn-reset-all" id="settings-reset-btn">
           <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
@@ -5035,31 +5041,79 @@ const MOOD_BG_COLORS = {
   flat:             { l: 0.18, c: 0.015, h: 250 },
 };
 
-// Live-intensity modulation. The brain sends `intensity` (arousal, 0..1,
-// neutral ~0.25) on each emotion event; the same mood glows brighter, more
-// vivid, and fuller the harder it's felt. Missing intensity → mid strength.
+// ---- Mood colour intensity (Settings → Appearance) -------------------------
+// Display-only gain on how strongly the brain's mood colours the UI — the glow
+// opacity and the saturation of the wash/badge/dot/paper. It does NOT change
+// what the brain feels (that's `intensity` = live arousal, below): off → no
+// colour, high → full strength.
+const MOOD_UI_GAIN = { off: 0, low: 0.5, medium: 0.8, high: 1.0 };
+let _moodLevel = (function () {
+  try {
+    const raw = localStorage.getItem('brain_mood_intensity');
+    if (raw && Object.prototype.hasOwnProperty.call(MOOD_UI_GAIN, raw)) return raw;
+    const n = parseInt(raw, 10);  // migrate the old 0–100 slider value
+    if (!isNaN(n)) return n <= 0 ? 'off' : n < 45 ? 'low' : n < 85 ? 'medium' : 'high';
+  } catch (e) {}
+  return 'medium';
+})();
+function _moodGain() { return MOOD_UI_GAIN[_moodLevel] != null ? MOOD_UI_GAIN[_moodLevel] : 1; }
+
+// Live "felt intensity" = the brain's arousal (0..1, neutral ~0.25) on each
+// emotion event; the same mood glows brighter the harder it's felt. Missing
+// intensity → mid strength.
 function moodStrength(intensity) {
   const i = (typeof intensity === 'number') ? intensity : 0.45;
   return Math.max(0, Math.min(1, (i - 0.20) / 0.50));  // 0.20→0, 0.70→1
 }
-function moodColor(cfg, s) {
+// Lightness tracks felt-intensity (brain only). Chroma tracks felt-intensity
+// AND the user's colour gain, so lowering the setting desaturates rather than
+// darkens.
+function moodColor(cfg, s, gain) {
+  if (gain == null) gain = 1;
   const l = Math.max(0, Math.min(0.95, cfg.l + (s - 0.5) * 0.10));
-  const c = cfg.c * (0.65 + 0.55 * s);
+  const c = cfg.c * (0.65 + 0.55 * s) * gain;
   return { l: +l.toFixed(3), c: +c.toFixed(3), h: cfg.h };
 }
 
 function setMoodBackground(emotion, intensity) {
   const moodEl = document.getElementById('mood-bg');
   if (!moodEl) return;
-  if (!emotion || emotion === 'neutral' || emotion === 'flat') {
+  const gain = _moodGain();
+  if (gain <= 0 || !emotion || emotion === 'neutral' || emotion === 'flat') {
     moodEl.style.opacity = '0';
     return;
   }
   const s = moodStrength(intensity);
-  const { l, c, h } = moodColor(MOOD_BG_COLORS[emotion] || MOOD_BG_COLORS.neutral, s);
+  const { l, c, h } = moodColor(MOOD_BG_COLORS[emotion] || MOOD_BG_COLORS.neutral, s, gain);
   const center = `oklch(${l} ${c} ${h})`;
   moodEl.style.background = `radial-gradient(ellipse 130% 90% at 50% 50%, ${center} 0%, transparent 65%)`;
-  moodEl.style.opacity = (0.45 + 0.55 * s).toFixed(3);
+  moodEl.style.opacity = ((0.45 + 0.55 * s) * gain).toFixed(3);
+}
+
+// Apply the brain's current emotion to every colour surface (badge, dot, glow),
+// scaled by the user's mood-colour gain. Called on each emotion event and when
+// the gain control changes, so the UI re-renders without waiting for the next
+// event. Remembers the last emotion for that re-render.
+let _lastMoodEmotion = 'neutral';
+let _lastMoodIntensity = null;
+function applyEmotionColors(emotion, intensity) {
+  _lastMoodEmotion = emotion;
+  _lastMoodIntensity = intensity;
+  const badge = document.getElementById('emotion-badge');
+  const moodDot = document.getElementById('mood-dot');
+  const cfg = MOOD_BG_COLORS[emotion] || MOOD_BG_COLORS.neutral;
+  const { l: ml, c: mc, h: mh } = moodColor(cfg, moodStrength(intensity), _moodGain());
+  if (badge) {
+    badge.style.background  = `oklch(${ml} ${mc} ${mh} / 0.35)`;
+    badge.style.color       = `oklch(${Math.min(ml + 0.62, 0.88)} ${Math.min(mc * 1.3, 0.20)} ${mh})`;
+    badge.style.borderColor = `oklch(${Math.min(ml + 0.28, 0.50)} ${mc} ${mh} / 0.6)`;
+  }
+  if (moodDot) {
+    const dotColor = `oklch(${Math.min(ml + 0.22, 0.60)} ${Math.min(mc * 1.4, 0.19)} ${mh})`;
+    moodDot.style.background = dotColor;
+    moodDot.style.boxShadow  = `0 0 6px ${dotColor}`;
+  }
+  setMoodBackground(emotion, intensity);
 }
 
 /* =====================================================================
@@ -5545,15 +5599,6 @@ function handle(msg) {
     case 'emotion': {
       const badge = document.getElementById('emotion-badge');
       badge.classList.toggle('deliberate', !!msg.deliberate);
-      // Derive badge colors from MOOD_BG_COLORS so it matches the background glow,
-      // scaled by the live intensity the brain reports (brighter = felt harder).
-      const moodCfg = MOOD_BG_COLORS[msg.emotion] || MOOD_BG_COLORS.neutral;
-      const { l: ml, c: mc, h: mh } = moodColor(moodCfg, moodStrength(msg.intensity));
-      const badgeText  = `oklch(${Math.min(ml + 0.62, 0.88)} ${Math.min(mc * 1.3, 0.20)} ${mh})`;
-      badge.style.background   = `oklch(${ml} ${mc} ${mh} / 0.35)`;
-      badge.style.color        = badgeText;
-      badge.style.borderColor  = `oklch(${Math.min(ml + 0.28, 0.50)} ${mc} ${mh} / 0.6)`;
-      const moodDot  = document.getElementById('mood-dot');
       const moodName = document.getElementById('mood-name');
       if (msg.deliberate) {
         const current = badge.textContent.replace(/ expressing .*$/, '');
@@ -5564,13 +5609,11 @@ function handle(msg) {
         moodName.textContent = msg.emotion;
       }
       // Mood label reads as ink (same as the persona name) — the light
-      // emotion colour was hard to read on paper. The dot carries the colour,
-      // at a medium saturation that's legible on both themes.
+      // emotion colour was hard to read on paper. The dot carries the colour.
       moodName.style.color = 'var(--ink)';
-      const dotColor = `oklch(${Math.min(ml + 0.22, 0.60)} ${Math.min(mc * 1.4, 0.19)} ${mh})`;
-      moodDot.style.background = dotColor;
-      moodDot.style.boxShadow  = `0 0 6px ${dotColor}`;
-      setMoodBackground(msg.emotion, msg.intensity);
+      // Colour the badge, dot, and glow — scaled by the brain's felt intensity
+      // and the user's mood-colour setting (Settings → Appearance).
+      applyEmotionColors(msg.emotion, msg.intensity);
       break;
     }
     case 'emotion_lock_cleared': {
@@ -8830,10 +8873,8 @@ var _chemState = { DA:0.5, ACh:0.2, GABA:0.05, Glu:0.3, NE:0.25, '5HT':0.3, OXT:
 var _MOOD_TINT_PROPS = ['--signal','--signal-deep','--signal-soft','--paper','--paper-2','--paper-3','--plate','--ink','--ink-2'];
 // Background mood-tint strength (0–100, tunable in Settings). 50 = the previous
 // fixed 1.8x; the slider maps 0→none … 100→3.6x of each mood's paper chroma.
-var _moodIntensity = (function () {
-  try { var v = parseInt(localStorage.getItem('brain_mood_intensity'), 10); return isNaN(v) ? 50 : v; }
-  catch (e) { return 50; }
-})();
+// Mood-colour intensity state (`_moodLevel` / `_moodGain()`) lives with the
+// mood-colour helpers near MOOD_BG_COLORS.
 
 // Single source of truth: the displayed disposition (the named emotion) maps
 // to one of the six mood families, so the label and the tint always agree —
@@ -8875,7 +8916,7 @@ function _applyMoodTint() {
   rs.setProperty('--signal-soft', 'oklch(' + L + ' ' + C + ' ' + H + ' / 0.13)');
   // Amplify the paper chroma so the mood is visible — but gently; at the
   // original 0.013 it was imperceptible, at 3.4× it ran a touch too warm.
-  var pc = t.paperC * (_moodIntensity / 100 * 3.6);
+  var pc = t.paperC * (_moodGain() * 3.6);
   rs.setProperty('--paper',   'oklch(0.957 ' + pc.toFixed(3) + ' ' + t.paperH + ')');
   rs.setProperty('--paper-2', 'oklch(0.934 ' + (pc + 0.007).toFixed(3) + ' ' + t.paperH + ')');
   rs.setProperty('--paper-3', 'oklch(0.898 ' + (pc + 0.014).toFixed(3) + ' ' + t.paperH + ')');
@@ -8918,19 +8959,25 @@ function _applyMoodTint() {
   }, true); // capture phase catches scroll from every nested container
 })();
 
-// Mood-intensity slider (Settings → Appearance) — tunes the background tint.
+// Mood-colour intensity (Settings → Appearance) — off/low/medium/high. Scales
+// both the atlas paper tint and the brain mood colours (glow/badge/dot).
 (function () {
-  var slider = document.getElementById('mood-intensity-slider');
-  var label = document.getElementById('mood-intensity-val');
-  if (label) label.textContent = _moodIntensity + '%';
-  if (!slider) return;
-  slider.value = _moodIntensity;
-  slider.addEventListener('input', function () {
-    _moodIntensity = parseInt(slider.value, 10) || 0;
-    try { localStorage.setItem('brain_mood_intensity', String(_moodIntensity)); } catch (e) {}
-    if (label) label.textContent = _moodIntensity + '%';
-    _applyMoodTint();
+  var seg = document.getElementById('mood-intensity-seg');
+  if (!seg) return;
+  var btns = seg.querySelectorAll('.theme-seg-btn');
+  function reflect() {
+    btns.forEach(function (b) { b.classList.toggle('active', b.dataset.moodLevel === _moodLevel); });
+  }
+  btns.forEach(function (b) {
+    b.addEventListener('click', function () {
+      _moodLevel = b.dataset.moodLevel;
+      try { localStorage.setItem('brain_mood_intensity', _moodLevel); } catch (e) {}
+      reflect();
+      _applyMoodTint();                                       // atlas paper tint
+      applyEmotionColors(_lastMoodEmotion, _lastMoodIntensity); // glow/badge/dot
+    });
   });
+  reflect();
 })();
 
 // neuromodulator Levels / Changes view toggle.
