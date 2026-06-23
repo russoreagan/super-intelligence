@@ -16,6 +16,9 @@ class ActivationEmitter:
         # Extra sinks that mirror every event — used by the engine API's SSE stream
         # to follow one turn's events (thoughts, mood, final response).
         self._taps: set[asyncio.Queue] = set()
+        # Live partner-webhook deliveries (proactive outbound). Held so the
+        # fire-and-forget POST tasks aren't garbage-collected before they finish.
+        self._webhook_tasks: set[asyncio.Task] = set()
 
     def get_queue(self) -> asyncio.Queue:
         return self._queue
@@ -146,6 +149,56 @@ class ActivationEmitter:
     async def emit_proactive_speech(self, text: str) -> None:
         with contextlib.suppress(asyncio.QueueFull):
             self._put({"type": "proactive_speech", "text": text, "ts": time.time()})
+        # Durable delivery to the owning partner's callback (works with the partner's
+        # client closed). No-op on the owner lane or when no callback is configured.
+        self._dispatch_partner_proactive(text)
+
+    def _dispatch_partner_proactive(
+        self, text: str, *, kind: str = "proactive", urgency: str = "normal"
+    ) -> None:
+        """Schedule a best-effort webhook POST to the owning partner's callback for an
+        agent-lane proactive message. Generic — the brain knows nothing about the
+        partner's domain; it just forwards "agent emitted a message for end-user X".
+        No-op on the owner lane (the brain's own UI) or when unconfigured."""
+        import os
+
+        url = os.environ.get("AGENT_WEBHOOK_URL", "").strip()
+        secret = os.environ.get("AGENT_WEBHOOK_SECRET", "").strip()
+        if not url or not secret:
+            return
+        from brain.turn_ctx import current_turn
+
+        ctx = current_turn()
+        if ctx.get("channel") != "agent" or not ctx.get("end_user_id"):
+            return
+        import uuid
+
+        payload = {
+            "event_id": uuid.uuid4().hex,
+            "agent_id": ctx.get("agent_id") or None,
+            "session_id": ctx.get("session_id") or "",
+            "end_user_id": ctx.get("end_user_id"),
+            "kind": kind,
+            "text": text,
+            "urgency": urgency,
+            "ts": time.time(),
+        }
+        with contextlib.suppress(RuntimeError):  # no running loop → nothing to schedule
+            task = asyncio.create_task(self._post_partner_webhook(url, secret, payload))
+            self._webhook_tasks.add(task)
+            task.add_done_callback(self._webhook_tasks.discard)
+
+    @staticmethod
+    async def _post_partner_webhook(url: str, secret: str, payload: dict) -> None:
+        """One best-effort webhook POST. Never raises — a dead partner callback must
+        not affect the brain."""
+        with contextlib.suppress(Exception):
+            import httpx
+
+            async with httpx.AsyncClient(timeout=httpx.Timeout(5.0, connect=3.0)) as client:
+                await client.post(
+                    url, json=payload, headers={"Authorization": f"Bearer {secret}"}
+                )
 
     async def emit_cell(self, cluster: str, cell: str, model: str, turn_id: str = "") -> None:
         with contextlib.suppress(asyncio.QueueFull):

@@ -34,7 +34,17 @@ logger = logging.getLogger(__name__)
 # Emitter event types forwarded to WS clients (subset of _STREAMED_TYPES).
 # audio_* types are produced locally by _ws_stream_audio, not from the emitter.
 _FORWARD_TYPES = frozenset(
-    {"turn_start", "stream_thought", "neuromod", "hormonal", "emotion", "user_emotion"}
+    {
+        "turn_start",
+        "stream_thought",
+        "neuromod",
+        "hormonal",
+        "emotion",
+        "user_emotion",
+        # Out-of-band: a backgrounded/always-on job's result. Fires after turn_end,
+        # so it's exempt from the active-turn filter below.
+        "proactive_speech",
+    }
 )
 
 
@@ -243,10 +253,19 @@ class WsSession:
                     continue
                 if etype not in _FORWARD_TYPES:
                     continue
+                # Proactive results are intentionally out-of-band (they fire under a
+                # bg_<turn_id> after turn_end), so they bypass the active-turn filter.
+                out_of_band = etype == "proactive_speech"
                 # Belt-and-suspenders: stick to the active turn within this session.
-                if turn_id is not None and turn_id != self._active_turn_id:
+                if not out_of_band and turn_id is not None and turn_id != self._active_turn_id:
                     continue
-                out_type = "thought" if etype == "stream_thought" else etype
+                out_type = (
+                    "proactive"
+                    if etype == "proactive_speech"
+                    else "thought"
+                    if etype == "stream_thought"
+                    else etype
+                )
                 await self._send({"type": out_type, **{k: v for k, v in ev.items() if k != "type"}})
         except asyncio.CancelledError:
             pass
