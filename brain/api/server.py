@@ -31,6 +31,7 @@ from fastapi import APIRouter, FastAPI, Header, HTTPException, WebSocket
 
 from brain.api.auth import check_bearer
 from brain.api.sessions import ApiSessionRegistry
+from brain.turn_ctx import bind_turn
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +46,29 @@ def _session_persona(s) -> "str | None":
     if not aid or "." not in aid:
         return None
     return aid.split(".", 1)[0]
+
+
+def _log_agent_turn(s, prompt: str, response: str, turn_id: str = "") -> None:
+    """Record a completed agent turn to the durable activity log, off the hot path
+    (fire-and-forget; best-effort). Surfaces in the owner's Agents view, never the
+    main chat feed."""
+    import asyncio
+
+    from brain import agent_log
+
+    with contextlib.suppress(Exception):
+        asyncio.create_task(
+            asyncio.to_thread(
+                agent_log.record,
+                agent_id=getattr(s, "agent_id", None),
+                end_user_id=getattr(s, "end_user_id", None),
+                session_id=getattr(s, "session_id", None),
+                turn_id=turn_id,
+                persona=_session_persona(s),
+                prompt=prompt,
+                response=response,
+            )
+        )
 # (reason) -> consolidation status dict. Runs the session-end Hebbian/sleep pass on
 # demand (checkpoint; does not tear down). Used by the debate consolidation barrier
 # and by long-running agents to persist learning before a crash can lose it.
@@ -331,7 +355,14 @@ def build_api_router(
         if not _owns(ctx, s):
             raise HTTPException(status_code=403, detail="session belongs to another partner")
         message, transcript = await _resolve_input(body)
-        text, affect = await turn_runner(message, s.end_user_id, s.mandate_id, _session_persona(s))
+        # Tag every event this turn emits with the agent lane so it never lands in
+        # the owner's main feed (and can't bleed into another partner's stream).
+        with bind_turn(
+            "agent", session_id=s.session_id, agent_id=s.agent_id, end_user_id=s.end_user_id
+        ):
+            text, affect = await turn_runner(
+                message, s.end_user_id, s.mandate_id, _session_persona(s)
+            )
         # The turn returns TTS-ready text (still carrying [mood:X] markup + bare
         # reaction tags). Hand partners clean display text + the structured affect
         # that drives prosody — never the raw markup as the response.
@@ -345,6 +376,7 @@ def build_api_router(
         }
         if transcript is not None:
             resp["transcript"] = transcript  # echo what we heard (voice-in)
+        _log_agent_turn(s, message, display)
         # A cloud write awaiting sign-off — park it on the session and tell the
         # partner. They approve via POST /sessions/{id}/confirm. (Auto-confirmed
         # agents never reach here; the write already ran.)
@@ -412,9 +444,14 @@ def build_api_router(
             tap: asyncio.Queue = asyncio.Queue(maxsize=512)
             source.add_tap(tap)
             # Tap is live BEFORE the turn starts so turn_start isn't missed.
-            turn_task = asyncio.create_task(
-                turn_runner(message, s.end_user_id, s.mandate_id, _session_persona(s))
-            )
+            # bind_turn is active across create_task so the copied context tags the
+            # turn task's events with this session's lane (route_sid == session_id).
+            with bind_turn(
+                "agent", session_id=session_id, agent_id=s.agent_id, end_user_id=s.end_user_id
+            ):
+                turn_task = asyncio.create_task(
+                    turn_runner(message, s.end_user_id, s.mandate_id, _session_persona(s))
+                )
             try:
                 _open = {"session_id": session_id, "end_user_id": s.end_user_id}
                 if transcript is not None:
@@ -433,6 +470,10 @@ def build_api_router(
                     etype = ev.get("type")
                     if etype in ("turn_start", "turn_end"):
                         turn_id = ev.get("turn_id", turn_id)
+                    # Only this session's events — never another partner's, and
+                    # never the owner's idle inner life (which has no route_sid).
+                    if ev.get("route_sid") != session_id:
+                        continue
                     if etype in _STREAMED_TYPES:
                         yield _sse(etype, ev)
                     if etype == "turn_end":
@@ -458,6 +499,7 @@ def build_api_router(
                 # audio client keeps reading until audio_end. TTS uses the RAW text
                 # (markup intact) so mood spans drive per-chunk prosody.
                 yield _sse("done", final)
+                _log_agent_turn(s, message, display, turn_id or "")
                 if isinstance(audio_opt, dict) and audio_opt.get("enabled"):
                     _pid = None if ctx.get("owner") else ctx.get("partner_id")
                     async for frame in _stream_audio(

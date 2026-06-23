@@ -27,6 +27,8 @@ import asyncio
 import contextlib
 import logging
 
+from brain.turn_ctx import bind_turn
+
 logger = logging.getLogger(__name__)
 
 # Emitter event types forwarded to WS clients (subset of _STREAMED_TYPES).
@@ -235,9 +237,13 @@ class WsSession:
                 turn_id = ev.get("turn_id")
                 if etype == "turn_start":
                     self._active_turn_id = turn_id
+                # Only this session's lane — never another partner's turn, and
+                # never the owner's idle inner life (no route_sid).
+                if ev.get("route_sid") != self._session.session_id:
+                    continue
                 if etype not in _FORWARD_TYPES:
                     continue
-                # Only forward events belonging to the active turn.
+                # Belt-and-suspenders: stick to the active turn within this session.
                 if turn_id is not None and turn_id != self._active_turn_id:
                     continue
                 out_type = "thought" if etype == "stream_thought" else etype
@@ -258,7 +264,15 @@ class WsSession:
             # Multi-persona Path B: bind the session agent's persona for the turn.
             _persona = s.agent_id.split(".", 1)[0] if s.agent_id and "." in s.agent_id else None
             try:
-                text, affect = await self._turn_runner(message, s.end_user_id, s.mandate_id, _persona)
+                with bind_turn(
+                    "agent",
+                    session_id=s.session_id,
+                    agent_id=s.agent_id,
+                    end_user_id=s.end_user_id,
+                ):
+                    text, affect = await self._turn_runner(
+                        message, s.end_user_id, s.mandate_id, _persona
+                    )
             except Exception as e:
                 logger.warning("[WsSession] turn error: %s", e)
                 await self._send({"type": "error", "detail": str(e), "code": 500})

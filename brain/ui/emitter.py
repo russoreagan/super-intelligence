@@ -29,11 +29,32 @@ class ActivationEmitter:
     def _put(self, event: dict) -> None:
         """Enqueue to the UI broadcast queue and fan out to any taps. Best-effort
         per sink (a full queue drops the event rather than blocking the turn)."""
+        self._stamp_lane(event)
         with contextlib.suppress(asyncio.QueueFull):
             self._queue.put_nowait(event)
         for q in list(self._taps):
             with contextlib.suppress(asyncio.QueueFull):
                 q.put_nowait(event)
+
+    @staticmethod
+    def _stamp_lane(event: dict) -> None:
+        """Tag the event with the current turn's routing lane so downstream sinks
+        can keep agents apart: ``channel`` always, plus the agent session
+        (``route_sid``) / agent_id / end_user_id for the agent lane. Owner-lane
+        events (interactive UI + idle inner life) carry only channel="owner".
+        Uses distinct keys so it never collides with the cosmetic process
+        ``session_id`` that turn_start/turn_end already carry."""
+        with contextlib.suppress(Exception):
+            from brain.turn_ctx import current_turn
+
+            ctx = current_turn()
+            event.setdefault("channel", ctx["channel"])
+            if ctx["channel"] == "agent":
+                event.setdefault("route_sid", ctx["session_id"])
+                if ctx["agent_id"]:
+                    event.setdefault("agent_id", ctx["agent_id"])
+                if ctx["end_user_id"]:
+                    event.setdefault("end_user_id", ctx["end_user_id"])
 
     async def emit(self, cluster: str, intensity: float, note: str, turn_id: str = "") -> None:
         event = {
