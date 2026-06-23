@@ -9033,8 +9033,8 @@ function _applyMoodTint() {
   }
   #agents-drawer .ad-title { font-family: var(--serif); font-size: 17px; color: var(--fg); }
   #agents-drawer .ad-sub { font-family: var(--mono); font-size: 11px; color: var(--fg-dim); margin-top: 3px; }
-  #agents-drawer .ad-close { cursor: pointer; color: var(--fg-dim); font-size: 18px; line-height: 1; background: none; border: none; }
-  #agents-drawer .ad-close:hover { color: var(--fg); }
+  #agents-drawer .ad-close { cursor: pointer; flex: none; color: var(--fg-dim); font-size: 20px; line-height: 1; background: none; border: none; padding: 4px 9px; margin: -4px -7px -4px 0; border-radius: 8px; }
+  #agents-drawer .ad-close:hover { color: var(--fg); background: var(--bg-2); }
   #agents-list { overflow-y: auto; padding: 10px 14px 24px; flex: 1; }
   #agents-empty { color: var(--fg-dim); font-family: var(--mono); font-size: 12px; padding: 26px 6px; text-align: center; }
   .ad-agent { margin: 12px 0 4px; }
@@ -9149,6 +9149,14 @@ function _applyMoodTint() {
 
   fab.addEventListener('click', () => setOpen(!open));
   closeBtn.addEventListener('click', () => setOpen(false));
+  // Match the rest of the app's popovers: Escape and click-outside dismiss.
+  // (The FAB is covered by the open drawer, so it can't be used to close.)
+  document.addEventListener('keydown', (e) => { if (open && e.key === 'Escape') setOpen(false); });
+  document.addEventListener('click', (e) => {
+    if (!open) return;
+    if (drawer.contains(e.target) || fab.contains(e.target)) return;
+    setOpen(false);
+  });
 
   window.Agents = {
     // One live agent-lane event (already unwrapped from the agent_event envelope).
