@@ -701,6 +701,14 @@ class RunPodManager:
                 except Exception as e:
                     logger.warning("[RunPod] ensure_running resume of %s failed: %s", pod_id, e)
                     self._pod_id = None
+                    # Don't chase a pod that won't resume (dead, or its host is out of
+                    # GPUs): mark it unhealthy for this session so the next cycle skips it
+                    # and falls through to discover/create instead of retrying the same
+                    # dead pod every reconcile tick. Drop it as the known pod too so it
+                    # isn't re-adopted as a candidate.
+                    self._unhealthy.add(pod_id)
+                    if self._known_pod_id == pod_id:
+                        self._known_pod_id = None
 
             # Nothing healthy to resume — create on the best GPU.
             try:

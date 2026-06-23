@@ -112,19 +112,25 @@ class _SetupMixin:
         ) = self._bootstrap_eval_system(self.obs)
         self.obs._eval_logger = self._eval_logger
         self.router = ModelRouter(obs=self.obs)
-        # Per-brain tier gate (multi-persona Step 5C): a 'lite' persona holds no local
-        # pod, so its local routes must run on cloud. The brain owns the right
-        # org+persona scope here, so it resolves its OWN effective tier (full if any of
-        # this persona's enabled agents is full) rather than trusting an injected env.
-        # Falls back to the env/default (full) if the agents table is unreachable.
-        try:
-            _tier_persona = str(_brain_settings.get("persona_name", "")).strip()
-            if _tier_persona:
-                from brain import agents as _agents
+        # Per-brain tier gate (multi-persona Step 5C). A 'lite' persona holds no local
+        # pod, so its local routes must run on cloud; a 'full' persona gets the pod +
+        # background thinking. An explicit BRAIN_TIER=full|lite is AUTHORITATIVE — the
+        # operator's choice wins and is never silently downgraded by the agents table.
+        # Only when BRAIN_TIER is unset/"auto" do we derive the effective tier from this
+        # persona's enabled agents (full if any is full; full by default when the persona
+        # has no agent config at all). Falls back to the router default if unreachable.
+        _tier_env = os.environ.get("BRAIN_TIER", "").strip().lower()
+        if _tier_env in ("full", "lite"):
+            self.router._local_disabled = _tier_env == "lite"
+        else:
+            try:
+                _tier_persona = str(_brain_settings.get("persona_name", "")).strip()
+                if _tier_persona:
+                    from brain import agents as _agents
 
-                self.router._local_disabled = _agents.effective_tier(_tier_persona) == "lite"
-        except Exception:
-            logger.debug("[setup] tier resolution skipped (agents table unavailable)", exc_info=True)
+                    self.router._local_disabled = _agents.effective_tier(_tier_persona) == "lite"
+            except Exception:
+                logger.debug("[setup] tier resolution skipped (agents table unavailable)", exc_info=True)
         self.brainstem = Brainstem(self.bus, self.router)
         self._proactive_idle_threshold = _brain_settings.get("proactive_idle_threshold") or float(
             os.environ.get("BRAIN_PROACTIVE_IDLE_THRESHOLD", "180")

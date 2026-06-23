@@ -215,13 +215,22 @@ class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
         # though push-to-talk works fine.
         voice_up = self._voice_requested
 
+        # DMN + metacognition are intentionally OFF on a lite-tier brain (it runs no
+        # idle loops by design — see _setup_dmn/_setup_meta). Report that as "up", not
+        # "Degraded" — the same reasoning as voice_up above for the mic-less cloud path —
+        # so a correctly-lite brain doesn't show a permanent red pill. A full brain has
+        # them initialized, so this is a no-op there.
+        _lite_tier = getattr(self.router, "_local_disabled", False)
+        dmn_up = (self.dmn is not None) or _lite_tier
+        meta_up = (self.meta is not None) or _lite_tier
+
         logger.info(
             "Session %s online — UI:%s  Motor:%s  DMN:%s  Meta:%s  Voice:%s  Ears:%s",
             self.session_id,
             _on(self._ui_enabled),
             _on(self.motor is not None),
-            _on(self.dmn is not None),
-            _on(self.meta is not None),
+            _on(dmn_up),
+            _on(meta_up),
             _on(voice_up),
             _on(self.ears is not None),
         )
@@ -230,8 +239,8 @@ class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
                 {
                     "ui": self._ui_enabled,
                     "motor": self.motor is not None,
-                    "dmn": self.dmn is not None,
-                    "meta": self.meta is not None,
+                    "dmn": dmn_up,
+                    "meta": meta_up,
                     "voice": voice_up,
                     "ears": self.ears is not None,
                 }

@@ -205,9 +205,12 @@ def set_tier(agent_id: str, tier: str) -> dict:
 
 def effective_tier(persona: str) -> str:
     """A persona is one process, so it can't be both tiers at once. Its effective
-    tier is the max over its enabled agents — 'full' wins if ANY enabled agent of
-    the persona requires it, else 'lite'. The scheduler reads this to decide whether
-    to keep an awake local-thinking brain (its own pod) for the persona."""
+    tier is the max over its enabled agents — 'full' wins if ANY enabled agent of the
+    persona requires it. A persona with NO agent config defaults to 'full' (a normal
+    local-thinking brain with its own pod); 'lite' is opt-in — it applies only when the
+    persona has enabled agents and none of them requires full (e.g. ephemeral judge
+    personas). The scheduler reads this to decide whether to keep an awake
+    local-thinking brain (its own pod) for the persona."""
     persona_slug = _persona(persona)
     sb, org = _sb()
     res = (
@@ -219,6 +222,8 @@ def effective_tier(persona: str) -> str:
         .execute()
     )
     rows = res.data or []
+    if not rows:
+        return "full"
     return "full" if any((r.get("tier") or "lite") == "full" for r in rows) else "lite"
 
 
