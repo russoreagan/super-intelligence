@@ -27,7 +27,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import os
+import re
 import time
 
 logger = logging.getLogger(__name__)
@@ -52,7 +54,12 @@ _CONTAINER_DISK_GB = 10
 # Persistent model storage (optional, env-driven). When RUNPOD_NETWORK_VOLUME_ID is
 # set, a pre-existing RunPod *network volume* is mounted at _VOLUME_MOUNT instead of
 # a fresh per-pod disk, so the ~20GB qwen model survives pod create/destroy and is
-# never re-downloaded. Two consequences, both intentional:
+# never re-downloaded. Three consequences, all intentional:
+#   • Network volumes attach ONLY to Secure Cloud, so a volume-backed pod runs on
+#     SECURE cloud (a bit pricier/hr than COMMUNITY). GPU ranking prices against secure
+#     availability so the $0.50/hr ceiling still holds. If no secure GPU is under the
+#     ceiling, create falls back to a COMMUNITY pod WITHOUT the volume (affordable but
+#     cold — re-downloads the model) rather than failing to a pod-less state.
 #   • A network volume lives in ONE datacenter; pods must deploy there. Set
 #     RUNPOD_DATA_CENTER_ID to that DC (else RunPod infers it from the volume id).
 #     Under GPU scarcity this can mean more cloud fallback when that DC is dry.
@@ -65,7 +72,11 @@ _MIN_VCPU = 2
 _MIN_MEMORY_GB = 15
 
 # GPU selection policy
-_VRAM_FLOOR_GB = 24  # minimum acceptable VRAM
+# _VRAM_FLOOR_GB is the FALLBACK floor for an unsized/unknown model. The real floor is
+# derived per-model from RUNPOD_MODEL (see _min_vram_gb): a 32B needs ~40GB to sit on
+# the GPU, and deploying it onto a 24GB card (which then runs on CPU and fails the
+# residency gate) is the bug this guards against.
+_VRAM_FLOOR_GB = 24  # fallback minimum VRAM when the model size can't be parsed
 _PRICE_CEILING = 0.50  # max $/hr — hard cutoff
 
 _POLL_S = 5.0
@@ -81,8 +92,11 @@ _LIVENESS_POLL_S = 120.0
 # every DMN/inference call times out (silent total failure). Require the model to be
 # (almost) fully resident in VRAM before a pod is considered healthy/ready.
 _MIN_GPU_FRACTION = 0.9
-# After failing to bring up any healthy pod, wait this long before trying again so a
-# systemic fault (e.g. a bad image) can't churn create→terminate every tick.
+# Back-off after a pod CAME UP but failed health (bad image / CPU-only GPU) so a
+# systemic fault can't churn create→terminate every tick. Default for
+# _unhealthy_cooldown_s() (env-overridable). This does NOT apply to a pure supply
+# shortage — that path stays cooldown-free so the reconciler keeps hunting for a
+# good-fit GPU rather than settling for a worse one.
 _UNHEALTHY_COOLDOWN_S = 1800.0
 
 # Warmup runs in the background (never blocks boot). Loading a 32B model from disk
@@ -98,6 +112,19 @@ def _required_models() -> list[str]:
         os.environ.get("RUNPOD_MODEL", "qwen2.5:32b"),
         os.environ.get("OLLAMA_EMBED_MODEL", "nomic-embed-text"),
     ]
+
+
+def _unhealthy_cooldown_s() -> float:
+    """Back-off after a pod CAME UP but failed health (churn guard). Env-overridable
+    (RUNPOD_UNHEALTHY_COOLDOWN_S). NOTE: this never applies to a pure supply shortage —
+    that path stays cooldown-free so the reconciler keeps hunting for a good-fit GPU."""
+    raw = os.environ.get("RUNPOD_UNHEALTHY_COOLDOWN_S", "").strip()
+    if raw:
+        try:
+            return float(raw)
+        except ValueError:
+            pass
+    return _UNHEALTHY_COOLDOWN_S
 
 
 class RunPodManager:
@@ -158,24 +185,87 @@ class RunPodManager:
 
     # ── GPU selection ─────────────────────────────────────────────────────────
 
-    async def _fetch_gpu_types(self) -> list[dict]:
-        data = await self._gql("""{ gpuTypes {
-            id displayName memoryInGb
-            lowestPrice(input: {gpuCount: 1}) { uninterruptablePrice }
-        } }""")
+    async def _fetch_gpu_types(
+        self, *, secure: bool | None = None, data_center: str | None = None
+    ) -> list[dict]:
+        """GPU types with lowest price. `secure` filters pricing to Secure Cloud (the
+        only cloud a network volume can attach to); `data_center` further pins it to the
+        volume's DC. Both default from the env (volume set → secure + its DC) so existing
+        callers keep working; the two-phase create overrides them to price community on
+        the fallback leg."""
+        if secure is None:
+            secure = bool(self._network_volume_id())
+        if data_center is None:
+            data_center = self._data_center_id() if secure else ""
+        price_input: dict = {"gpuCount": 1}
+        if secure:
+            price_input["secureCloud"] = True
+            if data_center:
+                price_input["dataCenterId"] = data_center
+        data = await self._gql(
+            """query($input: GpuLowestPriceInput!) { gpuTypes {
+                id displayName memoryInGb
+                lowestPrice(input: $input) { uninterruptablePrice }
+            } }""",
+            {"input": price_input},
+        )
         return data["gpuTypes"]
 
+    @staticmethod
+    def _min_vram_gb() -> int:
+        """Minimum GPU VRAM (GB) a candidate must have to actually RUN the configured
+        model ON the GPU — not spill to CPU and fail the residency gate (the root cause
+        of 'booted a pod but still on cloud': a 32B deployed onto a 24GB card).
+
+        Derived from the model's parameter count (Q4 weights + KV + headroom ≈ params·
+        1.25), so changing RUNPOD_MODEL auto-adjusts the floor: 32b→40, 14b→18, 7b→12.
+        Override with RUNPOD_MIN_VRAM_GB. Unparseable model → the conservative fallback."""
+        override = os.environ.get("RUNPOD_MIN_VRAM_GB", "").strip()
+        if override:
+            try:
+                return int(float(override))
+            except ValueError:
+                pass
+        model = os.environ.get("RUNPOD_MODEL", "qwen2.5:32b")
+        m = re.search(r"(\d+(?:\.\d+)?)\s*b\b", model.lower())
+        if not m:
+            return _VRAM_FLOOR_GB
+        return max(12, math.ceil(float(m.group(1)) * 1.25))
+
     def _rank_gpus(self, gpu_types: list[dict]) -> list[dict]:
-        """Most VRAM first, ties by lowest price, hard ceiling $0.50/hr."""
+        """Most VRAM first, ties by lowest price, hard ceiling $0.50/hr. The VRAM floor
+        is model-aware (see _min_vram_gb) so a GPU too small to actually run the model is
+        never offered — deploying onto it would just fail the residency gate."""
+        floor = self._min_vram_gb()
         candidates = []
         for g in gpu_types:
             price = (g.get("lowestPrice") or {}).get("uninterruptablePrice")
             vram = g.get("memoryInGb", 0)
-            if price is None or vram < _VRAM_FLOOR_GB or price > _PRICE_CEILING:
+            if price is None or vram < floor or price > _PRICE_CEILING:
                 continue
             candidates.append({**g, "_price": price})
         candidates.sort(key=lambda g: (-g["memoryInGb"], g["_price"]))
         return candidates
+
+    async def _create_candidates(self) -> list[dict]:
+        """Ordered create attempts as {gpu, cloud_type, attach_volume}, each under the
+        price ceiling.
+
+        No network volume → community GPUs only (the original behavior).
+        With a network volume → SECURE GPUs first (volume attaches → warm start), THEN a
+        COMMUNITY fallback WITHOUT the volume (affordable but cold/re-download) for when
+        no secure GPU under the ceiling is available — a cheap cold pod beats no pod
+        (local-routed cells have no cloud fallback). De-dup so a card affordable on both
+        clouds isn't tried twice on the same leg."""
+        if not self._network_volume_id():
+            ranked = self._rank_gpus(await self._fetch_gpu_types(secure=False))
+            return [{"gpu": g, "cloud_type": "COMMUNITY", "attach_volume": False} for g in ranked]
+
+        secure = self._rank_gpus(await self._fetch_gpu_types(secure=True))
+        out = [{"gpu": g, "cloud_type": "SECURE", "attach_volume": True} for g in secure]
+        community = self._rank_gpus(await self._fetch_gpu_types(secure=False))
+        out += [{"gpu": g, "cloud_type": "COMMUNITY", "attach_volume": False} for g in community]
+        return out
 
     # ── Pod lifecycle ─────────────────────────────────────────────────────────
 
@@ -209,15 +299,29 @@ class RunPodManager:
         the volume id when empty; set it to pin GPU deploys to that DC."""
         return os.environ.get("RUNPOD_DATA_CENTER_ID", "").strip()
 
-    async def _create_pod(self, gpu_id: str) -> str | None:
-        # With a network volume the model files live ON THE VOLUME, not a per-pod
-        # disk: request volumeInGb=0 (allocate no separate disk) and let the volume
-        # mount at _VOLUME_MOUNT. RunPod deploys the pod in the volume's datacenter
-        # (pinned by dataCenterId, else inferred). Both fields are nullable variables,
-        # so when unset the mutation is byte-for-byte equivalent to the old per-pod-disk
-        # create (volumeInGb=50, no network volume).
-        net_vol = self._network_volume_id()
-        data_center = self._data_center_id()
+    async def _create_pod(
+        self, gpu_id: str, *, cloud_type: str | None = None, attach_volume: bool | None = None
+    ) -> str | None:
+        # With a network volume the model files live ON THE VOLUME, not a per-pod disk:
+        # request volumeInGb=0 (allocate no separate disk) and mount the volume at
+        # _VOLUME_MOUNT in its datacenter. Network volumes attach ONLY to Secure Cloud,
+        # so attaching one forces cloudType: SECURE.
+        #
+        # `attach_volume`/`cloud_type` default from the env (volume set → attach + SECURE;
+        # else COMMUNITY, no volume — byte-for-byte the original per-pod-disk create). The
+        # two-phase create in ensure_running passes them explicitly: SECURE+attach first,
+        # then a COMMUNITY+no-attach fallback (affordable but cold — a community pod can't
+        # use the volume) when no secure GPU is under the price ceiling.
+        if attach_volume is None:
+            attach_volume = bool(self._network_volume_id())
+        if cloud_type is None:
+            cloud_type = "SECURE" if attach_volume else "COMMUNITY"
+        # cloudType is a GraphQL enum, not a String, so it can't ride a variable — splice
+        # a validated literal (never user input) into the query.
+        if cloud_type not in ("SECURE", "COMMUNITY", "ALL"):
+            cloud_type = "COMMUNITY"
+        net_vol = self._network_volume_id() if attach_volume else ""
+        data_center = self._data_center_id() if attach_volume else ""
         variables = {
             "gpuId": gpu_id,
             "volumeInGb": 0 if net_vol else _VOLUME_GB,
@@ -229,7 +333,7 @@ class RunPodManager:
                 """mutation($gpuId: String!, $volumeInGb: Int!,
                             $networkVolumeId: String, $dataCenterId: String) {
                 podFindAndDeployOnDemand(input: {
-                    cloudType: COMMUNITY,
+                    cloudType: __CLOUD_TYPE__,
                     gpuCount: 1,
                     volumeInGb: $volumeInGb,
                     containerDiskInGb: 10,
@@ -244,7 +348,7 @@ class RunPodManager:
                     dataCenterId: $dataCenterId,
                     env: [{key: "OLLAMA_HOST", value: "0.0.0.0"}]
                 }) { id }
-            }""",
+            }""".replace("__CLOUD_TYPE__", cloud_type),
                 variables,
             )
             pod_id = data["podFindAndDeployOnDemand"]["id"]
@@ -617,22 +721,29 @@ class RunPodManager:
                 except Exception as e:
                     logger.warning("[RunPod] Resume of %s failed (%s) — trying next", pod_id, e)
 
-            # No existing pod worked — create on best available GPU
-            gpu_types = await self._fetch_gpu_types()
-            ranked = self._rank_gpus(gpu_types)
-            if not ranked:
+            # No existing pod worked — create on best available GPU. In network-volume
+            # mode this is SECURE+volume first, then a COMMUNITY+no-volume fallback.
+            attempts = await self._create_candidates()
+            if not attempts:
                 logger.warning("[RunPod] No suitable GPU available — using local Ollama")
                 self._clear_host()
                 return False
 
-            for gpu in ranked:
+            for cand in attempts:
+                gpu = cand["gpu"]
                 logger.info(
-                    "[RunPod] Trying %s (%dGB, $%.2f/hr)",
+                    "[RunPod] Trying %s (%dGB, $%.2f/hr, %s%s)",
                     gpu["displayName"],
                     gpu["memoryInGb"],
                     gpu["_price"],
+                    cand["cloud_type"],
+                    "+volume" if cand["attach_volume"] else "",
                 )
-                pod_id = await self._create_pod(gpu["id"])
+                pod_id = await self._create_pod(
+                    gpu["id"],
+                    cloud_type=cand["cloud_type"],
+                    attach_volume=cand["attach_volume"],
+                )
                 if pod_id:
                     self._pod_id = pod_id
                     self._current_price = gpu["_price"]
@@ -769,33 +880,63 @@ class RunPodManager:
                     if self._network_volume_id():
                         await self._terminate_pod(pod_id)
 
-            # Nothing healthy to resume — create on the best GPU.
+            # Nothing healthy to resume — create on the best GPU. In network-volume mode
+            # this tries SECURE+volume first (warm), then a COMMUNITY+no-volume fallback
+            # (cold) when no secure GPU is under the ceiling — see _create_candidates.
             try:
                 self._set_status("resuming", "provisioning a GPU")
-                ranked = self._rank_gpus(await self._fetch_gpu_types())
+                attempts = await self._create_candidates()
             except Exception as e:
                 logger.warning("[RunPod] ensure_running GPU fetch failed: %s", e)
                 self._set_status("failed", "GPU lookup failed")
                 return False
-            for gpu in ranked:
-                new_id = await self._create_pod(gpu["id"])
+            created_unhealthy = False  # did a pod actually come up but fail health?
+            for cand in attempts:
+                gpu = cand["gpu"]
+                new_id = await self._create_pod(
+                    gpu["id"],
+                    cloud_type=cand["cloud_type"],
+                    attach_volume=cand["attach_volume"],
+                )
                 if new_id:
                     self._pod_id = new_id
                     self._known_pod_id = new_id
                     self._current_price = gpu["_price"]
                     if await self._activate_pod(new_id):
                         self._start_watcher()
-                        logger.info("[RunPod] Pod %s created + running (demand>0)", new_id)
+                        logger.info(
+                            "[RunPod] Pod %s created + running (demand>0, %s%s)",
+                            new_id,
+                            cand["cloud_type"],
+                            "+volume" if cand["attach_volume"] else "",
+                        )
                         return True
                     await self._retire_unhealthy(new_id)  # delete the dud, try next GPU
+                    created_unhealthy = True
 
-            logger.warning(
-                "[RunPod] No healthy GPU pod could be brought up — cloud fallback, "
-                "cooling down %.0fmin",
-                _UNHEALTHY_COOLDOWN_S / 60,
-            )
-            self._cooldown_until = time.time() + _UNHEALTHY_COOLDOWN_S
-            self._set_status("failed", "no healthy GPU pod — using cloud")
+            # Acquisition failed. Distinguish two very different causes:
+            #   • CHURN: a pod CAME UP but failed health (bad image / CPU-only GPU).
+            #     Retrying immediately would create→terminate every tick, so back off.
+            #   • SUPPLY: nothing was created — the right-sized GPUs (model-aware floor +
+            #     price ceiling) are just out of stock. No pod was made, so there's no
+            #     churn cost. Per the operator's preference — wait for a GOOD fit rather
+            #     than settle for a smaller/pricier pod — DON'T cool down: stay on cloud
+            #     and let the reconciler keep hunting each tick, grabbing the right GPU
+            #     the moment inventory frees up.
+            if created_unhealthy:
+                logger.warning(
+                    "[RunPod] No HEALTHY GPU pod could be brought up — cloud fallback, "
+                    "cooling down %.0fmin (churn guard)",
+                    _unhealthy_cooldown_s() / 60,
+                )
+                self._cooldown_until = time.time() + _unhealthy_cooldown_s()
+                self._set_status("failed", "no healthy GPU pod — using cloud")
+            else:
+                logger.info(
+                    "[RunPod] Right-sized GPU out of stock — staying on cloud, will keep "
+                    "searching for good inventory (no cooldown)."
+                )
+                self._set_status("failed", "preferred GPU out of stock — searching")
             return False
 
     async def pause(self) -> None:

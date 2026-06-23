@@ -258,6 +258,219 @@ def test_create_pod_attaches_network_volume(monkeypatch):
     assert v["dataCenterId"] == "EU-RO-1"
     assert v["volumeInGb"] == 0, "must request no separate per-pod disk"
     assert "$networkVolumeId" in captured["query"]
+    # Network volumes attach only to Secure Cloud — the create must request SECURE.
+    assert "cloudType: SECURE" in captured["query"]
+
+
+def test_fetch_gpu_types_prices_secure_in_network_volume_mode(monkeypatch):
+    """In network-volume mode GPU pricing must be queried against SECURE availability
+    (and the pinned DC) so the $0.50/hr ceiling reflects the secure pod we'll deploy."""
+    monkeypatch.setenv("RUNPOD_NETWORK_VOLUME_ID", "vol123")
+    monkeypatch.setenv("RUNPOD_DATA_CENTER_ID", "EU-RO-1")
+    m = _mgr()
+    captured: dict = {}
+
+    async def fake_gql(query, variables=None):
+        captured["variables"] = variables
+        return {"gpuTypes": []}
+
+    m._gql = fake_gql  # type: ignore[assignment]
+    asyncio.run(m._fetch_gpu_types())
+    pi = captured["variables"]["input"]
+    assert pi["secureCloud"] is True
+    assert pi["dataCenterId"] == "EU-RO-1"
+
+
+def test_fetch_gpu_types_prices_any_cloud_without_volume(monkeypatch):
+    """Default (no volume): price across all clouds (no secureCloud filter), unchanged."""
+    monkeypatch.delenv("RUNPOD_NETWORK_VOLUME_ID", raising=False)
+    m = _mgr()
+    captured: dict = {}
+
+    async def fake_gql(query, variables=None):
+        captured["variables"] = variables
+        return {"gpuTypes": []}
+
+    m._gql = fake_gql  # type: ignore[assignment]
+    asyncio.run(m._fetch_gpu_types())
+    pi = captured["variables"]["input"]
+    assert "secureCloud" not in pi
+    assert pi == {"gpuCount": 1}
+
+
+def _gpu(id_, vram, price):
+    return {"id": id_, "displayName": id_, "memoryInGb": vram,
+            "lowestPrice": {"uninterruptablePrice": price}}
+
+
+def test_create_candidates_secure_first_then_community_in_netvol_mode(monkeypatch):
+    """With a network volume, create attempts are SECURE+volume first (warm), then a
+    COMMUNITY+no-volume fallback (cold) so an affordable community GPU is still tried
+    when no secure GPU is under the ceiling."""
+    monkeypatch.setenv("RUNPOD_NETWORK_VOLUME_ID", "vol123")
+    monkeypatch.setenv("RUNPOD_MIN_VRAM_GB", "16")  # isolate sequencing from the model floor
+    m = _mgr()
+
+    async def fake_fetch(*, secure=None, data_center=None):
+        return [_gpu("A40", 48, 0.40)] if secure else [_gpu("3090", 24, 0.22)]
+
+    m._fetch_gpu_types = fake_fetch  # type: ignore[assignment]
+    cands = asyncio.run(m._create_candidates())
+    assert [(c["gpu"]["id"], c["cloud_type"], c["attach_volume"]) for c in cands] == [
+        ("A40", "SECURE", True),
+        ("3090", "COMMUNITY", False),
+    ]
+
+
+def test_create_candidates_community_only_without_volume(monkeypatch):
+    monkeypatch.delenv("RUNPOD_NETWORK_VOLUME_ID", raising=False)
+    monkeypatch.setenv("RUNPOD_MIN_VRAM_GB", "16")  # isolate sequencing from the model floor
+    m = _mgr()
+
+    async def fake_fetch(*, secure=None, data_center=None):
+        assert not secure, "no network volume → never query secure-only pricing"
+        return [_gpu("3090", 24, 0.22)]
+
+    m._fetch_gpu_types = fake_fetch  # type: ignore[assignment]
+    cands = asyncio.run(m._create_candidates())
+    assert [(c["cloud_type"], c["attach_volume"]) for c in cands] == [("COMMUNITY", False)]
+
+
+def test_create_pod_community_fallback_does_not_attach_volume(monkeypatch):
+    """The COMMUNITY fallback leg must NOT attach the network volume (community pods
+    can't), even with RUNPOD_NETWORK_VOLUME_ID set: it deploys a plain per-pod-disk pod
+    that re-downloads the model."""
+    monkeypatch.setenv("RUNPOD_NETWORK_VOLUME_ID", "vol123")
+    m = _mgr()
+    captured: dict = {}
+
+    async def fake_gql(query, variables=None):
+        captured["query"] = query
+        captured["variables"] = variables
+        return {"podFindAndDeployOnDemand": {"id": "podCOMM"}}
+
+    m._gql = fake_gql  # type: ignore[assignment]
+    assert asyncio.run(
+        m._create_pod("3090", cloud_type="COMMUNITY", attach_volume=False)
+    ) == "podCOMM"
+    v = captured["variables"]
+    assert v["networkVolumeId"] is None
+    assert v["volumeInGb"] == rm._VOLUME_GB
+    assert "cloudType: COMMUNITY" in captured["query"]
+
+
+# ── model-aware GPU VRAM floor (don't deploy a model onto a too-small card) ──
+
+
+def test_min_vram_floor_scales_with_model(monkeypatch):
+    """The floor is derived from the model size so a 32B isn't deployed onto a 24GB
+    card (where it spills to CPU and fails the residency gate)."""
+    monkeypatch.delenv("RUNPOD_MIN_VRAM_GB", raising=False)
+    m = _mgr()
+    monkeypatch.setenv("RUNPOD_MODEL", "qwen2.5:32b")
+    assert m._min_vram_gb() == 40  # needs an A40/A6000-class card
+    monkeypatch.setenv("RUNPOD_MODEL", "qwen2.5:14b")
+    assert m._min_vram_gb() == 18  # a 24GB card is fine
+    monkeypatch.setenv("RUNPOD_MODEL", "qwen2.5:7b")
+    assert m._min_vram_gb() == 12
+
+
+def test_min_vram_floor_env_override(monkeypatch):
+    monkeypatch.setenv("RUNPOD_MODEL", "qwen2.5:32b")
+    monkeypatch.setenv("RUNPOD_MIN_VRAM_GB", "48")
+    assert _mgr()._min_vram_gb() == 48
+
+
+def test_min_vram_floor_falls_back_when_unparseable(monkeypatch):
+    monkeypatch.delenv("RUNPOD_MIN_VRAM_GB", raising=False)
+    monkeypatch.setenv("RUNPOD_MODEL", "nomic-embed-text")
+    assert _mgr()._min_vram_gb() == rm._VRAM_FLOOR_GB  # conservative default
+
+
+def test_rank_gpus_excludes_too_small_for_32b(monkeypatch):
+    """With 32B configured, 24GB cards must be filtered out (they'd run on CPU); the
+    48GB A40/A6000 under the ceiling are kept and preferred (most VRAM first)."""
+    monkeypatch.delenv("RUNPOD_MIN_VRAM_GB", raising=False)
+    monkeypatch.setenv("RUNPOD_MODEL", "qwen2.5:32b")
+    m = _mgr()
+    ranked = m._rank_gpus([
+        _gpu("A6000", 48, 0.33),
+        _gpu("A40", 48, 0.35),
+        _gpu("4090", 24, 0.34),   # too small for 32B
+        _gpu("L4", 24, 0.44),     # too small for 32B
+        _gpu("L40S", 48, 0.79),   # over the $0.50 ceiling
+    ])
+    ids = [g["id"] for g in ranked]
+    assert ids == ["A6000", "A40"], "only affordable 48GB cards qualify for 32B"
+
+
+def test_rank_gpus_allows_24gb_for_14b(monkeypatch):
+    monkeypatch.delenv("RUNPOD_MIN_VRAM_GB", raising=False)
+    monkeypatch.setenv("RUNPOD_MODEL", "qwen2.5:14b")
+    m = _mgr()
+    ranked = m._rank_gpus([_gpu("3090", 24, 0.22), _gpu("A5000", 24, 0.16)])
+    assert {g["id"] for g in ranked} == {"3090", "A5000"}, "24GB cards run 14B fine"
+
+
+# ── keep searching for good inventory vs. cool down on churn ─────────────────
+
+
+def test_ensure_running_supply_shortage_does_not_cooldown(monkeypatch):
+    """A right-sized GPU exists but every create fails on supply (nothing created):
+    DON'T cool down — keep hunting each reconcile tick rather than settling for a worse
+    pod or going quiet for 30min. (Operator preference: patient + picky.)"""
+    monkeypatch.delenv("RUNPOD_MIN_VRAM_GB", raising=False)
+    monkeypatch.setenv("RUNPOD_MODEL", "qwen2.5:32b")
+    m = _mgr()
+
+    async def no_pods():
+        return []
+
+    async def some_gpus(*, secure=None, data_center=None):
+        return [_gpu("A40", 48, 0.35)]  # valid, but create will fail on supply
+
+    async def fail_create(*a, **k):
+        return None  # SUPPLY_CONSTRAINT → no pod created
+
+    m._find_existing_pods = no_pods  # type: ignore[assignment]
+    m._fetch_gpu_types = some_gpus  # type: ignore[assignment]
+    m._create_pod = fail_create  # type: ignore[assignment]
+
+    assert asyncio.run(m.ensure_running()) is False
+    assert m._cooldown_until == 0.0, "supply shortage must NOT trigger a cooldown"
+    assert m.status()["state"] == "failed"
+
+
+def test_ensure_running_churn_triggers_cooldown(monkeypatch):
+    """A pod that comes UP but fails health (churn) DOES cool down — otherwise it would
+    create→terminate every tick on a bad image/GPU."""
+    monkeypatch.delenv("RUNPOD_MIN_VRAM_GB", raising=False)
+    monkeypatch.setenv("RUNPOD_MODEL", "qwen2.5:32b")
+    m = _mgr()
+
+    async def no_pods():
+        return []
+
+    async def some_gpus(*, secure=None, data_center=None):
+        return [_gpu("A40", 48, 0.35)]
+
+    async def make_pod(*a, **k):
+        return "podBad"
+
+    async def bad_activate(_pid):
+        return False  # came up but unhealthy
+
+    async def fake_retire(_pid):
+        pass
+
+    m._find_existing_pods = no_pods  # type: ignore[assignment]
+    m._fetch_gpu_types = some_gpus  # type: ignore[assignment]
+    m._create_pod = make_pod  # type: ignore[assignment]
+    m._activate_pod = bad_activate  # type: ignore[assignment]
+    m._retire_unhealthy = fake_retire  # type: ignore[assignment]
+
+    assert asyncio.run(m.ensure_running()) is False
+    assert m._cooldown_until > 0.0, "churn (created-but-unhealthy) must cool down"
 
 
 def test_create_pod_without_network_volume_uses_per_pod_disk(monkeypatch):
@@ -269,6 +482,7 @@ def test_create_pod_without_network_volume_uses_per_pod_disk(monkeypatch):
     captured: dict = {}
 
     async def fake_gql(query, variables=None):
+        captured["query"] = query
         captured["variables"] = variables
         return {"podFindAndDeployOnDemand": {"id": "podDISK"}}
 
@@ -278,6 +492,7 @@ def test_create_pod_without_network_volume_uses_per_pod_disk(monkeypatch):
     assert v["networkVolumeId"] is None
     assert v["dataCenterId"] is None
     assert v["volumeInGb"] == rm._VOLUME_GB == 50
+    assert "cloudType: COMMUNITY" in captured["query"]
 
 
 def test_pause_terminates_pod_in_network_volume_mode(monkeypatch):
