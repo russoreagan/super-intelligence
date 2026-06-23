@@ -6,8 +6,12 @@ Startup:  try to resume any stopped "ollama-brain" pod (multiple supported —
           If none resume, create a new pod on the best available GPU and pull
           the required models automatically before marking ready.
 
-Shutdown: stop (not terminate) the active pod — volume and models persist for
-          the next session.
+Shutdown: stop (not terminate) the active pod — its per-pod volume + models
+          persist for the next session. In NETWORK-VOLUME mode
+          (RUNPOD_NETWORK_VOLUME_ID set) the pod is TERMINATED instead: the models
+          live on the persistent network volume, so a stopped pod's disk would only
+          burn idle-storage $ with nothing worth keeping — the next pod re-attaches
+          the same volume warm (no model re-download).
 
 Watcher:  liveness-only. While a pod is HELD it's probed every couple minutes and
           resumed if it stopped responding. It NEVER speculatively creates a pod
@@ -44,6 +48,19 @@ _PORT = 11434
 _VOLUME_MOUNT = "/root/.ollama"
 _VOLUME_GB = 50
 _CONTAINER_DISK_GB = 10
+
+# Persistent model storage (optional, env-driven). When RUNPOD_NETWORK_VOLUME_ID is
+# set, a pre-existing RunPod *network volume* is mounted at _VOLUME_MOUNT instead of
+# a fresh per-pod disk, so the ~20GB qwen model survives pod create/destroy and is
+# never re-downloaded. Two consequences, both intentional:
+#   • A network volume lives in ONE datacenter; pods must deploy there. Set
+#     RUNPOD_DATA_CENTER_ID to that DC (else RunPod infers it from the volume id).
+#     Under GPU scarcity this can mean more cloud fallback when that DC is dry.
+#   • pause() then TERMINATES the pod (see pause): a stopped pod's volume bills at
+#     the idle rate for nothing, since the durable data is on the network volume.
+# Empty (the default) → original behavior: ephemeral per-pod disk, re-pull on every
+# fresh pod. Read at call time (see _network_volume_id) so a deploy-env change is
+# picked up without a code change.
 _MIN_VCPU = 2
 _MIN_MEMORY_GB = 15
 
@@ -179,14 +196,42 @@ class RunPodManager:
         )
         logger.info("[RunPod] Resuming pod %s", pod_id)
 
+    @staticmethod
+    def _network_volume_id() -> str:
+        """Persistent RunPod network-volume id that holds the models across pod
+        create/destroy. Empty = ephemeral per-pod disk (original behavior). Read from
+        the env each call so a deploy-env change is picked up without a restart."""
+        return os.environ.get("RUNPOD_NETWORK_VOLUME_ID", "").strip()
+
+    @staticmethod
+    def _data_center_id() -> str:
+        """Datacenter the network volume lives in. Optional — RunPod infers it from
+        the volume id when empty; set it to pin GPU deploys to that DC."""
+        return os.environ.get("RUNPOD_DATA_CENTER_ID", "").strip()
+
     async def _create_pod(self, gpu_id: str) -> str | None:
+        # With a network volume the model files live ON THE VOLUME, not a per-pod
+        # disk: request volumeInGb=0 (allocate no separate disk) and let the volume
+        # mount at _VOLUME_MOUNT. RunPod deploys the pod in the volume's datacenter
+        # (pinned by dataCenterId, else inferred). Both fields are nullable variables,
+        # so when unset the mutation is byte-for-byte equivalent to the old per-pod-disk
+        # create (volumeInGb=50, no network volume).
+        net_vol = self._network_volume_id()
+        data_center = self._data_center_id()
+        variables = {
+            "gpuId": gpu_id,
+            "volumeInGb": 0 if net_vol else _VOLUME_GB,
+            "networkVolumeId": net_vol or None,
+            "dataCenterId": data_center or None,
+        }
         try:
             data = await self._gql(
-                """mutation($gpuId: String!) {
+                """mutation($gpuId: String!, $volumeInGb: Int!,
+                            $networkVolumeId: String, $dataCenterId: String) {
                 podFindAndDeployOnDemand(input: {
                     cloudType: COMMUNITY,
                     gpuCount: 1,
-                    volumeInGb: 50,
+                    volumeInGb: $volumeInGb,
                     containerDiskInGb: 10,
                     minVcpuCount: 2,
                     minMemoryInGb: 15,
@@ -195,13 +240,20 @@ class RunPodManager:
                     imageName: "ollama/ollama",
                     ports: "11434/http",
                     volumeMountPath: "/root/.ollama",
+                    networkVolumeId: $networkVolumeId,
+                    dataCenterId: $dataCenterId,
                     env: [{key: "OLLAMA_HOST", value: "0.0.0.0"}]
                 }) { id }
             }""",
-                {"gpuId": gpu_id},
+                variables,
             )
             pod_id = data["podFindAndDeployOnDemand"]["id"]
-            logger.info("[RunPod] Created pod %s on %s", pod_id, gpu_id)
+            logger.info(
+                "[RunPod] Created pod %s on %s%s",
+                pod_id,
+                gpu_id,
+                f" (network volume {net_vol})" if net_vol else "",
+            )
             return pod_id
         except Exception as e:
             logger.warning("[RunPod] Failed to create pod on %s: %s", gpu_id, e)
@@ -709,6 +761,13 @@ class RunPodManager:
                     self._unhealthy.add(pod_id)
                     if self._known_pod_id == pod_id:
                         self._known_pod_id = None
+                    # Network-volume mode: a stopped pod that won't resume still holds
+                    # the volume attached, which would block the create path below from
+                    # re-attaching it (a wedge → permanent cloud fallback). The models
+                    # live on the volume, not the pod, so terminating the un-resumable
+                    # pod is safe and frees the volume for a fresh create.
+                    if self._network_volume_id():
+                        await self._terminate_pod(pod_id)
 
             # Nothing healthy to resume — create on the best GPU.
             try:
@@ -754,8 +813,22 @@ class RunPodManager:
                 self._warmup_task = None
             self._stop_watchdog()
             if self._pod_id:
-                await self._stop_pod(self._pod_id)
-                logger.info("[RunPod] Pod %s paused (no live brains)", self._pod_id)
+                if self._network_volume_id():
+                    # Models persist on the network volume, so the pod's own disk holds
+                    # nothing worth keeping. TERMINATE (not stop) so a stopped pod's
+                    # volume isn't billed at the idle rate; the next ensure_running()
+                    # creates a fresh pod that re-attaches the same volume warm.
+                    await self._terminate_pod(self._pod_id)
+                    logger.info(
+                        "[RunPod] Pod %s terminated (models persist on network volume %s)",
+                        self._pod_id,
+                        self._network_volume_id(),
+                    )
+                    # Nothing to resume — create fresh next time (re-attaches the volume).
+                    self._known_pod_id = None
+                else:
+                    await self._stop_pod(self._pod_id)
+                    logger.info("[RunPod] Pod %s paused (no live brains)", self._pod_id)
                 self._pod_id = None
             self._set_status("off")
 
@@ -810,8 +883,10 @@ class RunPodManager:
             logger.warning("[RunPod] Failed to stop pod %s: %s", pod_id, e)
 
     async def _terminate_pod(self, pod_id: str) -> None:
-        """Permanently delete a pod (frees its volume → stops storage charges). Used
-        for confirmed-unhealthy pods so they aren't rediscovered or billed."""
+        """Permanently delete a pod. Frees its per-pod container disk; a network volume
+        (if attached) PERSISTS with its models — terminating only detaches it, freeing
+        it to re-attach to the next pod. Used for confirmed-unhealthy pods (so they
+        aren't rediscovered or billed) and, in network-volume mode, on pause."""
         try:
             await self._gql(
                 "mutation($id: String!) { podTerminate(input: {podId: $id}) }",

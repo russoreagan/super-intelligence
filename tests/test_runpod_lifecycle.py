@@ -234,6 +234,132 @@ def test_pause_consumer_is_noop():
     assert m._pod_id == "shared"
 
 
+# ── network volume: persist models across pod create/destroy ────────────────
+
+
+def test_create_pod_attaches_network_volume(monkeypatch):
+    """With RUNPOD_NETWORK_VOLUME_ID set, the create mutation attaches the network
+    volume (volumeInGb=0, networkVolumeId + dataCenterId) so the ~20GB model persists
+    on it instead of a fresh per-pod disk that would re-download on every cold start."""
+    monkeypatch.setenv("RUNPOD_NETWORK_VOLUME_ID", "vol123")
+    monkeypatch.setenv("RUNPOD_DATA_CENTER_ID", "EU-RO-1")
+    m = _mgr()
+    captured: dict = {}
+
+    async def fake_gql(query, variables=None):
+        captured["query"] = query
+        captured["variables"] = variables
+        return {"podFindAndDeployOnDemand": {"id": "podNEW"}}
+
+    m._gql = fake_gql  # type: ignore[assignment]
+    assert asyncio.run(m._create_pod("NVIDIA RTX 4090")) == "podNEW"
+    v = captured["variables"]
+    assert v["networkVolumeId"] == "vol123"
+    assert v["dataCenterId"] == "EU-RO-1"
+    assert v["volumeInGb"] == 0, "must request no separate per-pod disk"
+    assert "$networkVolumeId" in captured["query"]
+
+
+def test_create_pod_without_network_volume_uses_per_pod_disk(monkeypatch):
+    """Default (no volume id) is byte-for-byte the original behavior: a 50GB per-pod
+    disk and no network volume / datacenter pin."""
+    monkeypatch.delenv("RUNPOD_NETWORK_VOLUME_ID", raising=False)
+    monkeypatch.delenv("RUNPOD_DATA_CENTER_ID", raising=False)
+    m = _mgr()
+    captured: dict = {}
+
+    async def fake_gql(query, variables=None):
+        captured["variables"] = variables
+        return {"podFindAndDeployOnDemand": {"id": "podDISK"}}
+
+    m._gql = fake_gql  # type: ignore[assignment]
+    assert asyncio.run(m._create_pod("gpu")) == "podDISK"
+    v = captured["variables"]
+    assert v["networkVolumeId"] is None
+    assert v["dataCenterId"] is None
+    assert v["volumeInGb"] == rm._VOLUME_GB == 50
+
+
+def test_pause_terminates_pod_in_network_volume_mode(monkeypatch):
+    """In network-volume mode pause TERMINATES the pod (not stop): a stopped pod's
+    volume bills at the idle rate for nothing, since the models live on the network
+    volume. The known id is cleared so the next ensure_running creates a fresh pod
+    that re-attaches the volume warm."""
+    monkeypatch.setenv("RUNPOD_NETWORK_VOLUME_ID", "vol123")
+    m = _mgr()
+    m._pod_id = "podX"
+    m._known_pod_id = "podX"
+    terminated: list[str] = []
+    stopped: list[str] = []
+
+    async def fake_terminate(pid):
+        terminated.append(pid)
+
+    async def fake_stop(pid):  # pragma: no cover - must not be called
+        stopped.append(pid)
+
+    m._terminate_pod = fake_terminate  # type: ignore[assignment]
+    m._stop_pod = fake_stop  # type: ignore[assignment]
+    asyncio.run(m.pause())
+    assert terminated == ["podX"]
+    assert stopped == [], "must terminate, never stop, in network-volume mode"
+    assert m._pod_id is None
+    assert m._known_pod_id is None, "no pod to resume — create fresh next time"
+    assert m.status()["state"] == "off"
+
+
+def test_pause_stops_pod_without_network_volume(monkeypatch):
+    """Without a network volume pause STOPS the pod (preserving its disk) and keeps
+    the known id — the original resume-the-same-pod behavior is untouched."""
+    monkeypatch.delenv("RUNPOD_NETWORK_VOLUME_ID", raising=False)
+    m = _mgr()
+    m._pod_id = "podX"
+    m._known_pod_id = "podX"
+    stopped: list[str] = []
+    terminated: list[str] = []
+
+    async def fake_stop(pid):
+        stopped.append(pid)
+
+    async def fake_terminate(pid):  # pragma: no cover - must not be called
+        terminated.append(pid)
+
+    m._stop_pod = fake_stop  # type: ignore[assignment]
+    m._terminate_pod = fake_terminate  # type: ignore[assignment]
+    asyncio.run(m.pause())
+    assert stopped == ["podX"]
+    assert terminated == []
+    assert m._pod_id is None
+    assert m._known_pod_id == "podX", "known id retained for resume"
+
+
+def test_ensure_running_terminates_unresumable_pod_in_netvol_mode(monkeypatch):
+    """In network-volume mode a known pod that won't resume must be terminated to
+    release the volume — otherwise a fresh create can't re-attach it (a wedge that
+    dead-ends on permanent cloud fallback)."""
+    monkeypatch.setenv("RUNPOD_NETWORK_VOLUME_ID", "vol123")
+    m = _mgr()
+    m._known_pod_id = "podStuck"
+    terminated: list[str] = []
+
+    async def boom_resume(_pid):
+        raise RuntimeError("DC out of GPUs")
+
+    async def fake_terminate(pid):
+        terminated.append(pid)
+
+    async def no_gpus():
+        return []
+
+    m._resume_pod = boom_resume  # type: ignore[assignment]
+    m._terminate_pod = fake_terminate  # type: ignore[assignment]
+    m._fetch_gpu_types = no_gpus  # type: ignore[assignment]
+
+    assert asyncio.run(m.ensure_running()) is False
+    assert "podStuck" in terminated, "un-resumable pod must be terminated to free the volume"
+    assert "podStuck" in m._unhealthy
+
+
 # ── watcher: liveness-only, never speculatively creates ─────────────────────
 
 
@@ -291,6 +417,17 @@ def test_live_count_excludes_dead_unreaped_procs():
     assert prov.live_count() == 2
     prov._procs = {}
     assert prov.live_count() == 0
+
+
+def test_full_count_counts_only_live_full_tier_brains():
+    prov = pv.Provisioner()
+    full = pv._Proc(_FakeProc(True), 9001)  # default tier 'full'
+    lite = pv._Proc(_FakeProc(True), 9002)
+    lite.tier = "lite"  # alive but never uses the pod
+    dead_full = pv._Proc(_FakeProc(False), 9003)  # full but died, not yet reaped
+    prov._procs = {"full": full, "lite": lite, "dead": dead_full}
+    assert prov.live_count() == 2  # full + lite are alive
+    assert prov.full_count() == 1  # only the live full brain drives the pod
 
 
 def test_published_host_tracks_pod_identity():
