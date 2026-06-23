@@ -252,6 +252,11 @@ class _SetupMixin:
                 and hasattr(getattr(self, "motor", None)._cloud, "reload_mcp_config")
                 else None
             ),
+            # Report the resolved tier on /health so the gateway only spins the shared
+            # GPU pod for full-tier brains. _local_disabled is the authoritative signal:
+            # a lite brain has local routing off (every local/runpod route → cloud), so
+            # it never touches the pod. Read lazily so it reflects the final resolution.
+            tier_fn=lambda: "lite" if getattr(self.router, "_local_disabled", False) else "full",
             wiring=self.wiring,
             bus=self.bus,
         )

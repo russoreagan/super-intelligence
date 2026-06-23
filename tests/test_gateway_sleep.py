@@ -43,6 +43,11 @@ class _FakeProv:
     def live_count(self):
         return self._live
 
+    def full_count(self):
+        # The sleep path gates the pod on full-tier brains; in these tests every
+        # session is full, so it mirrors live_count.
+        return self._live
+
     def touch(self, t):  # pragma: no cover
         pass
 

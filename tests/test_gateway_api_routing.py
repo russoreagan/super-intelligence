@@ -55,6 +55,10 @@ class _FakeProv:
             return self._live
         return 1 if self._status else 0
 
+    def full_count(self):
+        # These tests treat every live brain as full-tier, so it mirrors live_count.
+        return self.live_count()
+
 
 class _FakeRunpod:
     def __init__(self):
@@ -101,6 +105,9 @@ def test_v1_rejects_unknown_token(monkeypatch):
 
 def test_v1_spawns_brain_and_kicks_pod_when_cold(monkeypatch):
     _patch(monkeypatch, "org-1")
+    # BRAIN_TIER=full is the authoritative override the hosted deploy runs under, so a
+    # cold brain is known-full → the pod is warmed eagerly to overlap its boot.
+    monkeypatch.setenv("BRAIN_TIER", "full")
     prov = _FakeProv(status=None)  # brain not up
     runpod = _FakeRunpod()
     app = gw.build_gateway_app(prov, [runpod])
@@ -118,6 +125,31 @@ def test_v1_spawns_brain_and_kicks_pod_when_cold(monkeypatch):
     assert r.status_code == 503  # partner retries while the brain boots
     assert "org-1" in prov.ensured, "the brain must be spawned on demand"
     assert runpod.ensured is True, "the pod must be kicked on the API path"
+
+
+def test_v1_cold_does_not_kick_pod_when_tier_unknown(monkeypatch):
+    # With per-tenant tiers (BRAIN_TIER unset) and no full brain already alive, an
+    # as-yet-unbooted brain's tier is unknown — it might be lite, which never uses the
+    # pod. So the API path must NOT eagerly spin a GPU; the reconciler brings the pod up
+    # only once the brain reports full on /health. The brain is still spawned on demand.
+    _patch(monkeypatch, "org-1")
+    monkeypatch.delenv("BRAIN_TIER", raising=False)
+    prov = _FakeProv(status=None)  # brain not up → full_count() == 0
+    runpod = _FakeRunpod()
+    app = gw.build_gateway_app(prov, [runpod])
+
+    async def run():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+            r = await c.post("/v1/sessions", headers={"authorization": "Bearer good"}, json={})
+        for _ in range(5):
+            await asyncio.sleep(0)
+        return r
+
+    r = asyncio.run(run())
+    assert r.status_code == 503
+    assert "org-1" in prov.ensured, "the brain must still be spawned on demand"
+    assert runpod.ensured is False, "no GPU pod for an unknown-tier (possibly lite) brain"
 
 
 def test_v1_routes_to_tenant_api_port_when_up(monkeypatch):

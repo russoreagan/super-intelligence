@@ -303,9 +303,27 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
     def _kick_pod() -> None:
         """Fire-and-forget: start resuming the shared pod NOW (don't wait for the
         reconciler's next tick) so its boot overlaps the brain boot and the UI
-        shows progress immediately. Idempotent — ensure_running() no-ops if alive."""
+        shows progress immediately. Idempotent — ensure_running() no-ops if alive.
+
+        Tier-aware: a lite brain never uses the pod, so don't eagerly spin a GPU for
+        one. We can't know an as-yet-unbooted brain's tier here (it's resolved inside
+        the process and reported on /health), so warm eagerly only when we have positive
+        reason to believe a full brain needs it:
+          • BRAIN_TIER=full — the operator's authoritative override (the current hosted
+            default; preserves the boot-overlap warm exactly as before), or
+          • a full brain is already alive (full_count>0) — the pod is likely already up,
+            so this is a cheap no-op that also covers a 2nd persona/tab.
+        BRAIN_TIER=lite never warms. When tier is per-tenant (BRAIN_TIER unset) a brand-new
+        full brain isn't warmed here — the reconciler brings the pod up once it reports
+        full on /health. That trades a little cold-start latency for never letting a
+        lite-only tenant spin the GPU pod; a tier-aware eager warm is deferred work."""
         runpod = runpod_holder[0] if runpod_holder else None
-        if runpod is not None:
+        if runpod is None:
+            return
+        tier_env = os.environ.get("BRAIN_TIER", "").strip().lower()
+        if tier_env == "lite":
+            return
+        if tier_env == "full" or provisioner.full_count() > 0:
             asyncio.create_task(_safe_pod_ensure(runpod))
 
     # ── Readiness poll for the interstitial ─────────────────────────────────
@@ -392,19 +410,21 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
             _set_sleep(tenant, "stopping")
             await provisioner.stop_user(tenant)
 
-            # 3. Pause the shared pod — only if NO other brain still needs it.
-            # The brain subprocess is a consumer and can't stop the pod itself.
+            # 3. Pause the shared pod — only if NO other FULL-tier brain still needs it.
+            # A lingering lite brain runs entirely on cloud and never touches the pod,
+            # so it shouldn't keep a GPU alive. The brain subprocess is a consumer and
+            # can't stop the pod itself.
             phase = "pausing_pod"
             runpod = runpod_holder[0] if runpod_holder else None
             if runpod is None:
                 pod = "none"
-            elif provisioner.live_count() == 0:
+            elif provisioner.full_count() == 0:
                 _set_sleep(tenant, "pausing_pod")
                 await runpod.pause()
-                logger.info("[gateway] last brain slept — shared pod paused")
+                logger.info("[gateway] last full-tier brain slept — shared pod paused")
                 pod = "paused"
             else:
-                pod = "kept"  # other sessions still using the pod
+                pod = "kept"  # other full-tier sessions still using the pod
 
             _set_sleep(tenant, "asleep", pod=pod)
         except Exception as e:
@@ -841,8 +861,12 @@ def main() -> None:
         while True:
             try:
                 await asyncio.sleep(reconcile_interval_s)
-                live = provisioner.live_count()
-                if live > 0:
+                # Gate on FULL-tier brains, not all live brains: a lite brain remaps
+                # every local/runpod route to cloud and never uses the pod, so spinning
+                # a GPU for a lite-only host is pure waste. full_count() reads each
+                # brain's tier (reported on /health, captured at boot).
+                full = provisioner.full_count()
+                if full > 0:
                     zero_since = None
                     await runpod.ensure_running()
                     _sync_runpod_host(runpod)
@@ -851,7 +875,7 @@ def main() -> None:
                         zero_since = time.time()
                     elif time.time() - zero_since >= pod_idle_grace_s and runpod._pod_id:
                         logger.info(
-                            "[gateway] no live brains for %.0fs — pausing shared pod",
+                            "[gateway] no full-tier brains for %.0fs — pausing shared pod",
                             time.time() - zero_since,
                         )
                         await runpod.pause()

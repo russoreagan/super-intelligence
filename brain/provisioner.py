@@ -98,6 +98,13 @@ class _Proc:
         self.api_port = api_port  # tenant's engine-API port (for /v1 gateway routing)
         self.last_active: float = time.time()
         self.booting: bool = True
+        # Runtime tier this brain resolved to, reported on /health and captured at
+        # boot. 'full' = uses the shared GPU pod (own local-thinking brain); 'lite' =
+        # remaps every local/runpod route to cloud and never touches the pod. The
+        # gateway gates the pod's lifecycle on the count of FULL brains, so a lite
+        # brain never keeps a GPU pod alive. Default 'full' until /health is read —
+        # a real full brain must never be denied its pod on an unknown tier.
+        self.tier: str = "full"
 
 
 def _free_port() -> int:
@@ -198,6 +205,19 @@ class Provisioner:
         DMN running, so keeping the pod up for it is pure waste."""
         return sum(1 for p in self._procs.values() if p.proc.poll() is None)
 
+    def full_count(self) -> int:
+        """Number of live FULL-tier brains — the only ones that actually use the shared
+        GPU pod. A 'lite' brain remaps every local/runpod route to cloud, so it never
+        touches the pod; counting it would keep a GPU alive for nothing. The gateway's
+        pod reconciler gates on this (not live_count) so a lite-only host runs no pod.
+
+        Tier is captured from /health at boot (default 'full' until known), so a brain
+        still booting counts as full — conservative: we'd rather briefly keep a pod up
+        for a brain that turns out lite than starve a real full brain of its pod."""
+        return sum(
+            1 for p in self._procs.values() if p.proc.poll() is None and p.tier != "lite"
+        )
+
     async def ensure(self, user_id: str, persona: str | None = None) -> int:
         """Resume-or-spawn this (user, persona) brain process; return its localhost
         port. With no persona this is the original tenant-only process; with one, a
@@ -256,9 +276,9 @@ class Provisioner:
         entry = _Proc(proc, port, api_port=api_port)
         self._procs[key] = entry
 
-        ok = await self._wait_health(port, proc)
+        tier = await self._wait_health(port, proc)
         entry.booting = False
-        if not ok:
+        if tier is None:
             with contextlib.suppress(Exception):
                 proc.terminate()
             self._procs.pop(key, None)
@@ -266,7 +286,8 @@ class Provisioner:
                 f"tenant {key[:16]} failed to become healthy on :{port} "
                 f"(exit code: {proc.poll()})"
             )
-        logger.info("[provisioner] %s healthy on :%d", key[:16], port)
+        entry.tier = tier
+        logger.info("[provisioner] %s healthy on :%d (tier=%s)", key[:16], port, tier)
         return port
 
     def _build_and_launch(self, user_id: str, persona: str | None = None):
@@ -471,22 +492,31 @@ class Provisioner:
         _start_log_relay(proc, user_id)
         return proc, port, api_port
 
-    async def _wait_health(self, port: int, proc) -> bool:
+    async def _wait_health(self, port: int, proc) -> str | None:
+        """Poll /health until the brain is up. Returns the brain's resolved tier
+        ('full'|'lite') on success, or None if it never became healthy. The tier rides
+        the health response so the gateway can gate the shared GPU pod on full brains
+        only; an older brain that omits it (or a parse failure) defaults to 'full'."""
         url = f"http://127.0.0.1:{port}/health"
         deadline = time.monotonic() + READY_TIMEOUT_S
         async with httpx.AsyncClient(timeout=5.0) as client:
             while time.monotonic() < deadline:
                 if proc.poll() is not None:
                     logger.error("[provisioner] process exited during boot (code %s)", proc.poll())
-                    return False
+                    return None
                 try:
                     r = await client.get(url)
                     if r.status_code == 200:
-                        return True
+                        tier = "full"
+                        with contextlib.suppress(Exception):
+                            reported = str((r.json() or {}).get("tier", "")).strip().lower()
+                            if reported in ("full", "lite"):
+                                tier = reported
+                        return tier
                 except Exception:
                     pass
                 await asyncio.sleep(1.0)
-        return False
+        return None
 
     async def stop_user(self, user_id: str, persona: str | None = None) -> None:
         await self._stop_key(self._key(user_id, persona))

@@ -108,6 +108,7 @@ class UIServer:
         on_tasks_clear: Callable[[], dict] | None = None,
         connectors_fn: Callable[[], list] | None = None,
         connector_reload_fn: Callable[[], None] | None = None,
+        tier_fn: Callable[[], str] | None = None,
         wiring=None,
         bus=None,
     ) -> None:
@@ -128,6 +129,12 @@ class UIServer:
         self._connector_reload_fn = (
             connector_reload_fn  # () -> None; hot-reload after register/remove
         )
+        # () -> 'full'|'lite'. The brain's resolved runtime tier, surfaced on /health
+        # so the gateway's pod reconciler knows whether THIS brain actually uses the
+        # shared GPU pod: a 'lite' brain remaps every local/runpod route to cloud, so
+        # keeping a pod up for it is pure waste. None = report 'full' (the safe default
+        # — a real full brain must never be denied its pod).
+        self._tier_fn = tier_fn
         self._clients: set = set()
         self._last_neuromod: dict = {}
         self._last_hormonal: dict = {}
@@ -349,7 +356,15 @@ class UIServer:
 
         @app.get("/health")
         async def health():
-            return {"status": "ok"}
+            # tier lets the gateway gate the shared GPU pod on full-tier brains only
+            # (the provisioner records it off this response). Default 'full' if unknown.
+            tier = "full"
+            if self._tier_fn is not None:
+                try:
+                    tier = self._tier_fn()
+                except Exception:
+                    pass
+            return {"status": "ok", "tier": tier}
 
         @app.get("/")
         async def index():
