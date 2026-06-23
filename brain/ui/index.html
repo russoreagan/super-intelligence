@@ -8847,82 +8847,42 @@ window.__enhFx = enhFx;
    the whole chrome breathes with feeling. Console keeps its fixed cyan. The
    tint is written as inline custom-props on :root; we clear them in console
    so the stylesheet value wins. */
-/* Mood engine — the curated Elyceum palette (matches Claude Design's
-   elyceum-mood.js). The brain's prevailing mood is derived from its
-   *chemistry*, and the whole atlas chrome cross-fades to that mood: a
-   saturated "signal" accent plus a faint, tasteful wash through paper + ink.
-   Each mood is a hand-tuned hue family — NOT a raw emotion hue — so the paper
-   never goes garish. Region colours are never tinted. */
-var _MOODS = {
-  Settling: { sig: [0.56, 0.185, 33],  paperH: 84,  paperC: 0.013, inkH: 54 },
-  Curious:  { sig: [0.62, 0.150, 75],  paperH: 82,  paperC: 0.016, inkH: 70 },
-  Warm:     { sig: [0.62, 0.155, 62],  paperH: 72,  paperC: 0.019, inkH: 60 },
-  Content:  { sig: [0.55, 0.130, 150], paperH: 124, paperC: 0.015, inkH: 140 },
-  Alert:    { sig: [0.58, 0.190, 25],  paperH: 42,  paperC: 0.019, inkH: 36 },
-  Guarded:  { sig: [0.55, 0.115, 250], paperH: 250, paperC: 0.013, inkH: 250 }
-};
-var _MOOD_RULES = [
-  ['Curious',  function (s) { return s.DA > 0.55 && s.ACh > 0.35; }],
-  ['Warm',     function (s) { return s.OXT > 0.55; }],
-  ['Content',  function (s) { return s['5HT'] > 0.6 && s.GABA < 0.3; }],
-  ['Alert',    function (s) { return s.NE > 0.5; }],
-  ['Guarded',  function (s) { return s.GABA > 0.45; }],
-  ['Settling', function () { return true; }]
-];
-var _chemState = { DA:0.5, ACh:0.2, GABA:0.05, Glu:0.3, NE:0.25, '5HT':0.3, OXT:0.25, CORT:0.1, AEA:0.2 };
+/* ---- mood-driven accent tint (single source of truth) ----
+   In atlas, the whole chrome cross-fades to the brain's prevailing mood: a
+   "signal" accent plus a faint wash through paper + ink. Hue and vividness come
+   straight from MOOD_BG_COLORS (the same table the glow + badge use), scaled by
+   the user's mood-colour gain (_moodGain()); off -> no tint. Console clears the
+   inline props so its stylesheet wins. Region colours are never tinted. */
 var _MOOD_TINT_PROPS = ['--signal','--signal-deep','--signal-soft','--paper','--paper-2','--paper-3','--plate','--ink','--ink-2'];
-// Background mood-tint strength (0–100, tunable in Settings). 50 = the previous
-// fixed 1.8x; the slider maps 0→none … 100→3.6x of each mood's paper chroma.
-// Mood-colour intensity state (`_moodLevel` / `_moodGain()`) lives with the
-// mood-colour helpers near MOOD_BG_COLORS.
 
-// Single source of truth: the displayed disposition (the named emotion) maps
-// to one of the six mood families, so the label and the tint always agree —
-// the disposition is literally a subset of the mood that's colouring the room.
-// Unlisted emotions fall back to the chemistry classifier.
-var _EMOTION_FAMILY = {
-  curious:'Curious', 'curious-uncertain':'Curious', excitement:'Curious', excited:'Curious',
-  enthusiasm:'Curious', surprised:'Curious', amused:'Curious', playful:'Curious', joking:'Curious',
-  proud:'Curious', confident:'Curious', interested:'Curious', focused:'Curious',
-  warm:'Warm', tender:'Warm', affectionate:'Warm', flirty:'Warm', grateful:'Warm', joy:'Warm', loving:'Warm',
-  content:'Content', relieved:'Content', sympathetic:'Content', calm:'Content', serene:'Content',
-  angry:'Alert', frustrated:'Alert', irritated:'Alert', agitated:'Alert', defensive:'Alert',
-  anxious:'Alert', restless:'Alert', 'cautious-agitated':'Alert', sarcastic:'Alert', alert:'Alert', stressed:'Alert',
-  inhibited:'Guarded', sad:'Guarded', somber:'Guarded', melancholy:'Guarded', wistful:'Guarded',
-  disappointed:'Guarded', embarrassed:'Guarded', shy:'Guarded', apologetic:'Guarded', confused:'Guarded', guarded:'Guarded',
-  thoughtful:'Settling', neutral:'Settling', flat:'Settling'
-};
-var _moodFamily = 'Settling';
-
-function _moodFor(s) {
-  for (var i = 0; i < _MOOD_RULES.length; i++) if (_MOOD_RULES[i][1](s)) return _MOOD_RULES[i][0];
-  return 'Settling';
-}
-function _emotionFamily(emotion) {
-  if (!emotion) return _moodFamily;
-  return _EMOTION_FAMILY[String(emotion).toLowerCase()] || _moodFor(_chemState);
-}
 function _applyMoodTint() {
   var rs = document.documentElement.style;
-  // Console keeps its fixed cyan/dark palette — clear any inline mood tint.
+  // Console keeps its fixed dark palette - clear any inline mood tint.
   if (document.documentElement.getAttribute('data-theme') !== 'atlas') {
     _MOOD_TINT_PROPS.forEach(function (p) { rs.removeProperty(p); });
     return;
   }
-  var t = _MOODS[_moodFamily] || _MOODS.Settling;
-  var L = t.sig[0], C = t.sig[1], H = t.sig[2];
-  rs.setProperty('--signal',      'oklch(' + L + ' ' + C + ' ' + H + ')');
-  rs.setProperty('--signal-deep', 'oklch(' + (L - 0.08).toFixed(2) + ' ' + C + ' ' + H + ')');
-  rs.setProperty('--signal-soft', 'oklch(' + L + ' ' + C + ' ' + H + ' / 0.13)');
-  // Amplify the paper chroma so the mood is visible — but gently; at the
-  // original 0.013 it was imperceptible, at 3.4× it ran a touch too warm.
-  var pc = t.paperC * (_moodGain() * 3.6);
-  rs.setProperty('--paper',   'oklch(0.957 ' + pc.toFixed(3) + ' ' + t.paperH + ')');
-  rs.setProperty('--paper-2', 'oklch(0.934 ' + (pc + 0.007).toFixed(3) + ' ' + t.paperH + ')');
-  rs.setProperty('--paper-3', 'oklch(0.898 ' + (pc + 0.014).toFixed(3) + ' ' + t.paperH + ')');
-  rs.setProperty('--plate',   'oklch(0.972 ' + (pc * 0.6).toFixed(3) + ' ' + t.paperH + ')');
-  rs.setProperty('--ink',     'oklch(0.27 0.022 ' + t.inkH + ')');
-  rs.setProperty('--ink-2',   'oklch(0.42 0.020 ' + t.inkH + ')');
+  var cfg = MOOD_BG_COLORS[_lastMoodEmotion] || MOOD_BG_COLORS.neutral;
+  var mh = cfg.h;
+  // Tint strength = the mood's own vividness (baked chroma, normalised ~0..1.2)
+  // times the user gain. Neutral/flat stay near-grey; vivid moods tint harder;
+  // off = 0.
+  var k = Math.min(cfg.c / 0.15, 1.2) * _moodGain();
+  // Signal accent - mood hue, fixed light-theme lightness, saturation from k.
+  var sc = Math.min(0.20 * k, 0.18);
+  rs.setProperty('--signal',      'oklch(0.58 ' + sc.toFixed(3) + ' ' + mh + ')');
+  rs.setProperty('--signal-deep', 'oklch(0.50 ' + sc.toFixed(3) + ' ' + mh + ')');
+  rs.setProperty('--signal-soft', 'oklch(0.58 ' + sc.toFixed(3) + ' ' + mh + ' / 0.13)');
+  // Paper - near-white, faintly hued by the same k.
+  var pc = 0.06 * k;
+  rs.setProperty('--paper',   'oklch(0.957 ' + pc.toFixed(3) + ' ' + mh + ')');
+  rs.setProperty('--paper-2', 'oklch(0.934 ' + (pc + 0.007).toFixed(3) + ' ' + mh + ')');
+  rs.setProperty('--paper-3', 'oklch(0.898 ' + (pc + 0.014).toFixed(3) + ' ' + mh + ')');
+  rs.setProperty('--plate',   'oklch(0.972 ' + (pc * 0.6).toFixed(3) + ' ' + mh + ')');
+  // Ink - dark text with a whisper of the mood hue.
+  var ic = 0.022 * Math.min(_moodGain(), 1);
+  rs.setProperty('--ink',   'oklch(0.27 ' + ic.toFixed(3) + ' ' + mh + ')');
+  rs.setProperty('--ink-2', 'oklch(0.42 ' + (ic * 0.9).toFixed(3) + ' ' + mh + ')');
 }
 
 (function () {
@@ -8998,13 +8958,6 @@ function _applyMoodTint() {
   if (typeof handle !== 'function') return;
   var prev = handle;
   var voicebars = document.getElementById('voicebars');
-  function ingestChem(src) {
-    // Keep the chemistry snapshot current (used as the fallback classifier for
-    // any emotion not in the map) — but the tint follows the named emotion.
-    ['DA','ACh','GABA','Glu','NE','5HT','OXT','CORT','AEA'].forEach(function (k) {
-      var v = src[k]; if (typeof v === 'number') _chemState[k] = v;
-    });
-  }
   // map a value within [lo,hi] to how many of the 3 meter segments light up
   function _setMeter(id, val, lo, hi) {
     var el = document.getElementById(id);
@@ -9017,15 +8970,10 @@ function _applyMoodTint() {
   handle = function (msg) {
     prev(msg);
     if (!msg) return;
-    // The tint follows the displayed disposition: the named emotion maps to a
-    // mood family, so the label and the colour always agree.
+    // The atlas paper tint follows the displayed emotion (already stored on
+    // _lastMoodEmotion by applyEmotionColors inside prev(msg) above).
     if (msg.type === 'emotion' && msg.emotion) {
-      _moodFamily = _emotionFamily(msg.emotion);
       _applyMoodTint();
-    } else if (msg.type === 'neuromod') {
-      ingestChem(msg);
-    } else if (msg.type === 'hormonal') {
-      ingestChem(msg.data || msg);
     } else if (msg.type === 'user_prosody') {
       // energy = RMS loudness (~0.02–0.20); pace = onsets/sec (~1.5–5.5)
       _setMeter('m-energy', msg.energy || 0, 0.02, 0.20);
