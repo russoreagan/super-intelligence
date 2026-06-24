@@ -287,7 +287,7 @@
   "flock_gain_min": 0.5,
   "flock_gain_max": 1.8,
   "flock_gain_ema_alpha": 0.25,
-  "trading_enabled": 1,
+  "trading_enabled": 0,
   "trading_cache_ttl_s": 30.0,
   "trading_max_scan_symbols": 50,
   "trading_default_benchmark": "QQQ",

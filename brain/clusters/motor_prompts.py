@@ -110,14 +110,26 @@ Each story names the ONE tool that best fits it. Choose expected_tool using this
   list_files     — discover what files/dirs exist (categorize, inventory, find by name/glob)
   read_file      — read the contents of a known file path
   search_files   — find text/symbols across files (grep-style; analyze code by content)
-  write_file     — create or overwrite a file
+  write_file     — create or overwrite a file with content you already have verbatim
   run_command    — run a shell command (build, test, git, scripts)
-  fetch_url      — fetch a specific http/https web page
-  cloud_action   — external services: email, calendar, messages, web search, documents
+  fetch_url      — fetch ONE specific, known http/https web page (e.g. a doc URL the user gave you)
+  cloud_action   — external services AND live web research: email, calendar, messages,
+                   web search, documents. Use this for live data from the open web
+                   (market/financial data, news, prices) — it uses Claude web search,
+                   which works where fetch_url is blocked by anti-bot pages.
   query_langfuse — ONLY read Langfuse observability data (LLM traces/scores/sessions).
                    NEVER use it for files, code, or general analysis.
 Hard rule: any story about files, directories, codebases, or architecture uses
 list_files / read_file / search_files (and run_command if needed) — NEVER query_langfuse.
+Live web data: prefer cloud_action over fetch_url for market/financial/news data —
+public data sites (marketwatch, yahoo finance, etc.) block automated fetch_url with
+401/403/429. Only use fetch_url for a specific page you have strong reason to expect
+serves raw content to a plain client.
+Synthesis + write: a story that COMPOSES a report/summary from EARLIER steps' results
+and writes it to a file must use cloud_action (give it the file path in the task) —
+NOT write_file. The per-step planner that runs write_file only sees short previews of
+prior steps, so it cannot reconstruct the full content; cloud_action can synthesize and
+write in one step. Reserve write_file for content already fixed and known up front.
 
 Return STRICT JSON, nothing else:
 {

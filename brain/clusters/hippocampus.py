@@ -244,11 +244,31 @@ class HippocampusCluster:
         """
         chem = self._chem_snapshot()
 
+        # Personal/sensitive CONVERSATION memory is partitioned by end-user. An agent
+        # (partner) session recalls only its own end_user_id's episodes, so one user's
+        # conversations are never carried into another session — nor is the owner's
+        # general conversation. The owner/companion lane stays unscoped (its own brain,
+        # and avoids dropping legacy NULL-end_user_id episodes).
+        #
+        # Abstracted cross-user learning is deliberately PRESERVED: it rides structural
+        # (cog-signature) recall + procedure/motor memory + sleep consolidation, which
+        # stay persona-wide so the agent keeps consolidating across users. Do NOT scope
+        # those by end_user_id — only the conversation-content paths below.
+        from brain.turn_ctx import current_turn
+
+        _lane = current_turn()
+        scope_eu = (
+            _lane.get("end_user_id")
+            if _lane.get("channel") == "agent" and _lane.get("end_user_id")
+            else None
+        )
+
         # ── Coordinator gate: reuse recent recall if query is near-identical ──
         # The recall_cache_reuse switch encodes "trust the cache" as a fire.
         # High DA lowers its threshold (more reuse under reward); low DA raises
-        # it (force fresh recall when nothing's working).
-        cache_key = self._normalize_recall_key(query, entities)
+        # it (force fresh recall when nothing's working). Keyed by lane so one
+        # end-user's recall is never served from another's cache.
+        cache_key = f"{scope_eu or ''}\x00{self._normalize_recall_key(query, entities)}"
         cached = self._recent_recall.get(cache_key)
         if cached is not None and self._recall_cache_reuse.should_fire(0.55, chem, turn_id):
             self._recall_cache_reuse.fire(0.55, "cache_hit", {"key": cache_key[:60]}, snapshot=chem)
@@ -304,11 +324,13 @@ class HippocampusCluster:
                     vec,
                     limit=max(2, episode_k),
                     exclude_tags=["deferred_question"],
+                    end_user_id=scope_eu,
                 )
                 deferred_episodes = self._episodic.recall_by_tag(
                     vec,
                     tag="deferred_question",
                     limit=2,
+                    end_user_id=scope_eu,
                 )
             except Exception as e:
                 logger.warning(

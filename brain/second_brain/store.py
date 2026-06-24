@@ -367,18 +367,26 @@ class EpisodicStore:
             return []
 
     def recall(
-        self, query_vector: list[float], limit: int = 5, exclude_tags: list[str] | None = None
+        self,
+        query_vector: list[float],
+        limit: int = 5,
+        exclude_tags: list[str] | None = None,
+        end_user_id: str | None = None,
     ) -> list[dict]:
-        """Vector search over all episodes."""
+        """Vector search over episodes. When ``end_user_id`` is given, results are
+        scoped to that end-user — isolating personal/sensitive conversation memory.
+        ``None`` searches the whole persona store (owner lane + cross-user learning)."""
         if self._use_supabase:
-            return self._sb_recall(query_vector, limit, exclude_tags)
+            return self._sb_recall(query_vector, limit, exclude_tags, end_user_id)
         if not self._ensure_ready():
             return []
         try:
+            preds = [f"topic_tags NOT LIKE '%{_sql_quote(t)}%'" for t in (exclude_tags or [])]
+            if end_user_id is not None:
+                preds.append(f"end_user_id = '{_sql_quote(end_user_id)}'")
             q = self._table.search(query_vector).limit(limit)
-            if exclude_tags:
-                for tag in exclude_tags:
-                    q = q.where(f"topic_tags NOT LIKE '%{_sql_quote(tag)}%'")
+            if preds:
+                q = q.where(" AND ".join(preds))
             results = q.to_list()
             return self._parse_rows(results)
         except Exception as e:
@@ -386,7 +394,11 @@ class EpisodicStore:
             return []
 
     def _sb_recall(
-        self, query_vector: list[float], limit: int, exclude_tags: list[str] | None
+        self,
+        query_vector: list[float],
+        limit: int,
+        exclude_tags: list[str] | None,
+        end_user_id: str | None = None,
     ) -> list[dict]:
         try:
             sb, uid = self._sb()
@@ -401,22 +413,31 @@ class EpisodicStore:
             }
             if exclude_tags:
                 params["exclude_tags"] = exclude_tags
+            # match_episodes already accepts end_user_param (007); only filters when set.
+            if end_user_id is not None:
+                params["end_user_param"] = end_user_id
             res = sb.rpc("match_episodes", params).execute()
             return self._parse_rows(res.data or [])
         except Exception as e:
             logger.error("[Episode DB] Supabase recall failed: %s", e)
             return []
 
-    def recall_by_tag(self, query_vector: list[float], tag: str, limit: int = 3) -> list[dict]:
-        """Vector search scoped to episodes that contain the given tag."""
+    def recall_by_tag(
+        self, query_vector: list[float], tag: str, limit: int = 3, end_user_id: str | None = None
+    ) -> list[dict]:
+        """Vector search scoped to episodes that contain the given tag. ``end_user_id``
+        further scopes to one end-user (personal-memory isolation); ``None`` = persona-wide."""
         if self._use_supabase:
-            return self._sb_recall_by_tag(query_vector, tag, limit)
+            return self._sb_recall_by_tag(query_vector, tag, limit, end_user_id)
         if not self._ensure_ready():
             return []
         try:
+            pred = f"topic_tags LIKE '%{_sql_quote(tag)}%'"
+            if end_user_id is not None:
+                pred += f" AND end_user_id = '{_sql_quote(end_user_id)}'"
             results = (
                 self._table.search(query_vector)
-                .where(f"topic_tags LIKE '%{_sql_quote(tag)}%'")
+                .where(pred)
                 .limit(limit)
                 .to_list()
             )
@@ -425,20 +446,22 @@ class EpisodicStore:
             logger.error("[Episode DB] Tag-scoped recall failed (tag=%r): %s", tag, e)
             return []
 
-    def _sb_recall_by_tag(self, query_vector: list[float], tag: str, limit: int) -> list[dict]:
+    def _sb_recall_by_tag(
+        self, query_vector: list[float], tag: str, limit: int, end_user_id: str | None = None
+    ) -> list[dict]:
         try:
             sb, uid = self._sb()
             vec_str = f"[{','.join(str(v) for v in query_vector)}]"
-            res = sb.rpc(
-                "match_episodes_by_tag",
-                {
-                    "query_vector": vec_str,
-                    "org_id_param": uid,
-                    "persona_param": self._sb_persona(),
-                    "tag_param": tag,
-                    "match_count": limit,
-                },
-            ).execute()
+            params = {
+                "query_vector": vec_str,
+                "org_id_param": uid,
+                "persona_param": self._sb_persona(),
+                "tag_param": tag,
+                "match_count": limit,
+            }
+            if end_user_id is not None:
+                params["end_user_param"] = end_user_id
+            res = sb.rpc("match_episodes_by_tag", params).execute()
             return self._parse_rows(res.data or [])
         except Exception as e:
             logger.error("[Episode DB] Supabase tag-recall failed: %s", e)

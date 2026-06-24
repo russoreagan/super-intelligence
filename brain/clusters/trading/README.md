@@ -1,18 +1,63 @@
 # Day-trading capability (ADVISE-ONLY)
 
-Gives the brain read-only market/account data, technical indicators, a persistent
-decision journal with a reflection loop, and four analytical tools. **It never
-places an order or moves money.**
+Read-only market/account data, technical indicators, a persistent decision journal
+with a reflection loop, and analytical tools. **It never places an order or moves
+money.**
 
-## Turn it on
+## Boundary: the trading app's MCP server is the default
 
-1. **Enable the flag** in `brain/settings.json` (off by default):
+The brain is **domain-agnostic** — trading is a vertical that lives in a separate
+**trading app**, exposed to the brain as a remote **MCP connector**. The native
+in-tree layer in this package (`tools.py`, `alpaca_mcp_client.py`, …) is **retired
+and OFF by default** (`trading_enabled` defaults to `0`). It stays in-tree so it
+can be re-enabled, but the supported path is the MCP connector below.
+
+### Wire the trading MCP connector
+
+1. **Register the connector** (`name: "trading"`) by pinning it via env. The CMA
+   executor reads `BRAIN_CMA_MCP_SERVERS` first, which makes the registry
+   read-only/env-managed:
+   ```bash
+   BRAIN_CMA_MCP_SERVERS='[{"name":"trading","url":"https://exquisite-courtesy-production-e579.up.railway.app/api/mcp/trading"}]'
+   ```
+2. **Set the shared bearer token.** The connector name `trading` maps to env var
+   `BRAIN_CMA_MCP_TRADING_TOKEN` (`<NAME>` = name upper-cased, `-`→`_`). It MUST
+   equal the trading app's `TRADING_MCP_SECRET` — **the same value on both
+   services** (coordinate via Railway):
+   ```bash
+   BRAIN_CMA_MCP_TRADING_TOKEN=<same value as the app's TRADING_MCP_SECRET>
+   ```
+3. **Bind the connector to the trading mandate** so only the trading agent sees
+   its tools. The motor cortex intersects the org-level connector allowlist with
+   the *bound agent's* `permissions` (`_mode_policy` → `set_connector_filter`), so
+   set the trading agent's permission overrides to scope it to `trading`:
+   ```json
+   { "motor_user_connectors": "trading", "motor_self_connectors": "trading" }
+   ```
+   (Connector names are newline-separated; one name = just `"trading"`.) With this,
+   when the trading agent is bound for a turn it sees **only** the trading
+   connector, and the trading connector is the only MCP surface it can reach.
+   Manage agent permissions via the Agents UI / `brain/mandates.py` CRUD (the
+   `permissions` column of the `agents` table) — it is org-level data, not code.
+
+Cloud actions must be enabled for the bound agent (`motor_user_cloud` ≥ `ro`) and
+`BRAIN_MOTOR=true`. The connector is read-only/advise-only on the app side.
+
+### Native layer (legacy / escape hatch — not the supported path)
+
+The in-tree native tools remain for local/offline use. They are gated OFF by
+`trading_enabled=0`; `BRAIN_NATIVE_TRADING` is an env override that wins over a
+stale per-tenant `settings.json` (`0/false/off/no` → off, any other value → on,
+unset → use the setting). To run them:
+
+1. **Enable the flag** in `brain/settings.json`:
    ```json
    "trading_enabled": 1
    ```
-2. **Run the brain with the motor cortex** (`--motor` / `BRAIN_MOTOR=true`).
-3. Without an Alpaca key it works immediately on **free yfinance** data. To use
-   Alpaca (better data + your real account), set a **read-only-scoped** key:
+   (or `BRAIN_NATIVE_TRADING=1`), and **run with the motor cortex**
+   (`--motor` / `BRAIN_MOTOR=true`).
+2. Without an Alpaca key it works on **free yfinance** data. For Alpaca, set a
+   **read-only-scoped** key:
    ```bash
    export ALPACA_API_KEY=...        # read-only scope (create in Alpaca dashboard)
    export ALPACA_SECRET_KEY=...
