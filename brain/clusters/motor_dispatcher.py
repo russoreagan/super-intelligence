@@ -440,11 +440,35 @@ class ToolDispatcher:
         except socket.gaierror as e:
             return f"[error] Could not resolve host {host!r}: {e}"
 
+        # Present as a real browser. The default python-httpx User-Agent is
+        # rejected outright (401/403/429) by many news/financial/data sites,
+        # which was the root cause of trading-research fetches failing against
+        # marketwatch.com (401) and finance.yahoo.com (429).
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/125.0.0.0 Safari/537.36"
+            ),
+            "Accept": (
+                "text/html,application/xhtml+xml,application/xml;q=0.9,"
+                "image/avif,image/webp,*/*;q=0.8"
+            ),
+            "Accept-Language": "en-US,en;q=0.9",
+        }
         try:
             import httpx
 
-            async with httpx.AsyncClient(follow_redirects=True, timeout=15) as client:
-                r = await client.get(url)
+            async with httpx.AsyncClient(
+                follow_redirects=True, timeout=15, headers=headers
+            ) as client:
+                # One retry with backoff on rate-limit / transient upstream errors.
+                for attempt in range(2):
+                    r = await client.get(url)
+                    if r.status_code in (429, 503) and attempt == 0:
+                        await asyncio.sleep(1.5)
+                        continue
+                    break
                 r.raise_for_status()
             content_type = r.headers.get("content-type", "")
             text = r.text
@@ -454,6 +478,18 @@ class ToolDispatcher:
             if len(text) > max_chars:
                 text = text[:max_chars] + f"\n[... truncated at {max_chars} chars ...]"
             content = text or "(empty response)"
+        except httpx.HTTPStatusError as e:
+            code = e.response.status_code
+            if code in (401, 403, 429):
+                # Hard anti-bot block. Surface a concrete next step so the
+                # motor cortex's retry loop re-plans via the path that works
+                # (Claude web search) instead of re-scraping the same wall.
+                return (
+                    f"[error] fetch_url blocked by {host!r} (HTTP {code}) — this "
+                    f"site refuses automated fetches. Use cloud_action (web "
+                    f"search) to obtain this information instead of fetch_url."
+                )
+            return f"[error] fetch_url failed: {e}"
         except Exception as e:
             return f"[error] fetch_url failed: {e}"
 

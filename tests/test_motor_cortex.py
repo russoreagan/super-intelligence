@@ -2088,6 +2088,20 @@ class TestStrategicPromptGuidance:
 
         assert "observability data ONLY" in PLANNER_SYSTEM_BASE
 
+    def test_strategic_prompt_steers_live_web_data_to_cloud_action(self):
+        # Live market/financial/news data must prefer cloud_action — fetch_url is
+        # blocked by anti-bot pages (the marketwatch/yahoo 401/429 failures).
+        from brain.clusters.motor_prompts import STRATEGIC_SYSTEM
+
+        assert "prefer cloud_action over fetch_url" in STRATEGIC_SYSTEM
+
+    def test_strategic_prompt_routes_synthesis_writes_to_cloud_action(self):
+        # A report composed from earlier steps must be written via cloud_action,
+        # not write_file (the per-step planner only sees short previews).
+        from brain.clusters.motor_prompts import STRATEGIC_SYSTEM
+
+        assert "must use cloud_action" in STRATEGIC_SYSTEM
+
 
 class TestToolAppropriatenessHelper:
     """Deterministic appropriateness guard (Change 6)."""
@@ -2320,3 +2334,89 @@ class TestJobWallClockDeadline:
         # With deadline=0, the first story-loop check fires immediately
         assert result["success"] is False
         assert result["steps_taken_count"] == 0  # stopped before any steps
+
+
+class TestFetchUrlHardening:
+    """fetch_url must present as a real browser and survive transient 429s, and
+    return a self-healing hint when a site hard-blocks automated fetches.
+
+    Root cause of the failing trading-research steps: the default python-httpx
+    User-Agent was rejected by marketwatch.com (401) and finance.yahoo.com (429).
+    """
+
+    @staticmethod
+    def _dispatcher():
+        from brain.clusters.motor_dispatcher import ToolDispatcher
+
+        return ToolDispatcher(enable_network=True)
+
+    @staticmethod
+    def _patch_dns(monkeypatch):
+        # Skip real DNS + keep the SSRF guard happy with a public IP.
+        import socket as _socket
+
+        def fake_getaddrinfo(host, *a, **k):
+            return [(_socket.AF_INET, _socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))]
+
+        monkeypatch.setattr(_socket, "getaddrinfo", fake_getaddrinfo)
+
+    def _install_fake_client(self, monkeypatch, status_sequence, body="<html><body>hello world</body></html>"):
+        """Replace httpx.AsyncClient with a fake yielding real httpx.Response
+        objects (so .raise_for_status() behaves exactly as in production).
+        Records the headers and the number of GETs."""
+        import httpx
+
+        captured = {"headers": None, "gets": 0}
+        seq = list(status_sequence)
+
+        class _FakeClient:
+            def __init__(self, *args, **kwargs):
+                captured["headers"] = kwargs.get("headers")
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            async def get(self, url):
+                captured["gets"] += 1
+                code = seq[min(captured["gets"] - 1, len(seq) - 1)]
+                return httpx.Response(
+                    code, request=httpx.Request("GET", url), text=body
+                )
+
+        monkeypatch.setattr(httpx, "AsyncClient", _FakeClient)
+        return captured
+
+    async def test_sends_browser_user_agent(self, monkeypatch):
+        self._patch_dns(monkeypatch)
+        captured = self._install_fake_client(monkeypatch, [200])
+        out = await self._dispatcher()._fetch_url("https://example.com")
+        assert "hello world" in out
+        ua = (captured["headers"] or {}).get("User-Agent", "")
+        assert "Mozilla" in ua and "python-httpx" not in ua
+
+    async def test_retries_once_on_429_then_succeeds(self, monkeypatch):
+        self._patch_dns(monkeypatch)
+        captured = self._install_fake_client(monkeypatch, [429, 200])
+        monkeypatch.setattr("asyncio.sleep", AsyncMock())  # no real backoff wait
+        out = await self._dispatcher()._fetch_url("https://example.com")
+        assert "hello world" in out
+        assert captured["gets"] == 2  # initial + one retry
+
+    async def test_hard_block_returns_cloud_action_hint(self, monkeypatch):
+        self._patch_dns(monkeypatch)
+        monkeypatch.setattr("asyncio.sleep", AsyncMock())
+        # 429 on both the initial call and the retry → exhausted, hard block.
+        self._install_fake_client(monkeypatch, [429, 429])
+        out = await self._dispatcher()._fetch_url("https://finance.yahoo.com/")
+        assert out.startswith("[error]")
+        assert "cloud_action" in out
+
+    async def test_401_returns_cloud_action_hint(self, monkeypatch):
+        self._patch_dns(monkeypatch)
+        self._install_fake_client(monkeypatch, [401])
+        out = await self._dispatcher()._fetch_url("https://www.marketwatch.com/")
+        assert out.startswith("[error]")
+        assert "cloud_action" in out
