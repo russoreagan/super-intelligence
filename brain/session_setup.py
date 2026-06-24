@@ -493,9 +493,23 @@ class _SetupMixin:
         self.motor.set_observability(self.obs)
 
         # ── Advise-only day-trading layer (dark unless trading_enabled) ──────────
+        # BOUNDARY: this native layer is retired in favour of the trading app's MCP
+        # connector (register connector "trading" via BRAIN_CMA_MCP_SERVERS +
+        # BRAIN_CMA_MCP_TRADING_TOKEN; bind it to the trading mandate — see
+        # brain/clusters/trading/README.md). The package stays in-tree so it can be
+        # re-enabled, but it is OFF by default. BRAIN_NATIVE_TRADING is an env-level
+        # override (Railway-settable) that wins over the per-tenant settings.json so
+        # a stale `trading_enabled: 1` on a tenant volume can be force-disabled
+        # without editing that file: "0"/"false"/"off"/"no" → off, any other value
+        # → on, unset → fall back to the trading_enabled setting (default 0).
         from brain.settings import settings as _bsettings
 
-        if int(_bsettings.get("trading_enabled") or 0):
+        _native_trading = bool(int(_bsettings.get("trading_enabled") or 0))
+        _env_native = os.environ.get("BRAIN_NATIVE_TRADING", "").strip().lower()
+        if _env_native:
+            _native_trading = _env_native not in ("0", "false", "off", "no")
+
+        if _native_trading:
             try:
                 from brain.clusters.trading.alpaca_mcp_client import AlpacaMCPClient
                 from brain.clusters.trading.subsystem import TradingSubsystem

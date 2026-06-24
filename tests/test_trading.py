@@ -219,9 +219,14 @@ def test_compute_all_keys():
 
 
 def test_trading_enabled():
-    from brain.settings import settings
+    # Boundary move: the native in-tree trading layer is retired in favour of the
+    # trading app's MCP connector, so it must be OFF by default — both the code
+    # default and the committed settings.json. (Re-enable locally via
+    # trading_enabled=1 or BRAIN_NATIVE_TRADING=1; see the package README.)
+    from brain.settings import DEFAULTS, settings
 
-    assert int(settings.get("trading_enabled") or 0) == 1
+    assert int(DEFAULTS.get("trading_enabled") or 0) == 0
+    assert int(settings.get("trading_enabled") or 0) == 0
 
 
 # ── 5. journal lifecycle ──────────────────────────────────────────────────────
