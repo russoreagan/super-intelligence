@@ -47,7 +47,7 @@ def _persona_dial_positions() -> dict:
     needle matches the per-persona reward profile the brain actually runs on —
     map a reward weight in ~[0.5,1.6] to a 0..1 needle position."""
     try:
-        from brain.neuron import _PERSONA_REWARD_WEIGHTS
+        from brain.neuron import _PERSONA_REWARD_WEIGHTS, _PERSONA_RISK_POSTURE
         from brain.persona_chem import PERSONA_COG_POSITIONS
 
         def _slug(name: str) -> str:
@@ -58,19 +58,34 @@ def _persona_dial_positions() -> dict:
         def _pos(w: float) -> float:
             return max(0.0, min(1.0, (float(w) - 0.5) / 1.1))
 
+        def _pos_la(lam: float) -> float:
+            # Loss aversion λ: neutral 1.0 → mid-dial 0.5; the panel spreads either side.
+            return max(0.0, min(1.0, 0.5 + (float(lam) - 1.0) / 4.0))
+
+        def _pos_ua(kap: float) -> float:
+            # Uncertainty aversion κ is one-sided: 0.0 (risk-neutral) → bottom, 1.5 → top.
+            return max(0.0, min(1.0, float(kap) / 1.5))
+
         out: dict[str, dict[str, float]] = {}
         for name, cog in PERSONA_COG_POSITIONS.items():
             out[name] = dict(cog)
-        # Add motivation positions for every persona that has reward weights.
+        # Add motivation + risk-posture positions for every persona. Both pose from an
+        # innate neuron table (reward weights / risk posture) — the brain runs on the table,
+        # the *_scale multipliers stay neutral, so only the NEEDLE needs deriving here.
         for name in set(list(out) + list(_reward_persona_names())):
+            out.setdefault(name, {})
             rw = _PERSONA_REWARD_WEIGHTS.get(_slug(name), {})
             if rw:
-                out.setdefault(name, {})
                 out[name]["warmth-seeking"] = _pos(rw.get("connection", 1.0))
                 out[name]["curiosity-seeking"] = _pos(rw.get("novelty", 1.0))
                 out[name]["mastery-seeking"] = _pos(
                     (rw.get("correctness", 1.0) + rw.get("mastery", 1.0)) / 2.0
                 )
+            # Risk posture is the avoidance-side mirror of motivation (what the persona is
+            # wired to FEAR). Defaults λ=1.0 / κ=0.0 (symmetric, risk-neutral) for the unlisted.
+            rp = _PERSONA_RISK_POSTURE.get(_slug(name), {})
+            out[name]["loss-sensitivity"] = _pos_la(float(rp.get("loss_aversion", 1.0)))
+            out[name]["uncertainty-aversion"] = _pos_ua(float(rp.get("uncertainty_aversion", 0.0)))
         return out
     except Exception as e:
         logger.debug("[settings] persona dial positions unavailable: %s", e)

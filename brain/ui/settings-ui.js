@@ -81,6 +81,16 @@
       map: [ { key: 'reward_weight_novelty', dir: +1, span: 0.5 } ] },
     { id: 'mastery-seeking', label: 'Mastery-seeking', sub: 'rewarded by being right', glyph: 'arrow',
       map: [ { key: 'reward_weight_correctness', dir: +1, span: 0.4 }, { key: 'reward_weight_mastery', dir: +1, span: 0.4 } ] },
+    /* ---- Risk posture: the AVOIDANCE-side mirror of Motivation — what the persona
+       is wired to fear, independent of how much reward it feels. Loss-sensitivity is
+       the asymmetric twin of reward sensitivity (a loss bites harder than an equal
+       gain); Uncertainty-aversion is dread of a wide spread of outcomes, which also
+       shapes how conservatively it DECIDES. Both pose from neuron._PERSONA_RISK_POSTURE
+       (like Motivation); their *_scale multipliers rest neutral until you turn them. ---- */
+    { id: 'loss-sensitivity', label: 'Loss-sensitivity', sub: 'shrugs it off ↔ losses cut deep', glyph: 'loss',
+      map: [ { key: 'loss_aversion_scale', dir: +1, span: 0.5 } ] },
+    { id: 'uncertainty-aversion', label: 'Uncertainty-aversion', sub: 'embraces unknown ↔ needs certainty', glyph: 'fork',
+      map: [ { key: 'uncertainty_aversion_scale', dir: +1, span: 0.6 } ] },
   ];
 
   /* ---- cognitive-style dials — how the mind WORKS (vs temperament = who it
@@ -161,6 +171,8 @@
     balance:'<line x1="12" y1="4" x2="12" y2="20"/><line x1="5" y1="8" x2="19" y2="8"/><path d="M5 8l-2.5 5a2.5 2.5 0 0 0 5 0z"/><path d="M19 8l-2.5 5a2.5 2.5 0 0 0 5 0z"/>',
     echo:   '<circle cx="9" cy="12" r="3"/><path d="M14.5 8.5a5 5 0 0 1 0 7M17.5 6a8.5 8.5 0 0 1 0 12"/>',
     rewind: '<polygon points="11 6 4 12 11 18" fill="currentColor" stroke="none"/><polygon points="20 6 13 12 20 18" fill="currentColor" stroke="none"/>',
+    loss:   '<line x1="12" y1="4" x2="12" y2="18"/><polyline points="6 12 12 18 18 12"/>',
+    fork:   '<path d="M12 21v-7"/><path d="M12 14L6 5"/><path d="M12 14l6-9"/><circle cx="6" cy="4" r="1.4" fill="currentColor" stroke="none"/><circle cx="18" cy="4" r="1.4" fill="currentColor" stroke="none"/>',
   };
   const ico = d => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
   const chevSvg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg>';
@@ -201,6 +213,8 @@
     reward_weight_correctness: { min: 0.2, max: 2.0, def: 1.0 },
     reward_weight_mastery: { min: 0.2, max: 2.0, def: 1.0 },
     reward_weight_levity: { min: 0.2, max: 2.0, def: 1.0 },
+    loss_aversion_scale: { min: 0.4, max: 2.0, def: 1.0 },
+    uncertainty_aversion_scale: { min: 0.3, max: 2.5, def: 1.0 },
     eligibility_lookback: { min: 0, max: 5, def: 2 },
     eligibility_tau_turns: { min: 0.5, max: 5.0, def: 2.0 },
   };
@@ -1245,7 +1259,7 @@
       `<div id="tab-temperament"><div class="es-card">` +
         `<div class="es-card-head static"><span class="es-num">00</span>` +
           `<div class="es-ct"><div class="es-card-title">Temperament</div>` +
-          `<div class="es-card-desc">Eight dials that shape the persona. Each rests where this persona naturally sits and quietly turns a whole bundle of underlying controls at once — turn one to lean the temperament that way.</div></div>` +
+          `<div class="es-card-desc">The dials that shape who this persona is — its felt traits, what it's drawn toward (motivation), and what it's wired to fear (risk posture). Each rests where this persona naturally sits and quietly turns a whole bundle of underlying controls at once — turn one to lean the temperament that way.</div></div>` +
           `<div class="es-tools"><span class="es-badge" id="st-chembadge"><i></i><span>off baseline</span></span>` +
           `<button class="es-reset" id="st-personareset" title="Restore this persona's baseline">${resetSvg}</button></div>` +
         `</div>` +

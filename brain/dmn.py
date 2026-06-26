@@ -3352,9 +3352,11 @@ class DefaultModeNetwork:
         # the entity is VERIFIED right or wrong, not self-judging a draft. Reward/penalise
         # accordingly, scaled by how much this persona values being right (reward_weight) and
         # global emotional reactivity. This is delayed, outcome-based reinforcement (RPE-like).
-        from brain.neuron import reward_weight
+        from brain.neuron import loss_aversion, reward_weight
 
-        _w = reward_weight(str(settings.get("persona_name", "")), "correctness")
+        _persona = str(settings.get("persona_name", ""))
+        _w = reward_weight(_persona, "correctness")
+        _la = loss_aversion(_persona)  # λ: weights the verified-wrong sting, never the affirm reward
         _er = float(settings.get("emotional_reactivity_scale"))
         _nm = getattr(getattr(self, "_bus", None), "neuromod", None)  # best-effort; None in tests
         if verdict == "affirm":
@@ -3380,15 +3382,15 @@ class DefaultModeNetwork:
             # Verified wrong — DA dip plus 5HT drain (the sting that lingers); resting
             # chemistry decides whether that reads as brooding (Poet) or bristling (Analyst).
             if _nm:
-                _nm.add("DA", -float(settings.get("correctness_penalty_base")) * _w * _er)
-                _nm.add("5HT", -float(settings.get("correctness_5ht_drain")) * _w * _er)
+                _nm.add("DA", -float(settings.get("correctness_penalty_base")) * _w * _er * _la)
+                _nm.add("5HT", -float(settings.get("correctness_5ht_drain")) * _w * _er * _la)
             self._open_threads = ot.remove_thread(self._open_threads, thread.id)
             await self._save_threads()
             logger.info("[DMN] User rejected conclusion → thread dropped: %s", thread.id)
             return {"action": "conclusion_rejected", "thread_id": thread.id}
         # correction → partially wrong: a softer penalty (half), then re-open the thread.
         if _nm:
-            _nm.add("DA", -0.5 * float(settings.get("correctness_penalty_base")) * _w * _er)
+            _nm.add("DA", -0.5 * float(settings.get("correctness_penalty_base")) * _w * _er * _la)
         thread.status = ot.STATUS_OPEN
         thread.pending_conclusion = ""
         self._open_threads, _ = ot.advance_thread(
@@ -3632,18 +3634,35 @@ class DefaultModeNetwork:
                 # Anticipation moves chemistry, not just thought: imagining a good outcome
                 # pulls DA forward (wanting / looking-forward), imagining a bad one raises CORT
                 # (dread). This is what gives the entity a forward pull instead of pure reaction.
-                # Reward for the hoped-for case scales by what this persona values (correctness
-                # as a stand-in for "things going well"); dread is persona-agnostic threat.
-                from brain.neuron import reward_weight
+                # This is also the DECISION-TIME locus of risk posture: dread scales by the
+                # persona's loss aversion (λ) and the SPREAD of imagined outcomes by its
+                # uncertainty aversion (κ), so a risk-averse identity generates more CORT here →
+                # GABA → raised switch thresholds → it DECIDES more conservatively, not merely
+                # stings harder after a loss lands. Hoped-for reward still scales by what this
+                # persona values (correctness as a stand-in for "things going well"); gains are
+                # never λ-scaled — that one-sidedness is loss aversion.
+                from brain.neuron import (
+                    loss_aversion,
+                    reward_weight,
+                    uncertainty_aversion,
+                )
 
+                _persona = str(settings.get("persona_name", ""))
                 _scale = float(settings.get("anticipation_reward_scale"))
-                _w = reward_weight(str(settings.get("persona_name", "")), "correctness")
+                _w = reward_weight(_persona, "correctness")
+                _la = loss_aversion(_persona)
+                _ka = uncertainty_aversion(_persona)
                 _best = max((s["valence"] for s in self.anticipations), default=0.0)
                 _worst = min((s["valence"] for s in self.anticipations), default=0.0)
                 if _best > 0:
                     self._bus.neuromod.add("DA", _scale * _best * _w)
                 if _worst < 0:
-                    self._bus.neuromod.add("CORT", _scale * (-_worst))
+                    self._bus.neuromod.add("CORT", _scale * (-_worst) * _la)
+                # Uncertainty aversion: even with no outright loss, a wide spread between the
+                # best and worst imagined outcome is itself aversive to a risk-averse persona.
+                _spread = _best - _worst
+                if _spread > 0 and _ka > 0:
+                    self._bus.neuromod.add("CORT", _scale * _spread * _ka)
                 await self._bus.publish_dict(
                     "stream.anticipation",
                     {"scenarios": self.anticipations, "ts": time.time()},

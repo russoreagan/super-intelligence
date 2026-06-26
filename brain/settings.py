@@ -111,6 +111,15 @@ DEFAULTS: dict[str, float | int | str] = {
     "reward_weight_levity": 1.0,
     "weight_min": 0.10,
     "weight_max": 3.00,
+    # Risk posture (independent of the reward-source dials above): the ASYMMETRY between how
+    # losses and gains are felt, plus how aversive raw uncertainty is on its own. Innate per-
+    # persona baselines live in neuron._PERSONA_RISK_POSTURE; these scales (centred 1.0) tune
+    # them per deployment, the same way the Motivation dials scale reward_weight.
+    "loss_aversion_scale": 1.0,  # ×λ: how much harder a loss bites than an equal gain (1.0 = symmetric)
+    "loss_aversion_min": 0.5,  # λ floor (below 1.0 = loss-SEEKING / reckless)
+    "loss_aversion_max": 3.0,  # λ ceiling (prospect-theory rarely exceeds ~2.5)
+    "uncertainty_aversion_scale": 1.0,  # ×κ: dread drawn from outcome SPREAD/variance (0 baseline = risk-neutral)
+    "uncertainty_aversion_max": 1.5,  # κ ceiling
     "gaba_skip_threshold_high": 0.55,
     # Drafter selection: 1 = sample drafters ∝ softmax(learned weight) so a Hebbian
     # ranking shift changes the response MIX even when the count saturates the slate
