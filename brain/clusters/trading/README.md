@@ -51,12 +51,14 @@ post briefings, edit the watchlist, or recursively spawn a debate. The trading a
 exposes a second, **read-only** MCP server for exactly this; the brain registers it
 as a separate connector and binds it to those six agents instead of `trading`.
 
-1. **Register `trading-readonly`** by appending it to the same env-pinned list
-   (the app's read-only endpoint exposes only `get_quote`, `get_indicators`,
-   `get_portfolio`, `scan_watchlist`, `check_contradictions`, `review_journal`,
-   `review_signals`, `scan_source`, `find_mispricing` — no mutation, no
-   `stress_test_thesis`). `identity: true` is required in env-managed mode (it
-   defaults off there) so the brain mints a per-end-user HMAC bearer:
+1. **Register `trading-readonly`** by appending it to the same env-pinned list.
+   The app's read-only endpoint exposes only the **8 pure-data** tools:
+   `get_quote`, `get_indicators`, `get_portfolio`, `scan_watchlist`,
+   `check_contradictions`, `review_journal`, `review_signals`, `scan_source` — no
+   mutation, and crucially **no `find_mispricing` and no `stress_test_thesis`**
+   (both spawn agents / orchestration — they stay main-agent-only on `trading`).
+   `identity: true` is required in env-managed mode (it defaults off there) so the
+   brain mints a per-end-user HMAC bearer:
    ```bash
    BRAIN_CMA_MCP_SERVERS='[
      {"name":"trading","url":"https://exquisite-courtesy-production-e579.up.railway.app/api/mcp/trading","identity":true},
