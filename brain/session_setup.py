@@ -494,8 +494,10 @@ class _SetupMixin:
 
         # ── Advise-only day-trading layer (dark unless trading_enabled) ──────────
         # BOUNDARY: this native layer is retired in favour of the trading app's MCP
-        # connector (register connector "trading" via BRAIN_CMA_MCP_SERVERS +
-        # BRAIN_CMA_MCP_TRADING_TOKEN; bind it to the trading mandate — see
+        # connectors (register "trading" via BRAIN_CMA_MCP_SERVERS +
+        # BRAIN_CMA_MCP_TRADING_TOKEN, bound to the trading mandate; plus the
+        # read-only "trading-readonly" + BRAIN_CMA_MCP_TRADING_READONLY_TOKEN, bound
+        # to the six bull/bear/risk/pm/mispricing/reflection debate agents — see
         # brain/clusters/trading/README.md). The package stays in-tree so it can be
         # re-enabled, but it is OFF by default. BRAIN_NATIVE_TRADING is an env-level
         # override (Railway-settable) that wins over the per-tenant settings.json so
