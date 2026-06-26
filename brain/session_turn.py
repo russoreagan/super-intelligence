@@ -306,7 +306,7 @@ class _TurnMixin:
         effort (continuous), anti-flailing — productive work + confirmed hypotheses (depth), not
         raw retries. Success-gated with an asymmetry: failing a hard task stings less than
         succeeding rewards, so the entity stays drawn TO challenge. Best-effort."""
-        from brain.neuron import accomplishment_factor, reward_weight
+        from brain.neuron import accomplishment_factor, loss_aversion, reward_weight
 
         complexity = str(summary.get("complexity", "medium"))
         productive = float(
@@ -330,9 +330,13 @@ class _TurnMixin:
         if bool(summary.get("success")):
             self.bus.neuromod.add("DA", base * difficulty * modifier * w * er)
         else:
+            # Failing a braced-for hard task is a loss — weight the dip by this persona's loss
+            # aversion (λ), independently of the symmetric mastery reward weight (w). The reward
+            # branch above is never λ-scaled; the asymmetry IS loss aversion.
+            la = loss_aversion(persona)
             fail_ratio = float(settings.get("accomplishment_fail_ratio"))
-            self.bus.neuromod.add("DA", -base * difficulty * fail_ratio * w * er)
-            self.bus.neuromod.add("5HT", -float(settings.get("correctness_5ht_drain")) * w * er)
+            self.bus.neuromod.add("DA", -base * difficulty * fail_ratio * w * er * la)
+            self.bus.neuromod.add("5HT", -float(settings.get("correctness_5ht_drain")) * w * er * la)
 
     async def _verify_world_prediction(self, pred: dict, actual_input: str) -> None:
         """Stage 5 Tier B: did our idle prediction of the user's next message hold? Embed-compare
@@ -1059,7 +1063,7 @@ class _TurnMixin:
             # (reward_weight "correctness") — the Analyst is buoyed/stung far more than the
             # Empath — and is intrinsic: it fires on self-judged quality, no user praise needed.
             if draft_scores:
-                from brain.neuron import reward_weight
+                from brain.neuron import loss_aversion, reward_weight
 
                 best = max(draft_scores, key=lambda d: d.get("overall", 0.5))
                 overall = best.get("overall", 0.5)
@@ -1069,14 +1073,17 @@ class _TurnMixin:
                 if overall < 0.4:
                     # Effort cost (unchanged) PLUS the self-standard penalty: falling short of
                     # its own bar dips DA and drains 5HT (the lingering disappointed-in-self /
-                    # guilt component). Flavor — brooding vs bristling — comes from resting chem.
+                    # guilt component). Falling short is a LOSS, so it scales by this persona's
+                    # loss aversion (λ) on top of how much it values being right — the high-λ
+                    # identity broods harder over its own miss. Flavor from resting chem.
+                    _la = loss_aversion(_persona)
                     self.bus.neuromod.add("GABA", 0.06)
                     self.bus.neuromod.add("NE", 0.04)
                     self.bus.neuromod.add(
-                        "DA", -float(settings.get("correctness_penalty_base")) * _w * _er
+                        "DA", -float(settings.get("correctness_penalty_base")) * _w * _er * _la
                     )
                     self.bus.neuromod.add(
-                        "5HT", -float(settings.get("correctness_5ht_drain")) * _w * _er
+                        "5HT", -float(settings.get("correctness_5ht_drain")) * _w * _er * _la
                     )
                     _trigger = "draft_quality_low"
                 elif overall > 0.7:
@@ -1841,17 +1848,24 @@ class _TurnMixin:
         # Neuromod update (deferred from main turn into background completion). Completing a
         # task is an intrinsic correctness signal — reward/penalty scale by how much this
         # persona values being right, and failure also drains 5HT (the sting that lingers).
+        from brain.neuron import loss_aversion as _loss_aversion
         from brain.neuron import reward_weight as _reward_weight
 
-        _tw = _reward_weight(str(settings.get("persona_name", "")), "correctness")
+        _tpersona = str(settings.get("persona_name", ""))
+        _tw = _reward_weight(_tpersona, "correctness")
         _ter = float(settings.get("emotional_reactivity_scale"))
         if success is False:
+            # A failed task is a LOSS — scale the dip/drain by loss aversion (λ), one-sided
+            # (the success branch below stays unweighted), independent of correctness valuation.
+            _tla = _loss_aversion(_tpersona)
             self.bus.neuromod.add("GABA", 0.08)
             self.bus.neuromod.add("NE", 0.06)
             self.bus.neuromod.add(
-                "DA", -float(settings.get("correctness_penalty_base")) * _tw * _ter
+                "DA", -float(settings.get("correctness_penalty_base")) * _tw * _ter * _tla
             )
-            self.bus.neuromod.add("5HT", -float(settings.get("correctness_5ht_drain")) * _tw * _ter)
+            self.bus.neuromod.add(
+                "5HT", -float(settings.get("correctness_5ht_drain")) * _tw * _ter * _tla
+            )
         elif success:
             self.bus.neuromod.add("DA", float(settings.get("correctness_reward_base")) * _tw * _ter)
             self.bus.neuromod.add("Glu", 0.04)

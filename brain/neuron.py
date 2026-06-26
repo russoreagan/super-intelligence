@@ -454,6 +454,33 @@ _PERSONA_REWARD_WEIGHTS: dict[str, dict[str, float]] = {
 }
 
 
+# Per-persona RISK POSTURE — the asymmetry the reward table above cannot express. reward_weight
+# scales how much a persona draws from a reward SOURCE, but symmetrically: it makes both the gain
+# and the matching loss bigger together. These two axes add the part that is INDEPENDENT of how
+# much reward a persona feels:
+#   loss_aversion (λ)        — how much harder a below-expectation outcome (a loss) bites than an
+#                              equal-sized gain. 1.0 = symmetric (no loss aversion); prospect-theory
+#                              typical ≈ 1.5–2.5; <1 = a reckless identity that underweights downside.
+#                              Applied ONLY to the negative side of appraisal — that asymmetry IS
+#                              loss aversion. (De Martino et al. 2010: amygdala lesions abolish loss
+#                              aversion while leaving gain sensitivity intact — the two dissociate.)
+#   uncertainty_aversion (κ) — dread drawn from the SPREAD of imagined outcomes, regardless of sign
+#                              and independent of λ. 0.0 = risk-neutral (variance per se is fine);
+#                              higher = prefers predictable options even when nothing is a clear loss.
+# The axes are orthogonal: a persona can feel rewards strongly AND fear losses strongly, or any mix.
+# Unlisted personas default to λ=1.0 / κ=0.0 (symmetric, risk-neutral); the_stoic is pinned there on
+# purpose as the experimental control. Values are the innate baseline; the settings dials
+# loss_aversion_scale / uncertainty_aversion_scale (centred 1.0) tune them per deployment.
+_PERSONA_RISK_POSTURE: dict[str, dict[str, float]] = {
+    "the_analyst": {"loss_aversion": 2.0, "uncertainty_aversion": 1.25},  # craves certainty; hates being wrong most
+    "the_empath": {"loss_aversion": 1.7, "uncertainty_aversion": 0.6},  # feels potential pain harder
+    "the_visionary": {"loss_aversion": 0.6, "uncertainty_aversion": 0.05},  # bold; actively underweights downside
+    "the_poet": {"loss_aversion": 2.4, "uncertainty_aversion": 0.25},  # Tortured Artist: losses loom largest; ambiguity-tolerant
+    "the_sage": {"loss_aversion": 1.1, "uncertainty_aversion": 0.1},  # even-keeled; barely reactive to either
+    "the_cynic": {"loss_aversion": 2.0, "uncertainty_aversion": 0.75},  # braces hard for the worst
+}
+
+
 def reward_weight(persona_seed: str, source: str) -> float:
     """Per-persona multiplier on a reward SOURCE (what this identity values, and so how much
     the matching failure hurts). >1.0 = this persona cares more about `source`; <1.0 = less.
@@ -476,6 +503,52 @@ def reward_weight(persona_seed: str, source: str) -> float:
     return base * override
 
 
+def loss_aversion(persona_seed: str) -> float:
+    """Per-persona λ (see _PERSONA_RISK_POSTURE): how much harder a loss — a below-expectation
+    outcome — bites than an equal gain. 1.0 = symmetric (no loss aversion); >1 = loss-averse
+    (prospect-theory typical ≈1.5–2.5); <1 = reckless. INDEPENDENT of reward_weight: a persona can
+    value rewards strongly AND fear losses strongly. Callers apply it ONLY to negative appraisal
+    deltas (dread, penalties), never to gains — that one-sidedness is what makes it loss aversion.
+
+    base table × per-deployment settings dial (loss_aversion_scale, centred 1.0), bounded
+    [loss_aversion_min, loss_aversion_max]. Unknown persona → 1.0 (symmetric)."""
+    import re
+
+    from brain.settings import settings as _settings
+
+    key = re.sub(r"[^a-z0-9]+", "_", str(persona_seed).lower()).strip("_")
+    base = float(_PERSONA_RISK_POSTURE.get(key, {}).get("loss_aversion", 1.0))
+    try:
+        scale = float(_settings.get("loss_aversion_scale", 1.0) or 1.0)
+    except Exception:
+        scale = 1.0
+    lo = float(_settings.get("loss_aversion_min", 0.5))
+    hi = float(_settings.get("loss_aversion_max", 3.0))
+    return max(lo, min(hi, base * scale))
+
+
+def uncertainty_aversion(persona_seed: str) -> float:
+    """Per-persona κ (see _PERSONA_RISK_POSTURE): dread drawn from the SPREAD of imagined outcomes
+    (variance), independent of sign and of loss_aversion. 0.0 = risk-neutral; higher = prefers
+    predictable options. Feeds the anticipator so a risk-averse persona DECIDES conservatively
+    ahead of time, not merely stings harder after a loss lands.
+
+    base table × per-deployment settings dial (uncertainty_aversion_scale, centred 1.0), bounded
+    [0.0, uncertainty_aversion_max]. Unknown persona → 0.0 (risk-neutral)."""
+    import re
+
+    from brain.settings import settings as _settings
+
+    key = re.sub(r"[^a-z0-9]+", "_", str(persona_seed).lower()).strip("_")
+    base = float(_PERSONA_RISK_POSTURE.get(key, {}).get("uncertainty_aversion", 0.0))
+    try:
+        scale = float(_settings.get("uncertainty_aversion_scale", 1.0) or 1.0)
+    except Exception:
+        scale = 1.0
+    hi = float(_settings.get("uncertainty_aversion_max", 1.5))
+    return max(0.0, min(hi, base * scale))
+
+
 def prediction_reward(confidence: float, correct: bool, informativeness: float) -> float:
     """Self-verified correctness (Stage 5): the DA delta for a prediction the world then
     confirmed or refuted — no user needed. Returns a *base-scaled* multiplier in roughly
@@ -495,7 +568,12 @@ def prediction_reward(confidence: float, correct: bool, informativeness: float) 
         return 0.0
     # Scale by both how sure it was and how non-trivial the call was.
     magnitude = confidence * informativeness
-    return magnitude if correct else -magnitude
+    if correct:
+        return magnitude
+    # A confident bet reality then refuted is a loss — weight it by this persona's loss aversion
+    # (λ), so the same wrong call stings harder for risk-averse identities. Gains are never
+    # λ-scaled (above); that one-sidedness is loss aversion. Unknown persona → λ=1.0 (unchanged).
+    return -magnitude * loss_aversion(str(_settings.get("persona_name", "")))
 
 
 def accomplishment_factor(measured_effort: float, expected_effort: float) -> tuple[float, float]:

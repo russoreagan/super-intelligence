@@ -1324,6 +1324,7 @@ class MotorCortexCluster:
                 if story_criteria_verified:
                     predictions_confirmed += 1
                 with contextlib.suppress(Exception):
+                    from brain.neuron import loss_aversion as _la_fn
                     from brain.neuron import reward_weight as _rw
 
                     _persona = str(_brain_settings.get("persona_name", ""))
@@ -1338,7 +1339,9 @@ class MotorCortexCluster:
                             self._bus.neuromod.add("DA", _delta)
                             _pred_reward_total += _delta
                     else:
-                        self._bus.neuromod.add("DA", -0.5 * _base * _w * _er)
+                        # Predicted its story would verify; reality refuted it — a loss, so the
+                        # dip scales by loss aversion (λ). The reward branch above stays unweighted.
+                        self._bus.neuromod.add("DA", -0.5 * _base * _w * _er * _la_fn(_persona))
 
             # Stage 6(c): in-the-moment frustration. The job is dragging past the effort it was
             # braced for (complexity estimate) — accrue NE/GABA + a small DA/5HT dip as the slog
