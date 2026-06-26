@@ -43,6 +43,52 @@ can be re-enabled, but the supported path is the MCP connector below.
 Cloud actions must be enabled for the bound agent (`motor_user_cloud` ≥ `ro`) and
 `BRAIN_MOTOR=true`. The connector is read-only/advise-only on the app side.
 
+### Wire the read-only connector for the debate agents
+
+The three-round bull/bear/risk debate runs six reasoning agents (one persona ×
+mandate each). They must pull **live** data during analysis but must never write,
+post briefings, edit the watchlist, or recursively spawn a debate. The trading app
+exposes a second, **read-only** MCP server for exactly this; the brain registers it
+as a separate connector and binds it to those six agents instead of `trading`.
+
+1. **Register `trading-readonly`** by appending it to the same env-pinned list
+   (the app's read-only endpoint exposes only `get_quote`, `get_indicators`,
+   `get_portfolio`, `scan_watchlist`, `check_contradictions`, `review_journal`,
+   `review_signals`, `scan_source`, `find_mispricing` — no mutation, no
+   `stress_test_thesis`). `identity: true` is required in env-managed mode (it
+   defaults off there) so the brain mints a per-end-user HMAC bearer:
+   ```bash
+   BRAIN_CMA_MCP_SERVERS='[
+     {"name":"trading","url":"https://exquisite-courtesy-production-e579.up.railway.app/api/mcp/trading","identity":true},
+     {"name":"trading-readonly","url":"https://exquisite-courtesy-production-e579.up.railway.app/api/mcp/trading-readonly","identity":true}
+   ]'
+   ```
+2. **Set its token.** `trading-readonly` maps to env var
+   `BRAIN_CMA_MCP_TRADING_READONLY_TOKEN` (`<NAME>` upper-cased, `-`→`_`). It MUST
+   equal `BRAIN_CMA_MCP_TRADING_TOKEN` (= the app's `TRADING_MCP_SECRET`):
+   ```bash
+   BRAIN_CMA_MCP_TRADING_READONLY_TOKEN=$BRAIN_CMA_MCP_TRADING_TOKEN
+   ```
+3. **Bind it to the six debate agents** (and leave `trading` on the main agent
+   only). Each debate agent's permission overrides become:
+   ```json
+   { "motor_user_connectors": "trading-readonly", "motor_self_connectors": "trading-readonly" }
+   ```
+   Mandate ids: `trading_bull`, `trading_bear`, `trading_risk`, `trading_pm`,
+   `trading_mispricing`, `trading_reflection`. The whole topology (main → `trading`,
+   debate → `trading-readonly`) is applied idempotently by
+   `python -m scripts.bind_trading_connector`, or per-agent over the owner API:
+   ```
+   PUT /v1/agents/<persona>.trading_bear
+   {"permissions": {"motor_user_connectors":"trading-readonly","motor_self_connectors":"trading-readonly"}}
+   ```
+
+> **Guard:** keep the org-level `motor_user_connectors` / `motor_self_connectors`
+> settings **empty** (= "all configured"). The motor cortex intersects the org
+> allowlist with the bound agent's; a non-empty org set that omits
+> `trading-readonly` would null the debate agents' allowlist. The per-agent
+> binding is the only place the scoping should live.
+
 ### Native layer (legacy / escape hatch — not the supported path)
 
 The in-tree native tools remain for local/offline use. They are gated OFF by
