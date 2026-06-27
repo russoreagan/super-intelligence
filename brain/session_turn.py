@@ -1615,6 +1615,20 @@ class _TurnMixin:
         unset, which keeps delivery owner-only (current behaviour)."""
         return os.environ.get("AGENT_WORK_DEFAULT_END_USER_ID", "").strip()
 
+    def _genuine_mood(self) -> dict:
+        """The brain's genuine current emotion, re-derived from live state at this
+        moment — the mood OUTPUT only ({"emotion": <label>}), never the underlying
+        chemistry. Proactive results voice the entity's real feeling (already shaped
+        by the reward appraisal that just ran), not a hardcoded label; and only the
+        label crosses the boundary, so the chemical model stays un-reverse-engineerable.
+        Falls back to neutral if the hypothalamus is unavailable."""
+        emotion = "neutral"
+        try:
+            emotion = self.hypothalamus.refresh_emotion()[0] or "neutral"
+        except Exception:
+            pass
+        return {"emotion": emotion}
+
     async def _run_task(self, task) -> None:
         job_turn_id = f"task_{task.id}"
         job_id = f"job_{job_turn_id}"
@@ -1715,14 +1729,15 @@ class _TurnMixin:
             if should_report:
                 # Partner delivery isn't gated on a local listener (the user may be
                 # waiting remotely in the copilot); local TTS still is.
+                mood = self._genuine_mood()
                 if self._emitter:
                     await self._emitter.emit_proactive_speech(
                         question,
-                        affect={"emotion": "curious"},
+                        affect=mood,
                         partner_target=self._partner_proactive_target(),
                     )
                 if self._proactive_speech_allowed():
-                    await self.pns.emit(question, {"emotion": "curious"})
+                    await self.pns.emit(question, mood)
                 else:
                     logger.debug(
                         "[TaskWorker] Task [%s] clarification delivered to partner; local "
@@ -1795,6 +1810,9 @@ class _TurnMixin:
                     already_reported=should_report,
                 )
         logger.info("[TaskWorker] Reporting result [%s]: %s", task.id, spoken_summary[:160])
+        # The reward appraisal above already moved the chemistry, so the genuine mood now
+        # reflects how this result actually landed — voice it, don't hardcode a label.
+        mood = self._genuine_mood()
         if self._emitter:
             await self._emitter.emit_event(
                 {
@@ -1808,7 +1826,7 @@ class _TurnMixin:
                 # copilot may be away); local TTS below still is.
                 await self._emitter.emit_proactive_speech(
                     spoken_summary,
-                    affect={"emotion": "lively" if summary.get("success") else "concerned"},
+                    affect=mood,
                     partner_target=self._partner_proactive_target(),
                 )
             else:
@@ -1818,9 +1836,7 @@ class _TurnMixin:
                     task.id,
                 )
         if should_report and self._proactive_speech_allowed():
-            await self.pns.emit(
-                spoken_summary, {"emotion": "lively" if summary.get("success") else "concerned"}
-            )
+            await self.pns.emit(spoken_summary, mood)
 
     async def _synthesize_lobe_result(self, tool_name: str, output: str, turn_id: str) -> str:
         """Synthesize a natural spoken utterance from a lobe tool's raw context output.
@@ -1999,14 +2015,15 @@ class _TurnMixin:
             # third-party app drives this agent through the engine API the result
             # must stay silent in the Elyceum app — anyone there is observing the
             # run, not conversing — while still reaching the partner above.
+            # The tool's reward/outcome already moved the chemistry, so the genuine mood
+            # reflects how it landed — voice that, not a hardcoded success/fail label.
+            mood = self._genuine_mood()
             with contextlib.suppress(Exception):
                 if self._emitter:
-                    await self._emitter.emit_proactive_speech(
-                        msg, affect={"emotion": "lively" if success else "concerned"}
-                    )
+                    await self._emitter.emit_proactive_speech(msg, affect=mood)
             if self._proactive_voice_allowed():
                 with contextlib.suppress(Exception):
-                    await self.pns.emit(msg, {"emotion": "lively" if success else "concerned"})
+                    await self.pns.emit(msg, mood)
 
 
 # ── Module-level helpers (used inside _process_turn_body) ─────────────────────

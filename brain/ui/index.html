@@ -3808,6 +3808,15 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
 /* When analyser is driving bar heights directly, suppress the CSS animation */
 .voicebars.live i { animation: none; }
 
+/* ---- TTS mute toggle (sits left of the voicebars) ---- */
+.tts-mute { position: absolute; top: 15px; right: 56px; width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center; padding: 0; border: none; border-radius: 6px; background: transparent; color: var(--fg-faint); cursor: pointer; transition: color 0.18s, background 0.18s; }
+.tts-mute:hover { color: var(--fg); background: var(--line-soft); }
+.tts-mute svg { width: 16px; height: 16px; display: block; }
+.tts-mute .ic-off { display: none; }
+.tts-mute.muted { color: var(--fg-mute); }
+.tts-mute.muted .ic-on { display: none; }
+.tts-mute.muted .ic-off { display: block; }
+
 /* ---- disposition / mood ---- */
 .iv-mood { display: flex; align-items: center; gap: 10px; margin-top: 2px; }
 .iv-mood-name { font-family: var(--serif); font-size: 26px; font-weight: 500; letter-spacing: -0.015em; color: var(--fg); text-transform: capitalize; line-height: 1.05; }
@@ -4502,12 +4511,16 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
         <div class="iv-eyebrow">Persona</div>
         <div class="iv-persona-name" id="persona-name-display">The Visionary</div>
         <div class="iv-persona-tag" id="persona-tag-display">Exploratory · optimistic</div>
+        <button class="tts-mute" id="tts-mute" type="button" title="Mute voice narration" aria-label="Mute voice narration" aria-pressed="false">
+          <svg class="ic-on" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M19 5a9 9 0 0 1 0 14"/></svg>
+          <svg class="ic-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4V5z"/><line x1="22" y1="9" x2="16" y2="15"/><line x1="16" y1="9" x2="22" y2="15"/></svg>
+        </button>
         <div class="voicebars" id="voicebars" title="Voice"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
       </div>
 
-      <!-- Disposition / mood -->
+      <!-- Prevailing mood -->
       <section class="col-section">
-        <div class="section-label">Disposition</div>
+        <div class="section-label">Prevailing mood</div>
         <div class="iv-mood">
           <span class="mood-dot" id="mood-dot"></span>
           <span class="iv-mood-name" id="mood-name">settling</span>
@@ -4615,7 +4628,7 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
     <!-- ===================== CENTER: conversation ===================== -->
     <main class="col col-mid convo">
       <header class="convo-head">
-        <h2 class="convo-title">Conversation</h2>
+        <h2 class="convo-title" id="convo-title">Conversation</h2>
         <div class="head-meta">
           <span class="convo-sub">Voice · text · transcribed</span>
         </div>
@@ -5360,6 +5373,37 @@ document.getElementById('voice-select').addEventListener('change', function() {
   }).catch(() => {});
 });
 
+// ── Voice-narration mute toggle ──────────────────────────────────────────────
+// Client-side gate on TTS playback. Does NOT touch agent responses — only the
+// spoken narration is silenced. State persists in localStorage per browser.
+(function initTtsMute() {
+  const btn = document.getElementById('tts-mute');
+  if (!btn) return;
+
+  function render() {
+    btn.classList.toggle('muted', _ttsMuted);
+    btn.setAttribute('aria-pressed', _ttsMuted ? 'true' : 'false');
+    btn.title = _ttsMuted ? 'Voice narration muted — click to unmute'
+                          : 'Mute voice narration';
+  }
+
+  btn.addEventListener('click', function() {
+    _ttsMuted = !_ttsMuted;
+    localStorage.setItem('brain_voice_muted', _ttsMuted ? '1' : '0');
+    render();
+    // When muting mid-utterance, flush any audio already buffered/playing so it
+    // stops immediately rather than draining its remaining schedule.
+    if (_ttsMuted && _audioCtx) {
+      _audioCtx.close();
+      _audioCtx = null;
+      _audioScheduledUntil = 0;
+      _stopVbarLoop();
+    }
+  });
+
+  render();
+})();
+
 /* =====================================================================
    BOOT OVERLAY — "Awakening the mind"
    Shown on page load and across brain restarts (persona switch, manual
@@ -5484,6 +5528,9 @@ function connect() {
 }
 
 // ── Browser TTS audio playback (BRAIN_AUDIO_OUTPUT_DEVICE=browser) ───────────
+// Voice-narration mute. Gates playback only — agent text responses are
+// unaffected (they arrive on a separate, non-audio path). Persists per browser.
+let _ttsMuted = localStorage.getItem('brain_voice_muted') === '1';
 let _audioCtx = null;
 let _audioScheduledUntil = 0;  // AudioContext.currentTime when next chunk should start
 const AUDIO_SAMPLE_RATE = 22050;
@@ -5574,6 +5621,9 @@ function handleBinaryAudio(buf) {
   }
 
   if (frameType !== 0x01) return;  // unknown frame type
+
+  // Voice narration muted — drop the audio chunk (text response is unaffected).
+  if (_ttsMuted) return;
 
   // PCM int16 LE, 22050 Hz, mono — skip the 1-byte prefix
   const pcmBytes = buf.slice(1);
@@ -5683,9 +5733,12 @@ function _applyObservedIdentity(pslug, agentLabel) {
   const nameEl = document.getElementById('persona-name-display');
   const tagEl  = document.getElementById('persona-tag-display');
   const badge  = document.getElementById('persona-header-badge');
-  if (nameEl) nameEl.textContent = agentLabel || pname;
+  const titleEl = document.getElementById('convo-title');
+  // Left rail keeps the PERSONA identity; the chat header carries the AGENT name.
+  if (nameEl) nameEl.textContent = pname;
   if (tagEl)  tagEl.textContent  = p ? p.tag : '';
-  if (badge)  { badge.textContent = String(agentLabel || pname).replace(/^The\s+/i, ''); badge.classList.remove('neutral'); }
+  if (badge)  { badge.textContent = String(pname).replace(/^The\s+/i, ''); badge.classList.remove('neutral'); }
+  if (titleEl) titleEl.textContent = agentLabel || pname;
   const chem = window.PERSONA_CHEM && window.PERSONA_CHEM[pname];
   if (chem) { renderNeuromod(chem); renderHormonal(chem); }
 }
@@ -5693,6 +5746,8 @@ function _applyObservedIdentity(pslug, agentLabel) {
 // Restore the owner persona's identity + resting bars when observation clears.
 function _restoreOwnerIdentity() {
   if (typeof _renderPersonaState === 'function') _renderPersonaState();
+  const titleEl = document.getElementById('convo-title');
+  if (titleEl) titleEl.textContent = 'Conversation';
   const owner = currentSettings && currentSettings.persona_name;
   // _renderPersonaState only knows the 5 core personas; fill the tag from the full
   // list for the rest (e.g. The Admin) so the owner identity isn't left blank.
