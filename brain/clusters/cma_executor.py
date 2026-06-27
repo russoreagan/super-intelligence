@@ -117,8 +117,24 @@ def mint_end_user_token(
 
 
 def is_env_managed() -> bool:
-    """True when connectors are pinned via BRAIN_CMA_MCP_SERVERS (registry is read-only)."""
-    return bool(os.environ.get("BRAIN_CMA_MCP_SERVERS", "").strip())
+    """True when THIS brain's connector registry is pinned via BRAIN_CMA_MCP_SERVERS
+    (read-only).
+
+    Env-pinned connectors are process-global, so in multi-tenant hosting they would
+    otherwise be inherited by EVERY tenant brain — a cross-org leak (one org's
+    `trading` connector showing up in another org's tool menu). They are therefore
+    gated to the owning org: when BRAIN_CMA_MCP_OWNER_ORG is set and does not match
+    this brain's org (BRAIN_ORG_ID / BRAIN_USER_ID), the env list does NOT apply and
+    the brain falls through to its own org-scoped Supabase registry. With no owner
+    pin (single-tenant / dev) the env applies as before."""
+    if not os.environ.get("BRAIN_CMA_MCP_SERVERS", "").strip():
+        return False
+    owner = os.environ.get("BRAIN_CMA_MCP_OWNER_ORG", "").strip()
+    this_org = (
+        os.environ.get("BRAIN_ORG_ID", "").strip()
+        or os.environ.get("BRAIN_USER_ID", "").strip()
+    )
+    return not (owner and this_org and owner != this_org)
 
 
 def _normalize_url(url: str) -> str:
@@ -469,8 +485,11 @@ class CMAExecutor(ExecutorCommon):
         make creds available here.
         """
         data = None
-        raw = os.environ.get("BRAIN_CMA_MCP_SERVERS", "").strip()
-        if raw:
+        # Env-pinned connectors apply only to the owning org (is_env_managed gates
+        # this) — otherwise every tenant brain would inherit them. A non-owner org
+        # skips the env list and resolves its own org-scoped registry below.
+        if is_env_managed():
+            raw = os.environ.get("BRAIN_CMA_MCP_SERVERS", "").strip()
             try:
                 data = json.loads(raw)
             except Exception as e:
