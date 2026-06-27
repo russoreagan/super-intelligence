@@ -125,6 +125,7 @@ class UIServer:
         connectors_fn: Callable[[], list] | None = None,
         connector_reload_fn: Callable[[], None] | None = None,
         tier_fn: Callable[[], str] | None = None,
+        usage_fn: Callable[..., dict] | None = None,
         wiring=None,
         bus=None,
     ) -> None:
@@ -152,6 +153,10 @@ class UIServer:
         # keeping a pod up for it is pure waste. None = report 'full' (the safe default
         # — a real full brain must never be denied its pod).
         self._tier_fn = tier_fn
+        # (since, until) -> { agent_id: {calls, cloud_calls, in_tok, out_tok,
+        # cloud_usd, pod_s, last_ts} }. Per-agent model usage for the Agents
+        # dashboard: no range → live session meter; a range → durable ledger sum.
+        self._usage_fn = usage_fn
         self._clients: set = set()
         self._last_neuromod: dict = {}
         self._last_hormonal: dict = {}
@@ -994,6 +999,25 @@ class UIServer:
                     "ceilings": ceilings,
                 }
             )
+
+        @app.get("/agents/usage")
+        async def agents_usage_ui(request: Request):
+            """Per-agent model usage (tokens, pod compute-seconds, cloud $) for the
+            Agents dashboard cost monitor. No ?since/?until → the live in-memory meter
+            (current session). A [since, until] range (ISO-8601) → the durable ledger
+            summed across restarts. Owner-authed; empty when there is no meter."""
+            from fastapi.responses import JSONResponse
+
+            since = request.query_params.get("since") or None
+            until = request.query_params.get("until") or None
+            usage: dict = {}
+            if self._usage_fn is not None:
+                try:
+                    # May hit Supabase on the range path → keep it off the event loop.
+                    usage = await asyncio.to_thread(self._usage_fn, since, until) or {}
+                except Exception as e:
+                    logger.debug("[agents] usage fn failed: %s", e)
+            return JSONResponse({"usage": usage, "since": since, "until": until})
 
         @app.post("/agents")
         async def create_agent_ui(request: Request):

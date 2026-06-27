@@ -19,11 +19,127 @@
 
   let workspace = 'labs';
   let isAdmin = false;
+  let ownerEmail = '';
   let mandatesEnabled = false;
   let agentsData = null;      // { agents, roles, ceilings }
+  let agentActivity = null;   // { agent_id: { count, lastTs } } from /agents/turns
+  let agentUsage = null;      // { agent_id: { calls, cloud_calls, in_tok, out_tok, cloud_usd, pod_s, last_ts } }
+  let usageRange = { key: 'today', since: null, until: null }; // dashboard date-range selector
+  let podStatus = null;       // /__pod_status — shared GPU pod uptime + accrued cost
+  let podMeterTimer = null;   // ticking refresh while the Live dashboard is visible
   let agentSel = null;        // open agent_id
   let partnerKeys = null;
   let connectorsCache = null;
+
+  // ── agent helpers (shared across rail / dashboard / list) ────────────────
+  const isLive = (a) => !!a && a.enabled !== false;
+  // Compact "time since" for tight rail/dashboard cells: 12s · 4m · 3h · 5d · —
+  function agoShort(ms) {
+    if (!isFinite(ms) || ms < 0) return '—';
+    const s = Math.floor(ms / 1000);
+    if (s < 10) return 'now';
+    if (s < 60) return s + 's';
+    const m = Math.floor(s / 60); if (m < 60) return m + 'm';
+    const h = Math.floor(m / 60); if (h < 24) return h + 'h';
+    return Math.floor(h / 24) + 'd';
+  }
+  // Compact token counts: 840 · 12k · 1.2M.
+  function fmtTokens(n) {
+    n = n || 0;
+    if (n >= 1e6) return (n / 1e6).toFixed(n >= 1e7 ? 0 : 1) + 'M';
+    if (n >= 1e3) return (n / 1e3).toFixed(n >= 1e4 ? 0 : 1) + 'k';
+    return String(n);
+  }
+  // Hover detail for an agent's token cell: calls, in/out split, cloud spend.
+  function usageTitle(u) {
+    if (!u) return 'no model calls this session';
+    const cloud = u.cloud_usd ? ` · $${u.cloud_usd.toFixed(2)} cloud spend` : '';
+    return `${u.calls} model call${u.calls === 1 ? '' : 's'} · ${fmtTokens(u.in_tok)} in / ${fmtTokens(u.out_tok)} out · ${u.cloud_calls} cloud${cloud}`;
+  }
+  // Long-form duration for the pod uptime meter: 45s · 12m · 3h 12m · 2d 3h.
+  function fmtDur(sec) {
+    if (sec == null || !isFinite(sec) || sec < 0) return '—';
+    sec = Math.floor(sec);
+    const d = Math.floor(sec / 86400), h = Math.floor((sec % 86400) / 3600), m = Math.floor((sec % 3600) / 60);
+    if (d) return `${d}d ${h}h`;
+    if (h) return `${h}h ${m}m`;
+    if (m) return `${m}m`;
+    return `${sec}s`;
+  }
+  // The connectors an agent is granted (empty ⇒ inherits the org default set).
+  function agentConnectors(a) {
+    const p = (a && a.permissions) || {};
+    const parse = (v) => (v ? String(v).split(/[\n,]/).map((s) => s.trim()).filter(Boolean) : []);
+    return [...new Set([...parse(p.motor_user_connectors), ...parse(p.motor_self_connectors)])];
+  }
+  // ── cost = real cloud $ + pod compute-time × the pod's $/hr ───────────────
+  // $/hr to value pod compute-seconds when the live pod rate is unknown (pod off /
+  // historical range). Matches the typical secure-A40 rate; clearly an estimate.
+  const POD_RATE_FALLBACK = 0.44;
+  const RANGE_PRESETS = [
+    { key: 'session', label: 'This session' },
+    { key: 'today', label: 'Today' },
+    { key: '7d', label: '7 days' },
+    { key: '30d', label: '30 days' },
+    { key: 'custom', label: 'Custom' },
+  ];
+  // Resolve the selected range to ISO [since, until]. 'session' → nulls (live meter).
+  function rangeBounds() {
+    const r = usageRange;
+    if (r.key === 'session') return { since: null, until: null };
+    if (r.key === 'custom') return { since: r.since || null, until: r.until || null };
+    const now = Date.now();
+    if (r.key === 'today') { const d = new Date(); d.setHours(0, 0, 0, 0); return { since: d.toISOString(), until: null }; }
+    const days = r.key === '30d' ? 30 : 7;
+    return { since: new Date(now - days * 86400000).toISOString(), until: null };
+  }
+  function podRate() { return (podStatus && podStatus.cost_per_hr) ? podStatus.cost_per_hr : POD_RATE_FALLBACK; }
+  // An agent's cost over the loaded window: real cloud spend + pod compute time priced.
+  function agentCostUsd(u) {
+    if (!u) return 0;
+    return (u.cloud_usd || 0) + (u.pod_s || 0) * podRate() / 3600;
+  }
+  function costTitle(u) {
+    if (!u) return 'no model usage in this range';
+    const podUsd = (u.pod_s || 0) * podRate() / 3600;
+    return `$${(u.cloud_usd || 0).toFixed(4)} cloud + $${podUsd.toFixed(4)} pod (${Math.round(u.pod_s || 0)}s @ $${podRate().toFixed(2)}/hr)`;
+  }
+  // Switch the dashboard's date range: reload usage + pod rate, then re-render.
+  async function setUsageRange(key, since, until) {
+    usageRange = { key, since: since || null, until: until || null };
+    await Promise.all([loadAgentUsage(), loadPodStatus()]);
+    const main = document.getElementById('ag-main');
+    if (main && agView === 'live') renderLiveDashboard(main);
+  }
+  // Re-fill the per-card cost / token / call cells in place (on the 30s tick).
+  function repaintUsageCells() {
+    const ags = (agentsData && agentsData.agents) || [];
+    document.querySelectorAll('#ws-agents .dash-card').forEach((card) => {
+      const id = card.getAttribute('data-agent');
+      const a = ags.find((x) => x.agent_id === id);
+      const live = isLive(a);
+      const u = (agentUsage && agentUsage[id]) || null;
+      const c = card.querySelector('[data-cost-for]');
+      const t = card.querySelector('[data-tok-for]');
+      const k = card.querySelector('[data-calls-for]');
+      if (c) { c.textContent = u ? '$' + agentCostUsd(u).toFixed(2) : (live ? '$0.00' : '—'); c.title = costTitle(u); }
+      if (t) { t.textContent = u ? fmtTokens((u.in_tok || 0) + (u.out_tok || 0)) : (live ? '0' : '—'); t.title = usageTitle(u); }
+      if (k) { k.textContent = u ? String(u.calls) : (live ? '0' : '—'); }
+    });
+    const tot = document.getElementById('range-total');
+    if (tot) tot.textContent = '$' + dashboardShown().reduce((s, a) => s + agentCostUsd(agentUsage && agentUsage[a.agent_id]), 0).toFixed(2);
+  }
+  // Which agents the dashboard shows for the current range: live agents always; for
+  // a historical range, also any agent that had usage in it (now-paused cost-runners
+  // included). Sorted by cost so whatever is running up the bill floats to the top.
+  function dashboardShown() {
+    const ags = (agentsData && agentsData.agents) || [];
+    const map = new Map();
+    ags.filter(isLive).forEach((a) => map.set(a.agent_id, a));
+    if (usageRange.key !== 'session') ags.forEach((a) => { if (agentUsage && agentUsage[a.agent_id]) map.set(a.agent_id, a); });
+    return [...map.values()].sort((x, y) =>
+      agentCostUsd(agentUsage && agentUsage[y.agent_id]) - agentCostUsd(agentUsage && agentUsage[x.agent_id]));
+  }
 
   // ── masthead dropdown ────────────────────────────────────────────────────
   function closeMenu() {
@@ -74,7 +190,7 @@
   async function loadGating() {
     try {
       const me = await fetch('/auth/me');
-      if (me.ok) isAdmin = !!(await me.json()).is_admin;
+      if (me.ok) { const j = await me.json(); isAdmin = !!j.is_admin; ownerEmail = j.email || ''; }
     } catch (e) { isAdmin = false; }
     try {
       const mr = await fetch('/agents');
@@ -113,7 +229,14 @@
     return connectorsCache;
   }
 
-  function ensureAgents() { if (!agentsData) loadAgents(); else { if (!connectorsDetails) loadConnectorDetails().then(paintAgents); else paintAgents(); } }
+  function ensureAgents() {
+    if (!agentsData) { loadAgents(); return; }
+    const need = [];
+    if (!connectorsDetails) need.push(loadConnectorDetails());
+    if (!agentActivity) need.push(loadAgentActivity());
+    if (!agentUsage) need.push(loadAgentUsage());
+    if (need.length) Promise.all(need).then(paintAgents); else paintAgents();
+  }
   async function loadAgents() {
     const host = document.getElementById('ws-agents');
     host.innerHTML = '<div class="ws-grid"><div class="ws-main"><div class="main-pad"><div class="empty"><h3>Loading…</h3></div></div></div></div>';
@@ -121,11 +244,52 @@
       const r = await fetch('/agents');
       agentsData = r.ok ? await r.json() : { enabled: false, agents: [], roles: [], ceilings: {} };
     } catch (e) { agentsData = { enabled: false, agents: [], roles: [], ceilings: {} }; }
-    await loadConnectorDetails();
+    await Promise.all([loadConnectorDetails(), loadAgentActivity(), loadAgentUsage()]);
     paintAgents();
   }
-  // which sub-view is active in Agents
-  let agView = 'list';
+  // Roll up the durable agent-turn log into per-agent { count, lastTs } so the
+  // Live dashboard + rail can show real activity (the engine-API path records
+  // these; interactive personas without API traffic simply read as idle).
+  async function loadAgentActivity() {
+    try {
+      const r = await fetch('/agents/turns?limit=200');
+      const turns = r.ok ? (await r.json()).turns || [] : [];
+      const m = {};
+      for (const t of turns) {
+        const id = t && t.agent_id; if (!id) continue;
+        const ts = t.ts ? Date.parse(t.ts) : NaN;
+        const e = m[id] || (m[id] = { count: 0, lastTs: 0, ts: [] });
+        e.count++;
+        if (!isNaN(ts)) { e.ts.push(ts); if (ts > e.lastTs) e.lastTs = ts; }
+      }
+      agentActivity = m;
+    } catch (e) { agentActivity = {}; }
+  }
+  // Per-agent model usage (tokens, pod compute-seconds, cloud $) — which agent is
+  // calling the model and how hard. No range → live session meter; a date range →
+  // the durable ledger summed across restarts. Engine-API agent turns are
+  // attributed; the owner's interactive + idle usage is excluded server-side.
+  async function loadAgentUsage() {
+    const { since, until } = rangeBounds();
+    const qs = [];
+    if (since) qs.push('since=' + encodeURIComponent(since));
+    if (until) qs.push('until=' + encodeURIComponent(until));
+    try {
+      const r = await fetch('/agents/usage' + (qs.length ? '?' + qs.join('&') : ''));
+      agentUsage = r.ok ? (await r.json()).usage || {} : {};
+    } catch (e) { agentUsage = {}; }
+  }
+  // Shared GPU pod telemetry (org-level, not per-agent): served by the gateway's
+  // /__pod_status, which reverse-proxies in front of the brain. Carries the pod's
+  // live uptime + cost accrued this session (running:false ⇒ cloud inference).
+  async function loadPodStatus() {
+    try {
+      const r = await fetch('/__pod_status', { headers: { accept: 'application/json' } });
+      podStatus = r.ok ? await r.json() : null;
+    } catch (e) { podStatus = null; }
+  }
+  // which sub-view is active in Agents (Live dashboard is the landing view)
+  let agView = 'live';
   let agRoleSel = null; // persists selected role across reloads
   let connectorsDetails = null; // [{name, url, display_name}]
   let connectorsEnvManaged = false; // true → registry pinned via BRAIN_CMA_MCP_SERVERS
@@ -133,14 +297,28 @@
     const host = document.getElementById('ws-agents');
     const ags = (agentsData && agentsData.agents) || [];
     const roles = (agentsData && agentsData.roles) || [];
+    const live = ags.filter(isLive);
+    const paused = ags.length - live.length;
     host.innerHTML = `
       <div class="ws-grid" style="grid-template-columns:268px 1fr;">
         <div class="ws-rail">
           <div class="rail-head"><h2>Agents</h2><span class="n">admin</span></div>
-          <div class="rail-sect-lab" style="padding-left:22px;">Governance</div>
-          <div class="rail-sect"><button class="rail-item ag-nav ${agView==='limits'?'on':''}" data-view="limits"><span class="ri-name">Account Limits</span><span class="ri-meta">org ceilings · motor + spend</span></button><button class="rail-item ag-nav ${agView==='connectors'?'on':''}" data-view="connectors"><span class="ri-name">Connectors</span><span class="ri-meta">MCP servers · register + manage</span></button></div>
-          <div class="rail-sect-lab" style="padding-left:22px;">Library</div>
-          <div class="rail-sect"><button class="rail-item ag-nav ${agView==='roles'?'on':''}" data-view="roles"><span class="ri-name">Roles</span><span class="ri-meta">${roles.length} reusable job spec${roles.length===1?'':'s'}</span></button></div>
+
+          <div class="rail-sect">
+            <button class="rail-item ag-nav ${agView==='live'?'on':''}" data-view="live"><span class="ri-name"><span class="dot-status live" style="background:var(--ok)"></span>Live</span><span class="ri-meta">${live.length} running${paused?` · ${paused} paused`:''}</span></button>
+            <button class="rail-item ag-nav ${agView==='list'?'on':''}" data-view="list"><span class="ri-name">All agents</span><span class="ri-meta">${ags.length} total · ${live.length} live</span></button>
+          </div>
+
+          <div class="rail-div"></div>
+
+          <div class="rail-sect">
+            <button class="rail-item ag-nav ${agView==='roles'?'on':''}" data-view="roles"><span class="ri-name">Roles</span><span class="ri-meta">${roles.length} reusable spec${roles.length===1?'':'s'}</span></button>
+            <button class="rail-item ag-nav ${agView==='limits'?'on':''}" data-view="limits"><span class="ri-name">Account limits</span><span class="ri-meta">org ceilings</span></button>
+            <button class="rail-item ag-nav ${agView==='connectors'?'on':''}" data-view="connectors"><span class="ri-name">Connectors</span><span class="ri-meta">MCP servers · register</span></button>
+          </div>
+
+          <div class="rail-div"></div>
+
           <div class="rail-sect-lab" style="padding-left:22px; display:flex; justify-content:space-between; padding-right:18px;"><span>Agents</span><span class="n">${ags.length}</span></div>
           <div class="rail-sect">${ags.map(a => railAgent(a)).join('') || '<div class="ri-meta" style="padding:6px 14px; opacity:.6;">No agents yet</div>'}</div>
           <button class="rail-add" id="ws-new-agent"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg> New agent</button>
@@ -156,12 +334,137 @@
     else if (agView === 'roles') renderRoles(main);
     else if (agView === 'limits') renderAccountLimits(main);
     else if (agView === 'connectors') renderConnectors(main);
-    else renderAgentsList(main);
+    else if (agView === 'list') renderAgentsList(main);
+    else renderLiveDashboard(main);
   }
   function railAgent(a) {
-    const sc = a.enabled === false ? 'var(--ink-4)' : 'var(--ok)';
-    return `<button class="rail-item rail-agent" data-agent="${esc(a.agent_id)}"><span class="ri-name"><span class="dot-status" style="background:${sc}"></span>${esc(a.name || a.agent_id)}</span><span class="ri-meta">${esc(a.agent_id)}</span></button>`;
+    const live = isLive(a);
+    const sc = live ? 'var(--ok)' : 'var(--temporal)';
+    const act = agentActivity && agentActivity[a.agent_id];
+    // Mirror the design's "persona · uptime" (live) / "persona · status" (idle),
+    // but read uptime as real last-activity from the agent-turn log.
+    const meta = live
+      ? `${personaName(a.persona)} · ${act && act.lastTs ? agoShort(Date.now() - act.lastTs) : 'ready'}`
+      : `${personaName(a.persona)} · paused`;
+    const dotCls = live ? 'dot-status live' : 'dot-status';
+    return `<button class="rail-item rail-agent" data-agent="${esc(a.agent_id)}"><span class="ri-name"><span class="${dotCls}" style="background:${sc}"></span>${esc(a.name || a.agent_id)}</span><span class="ri-meta">${esc(meta)}</span></button>`;
   }
+
+  // Convert an ISO timestamp to a <input type="datetime-local"> value (local time).
+  function toLocalInput(iso) {
+    if (!iso) return '';
+    const d = new Date(iso); if (isNaN(d)) return '';
+    const p = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+  }
+
+  // ── Live dashboard — running agents + a date-range usage/cost monitor ─────
+  function renderLiveDashboard(main) {
+    const ags = (agentsData && agentsData.agents) || [];
+    const live = ags.filter(isLive);
+    const paused = ags.length - live.length;
+    const shown = dashboardShown();
+    const isSession = usageRange.key === 'session';
+    const rangeLabel = (RANGE_PRESETS.find(p => p.key === usageRange.key) || {}).label || 'Range';
+    const rangeTotal = shown.reduce((s, a) => s + agentCostUsd(agentUsage && agentUsage[a.agent_id]), 0);
+    main.innerHTML = `<div class="main-pad" style="max-width:none;">
+      <div class="between" style="align-items:flex-start;">
+        <div>
+          <div class="page-eyebrow">Agents · operational</div>
+          <div class="page-title">Live</div>
+          <p class="page-lede">Running agents and their model usage. Pick a range to total cost + tokens across every time an agent ran — cumulative through restarts. Click an agent to open its persona in Labs.</p>
+        </div>
+        <div class="row" style="gap:10px; margin-top:14px; flex-shrink:0; align-items:center;">
+          <span class="chip"><span class="dot live" style="background:var(--ok);"></span>${live.length} running</span>
+          <span class="data" id="pod-meter" style="font-size:10px; color:var(--ink-4);"></span>
+        </div>
+      </div>
+      <div class="between" style="margin-top:20px; flex-wrap:wrap; gap:12px;">
+        <div class="ws-range">${RANGE_PRESETS.map(p => `<button class="${p.key === usageRange.key ? 'on' : ''}" data-range="${p.key}">${esc(p.label)}</button>`).join('')}</div>
+        <span class="data" style="font-size:10px; color:var(--ink-4);">${esc(rangeLabel)} total · <span style="color:var(--signal-deep);" id="range-total">$${rangeTotal.toFixed(2)}</span></span>
+      </div>
+      ${usageRange.key === 'custom' ? `<div class="row" style="gap:14px; margin-top:12px; flex-wrap:wrap;">
+        <label class="data" style="font-size:9px; color:var(--ink-4); display:flex; align-items:center; gap:6px;">FROM <input type="datetime-local" id="range-from" class="ctrl-input" value="${esc(toLocalInput(usageRange.since))}"></label>
+        <label class="data" style="font-size:9px; color:var(--ink-4); display:flex; align-items:center; gap:6px;">TO <input type="datetime-local" id="range-to" class="ctrl-input" value="${esc(toLocalInput(usageRange.until))}"></label>
+      </div>` : ''}
+      ${shown.length
+        ? `<div class="dash-grid" style="margin-top:22px;">${shown.map(a => dashCard(a)).join('')}</div>
+           <div class="data" style="font-size:8.5px; color:var(--ink-4); margin-top:12px; line-height:1.6;">Est. cost — real cloud spend + the agent's share of the GPU pod, valued by its compute-seconds × the pod's $/hr (hover a cost for the split). Totals are cumulative over the selected range, summed across every restart.${isSession ? ' This session = the current process uptime.' : ''}</div>`
+        : `<div class="empty" style="margin-top:22px;"><h3>No usage in this range</h3><p>No agent called the model in the selected window${isSession ? ' this session' : ''}. Widen the range, or enable an agent under <b>All agents</b>.</p></div>`}
+      <div style="margin-top:28px; padding-top:20px; border-top:1px solid var(--line-faint); display:flex; align-items:center; justify-content:space-between;">
+        <span class="data" style="font-size:9px; color:var(--ink-4);">${paused} paused</span>
+        <button class="link ag-nav" data-view="list" style="font-size:9px;">All agents <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m9 18 6-6-6-6"/></svg></button>
+      </div></div>`;
+    main.querySelectorAll('.ws-range button').forEach(b => b.addEventListener('click', () => setUsageRange(b.dataset.range)));
+    const from = main.querySelector('#range-from'), to = main.querySelector('#range-to');
+    const applyCustom = () => setUsageRange('custom',
+      from && from.value ? new Date(from.value).toISOString() : null,
+      to && to.value ? new Date(to.value).toISOString() : null);
+    if (from) from.addEventListener('change', applyCustom);
+    if (to) to.addEventListener('change', applyCustom);
+    main.querySelectorAll('.ag-nav').forEach(n => n.addEventListener('click', () => { agView = n.dataset.view; agentSel = null; paintAgents(); }));
+    main.querySelectorAll('.dash-card').forEach(c => c.addEventListener('click', () => openAgentInLabs(c.dataset.persona)));
+    refreshPodMeter();
+  }
+  // Fill (and keep ticking) the shared GPU-pod uptime + accrued-cost meter in the
+  // dashboard header. Self-cancelling: stops once the Live view is no longer shown.
+  async function refreshPodMeter() {
+    const ws = document.getElementById('ws-agents');
+    const el = document.getElementById('pod-meter');
+    if (!el || !ws || !ws.classList.contains('on')) {
+      if (podMeterTimer) { clearInterval(podMeterTimer); podMeterTimer = null; }
+      return;
+    }
+    await loadPodStatus();
+    const p = podStatus;
+    let html = '';
+    if (p && p.running && p.uptime_s != null) {
+      const cost = (p.cost_accrued_usd != null)
+        ? ` · <span style="color:var(--signal-deep);">$${p.cost_accrued_usd.toFixed(2)}</span> accrued`
+        : '';
+      html = `GPU pod · up ${esc(fmtDur(p.uptime_s))}${cost}`;
+    } else if (p && ['resuming', 'pulling', 'warming'].includes(p.state)) {
+      html = `GPU pod · ${esc(p.state)}…`;
+    } else if (p) {
+      html = 'cloud inference';
+    }
+    const live = document.getElementById('pod-meter');
+    if (live) live.innerHTML = html;
+    await loadAgentUsage();   // refresh the range's tallies alongside the pod rate
+    repaintUsageCells();      // keep per-agent cost/tokens/calls + range total current
+    if (!podMeterTimer) podMeterTimer = setInterval(refreshPodMeter, 30000);
+  }
+  function dashCard(a) {
+    const live = isLive(a);
+    const u = (agentUsage && agentUsage[a.agent_id]) || null;
+    const lt = u && u.last_ts ? Date.parse(u.last_ts)
+      : (agentActivity && agentActivity[a.agent_id] ? agentActivity[a.agent_id].lastTs : 0);
+    const lastActive = lt ? agoShort(Date.now() - lt) + ' ago' : '—';
+    const costLabel = u ? '$' + agentCostUsd(u).toFixed(2) : (live ? '$0.00' : '—');
+    const tokLabel = u ? fmtTokens((u.in_tok || 0) + (u.out_tok || 0)) : (live ? '0' : '—');
+    const callsLabel = u ? String(u.calls) : (live ? '0' : '—');
+    const dotCls = live ? 'dot-status live' : 'dot-status';
+    return `<button class="dash-card" data-persona="${esc(a.persona)}" data-agent="${esc(a.agent_id)}">
+      <div class="dc-head">
+        <div class="dc-identity">
+          <span class="${dotCls}" style="background:${live ? 'var(--ok)' : 'var(--temporal)'};"></span>
+          <span class="dc-name">${esc(a.name || a.agent_id)}</span>
+          <span class="chip persona"><span class="dot"></span>${esc(personaName(a.persona))}</span>
+          <span class="chip role"><span class="dot"></span>${esc(a.mandate_id)}</span>
+        </div>
+        <span class="dc-launch-hint"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg> Open in Labs</span>
+      </div>
+      <div class="dc-metrics">
+        <div class="dc-metric dm-cost"><div class="dm-val" data-cost-for="${esc(a.agent_id)}" title="${esc(costTitle(u))}">${esc(costLabel)}</div><div class="dm-lab">Est. cost</div></div>
+        <div class="dc-metric"><div class="dm-val" data-tok-for="${esc(a.agent_id)}" title="${esc(usageTitle(u))}">${esc(tokLabel)}</div><div class="dm-lab">Tokens</div></div>
+        <div class="dc-metric"><div class="dm-val" data-calls-for="${esc(a.agent_id)}">${esc(callsLabel)}</div><div class="dm-lab">Model calls</div></div>
+        <div class="dc-metric"><div class="dm-val">${esc(lastActive)}</div><div class="dm-lab">Last active</div></div>
+      </div>
+    </button>`;
+  }
+  // Card → Labs. Persona deep-load/switch would force a brain restart, so we just
+  // surface the Labs workspace (matches the detail view's "View persona in Labs").
+  function openAgentInLabs(_persona) { setWorkspace('labs'); }
   function personaName(slug) {
     const p = (window.SETTINGS && window.SETTINGS.personas || []).find(x => personaSlug(x.id) === slug);
     return p ? p.name : slug;
