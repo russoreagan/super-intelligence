@@ -841,13 +841,23 @@
         </div>
         ${cl.available && cl.model ? `<span class="chip"><span class="dot"></span>${esc(cl.model)}</span>` : ''}
       </div>`;
+    // Claude's built-in (native) tools — available on every cloud action with no
+    // connector. ✎ marks the mutating (write/shell) tools, which are approval-gated.
+    const nativeTools = (cl.native_tools) || [];
+    const nativeBlock = nativeTools.length ? `
+      <div class="rail-sect-lab" style="margin-top:18px; padding-left:2px;">Native tools · built into Claude</div>
+      <p class="data" style="font-size:9px; color:var(--ink-4); margin:4px 0 8px; line-height:1.6;">Claude's own toolset — available on every cloud action without any connector. <b>✎</b> = mutating (write / shell), approval-gated.</p>
+      <div style="display:flex; flex-wrap:wrap; gap:6px;">
+        ${nativeTools.map(t => `<span class="chip" title="${esc(t.group || '')}${t.write ? ' · write/shell · approval-gated' : ' · read-only'}">${esc(t.name)}${t.write ? ' ✎' : ''}</span>`).join('')}
+      </div>` : '';
     main.innerHTML = `<div class="main-pad" style="max-width:760px;">
       <div class="between"><div><div class="page-eyebrow">Governance · MCP</div><div class="page-title">Connectors</div>
       <p class="page-lede">External services the agent reaches <b>through Claude</b>, the cloud connector. The brain dispatches a cloud action and Claude calls the MCP servers below. Registering one generates a shared secret — copy it to both Railway and your app. Shown once.</p></div>
       ${envManaged ? '' : `<button class="btn btn-primary" id="conn-register" style="margin-top:8px;">${_plus} Register connector</button>`}</div>
       ${cloudCard}
+      ${nativeBlock}
       ${envManaged ? `<div class="note" style="margin-top:18px;">${_info}<p>Connectors are pinned via <b>BRAIN_CMA_MCP_SERVERS</b> and are read-only here. Unset that environment variable to manage connectors from this page.</p></div>` : ''}
-      <div class="rail-sect-lab" style="margin-top:22px; padding-left:2px;">Available through Claude${rows.length ? ` · ${rows.length}` : ''}</div>
+      <div class="rail-sect-lab" style="margin-top:22px; padding-left:2px;">Connectors · available through Claude${rows.length ? ` · ${rows.length}` : ''}</div>
       <div class="mint-reveal" id="conn-reveal"></div>
       <div class="ag-table" style="margin-top:24px;">
         <div class="ag-table-head" style="grid-template-columns:1fr 2fr 1fr 60px;"><span>Name</span><span>URL</span><span>Env vars</span><span></span></div>

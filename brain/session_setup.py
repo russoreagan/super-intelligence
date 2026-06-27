@@ -263,6 +263,12 @@ class _SetupMixin:
                     "available": bool(getattr(self.motor._cloud, "available", False)),
                     "model": str(getattr(self.motor._cloud, "_model", "") or ""),
                     "actions_enabled": bool(_brain_settings.get("motor_enable_cloud_actions")),
+                    # Claude's built-in (native) tools, distinct from MCP connectors.
+                    "native_tools": (
+                        self.motor._cloud.native_tools()
+                        if hasattr(self.motor._cloud, "native_tools")
+                        else []
+                    ),
                 }
                 if getattr(self, "motor", None)
                 and getattr(getattr(self, "motor", None), "_cloud", None) is not None

@@ -291,6 +291,21 @@ _AGENT_TOOLSET = "agent_toolset_20260401"
 # complete read-scoping set.
 _READ_DISABLED_TOOLS = ("write", "edit", "bash")
 
+# The built-in tools the cloud agent (Claude) runs natively via _AGENT_TOOLSET —
+# the "native connectors" of the cloud conduit, distinct from the custom MCP
+# connectors. Surfaced in the Connectors UI so operators see Claude's native reach.
+# `write`=True ones are the read-disabled / approval-gated mutating tools.
+NATIVE_TOOLS = (
+    {"name": "web_search", "group": "Web"},
+    {"name": "web_fetch", "group": "Web"},
+    {"name": "read", "group": "Files"},
+    {"name": "grep", "group": "Files"},
+    {"name": "glob", "group": "Files"},
+    {"name": "write", "group": "Files", "write": True},
+    {"name": "edit", "group": "Files", "write": True},
+    {"name": "bash", "group": "Shell", "write": True},
+)
+
 
 # ── Action approval policy ─────────────────────────────────────────────────────
 # Reads and small data-saving writes run unattended; destructive / code-changing /
@@ -772,6 +787,10 @@ class CMAExecutor(ExecutorCommon):
     def connector_names(self) -> list[str]:
         """All configured connector names (unfiltered) — for the settings UI."""
         return sorted({s["name"] for s in self._mcp_servers})
+
+    def native_tools(self) -> list[dict]:
+        """The cloud agent's built-in (native) tools — distinct from MCP connectors."""
+        return [dict(t) for t in NATIVE_TOOLS]
 
     def reload_mcp_config(self) -> None:
         """Reload the connector registry into memory. Call after register/remove."""
