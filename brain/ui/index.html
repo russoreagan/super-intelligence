@@ -947,6 +947,58 @@ input, select, textarea { font: inherit; color: inherit; background: none; borde
   background: var(--bg-1);
 }
 
+/* Action approvals — sensitive tool calls awaiting the user's go-ahead */
+#approvals-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+.approval-card {
+  border: 1px solid oklch(0.78 0.16 75);
+  border-left-width: 3px;
+  border-radius: 6px;
+  background: var(--bg-1);
+  padding: 9px 11px;
+}
+.approval-flag {
+  font-size: 9px;
+  font-family: var(--mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: oklch(0.78 0.16 75);
+  font-weight: 700;
+}
+.approval-tool {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg);
+  margin: 4px 0 2px;
+  font-family: var(--mono);
+}
+.approval-reason { font-size: 11px; color: var(--fg-mute); }
+.approval-preview {
+  margin-top: 5px;
+  padding: 4px 7px;
+  background: var(--bg-2);
+  border-radius: 3px;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--fg-faint);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.approval-actions { display: flex; gap: 6px; margin-top: 8px; }
+.approval-btn {
+  flex: 1;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 4px;
+  cursor: pointer;
+  border: 1px solid var(--line-soft);
+  background: var(--bg-2);
+  color: var(--fg-mute);
+}
+.approval-btn.approve { border-color: oklch(0.70 0.15 145); color: oklch(0.72 0.16 145); }
+.approval-btn.approve:hover { background: oklch(0.70 0.15 145 / 0.14); }
+.approval-btn.skip:hover { background: var(--bg-1); color: var(--fg); }
+
 /* ---- Thoughts feed ---- */
 #thoughts-feed {
   padding: 14px 16px;
@@ -4523,6 +4575,7 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
           <span class="count"><span id="tasks-badge" class="right-tab-badge hidden">0</span>
           <button id="tasks-clear-btn" class="btn-reset" style="font-size:9px;padding:2px 7px;margin-left:6px;" title="Stop every job and clear the panel">Clear</button></span>
         </div>
+        <div id="approvals-list"></div>
         <div id="tasks-list">
           <div class="tasks-empty">No active jobs.<br/>The brain will create one when it commits to an action.</div>
         </div>
@@ -5829,6 +5882,9 @@ function handle(msg) {
     case 'task_complete':
     case 'task_summary':
       handleTaskEvent(msg);
+      break;
+    case 'task_approval':
+      handleApprovalEvent(msg);
       break;
     case 'chat_history': {
       if (Array.isArray(msg.turns) && msg.turns.length) {
@@ -8035,6 +8091,58 @@ document.getElementById('tasks-clear-btn')?.addEventListener('click', () => {
   renderTasks();
   _updateTaskBadge();
 });
+
+// ---- Action approvals: sensitive tool calls awaiting the user's go-ahead ----
+const APPROVALS = {};  // id → {id, tool, reason, preview, created_at}
+
+function handleApprovalEvent(msg) {
+  if (!msg || !msg.id) return;
+  APPROVALS[msg.id] = msg;
+  renderApprovals();
+}
+
+function renderApprovals() {
+  const list = document.getElementById('approvals-list');
+  if (!list) return;
+  const items = Object.values(APPROVALS).sort((a, b) => (a.created_at || 0) - (b.created_at || 0));
+  if (!items.length) { list.innerHTML = ''; return; }
+  list.innerHTML = items.map(a => `
+    <div class="approval-card" data-approval-id="${escapeHtml(a.id)}">
+      <div class="approval-head"><span class="approval-flag">Needs your approval</span></div>
+      <div class="approval-tool">${escapeHtml(a.tool || 'action')}</div>
+      <div class="approval-reason">${escapeHtml(a.reason || 'sensitive action')}</div>
+      ${a.preview ? `<div class="approval-preview">${escapeHtml(a.preview)}</div>` : ''}
+      <div class="approval-actions">
+        <button class="approval-btn approve" data-act="approve" data-id="${escapeHtml(a.id)}">Approve</button>
+        <button class="approval-btn skip" data-act="skip" data-id="${escapeHtml(a.id)}">Skip</button>
+      </div>
+    </div>`).join('');
+}
+
+document.getElementById('approvals-list')?.addEventListener('click', (e) => {
+  const btn = e.target.closest('.approval-btn');
+  if (!btn) return;
+  const id = btn.dataset.id;
+  const act = btn.dataset.act;  // 'approve' | 'skip'
+  if (!id || !act) return;
+  // Optimistic: remove the card immediately; the server settles the rest.
+  delete APPROVALS[id];
+  renderApprovals();
+  fetch('/tasks/' + act, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id }),
+  }).catch(() => {});
+});
+
+// Populate any approvals that were saved while the page was closed.
+function _loadApprovals() {
+  fetch('/tasks/approvals').then(r => r.json()).then(d => {
+    (d.approvals || []).forEach(a => { if (a && a.id) APPROVALS[a.id] = a; });
+    renderApprovals();
+  }).catch(() => {});
+}
+_loadApprovals();
 
 // ── Shared GPU pod boot status ─────────────────────────────────────────────
 // Polls the gateway's /__pod_status and shows a non-blocking banner while the

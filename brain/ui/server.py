@@ -122,6 +122,9 @@ class UIServer:
         on_interrupt: Callable[[], None] | None = None,
         on_tasks_clear: Callable[[], dict] | None = None,
         on_task_kill: Callable[[str], dict] | None = None,
+        on_task_approve: Callable[[str], dict] | None = None,
+        on_task_skip: Callable[[str], dict] | None = None,
+        approvals_fn: Callable[[], list] | None = None,
         connectors_fn: Callable[[], list] | None = None,
         connector_reload_fn: Callable[[], None] | None = None,
         tier_fn: Callable[[], str] | None = None,
@@ -143,6 +146,9 @@ class UIServer:
         self._on_interrupt = on_interrupt
         self._on_tasks_clear = on_tasks_clear  # () -> stats dict; kills self-directed work
         self._on_task_kill = on_task_kill  # (job_id) -> stats dict; kills one job
+        self._on_task_approve = on_task_approve  # (approval_id) -> dict; approve + re-queue
+        self._on_task_skip = on_task_skip  # (approval_id) -> dict; skip a pending approval
+        self._approvals_fn = approvals_fn  # () -> list of pending approvals
         self._connectors_fn = connectors_fn  # () -> configured cloud connector names
         self._connector_reload_fn = (
             connector_reload_fn  # () -> None; hot-reload after register/remove
@@ -784,6 +790,40 @@ class UIServer:
                 logger.warning("[tasks] kill failed: %s", _tk_err)
                 return {"ok": False, "error": str(_tk_err)}
             return {"ok": True, **stats}
+
+        @app.get("/tasks/approvals")
+        async def tasks_approvals():
+            if self._approvals_fn is None:
+                return {"approvals": []}
+            try:
+                return {"approvals": self._approvals_fn() or []}
+            except Exception as _ae:
+                logger.warning("[tasks] approvals list failed: %s", _ae)
+                return {"approvals": []}
+
+        async def _resolve_approval(request: Request, handler, label):
+            if handler is None:
+                return {"ok": False, "error": "no approval handler wired"}
+            try:
+                body = await request.json()
+            except Exception:
+                body = {}
+            approval_id = str((body or {}).get("id", "")).strip()
+            if not approval_id:
+                return {"ok": False, "error": "missing id"}
+            try:
+                return handler(approval_id) or {"ok": True}
+            except Exception as _err:
+                logger.warning("[tasks] %s failed: %s", label, _err)
+                return {"ok": False, "error": str(_err)}
+
+        @app.post("/tasks/approve")
+        async def tasks_approve(request: Request):
+            return await _resolve_approval(request, self._on_task_approve, "approve")
+
+        @app.post("/tasks/skip")
+        async def tasks_skip(request: Request):
+            return await _resolve_approval(request, self._on_task_skip, "skip")
 
         @app.get("/self-model")
         async def get_self_model(request: Request):
