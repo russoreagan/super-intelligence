@@ -24,6 +24,26 @@ from brain.model_router import ModelRouter
 logger = logging.getLogger(__name__)
 
 
+def looks_like_json_blob(text: str | None) -> bool:
+    """True when ``text`` is a raw JSON object/array rather than spoken prose.
+
+    Background-job cells (the result reporter, the planner) run on the local
+    model and are instructed to emit plain spoken text. A degenerate local model
+    ignores that and echoes the tool transcript or confabulates a response
+    schema — e.g. ``{"has_signal": ...}`` or ``{"speech": ...}`` — which must
+    never be spoken to a user. Spoken summaries never start with a brace/bracket,
+    so treat a leading ``{``/``[`` (after stripping any code fence) as a
+    non-answer.
+    """
+    if not text:
+        return False
+    t = text.strip()
+    if t.startswith("```"):
+        t = re.sub(r"^```[a-zA-Z]*\s*", "", t)
+        t = re.sub(r"\s*```$", "", t).strip()
+    return t.startswith("{") or t.startswith("[")
+
+
 SYSTEM = """You read a single utterance an AI assistant just spoke aloud and
 decide whether it committed to an immediate action it should now carry out.
 
@@ -247,7 +267,12 @@ class ResultReporter:
         )
 
         def _clean(text: str | None) -> str:
-            return (text or "").strip().strip('"').strip()
+            cleaned = (text or "").strip().strip('"').strip()
+            # A JSON echo from the local model is a non-answer — drop it so the
+            # primary path falls through to the Haiku fallback (and the fallback,
+            # if it also degenerates, yields "" rather than a raw {"...": ...}
+            # blob spoken to the user).
+            return "" if looks_like_json_blob(cleaned) else cleaned
 
         # Primary: local/RunPod model.
         try:
