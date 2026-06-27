@@ -909,6 +909,44 @@ input, select, textarea { font: inherit; color: inherit; background: none; borde
   text-align: right;
 }
 
+/* Timing: when a job kicked off + how long it / each step has been running */
+.task-card { position: relative; }
+.task-goal { padding-right: 22px; }
+.task-started { color: var(--fg-faint); }
+.task-elapsed { color: var(--accent); font-weight: 600; font-variant-numeric: tabular-nums; }
+.task-step .step-desc { flex: 1 1 auto; min-width: 0; }
+.step-time {
+  flex-shrink: 0;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: var(--fg-faint);
+  font-variant-numeric: tabular-nums;
+}
+.task-step.running .step-time { color: var(--accent); }
+
+/* Per-job kill switch (running/planning cards only) */
+.task-kill-btn {
+  position: absolute;
+  top: 8px; right: 10px;
+  width: 18px; height: 18px;
+  padding: 0; line-height: 1;
+  border: 1px solid var(--line-soft);
+  border-radius: 4px;
+  background: var(--bg-2);
+  color: var(--fg-faint);
+  font-size: 11px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2;
+}
+.task-kill-btn:hover {
+  border-color: oklch(0.65 0.20 25);
+  color: oklch(0.70 0.20 25);
+  background: var(--bg-1);
+}
+
 /* ---- Thoughts feed ---- */
 #thoughts-feed {
   padding: 14px 16px;
@@ -4483,7 +4521,7 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
       <section class="col-section">
         <div class="section-label">Self-directed work
           <span class="count"><span id="tasks-badge" class="right-tab-badge hidden">0</span>
-          <button id="tasks-clear-btn" class="btn-reset" style="font-size:9px;padding:2px 7px;margin-left:6px;" title="Clear completed jobs">Clear</button></span>
+          <button id="tasks-clear-btn" class="btn-reset" style="font-size:9px;padding:2px 7px;margin-left:6px;" title="Stop every job and clear the panel">Clear</button></span>
         </div>
         <div id="tasks-list">
           <div class="tasks-empty">No active jobs.<br/>The brain will create one when it commits to an action.</div>
@@ -7756,6 +7794,35 @@ function _stepStatusGlyph(status) {
   }
 }
 
+// "45s", "2m 15s", "1h 3m" — compact elapsed duration from milliseconds.
+function _fmtDur(ms) {
+  if (ms == null || !isFinite(ms) || ms < 0) return '';
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return s + 's';
+  const m = Math.floor(s / 60), rs = s % 60;
+  if (m < 60) return rs ? `${m}m ${rs}s` : `${m}m`;
+  const h = Math.floor(m / 60), rm = m % 60;
+  return rm ? `${h}h ${rm}m` : `${h}h`;
+}
+
+// Wall-clock time a job kicked off, e.g. "3:42 PM".
+function _fmtClock(ms) {
+  if (!ms) return '';
+  try { return new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); }
+  catch (_e) { return ''; }
+}
+
+// Tick the live timers (running job elapsed + the in-flight step) once a second.
+// Only spans carrying data-since are live; frozen durations are baked at render.
+function _tickTaskTimers() {
+  const now = Date.now();
+  document.querySelectorAll('#tasks-list [data-since]').forEach(el => {
+    const since = Number(el.dataset.since);
+    if (since) el.textContent = _fmtDur(now - since);
+  });
+}
+setInterval(_tickTaskTimers, 1000);
+
 function renderTasks() {
   const list = document.getElementById('tasks-list');
   if (!list) return;
@@ -7783,10 +7850,19 @@ function renderTasks() {
         const out = (job.outputs || [])[i] || '';
         const outCls = st === 'failed' ? 'error' : '';
         const showOutput = out && (st === 'done' || st === 'failed');
+        const sStart = (job.stepStartedAt || [])[i];
+        const sEnd = (job.stepEndedAt || [])[i];
+        let timeHtml = '';
+        if (st === 'running' && sStart) {
+          timeHtml = `<span class="step-time" data-since="${sStart}">${_fmtDur(Date.now() - sStart)}</span>`;
+        } else if (sStart && sEnd && sEnd >= sStart) {
+          timeHtml = `<span class="step-time">${_fmtDur(sEnd - sStart)}</span>`;
+        }
         return `<li class="task-step ${st}">
           <span class="step-status">${_stepStatusGlyph(st)}</span>
-          <span>${i + 1}. ${escapeHtml(desc)}</span>
+          <span class="step-desc">${i + 1}. ${escapeHtml(desc)}</span>
           ${tool ? `<span class="step-tool">${escapeHtml(tool)}</span>` : ''}
+          ${timeHtml}
         </li>${showOutput ? `<div class="task-step-output ${outCls}">${escapeHtml(out)}</div>` : ''}`;
       }).join('');
     }
@@ -7797,7 +7873,17 @@ function renderTasks() {
     } else {
       metaParts.push(`${doneCount}/${totalCount} steps`);
     }
-    if (job.complexity) metaParts.push(job.complexity);
+    if (job.complexity) metaParts.push(escapeHtml(job.complexity));
+    if (job.startedAt) {
+      metaParts.push(
+        `<span class="task-started" title="Started ${escapeHtml(new Date(job.startedAt).toLocaleString())}">${_fmtClock(job.startedAt)}</span>`
+      );
+      if (isRunning) {
+        metaParts.push(`<span class="task-elapsed" data-since="${job.startedAt}">${_fmtDur(Date.now() - job.startedAt)}</span>`);
+      } else if (job.endedAt && job.endedAt >= job.startedAt) {
+        metaParts.push(`<span class="task-elapsed">${_fmtDur(job.endedAt - job.startedAt)}</span>`);
+      }
+    }
     const meta = metaParts.join(' · ');
 
     const workingChip = isRunning
@@ -7813,7 +7899,11 @@ function renderTasks() {
     const hint = (cls === 'complete' || cls === 'failed' || cls === 'paused')
       ? `<div class="task-expand-hint">${job.expanded ? 'click to collapse' : 'click for details'}</div>`
       : '';
+    const killBtn = isRunning
+      ? `<button class="task-kill-btn" data-kill="${escapeHtml(job.job_id || '')}" title="Stop this job">✕</button>`
+      : '';
     return `<div class="task-card ${cls}${expandedCls}" data-job-id="${escapeHtml(job.job_id || '')}">
+      ${killBtn}
       <div class="task-goal">${escapeHtml(job.goal || '')}${workingChip}</div>
       <div class="task-meta">${meta}</div>
       ${summary}
@@ -7824,8 +7914,14 @@ function renderTasks() {
   }).join('');
 }
 
-// Click on a card toggles its expanded state.
+// Click on a card toggles its expanded state; the ✕ button kills that one job.
 document.getElementById('tasks-list')?.addEventListener('click', (e) => {
+  const killEl = e.target.closest('.task-kill-btn');
+  if (killEl) {
+    e.stopPropagation();
+    if (killEl.dataset.kill) _killTask(killEl.dataset.kill);
+    return;
+  }
   const card = e.target.closest('.task-card');
   if (!card) return;
   const id = card.dataset.jobId;
@@ -7833,6 +7929,31 @@ document.getElementById('tasks-list')?.addEventListener('click', (e) => {
   TASKS[id].expanded = !TASKS[id].expanded;
   renderTasks();
 });
+
+// Per-job kill: stop one running job server-side, then reflect it locally.
+// (The cancelled job emits no further events, so update the panel optimistically.)
+function _killTask(jobId) {
+  fetch('/tasks/kill', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ job_id: jobId }),
+  }).catch(() => {});
+  const job = TASKS[jobId];
+  if (job) {
+    const now = Date.now();
+    (job.statuses || []).forEach((s, i) => {
+      if (s === 'running') {
+        job.statuses[i] = 'failed';
+        if (job.stepEndedAt) job.stepEndedAt[i] = now;
+      }
+    });
+    job.status = 'failed';
+    job.endedAt = now;
+    if (!job.summary) job.summary = 'Stopped by you.';
+  }
+  renderTasks();
+  _updateTaskBadge();
+}
 
 function escapeHtml(s) {
   return String(s || '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -7847,9 +7968,11 @@ function handleTaskEvent(msg) {
       goal: msg.goal,
       steps: [],
       statuses: [], tools: [], outputs: [],
+      stepStartedAt: [], stepEndedAt: [],
       complexity: '',
       status: 'planning',
       startedAt: Date.now(),
+      endedAt: null,
     };
     _updateTaskBadge();
   } else if (msg.type === 'task_start') {
@@ -7861,9 +7984,12 @@ function handleTaskEvent(msg) {
       statuses: (msg.steps || []).map(() => 'queued'),
       tools: (msg.steps || []).map(() => ''),
       outputs: (msg.steps || []).map(() => ''),
+      stepStartedAt: (msg.steps || []).map(() => null),
+      stepEndedAt: (msg.steps || []).map(() => null),
       complexity: msg.complexity,
       status: 'running',
       startedAt: existing.startedAt || Date.now(),
+      endedAt: null,
     };
     _updateTaskBadge();
   } else if (msg.type === 'task_summary') {
@@ -7873,22 +7999,29 @@ function handleTaskEvent(msg) {
   } else if (msg.type === 'task_step_start') {
     const job = TASKS[id]; if (!job) return;
     job.statuses[msg.step_index] = 'running';
+    if (!job.stepStartedAt) job.stepStartedAt = [];
+    job.stepStartedAt[msg.step_index] = Date.now();
     if (msg.expected_tool) job.tools[msg.step_index] = msg.expected_tool;
   } else if (msg.type === 'task_step_done') {
     const job = TASKS[id]; if (!job) return;
     const idx = msg.step_index;
     job.statuses[idx] = msg.skipped ? 'skipped' : (msg.success ? 'done' : 'failed');
+    if (!job.stepEndedAt) job.stepEndedAt = [];
+    job.stepEndedAt[idx] = Date.now();
     if (msg.tool) job.tools[idx] = msg.tool;
     job.outputs[idx] = msg.output || '';
   } else if (msg.type === 'task_clarification') {
     const job = TASKS[id]; if (!job) return;
     job.statuses[msg.step_index] = 'failed';
+    if (job.stepEndedAt) job.stepEndedAt[msg.step_index] = Date.now();
     job.clarification = msg.question;
     job.status = 'paused';
+    job.endedAt = Date.now();
     _updateTaskBadge();
   } else if (msg.type === 'task_complete') {
     const job = TASKS[id]; if (!job) return;
     job.status = msg.success ? 'complete' : (job.clarification ? 'paused' : 'failed');
+    job.endedAt = Date.now();
     _updateTaskBadge();
   }
   renderTasks();

@@ -242,6 +242,7 @@ class _SetupMixin:
             mic_status_fn=self._mic_status,
             on_interrupt=self.pns.interrupt,
             on_tasks_clear=self.kill_self_directed_work,
+            on_task_kill=self.kill_task,
             connectors_fn=lambda: (
                 self.motor.list_connectors() if getattr(self, "motor", None) else []
             ),
