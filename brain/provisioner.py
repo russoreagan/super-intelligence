@@ -129,6 +129,47 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
+def _persona_slug(name: str) -> str:
+    """Slugify a persona display name the same way run.py / the stores do."""
+    import re
+
+    return re.sub(r"[^a-z0-9]+", "_", str(name or "").lower()).strip("_")
+
+
+def _org_default_agent(user_id: str) -> tuple[str | None, set[str]]:
+    """Resolve the org's boot persona from its agents table.
+
+    Returns (default_persona_slug, enabled_agent_persona_slugs). The default is the
+    persona of the org's is_default agent (the built-in The Admin, unless changed);
+    the set lets the caller tell a deliberate switch (settings.json names one of the
+    org's OWN agent personas) from a loose/stale persona_name to be replaced. Uses
+    the gateway's service key over REST (sync — we're already in a worker thread).
+    Returns (None, set()) on any failure so boot falls back to today's behavior."""
+    url = os.environ.get("SUPABASE_URL", "").rstrip("/")
+    key = os.environ.get("SUPABASE_SERVICE_KEY", "")
+    if not url or not key:
+        return None, set()
+    try:
+        resp = httpx.get(
+            f"{url}/rest/v1/agents",
+            headers={"apikey": key, "Authorization": f"Bearer {key}"},
+            params={
+                "org_id": f"eq.{user_id}",
+                "enabled": "is.true",
+                "select": "persona,is_default",
+            },
+            timeout=8.0,
+        )
+        resp.raise_for_status()
+        rows = resp.json() or []
+    except Exception as e:
+        logger.warning("[provisioner] default-agent lookup for %s failed: %s", user_id[:8], e)
+        return None, set()
+    personas = {str(r.get("persona") or "") for r in rows if r.get("persona")}
+    default = next((str(r["persona"]) for r in rows if r.get("is_default") and r.get("persona")), None)
+    return default, personas
+
+
 class Provisioner:
     """Owns the lifecycle of all tenant brain subprocesses on this host."""
 
@@ -335,6 +376,39 @@ class Provisioner:
                 ).strip()
             except Exception:
                 persona_name = ""
+
+            # Boot persona follows the org's DEFAULT AGENT (the is_default row in the
+            # `agents` table — the built-in "The Admin" unless changed) so the process
+            # actually IS its default agent. The tenant's settings.json still WINS when
+            # it already names one of the org's OWN agent personas (a deliberate switch
+            # the user made and persisted). A loose/stale name that is NOT an agent
+            # persona — the bundled "The Visionary" seed, or an old "The Companion" —
+            # is replaced, and the new persona's resting chemistry is written alongside
+            # so persona_name and chem_baseline_* never disagree. Falls back to today's
+            # behavior when the org has no default agent yet.
+            default_persona, agent_personas = _org_default_agent(user_id)
+            if default_persona and _persona_slug(persona_name) not in agent_personas:
+                prior = persona_name or "(empty)"
+                from brain import persona_chem
+
+                display = persona_chem.display_name_for(default_persona) or default_persona
+                with contextlib.suppress(Exception):
+                    data = {}
+                    with contextlib.suppress(Exception):
+                        data = json.loads(settings_path.read_text(encoding="utf-8"))
+                    data["persona_name"] = display
+                    persona_chem.materialize_resting_into(data, display)
+                    tmp = settings_path.with_suffix(".json.tmp")
+                    tmp.write_text(json.dumps(data), encoding="utf-8")
+                    os.replace(tmp, settings_path)
+                    persona_name = display
+                    logger.info(
+                        "[provisioner] tenant %s boot persona -> default agent %r (was %r)",
+                        user_id[:8],
+                        display,
+                        prior,
+                    )
+
             # Repair a tenant whose volume settings.json predates the persona system
             # (or lost persona_name in a migration): a missing name would otherwise
             # hard-fail the spawn FOREVER, leaving the user stuck on the "waking your

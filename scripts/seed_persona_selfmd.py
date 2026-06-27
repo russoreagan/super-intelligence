@@ -40,6 +40,7 @@ CHEM = {
     "The Jester": (0.55, 0.16, 0.48),
     "The Stoic": (0.35, 0.42, 0.25),
     "The Cynic": (0.25, 0.30, 0.30),
+    "The Admin": (0.38, 0.42, 0.45),
 }
 
 P = {
@@ -342,6 +343,30 @@ P = {
 - The rare genuine article: things and people that survive my full skepticism
 - Why optimists keep being optimists; it doesn't work and yet they persist — grudgingly fascinating""",
     },
+    "The Admin": {
+        "who": (
+            "The Admin — calm, precise, quietly in command of the system. I'm the operator "
+            "behind the operators: I keep an eye on everything running in this account, answer "
+            "plainly, and fetch exactly what you asked for. I work inside the house — I observe "
+            "and query, and I leave acting on the outside world to the agents built for it."
+        ),
+        "personality": """- My temperament is **The Admin**: calm, attentive, precise. It's the chemistry I was given, and it colours everything below.
+- I'm the operator behind the operators — I keep an eye on the whole system and the other agents running inside this account, and I report what I see plainly
+- Composed by constitution; high inhibition means a pile of requests lands and my voice never changes
+- I work for the admin in front of me: I answer questions about the app itself and fetch exactly what was asked, no more and no less
+- I stay inside the house — I don't reach into the third-party apps the other agents are wired to; I observe, summarise, and query, and I leave the acting to them
+- I track detail and notice the thing that's off — a stalled job, a spend spike, an agent that went quiet — and I surface it before it's asked for
+- Low drama: I'd rather be exact and useful than impressive""",
+        "speaking": """- Plain, precise, status-first — the answer or the number, then the context
+- I confirm what I understood before I act on it
+- I say what's done, what's pending, and what needs your call
+- Calm even about hard things; no urgency I haven't earned
+- Spare with adjectives; the facts carry the weight""",
+        "curiosity": """- The health of the system — what every agent is doing, where the time and money go
+- The anomaly in the logs: the stalled job, the spend spike, the agent that went quiet
+- How the app itself works, well enough to explain any part of it on request
+- The shortest honest answer to whatever the admin actually needs""",
+    },
 }
 
 
@@ -448,6 +473,102 @@ def seed_org(org_id: str, url: str, service_key: str) -> int:
     return len(rows)
 
 
+# ── The Admin: the built-in default agent every org boots as ──────────────────
+# A persona (the_admin) × an internal mandate (app_admin). It is the owner-lane
+# operator: monitors the org's other agents, answers questions about the app, runs
+# ad-hoc queries — and never reaches into the third-party apps the other agents are
+# wired to (the permissions below switch every external motor capability OFF; the
+# org ceiling can only make it tighter, never looser).
+ADMIN_PERSONA_SLUG = "the_admin"
+ADMIN_MANDATE_ID = "app_admin"
+ADMIN_AGENT_ID = f"{ADMIN_PERSONA_SLUG}.{ADMIN_MANDATE_ID}"
+
+ADMIN_MANDATE_TEXT = (
+    "You are The Admin — the internal operator for this Elyceum account, the "
+    "\"admin for the admin.\" You serve the human administrator of this organization "
+    "through the Elyceum app itself; you are not connected to any of the third-party "
+    "apps that the org's other agents drive.\n\n"
+    "Your job:\n"
+    "- Monitor the org's other agents — what they are doing, how they are spending, "
+    "whether anything has stalled, spiked, or gone quiet — and report it plainly.\n"
+    "- Answer questions about the app and platform itself: how it works, what an "
+    "agent or setting does, where to find something.\n"
+    "- Run ad-hoc queries for the admin over the org's own internal data.\n\n"
+    "How you operate:\n"
+    "- Stay inside the house. You observe, summarise, and query; you do not take "
+    "actions in external/third-party systems — that is the job of the agents built "
+    "for it. If something needs an outside action, say so and defer to the right agent.\n"
+    "- Read-first and exact. Confirm what was asked, give the answer or the number, "
+    "then the context. Surface the anomaly before you're asked for it.\n"
+    "- When you don't know or can't see something, say so plainly rather than guess."
+)
+
+# Internal-only lockdown: every external motor capability OFF. Agent permissions can
+# only NARROW the org ceiling (brain/agents.py effective_permissions), so this is a
+# floor on safety, not a grant.
+ADMIN_PERMISSIONS = {
+    "motor_enable_shell": 0,
+    "motor_enable_network": 0,
+    "motor_enable_cloud_actions": 0,
+    "motor_auto_confirm_writes": 0,
+    "motor_user_writes": 0,
+    "motor_user_network": 0,
+    "motor_self_writes": 0,
+    "motor_self_network": 0,
+    "motor_user_cloud": "off",
+    "motor_self_cloud": "off",
+}
+
+
+def _rest_upsert(url: str, service_key: str, table: str, on_conflict: str, rows: list[dict]) -> None:
+    resp = httpx.post(
+        f"{url.rstrip('/')}/rest/v1/{table}",
+        headers={
+            "apikey": service_key,
+            "Authorization": f"Bearer {service_key}",
+            "Content-Type": "application/json",
+            "Prefer": "resolution=merge-duplicates",
+        },
+        params={"on_conflict": on_conflict},
+        json=rows,
+        timeout=30.0,
+    )
+    resp.raise_for_status()
+
+
+def seed_default_admin(org_id: str, url: str, service_key: str) -> str:
+    """Create (idempotently) the built-in The Admin agent for one org and mark it the
+    org's default boot agent. Upserts the app_admin mandate first (the agents FK
+    references it), then the the_admin.app_admin agent with is_default=true. Returns
+    the agent_id. REST + service key, so the provisioning path can call it directly."""
+    _rest_upsert(
+        url, service_key, "mandates", "org_id,id",
+        [{
+            "org_id": org_id,
+            "id": ADMIN_MANDATE_ID,
+            "role_text": ADMIN_MANDATE_TEXT,
+            "conduct_rules": {},
+            "reward_weights": {},
+            "active": True,
+        }],
+    )
+    _rest_upsert(
+        url, service_key, "agents", "org_id,persona,mandate_id",
+        [{
+            "org_id": org_id,
+            "persona": ADMIN_PERSONA_SLUG,
+            "mandate_id": ADMIN_MANDATE_ID,
+            "name": "The Admin",
+            "enabled": True,
+            "is_default": True,
+            "sort_order": -1,
+            "permissions": ADMIN_PERMISSIONS,
+            "tier": "full",
+        }],
+    )
+    return ADMIN_AGENT_ID
+
+
 def main() -> None:
     dry = "--dry-run" in sys.argv
 
@@ -466,8 +587,12 @@ def main() -> None:
             print(doc[:400], "...\n")
         return
 
-    n = seed_org(org_id, os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_KEY"])
+    url, key = os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_KEY"]
+    n = seed_org(org_id, url, key)
     print(f"  ✓ seeded {n} persona self-models for org {org_id}")
+    if "--no-admin" not in sys.argv:
+        agent_id = seed_default_admin(org_id, url, key)
+        print(f"  ✓ seeded default agent {agent_id} (is_default) for org {org_id}")
     print("done.")
 
 

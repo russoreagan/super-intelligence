@@ -451,6 +451,18 @@ _PERSONA_REWARD_WEIGHTS: dict[str, dict[str, float]] = {
         "mastery": 1.0,
         "levity": 1.1,
     },
+    # The Admin: the internal operator. Reward comes from being correct and from a
+    # well-run system (mastery) — not from novelty or aesthetics. Connection is
+    # functional service to its admin; levity is low (low-drama by design).
+    "the_admin": {
+        "correctness": 1.3,
+        "connection": 1.0,
+        "novelty": 0.7,
+        "aesthetic": 0.8,
+        "relief": 1.0,
+        "mastery": 1.2,
+        "levity": 0.8,
+    },
 }
 
 

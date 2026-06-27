@@ -30,6 +30,7 @@
     'The Jester':    { DA: 0.55, ACh: 0.48, GABA: 0.16, Glu: 0.42, NE: 0.28, '5HT': 0.55, CORT: 0.04, OXT: 0.40, AEA: 0.50 },
     'The Stoic':     { DA: 0.35, ACh: 0.25, GABA: 0.42, Glu: 0.15, NE: 0.15, '5HT': 0.60, CORT: 0.05, OXT: 0.25, AEA: 0.45 },
     'The Cynic':     { DA: 0.25, ACh: 0.30, GABA: 0.30, Glu: 0.22, NE: 0.28, '5HT': 0.42, CORT: 0.18, OXT: 0.20, AEA: 0.22 },
+    'The Admin':     { DA: 0.38, ACh: 0.45, GABA: 0.42, Glu: 0.30, NE: 0.25, '5HT': 0.60, CORT: 0.04, OXT: 0.35, AEA: 0.25 },
   };
   const CHANNELS = [
     { ch: 'DA', name: 'Dopamine' }, { ch: 'ACh', name: 'Acetylcholine' }, { ch: 'GABA', name: 'GABA' },

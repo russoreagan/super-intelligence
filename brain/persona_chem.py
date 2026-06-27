@@ -226,6 +226,22 @@ PERSONA_CHEMISTRY: dict[str, dict[str, float]] = {
         "OXT": 0.20,
         "AEA": 0.22,
     },
+    "The Admin": {
+        # The internal operator (default boot agent): calm, attentive, precise,
+        # low-drama. Composed (high GABA, like the Concierge/Stoic) and steady
+        # (high 5HT, near-zero CORT) so it never flusters; ACh up for detail and
+        # vigilance over the system; DA mid so it's diligent, not restless; OXT
+        # mid — helpful to its admin without the Companion's warmth pull.
+        "DA": 0.38,
+        "ACh": 0.45,
+        "GABA": 0.42,
+        "Glu": 0.30,
+        "NE": 0.25,
+        "5HT": 0.60,
+        "CORT": 0.04,
+        "OXT": 0.35,
+        "AEA": 0.25,
+    },
 }
 
 # ── Per-persona NON-CHEMISTRY dial profile ────────────────────────────────────
@@ -354,6 +370,16 @@ PERSONA_COG_POSITIONS: dict[str, dict[str, float]] = {
         "emotionality": 0.45,
         "hindsight": 0.70,
         "lingering": 0.62,
+    },
+    "The Admin": {
+        "learning-rate": 0.55,
+        "focus": 0.85,
+        "curiosity": 0.55,
+        "introspection": 0.55,
+        "memory": 0.85,
+        "emotionality": 0.30,
+        "hindsight": 0.78,
+        "lingering": 0.45,
     },
     # The Stoic intentionally omitted — flat-neutral control.
 }
@@ -612,3 +638,29 @@ def materialize_into_settings(persona: str, settings_data: dict) -> dict:
     # same keys afterwards via /settings and win on the next save.
     _apply_cog_positions(settings_data, persona)
     return settings_data
+
+
+def materialize_resting_into(settings_data: dict, persona: str) -> dict:
+    """Pure (no persona-file I/O) variant of materialize_into_settings.
+
+    Seeds chem_baseline_* and chem_init_* straight from the canonical resting table
+    (current == resting, i.e. a fresh start with no evolved state) plus the
+    cognitive fingerprint. Safe to call OUTSIDE a brain process — e.g. the gateway/
+    provisioner choosing an org's boot persona — because it never reads or writes
+    the per-persona chemistry file. Off-table persona → settings unchanged. The
+    persona arg may be a display name OR a slug (from an agent_id)."""
+    key = _canonical_persona_key(persona)
+    if key is None:
+        return settings_data
+    resting = _floor_resting(PERSONA_CHEMISTRY[key])
+    for ch, v in resting.items():
+        settings_data[f"chem_baseline_{ch}"] = v
+        settings_data[f"chem_init_{ch}"] = v
+    _apply_cog_positions(settings_data, key)
+    return settings_data
+
+
+def display_name_for(persona: str) -> str | None:
+    """Canonical display name ('The Admin') for a persona display-name-or-slug, or
+    None if the persona isn't in the chemistry table."""
+    return _canonical_persona_key(persona)

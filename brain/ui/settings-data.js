@@ -29,6 +29,7 @@ window.SETTINGS = {
     { id: 'The Jester',    name: 'The Jester',    tag: 'Playful · quick · irreverent',          note: 'Lives for the laugh — fast associations, light heart, allergic to solemnity.' },
     { id: 'The Stoic',     name: 'The Stoic',     tag: 'Even · unmoved · baseline',             note: 'The flat-affect control — steady in everything, leaning nowhere. For experiments.' },
     { id: 'The Cynic',     name: 'The Cynic',     tag: 'Gruff · deadpan · secretly soft',       note: 'Expects the worst, says so dryly — and warms up only if you earn it. The warmth is real.' },
+    { id: 'The Admin',     name: 'The Admin',     tag: 'Calm · attentive · precise',            note: 'The internal operator — watches the account\'s other agents, answers questions about the app, runs ad-hoc queries. Boots by default; stays inside the house.' },
   ],
 
   // ---- Categories ---------------------------------------------------

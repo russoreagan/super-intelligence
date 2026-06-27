@@ -110,12 +110,14 @@ def main(argv: list[str]) -> int:
     #    stub (or nothing at all). Non-fatal: the account is already usable, and the
     #    seed is idempotent, so a failure here can be retried with the printed command.
     try:
-        from scripts.seed_persona_selfmd import seed_org
+        from scripts.seed_persona_selfmd import seed_default_admin, seed_org
 
         n = seed_org(user_id, url, service_key)
         print(f"  ✓ seeded {n} persona self-models")
+        agent_id = seed_default_admin(user_id, url, service_key)
+        print(f"  ✓ seeded default agent {agent_id} (The Admin)")
     except Exception as e:
-        print(f"  ! WARNING: failed to seed persona self-models: {e}", file=sys.stderr)
+        print(f"  ! WARNING: failed to seed personas / default agent: {e}", file=sys.stderr)
         print(
             f"    Retry: BRAIN_USER_ID={user_id} python scripts/seed_persona_selfmd.py",
             file=sys.stderr,
