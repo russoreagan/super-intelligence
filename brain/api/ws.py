@@ -283,7 +283,9 @@ class WsSession:
                         # Clear any stale barge-in flag from an earlier turn so the
                         # out-of-band synth isn't cancelled before it starts.
                         self._tts_cancel.clear()
-                        await self._ws_stream_audio(proactive_text, None, turn_id)
+                        # Carry the mood the brain attached so the spoken result has the
+                        # same prosody as an interactive reply, not a flat default.
+                        await self._ws_stream_audio(proactive_text, ev.get("affect"), turn_id)
         except asyncio.CancelledError:
             pass
         except Exception as e:

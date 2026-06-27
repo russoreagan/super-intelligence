@@ -203,19 +203,28 @@ class ActivationEmitter:
             t = t.lstrip()
         return t.startswith("{") or t.startswith("[")
 
-    async def emit_proactive_speech(self, text: str, *, partner_target: str = "") -> None:
+    async def emit_proactive_speech(
+        self, text: str, *, affect: dict | None = None, partner_target: str = ""
+    ) -> None:
         # Last-line guard: never surface a raw JSON blob as proactive speech. The
         # source paths (result reporter, planner clarification) already filter it;
         # this covers every other proactive caller too.
         if self._is_json_blob(text):
             return
+        # affect carries the mood the brain already computed for this message (same
+        # {"emotion": ...} shape pns.emit voices locally). Attaching it here lets the
+        # push-audio path and the partner's own /v1/tts synthesise with matching prosody
+        # instead of a flat default — parity with the local proactive voice.
+        event: dict = {"type": "proactive_speech", "text": text, "ts": time.time()}
+        if affect:
+            event["affect"] = affect
         with contextlib.suppress(asyncio.QueueFull):
-            self._put({"type": "proactive_speech", "text": text, "ts": time.time()})
+            self._put(event)
         # Durable delivery to the owning partner's callback (works with the partner's
         # client closed). No-op on the owner lane or when no callback is configured —
         # unless a self-directed job-result caller supplies partner_target (the owning
         # tenant), which reaches the partner without re-laning the local UI event above.
-        self._dispatch_partner_proactive(text, partner_target=partner_target)
+        self._dispatch_partner_proactive(text, partner_target=partner_target, affect=affect)
 
     def _dispatch_partner_proactive(
         self,
@@ -224,6 +233,7 @@ class ActivationEmitter:
         kind: str = "proactive",
         urgency: str = "normal",
         partner_target: str = "",
+        affect: dict | None = None,
     ) -> None:
         """Schedule a best-effort webhook POST to the owning partner's callback for a
         proactive message. Generic — the brain knows nothing about the partner's domain;
@@ -260,6 +270,7 @@ class ActivationEmitter:
             "end_user_id": target,
             "kind": kind,
             "text": text,
+            "affect": affect or None,  # mood for the partner's own /v1/tts; None when unknown
             "urgency": urgency,
             "ts": time.time(),
         }

@@ -1654,7 +1654,9 @@ class _TurnMixin:
                 if self._emitter:
                     with contextlib.suppress(Exception):
                         await self._emitter.emit_proactive_speech(
-                            _fail_msg, partner_target=self._partner_proactive_target()
+                            _fail_msg,
+                            affect={"emotion": "concerned"},
+                            partner_target=self._partner_proactive_target(),
                         )
                 if self._proactive_speech_allowed():
                     with contextlib.suppress(Exception):
@@ -1715,7 +1717,9 @@ class _TurnMixin:
                 # waiting remotely in the copilot); local TTS still is.
                 if self._emitter:
                     await self._emitter.emit_proactive_speech(
-                        question, partner_target=self._partner_proactive_target()
+                        question,
+                        affect={"emotion": "curious"},
+                        partner_target=self._partner_proactive_target(),
                     )
                 if self._proactive_speech_allowed():
                     await self.pns.emit(question, {"emotion": "curious"})
@@ -1803,7 +1807,9 @@ class _TurnMixin:
                 # Partner delivery isn't gated on a local listener (a user awaiting in the
                 # copilot may be away); local TTS below still is.
                 await self._emitter.emit_proactive_speech(
-                    spoken_summary, partner_target=self._partner_proactive_target()
+                    spoken_summary,
+                    affect={"emotion": "lively" if summary.get("success") else "concerned"},
+                    partner_target=self._partner_proactive_target(),
                 )
             else:
                 logger.info(
@@ -1995,7 +2001,9 @@ class _TurnMixin:
             # run, not conversing — while still reaching the partner above.
             with contextlib.suppress(Exception):
                 if self._emitter:
-                    await self._emitter.emit_proactive_speech(msg)
+                    await self._emitter.emit_proactive_speech(
+                        msg, affect={"emotion": "lively" if success else "concerned"}
+                    )
             if self._proactive_voice_allowed():
                 with contextlib.suppress(Exception):
                     await self.pns.emit(msg, {"emotion": "lively" if success else "concerned"})

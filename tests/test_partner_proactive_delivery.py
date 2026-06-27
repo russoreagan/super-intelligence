@@ -47,6 +47,34 @@ def test_owner_lane_job_result_delivers_to_partner_target(monkeypatch):
     assert captured[0]["text"] == "Found 3 fresh signals on NVDA."
 
 
+def test_affect_rides_along_for_partner_tts(monkeypatch):
+    # The mood the brain computed must reach the partner so its own /v1/tts can
+    # synthesise with matching prosody instead of a flat default.
+    em, captured = _emitter_with_capture(monkeypatch)
+
+    async def run():
+        await em.emit_proactive_speech(
+            "Done — closed the position.", affect={"emotion": "lively"}, partner_target="cust-1"
+        )
+        await asyncio.sleep(0)
+
+    asyncio.run(run())
+    assert len(captured) == 1
+    assert captured[0]["affect"] == {"emotion": "lively"}
+
+
+def test_affect_absent_is_null_not_missing(monkeypatch):
+    # No affect supplied → the key is present but null, never an undefined-shape payload.
+    em, captured = _emitter_with_capture(monkeypatch)
+
+    async def run():
+        await em.emit_proactive_speech("plain", partner_target="cust-1")
+        await asyncio.sleep(0)
+
+    asyncio.run(run())
+    assert captured[0]["affect"] is None
+
+
 def test_owner_lane_without_target_stays_private(monkeypatch):
     em, captured = _emitter_with_capture(monkeypatch)
 
