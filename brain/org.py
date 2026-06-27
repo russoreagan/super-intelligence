@@ -51,6 +51,32 @@ def org_id_for_user(user_id: str, client=None) -> str | None:
         return None
 
 
+def membership_role(user_id: str, org_id: str, client=None) -> str | None:
+    """The caller's role in this org ('admin' | 'member'), or None when they're not
+    a member / Supabase is unavailable / on any error. Lets the brain tell an
+    org-admin (manages the org's agents, roles, connectors, keys — the per-agent
+    narrowing within the account ceilings) apart from a plain member. Fail-closed:
+    None on error, so a lookup failure denies rather than grants."""
+    if not user_id or not org_id:
+        return None
+    try:
+        client = client or _client()
+        rows = (
+            client.table("memberships")
+            .select("role")
+            .eq("user_id", user_id)
+            .eq("org_id", org_id)
+            .limit(1)
+            .execute()
+            .data
+            or []
+        )
+        return str(rows[0]["role"]) if rows else None
+    except Exception as e:
+        logger.warning("[org] membership_role failed: %s", e)
+        return None
+
+
 def is_member(user_id: str, org_id: str, client=None) -> bool:
     """True iff the user is a member of the org. Used by the brain to gate access
     to its org's process (the membership-aware successor to the BRAIN_USER_ID == sub

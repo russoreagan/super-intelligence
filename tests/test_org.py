@@ -6,7 +6,9 @@ from __future__ import annotations
 
 import types
 
-from brain.org import is_member, org_id_for_user
+import brain.org as org_mod
+from brain.org import is_member, membership_role, org_id_for_user
+from brain.ui.auth import is_org_admin
 
 
 class _FakeTable:
@@ -86,3 +88,73 @@ def test_failures_degrade_gracefully():
 
     assert org_id_for_user("russ", client=_Boom()) is None
     assert is_member("russ", "russ", client=_Boom()) is False
+
+
+def test_membership_role_resolves_and_fails_closed():
+    assert membership_role("alice", "acme", client=_PARTNER) == "admin"
+    assert membership_role("bob", "acme", client=_PARTNER) == "member"
+    assert membership_role("bob", "other", client=_PARTNER) is None
+    assert membership_role("stranger", "acme", client=_PARTNER) is None
+    assert membership_role("bob", "", client=_PARTNER) is None
+
+    class _Boom:
+        def table(self, *_a):
+            raise RuntimeError("supabase down")
+
+    assert membership_role("alice", "acme", client=_Boom()) is None
+
+
+# ── is_org_admin: tenant-scoped admin, distinct from the platform super-user ──
+_ADMIN_CLAIMS = {"sub": "carol", "app_metadata": {"is_admin": True}}
+
+
+def _pin_org(monkeypatch, org_id):
+    monkeypatch.setenv("BRAIN_ORG_ID", org_id)
+    monkeypatch.delenv("BRAIN_USER_ID", raising=False)
+    monkeypatch.delenv("BRAIN_ADMIN_EMAILS", raising=False)
+
+
+def test_org_admin_unpinned_is_true(monkeypatch):
+    # No tenant pin (local/dev single-user) → permissive, matches owner_mismatch.
+    monkeypatch.delenv("BRAIN_ORG_ID", raising=False)
+    monkeypatch.delenv("BRAIN_USER_ID", raising=False)
+    monkeypatch.delenv("BRAIN_ADMIN_EMAILS", raising=False)
+    assert is_org_admin({"sub": "anyone"}) is True
+
+
+def test_platform_admin_is_always_org_admin(monkeypatch):
+    # A platform super-user administers any org its process is pinned to.
+    _pin_org(monkeypatch, "someone_elses_org")
+    assert is_org_admin(_ADMIN_CLAIMS) is True
+
+
+def test_personal_org_owner_is_org_admin(monkeypatch):
+    _pin_org(monkeypatch, "russ")
+    assert is_org_admin({"sub": "russ"}) is True  # sub == org_id, no DB hit
+
+
+def test_shared_org_admin_member_passes(monkeypatch):
+    _pin_org(monkeypatch, "acme")
+    monkeypatch.setattr(org_mod, "membership_role", lambda u, o: "admin")
+    assert is_org_admin({"sub": "alice"}) is True
+
+
+def test_shared_org_plain_member_denied(monkeypatch):
+    _pin_org(monkeypatch, "acme")
+    monkeypatch.setattr(org_mod, "membership_role", lambda u, o: "member")
+    assert is_org_admin({"sub": "bob"}) is False
+
+
+def test_pinned_org_no_sub_denied(monkeypatch):
+    _pin_org(monkeypatch, "acme")
+    assert is_org_admin({}) is False
+
+
+def test_org_admin_lookup_failure_fails_closed(monkeypatch):
+    _pin_org(monkeypatch, "acme")
+
+    def _boom(_u, _o):
+        raise RuntimeError("supabase down")
+
+    monkeypatch.setattr(org_mod, "membership_role", _boom)
+    assert is_org_admin({"sub": "bob"}) is False

@@ -384,7 +384,13 @@ class UIServer:
             # Gated by the auth middleware, which attaches the verified claims.
             claims = getattr(request.state, "user", None) or {}
             return JSONResponse(
-                {"email": claims.get("email"), "is_admin": ui_auth.is_admin(claims)}
+                {
+                    "email": claims.get("email"),
+                    # is_admin = platform super-user (sets ceilings, cross-org god
+                    # view). org_admin = may manage THIS org's agents/roles/keys.
+                    "is_admin": ui_auth.is_admin(claims),
+                    "org_admin": ui_auth.is_org_admin(claims),
+                }
             )
 
         @app.get("/health")
@@ -696,10 +702,10 @@ class UIServer:
             # needed by any admin for the per-agent connector permission grid.
             if request.query_params.get("full"):
                 claims = getattr(request.state, "user", None) or {}
-                if not (ui_auth.is_disabled() or ui_auth.is_admin(claims)):
+                if not (ui_auth.is_disabled() or ui_auth.is_org_admin(claims)):
                     from fastapi import HTTPException
 
-                    raise HTTPException(status_code=403, detail="admin only")
+                    raise HTTPException(status_code=403, detail="org admin only")
                 from brain.clusters.cma_executor import is_env_managed, list_connector_details
 
                 try:
@@ -888,13 +894,17 @@ class UIServer:
         # Permissions gate). When the Supabase backend is off the section reports
         # enabled:false so the UI hides the tab.
         def _mandate_admin_or_403(request: Request) -> None:
+            # Managing this org's agents / roles / connectors / keys is an
+            # org-admin action (the per-agent narrowing within the account
+            # ceilings). The platform super-user sets the ceilings and gets the
+            # cross-org view elsewhere; it is implicitly an org-admin too.
             if ui_auth.is_disabled():
                 return
             claims = getattr(request.state, "user", None) or {}
-            if not ui_auth.is_admin(claims):
+            if not ui_auth.is_org_admin(claims):
                 from fastapi import HTTPException
 
-                raise HTTPException(status_code=403, detail="admin only")
+                raise HTTPException(status_code=403, detail="org admin only")
 
         @app.get("/mandates")
         async def list_mandates_ui(request: Request):
@@ -1152,8 +1162,8 @@ class UIServer:
             from brain.second_brain import supabase_client
 
             claims = getattr(request.state, "user", None) or {}
-            is_admin = ui_auth.is_disabled() or ui_auth.is_admin(claims)
-            if not (is_admin and supabase_client.is_enabled()):
+            org_admin = ui_auth.is_disabled() or ui_auth.is_org_admin(claims)
+            if not (org_admin and supabase_client.is_enabled()):
                 return JSONResponse({"enabled": False, "keys": []})
             from brain.api import auth as _a
 

@@ -137,6 +137,41 @@ def is_admin(claims: dict[str, Any] | None) -> bool:
     return False
 
 
+def is_org_admin(claims: dict[str, Any] | None) -> bool:
+    """True if the caller may administer THIS process's org — manage its agents,
+    roles, connectors, and partner keys (the per-agent narrowing that lives within
+    the account ceilings). This is the tenant-scoped admin, distinct from is_admin
+    (the platform super-user, who sets the ceilings and gets the cross-org god
+    view): an org-admin manages only their own org.
+
+    Resolution, cheapest first:
+      • a platform admin is implicitly an org-admin (the super-user can operate any
+        org its process is pinned to);
+      • the owner of a personal org (sub == org_id) is its admin — the common case,
+        no DB hit;
+      • a multi-member org pays one membership lookup for the 'admin' role.
+    With no org pin (local/dev single-user), returns True to match the unpinned
+    posture of owner_mismatch. Fail-closed on a lookup error (denies)."""
+    if is_admin(claims):
+        return True
+    org_id = (
+        os.environ.get("BRAIN_ORG_ID", "").strip() or os.environ.get("BRAIN_USER_ID", "").strip()
+    )
+    if not org_id:
+        return True  # unpinned single-user / dev — nothing to scope to
+    sub = str((claims or {}).get("sub", "")).strip()
+    if not sub:
+        return False
+    if sub == org_id:
+        return True  # personal-org owner — the only member, and its admin
+    try:
+        from brain.org import membership_role
+
+        return membership_role(sub, org_id) == "admin"
+    except Exception:
+        return False  # fail closed
+
+
 def _secure_cookies() -> bool:
     # Secure cookies aren't sent over plain http (localhost), so only require
     # them when actually hosted behind TLS (Railway terminates TLS for us).

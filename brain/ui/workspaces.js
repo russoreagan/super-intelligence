@@ -18,7 +18,8 @@
   const WS_NAMES = { labs: 'Labs', agents: 'Agents', api: 'API' };
 
   let workspace = 'labs';
-  let isAdmin = false;
+  let isAdmin = false;      // platform super-user — sets ceilings + cross-org god view
+  let orgAdmin = false;     // may manage THIS org's agents/roles/keys (within ceilings)
   let ownerEmail = '';
   let mandatesEnabled = false;
   let agentsData = null;      // { agents, roles, ceilings }
@@ -192,8 +193,8 @@
   async function loadGating() {
     try {
       const me = await fetch('/auth/me');
-      if (me.ok) { const j = await me.json(); isAdmin = !!j.is_admin; ownerEmail = j.email || ''; }
-    } catch (e) { isAdmin = false; }
+      if (me.ok) { const j = await me.json(); isAdmin = !!j.is_admin; orgAdmin = !!(j.org_admin ?? j.is_admin); ownerEmail = j.email || ''; }
+    } catch (e) { isAdmin = false; orgAdmin = false; }
     try {
       const mr = await fetch('/agents');
       if (mr.ok) { const d = await mr.json(); mandatesEnabled = !!d.enabled; }
@@ -201,9 +202,11 @@
     applyGating();
   }
   function applyGating() {
-    // Agents: admin + hosted backend. API: admin (partner keys need the backend;
-    // reference is informational). Member/companion fall back to Labs.
-    const show = { labs: true, agents: isAdmin && mandatesEnabled, api: isAdmin };
+    // Agents: org-admin + hosted backend (manage this org's agents/roles within
+    // the ceilings). API: org-admin (partner keys mint against this org; the
+    // reference is informational). Plain members / companion fall back to Labs.
+    // The cross-org "All orgs" view inside Agents stays platform-admin (isAdmin).
+    const show = { labs: true, agents: orgAdmin && mandatesEnabled, api: orgAdmin };
     $$('.ws-opt').forEach((t) => t.classList.toggle('locked', !show[t.dataset.ws]));
     if (!show[workspace]) setWorkspace('labs');
   }
@@ -925,15 +928,22 @@
   function renderAccountLimits(main) {
     const ceilings = (agentsData && agentsData.ceilings) || {};
     const patch = {};
+    // Ceilings are a platform concern (they govern host reach + spend). An
+    // org-admin sees them but cannot widen them — only the platform super-user
+    // (isAdmin) sets them. Render read-only for everyone else.
+    const readOnly = !isAdmin;
     main.innerHTML = `<div class="main-pad" style="max-width:720px;">
       <div class="page-eyebrow">Governance · org-level</div>
       <div class="page-title">Account Limits</div>
-      <p class="page-lede">The ceilings every agent is bounded by. Set the maximum motor reach and operational spend for the whole organization; per-agent editors can grant any value up to these — never beyond.</p>
+      <p class="page-lede">The ceilings every agent is bounded by — the maximum motor reach and operational spend for the whole organization; per-agent editors can grant any value up to these, never beyond.${readOnly ? ' <b>Set by the platform</b> — view only.' : ' Set the ceilings here.'}</p>
       <div class="card" style="margin-top:24px;">
         <div class="card-head"><span class="ch-num">A</span><div><div class="ch-title">Account ceilings</div><div class="ch-desc">the outer bound on what any agent may touch</div></div></div>
         <div class="card-body" id="limit-body"></div>
       </div>
-      <div class="row" style="margin-top:16px;"><button class="btn btn-primary" id="limit-save"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg> Save limits</button></div></div>`;
+      ${readOnly
+        ? `<div class="note" style="margin-top:16px;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg><p>Account ceilings are set by the platform. Narrow each agent within them in its permission editor.</p></div>`
+        : `<div class="row" style="margin-top:16px;"><button class="btn btn-primary" id="limit-save"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg> Save limits</button></div>`}
+      </div>`;
     const body = main.querySelector('#limit-body');
     LIMIT_FIELDS.forEach(f => {
       const cur = ceilings[f.key];
@@ -943,18 +953,19 @@
       let input;
       if (f.type === 'bool') {
         const on = !!(typeof cur === 'string' ? +cur : cur);
-        input = document.createElement('div'); input.className = 'toggle' + (on ? ' on' : '');
-        input.addEventListener('click', () => { const nv = !input.classList.contains('on'); input.classList.toggle('on', nv); patch[f.key] = nv ? 1 : 0; });
+        input = document.createElement('div'); input.className = 'toggle' + (on ? ' on' : '') + (readOnly ? ' disabled' : '');
+        if (!readOnly) input.addEventListener('click', () => { const nv = !input.classList.contains('on'); input.classList.toggle('on', nv); patch[f.key] = nv ? 1 : 0; });
       } else if (f.type === 'dirs') {
-        input = document.createElement('textarea'); input.className = 'ctrl-input'; input.value = cur || '';
-        input.addEventListener('input', () => { patch[f.key] = input.value; });
+        input = document.createElement('textarea'); input.className = 'ctrl-input'; input.value = cur || ''; input.disabled = readOnly;
+        if (!readOnly) input.addEventListener('input', () => { patch[f.key] = input.value; });
         field.style.width = '100%';
       } else {
-        input = document.createElement('input'); input.type = 'number'; input.className = 'ctrl-input'; input.step = 'any'; input.value = (cur ?? '');
-        input.addEventListener('input', () => { patch[f.key] = input.value === '' ? 0 : +input.value; });
+        input = document.createElement('input'); input.type = 'number'; input.className = 'ctrl-input'; input.step = 'any'; input.value = (cur ?? ''); input.disabled = readOnly;
+        if (!readOnly) input.addEventListener('input', () => { patch[f.key] = input.value === '' ? 0 : +input.value; });
       }
       field.appendChild(input); row.appendChild(field); body.appendChild(row);
     });
+    if (readOnly) return;
     main.querySelector('#limit-save').addEventListener('click', async () => {
       if (!Object.keys(patch).length) return;
       try {
