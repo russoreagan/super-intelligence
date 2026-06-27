@@ -288,6 +288,23 @@ class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
             return True
         return bool(self._ui_server is not None and self._ui_server.has_listeners)
 
+    def _proactive_voice_allowed(self) -> bool:
+        """Whether an unprompted message may be SPOKEN ALOUD right now.
+
+        Stricter than _proactive_speech_allowed: on the agent lane — a third-party
+        app driving this agent through the engine API — the brain must never voice
+        an unprompted message into the Elyceum app. Someone watching there is
+        observing the agent run, not conversing with it; the message is still
+        delivered to the owning partner and shown in the observed lane, it just
+        isn't synthesised to audio. Direct Elyceum interaction (the owner lane)
+        is unaffected and still speaks.
+        """
+        from brain.turn_ctx import current_turn
+
+        if current_turn().get("channel") == "agent":
+            return False
+        return self._proactive_speech_allowed()
+
     async def _run_ui_loop(self) -> None:
         print("Brain online. Open http://localhost:8765 to interact.\n")
         while True:
@@ -301,34 +318,49 @@ class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
                     and self._ui_message_queue.empty()
                     and since_last_spoke >= self._proactive_response_window
                 ):
-                    spoken = self.dmn.take_proactive()
-                    if spoken:
+                    item = self.dmn.take_proactive()
+                    if item:
+                        spoken = item.get("spoken", "")
+                        from_job = bool(item.get("from_job"))
                         idle = get_idle_seconds()
-                        if not self._proactive_speech_allowed():
-                            logger.debug(
-                                "[Proactive] Suppressed — no connected listener "
-                                "(skipping TTS synthesis)"
-                            )
-                        elif (
+                        # Local TTS gates: a connected listener, and the user not idle
+                        # past the threshold. These govern the brain's OWN speech only.
+                        local_ok = self._proactive_speech_allowed() and not (
                             self._proactive_idle_threshold > 0
                             and idle >= self._proactive_idle_threshold
-                        ):
-                            logger.debug(
-                                "[Proactive] Suppressed — user idle %.0fs (threshold %.0fs)",
-                                idle,
-                                self._proactive_idle_threshold,
-                            )
-                        else:
+                        )
+                        # A reaction to a finished self-directed job is delivered durably
+                        # to the owning tenant regardless of the local gates — the tenant
+                        # may well be away, which is exactly when it matters. A pure idle
+                        # musing only surfaces when a local listener is actually present,
+                        # and never leaves the owner lane.
+                        if from_job or local_ok:
+                            if self._emitter:
+                                await self._emitter.emit_proactive_speech(
+                                    spoken,
+                                    partner_target=(
+                                        self._partner_proactive_target() if from_job else ""
+                                    ),
+                                )
+                            if local_ok:
+                                await self.pns.emit(spoken, {"emotion": "curious"})
+                            self._last_brain_spoke_ts = time.time()
                             logger.info(
-                                "[Proactive] Speaking (idle=%.0fs, since_spoke=%.0fs): %r",
+                                "[Proactive] Surfaced (from_job=%s, local=%s, idle=%.0fs, "
+                                "since_spoke=%.0fs): %r",
+                                from_job,
+                                local_ok,
                                 idle,
                                 since_last_spoke,
                                 spoken[:80],
                             )
-                            if self._emitter:
-                                await self._emitter.emit_proactive_speech(spoken)
-                            await self.pns.emit(spoken, {"emotion": "curious"})
-                            self._last_brain_spoke_ts = time.time()
+                        else:
+                            logger.debug(
+                                "[Proactive] Suppressed idle musing — no listener / "
+                                "user idle %.0fs (threshold %.0fs)",
+                                idle,
+                                self._proactive_idle_threshold,
+                            )
                 continue
             except asyncio.CancelledError:
                 break

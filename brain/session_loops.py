@@ -643,9 +643,14 @@ class _LoopsMixin:
                 await asyncio.sleep(3.0)
                 if not self._task_queue.has_pending():
                     if self.dmn:
-                        self_goal = self.dmn.take_self_task()
-                        if self_goal:
-                            self._task_queue.enqueue(self_goal, source="self", priority=2)
+                        self_task = self.dmn.take_self_task()
+                        if self_task:
+                            self._task_queue.enqueue(
+                                self_task["goal"],
+                                source="self",
+                                priority=2,
+                                reflex_depth=int(self_task.get("reflex_depth", 0)),
+                            )
                         else:
                             # Clock-in: no ad-hoc self-task → start the next project
                             # step so a project is always making background progress

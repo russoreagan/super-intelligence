@@ -343,6 +343,11 @@ DMN_MEMORY_SEED_EVERY = int(os.environ.get("BRAIN_DMN_MEMORY_SEED_EVERY", "3"))
 DMN_IDLE_COOLING_S = float(os.environ.get("BRAIN_DMN_IDLE_COOLING_S", "30"))  # memory seeds, silence recall
 DMN_IDLE_DEEP_S = float(os.environ.get("BRAIN_DMN_IDLE_DEEP_S", "90"))  # mind-wandering context reframe
 
+# How many times a self-directed job result may chain into a follow-up job before
+# the reflex loop is forced to terminate (surface to the user or stop). Bounds the
+# result→reflect→act loop so an autonomous chain can't run away. See note_job_result.
+REFLEX_MAX_DEPTH = int(os.environ.get("BRAIN_REFLEX_MAX_DEPTH", "3"))
+
 
 class IdlePhase(IntEnum):
     ENGAGED = 0  # actively conversing (< cooling)
@@ -469,6 +474,16 @@ class DefaultModeNetwork:
         # prompt every N idle ticks, to give the thought something concrete to bite
         # on instead of defaulting to generic "understand the user" meta-thoughts.
         self._memory_seed: str = ""
+
+        # A finished self-directed job's outcome, surfaced into the next tick's
+        # prompt so the entity reasons over what it just did (and decides whether to
+        # tell the user / act further). Consumed once, like _memory_seed.
+        # _event_seed_depth = the completed job's reflex chain depth; _active_event_depth
+        # = that depth for the in-flight tick (None when this tick isn't event-seeded),
+        # read where a follow-up self-task is queued to tag it depth+1 and cap the loop.
+        self._event_seed: str = ""
+        self._event_seed_depth: int = 0
+        self._active_event_depth: int | None = None
 
         # ── Resilience: skip-and-backoff state ──────────────────────────────
         # A failed idle tick is harmless (the loop fires again in seconds), so
@@ -1059,12 +1074,46 @@ class DefaultModeNetwork:
         out, self.prefetched = self.prefetched, []
         return out
 
-    def take_self_task(self) -> str | None:
-        """Drain one self-initiated task goal, or None if queue is empty."""
+    def take_self_task(self) -> dict | None:
+        """Drain one self-initiated task — {"goal", "reflex_depth"} — or None if empty."""
         return self._self_task_q.popleft() if self._self_task_q else None
 
-    def take_proactive(self) -> str | None:
-        """Pop the oldest queued proactive utterance, or None if empty."""
+    def note_job_result(self, goal: str, summary: str, success: bool, *, depth: int = 0) -> None:
+        """Feed a finished self-directed motor-cortex job back into reflection so the
+        entity reasons over the outcome and decides what to do with it — surface it to
+        the user (gated by the speak-gate judge), spawn a follow-up job, or let it
+        rest. Reuses the _memory_seed mechanism: the next tick weaves this in and the
+        existing candidate / self-task / deferred pathways carry whatever it decides.
+        This is the result→reasoning re-engagement; nothing here speaks directly.
+
+        ``depth`` is the completed job's reflex chain depth. A follow-up the seeded
+        tick spawns is tagged depth+1; at REFLEX_MAX_DEPTH the seed forbids spawning
+        another task (and the tick hard-blocks it regardless), so the loop terminates."""
+        self._ensure_runtime_state()
+        goal = (goal or "").strip()
+        summary = (summary or "").strip()
+        # Nothing worth reasoning over: a successful job with no summary. Failures are
+        # always seeded (the entity may want to react to or report a failure).
+        if success and not summary:
+            return
+        outcome = "finished" if success else "failed"
+        seed = f'Your self-directed job "{goal[:160]}" just {outcome}. Result: {summary[:600]}'
+        if depth >= REFLEX_MAX_DEPTH:
+            seed += (
+                " You've already chained several follow-up jobs from this — do NOT "
+                "start another task now. Either surface what matters to the user or let it rest."
+            )
+        self._event_seed = seed
+        self._event_seed_depth = depth
+        logger.info(
+            "[DMN] Job result seeded into reflection (depth=%d, %s): %r", depth, outcome, goal[:60]
+        )
+
+    def take_proactive(self) -> dict | None:
+        """Pop the oldest queued proactive utterance as {"spoken", "from_job"}, or None
+        if empty. ``from_job`` flags utterances that descend from a finished self-directed
+        job (so the caller can deliver those to the owning tenant, while pure idle musings
+        stay on the owner's own feed)."""
         return self._proactive_q.popleft() if self._proactive_q else None
 
     # ── Speak-gate API — used by run.py's gate loop ─────────────────────────
@@ -1093,7 +1142,9 @@ class DefaultModeNetwork:
         proactive drain in run.py will pick it up and route it to TTS."""
         spoken = (candidate.get("spoken") or "").strip()
         if spoken:
-            self._proactive_q.append(spoken)
+            self._proactive_q.append(
+                {"spoken": spoken, "from_job": bool(candidate.get("from_job"))}
+            )
             logger.info(
                 "[Speak gate] Committing candidate (age=%.0fs, attempts=%d): %r",
                 time.time() - float(candidate.get("created_ts", time.time())),
@@ -1889,6 +1940,9 @@ class DefaultModeNetwork:
             self._recent_frames = deque(maxlen=DMN_RECENT_FRAMES)
         for attr, default in (
             ("_memory_seed", ""),
+            ("_event_seed", ""),
+            ("_event_seed_depth", 0),
+            ("_active_event_depth", None),
             ("_consec_errors", 0),
             ("_consec_suppressed", 0),
             ("_backoff_mult", 1.0),
@@ -1983,6 +2037,9 @@ class DefaultModeNetwork:
         self._thought_count += 1
         turn_id = f"dmn_{self._thought_count}"
         t_start = time.time()
+        # Only set when this tick consumes an event seed (a finished job); read where a
+        # follow-up self-task is queued so it inherits depth+1. Cleared every tick.
+        self._active_event_depth = None
 
         # Compute the engagement idle ONCE for this tick. Every idle-gated step below
         # (memory seed, rumination decision, skill rotation, context framing, silence
@@ -2631,6 +2688,19 @@ class DefaultModeNetwork:
             )
             self._memory_seed = ""  # consume — surfaces once, not every tick until cleared
 
+        if self._event_seed and not startup:
+            prompt_parts.append(
+                f"\nSOMETHING YOU SET IN MOTION JUST FINISHED: {self._event_seed}\n"
+                "React to it as your own work: decide whether it's worth telling the "
+                "person (set speak=true with a self-contained spoken form), whether it "
+                "warrants a concrete follow-up you should do next (set a task), or "
+                "whether it's minor and you simply note it and move on. Don't narrate "
+                "that 'a job finished' — speak naturally, as yourself."
+            )
+            # Mark this tick as event-seeded so a follow-up self-task inherits depth+1.
+            self._active_event_depth = self._event_seed_depth
+            self._event_seed = ""  # consume once
+
         if startup:
             if getattr(self, "_startup_first_meeting", False):
                 prompt_parts.append(
@@ -2989,6 +3059,9 @@ class DefaultModeNetwork:
                     "spoken": spoken_form,
                     "angle": angle,
                     "propose": is_propose,
+                    # Reaction to a finished self-directed job → deliverable to the
+                    # owning tenant; pure idle musings (None depth) stay owner-only.
+                    "from_job": self._active_event_depth is not None,
                     "created_ts": time.time(),
                     "attempts": 0,
                 }
@@ -3000,8 +3073,24 @@ class DefaultModeNetwork:
             )
 
         if task_goal:
-            self._self_task_q.append(task_goal)
-            logger.info("[Background reflection] Self-initiated task queued: %r", task_goal[:80])
+            _depth = self._active_event_depth
+            if _depth is not None and _depth >= REFLEX_MAX_DEPTH:
+                # Hard stop, independent of whether the model heeded the seed's
+                # instruction: a reflex chain that hit the cap may not spawn more work.
+                logger.info(
+                    "[Background reflection] Reflex depth cap (%d) reached — dropping "
+                    "follow-up self-task: %r",
+                    REFLEX_MAX_DEPTH,
+                    task_goal[:80],
+                )
+            else:
+                _next_depth = (_depth + 1) if _depth is not None else 0
+                self._self_task_q.append({"goal": task_goal, "reflex_depth": _next_depth})
+                logger.info(
+                    "[Background reflection] Self-initiated task queued (reflex_depth=%d): %r",
+                    _next_depth,
+                    task_goal[:80],
+                )
 
         if defer_text:
             self._append_deferred_thought(defer_text, defer_urgency, defer_tags)

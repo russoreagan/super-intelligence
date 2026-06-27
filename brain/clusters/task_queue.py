@@ -55,6 +55,10 @@ class Task:
     completed_at: float | None = None
     success: bool | None = None
     job_id: str | None = None  # linked JobStore entry (set when execution starts)
+    # Reflex chain depth: 0 for user/DMN-originated work; a job whose completion
+    # seeds a reflection that spawns a follow-up task tags that follow-up depth+1,
+    # so the result→reasoning→act loop is bounded (see DMN.note_job_result).
+    reflex_depth: int = 0
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -124,7 +128,9 @@ class PersistentTaskQueue:
 
     # ── Queue operations ──────────────────────────────────────────────────────
 
-    def enqueue(self, goal: str, source: Source = "user", priority: int = 1) -> Task | None:
+    def enqueue(
+        self, goal: str, source: Source = "user", priority: int = 1, reflex_depth: int = 0
+    ) -> Task | None:
         """
         Add a task. Returns the new Task, or None if it was deduplicated.
         Trims oldest completed/failed entries when over MAX_TASKS.
@@ -159,7 +165,13 @@ class PersistentTaskQueue:
                         goal[:60],
                     )
                     return None
-        task = Task(id=str(uuid.uuid4())[:8], goal=goal, source=source, priority=priority)
+        task = Task(
+            id=str(uuid.uuid4())[:8],
+            goal=goal,
+            source=source,
+            priority=priority,
+            reflex_depth=reflex_depth,
+        )
         self._tasks.append(task)
         # Trim oldest completed/failed if over limit
         if len(self._tasks) > MAX_TASKS:

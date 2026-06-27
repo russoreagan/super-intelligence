@@ -1641,6 +1641,16 @@ class _TurnMixin:
             if self.dmn and self.dmn.is_project_task(task.id):
                 with contextlib.suppress(Exception):
                     await self.dmn.note_project_complete(task.id, False, "execution error")
+            # Feed the crash back into reflection so the entity can react to / report
+            # the failure (result→reasoning loop; the DMN decides what, if anything).
+            if self.dmn is not None:
+                with contextlib.suppress(Exception):
+                    self.dmn.note_job_result(
+                        task.goal,
+                        f"crashed: {_e}",
+                        False,
+                        depth=getattr(task, "reflex_depth", 0),
+                    )
             return
         finally:
             if is_autonomous:
@@ -1743,6 +1753,19 @@ class _TurnMixin:
         )
         if len(self._recent_task_results) > 3:
             self._recent_task_results.pop(0)
+        # Feed the outcome back into reflection (result→reasoning loop). The DMN reasons
+        # over what just finished and decides — via the existing speak-gate / self-task /
+        # deferred pathways — whether to tell the user, act further, or let it rest. This
+        # is independent of the on_topic gate below (which only governs immediate speech):
+        # the judge, not word-overlap, decides relevance.
+        if self.dmn is not None:
+            with contextlib.suppress(Exception):
+                self.dmn.note_job_result(
+                    task.goal,
+                    spoken_summary,
+                    bool(summary.get("success")),
+                    depth=getattr(task, "reflex_depth", 0),
+                )
         logger.info("[TaskWorker] Reporting result [%s]: %s", task.id, spoken_summary[:160])
         if self._emitter:
             await self._emitter.emit_event(
@@ -1939,11 +1962,17 @@ class _TurnMixin:
             success,
         )
         if self._proactive_speech_allowed():
+            # Deliver to the owning partner + the observed lane regardless of who
+            # drove the turn. But only VOICE it aloud on the owner lane: when a
+            # third-party app drives this agent through the engine API the result
+            # must stay silent in the Elyceum app — anyone there is observing the
+            # run, not conversing — while still reaching the partner above.
             with contextlib.suppress(Exception):
                 if self._emitter:
                     await self._emitter.emit_proactive_speech(msg)
-            with contextlib.suppress(Exception):
-                await self.pns.emit(msg, {"emotion": "lively" if success else "concerned"})
+            if self._proactive_voice_allowed():
+                with contextlib.suppress(Exception):
+                    await self.pns.emit(msg, {"emotion": "lively" if success else "concerned"})
 
 
 # ── Module-level helpers (used inside _process_turn_body) ─────────────────────
