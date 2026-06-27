@@ -1644,6 +1644,26 @@ class _TurnMixin:
 
         if summary.get("clarification"):
             question = summary["clarification"]
+            # A degenerate local planner sometimes returns a JSON blob / echoed
+            # tool output in place of a real question. Never block on (or speak)
+            # that — fail the task quietly so the queue doesn't fill with garbage
+            # "clarifications" and nothing junk reaches the copilot.
+            from brain.clusters.follow_through import looks_like_json_blob
+
+            if looks_like_json_blob(question):
+                logger.info(
+                    "[TaskWorker] Task [%s] clarification was a JSON blob — dropping "
+                    "(local model degenerated): %r",
+                    task.id,
+                    question[:120],
+                )
+                self._task_queue.mark_done(task.id, success=False)
+                if self.dmn and self.dmn.is_project_task(task.id):
+                    with contextlib.suppress(Exception):
+                        await self.dmn.note_project_complete(
+                            task.id, False, "planner returned an unusable clarification"
+                        )
+                return
             self._task_queue.mark_blocked(task.id, reason=question)
             if self.dmn and self.dmn.is_project_task(task.id):
                 with contextlib.suppress(Exception):
