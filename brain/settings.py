@@ -228,9 +228,11 @@ DEFAULTS: dict[str, float | int | str] = {
     # TONIC idle drive (Stage 7 fix): the phasic worry/interest drive above decays to ~0 during
     # deep idle, so rumination never fired. The DMN is most active AT REST — these add a
     # mind-wandering (boredom) + finish-out (unfinished business) pull that grows during idle.
-    "rum_w_boredom": 0.45,  # weight on idle-duration boredom term (idle-driven rumination is
-    #                         desired: when disengaged, the brain should go back to ruminating)
-    "rum_idle_saturation_s": 120.0,  # boredom ramps 0→1 over this much idle past the threshold
+    "rum_w_boredom": 0.30,  # weight on idle-duration boredom term. Kept modest on purpose:
+    #                         time-to-bored is meant to be chemistry/persona-driven (see the
+    #                         `disposition` term in _tonic_idle_drive — Poet chews soonest,
+    #                         Sage latest), so different agents get bored at different rates.
+    "rum_idle_saturation_s": 300.0,  # boredom ramps 0→1 over this much idle past the threshold
     "rum_w_unfinished": 0.30,  # weight on open-thread finish-out pull
     "rum_unfinished_cap": 4.0,  # advances at which unfinished-business pull saturates
     # Per-step costs that let anxious rumination self-limit (added each chain step)
