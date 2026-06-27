@@ -321,6 +321,8 @@ class _SetupMixin:
             self.api_turn,
             consolidate_runner=self.consolidate_now,
             confirm_runner=self.api_confirm,
+            approvals_list_runner=self.api_list_approvals,
+            approval_resolve_runner=self.api_resolve_approval,
             purge_runner=self.api_purge_end_user,
         )
         self.brainstem.register_loop(

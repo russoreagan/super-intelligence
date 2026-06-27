@@ -780,19 +780,21 @@ class _LoopsMixin:
             tool_input,
             reason=action.get("reason", ""),
             turn_id=action.get("turn_id", ""),
+            end_user_id=action.get("end_user_id", ""),
         )
         with contextlib.suppress(Exception):
             if self._emitter:
                 await self._emitter.emit_event({"type": "task_approval", **item.to_dict()})
         return "deny"
 
-    def approve_action(self, approval_id: str) -> dict:
+    def approve_action(self, approval_id: str, end_user_id: str | None = None) -> dict:
         """UI/API: approve a pending action and re-queue it so the brain runs it,
-        pre-authorized, on the next idle cycle."""
+        pre-authorized, on the next idle cycle. end_user_id (engine API) scopes the
+        approval to that end-user's own items; None (owner/brain UI) = any."""
         approvals = getattr(self, "_approvals", None)
         if approvals is None:
             return {"ok": False, "error": "approvals unavailable"}
-        item = approvals.approve(approval_id)
+        item = approvals.approve(approval_id, end_user_id=end_user_id)
         if item is None:
             return {"ok": False, "error": "no such pending approval"}
         goal = f"The user approved this action — carry it out now: {item.tool}"
@@ -803,12 +805,24 @@ class _LoopsMixin:
         logger.info("[Approvals] approved + re-queued [%s] %s", item.id, item.tool)
         return {"ok": True, "tool": item.tool}
 
-    def skip_action(self, approval_id: str) -> dict:
+    def skip_action(self, approval_id: str, end_user_id: str | None = None) -> dict:
         approvals = getattr(self, "_approvals", None)
         if approvals is None:
             return {"ok": False, "error": "approvals unavailable"}
-        return {"ok": approvals.skip(approval_id)}
+        return {"ok": approvals.skip(approval_id, end_user_id=end_user_id)}
 
-    def list_approvals(self) -> list[dict]:
+    def list_approvals(self, end_user_id: str | None = None) -> list[dict]:
         approvals = getattr(self, "_approvals", None)
-        return approvals.pending() if approvals else []
+        return approvals.pending(end_user_id=end_user_id) if approvals else []
+
+    # ── Engine-API relay (tenant apps; scoped to the caller's end-user) ─────────
+    def api_list_approvals(self, end_user_id: str) -> list[dict]:
+        return self.list_approvals(end_user_id=end_user_id or "")
+
+    def api_resolve_approval(self, approval_id: str, end_user_id: str, approve: bool) -> dict:
+        """Resolve one approval on behalf of a tenant end-user. The end_user_id is
+        enforced, so a partner can only resolve their own end-user's items."""
+        euid = end_user_id or ""
+        if approve:
+            return self.approve_action(approval_id, end_user_id=euid)
+        return self.skip_action(approval_id, end_user_id=euid)

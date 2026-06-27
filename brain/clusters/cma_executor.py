@@ -1127,6 +1127,7 @@ class CMAExecutor(ExecutorCommon):
                                     "input": call.get("input"),
                                     "reason": reason,
                                     "turn_id": self._current_turn_id,
+                                    "end_user_id": self._current_end_user_id or "",
                                 }
                             )
                         )

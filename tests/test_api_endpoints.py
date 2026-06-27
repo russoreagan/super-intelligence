@@ -384,6 +384,56 @@ def test_confirm_unavailable_without_runner():
     assert c.post(f"/v1/sessions/{sid}/confirm", json={}, headers=_AUTH).status_code == 501
 
 
+def _client_approvals(list_runner=None, resolve_runner=None, keys=None):
+    keys = keys or {"sk_test_123"}
+    registry = ApiSessionRegistry(now_fn=lambda: 1.0, id_fn=lambda: "sess_ap")
+    app = FastAPI()
+    app.include_router(
+        build_api_router(
+            _FakeRunner(),
+            registry,
+            auth=lambda h: _ok(h, keys),
+            approvals_list_runner=list_runner,
+            approval_resolve_runner=resolve_runner,
+        )
+    )
+    return TestClient(app)
+
+
+def test_approvals_list_and_resolve_route_to_runner():
+    seen = {}
+
+    def _list(end_user_id):
+        seen["list_euid"] = end_user_id
+        return [{"id": "ap1", "tool": "send_email", "reason": "would send communication"}]
+
+    def _resolve(approval_id, end_user_id, approve):
+        seen["resolve"] = (approval_id, end_user_id, approve)
+        return {"ok": True, "tool": "send_email"}
+
+    c = _client_approvals(list_runner=_list, resolve_runner=_resolve)
+    sid = c.post("/v1/sessions", json={"end_user_id": "c1"}, headers=_AUTH).json()["session_id"]
+    r = c.get(f"/v1/sessions/{sid}/approvals", headers=_AUTH)
+    assert r.status_code == 200 and r.json()["approvals"][0]["id"] == "ap1"
+    assert seen["list_euid"] == "c1"  # scoped to the session's end-user
+    r2 = c.post(
+        f"/v1/sessions/{sid}/approvals/ap1/resolve", json={"approve": True}, headers=_AUTH
+    )
+    assert r2.status_code == 200 and r2.json()["approved"] is True and r2.json()["ok"] is True
+    assert seen["resolve"] == ("ap1", "c1", True)  # end_user_id enforced from session
+
+
+def test_approvals_require_auth_and_runner():
+    c = _client_approvals(resolve_runner=None)
+    sid = c.post("/v1/sessions", json={"end_user_id": "c1"}, headers=_AUTH).json()["session_id"]
+    assert c.get(f"/v1/sessions/{sid}/approvals").status_code == 401  # no key
+    # resolve with no runner wired → 501
+    assert (
+        c.post(f"/v1/sessions/{sid}/approvals/ap1/resolve", json={}, headers=_AUTH).status_code
+        == 501
+    )
+
+
 def test_end_user_purge_routes_to_runner():
     purged = {}
 
