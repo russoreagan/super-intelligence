@@ -32,6 +32,10 @@
     'The Cynic':     { DA: 0.25, ACh: 0.30, GABA: 0.30, Glu: 0.22, NE: 0.28, '5HT': 0.42, CORT: 0.18, OXT: 0.20, AEA: 0.22 },
     'The Admin':     { DA: 0.38, ACh: 0.45, GABA: 0.42, Glu: 0.30, NE: 0.25, '5HT': 0.60, CORT: 0.04, OXT: 0.35, AEA: 0.25 },
   };
+  // Expose the (live) persona→chemistry table so Labs observe-mode can seed an
+  // observed agent's resting bars. Same object reference, so custom personas added
+  // below stay visible to readers.
+  window.PERSONA_CHEM = PERSONA_CHEM;
   const CHANNELS = [
     { ch: 'DA', name: 'Dopamine' }, { ch: 'ACh', name: 'Acetylcholine' }, { ch: 'GABA', name: 'GABA' },
     { ch: 'Glu', name: 'Glutamate' }, { ch: 'NE', name: 'Norepinephrine' }, { ch: '5HT', name: 'Serotonin' },

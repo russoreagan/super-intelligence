@@ -5658,12 +5658,50 @@ window.setObservedAgent = function (agentId, name, persona) {
   if (!agentId || (ownerSlug && pslug === ownerSlug)) {
     observedAgentId = null;
     observedAgentName = '';
+    _restoreOwnerIdentity();
   } else {
     observedAgentId = agentId;
     observedAgentName = name || agentId;
+    _applyObservedIdentity(pslug, observedAgentName);
   }
   renderObserveBanner();
 };
+
+// The persona record (display name + tag) for a persona slug, from the global list.
+function _personaBySlug(slug) {
+  const list = (window.SETTINGS && window.SETTINGS.personas) || [];
+  return list.find(p => _personaSlugJS(p.id) === slug) || null;
+}
+
+// Switch the Labs identity (name/tag/badge + resting chemistry bars) to the
+// observed agent, so clicking "Trading copilot" actually SHOWS Trading copilot —
+// not the owner persona (The Admin). The agent runs only when called, so we seed
+// its persona's resting chemistry; live lane events refine the bars when it acts.
+function _applyObservedIdentity(pslug, agentLabel) {
+  const p = _personaBySlug(pslug);
+  const pname = p ? p.name : pslug;
+  const nameEl = document.getElementById('persona-name-display');
+  const tagEl  = document.getElementById('persona-tag-display');
+  const badge  = document.getElementById('persona-header-badge');
+  if (nameEl) nameEl.textContent = agentLabel || pname;
+  if (tagEl)  tagEl.textContent  = p ? p.tag : '';
+  if (badge)  { badge.textContent = String(agentLabel || pname).replace(/^The\s+/i, ''); badge.classList.remove('neutral'); }
+  const chem = window.PERSONA_CHEM && window.PERSONA_CHEM[pname];
+  if (chem) { renderNeuromod(chem); renderHormonal(chem); }
+}
+
+// Restore the owner persona's identity + resting bars when observation clears.
+function _restoreOwnerIdentity() {
+  if (typeof _renderPersonaState === 'function') _renderPersonaState();
+  const owner = currentSettings && currentSettings.persona_name;
+  // _renderPersonaState only knows the 5 core personas; fill the tag from the full
+  // list for the rest (e.g. The Admin) so the owner identity isn't left blank.
+  const op = _personaBySlug(_personaSlugJS(owner));
+  const tagEl = document.getElementById('persona-tag-display');
+  if (op && tagEl && !tagEl.textContent) tagEl.textContent = op.tag;
+  const chem = owner && window.PERSONA_CHEM && window.PERSONA_CHEM[owner];
+  if (chem) { renderNeuromod(chem); renderHormonal(chem); }
+}
 
 function renderObserveBanner() {
   let b = document.getElementById('observe-banner');
