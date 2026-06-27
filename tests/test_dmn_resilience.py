@@ -68,6 +68,10 @@ def _make_dmn():
     dmn.anticipations = []
     dmn.prefetched = []
     dmn._ensure_runtime_state()
+    # Snapshot engagement idle + phase like _tick does, so idle-gated methods read the same
+    # single source of truth. Tests needing a specific idle patch _effective_idle_seconds.
+    dmn._tick_idle_s = dmn._effective_idle_seconds()
+    dmn._tick_idle_phase = dmn._idle_phase(dmn._tick_idle_s)
     return dmn
 
 
@@ -273,7 +277,7 @@ def test_rumination_drive_flavors():
 
 def test_rumination_never_fires_during_live_conversation(monkeypatch):
     """Idle is a hard precondition: high drive but user active → always normal."""
-    monkeypatch.setattr(D, "get_idle_seconds", lambda: 0.0)
+    monkeypatch.setattr(D.DefaultModeNetwork, "_effective_idle_seconds", lambda self: 0.0)
     dmn = _make_dmn()
     for _ in range(40):
         mode, _flavor, drive = dmn._rumination_decision({"CORT": 0.9, "NE": 0.8, "5HT": 0.0})
@@ -282,7 +286,7 @@ def test_rumination_never_fires_during_live_conversation(monkeypatch):
 
 
 def test_rumination_eligible_when_idle_with_high_drive(monkeypatch):
-    monkeypatch.setattr(D, "get_idle_seconds", lambda: 999.0)
+    monkeypatch.setattr(D.DefaultModeNetwork, "_effective_idle_seconds", lambda self: 999.0)
     monkeypatch.setattr(D.random, "random", lambda: 0.0)  # force the probabilistic fire
     dmn = _make_dmn()
     mode, flavor, _drive = dmn._rumination_decision({"CORT": 0.9, "NE": 0.8, "5HT": 0.0})
@@ -291,7 +295,7 @@ def test_rumination_eligible_when_idle_with_high_drive(monkeypatch):
 
 
 def test_rumination_depth_cap(monkeypatch):
-    monkeypatch.setattr(D, "get_idle_seconds", lambda: 999.0)
+    monkeypatch.setattr(D.DefaultModeNetwork, "_effective_idle_seconds", lambda self: 999.0)
     monkeypatch.setattr(D.random, "random", lambda: 0.0)
     dmn = _make_dmn()
     dmn._consecutive_ruminations = int(settings.get("dmn_rumination_max_consecutive"))
@@ -300,7 +304,7 @@ def test_rumination_depth_cap(monkeypatch):
 
 
 def test_low_drive_idle_stays_normal(monkeypatch):
-    monkeypatch.setattr(D, "get_idle_seconds", lambda: 999.0)
+    monkeypatch.setattr(D.DefaultModeNetwork, "_effective_idle_seconds", lambda self: 999.0)
     dmn = _make_dmn()
     mode, _flavor, _drive = dmn._rumination_decision({"5HT": 0.9})  # calm → low drive
     assert mode == "normal"
@@ -344,7 +348,7 @@ def test_run_rumination_emits_and_logs(monkeypatch):
 
 
 def test_apply_monologue_skills_logs_pick(monkeypatch):
-    monkeypatch.setattr(D, "get_idle_seconds", lambda: 999.0)
+    monkeypatch.setattr(D.DefaultModeNetwork, "_effective_idle_seconds", lambda self: 999.0)
     logged = []
     monkeypatch.setattr(
         "brain.observability.decisions.decisions.log",
@@ -370,7 +374,7 @@ def test_apply_monologue_skills_logs_pick(monkeypatch):
 
 
 def test_apply_monologue_skills_resets_to_baseline_when_low_drive(monkeypatch):
-    monkeypatch.setattr(D, "get_idle_seconds", lambda: 999.0)
+    monkeypatch.setattr(D.DefaultModeNetwork, "_effective_idle_seconds", lambda self: 999.0)
     dmn = _make_dmn()
     dmn._monologue_baseline_skills = ["logic-check", "emotional"]
     dmn._skill_selector = MagicMock()

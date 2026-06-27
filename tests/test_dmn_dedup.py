@@ -193,12 +193,9 @@ def test_memory_seed_injected_when_idle_and_relevant():
     )
     dmn._thought_count = dmn_mod.DMN_MEMORY_SEED_EVERY  # lands on the interval
     # Force "idle" so the gate allows surfacing.
-    orig = dmn_mod.get_idle_seconds
-    dmn_mod.get_idle_seconds = lambda: 999.0
-    try:
-        dmn._maybe_inject_memory_seed()
-    finally:
-        dmn_mod.get_idle_seconds = orig
+    dmn._tick_idle_s = 999.0
+    dmn._tick_idle_phase = dmn._idle_phase(999.0)
+    dmn._maybe_inject_memory_seed()
     assert "pitch detection" in dmn._memory_seed
     assert "karaoke-hero" in dmn._memory_seed
 
@@ -223,12 +220,9 @@ def test_memory_seed_skipped_when_irrelevant():
         ]
     )
     dmn._thought_count = dmn_mod.DMN_MEMORY_SEED_EVERY
-    orig = dmn_mod.get_idle_seconds
-    dmn_mod.get_idle_seconds = lambda: 999.0
-    try:
-        dmn._maybe_inject_memory_seed()
-    finally:
-        dmn_mod.get_idle_seconds = orig
+    dmn._tick_idle_s = 999.0
+    dmn._tick_idle_phase = dmn._idle_phase(999.0)
+    dmn._maybe_inject_memory_seed()
     assert dmn._memory_seed == ""
 
 
@@ -248,12 +242,9 @@ def test_memory_seed_skipped_when_user_active():
         ]
     )
     dmn._thought_count = dmn_mod.DMN_MEMORY_SEED_EVERY
-    orig = dmn_mod.get_idle_seconds
-    dmn_mod.get_idle_seconds = lambda: 5.0  # user present
-    try:
-        dmn._maybe_inject_memory_seed()
-    finally:
-        dmn_mod.get_idle_seconds = orig
+    dmn._tick_idle_s = 5.0  # user present
+    dmn._tick_idle_phase = dmn._idle_phase(5.0)
+    dmn._maybe_inject_memory_seed()
     assert dmn._memory_seed == ""
     dmn._hippocampus._episodic.sample_random.assert_not_called()
 

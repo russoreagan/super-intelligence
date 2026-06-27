@@ -22,6 +22,7 @@ import random
 import re
 import time
 from collections import deque
+from enum import IntEnum
 
 from brain.bus import Bus
 from brain.cell import IntegratorCell
@@ -332,6 +333,24 @@ DMN_FRAME_REPEAT_MAX = int(os.environ.get("BRAIN_DMN_FRAME_REPEAT_MAX", "2"))
 # collapsing into generic meta-thoughts. 0 disables.
 DMN_MEMORY_SEED_EVERY = int(os.environ.get("BRAIN_DMN_MEMORY_SEED_EVERY", "3"))
 
+# ── Idle / engagement phases — THE single source of truth for "how disengaged is the
+# user." Derived from engagement idle (seconds since their last turn to the agent,
+# _effective_idle_seconds). Every idle-gated behaviour reads _idle_phase() instead of its
+# own magic-number comparison, so the idle notion is defined ONCE: change the source or a
+# threshold in one place and all gates follow. COOLING/DEEP are constants here; WANDERING
+# tracks the runtime `dmn_rumination_idle_threshold_s` setting so the rumination gate and
+# everything else cross into "mind-wandering" at the same instant.
+DMN_IDLE_COOLING_S = float(os.environ.get("BRAIN_DMN_IDLE_COOLING_S", "30"))  # memory seeds, silence recall
+DMN_IDLE_DEEP_S = float(os.environ.get("BRAIN_DMN_IDLE_DEEP_S", "90"))  # mind-wandering context reframe
+
+
+class IdlePhase(IntEnum):
+    ENGAGED = 0  # actively conversing (< cooling)
+    COOLING = 1  # just went quiet — light idle work (memory seeds, silence recall)
+    WANDERING = 2  # mind-wandering — rumination + humanities-skill rotation eligible
+    DEEP = 3  # long gone — frame context as "not a live exchange"
+
+
 # How long a settled conclusion stays in the monologue prompt as "already
 # concluded." Past this it's dropped so the brain stops citing old conclusions as
 # if they're current. Default 30 min.
@@ -563,6 +582,11 @@ class DefaultModeNetwork:
         # single idle signal for all idle-gated cognition (_effective_idle_seconds) —
         # engagement-based, not device HID, so working in another app still counts as idle.
         self._last_user_activity_ts: float = time.time()
+        # Per-tick engagement snapshot — computed ONCE at the top of each _tick and read by
+        # every idle-gated step that tick, so they can't disagree mid-thought. Seeded to
+        # ENGAGED for any pre-loop call (e.g. the startup prime thought).
+        self._tick_idle_s: float = 0.0
+        self._tick_idle_phase: IdlePhase = IdlePhase.ENGAGED
         # Predicted next input (used by temporal lobe predictor as a warm hint)
         self.predicted_next: dict | None = None
         # When the brain's last response ended with a question, the DMN runs
@@ -1730,8 +1754,9 @@ class DefaultModeNetwork:
         away. Engagement-based (not device HID), consistent with the rumination gate."""
         base = float(settings.get("dmn_interval") or DMN_INTERVAL)
         idle_base = float(settings.get("dmn_idle_interval") or base * 3)
-        idle = self._effective_idle_seconds()
-        interval = idle_base if idle > 60.0 else base
+        # Runs before the tick (sets the NEXT sleep), so read the phase live rather than the
+        # per-tick cache — same definition, just a fresh sample.
+        interval = idle_base if self._idle_phase() >= IdlePhase.WANDERING else base
         # Skip-and-backoff: while the local model is failing, lengthen the
         # interval geometrically so we stop hammering it. _backoff_mult is 1.0
         # when healthy and reset on the first successful tick.
@@ -1842,10 +1867,11 @@ class DefaultModeNetwork:
         else:
             lines.append("Speaker: unknown (new)")
         try:
-            idle_s = int(self._effective_idle_seconds())
+            idle_s = int(self._tick_idle_s)
+            away = self._tick_idle_phase >= IdlePhase.WANDERING
             lines.append(
                 f"Idle since last engagement: {idle_s}s  "
-                f"({'user away' if idle_s > 60 else 'user present'})"
+                f"({'user away' if away else 'user present'})"
             )
         except Exception:
             pass
@@ -1958,6 +1984,12 @@ class DefaultModeNetwork:
         turn_id = f"dmn_{self._thought_count}"
         t_start = time.time()
 
+        # Compute the engagement idle ONCE for this tick. Every idle-gated step below
+        # (memory seed, rumination decision, skill rotation, context framing, silence
+        # recall) reads this same snapshot + phase, so they can't disagree mid-thought.
+        self._tick_idle_s = self._effective_idle_seconds()
+        self._tick_idle_phase = self._idle_phase(self._tick_idle_s)
+
         # Refresh parietal slice so the monologue always sees the live conversation
         if self._parietal is not None:
             with contextlib.suppress(Exception):
@@ -1980,8 +2012,9 @@ class DefaultModeNetwork:
         # ruminate, dmn_skill_vary_drive_threshold to vary the humanities-skill framework).
         if self._thought_count % 5 == 0:
             logger.info(
-                "[Background reflection] gate idle=%.0fs drive=%.2f mode=%s flavor=%s",
-                self._effective_idle_seconds(),
+                "[Background reflection] gate idle=%.0fs phase=%s drive=%.2f mode=%s flavor=%s",
+                self._tick_idle_s,
+                self._tick_idle_phase.name,
                 drive,
                 mode,
                 flavor,
@@ -2091,9 +2124,9 @@ class DefaultModeNetwork:
         drive, flavor = self._rumination_drive(chem)
         if not settings.get("dmn_rumination_enabled"):
             return "normal", flavor, drive
-        idle = self._effective_idle_seconds()
+        idle = self._tick_idle_s
         idle_threshold = float(settings.get("dmn_rumination_idle_threshold_s") or 60.0)
-        if idle < idle_threshold:
+        if self._tick_idle_phase < IdlePhase.WANDERING:
             return "normal", flavor, drive
         # TONIC idle drive (Stage 7): the phasic worry/interest `drive` decays to ~0 during deep
         # idle, so on its own it never crossed threshold — rumination never fired. The DMN is most
@@ -2178,6 +2211,21 @@ class DefaultModeNetwork:
         if last_active <= 0.0:
             return 0.0
         return max(0.0, time.time() - last_active)
+
+    def _idle_phase(self, idle_s: float | None = None) -> IdlePhase:
+        """How disengaged the user is, as a named phase — the single definition every idle
+        gate keys off. Pass the per-tick snapshot (self._tick_idle_s) to keep one tick
+        consistent; omit to read live (used by _current_interval, which runs before the
+        tick). WANDERING tracks dmn_rumination_idle_threshold_s so the rumination gate and
+        all other idle-gated steps cross into 'mind-wandering' at the same moment."""
+        s = self._effective_idle_seconds() if idle_s is None else idle_s
+        if s >= DMN_IDLE_DEEP_S:
+            return IdlePhase.DEEP
+        if s >= float(settings.get("dmn_rumination_idle_threshold_s") or 60.0):
+            return IdlePhase.WANDERING
+        if s >= DMN_IDLE_COOLING_S:
+            return IdlePhase.COOLING
+        return IdlePhase.ENGAGED
 
     def _tonic_idle_drive(self, chem: dict, idle: float, idle_threshold: float) -> float:
         """Mind-wandering + finish-out pull that grows during deep idle (Stage 7). Independent of
@@ -2337,8 +2385,7 @@ class DefaultModeNetwork:
             return
         if drive < float(settings.get("dmn_skill_vary_drive_threshold") or 0.30):
             return
-        idle = self._effective_idle_seconds()
-        if idle < float(settings.get("dmn_rumination_idle_threshold_s") or 60.0):
+        if self._tick_idle_phase < IdlePhase.WANDERING:
             return
         seed = self._current_seed()
         if not seed:
@@ -2396,7 +2443,7 @@ class DefaultModeNetwork:
         # Only when the user is idle — keep live-conversation ticks grounded in the
         # actual exchange, not a random old memory. 30s is enough separation from
         # the last message; 120s was too conservative and starved the model of fuel.
-        if self._effective_idle_seconds() < 30:
+        if self._tick_idle_phase < IdlePhase.COOLING:
             return
         # Sample a handful and prefer the one most connected to the live context,
         # rather than injecting a single uniformly-random (often irrelevant) memory.
@@ -2474,8 +2521,8 @@ class DefaultModeNetwork:
         if not self._last_context:
             context_label = "Recent context: none"
         else:
-            idle_s = self._effective_idle_seconds()
-            if idle_s > 90:
+            idle_s = self._tick_idle_s
+            if self._tick_idle_phase >= IdlePhase.DEEP:
                 mins = int(idle_s // 60)
                 context_label = (
                     f"Earlier conversation (the user went quiet ~{mins} min ago — "
@@ -3487,7 +3534,7 @@ class DefaultModeNetwork:
         existing hippocampus.recall path; surfaces the result as a monologue seed
         and lets recall_affect recolor chemistry."""
         # Only during genuine lulls — never mid-exchange.
-        if self._effective_idle_seconds() < 30:
+        if self._tick_idle_phase < IdlePhase.COOLING:
             return
         for topic in self._bus.tracked_topics():
             if not self._bus.consume_quiet_onset(topic):

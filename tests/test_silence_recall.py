@@ -19,8 +19,8 @@ def colony_on(monkeypatch):
     monkeypatch.setitem(settings._data, "colony_arm_threshold", 1.0)
     monkeypatch.setitem(settings._data, "colony_silence_floor", 0.15)
     monkeypatch.setitem(settings._data, "colony_silence_disarm_s", 1e12)  # never disarm in-test
-    # idle so the silence step is eligible
-    monkeypatch.setattr(dmn_mod, "get_idle_seconds", lambda: 60.0)
+    # idle so the silence step is eligible (engagement-based — patch the single source)
+    monkeypatch.setattr(dmn_mod.DefaultModeNetwork, "_effective_idle_seconds", lambda self: 60.0)
 
 
 def _make_dmn(bus):
@@ -34,6 +34,8 @@ def _make_dmn(bus):
         return_value={"episodes": "they said X; I replied Y", "recall_affect": {"ACh": 0.1}}
     )
     dmn._memory_seed = ""
+    dmn._tick_idle_s = dmn._effective_idle_seconds()
+    dmn._tick_idle_phase = dmn._idle_phase(dmn._tick_idle_s)
     return dmn
 
 
@@ -76,8 +78,8 @@ async def test_silence_recall_debounced_fires_once(colony_on):
 
 
 async def test_silence_recall_suppressed_when_active(colony_on, monkeypatch):
-    """Mid-exchange (OS not idle) → no recall even on a quiet onset."""
-    monkeypatch.setattr(dmn_mod, "get_idle_seconds", lambda: 5.0)
+    """Mid-exchange (user just engaged) → no recall even on a quiet onset."""
+    monkeypatch.setattr(dmn_mod.DefaultModeNetwork, "_effective_idle_seconds", lambda self: 5.0)
     bus = Bus()
     _drive_to_quiet(bus)
     dmn = _make_dmn(bus)
