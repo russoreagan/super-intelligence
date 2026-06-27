@@ -39,7 +39,6 @@ from brain.model_router import ModelRouter
 from brain.neuron import SwitchNeuron
 from brain.second_brain.store import SECOND_BRAIN_ROOT
 from brain.settings import settings
-from brain.utils import get_idle_seconds
 
 DEFERRED_THOUGHTS_PATH = SECOND_BRAIN_ROOT / "deferred_thoughts.md"
 PROPOSALS_DIR = SECOND_BRAIN_ROOT / "proposals"
@@ -559,9 +558,10 @@ class DefaultModeNetwork:
         )
         self._bridge_cell.set_router(router)
 
-        # Last time the user was active (stamped at every turn start in pause()). Used as a
-        # conversation-idle fallback for the rumination gate when OS HID idle is unavailable
-        # (e.g. the Linux-hosted instance, where get_idle_seconds() always returns 0.0).
+        # Last time the user ENGAGED THE AGENT (stamped on a real user turn via
+        # pause(stamp_activity=True); AI-internal pauses do not touch it). This is the
+        # single idle signal for all idle-gated cognition (_effective_idle_seconds) —
+        # engagement-based, not device HID, so working in another app still counts as idle.
         self._last_user_activity_ts: float = time.time()
         # Predicted next input (used by temporal lobe predictor as a warm hint)
         self.predicted_next: dict | None = None
@@ -1724,16 +1724,13 @@ class DefaultModeNetwork:
         return snap
 
     def _current_interval(self) -> float:
-        """Adaptive tick interval: faster when there's a live conversation,
-        slower when the user has wandered off (OS-idle for > 60s) so we
-        don't burn LLM calls into the void. Falls back to dmn_interval if
-        get_idle_seconds is unavailable."""
+        """Adaptive tick interval: faster during a live conversation, slower once the
+        user has disengaged from the AGENT (>60s since their last turn) so we don't burn
+        LLM calls — or contend with other subsystems for the local model — while they're
+        away. Engagement-based (not device HID), consistent with the rumination gate."""
         base = float(settings.get("dmn_interval") or DMN_INTERVAL)
         idle_base = float(settings.get("dmn_idle_interval") or base * 3)
-        try:
-            idle = get_idle_seconds()
-        except Exception:
-            idle = 0.0
+        idle = self._effective_idle_seconds()
         interval = idle_base if idle > 60.0 else base
         # Skip-and-backoff: while the local model is failing, lengthen the
         # interval geometrically so we stop hammering it. _backoff_mult is 1.0
@@ -1845,9 +1842,10 @@ class DefaultModeNetwork:
         else:
             lines.append("Speaker: unknown (new)")
         try:
-            idle_s = int(get_idle_seconds())
+            idle_s = int(self._effective_idle_seconds())
             lines.append(
-                f"OS-idle seconds: {idle_s}  ({'user away' if idle_s > 60 else 'user present'})"
+                f"Idle since last engagement: {idle_s}s  "
+                f"({'user away' if idle_s > 60 else 'user present'})"
             )
         except Exception:
             pass
@@ -2339,10 +2337,7 @@ class DefaultModeNetwork:
             return
         if drive < float(settings.get("dmn_skill_vary_drive_threshold") or 0.30):
             return
-        try:
-            idle = get_idle_seconds()
-        except Exception:
-            idle = 0.0
+        idle = self._effective_idle_seconds()
         if idle < float(settings.get("dmn_rumination_idle_threshold_s") or 60.0):
             return
         seed = self._current_seed()
@@ -2401,11 +2396,8 @@ class DefaultModeNetwork:
         # Only when the user is idle — keep live-conversation ticks grounded in the
         # actual exchange, not a random old memory. 30s is enough separation from
         # the last message; 120s was too conservative and starved the model of fuel.
-        try:
-            if get_idle_seconds() < 30:
-                return
-        except Exception:
-            pass
+        if self._effective_idle_seconds() < 30:
+            return
         # Sample a handful and prefer the one most connected to the live context,
         # rather than injecting a single uniformly-random (often irrelevant) memory.
         # A pure-random seed was the main reason proactive thoughts drifted onto
@@ -2482,10 +2474,7 @@ class DefaultModeNetwork:
         if not self._last_context:
             context_label = "Recent context: none"
         else:
-            try:
-                idle_s = get_idle_seconds()
-            except Exception:
-                idle_s = 0.0
+            idle_s = self._effective_idle_seconds()
             if idle_s > 90:
                 mins = int(idle_s // 60)
                 context_label = (
@@ -3498,11 +3487,8 @@ class DefaultModeNetwork:
         existing hippocampus.recall path; surfaces the result as a monologue seed
         and lets recall_affect recolor chemistry."""
         # Only during genuine lulls — never mid-exchange.
-        try:
-            if get_idle_seconds() < 30:
-                return
-        except Exception:
-            pass
+        if self._effective_idle_seconds() < 30:
+            return
         for topic in self._bus.tracked_topics():
             if not self._bus.consume_quiet_onset(topic):
                 continue  # no fresh quiet onset (debounced)
