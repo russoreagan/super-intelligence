@@ -267,6 +267,23 @@ class WsSession:
                     else etype
                 )
                 await self._send({"type": out_type, **{k: v for k, v in ev.items() if k != "type"}})
+                # Push path: also VOICE a proactive result when the client opted into
+                # audio — out-of-band (it fires after turn_end), mirroring the turn-reply
+                # audio in _run_turn. Mood comes from the [mood:X] markup the proactive
+                # text still carries, so no separate affect is needed. A client can keep
+                # reply audio but mute proactive audio with audio.proactive=false.
+                if (
+                    out_of_band
+                    and isinstance(self._audio_opts, dict)
+                    and self._audio_opts.get("enabled")
+                    and self._audio_opts.get("proactive", True)
+                ):
+                    proactive_text = (ev.get("text") or "").strip()
+                    if proactive_text:
+                        # Clear any stale barge-in flag from an earlier turn so the
+                        # out-of-band synth isn't cancelled before it starts.
+                        self._tts_cancel.clear()
+                        await self._ws_stream_audio(proactive_text, None, turn_id)
         except asyncio.CancelledError:
             pass
         except Exception as e:
