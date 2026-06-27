@@ -29,6 +29,7 @@
   let agentUsageAll = null;   // [{ org_id, org_name, agent_id, … }] — superadmin all-orgs rows
   let usageRange = { key: 'today', since: null, until: null }; // dashboard date-range selector
   let usageScope = 'org';     // 'org' (this org) | 'all' (platform-superadmin fleet view)
+  let _scopeChosen = false;   // true once the user picks a scope — stops the admin default re-applying
   let podStatus = null;       // /__pod_status — shared GPU pod uptime + accrued cost
   let podMeterTimer = null;   // ticking refresh while the Live dashboard is visible
   let agentSel = null;        // open agent_id
@@ -196,6 +197,11 @@
       const me = await fetch('/auth/me');
       if (me.ok) { const j = await me.json(); isAdmin = !!j.is_admin; orgAdmin = !!(j.org_admin ?? j.is_admin); ownerEmail = j.email || ''; }
     } catch (e) { isAdmin = false; orgAdmin = false; }
+    // A platform super-user's own org is typically empty (it exists to monitor the
+    // fleet), so default the dashboard to the cross-org "All orgs" view — otherwise
+    // they land on an empty "My org" and think it's broken. They can still toggle
+    // back. Range moves off "This session" since that's process-local (org-only).
+    if (isAdmin && !_scopeChosen) { usageScope = 'all'; if (usageRange.key === 'session') usageRange = { key: 'today', since: null, until: null }; }
     try {
       const mr = await fetch('/agents');
       if (mr.ok) { const d = await mr.json(); mandatesEnabled = !!d.enabled; }
@@ -377,7 +383,7 @@
 
   // Switch org-scope (platform super-admin only): own org ↔ all orgs.
   async function setUsageScope(scope) {
-    usageScope = scope;
+    usageScope = scope; _scopeChosen = true;
     // "This session" is process-local — meaningless cross-org; fall back to Today.
     if (scope === 'all' && usageRange.key === 'session') usageRange = { key: 'today', since: null, until: null };
     await Promise.all([loadAgentUsage(), loadPodStatus()]);
