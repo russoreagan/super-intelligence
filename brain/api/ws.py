@@ -7,8 +7,8 @@ bidirectional transport that supports:
 
   - Streaming audio IN (PCM16 chunks) → Deepgram live STT → interim transcripts
     forwarded to the client → full utterance triggers a brain turn
-  - Brain inner-life events (thoughts, mood, neuromod) forwarded over the socket,
-    filtered to the active turn_id
+  - Brain inner-life events (thoughts, mood OUTPUT) forwarded over the socket,
+    filtered to the active turn_id — raw chemistry (neuromod/hormonal) is withheld
   - Streaming audio OUT (TTS chunks via synthesize_stream) on the same connection
   - Barge-in: audio arriving while TTS is playing cancels the in-flight synthesis
     and opens a fresh STT session for the new utterance
@@ -37,8 +37,9 @@ _FORWARD_TYPES = frozenset(
     {
         "turn_start",
         "stream_thought",
-        "neuromod",
-        "hormonal",
+        # Chemistry (neuromod/hormonal) is deliberately NOT forwarded to partners — only
+        # the mood OUTPUT (emotion) crosses the boundary, so the affect model can't be
+        # reverse-engineered from the raw signal. It stays visible in the owner's own UI.
         "emotion",
         "user_emotion",
         # Out-of-band: a backgrounded/always-on job's result. Fires after turn_end,
@@ -422,10 +423,10 @@ def _affect_view(text: str, affect: dict | None) -> tuple[str, dict]:
 
 
 def _mood_from_affect(affect: dict | None) -> dict:
+    # Mood OUTPUT only — emotion (+ the user's read emotion). The hormonal/chemical
+    # layer is intentionally withheld so partners can't reverse-engineer the model.
     affect = affect or {}
     mood: dict = {"emotion": affect.get("emotion", "neutral")}
     if affect.get("user_emotion"):
         mood["user_emotion"] = affect["user_emotion"]
-    if isinstance(affect.get("hormonal"), dict):
-        mood["hormonal"] = affect["hormonal"]
     return mood

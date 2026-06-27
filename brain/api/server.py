@@ -95,8 +95,8 @@ _STREAMED_TYPES = frozenset(
         "turn_start",
         "activation",
         "stream_thought",
-        "neuromod",
-        "hormonal",
+        # Chemistry (neuromod/hormonal) is deliberately NOT streamed to partners — only
+        # the mood OUTPUT (emotion) crosses the API, keeping the affect model opaque.
         "emotion",
         "user_emotion",
         "turn_end",
@@ -184,14 +184,14 @@ def _affect_view(text: str, affect: dict | None) -> tuple[str, dict]:
 
 
 def _mood_from_affect(affect: dict | None) -> dict:
-    """Curate the public mood view from the internal affect dict — emotion + the
-    hormonal layer, never internal fields (enrollment, appraisal, etc.)."""
+    """Curate the public mood view from the internal affect dict — the mood OUTPUT
+    only (emotion + the user's read emotion). The hormonal/chemical layer and every
+    internal field (neuromod, enrollment, appraisal, …) are withheld so the affect
+    model can't be reverse-engineered from the API."""
     affect = affect or {}
     mood: dict = {"emotion": affect.get("emotion", "neutral")}
     if affect.get("user_emotion"):
         mood["user_emotion"] = affect["user_emotion"]
-    if isinstance(affect.get("hormonal"), dict):
-        mood["hormonal"] = affect["hormonal"]
     return mood
 
 
