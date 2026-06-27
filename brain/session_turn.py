@@ -1629,6 +1629,11 @@ class _TurnMixin:
         # (DMN self-tasks AND recovered jobs from a previous session) runs under
         # the tighter self-directed grants.
         is_autonomous = getattr(task, "source", "") != "user"
+        # A user-awaited job: the user asked for this (the agent deferred a tool/research
+        # step needed to answer) and is WAITING. Its result must always come back — the
+        # on_topic surfacing heuristic governs only the brain's discretionary autonomous
+        # work, never an answer someone is waiting on.
+        is_user = getattr(task, "source", "") == "user"
         if is_self:
             self.router.enter_background_mode()
         if is_autonomous:
@@ -1641,7 +1646,20 @@ class _TurnMixin:
             if self.dmn and self.dmn.is_project_task(task.id):
                 with contextlib.suppress(Exception):
                     await self.dmn.note_project_complete(task.id, False, "execution error")
-            # Feed the crash back into reflection so the entity can react to / report
+            # The user is waiting on this — never leave them with silence. Tell them it
+            # failed (partner delivery isn't gated on a local listener; the tenant may
+            # be away). Autonomous work fails quietly and only feeds reflection below.
+            if is_user:
+                _fail_msg = "I ran into an error working on that and couldn't finish it."
+                if self._emitter:
+                    with contextlib.suppress(Exception):
+                        await self._emitter.emit_proactive_speech(
+                            _fail_msg, partner_target=self._partner_proactive_target()
+                        )
+                if self._proactive_speech_allowed():
+                    with contextlib.suppress(Exception):
+                        await self.pns.emit(_fail_msg, {"emotion": "concerned"})
+            # Feed the crash back into reflection so the entity can react to / act on
             # the failure (result→reasoning loop; the DMN decides what, if anything).
             if self.dmn is not None:
                 with contextlib.suppress(Exception):
@@ -1650,6 +1668,7 @@ class _TurnMixin:
                         f"crashed: {_e}",
                         False,
                         depth=getattr(task, "reflex_depth", 0),
+                        already_reported=is_user,
                     )
             return
         finally:
@@ -1659,6 +1678,8 @@ class _TurnMixin:
                 self.router.exit_background_mode()
 
         on_topic = self._task_is_on_topic(task.goal)
+        # Always surface a user-awaited answer; on_topic only gates autonomous work.
+        should_report = on_topic or is_user
 
         if summary.get("clarification"):
             question = summary["clarification"]
@@ -1689,23 +1710,25 @@ class _TurnMixin:
             logger.info(
                 "[TaskWorker] Task [%s] blocked on clarification: %s", task.id, question[:120]
             )
-            if on_topic:
+            if should_report:
+                # Partner delivery isn't gated on a local listener (the user may be
+                # waiting remotely in the copilot); local TTS still is.
+                if self._emitter:
+                    await self._emitter.emit_proactive_speech(
+                        question, partner_target=self._partner_proactive_target()
+                    )
                 if self._proactive_speech_allowed():
-                    if self._emitter:
-                        await self._emitter.emit_proactive_speech(
-                            question, partner_target=self._partner_proactive_target()
-                        )
                     await self.pns.emit(question, {"emotion": "curious"})
                 else:
                     logger.debug(
-                        "[TaskWorker] Task [%s] clarification held — no connected "
-                        "listener (task stays blocked, surfaces in context later)",
+                        "[TaskWorker] Task [%s] clarification delivered to partner; local "
+                        "TTS skipped — no connected listener",
                         task.id,
                     )
             else:
                 logger.info(
-                    "[TaskWorker] Task [%s] clarification held — off-topic (will surface "
-                    "in context when relevant)",
+                    "[TaskWorker] Task [%s] clarification held — off-topic autonomous work "
+                    "(will surface in context when relevant)",
                     task.id,
                 )
             return
@@ -1755,9 +1778,9 @@ class _TurnMixin:
             self._recent_task_results.pop(0)
         # Feed the outcome back into reflection (result→reasoning loop). The DMN reasons
         # over what just finished and decides — via the existing speak-gate / self-task /
-        # deferred pathways — whether to tell the user, act further, or let it rest. This
-        # is independent of the on_topic gate below (which only governs immediate speech):
-        # the judge, not word-overlap, decides relevance.
+        # deferred pathways — whether to act further, and (for autonomous work) whether to
+        # surface it. already_reported=should_report tells it the answer has already gone
+        # out for a user-awaited job, so it won't repeat it — only consider a follow-up.
         if self.dmn is not None:
             with contextlib.suppress(Exception):
                 self.dmn.note_job_result(
@@ -1765,6 +1788,7 @@ class _TurnMixin:
                     spoken_summary,
                     bool(summary.get("success")),
                     depth=getattr(task, "reflex_depth", 0),
+                    already_reported=should_report,
                 )
         logger.info("[TaskWorker] Reporting result [%s]: %s", task.id, spoken_summary[:160])
         if self._emitter:
@@ -1775,17 +1799,19 @@ class _TurnMixin:
                     "summary": spoken_summary,
                 }
             )
-            if on_topic:
+            if should_report:
+                # Partner delivery isn't gated on a local listener (a user awaiting in the
+                # copilot may be away); local TTS below still is.
                 await self._emitter.emit_proactive_speech(
                     spoken_summary, partner_target=self._partner_proactive_target()
                 )
             else:
                 logger.info(
-                    "[TaskWorker] Task [%s] result held from speech — off-topic "
-                    "(will surface in LLM context on next turn)",
+                    "[TaskWorker] Task [%s] result held from speech — off-topic autonomous "
+                    "work (will surface in LLM context on next turn)",
                     task.id,
                 )
-        if on_topic and self._proactive_speech_allowed():
+        if should_report and self._proactive_speech_allowed():
             await self.pns.emit(
                 spoken_summary, {"emotion": "lively" if summary.get("success") else "concerned"}
             )

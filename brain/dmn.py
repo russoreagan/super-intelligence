@@ -1078,13 +1078,26 @@ class DefaultModeNetwork:
         """Drain one self-initiated task — {"goal", "reflex_depth"} — or None if empty."""
         return self._self_task_q.popleft() if self._self_task_q else None
 
-    def note_job_result(self, goal: str, summary: str, success: bool, *, depth: int = 0) -> None:
+    def note_job_result(
+        self,
+        goal: str,
+        summary: str,
+        success: bool,
+        *,
+        depth: int = 0,
+        already_reported: bool = False,
+    ) -> None:
         """Feed a finished self-directed motor-cortex job back into reflection so the
         entity reasons over the outcome and decides what to do with it — surface it to
         the user (gated by the speak-gate judge), spawn a follow-up job, or let it
         rest. Reuses the _memory_seed mechanism: the next tick weaves this in and the
         existing candidate / self-task / deferred pathways carry whatever it decides.
         This is the result→reasoning re-engagement; nothing here speaks directly.
+
+        ``already_reported`` marks a job whose result was just delivered to the user who
+        asked for it (a user-awaited job — the answer already went out synchronously).
+        The seed then tells the entity not to repeat it, only to weigh a follow-up — so
+        the reflex loop never double-speaks an answer the caller already returned.
 
         ``depth`` is the completed job's reflex chain depth. A follow-up the seeded
         tick spawns is tagged depth+1; at REFLEX_MAX_DEPTH the seed forbids spawning
@@ -1098,6 +1111,11 @@ class DefaultModeNetwork:
             return
         outcome = "finished" if success else "failed"
         seed = f'Your self-directed job "{goal[:160]}" just {outcome}. Result: {summary[:600]}'
+        if already_reported:
+            seed += (
+                " You've ALREADY given this result to the person who asked — do not repeat "
+                "it. Only weigh whether a concrete follow-up is warranted; otherwise let it rest."
+            )
         if depth >= REFLEX_MAX_DEPTH:
             seed += (
                 " You've already chained several follow-up jobs from this — do NOT "

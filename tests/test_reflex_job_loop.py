@@ -55,6 +55,18 @@ def test_depth_cap_seed_forbids_further_tasks():
     assert "do NOT start another task" not in dmn2._event_seed
 
 
+def test_already_reported_seed_suppresses_repeat():
+    # A user-awaited job's answer is delivered synchronously by _run_task; the reflex
+    # seed must tell the entity not to repeat it, only to weigh a follow-up.
+    dmn = _bare_dmn()
+    dmn.note_job_result("price NVDA", "NVDA is $920", True, already_reported=True)
+    assert "do not repeat" in dmn._event_seed
+    # A non-reported (autonomous) result carries no such restriction.
+    dmn2 = _bare_dmn()
+    dmn2.note_job_result("price NVDA", "NVDA is $920", True, already_reported=False)
+    assert "do not repeat" not in dmn2._event_seed
+
+
 def test_proactive_queue_carries_from_job_flag():
     dmn = _bare_dmn()
     dmn._proactive_q = deque(maxlen=2)
