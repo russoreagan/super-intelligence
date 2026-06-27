@@ -261,6 +261,32 @@ class _LoopsMixin:
             except Exception:
                 pass
 
+    async def _usage_flush_loop(self) -> None:
+        """Persist per-agent model usage (tokens, pod compute-seconds, cloud $) to the
+        durable ledger every couple minutes so the Agents dashboard can sum cost +
+        tokens over a date range — cumulative across every restart (migration 016)."""
+        while True:
+            await asyncio.sleep(120)
+            try:
+                if getattr(self, "router", None) is not None:
+                    await asyncio.to_thread(self.router.flush_usage)
+            except Exception:
+                pass
+
+    def _agent_usage_for_ui(self, since: str | None = None, until: str | None = None) -> dict:
+        """Per-agent usage for the dashboard. No range → the live in-memory meter
+        (current session). A [since, until] range (ISO-8601) → the durable ledger
+        summed across restarts. Sync + blocking on the range path; the UI server
+        calls it off-thread."""
+        if since or until:
+            try:
+                from brain import agent_usage_store
+
+                return agent_usage_store.aggregate(since, until)
+            except Exception:
+                return {}
+        return self.router.agent_usage() if getattr(self, "router", None) else {}
+
     async def _speak_gate_loop(self) -> None:
         SPEAK_GATE_INTERVAL = float(_brain_settings.get("speak_gate_poll_interval") or 5.0)
         SPEAK_CAND_MAX_AGE = float(_brain_settings.get("speak_candidate_max_age_s") or 60.0)

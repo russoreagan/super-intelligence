@@ -258,6 +258,10 @@ class _SetupMixin:
             # a lite brain has local routing off (every local/runpod route → cloud), so
             # it never touches the pod. Read lazily so it reflects the final resolution.
             tier_fn=lambda: "lite" if getattr(self.router, "_local_disabled", False) else "full",
+            # Per-agent model usage for the Agents dashboard cost monitor. No range →
+            # the live in-memory meter ("This session"); a [since, until] range → the
+            # durable ledger summed across restarts (migration 016).
+            usage_fn=self._agent_usage_for_ui,
             wiring=self.wiring,
             bus=self.bus,
         )
@@ -752,6 +756,7 @@ class _SetupMixin:
     def _setup_loops(self) -> None:
         self.brainstem.register_loop("heartbeat", self._heartbeat_with_ui)
         self.brainstem.register_loop("runpod_heartbeat", self._runpod_heartbeat_loop)
+        self.brainstem.register_loop("usage_flush", self._usage_flush_loop)
         if self.motor:
             self.brainstem.register_loop("task_worker", self._task_worker_loop)
         # Periodic in-process consolidation. Lets the brain run for days

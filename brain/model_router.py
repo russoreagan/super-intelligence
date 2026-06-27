@@ -231,6 +231,14 @@ class ModelRouter:
         # Daily cloud USD tracking — in-memory; loaded from disk lazily.
         self._cloud_usd_today: float = 0.0
         self._cloud_usd_date: str = ""  # "YYYY-MM-DD" (UTC)
+        # Per-agent token + cost meter for the Agents dashboard: which engine-API
+        # agent drove the model, how much. Keyed by agent_id (turn_ctx lane);
+        # owner/idle turns bucket under "owner" and are hidden from the dashboard.
+        # In-memory + process-session scoped (see agent_usage()).
+        self._agent_usage: dict[str, dict] = {}
+        # High-water snapshot of _agent_usage at the last durable flush, so
+        # flush_usage() can persist only the delta since then (migration 016).
+        self._usage_flushed: dict[str, dict] = {}
 
     # ── Egress pseudonymization ───────────────────────────────────────────────
 
@@ -287,14 +295,99 @@ class ModelRouter:
         except Exception as e:
             logger.debug("[ModelRouter] cloud_usage persist failed: %s", e)
 
+    @staticmethod
+    def _price_usd(model_id: str, in_tok: int, out_tok: int, cache_read: int = 0) -> float:
+        """USD for a cloud call's token counts (unknown models → Sonnet-class rate)."""
+        ri, ro, rc = _CLOUD_RATES.get(model_id, (3.0, 15.0, 0.30))
+        return (in_tok * ri + out_tok * ro + cache_read * rc) / 1_000_000
+
     def _charge_cloud_usd(self, model_id: str, in_tok: int, out_tok: int, cache_read: int) -> float:
         """Compute and accumulate USD for a completed cloud call. Returns call cost."""
-        ri, ro, rc = _CLOUD_RATES.get(model_id, (3.0, 15.0, 0.30))
-        usd = (in_tok * ri + out_tok * ro + cache_read * rc) / 1_000_000
+        usd = self._price_usd(model_id, in_tok, out_tok, cache_read)
         if usd > 0:
             self._cloud_usd_today = getattr(self, "_cloud_usd_today", 0.0) + usd
             self._persist_cloud_usd()
         return usd
+
+    def _meter_agent(
+        self,
+        model_id: str,
+        in_tok: int,
+        out_tok: int,
+        *,
+        is_cloud: bool,
+        latency: float = 0.0,
+        cache_read: int = 0,
+    ) -> None:
+        """Attribute one completed model call to the agent that drove this turn, so
+        the Agents dashboard can show which agent is calling the model and how much
+        it burns. Reads the agent_id from the turn-routing lane (turn_ctx); owner/
+        idle turns fall under "owner" and are dropped by the dashboard.
+
+        Local (GPU-pod) calls accrue ``pod_s`` (their wall-clock latency) so the
+        dashboard can split the shared pod's $/hr across agents by real compute time;
+        cloud calls accrue metered ``cloud_usd``. Best-effort — never raises."""
+        try:
+            from brain import turn_ctx
+
+            aid = (turn_ctx.current_turn() or {}).get("agent_id") or "owner"
+        except Exception:
+            aid = "owner"
+        u = self._agent_usage.get(aid)
+        if u is None:
+            u = self._agent_usage[aid] = {
+                "calls": 0, "cloud_calls": 0, "in_tok": 0, "out_tok": 0,
+                "cloud_usd": 0.0, "pod_s": 0.0, "last_ts": 0.0,
+            }
+        u["calls"] += 1
+        u["in_tok"] += int(in_tok or 0)
+        u["out_tok"] += int(out_tok or 0)
+        if is_cloud:
+            u["cloud_calls"] += 1
+            u["cloud_usd"] += self._price_usd(model_id, in_tok, out_tok, cache_read)
+        else:
+            u["pod_s"] += max(0.0, float(latency or 0.0))
+        u["last_ts"] = time.time()
+
+    def flush_usage(self) -> int:
+        """Persist each agent's usage accumulated since the last flush to the durable
+        ledger (migration 016) so the dashboard can sum it across restarts. Writes one
+        additive delta row per agent that had activity. Returns rows written. Blocking
+        Supabase I/O — call from a thread. Best-effort / no-op when Supabase is off."""
+        rows = []
+        for aid, cur in self._agent_usage.items():
+            if not aid or aid == "owner":
+                continue
+            prev = self._usage_flushed.get(aid, {})
+            delta = {k: cur.get(k, 0) - prev.get(k, 0) for k in
+                     ("calls", "cloud_calls", "in_tok", "out_tok", "cloud_usd", "pod_s")}
+            if all(v <= 0 for v in delta.values()):
+                continue
+            rows.append({"agent_id": aid, "persona": aid.split(".", 1)[0], **delta})
+        if not rows:
+            return 0
+        try:
+            from brain import agent_usage_store
+
+            ok = agent_usage_store.record_deltas(rows)
+        except Exception as e:
+            logger.debug("[ModelRouter] usage flush failed: %s", e)
+            ok = False
+        if ok:
+            # Advance the high-water mark to the current cumulative for every agent.
+            for aid, cur in self._agent_usage.items():
+                self._usage_flushed[aid] = dict(cur)
+        return len(rows) if ok else 0
+
+    def agent_usage(self) -> dict:
+        """Per-agent token + cloud-$ tallies for this process session. Keyed by
+        agent_id; excludes the "owner" bucket (interactive UI + idle inner life).
+
+        Scope caveat: in-memory and per-process — covers agents whose turns ran in
+        THIS brain process (one (org, persona) process binds many agents). It resets
+        on restart and does not aggregate a separate agent-worker process. Durable
+        cross-process metering would persist these like agent_turns (migration 015)."""
+        return {k: dict(v) for k, v in self._agent_usage.items() if k and k != "owner"}
 
     # ── Background mode controls ──────────────────────────────────────────────
 
@@ -808,6 +901,9 @@ class ModelRouter:
                 text = self._egress.depseudonymize(text)
 
         latency = time.time() - start
+        self._meter_agent(
+            model_id, in_tok, out_tok, is_cloud=_is_cloud, latency=latency, cache_read=cache_read
+        )
         self._log_call(
             model_id,
             messages,

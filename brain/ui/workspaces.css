@@ -214,8 +214,53 @@
 .workspace .connector-check input[type=checkbox] { width: 11px; height: 11px; accent-color: var(--signal); flex-shrink: 0; cursor: pointer; }
 .workspace .connector-check:has(input:checked) { border-color: var(--signal-deep); background: var(--signal-soft); color: var(--ink); }
 
+/* thin rail divider — separates the rail's regions in place of section labels */
+.workspace .rail-div { height: 1px; background: var(--line-soft); margin: 6px 18px; }
+
+/* pulsing "live" status dot (rail item, dashboard card, header chip) */
+.workspace .dot-status.live, .workspace .chip .dot.live { animation: ws-live-pulse 2.6s ease-out infinite; }
+@keyframes ws-live-pulse {
+  0%      { box-shadow: 0 0 0 0 color-mix(in oklch, var(--ok) 45%, transparent); }
+  70%,100%{ box-shadow: 0 0 0 6px transparent; }
+}
+
+/* ---- live dashboard: date-range selector ---- */
+.workspace .ws-range { display: inline-flex; border: 1px solid var(--line); border-radius: var(--r-1); overflow: hidden; }
+.workspace .ws-range button { font-family: var(--mono); font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase;
+  padding: 7px 11px; color: var(--ink-4); background: none; border: none; cursor: pointer; transition: all 140ms; }
+.workspace .ws-range button + button { border-left: 1px solid var(--line); }
+.workspace .ws-range button:hover { color: var(--ink-2); background: var(--paper-2); }
+.workspace .ws-range button.on { background: var(--ink); color: var(--paper); }
+.workspace input.ctrl-input[type=datetime-local] { min-width: 0; font-size: 11px; padding: 5px 8px; }
+
+/* ---- live dashboard ---- */
+.workspace .dash-grid { display: flex; flex-direction: column; gap: 12px; }
+.workspace .dash-card { background: var(--plate); border: 1px solid var(--line-soft); border-radius: var(--r-2);
+  overflow: hidden; cursor: pointer; transition: border-color 160ms; width: 100%; text-align: left; }
+.workspace .dash-card:hover { border-color: var(--line); }
+.workspace .dash-card:hover .dc-launch-hint { opacity: 1; }
+.workspace .dc-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 20px 16px; }
+.workspace .dc-identity { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.workspace .dc-name { font-family: var(--serif); font-size: 18px; font-weight: 600; letter-spacing: -0.01em; color: var(--ink); }
+.workspace .dc-launch-hint { font-family: var(--mono); font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--signal-deep); opacity: 0; transition: opacity 160ms; flex-shrink: 0; display: flex; align-items: center; gap: 4px; }
+.workspace .dc-launch-hint svg { width: 11px; height: 11px; }
+.workspace .dc-metrics { display: grid; grid-template-columns: repeat(4, 1fr); border-top: 1px solid var(--line-faint); }
+.workspace .dc-metric { padding: 13px 18px; border-right: 1px solid var(--line-faint); background: var(--paper-2); min-width: 0; }
+.workspace .dc-metric:last-child { border-right: none; }
+.workspace .dm-val { font-family: var(--mono); font-size: 13px; font-variant-numeric: tabular-nums; color: var(--ink);
+  letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.workspace .dm-cost .dm-val { color: var(--signal-deep); }
+.workspace .dm-lab { font-family: var(--mono); font-size: 8px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink-4); margin-top: 6px; }
+
 /* responsive: stack the rail above the main column on narrow screens */
 @media (max-width: 820px) {
   .workspace .ws-grid { grid-template-columns: 1fr !important; grid-template-rows: auto minmax(0,1fr); }
   .workspace .ws-rail { border-right: none; border-bottom: 1px solid var(--line-soft); max-height: 40vh; }
+}
+/* dashboard metric strip → 2-up when the main column gets tight */
+@media (max-width: 680px) {
+  .workspace .dc-metrics { grid-template-columns: repeat(2, 1fr); }
+  .workspace .dc-metric:nth-child(2) { border-right: none; }
+  .workspace .dc-metric:nth-child(-n+2) { border-bottom: 1px solid var(--line-faint); }
 }

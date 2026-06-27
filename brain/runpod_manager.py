@@ -137,6 +137,13 @@ class RunPodManager:
         self._pod_id: str | None = None
         self._known_pod_id: str | None = None
         self._current_price: float | None = None
+        # Live billing telemetry for the Agents dashboard (surfaced via status()).
+        # _cost_per_hr: the held pod's $/hr (RunPod costPerHr, falls back to the
+        # selected GPU price). _uptime_base_s / _uptime_synced_at let status()
+        # extrapolate the pod's current uptime without an API call per poll.
+        self._cost_per_hr: float | None = None
+        self._uptime_base_s: float = 0.0
+        self._uptime_synced_at: float = 0.0
         self._watcher_task: asyncio.Task | None = None
         self._warmup_task: asyncio.Task | None = None
         # Consumer-only: polls the gateway's shared host file to track the live pod
@@ -372,7 +379,7 @@ class RunPodManager:
                 data = await self._gql(
                     """query($id: String!) {
                     pod(input: {podId: $id}) {
-                        desiredStatus runtime { uptimeInSeconds }
+                        desiredStatus costPerHr runtime { uptimeInSeconds }
                     }
                 }""",
                     {"id": pod_id},
@@ -390,6 +397,7 @@ class RunPodManager:
                             logger.info(
                                 "[RunPod] Pod %s ready + Ollama serving (%.0fs)", pod_id, elapsed
                             )
+                            self._record_runtime(pod)
                             return True
                         logger.debug(
                             "[RunPod] Pod %s up; Ollama HTTP %s (%.0fs)",
@@ -991,12 +999,27 @@ class RunPodManager:
 
     def status(self) -> dict:
         """Current pod boot phase + seconds in this phase. Consumed by the gateway
-        /__pod_status endpoint and rendered in the UI."""
-        return {
+        /__pod_status endpoint and rendered in the UI.
+
+        When a pod is held, also reports live billing telemetry for the Agents
+        dashboard: how long the pod has been up and the cost accrued this session
+        (RunPod bills per up-second, so cost_per_hr × uptime is the running tab)."""
+        held = self._pod_id is not None
+        out = {
             "state": self._status,
             "detail": self._status_detail,
             "elapsed_s": round(max(0.0, time.time() - self._status_since), 1),
+            "running": held,
+            "cost_per_hr": self._cost_per_hr,
+            "uptime_s": None,
+            "cost_accrued_usd": None,
         }
+        if held and self._uptime_synced_at:
+            up = self._uptime_base_s + max(0.0, time.time() - self._uptime_synced_at)
+            out["uptime_s"] = round(up, 1)
+            if self._cost_per_hr:
+                out["cost_accrued_usd"] = round(self._cost_per_hr * up / 3600.0, 4)
+        return out
 
     def _start_watcher(self) -> None:
         if self._watcher_task is None or self._watcher_task.done():
@@ -1067,6 +1090,36 @@ class RunPodManager:
 
     # ── Background watcher (liveness-only) ──────────────────────────────────────
 
+    def _record_runtime(self, pod: dict) -> None:
+        """Cache a freshly-observed pod's uptime + $/hr so status() can report live
+        accrued cost without an API call. `pod` carries costPerHr + runtime.uptimeInSeconds."""
+        rt = pod.get("runtime") or {}
+        up = rt.get("uptimeInSeconds")
+        if up is not None:
+            self._uptime_base_s = float(up)
+            self._uptime_synced_at = time.time()
+        cph = pod.get("costPerHr")
+        if cph is not None:
+            self._cost_per_hr = float(cph)
+        elif self._cost_per_hr is None:
+            self._cost_per_hr = self._current_price
+
+    async def _sync_runtime(self) -> None:
+        """Refresh the held pod's billing telemetry. Best-effort — never raises."""
+        pid = self._pod_id
+        if not pid:
+            return
+        try:
+            data = await self._gql(
+                """query($id: String!) { pod(input: {podId: $id}) {
+                    costPerHr runtime { uptimeInSeconds }
+                } }""",
+                {"id": pid},
+            )
+            self._record_runtime(data.get("pod") or {})
+        except Exception as e:
+            logger.debug("[RunPod] runtime sync skipped: %s", e)
+
     async def _watch(self) -> None:
         """Keep the HELD pod alive — recover it if it stops responding.
 
@@ -1084,6 +1137,7 @@ class RunPodManager:
                 return
             try:
                 if await self._probe_alive(self._pod_id):
+                    await self._sync_runtime()  # keep uptime + accrued cost fresh
                     continue
                 logger.warning(
                     "[RunPod] Held pod %s not responding — attempting recovery", self._pod_id
