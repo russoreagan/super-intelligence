@@ -24,7 +24,9 @@
   let agentsData = null;      // { agents, roles, ceilings }
   let agentActivity = null;   // { agent_id: { count, lastTs } } from /agents/turns
   let agentUsage = null;      // { agent_id: { calls, cloud_calls, in_tok, out_tok, cloud_usd, pod_s, last_ts } }
+  let agentUsageAll = null;   // [{ org_id, org_name, agent_id, … }] — superadmin all-orgs rows
   let usageRange = { key: 'today', since: null, until: null }; // dashboard date-range selector
+  let usageScope = 'org';     // 'org' (this org) | 'all' (platform-superadmin fleet view)
   let podStatus = null;       // /__pod_status — shared GPU pod uptime + accrued cost
   let podMeterTimer = null;   // ticking refresh while the Live dashboard is visible
   let agentSel = null;        // open agent_id
@@ -274,10 +276,13 @@
     const qs = [];
     if (since) qs.push('since=' + encodeURIComponent(since));
     if (until) qs.push('until=' + encodeURIComponent(until));
+    if (usageScope === 'all') qs.push('scope=all');
     try {
       const r = await fetch('/agents/usage' + (qs.length ? '?' + qs.join('&') : ''));
-      agentUsage = r.ok ? (await r.json()).usage || {} : {};
-    } catch (e) { agentUsage = {}; }
+      const d = r.ok ? await r.json() : {};
+      if (d.scope === 'all') { agentUsageAll = d.rows || []; agentUsage = {}; }
+      else { agentUsage = d.usage || {}; agentUsageAll = null; }
+    } catch (e) { agentUsage = {}; agentUsageAll = null; }
   }
   // Shared GPU pod telemetry (org-level, not per-agent): served by the gateway's
   // /__pod_status, which reverse-proxies in front of the brain. Carries the pod's
@@ -358,44 +363,98 @@
     return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
   }
 
+  // Switch org-scope (platform super-admin only): own org ↔ all orgs.
+  async function setUsageScope(scope) {
+    usageScope = scope;
+    // "This session" is process-local — meaningless cross-org; fall back to Today.
+    if (scope === 'all' && usageRange.key === 'session') usageRange = { key: 'today', since: null, until: null };
+    await Promise.all([loadAgentUsage(), loadPodStatus()]);
+    const main = document.getElementById('ag-main');
+    if (main && agView === 'live') renderLiveDashboard(main);
+  }
+  // A card in the all-orgs fleet view: built from a usage row (no agentsData), with
+  // an org chip and identity derived from agent_id. Not clickable (other orgs' Labs).
+  function dashCardAll(row) {
+    const aid = row.agent_id || '';
+    const dot = aid.indexOf('.');
+    const personaPart = dot >= 0 ? aid.slice(0, dot) : aid;
+    const mandate = dot >= 0 ? aid.slice(dot + 1) : '';
+    const cost = agentCostUsd(row);
+    const lt = row.last_ts ? Date.parse(row.last_ts) : 0;
+    const lastActive = lt ? agoShort(Date.now() - lt) + ' ago' : '—';
+    const orgLabel = row.org_name || (row.org_id || '').slice(0, 8) || 'org';
+    return `<div class="dash-card" style="cursor:default;">
+      <div class="dc-head">
+        <div class="dc-identity">
+          <span class="chip" title="${esc(row.org_id || '')}">${esc(orgLabel)}</span>
+          <span class="dc-name" style="font-size:15px;">${esc(personaName(personaPart))}</span>
+          <span class="chip role"><span class="dot"></span>${esc(mandate)}</span>
+        </div>
+        <span class="data" style="font-size:9px; color:var(--ink-4);">${esc(aid)}</span>
+      </div>
+      <div class="dc-metrics">
+        <div class="dc-metric dm-cost"><div class="dm-val" title="${esc(costTitle(row))}">$${cost.toFixed(2)}</div><div class="dm-lab">Est. cost</div></div>
+        <div class="dc-metric"><div class="dm-val" title="${esc(usageTitle(row))}">${esc(fmtTokens((row.in_tok || 0) + (row.out_tok || 0)))}</div><div class="dm-lab">Tokens</div></div>
+        <div class="dc-metric"><div class="dm-val">${esc(String(row.calls))}</div><div class="dm-lab">Model calls</div></div>
+        <div class="dc-metric"><div class="dm-val">${esc(lastActive)}</div><div class="dm-lab">Last active</div></div>
+      </div>
+    </div>`;
+  }
+
   // ── Live dashboard — running agents + a date-range usage/cost monitor ─────
   function renderLiveDashboard(main) {
     const ags = (agentsData && agentsData.agents) || [];
     const live = ags.filter(isLive);
     const paused = ags.length - live.length;
-    const shown = dashboardShown();
+    const allMode = usageScope === 'all';
+    const presets = allMode ? RANGE_PRESETS.filter(p => p.key !== 'session') : RANGE_PRESETS;
     const isSession = usageRange.key === 'session';
     const rangeLabel = (RANGE_PRESETS.find(p => p.key === usageRange.key) || {}).label || 'Range';
-    const rangeTotal = shown.reduce((s, a) => s + agentCostUsd(agentUsage && agentUsage[a.agent_id]), 0);
+    // org scope → cards from this org's agents; all scope → rows from every org.
+    const shown = allMode ? [] : dashboardShown();
+    const allRows = allMode ? (agentUsageAll || []).slice().sort((x, y) => agentCostUsd(y) - agentCostUsd(x)) : [];
+    const rangeTotal = allMode
+      ? allRows.reduce((s, r) => s + agentCostUsd(r), 0)
+      : shown.reduce((s, a) => s + agentCostUsd(agentUsage && agentUsage[a.agent_id]), 0);
+    const orgCount = allMode ? new Set(allRows.map(r => r.org_id)).size : 1;
+    const scopeToggle = isAdmin
+      ? `<div class="ws-range" id="scope-toggle"><button class="${allMode ? '' : 'on'}" data-scope="org">My org</button><button class="${allMode ? 'on' : ''}" data-scope="all">All orgs</button></div>`
+      : '';
     main.innerHTML = `<div class="main-pad" style="max-width:none;">
       <div class="between" style="align-items:flex-start;">
         <div>
-          <div class="page-eyebrow">Agents · operational</div>
-          <div class="page-title">Live</div>
-          <p class="page-lede">Running agents and their model usage. Pick a range to total cost + tokens across every time an agent ran — cumulative through restarts. Click an agent to open its persona in Labs.</p>
+          <div class="page-eyebrow">Agents · operational${allMode ? ' · platform' : ''}</div>
+          <div class="page-title">${allMode ? 'All orgs' : 'Live'}</div>
+          <p class="page-lede">${allMode
+            ? 'Every org\'s agents across the platform, by cost over the selected range — cumulative through restarts. The biggest spenders float to the top.'
+            : 'Running agents and their model usage. Pick a range to total cost + tokens across every time an agent ran — cumulative through restarts. Click an agent to open its persona in Labs.'}</p>
         </div>
         <div class="row" style="gap:10px; margin-top:14px; flex-shrink:0; align-items:center;">
-          <span class="chip"><span class="dot live" style="background:var(--ok);"></span>${live.length} running</span>
+          ${allMode ? '' : `<span class="chip"><span class="dot live" style="background:var(--ok);"></span>${live.length} running</span>`}
           <span class="data" id="pod-meter" style="font-size:10px; color:var(--ink-4);"></span>
         </div>
       </div>
       <div class="between" style="margin-top:20px; flex-wrap:wrap; gap:12px;">
-        <div class="ws-range">${RANGE_PRESETS.map(p => `<button class="${p.key === usageRange.key ? 'on' : ''}" data-range="${p.key}">${esc(p.label)}</button>`).join('')}</div>
+        <div class="row" style="gap:12px; flex-wrap:wrap;">
+          <div class="ws-range">${presets.map(p => `<button class="${p.key === usageRange.key ? 'on' : ''}" data-range="${p.key}">${esc(p.label)}</button>`).join('')}</div>
+          ${scopeToggle}
+        </div>
         <span class="data" style="font-size:10px; color:var(--ink-4);">${esc(rangeLabel)} total · <span style="color:var(--signal-deep);" id="range-total">$${rangeTotal.toFixed(2)}</span></span>
       </div>
       ${usageRange.key === 'custom' ? `<div class="row" style="gap:14px; margin-top:12px; flex-wrap:wrap;">
         <label class="data" style="font-size:9px; color:var(--ink-4); display:flex; align-items:center; gap:6px;">FROM <input type="datetime-local" id="range-from" class="ctrl-input" value="${esc(toLocalInput(usageRange.since))}"></label>
         <label class="data" style="font-size:9px; color:var(--ink-4); display:flex; align-items:center; gap:6px;">TO <input type="datetime-local" id="range-to" class="ctrl-input" value="${esc(toLocalInput(usageRange.until))}"></label>
       </div>` : ''}
-      ${shown.length
-        ? `<div class="dash-grid" style="margin-top:22px;">${shown.map(a => dashCard(a)).join('')}</div>
+      ${(allMode ? allRows.length : shown.length)
+        ? `<div class="dash-grid" style="margin-top:22px;">${allMode ? allRows.map(dashCardAll).join('') : shown.map(a => dashCard(a)).join('')}</div>
            <div class="data" style="font-size:8.5px; color:var(--ink-4); margin-top:12px; line-height:1.6;">Est. cost — real cloud spend + the agent's share of the GPU pod, valued by its compute-seconds × the pod's $/hr (hover a cost for the split). Totals are cumulative over the selected range, summed across every restart.${isSession ? ' This session = the current process uptime.' : ''}</div>`
-        : `<div class="empty" style="margin-top:22px;"><h3>No usage in this range</h3><p>No agent called the model in the selected window${isSession ? ' this session' : ''}. Widen the range, or enable an agent under <b>All agents</b>.</p></div>`}
+        : `<div class="empty" style="margin-top:22px;"><h3>No usage in this range</h3><p>No agent ${allMode ? 'across any org ' : ''}called the model in the selected window${isSession ? ' this session' : ''}.${allMode ? '' : ' Widen the range, or enable an agent under <b>All agents</b>.'}</p></div>`}
       <div style="margin-top:28px; padding-top:20px; border-top:1px solid var(--line-faint); display:flex; align-items:center; justify-content:space-between;">
-        <span class="data" style="font-size:9px; color:var(--ink-4);">${paused} paused</span>
-        <button class="link ag-nav" data-view="list" style="font-size:9px;">All agents <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m9 18 6-6-6-6"/></svg></button>
+        <span class="data" style="font-size:9px; color:var(--ink-4);">${allMode ? `${orgCount} org${orgCount === 1 ? '' : 's'} · ${allRows.length} agent${allRows.length === 1 ? '' : 's'}` : `${paused} paused`}</span>
+        ${allMode ? '' : `<button class="link ag-nav" data-view="list" style="font-size:9px;">All agents <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m9 18 6-6-6-6"/></svg></button>`}
       </div></div>`;
-    main.querySelectorAll('.ws-range button').forEach(b => b.addEventListener('click', () => setUsageRange(b.dataset.range)));
+    main.querySelectorAll('.ws-range button[data-range]').forEach(b => b.addEventListener('click', () => setUsageRange(b.dataset.range)));
+    main.querySelectorAll('#scope-toggle button[data-scope]').forEach(b => b.addEventListener('click', () => setUsageScope(b.dataset.scope)));
     const from = main.querySelector('#range-from'), to = main.querySelector('#range-to');
     const applyCustom = () => setUsageRange('custom',
       from && from.value ? new Date(from.value).toISOString() : null,
@@ -403,7 +462,7 @@
     if (from) from.addEventListener('change', applyCustom);
     if (to) to.addEventListener('change', applyCustom);
     main.querySelectorAll('.ag-nav').forEach(n => n.addEventListener('click', () => { agView = n.dataset.view; agentSel = null; paintAgents(); }));
-    main.querySelectorAll('.dash-card').forEach(c => c.addEventListener('click', () => openAgentInLabs(c.dataset.persona)));
+    if (!allMode) main.querySelectorAll('.dash-card').forEach(c => c.addEventListener('click', () => openAgentInLabs(c.dataset.persona)));
     refreshPodMeter();
   }
   // Fill (and keep ticking) the shared GPU-pod uptime + accrued-cost meter in the
@@ -430,8 +489,9 @@
     }
     const live = document.getElementById('pod-meter');
     if (live) live.innerHTML = html;
-    await loadAgentUsage();   // refresh the range's tallies alongside the pod rate
-    repaintUsageCells();      // keep per-agent cost/tokens/calls + range total current
+    // Live-refresh only the org view (repaintUsageCells is org-shaped). The all-orgs
+    // fleet view is a historical ledger snapshot — it refreshes on range/scope change.
+    if (usageScope === 'org') { await loadAgentUsage(); repaintUsageCells(); }
     if (!podMeterTimer) podMeterTimer = setInterval(refreshPodMeter, 30000);
   }
   function dashCard(a) {
