@@ -733,17 +733,22 @@ class DefaultModeNetwork:
             return [active.current_leaf]
         return [active.category]
 
-    def pause(self) -> None:
+    def pause(self, *, stamp_activity: bool = True) -> None:
         """Request that the next DMN tick be skipped.
 
         Called at turn start. The next tick that fires will skip its LLM work
         and clear the flag — no resume() needed. If no tick fires before the
         turn ends that's fine too; the flag is harmless and clears on the next tick.
+
+        stamp_activity: True for a real user turn — stamps the engagement clock
+        (the user is interacting with the AGENT right now), which is what gates idle
+        rumination. AI-internal pauses (e.g. sleep consolidation) MUST pass False:
+        the brain's own housekeeping is not user engagement, and stamping here would
+        reset the idle clock and keep rumination from ever firing.
         """
         self._skip_next_tick = True
-        # Turn start = the user is active right now. Stamp it so the rumination gate's
-        # conversation-idle fallback works on hosts where OS HID idle is unavailable.
-        self._last_user_activity_ts = time.time()
+        if stamp_activity:
+            self._last_user_activity_ts = time.time()
 
     def resume(self) -> None:
         """No-op — the skip is self-clearing after one tick."""
@@ -1972,6 +1977,18 @@ class DefaultModeNetwork:
         mode, flavor, drive = self._rumination_decision(chem)
         model_ok = True
 
+        # Observability: watch the idle→drive ramp so the rumination/skill gates can be
+        # tuned against real numbers (drive must clear dmn_rumination_drive_threshold to
+        # ruminate, dmn_skill_vary_drive_threshold to vary the humanities-skill framework).
+        if self._thought_count % 5 == 0:
+            logger.info(
+                "[Background reflection] gate idle=%.0fs drive=%.2f mode=%s flavor=%s",
+                self._effective_idle_seconds(),
+                drive,
+                mode,
+                flavor,
+            )
+
         if mode == "ruminate":
             try:
                 model_ok = await self._run_rumination(turn_id, chem, flavor, drive)
@@ -2151,20 +2168,18 @@ class DefaultModeNetwork:
             self._bus.neuromod.add("DA", delta)
 
     def _effective_idle_seconds(self) -> float:
-        """Seconds since the user was last active. Uses OS HID idle when available (macOS) and
-        a conversation-idle fallback (now − last turn start) otherwise — get_idle_seconds()
-        returns 0.0 on Linux, which would silently disable idle-gated cognition on the hosted
-        instance. max() is correct in all four cases (mac/linux × active/idle)."""
-        try:
-            os_idle = get_idle_seconds()
-        except Exception:
-            os_idle = 0.0
-        # convo_idle is only meaningful once a turn has actually stamped activity (pause()).
-        # Without a stamp, don't let an uninitialised timestamp fabricate idleness — trust OS.
+        """Seconds since the user last ENGAGED THE AGENT (their last turn) — deliberately
+        NOT since they last touched the device. The user can be heads-down in another app;
+        the brain should still consider itself idle and free to ruminate. (OS HID device-idle
+        was both meaningless on the Linux-hosted instance — always 0.0 — and the wrong signal:
+        working elsewhere is not engaging this agent.)
+
+        _last_user_activity_ts is stamped ONLY on a real user turn (pause(stamp_activity=True));
+        AI-internal pauses like consolidation deliberately do not reset it."""
         last_active = float(getattr(self, "_last_user_activity_ts", 0.0))
         if last_active <= 0.0:
-            return os_idle
-        return max(os_idle, max(0.0, time.time() - last_active))
+            return 0.0
+        return max(0.0, time.time() - last_active)
 
     def _tonic_idle_drive(self, chem: dict, idle: float, idle_threshold: float) -> float:
         """Mind-wandering + finish-out pull that grows during deep idle (Stage 7). Independent of

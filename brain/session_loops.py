@@ -479,7 +479,9 @@ class _LoopsMixin:
         dmn_thoughts = []
         if self.dmn:
             try:
-                self.dmn.pause()
+                # Consolidation is AI-internal housekeeping, NOT user engagement — skip the
+                # next tick but do NOT stamp the idle clock, or rumination never gets to fire.
+                self.dmn.pause(stamp_activity=False)
                 dmn_thoughts = self.dmn.session_thoughts() or []
                 self.dmn._session_thought_buf.clear()
             except Exception:
