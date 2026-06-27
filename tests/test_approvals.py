@@ -62,6 +62,27 @@ def test_persists_across_instances(approvals, tmp_path, monkeypatch):
     assert len(again.pending()) == 1 and again.pending()[0]["tool"] == "edit"
 
 
+def test_end_user_scoping_isolates_tenants(approvals):
+    a_alice = approvals.record("send_email", {"to": "1"}, end_user_id="alice")
+    a_bob = approvals.record("send_email", {"to": "2"}, end_user_id="bob")
+    # Each end-user sees only their own; the owner (None) sees both.
+    assert [p["id"] for p in approvals.pending("alice")] == [a_alice.id]
+    assert [p["id"] for p in approvals.pending("bob")] == [a_bob.id]
+    assert len(approvals.pending()) == 2
+    # Bob cannot approve Alice's action; Alice can.
+    assert approvals.approve(a_alice.id, end_user_id="bob") is None
+    assert approvals.approve(a_alice.id, end_user_id="alice") is not None
+    # Bob cannot skip Alice's (already approved) item, and scoping holds for skip.
+    assert approvals.skip(a_bob.id, end_user_id="alice") is False
+    assert approvals.skip(a_bob.id, end_user_id="bob") is True
+
+
+def test_owner_can_resolve_any_end_user(approvals):
+    a = approvals.record("delete_x", {}, end_user_id="carol")
+    # end_user_id=None (owner / brain UI) is unscoped.
+    assert approvals.approve(a.id, end_user_id=None) is not None
+
+
 def test_approved_expires_after_ttl(approvals, monkeypatch):
     import brain.clusters.approvals as mod
 

@@ -202,6 +202,8 @@ def build_api_router(
     auth: Callable[[str | None], bool] = check_bearer,
     consolidate_runner: ConsolidateRunner | None = None,
     confirm_runner: ConfirmRunner | None = None,
+    approvals_list_runner: Callable[[str], list] | None = None,
+    approval_resolve_runner: Callable[[str, str, bool], dict] | None = None,
     purge_runner: PurgeRunner | None = None,
     tts_runner: TtsRunner | None = None,
     stt_runner: SttRunner | None = None,
@@ -592,6 +594,44 @@ def build_api_router(
             "response": text,
             "mood": _mood_from_affect(affect),
         }
+
+    @router.get("/sessions/{session_id}/approvals")
+    async def list_approvals(session_id: str, authorization: str | None = Header(default=None)):
+        """Pending tool-action approvals for this session's end-user — the sensitive
+        actions the brain skipped and is waiting on a yes/no for."""
+        ctx = _require(authorization)
+        s = registry.get(session_id)
+        if s is None:
+            raise HTTPException(status_code=404, detail="unknown session_id")
+        if not _owns(ctx, s):
+            raise HTTPException(status_code=403, detail="session belongs to another partner")
+        if approvals_list_runner is None:
+            return {"session_id": session_id, "approvals": []}
+        return {
+            "session_id": session_id,
+            "end_user_id": s.end_user_id,
+            "approvals": approvals_list_runner(s.end_user_id) or [],
+        }
+
+    @router.post("/sessions/{session_id}/approvals/{approval_id}/resolve")
+    async def resolve_approval(
+        session_id: str,
+        approval_id: str,
+        body: dict | None = None,
+        authorization: str | None = Header(default=None),
+    ):
+        """Approve (run it) or skip a pending action, on behalf of this end-user."""
+        ctx = _require(authorization)
+        if approval_resolve_runner is None:
+            raise HTTPException(status_code=501, detail="approvals are not available on this server")
+        s = registry.get(session_id)
+        if s is None:
+            raise HTTPException(status_code=404, detail="unknown session_id")
+        if not _owns(ctx, s):
+            raise HTTPException(status_code=403, detail="session belongs to another partner")
+        approve = bool((body or {}).get("approve", True))
+        res = approval_resolve_runner(approval_id, s.end_user_id, approve) or {}
+        return {"session_id": session_id, "end_user_id": s.end_user_id, "approved": approve, **res}
 
     # ── Audio (optional, partner-gated) ───────────────────────────────────────
     # Stateless: no session needed. TTS exposes the affect→voice mapping (the
@@ -999,6 +1039,8 @@ class ApiServer:
         registry: ApiSessionRegistry | None = None,
         consolidate_runner: ConsolidateRunner | None = None,
         confirm_runner: ConfirmRunner | None = None,
+        approvals_list_runner: Callable[[str], list] | None = None,
+        approval_resolve_runner: Callable[[str, str, bool], dict] | None = None,
         purge_runner: PurgeRunner | None = None,
         tts_runner: TtsRunner | None = None,
         stt_runner: SttRunner | None = None,
@@ -1031,6 +1073,8 @@ class ApiServer:
                 self._registry,
                 consolidate_runner=consolidate_runner,
                 confirm_runner=confirm_runner,
+                approvals_list_runner=approvals_list_runner,
+                approval_resolve_runner=approval_resolve_runner,
                 purge_runner=purge_runner,
                 tts_runner=tts_runner,
                 stt_runner=stt_runner,

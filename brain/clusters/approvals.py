@@ -78,6 +78,7 @@ class Approval:
     reason: str = ""
     preview: str = ""
     turn_id: str = ""
+    end_user_id: str = ""  # "" = owner/autonomous; else the engine-API end-user
     status: Status = "pending"
     created_at: float = field(default_factory=time.time)
     resolved_at: float | None = None
@@ -118,7 +119,9 @@ class PendingApprovals:
             logger.warning("[Approvals] save failed: %s", e)
 
     # ── Operations ─────────────────────────────────────────────────────────────
-    def record(self, tool: str, tool_input, reason: str = "", turn_id: str = "") -> Approval:
+    def record(
+        self, tool: str, tool_input, reason: str = "", turn_id: str = "", end_user_id: str = ""
+    ) -> Approval:
         """Record a sensitive action as pending. Deduplicates against an existing
         pending item with the same signature (returns that one instead)."""
         sig = action_signature(tool, tool_input)
@@ -132,6 +135,7 @@ class PendingApprovals:
             reason=reason or "",
             preview=_preview(tool_input),
             turn_id=turn_id or "",
+            end_user_id=end_user_id or "",
         )
         self._items.append(item)
         self._trim()
@@ -168,10 +172,16 @@ class PendingApprovals:
             return True
         return False
 
-    def approve(self, approval_id: str) -> Approval | None:
-        """Mark a pending item approved. Returns it (caller re-queues the work)."""
+    @staticmethod
+    def _scoped(a: Approval, end_user_id: str | None) -> bool:
+        """end_user_id=None → no scope (owner, sees all); else must match exactly."""
+        return end_user_id is None or a.end_user_id == end_user_id
+
+    def approve(self, approval_id: str, end_user_id: str | None = None) -> Approval | None:
+        """Mark a pending item approved. Returns it (caller re-queues the work).
+        With end_user_id set, only that end-user's own item can be approved."""
         for a in self._items:
-            if a.id == approval_id and a.status == "pending":
+            if a.id == approval_id and a.status == "pending" and self._scoped(a, end_user_id):
                 a.status = "approved"
                 a.resolved_at = time.time()
                 self._save()
@@ -179,17 +189,21 @@ class PendingApprovals:
                 return a
         return None
 
-    def skip(self, approval_id: str) -> bool:
+    def skip(self, approval_id: str, end_user_id: str | None = None) -> bool:
         for a in self._items:
-            if a.id == approval_id and a.status == "pending":
+            if a.id == approval_id and a.status == "pending" and self._scoped(a, end_user_id):
                 a.status = "skipped"
                 a.resolved_at = time.time()
                 self._save()
                 return True
         return False
 
-    def pending(self) -> list[dict]:
-        return [a.to_dict() for a in self._items if a.status == "pending"]
+    def pending(self, end_user_id: str | None = None) -> list[dict]:
+        return [
+            a.to_dict()
+            for a in self._items
+            if a.status == "pending" and self._scoped(a, end_user_id)
+        ]
 
     def clear_pending(self) -> int:
         n = sum(1 for a in self._items if a.status == "pending")
