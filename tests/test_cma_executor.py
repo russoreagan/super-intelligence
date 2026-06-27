@@ -90,8 +90,12 @@ def _make_exec(client=None, mcp_servers=None):
     exe._pending = None
     exe._client = client
     exe._ready = True
-    exe._read_agent_id = "agent_read"
-    exe._write_agent_id = "agent_write"
+    # Agent ids per connector variant (True = full set, False = no identity conns).
+    # No-identity calls fall back to the same ids when there are no identity conns.
+    exe._agent_ids = {
+        True: {"read": "agent_read", "write": "agent_write"},
+        False: {"read": "agent_read", "write": "agent_write"},
+    }
     exe._env_id = "env_1"
     exe._vault_id = None
     exe._session_id = None
@@ -374,6 +378,42 @@ class TestToolScoping:
         assert any(
             t.get("type") == "mcp_toolset" and t["mcp_server_name"] == "gmail" for t in tools
         )
+
+
+# ── identity-connector scoping for no-end-user calls ─────────────────────────────
+
+
+class TestIdentityConnectorScoping:
+    _IDENT = {"name": "trading", "url": "https://mcp/trading", "identity": True, "access_token": "s"}
+    _PLAIN = {"name": "gmail", "url": "https://mcp/gmail", "access_token": "x"}
+
+    def test_no_end_user_drops_identity_connectors(self):
+        exe = _make_exec(mcp_servers=[self._IDENT, self._PLAIN])
+        assert {s["name"] for s in exe._active_mcp_servers(include_identity=True)} == {
+            "trading",
+            "gmail",
+        }
+        # No end-user → identity connector is dropped (it could only 401).
+        assert {s["name"] for s in exe._active_mcp_servers(include_identity=False)} == {"gmail"}
+
+    def test_no_identity_agent_tools_exclude_identity_connector(self):
+        exe = _make_exec(mcp_servers=[self._IDENT, self._PLAIN])
+        names = {
+            t.get("mcp_server_name") for t in exe._agent_tools(False, include_identity=False)
+        }
+        assert "trading" not in names and "gmail" in names
+
+    async def test_no_end_user_call_uses_no_identity_agent(self, monkeypatch):
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+        client = _make_client([_msg("ok"), _idle()])
+        exe = _make_exec(client, mcp_servers=[self._IDENT, self._PLAIN])
+        exe._agent_ids = {
+            True: {"read": "full_read", "write": "full_write"},
+            False: {"read": "ni_read", "write": "ni_write"},
+        }
+        await exe.execute_read("task", [])  # no end_user_id → no-identity variant
+        _, kwargs = client.beta.sessions.create.call_args
+        assert kwargs["agent"] == "ni_read"
 
 
 # ── timeout ──────────────────────────────────────────────────────────────────────

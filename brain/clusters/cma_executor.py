@@ -405,8 +405,15 @@ class CMAExecutor(ExecutorCommon):
         self._client = None
         self._ready = False
         self._ready_lock = asyncio.Lock()
-        self._read_agent_id: str | None = None
-        self._write_agent_id: str | None = None
+        # Agent ids per connector variant. True = the full connector set (used for
+        # end-user-bound calls); False = identity connectors dropped (owner / idle /
+        # background calls that have no end-user to mint a per-user token for, so an
+        # identity connector could only 401). The True variant — and thus the
+        # end-user trading path — is byte-identical to before this split.
+        self._agent_ids: dict[bool, dict[str, str | None]] = {
+            True: {"read": None, "write": None},
+            False: {"read": None, "write": None},
+        }
         self._env_id: str | None = None
         self._vault_id: str | None = None
         self._session_id: str | None = None
@@ -789,12 +796,18 @@ class CMAExecutor(ExecutorCommon):
         built with broader connectors is never reused for a narrower policy."""
         self._connector_filter = {n.strip().lower() for n in names} if names else None
 
-    def _active_mcp_servers(self) -> list[dict]:
-        if self._connector_filter is None:
-            return self._mcp_servers
-        return [s for s in self._mcp_servers if s["name"].strip().lower() in self._connector_filter]
+    def _active_mcp_servers(self, include_identity: bool = True) -> list[dict]:
+        servers = self._mcp_servers
+        if self._connector_filter is not None:
+            servers = [s for s in servers if s["name"].strip().lower() in self._connector_filter]
+        if not include_identity:
+            # No end-user behind this call → drop identity connectors (they require a
+            # brain-minted per-end-user token), so the agent never even offers them
+            # and we don't emit a spurious "credential invalidated" on a doomed call.
+            servers = [s for s in servers if not s.get("identity")]
+        return servers
 
-    def _agent_tools(self, write_allowed: bool) -> list[dict]:
+    def _agent_tools(self, write_allowed: bool, include_identity: bool = True) -> list[dict]:
         # Reads run server-side with no prompt (always_allow). Mutating built-in
         # tools (write/edit/bash) pause for review (always_ask) so the executor can
         # classify each call: small data writes auto-approve, while large /
@@ -812,7 +825,7 @@ class CMAExecutor(ExecutorCommon):
                 for n in _READ_DISABLED_TOOLS
             ]
         tools: list[dict] = [toolset]
-        for srv in self._active_mcp_servers():
+        for srv in self._active_mcp_servers(include_identity):
             entry: dict = {"type": "mcp_toolset", "mcp_server_name": srv["name"]}
             # On the write path, connector calls also pause for review; the executor
             # auto-approves read-only connector tools at decision time, so only
@@ -822,30 +835,33 @@ class CMAExecutor(ExecutorCommon):
             tools.append(entry)
         return tools
 
-    def _mcp_server_decls(self) -> list[dict]:
+    def _mcp_server_decls(self, include_identity: bool = True) -> list[dict]:
         return [
-            {"name": s["name"], "type": "url", "url": s["url"]} for s in self._active_mcp_servers()
+            {"name": s["name"], "type": "url", "url": s["url"]}
+            for s in self._active_mcp_servers(include_identity)
         ]
 
-    def _config_hash(self) -> str:
+    def _config_hash(self, include_identity: bool = True) -> str:
         blob = json.dumps(
             {
                 "model": self._model,
                 "system": _SYSTEM_GUIDANCE,
-                "mcp": self._mcp_server_decls(),
+                "mcp": self._mcp_server_decls(include_identity),
                 "toolset": _AGENT_TOOLSET,
             },
             sort_keys=True,
         )
         return hashlib.sha256(blob.encode()).hexdigest()[:16]
 
-    async def _ensure_agents(self) -> None:
-        want_hash = self._config_hash()
-        hash_ok = self._state.get("agent_config_hash") == want_hash
-        for kind, write_allowed, state_key in (
-            ("read", False, "read_agent_id"),
-            ("write", True, "write_agent_id"),
-        ):
+    async def _ensure_agents(self, include_identity: bool = True) -> None:
+        # The full variant (include_identity=True) keeps the original state keys +
+        # config hash, so it reuses the same persisted agents as before — the
+        # end-user path is untouched. The no-identity variant ("_ni") is additive.
+        suffix = "" if include_identity else "_ni"
+        want_hash = self._config_hash(include_identity)
+        hash_ok = self._state.get(f"agent_config_hash{suffix}") == want_hash
+        for kind, write_allowed in (("read", False), ("write", True)):
+            state_key = f"{kind}_agent_id{suffix}"
             aid = self._state.get(state_key)
             valid = False
             if aid and hash_ok:
@@ -855,20 +871,20 @@ class CMAExecutor(ExecutorCommon):
                 except Exception:
                     valid = False
             if valid:
-                setattr(self, f"_{kind}_agent_id", aid)
+                self._agent_ids[include_identity][kind] = aid
                 continue
             # (Re)create. On config change we create a fresh agent rather than
             # version-bumping — simpler and robust; old agents are harmless.
             a = await self._client.beta.agents.create(
                 model=self._model,
-                name=f"brain-{kind}",
+                name=f"brain-{kind}{suffix}",
                 system=_SYSTEM_GUIDANCE,
-                tools=self._agent_tools(write_allowed),
-                mcp_servers=self._mcp_server_decls(),
+                tools=self._agent_tools(write_allowed, include_identity),
+                mcp_servers=self._mcp_server_decls(include_identity),
             )
-            setattr(self, f"_{kind}_agent_id", a.id)
+            self._agent_ids[include_identity][kind] = a.id
             self._state[state_key] = a.id
-        self._state["agent_config_hash"] = want_hash
+        self._state[f"agent_config_hash{suffix}"] = want_hash
         self._save_state()
 
     # ── Public execution paths (CloudExecutor-compatible) ──────────────────────
@@ -912,6 +928,14 @@ class CMAExecutor(ExecutorCommon):
         start = time.time()
         try:
             await self._ensure_ready()
+            # Identity connectors need a per-end-user minted token. With no end-user
+            # (owner chat / idle DMN / background research) use the no-identity agent
+            # variant so those connectors are never offered — unless there are no
+            # identity connectors at all, in which case the full variant already
+            # equals it (skip the extra agent). Build the variant lazily.
+            include_identity = bool(end_user_id) or not self._identity_connectors()
+            if not include_identity and self._agent_ids[False]["read"] is None:
+                await self._ensure_agents(include_identity=False)
             # Resolve per-end-user vault (if any tokens are stored for this user).
             # Falls back to None → org-level vault used in _ensure_session.
             user_vault_id: str | None = None
@@ -919,7 +943,13 @@ class CMAExecutor(ExecutorCommon):
                 user_vault_id = await self._ensure_user_vault(end_user_id)
             timeout = float(settings.get("cma_task_timeout_s") or 120.0)
             raw = await asyncio.wait_for(
-                self._drive_task(task, context_facts, write_allowed, user_vault_id=user_vault_id),
+                self._drive_task(
+                    task,
+                    context_facts,
+                    write_allowed,
+                    user_vault_id=user_vault_id,
+                    include_identity=include_identity,
+                ),
                 timeout=timeout,
             )
         except TimeoutError:
@@ -951,8 +981,10 @@ class CMAExecutor(ExecutorCommon):
                 parts.append(f"Context: {facts_str}")
         return "\n".join(parts)
 
-    async def _ensure_session(self, write_allowed: bool, user_vault_id: str | None = None) -> str:
-        want_agent = self._write_agent_id if write_allowed else self._read_agent_id
+    async def _ensure_session(
+        self, write_allowed: bool, user_vault_id: str | None = None, include_identity: bool = True
+    ) -> str:
+        want_agent = self._agent_ids[include_identity]["write" if write_allowed else "read"]
 
         if user_vault_id:
             # Per-end-user session — keyed in memory by (agent, vault) so each
@@ -999,8 +1031,11 @@ class CMAExecutor(ExecutorCommon):
         context_facts: list[str],
         write_allowed: bool,
         user_vault_id: str | None = None,
+        include_identity: bool = True,
     ) -> str:
-        sid = await self._ensure_session(write_allowed, user_vault_id=user_vault_id)
+        sid = await self._ensure_session(
+            write_allowed, user_vault_id=user_vault_id, include_identity=include_identity
+        )
         text = await self._consume(sid, self._compose_task(task, context_facts), write_allowed)
         return text or "(no output)"
 
