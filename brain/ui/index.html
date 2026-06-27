@@ -4384,20 +4384,20 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
     <!-- PRIMARY NAV — workspace switcher (Labs / Agents / API) beside the wordmark -->
     <div class="ws-switch" id="ws-switch">
       <button class="ws-switch-btn" id="ws-switch-btn" type="button" aria-haspopup="true" aria-expanded="false">
-        <svg class="cur-ico" id="ws-cur-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M9 3v6.5L4.2 18a2 2 0 0 0 1.8 3h12a2 2 0 0 0 1.8-3L15 9.5V3M8 3h8M9 14h6"/></svg>
-        <span class="cur-name" id="ws-cur-name">Labs</span>
+        <svg class="cur-ico" id="ws-cur-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>
+        <span class="cur-name" id="ws-cur-name">Agents</span>
         <svg class="cur-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
       </button>
       <div class="ws-menu" id="ws-menu" role="menu">
         <div class="ws-menu-lab">Workspace</div>
-        <button class="ws-opt on" data-ws="labs" role="menuitem">
-          <span class="opt-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M9 3v6.5L4.2 18a2 2 0 0 0 1.8 3h12a2 2 0 0 0 1.8-3L15 9.5V3M8 3h8M9 14h6"/></svg></span>
-          <span class="opt-txt"><span class="opt-name">Labs</span><span class="opt-sub">Personas · companion</span></span>
-          <svg class="opt-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-        </button>
-        <button class="ws-opt" data-ws="agents" role="menuitem">
+        <button class="ws-opt on" data-ws="agents" role="menuitem">
           <span class="opt-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg></span>
           <span class="opt-txt"><span class="opt-name">Agents</span><span class="opt-sub">Agents · roles · limits</span></span>
+          <svg class="opt-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+        </button>
+        <button class="ws-opt" data-ws="labs" role="menuitem">
+          <span class="opt-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M9 3v6.5L4.2 18a2 2 0 0 0 1.8 3h12a2 2 0 0 0 1.8-3L15 9.5V3M8 3h8M9 14h6"/></svg></span>
+          <span class="opt-txt"><span class="opt-name">Labs</span><span class="opt-sub">Personas · companion</span></span>
           <svg class="opt-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
         </button>
         <button class="ws-opt" data-ws="api" role="menuitem">

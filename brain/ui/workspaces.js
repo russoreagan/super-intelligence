@@ -18,6 +18,7 @@
   const WS_NAMES = { labs: 'Labs', agents: 'Agents', api: 'API' };
 
   let workspace = 'labs';
+  let _landed = false;      // first gating resolution lands on Agents (or Labs if locked)
   let isAdmin = false;      // platform super-user — sets ceilings + cross-org god view
   let orgAdmin = false;     // may manage THIS org's agents/roles/keys (within ceilings)
   let ownerEmail = '';
@@ -208,7 +209,15 @@
     // The cross-org "All orgs" view inside Agents stays platform-admin (isAdmin).
     const show = { labs: true, agents: orgAdmin && mandatesEnabled, api: orgAdmin };
     $$('.ws-opt').forEach((t) => t.classList.toggle('locked', !show[t.dataset.ws]));
-    if (!show[workspace]) setWorkspace('labs');
+    // Land on Agents (the Live dashboard) on the first gating resolution after boot
+    // when it's available; otherwise Labs. Later re-gates only enforce the lock
+    // fallback, so they don't yank a user back out of whatever they navigated to.
+    if (!_landed) {
+      _landed = true;
+      setWorkspace(show.agents ? 'agents' : 'labs');
+    } else if (!show[workspace]) {
+      setWorkspace('labs');
+    }
   }
 
   // ══════════════════════════════════════════════════════════ AGENTS ═══════
