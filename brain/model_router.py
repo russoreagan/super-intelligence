@@ -186,6 +186,37 @@ _CLOUD_USAGE_PATH = os.path.join(
 )
 
 
+def _coerce_local_decision(raw_text: str) -> dict:
+    """Interpret a local model's reply to the tool/answer protocol
+    ({"tool":...,"args":...} | {"text":"<summary>"}) into that decision, robust to
+    a small model's JSON slips.
+
+    The failure this guards: a local model that crams its answer into a degenerate
+    object — the summary used as BOTH key and value, e.g. {"<summary>":"<summary>"}
+    (no "text" key). The old fallback (parsed.get("text", raw_text)) then returned
+    raw_text — the JSON blob itself — which surfaced verbatim as the spoken result
+    ({ "I found that…": "I found that…" }). Instead, recover the answer from the
+    object's strings (longest value, else key). A non-JSON reply is plain prose and
+    passes through untouched.
+    """
+    from brain.utils import safe_json_parse
+
+    parsed = safe_json_parse(raw_text)
+    if isinstance(parsed, dict):
+        if parsed.get("tool"):
+            return {"tool": str(parsed["tool"]), "args": parsed.get("args") or {}}
+        if isinstance(parsed.get("text"), str):
+            return {"text": parsed["text"]}
+        # Degenerate object (no usable tool/text key): recover the crammed answer
+        # rather than echoing the raw JSON. Prefer values, then keys.
+        strings = [
+            s for s in (*parsed.values(), *parsed.keys()) if isinstance(s, str) and s.strip()
+        ]
+        if strings:
+            return {"text": max(strings, key=len)}
+    return {"text": raw_text}
+
+
 class ModelRouter:
     def __init__(self, obs=None) -> None:
         self._anthropic_client = None
@@ -1020,17 +1051,13 @@ class ModelRouter:
             sys2 = (
                 f"{system_prompt}\n\nAvailable tools:\n{menu}\n\n"
                 'Reply with ONE JSON object: {"tool":"<name>","args":{...}} to call a tool, '
-                'or {"text":"<one-line summary>"} when the task is done. JSON only.'
+                'or {"text":"<one-line summary>"} when the task is done — put the summary as '
+                'the value of "text", never as a key. JSON only.'
             )
             text, _i, _o = await self._call_local(
                 sys2, messages, max_tokens, local_variant=model_id
             )
-            from brain.utils import safe_json_parse
-
-            parsed = safe_json_parse(text) or {}
-            if parsed.get("tool"):
-                return {"tool": str(parsed["tool"]), "args": parsed.get("args") or {}}
-            return {"text": str(parsed.get("text", text))}
+            return _coerce_local_decision(text)
         except Exception as e:
             logger.warning("[ModelRouter] call_structured_any %s/%s failed: %s", cluster, cell, e)
             return {"text": f"[error] {e}"}
