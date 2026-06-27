@@ -336,7 +336,7 @@ class _TurnMixin:
             la = loss_aversion(persona)
             fail_ratio = float(settings.get("accomplishment_fail_ratio"))
             self.bus.neuromod.add("DA", -base * difficulty * fail_ratio * w * er * la)
-            self.bus.neuromod.add("5HT", -float(settings.get("correctness_5ht_drain")) * w * er * la)
+            self.bus.hormonal.add("5HT", -float(settings.get("correctness_5ht_drain")) * w * er * la)
 
     async def _verify_world_prediction(self, pred: dict, actual_input: str) -> None:
         """Stage 5 Tier B: did our idle prediction of the user's next message hold? Embed-compare
@@ -1883,7 +1883,7 @@ class _TurnMixin:
             self.bus.neuromod.add(
                 "DA", -float(settings.get("correctness_penalty_base")) * _tw * _ter * _tla
             )
-            self.bus.neuromod.add(
+            self.bus.hormonal.add(
                 "5HT", -float(settings.get("correctness_5ht_drain")) * _tw * _ter * _tla
             )
         elif success:

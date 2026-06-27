@@ -3716,12 +3716,12 @@ class DefaultModeNetwork:
                 if _best > 0:
                     self._bus.neuromod.add("DA", _scale * _best * _w)
                 if _worst < 0:
-                    self._bus.neuromod.add("CORT", _scale * (-_worst) * _la)
+                    self._bus.hormonal.add("CORT", _scale * (-_worst) * _la)
                 # Uncertainty aversion: even with no outright loss, a wide spread between the
                 # best and worst imagined outcome is itself aversive to a risk-averse persona.
                 _spread = _best - _worst
                 if _spread > 0 and _ka > 0:
-                    self._bus.neuromod.add("CORT", _scale * _spread * _ka)
+                    self._bus.hormonal.add("CORT", _scale * _spread * _ka)
                 await self._bus.publish_dict(
                     "stream.anticipation",
                     {"scenarios": self.anticipations, "ts": time.time()},

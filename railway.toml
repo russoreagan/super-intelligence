@@ -22,5 +22,14 @@ startCommand = "/opt/venv/bin/python -u -m brain.gateway"
 healthcheckPath = "/health"
 # Gateway binds fast, but keep the generous window for the heavy import graph.
 healthcheckTimeout = 300
+# Zero-downtime deploys: keep the OLD gateway (with its already-warm tenants)
+# serving until the new one passes /health, then drain in-flight requests rather
+# than cutting them to 502. Note the limit: /health goes green as soon as the new
+# gateway binds — before its tenants boot — so this softens but doesn't fully
+# erase the deploy window. It does NOT cover a per-tenant brain re-exec (e.g. a
+# persona-switch Save), where the gateway stays healthy but the proxied tenant is
+# briefly down; that's handled by not re-execing needlessly.
+overlapSeconds = 30
+drainingSeconds = 30
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 3
