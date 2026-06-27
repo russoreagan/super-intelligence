@@ -1514,10 +1514,8 @@
       // is the reward table; their reward_weight_* multipliers stay at default
       // and only the needle poses (from PERSONA_POS). `persona` is `id` here.
       const _prevPersona = persona; persona = id;
-      _materializableDialIds.forEach(did => {
-        Object.entries(cogKeyValuesFor(did)).forEach(([k, v]) => {
-          if (k in values) values[k] = clampKey(k, v);
-        });
+      Object.entries(cogFingerprintValues()).forEach(([k, v]) => {
+        if (k in values) values[k] = clampKey(k, v);
       });
       persona = _prevPersona;
     }
