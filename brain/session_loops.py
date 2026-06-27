@@ -273,19 +273,27 @@ class _LoopsMixin:
             except Exception:
                 pass
 
-    def _agent_usage_for_ui(self, since: str | None = None, until: str | None = None) -> dict:
-        """Per-agent usage for the dashboard. No range → the live in-memory meter
-        (current session). A [since, until] range (ISO-8601) → the durable ledger
-        summed across restarts. Sync + blocking on the range path; the UI server
-        calls it off-thread."""
-        if since or until:
-            try:
-                from brain import agent_usage_store
+    def _agent_usage_for_ui(
+        self, since: str | None = None, until: str | None = None, scope: str = "org"
+    ) -> dict:
+        """Per-agent usage for the dashboard. Returns a discriminated payload:
+          scope 'org'  → {"scope":"org", "usage": {agent_id: {...}}}
+          scope 'all'  → {"scope":"all", "rows": [{org_id, org_name, agent_id, ...}]}
+        Org scope with no range = the live in-memory meter (current session); with a
+        range = this org's durable ledger. All scope = every org's ledger (the
+        platform super-admin fleet view) — the caller must already have gated this to
+        is_admin. Sync + blocking on the ledger paths; the UI server calls it
+        off-thread."""
+        try:
+            from brain import agent_usage_store
 
-                return agent_usage_store.aggregate(since, until)
-            except Exception:
-                return {}
-        return self.router.agent_usage() if getattr(self, "router", None) else {}
+            if scope == "all":
+                return {"scope": "all", "rows": agent_usage_store.aggregate_all(since, until)}
+            if since or until:
+                return {"scope": "org", "usage": agent_usage_store.aggregate(since, until)}
+        except Exception:
+            return {"scope": scope, "usage": {}, "rows": []}
+        return {"scope": "org", "usage": self.router.agent_usage() if getattr(self, "router", None) else {}}
 
     async def _speak_gate_loop(self) -> None:
         SPEAK_GATE_INTERVAL = float(_brain_settings.get("speak_gate_poll_interval") or 5.0)

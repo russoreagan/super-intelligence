@@ -1004,20 +1004,26 @@ class UIServer:
         async def agents_usage_ui(request: Request):
             """Per-agent model usage (tokens, pod compute-seconds, cloud $) for the
             Agents dashboard cost monitor. No ?since/?until → the live in-memory meter
-            (current session). A [since, until] range (ISO-8601) → the durable ledger
-            summed across restarts. Owner-authed; empty when there is no meter."""
+            (current session). A [since, until] range (ISO-8601) → this org's durable
+            ledger summed across restarts. ?scope=all → the cross-org fleet view, but
+            ONLY for a platform super-admin (is_admin); any other caller is silently
+            forced back to their own org. Returns {scope, usage|rows, since, until}."""
             from fastapi.responses import JSONResponse
 
             since = request.query_params.get("since") or None
             until = request.query_params.get("until") or None
-            usage: dict = {}
+            claims = getattr(request.state, "user", None) or {}
+            is_admin = ui_auth.is_disabled() or ui_auth.is_admin(claims)
+            # Cross-org scope is platform-admin only — never honor it for a tenant.
+            scope = "all" if (request.query_params.get("scope") == "all" and is_admin) else "org"
+            result: dict = {"scope": scope}
             if self._usage_fn is not None:
                 try:
-                    # May hit Supabase on the range path → keep it off the event loop.
-                    usage = await asyncio.to_thread(self._usage_fn, since, until) or {}
+                    # May hit Supabase on the ledger paths → keep it off the event loop.
+                    result = await asyncio.to_thread(self._usage_fn, since, until, scope) or result
                 except Exception as e:
                     logger.debug("[agents] usage fn failed: %s", e)
-            return JSONResponse({"usage": usage, "since": since, "until": until})
+            return JSONResponse({**result, "since": since, "until": until, "is_admin": is_admin})
 
         @app.post("/agents")
         async def create_agent_ui(request: Request):
