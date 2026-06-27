@@ -481,7 +481,7 @@
     if (from) from.addEventListener('change', applyCustom);
     if (to) to.addEventListener('change', applyCustom);
     main.querySelectorAll('.ag-nav').forEach(n => n.addEventListener('click', () => { agView = n.dataset.view; agentSel = null; paintAgents(); }));
-    if (!allMode) main.querySelectorAll('.dash-card').forEach(c => c.addEventListener('click', () => openAgentInLabs(c.dataset.persona)));
+    if (!allMode) main.querySelectorAll('.dash-card').forEach(c => c.addEventListener('click', () => openAgentInLabs(c.dataset.agent, c.dataset.name, c.dataset.persona)));
     refreshPodMeter();
   }
   // Fill (and keep ticking) the shared GPU-pod uptime + accrued-cost meter in the
@@ -523,7 +523,7 @@
     const tokLabel = u ? fmtTokens((u.in_tok || 0) + (u.out_tok || 0)) : (live ? '0' : '—');
     const callsLabel = u ? String(u.calls) : (live ? '0' : '—');
     const dotCls = live ? 'dot-status live' : 'dot-status';
-    return `<button class="dash-card" data-persona="${esc(a.persona)}" data-agent="${esc(a.agent_id)}">
+    return `<button class="dash-card" data-persona="${esc(a.persona)}" data-agent="${esc(a.agent_id)}" data-name="${esc(a.name || a.agent_id)}">
       <div class="dc-head">
         <div class="dc-identity">
           <span class="${dotCls}" style="background:${live ? 'var(--ok)' : 'var(--temporal)'};"></span>
@@ -541,9 +541,14 @@
       </div>
     </button>`;
   }
-  // Card → Labs. Persona deep-load/switch would force a brain restart, so we just
-  // surface the Labs workspace (matches the detail view's "View persona in Labs").
-  function openAgentInLabs(_persona) { setWorkspace('labs'); }
+  // Card → Labs. Switch to Labs and OBSERVE that agent's live lane (chemistry +
+  // idle thoughts) without restarting the brain. Clicking the org's own owner
+  // persona (e.g. the default The Admin) just shows the owner lane — setObservedAgent
+  // resolves that by comparing the agent's persona to the active process persona.
+  function openAgentInLabs(agentId, name, persona) {
+    if (typeof window.setObservedAgent === 'function') window.setObservedAgent(agentId, name, persona);
+    setWorkspace('labs');
+  }
   function personaName(slug) {
     const p = (window.SETTINGS && window.SETTINGS.personas || []).find(x => personaSlug(x.id) === slug);
     return p ? p.name : slug;

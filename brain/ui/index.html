@@ -5637,13 +5637,100 @@ function sendMessage(text) {
 /* =====================================================================
    EVENT HANDLER
    ===================================================================== */
+// ── Observe mode ─────────────────────────────────────────────────────────────
+// Watch a CLIENT agent's live inner life (chemistry + idle thoughts) in the Labs
+// panels without switching the process persona — the agent's lane events already
+// arrive wrapped as 'agent_event'. When an agent is observed, owner-lane events
+// stop painting the panels (so the two don't fight) and the observed agent's
+// events paint them instead; clearing returns to the owner lane. Read-only.
+let observedAgentId = null;
+let observedAgentName = '';
+
+function _personaSlugJS(s) {
+  return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+}
+
+// The owner persona an agent must NOT match to be observable (clicking the
+// default/owner agent just shows the owner lane). Exposed for workspaces.js.
+window.setObservedAgent = function (agentId, name, persona) {
+  const ownerSlug = _personaSlugJS(currentSettings && currentSettings.persona_name);
+  const pslug = _personaSlugJS(persona || String(agentId || '').split('.')[0]);
+  if (!agentId || (ownerSlug && pslug === ownerSlug)) {
+    observedAgentId = null;
+    observedAgentName = '';
+  } else {
+    observedAgentId = agentId;
+    observedAgentName = name || agentId;
+  }
+  renderObserveBanner();
+};
+
+function renderObserveBanner() {
+  let b = document.getElementById('observe-banner');
+  if (!observedAgentId) { if (b) b.remove(); return; }
+  const chem = document.getElementById('chem-section');
+  if (!chem || !chem.parentNode) return;
+  if (!b) {
+    b = document.createElement('div');
+    b.id = 'observe-banner';
+    b.style.cssText = 'display:flex;align-items:center;gap:8px;margin:0 0 10px;padding:7px 10px;'
+      + 'border:1px solid var(--signal-deep,#3b6);border-radius:8px;background:var(--signal-faint,rgba(60,180,120,.10));'
+      + 'font-size:11px;color:var(--ink,#222);';
+    chem.parentNode.insertBefore(b, chem);
+  }
+  const owner = (currentSettings && currentSettings.persona_name) || 'the default agent';
+  b.innerHTML = '<span style="width:7px;height:7px;border-radius:50%;background:var(--ok,#3b6);'
+    + 'box-shadow:0 0 6px var(--ok,#3b6);"></span>'
+    + '<span style="flex:1;">Observing <strong>' + escapeHtml(observedAgentName) + '</strong> · live</span>'
+    + '<button type="button" id="observe-clear" style="cursor:pointer;border:1px solid var(--line-faint,#ccc);'
+    + 'background:transparent;color:var(--ink-3,#666);border-radius:6px;padding:2px 8px;font-size:10px;">← '
+    + escapeHtml(owner) + '</button>';
+  b.querySelector('#observe-clear').onclick = () => window.setObservedAgent(null);
+}
+
+// Paint the inner-life panels from one event (owner-lane or observed agent-lane).
+function renderNeuromod(e) {
+  ['ACh', 'DA', 'GABA', 'Glu', 'NE'].forEach(ch => {
+    const v = e[ch];
+    if (v === undefined) return;
+    const pct = Math.round(v * 100);
+    const f = document.getElementById('nm-' + ch), n = document.getElementById('nm-num-' + ch);
+    if (f) f.style.width = pct + '%';
+    if (n) n.textContent = pct + '%';
+  });
+}
+function renderHormonal(e) {
+  const hd = e.data ?? e;
+  ['5HT', 'OXT', 'CORT', 'AEA'].forEach(k => {
+    const v = hd[k] ?? 0;
+    const pct = Math.round(v * 100);
+    const f = document.getElementById('nm-' + k), n = document.getElementById('nm-num-' + k);
+    if (f) f.style.width = pct + '%';
+    if (n) n.textContent = pct + '%';
+  });
+}
+function renderThought(e) {
+  if (e.thought) appendThought(e.thought, e.chem_delta || {}, e.ts);
+}
+// Route an observed agent's lane event into the same panels the owner lane uses.
+function applyObservedEvent(e) {
+  switch (e.type) {
+    case 'neuromod': renderNeuromod(e); break;
+    case 'hormonal': renderHormonal(e); break;
+    case 'stream_thought': renderThought(e); break;
+  }
+}
+
 function handle(msg) {
   switch (msg.type) {
     // Agent-lane activity (engine-API / partner agents, e.g. the trading app)
     // is routed to the Agents drawer and never the main chat feed. The server
-    // wraps these so none of the chat handlers below can match them.
+    // wraps these so none of the chat handlers below can match them. When the user
+    // is OBSERVING this agent, its inner-life events also paint the Labs panels.
     case 'agent_event': {
-      if (window.Agents) window.Agents.onEvent(msg.event || {});
+      const ev = msg.event || {};
+      if (window.Agents) window.Agents.onEvent(ev);
+      if (observedAgentId && ev.agent_id === observedAgentId) applyObservedEvent(ev);
       break;
     }
     case 'agent_history': {
@@ -5666,25 +5753,12 @@ function handle(msg) {
       break;
     }
     case 'neuromod': {
-      ['ACh', 'DA', 'GABA', 'Glu', 'NE'].forEach(ch => {
-        const v = msg[ch];
-        if (v === undefined) return;
-        const pct = Math.round(v * 100);
-        document.getElementById(`nm-${ch}`).style.width = pct + '%';
-        document.getElementById(`nm-num-${ch}`).textContent = pct + '%';
-      });
+      // Owner lane paints the panels only when not observing an agent.
+      if (!observedAgentId) renderNeuromod(msg);
       break;
     }
         case 'hormonal': {
-          const hd = msg.data ?? msg;
-          ['5HT', 'OXT', 'CORT', 'AEA'].forEach(k => {
-            const v = hd[k] ?? 0;
-            const pct = Math.round(v * 100);
-            const fill = document.getElementById('nm-' + k);
-            const num  = document.getElementById('nm-num-' + k);
-            if (fill) fill.style.width = pct + '%';
-            if (num)  num.textContent  = pct + '%';
-          });
+          if (!observedAgentId) renderHormonal(msg);
           break;
         }
     case 'emotion': {
@@ -5795,7 +5869,7 @@ function handle(msg) {
       break;
     }
     case 'stream_thought': {
-      if (msg.thought) appendThought(msg.thought, msg.chem_delta || {}, msg.ts);
+      if (!observedAgentId) renderThought(msg);
       break;
     }
     case 'proactive_speech': {
