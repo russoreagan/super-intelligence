@@ -640,6 +640,7 @@ class _LoopsMixin:
                     # in-flight job without tearing down the worker loop itself.
                     exec_task = asyncio.create_task(self._run_task(task))
                     self._task_exec = exec_task
+                    self._running_task_id = task.id
                     try:
                         await exec_task
                     except asyncio.CancelledError:
@@ -650,6 +651,7 @@ class _LoopsMixin:
                             raise  # session shutdown — propagate
                     finally:
                         self._task_exec = None
+                        self._running_task_id = None
             except asyncio.CancelledError:
                 return
             except Exception as _e:
@@ -680,3 +682,45 @@ class _LoopsMixin:
             drained,
         )
         return {"killed_running": killed_running, "cleared": cleared, "drained": drained}
+
+    def kill_task(self, job_id: str) -> dict:
+        """UI per-job kill switch: stop a single job by its UI job_id.
+
+        The UI sends ``job_task_<task_id>`` (see _run_task); accept the raw
+        task id too. If the target is the in-flight job, cancel its asyncio
+        task and settle the ledger; if it's still pending/blocked in the queue,
+        just cancel the queue entry. Leaves every other job untouched."""
+        # UI job_id is "job_task_<id>"; tolerate a bare task id as well.
+        task_id = job_id
+        for prefix in ("job_task_", "task_", "job_"):
+            if task_id.startswith(prefix):
+                task_id = task_id[len(prefix) :]
+                break
+        killed_running = False
+        exec_task = getattr(self, "_task_exec", None)
+        if (
+            getattr(self, "_running_task_id", None) == task_id
+            and exec_task is not None
+            and not exec_task.done()
+        ):
+            self._tasks_kill_requested = True
+            exec_task.cancel()
+            killed_running = True
+            # The cancelled coroutine never reaches mark_done — settle it here so
+            # the queue ledger doesn't leave the job stuck "running".
+            if self._task_queue:
+                self._task_queue.mark_done(task_id, success=False)
+        cancelled_pending = False
+        if not killed_running and self._task_queue:
+            cancelled_pending = self._task_queue.cancel(task_id)
+        logger.info(
+            "[TaskWorker] Kill job [%s]: running_killed=%s pending_cancelled=%s",
+            task_id,
+            killed_running,
+            cancelled_pending,
+        )
+        return {
+            "task_id": task_id,
+            "killed_running": killed_running,
+            "cancelled_pending": cancelled_pending,
+        }
