@@ -1607,6 +1607,14 @@ class _TurnMixin:
         overlap = len(task_words & convo_words) / len(task_words)
         return overlap >= 0.12
 
+    def _partner_proactive_target(self) -> str:
+        """The tenant a self-directed job's result should be delivered to. These jobs
+        run on the owner lane (no bind_turn → no end-user on the turn context), so the
+        proactive partner-webhook would otherwise drop the result. Fall back to the same
+        single-tenant id the work tray uses (AGENT_WORK_DEFAULT_END_USER_ID); empty when
+        unset, which keeps delivery owner-only (current behaviour)."""
+        return os.environ.get("AGENT_WORK_DEFAULT_END_USER_ID", "").strip()
+
     async def _run_task(self, task) -> None:
         job_turn_id = f"task_{task.id}"
         job_id = f"job_{job_turn_id}"
@@ -1674,7 +1682,9 @@ class _TurnMixin:
             if on_topic:
                 if self._proactive_speech_allowed():
                     if self._emitter:
-                        await self._emitter.emit_proactive_speech(question)
+                        await self._emitter.emit_proactive_speech(
+                            question, partner_target=self._partner_proactive_target()
+                        )
                     await self.pns.emit(question, {"emotion": "curious"})
                 else:
                     logger.debug(
@@ -1743,7 +1753,9 @@ class _TurnMixin:
                 }
             )
             if on_topic:
-                await self._emitter.emit_proactive_speech(spoken_summary)
+                await self._emitter.emit_proactive_speech(
+                    spoken_summary, partner_target=self._partner_proactive_target()
+                )
             else:
                 logger.info(
                     "[TaskWorker] Task [%s] result held from speech — off-topic "

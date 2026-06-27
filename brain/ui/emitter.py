@@ -203,7 +203,7 @@ class ActivationEmitter:
             t = t.lstrip()
         return t.startswith("{") or t.startswith("[")
 
-    async def emit_proactive_speech(self, text: str) -> None:
+    async def emit_proactive_speech(self, text: str, *, partner_target: str = "") -> None:
         # Last-line guard: never surface a raw JSON blob as proactive speech. The
         # source paths (result reporter, planner clarification) already filter it;
         # this covers every other proactive caller too.
@@ -212,16 +212,30 @@ class ActivationEmitter:
         with contextlib.suppress(asyncio.QueueFull):
             self._put({"type": "proactive_speech", "text": text, "ts": time.time()})
         # Durable delivery to the owning partner's callback (works with the partner's
-        # client closed). No-op on the owner lane or when no callback is configured.
-        self._dispatch_partner_proactive(text)
+        # client closed). No-op on the owner lane or when no callback is configured —
+        # unless a self-directed job-result caller supplies partner_target (the owning
+        # tenant), which reaches the partner without re-laning the local UI event above.
+        self._dispatch_partner_proactive(text, partner_target=partner_target)
 
     def _dispatch_partner_proactive(
-        self, text: str, *, kind: str = "proactive", urgency: str = "normal"
+        self,
+        text: str,
+        *,
+        kind: str = "proactive",
+        urgency: str = "normal",
+        partner_target: str = "",
     ) -> None:
-        """Schedule a best-effort webhook POST to the owning partner's callback for an
-        agent-lane proactive message. Generic — the brain knows nothing about the
-        partner's domain; it just forwards "agent emitted a message for end-user X".
-        No-op on the owner lane (the brain's own UI) or when unconfigured."""
+        """Schedule a best-effort webhook POST to the owning partner's callback for a
+        proactive message. Generic — the brain knows nothing about the partner's domain;
+        it just forwards "agent emitted a message for end-user X".
+
+        Agent-lane turns deliver to the end-user that drove them. Owner-lane callers (the
+        brain's own self-directed jobs) carry no end-user on the context, so the result
+        would otherwise be dropped — a job-result caller may pass ``partner_target`` (the
+        owning tenant) to reach the partner anyway, mirroring _maybe_forward_work's
+        owner-lane fallback. Crucially this does NOT re-lane the local UI event, so the
+        summary still shows in the brain's own feed. No-op when unconfigured, or on the
+        owner lane with no partner_target (the brain's private musings stay private)."""
         import os
 
         url = os.environ.get("AGENT_WEBHOOK_URL", "").strip()
@@ -231,7 +245,11 @@ class ActivationEmitter:
         from brain.turn_ctx import current_turn
 
         ctx = current_turn()
-        if ctx.get("channel") != "agent" or not ctx.get("end_user_id"):
+        if ctx.get("channel") == "agent" and ctx.get("end_user_id"):
+            target = ctx["end_user_id"]
+        else:
+            target = (partner_target or "").strip()
+        if not target:
             return
         import uuid
 
@@ -239,7 +257,7 @@ class ActivationEmitter:
             "event_id": uuid.uuid4().hex,
             "agent_id": ctx.get("agent_id") or None,
             "session_id": ctx.get("session_id") or "",
-            "end_user_id": ctx.get("end_user_id"),
+            "end_user_id": target,
             "kind": kind,
             "text": text,
             "urgency": urgency,
