@@ -40,6 +40,7 @@ import re
 import secrets as _secrets_mod
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 from brain.bus import Bus
@@ -274,6 +275,93 @@ _AGENT_TOOLSET = "agent_toolset_20260401"
 # complete read-scoping set.
 _READ_DISABLED_TOOLS = ("write", "edit", "bash")
 
+
+# ── Action approval policy ─────────────────────────────────────────────────────
+# Reads and small data-saving writes run unattended; destructive / code-changing /
+# communication actions need explicit user approval; money movement is blocked
+# outright. The classifier is conservative: anything it can't confidently call
+# "safe" falls through to "ask", never "allow".
+_READ_TOOLS = {"read", "glob", "grep", "web_search", "web_fetch", "view", "ls", "list_dir"}
+# Read-only verb prefixes (covers MCP connector reads: get_quote, scan_watchlist,
+# review_journal, check_contradictions, find_mispricing, …).
+_READ_PREFIXES = (
+    "get_", "list_", "read_", "search_", "scan_", "review_", "find_", "check_", "fetch_", "view_",
+)
+_CODE_EXTS = (
+    ".py", ".js", ".ts", ".tsx", ".jsx", ".go", ".rs", ".java", ".kt", ".c", ".cc", ".cpp",
+    ".h", ".hpp", ".cs", ".rb", ".php", ".sh", ".bash", ".zsh", ".sql", ".html", ".css",
+    ".scss", ".vue", ".swift", ".yml", ".yaml", ".toml", ".ini", ".cfg", ".env",
+)
+# Token-based matching (robust to snake_case / camelCase) rather than regex word
+# boundaries, which miss compound names like `buy_stock` or `placeOrder`.
+_MONEY_WORDS = {
+    "buy", "sell", "order", "trade", "transfer", "withdraw", "deposit", "wire",
+    "liquidate", "purchase", "sweep", "remit",
+}
+_COMMS_WORDS = {
+    "send", "email", "mail", "message", "dm", "sms", "post", "publish", "tweet",
+    "slack", "notify", "broadcast", "reply", "share", "comment",
+}
+_DESTRUCTIVE_WORDS = {
+    "delete", "remove", "destroy", "drop", "truncate", "wipe", "purge", "reset",
+    "revoke", "cancel", "clear",
+}
+
+
+def _name_tokens(name: str) -> set[str]:
+    s = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", name or "")
+    return {t for t in re.split(r"[^a-zA-Z0-9]+", s.lower()) if t}
+
+
+def _write_approval_bytes() -> int:
+    """Size above which even a plain data write needs sign-off. Default 5 MB so
+    images and other media save without a prompt; only very large writes pause.
+    Override per-tenant via the `motor_write_approval_bytes` setting."""
+    try:
+        return int(settings.get("motor_write_approval_bytes") or 5_000_000)
+    except Exception:
+        return 5_000_000
+
+
+def _classify_action(tool: str, args, write_allowed: bool) -> tuple[str, str]:
+    """Classify a pending tool call. Returns (decision, reason) where decision is
+    'allow' (run unattended) | 'ask' (needs user approval) | 'block' (never run).
+    Conservative: anything not confidently safe falls through to 'ask'."""
+    name = (tool or "").strip().lower()
+    args = args if isinstance(args, dict) else {}
+    toks = _name_tokens(tool)  # original casing → camelCase split works
+    # 1) Reads first — never mis-block a data pull.
+    if name in _READ_TOOLS or name.startswith(_READ_PREFIXES):
+        return ("allow", "")
+    # 2) Money movement is blocked outright (also covered by the platform trade ban).
+    if toks & _MONEY_WORDS:
+        return ("block", f"{tool} moves money or places an order")
+    # 3) Communication out.
+    if toks & _COMMS_WORDS:
+        return ("ask", f"{tool} would send communication")
+    # 4) Destructive mutation.
+    if toks & _DESTRUCTIVE_WORDS:
+        return ("ask", f"{tool} is destructive")
+    # 5) Arbitrary shell / edits to existing content (often code).
+    if name == "bash":
+        return ("ask", "runs a shell command")
+    if name == "edit":
+        return ("ask", "edits existing content")
+    # 6) Writes: code/config files always ask; data files ask only when very large.
+    if name in ("write", "write_file", "append_file") or name.startswith(
+        ("write_", "save_", "log_", "append_", "store_", "record_")
+    ):
+        path = str(args.get("path") or args.get("file_path") or args.get("filename") or "")
+        content = args.get("content") or args.get("text") or args.get("body") or ""
+        size = len(content if isinstance(content, (str, bytes)) else str(content))
+        if path.lower().endswith(_CODE_EXTS):
+            return ("ask", f"writes a code/config file ({path})")
+        if size > _write_approval_bytes():
+            return ("ask", f"large write (~{size} bytes)")
+        return ("allow", "")
+    # Anything unrecognized is treated as sensitive.
+    return ("ask", f"{tool} needs review")
+
 # Standing guidance — the per-call task + facts go in the user message; this is
 # the equivalent of CloudExecutor._build_prompt's standing instructions.
 _SYSTEM_GUIDANCE = (
@@ -324,6 +412,13 @@ class CMAExecutor(ExecutorCommon):
         # motor cortex — None = all configured connectors. Lets self-directed
         # work run with a narrower connector set than user-commanded work.
         self._connector_filter: set[str] | None = None
+
+        # Approval hook for actions the classifier flags 'ask'. Signature:
+        #   approval_fn(action: dict) -> "allow" | "deny"  (sync or async)
+        # where action = {tool, input, reason, turn_id}. None → 'ask' actions are
+        # denied (skipped) so nothing sensitive runs unattended.
+        self._approval_fn: Callable[[dict], object] | None = None
+        self._current_turn_id: str = ""
 
         logger.info(
             "[CMAExecutor] initialized (user=%s, model=%s, connectors=%s)",
@@ -665,6 +760,10 @@ class CMAExecutor(ExecutorCommon):
         self._user_sessions.clear()
         logger.info("[CMAExecutor] MCP config reloaded (%d connectors)", len(self._mcp_servers))
 
+    def set_approval_fn(self, fn: Callable[[dict], object] | None) -> None:
+        """Wire the human-approval hook for 'ask' actions (see __init__)."""
+        self._approval_fn = fn
+
     def set_connector_filter(self, names: set[str] | None) -> None:
         """Restrict which MCP connectors the NEXT agent session may use.
         None = all. Filter participates in the config hash, so a warm session
@@ -677,12 +776,31 @@ class CMAExecutor(ExecutorCommon):
         return [s for s in self._mcp_servers if s["name"].strip().lower() in self._connector_filter]
 
     def _agent_tools(self, write_allowed: bool) -> list[dict]:
-        toolset: dict = {"type": _AGENT_TOOLSET, "default_config": {"enabled": True}}
+        # Reads run server-side with no prompt (always_allow). Mutating built-in
+        # tools (write/edit/bash) pause for review (always_ask) so the executor can
+        # classify each call: small data writes auto-approve, while large /
+        # destructive / code-changing actions get routed to the user for approval.
+        toolset: dict = {
+            "type": _AGENT_TOOLSET,
+            "default_config": {"enabled": True, "permission_policy": {"type": "always_allow"}},
+        }
         if not write_allowed:
+            # Read agent: mutating tools are removed outright — only reads remain.
             toolset["configs"] = [{"name": n, "enabled": False} for n in _READ_DISABLED_TOOLS]
+        else:
+            toolset["configs"] = [
+                {"name": n, "permission_policy": {"type": "always_ask"}}
+                for n in _READ_DISABLED_TOOLS
+            ]
         tools: list[dict] = [toolset]
         for srv in self._active_mcp_servers():
-            tools.append({"type": "mcp_toolset", "mcp_server_name": srv["name"]})
+            entry: dict = {"type": "mcp_toolset", "mcp_server_name": srv["name"]}
+            # On the write path, connector calls also pause for review; the executor
+            # auto-approves read-only connector tools at decision time, so only
+            # connector mutations actually reach the approval hook.
+            if write_allowed:
+                entry["default_config"] = {"permission_policy": {"type": "always_ask"}}
+            tools.append(entry)
         return tools
 
     def _mcp_server_decls(self) -> list[dict]:
@@ -771,6 +889,7 @@ class CMAExecutor(ExecutorCommon):
                 "output": "[error] CMA executor not available (no ANTHROPIC_API_KEY).",
                 "success": False,
             }
+        self._current_turn_id = turn_id or ""
         start = time.time()
         try:
             await self._ensure_ready()
@@ -863,13 +982,14 @@ class CMAExecutor(ExecutorCommon):
         user_vault_id: str | None = None,
     ) -> str:
         sid = await self._ensure_session(write_allowed, user_vault_id=user_vault_id)
-        text = await self._consume(sid, self._compose_task(task, context_facts))
+        text = await self._consume(sid, self._compose_task(task, context_facts), write_allowed)
         return text or "(no output)"
 
-    async def _consume(self, sid: str, message: str) -> str:
+    async def _consume(self, sid: str, message: str, write_allowed: bool = False) -> str:
         """Stream-first event loop with bounded reconnect-and-replay."""
         seen: set[str] = set()
         buf: dict = {}  # event_id (or index) -> text, insertion-ordered
+        tools: dict = {}  # tool-call event id -> {name, input} (for approval routing)
         max_reconnects = int(settings.get("cma_max_reconnects") or 3)
         sent = False
         attempts = 0
@@ -890,9 +1010,16 @@ class CMAExecutor(ExecutorCommon):
                         )
                         sent = True
                     async for ev in stream:
-                        done, err = self._handle_event(ev, seen, buf)
+                        done, err, pending = self._handle_event(ev, seen, buf, tools)
                         if err is not None:
                             return err
+                        if pending:
+                            # Agent paused on tool calls that need our go-ahead.
+                            # Classify each: reads + small data writes auto-approve,
+                            # money is blocked, and anything sensitive is routed to
+                            # the approval hook — keep the session running either way.
+                            await self._resolve_pending(sid, pending, tools, write_allowed)
+                            continue
                         if done:
                             return self._join(buf)
                 finally:
@@ -915,32 +1042,46 @@ class CMAExecutor(ExecutorCommon):
             if attempts > max_reconnects:
                 return self._join(buf) or "(no output)"
 
-    def _handle_event(self, ev, seen: set, buf: dict) -> tuple[bool, str | None]:
-        """Return (done, error). done=True means terminal; error!=None short-circuits."""
+    def _handle_event(
+        self, ev, seen: set, buf: dict, tools: dict | None = None
+    ) -> tuple[bool, str | None, list | None]:
+        """Return (done, error, pending). done=True is terminal; error!=None
+        short-circuits; pending is a non-empty list of tool-call event ids the
+        caller must approve before the session will continue."""
         etype = getattr(ev, "type", None)
         eid = getattr(ev, "id", None)
+        if etype in ("agent.tool_use", "agent.mcp_tool_use"):
+            # Record name/input so a later requires_action can classify this call.
+            if tools is not None and eid:
+                tools[eid] = {
+                    "name": getattr(ev, "name", None) or getattr(ev, "tool_name", "") or "",
+                    "input": getattr(ev, "input", None) or getattr(ev, "args", None) or {},
+                }
+            return (False, None, None)
         if etype == "agent.message":
             key = eid or f"_idx{len(buf)}"
             if key in seen:
-                return (False, None)
+                return (False, None, None)
             seen.add(key)
             buf[key] = self._extract_text(ev)
-            return (False, None)
+            return (False, None, None)
         if etype == "session.error":
             msg = getattr(getattr(ev, "error", None), "message", None) or "session error"
-            return (False, f"[error] {msg}")
+            return (False, f"[error] {msg}", None)
         if etype == "session.status_terminated":
-            return (True, None)
+            return (True, None, None)
         if etype == "session.status_idle":
             sr = getattr(ev, "stop_reason", None)
             if getattr(sr, "type", None) == "requires_action":
-                # v1 does not handle mid-task tool confirmations (writes are
-                # pre-confirmed upstream). Don't hang — return what we have.
-                logger.warning(
-                    "[CMAExecutor] session idle requires_action — returning partial (v1)"
-                )
-            return (True, None)
-        return (False, None)
+                # Agent is blocked on us to approve its tool calls — NOT terminal.
+                # Surface the pending event ids so the caller can auto-confirm and
+                # keep the session running.
+                ids = [i for i in (getattr(sr, "event_ids", None) or []) if i]
+                if ids:
+                    return (False, None, ids)
+                logger.warning("[CMAExecutor] requires_action with no event ids — ending")
+            return (True, None, None)
+        return (False, None, None)
 
     @staticmethod
     def _extract_text(ev) -> str:
@@ -958,12 +1099,67 @@ class CMAExecutor(ExecutorCommon):
     def _join(buf: dict) -> str:
         return "".join(v for v in buf.values() if v).strip()
 
+    @staticmethod
+    async def _maybe_await(value):
+        if asyncio.iscoroutine(value):
+            return await value
+        return value
+
+    async def _resolve_pending(
+        self, sid: str, pending: list, tools: dict, write_allowed: bool
+    ) -> None:
+        """Classify each paused tool call and answer it: allow safe ones, deny
+        money outright, and route sensitive ones to the approval hook (default:
+        deny/skip). Always responds so the session never strands on a 400."""
+        events: list[dict] = []
+        for eid in pending:
+            call = tools.get(eid) or {}
+            name = call.get("name", "")
+            decision, reason = _classify_action(name, call.get("input"), write_allowed)
+            if decision == "ask":
+                verdict = "deny"
+                if self._approval_fn is not None:
+                    try:
+                        verdict = await self._maybe_await(
+                            self._approval_fn(
+                                {
+                                    "tool": name,
+                                    "input": call.get("input"),
+                                    "reason": reason,
+                                    "turn_id": self._current_turn_id,
+                                }
+                            )
+                        )
+                    except Exception as _ae:
+                        logger.warning("[CMAExecutor] approval hook failed for %s: %s", name, _ae)
+                        verdict = "deny"
+                decision = "allow" if verdict == "allow" else "deny"
+            if decision == "allow":
+                events.append(
+                    {"type": "user.tool_confirmation", "tool_use_id": eid, "result": "allow"}
+                )
+            else:
+                events.append(
+                    {
+                        "type": "user.tool_confirmation",
+                        "tool_use_id": eid,
+                        "result": "deny",
+                        "deny_message": (
+                            f"Not run — needs the user's approval ({reason or 'sensitive action'}). "
+                            "Continue with what you can do without it."
+                        ),
+                    }
+                )
+                logger.info("[CMAExecutor] action gated (%s): %s", reason or "sensitive", name)
+        if events:
+            await self._client.beta.sessions.events.send(sid, events=events)
+
     async def _replay_history(self, sid: str, seen: set, buf: dict) -> bool:
         """Page the full event list, dedupe by id, fold in. Return True if a
         terminal event is present."""
         terminal = False
         async for ev in self._client.beta.sessions.events.list(sid, order="asc"):
-            done, _err = self._handle_event(ev, seen, buf)
+            done, _err, _pending = self._handle_event(ev, seen, buf)
             if done:
                 terminal = True
         return terminal

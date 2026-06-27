@@ -24,8 +24,21 @@ def _msg(text, id="e1"):
     return SN(type="agent.message", id=id, content=[SN(type="text", text=text)])
 
 
-def _idle(reason="end_turn", id="i1"):
-    return SN(type="session.status_idle", id=id, stop_reason=SN(type=reason))
+def _idle(reason="end_turn", id="i1", event_ids=None):
+    return SN(
+        type="session.status_idle",
+        id=id,
+        stop_reason=SN(type=reason, event_ids=event_ids or []),
+    )
+
+
+def _tool_use(name, id="sevt_1", mcp=False, inp=None):
+    return SN(
+        type="agent.mcp_tool_use" if mcp else "agent.tool_use",
+        id=id,
+        name=name,
+        input=inp or {},
+    )
 
 
 def _terminated(id="t1"):
@@ -91,6 +104,8 @@ def _make_exec(client=None, mcp_servers=None):
     exe._user_vault_cache = {}
     exe._user_sessions = {}
     exe._current_end_user_id = None
+    exe._approval_fn = None
+    exe._current_turn_id = ""
     exe._append_tool_log = AsyncMock()  # don't touch the filesystem
     return exe
 
@@ -195,14 +210,96 @@ class TestIdleGate:
         result = await exe.execute_read("task", [])
         assert "partial result" in result["output"]
 
-    async def test_requires_action_returns_partial_v1(self, monkeypatch):
-        # v1 does not handle mid-task tool confirmations — requires_action is
-        # treated as terminal (return partial) rather than hanging.
+    async def test_requires_action_without_ids_ends(self, monkeypatch):
+        # requires_action carrying no pending event ids can't be actioned —
+        # end with what we have rather than hanging.
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
         client = _make_client([_msg("partial"), _idle("requires_action")])
         exe = _make_exec(client)
         result = await exe.execute_read("task", [])
         assert "partial" in result["output"]
+
+    @staticmethod
+    def _confirms(client):
+        sent = []
+        for call in client.beta.sessions.events.send.await_args_list:
+            sent.extend(call.kwargs.get("events", []))
+        return [e for e in sent if e.get("type") == "user.tool_confirmation"]
+
+    async def test_requires_action_allows_read_tools(self, monkeypatch):
+        # A read tool paused for confirmation → auto-allow and keep streaming.
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+        client = _make_client(
+            [
+                _tool_use("get_quote", id="sevt_a"),
+                _msg("before "),
+                _idle("requires_action", id="i1", event_ids=["sevt_a"]),
+                _msg("after", id="e2"),
+                _idle("end_turn", id="i2"),
+            ]
+        )
+        exe = _make_exec(client)
+        result = await exe.execute_read("task", [])
+        confirms = self._confirms(client)
+        assert confirms and all(e["result"] == "allow" for e in confirms)
+        assert {e["tool_use_id"] for e in confirms} == {"sevt_a"}
+        assert "before" in result["output"] and "after" in result["output"]
+
+    async def test_requires_action_denies_sensitive_without_approver(self, monkeypatch):
+        # A destructive tool with no approval hook wired → deny (skip), keep going.
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+        client = _make_client(
+            [
+                _tool_use("delete_journal", id="sevt_b"),
+                _idle("requires_action", id="i1", event_ids=["sevt_b"]),
+                _idle("end_turn", id="i2"),
+            ]
+        )
+        exe = _make_exec(client)
+        await exe.execute_read("task", [])
+        confirms = self._confirms(client)
+        assert confirms and all(e["result"] == "deny" for e in confirms)
+
+    async def test_money_action_blocked_even_with_approver(self, monkeypatch):
+        # Money movement is denied outright; the approval hook is never consulted.
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+        client = _make_client(
+            [
+                _tool_use("place_order", id="sevt_c"),
+                _idle("requires_action", id="i1", event_ids=["sevt_c"]),
+                _idle("end_turn", id="i2"),
+            ]
+        )
+        exe = _make_exec(client)
+        approver = MagicMock(return_value="allow")
+        exe.set_approval_fn(approver)
+        await exe.execute_read("task", [])
+        confirms = self._confirms(client)
+        assert confirms and all(e["result"] == "deny" for e in confirms)
+        approver.assert_not_called()
+
+    async def test_approval_fn_allows_sensitive(self, monkeypatch):
+        # A sensitive action the user approves → allow it through.
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+        client = _make_client(
+            [
+                _tool_use("send_email", id="sevt_d"),
+                _idle("requires_action", id="i1", event_ids=["sevt_d"]),
+                _idle("end_turn", id="i2"),
+            ]
+        )
+        exe = _make_exec(client)
+        seen = {}
+
+        def approve(action):
+            seen.update(action)
+            return "allow"
+
+        exe.set_approval_fn(approve)
+        await exe.execute_read("task", [])
+        confirms = self._confirms(client)
+        assert confirms and all(e["result"] == "allow" for e in confirms)
+        assert seen["tool"] == "send_email" and "communication" in seen["reason"]
 
 
 # ── reconnect-with-dedupe ───────────────────────────────────────────────────────
@@ -261,10 +358,15 @@ class TestToolScoping:
         disabled = {c["name"] for c in toolset.get("configs", []) if c["enabled"] is False}
         assert {"write", "edit", "bash"} <= disabled
 
-    def test_write_enables_full_toolset(self):
+    def test_write_gates_mutating_tools_as_always_ask(self):
         exe = _make_exec()
         tools = exe._agent_tools(write_allowed=True)
-        assert tools[0].get("configs") in (None, [])
+        cfgs = {c["name"]: c for c in tools[0].get("configs", [])}
+        assert {"write", "edit", "bash"} <= set(cfgs)
+        assert all(
+            cfgs[n]["permission_policy"]["type"] == "always_ask"
+            for n in ("write", "edit", "bash")
+        )
 
     def test_mcp_servers_added_as_toolsets(self):
         exe = _make_exec(mcp_servers=[{"name": "gmail", "url": "https://mcp.example/gmail"}])
