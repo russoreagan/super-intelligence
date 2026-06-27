@@ -760,3 +760,55 @@ class _LoopsMixin:
             "killed_running": killed_running,
             "cancelled_pending": cancelled_pending,
         }
+
+    # ── Action approvals ───────────────────────────────────────────────────────
+    async def _gate_action(self, action: dict) -> str:
+        """Cloud-executor approval hook. Returns 'allow' or 'deny'.
+
+        Allow an action the user has already approved (the resume path);
+        otherwise record it as pending, surface it to the UI, and deny (skip) for
+        now so the job moves on without doing anything sensitive unattended."""
+        approvals = getattr(self, "_approvals", None)
+        if approvals is None:
+            return "deny"
+        tool = action.get("tool", "")
+        tool_input = action.get("input")
+        if approvals.is_approved(tool, tool_input):
+            return "allow"
+        item = approvals.record(
+            tool,
+            tool_input,
+            reason=action.get("reason", ""),
+            turn_id=action.get("turn_id", ""),
+        )
+        with contextlib.suppress(Exception):
+            if self._emitter:
+                await self._emitter.emit_event({"type": "task_approval", **item.to_dict()})
+        return "deny"
+
+    def approve_action(self, approval_id: str) -> dict:
+        """UI/API: approve a pending action and re-queue it so the brain runs it,
+        pre-authorized, on the next idle cycle."""
+        approvals = getattr(self, "_approvals", None)
+        if approvals is None:
+            return {"ok": False, "error": "approvals unavailable"}
+        item = approvals.approve(approval_id)
+        if item is None:
+            return {"ok": False, "error": "no such pending approval"}
+        goal = f"The user approved this action — carry it out now: {item.tool}"
+        if item.preview:
+            goal += f" ({item.preview})"
+        if self._task_queue:
+            self._task_queue.enqueue(goal, source="user", priority=1)
+        logger.info("[Approvals] approved + re-queued [%s] %s", item.id, item.tool)
+        return {"ok": True, "tool": item.tool}
+
+    def skip_action(self, approval_id: str) -> dict:
+        approvals = getattr(self, "_approvals", None)
+        if approvals is None:
+            return {"ok": False, "error": "approvals unavailable"}
+        return {"ok": approvals.skip(approval_id)}
+
+    def list_approvals(self) -> list[dict]:
+        approvals = getattr(self, "_approvals", None)
+        return approvals.pending() if approvals else []

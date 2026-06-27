@@ -243,6 +243,9 @@ class _SetupMixin:
             on_interrupt=self.pns.interrupt,
             on_tasks_clear=self.kill_self_directed_work,
             on_task_kill=self.kill_task,
+            on_task_approve=self.approve_action,
+            on_task_skip=self.skip_action,
+            approvals_fn=self.list_approvals,
             connectors_fn=lambda: (
                 self.motor.list_connectors() if getattr(self, "motor", None) else []
             ),
@@ -482,6 +485,14 @@ class _SetupMixin:
         self._result_reporter = ResultReporter(self.router)
         self._task_queue = PersistentTaskQueue()
         self._recent_task_results: list[dict] = []  # ring buffer: last 3 completed tasks
+
+        # Action-approval ledger: sensitive tool calls the cloud executor flagged
+        # 'ask' are recorded here, surfaced for approval, and re-run once approved.
+        from brain.clusters.approvals import PendingApprovals
+
+        self._approvals = PendingApprovals()
+        if hasattr(self.motor, "_cloud") and hasattr(self.motor._cloud, "set_approval_fn"):
+            self.motor._cloud.set_approval_fn(self._gate_action)
 
         _recovered = self._task_queue.recover_interrupted()
         if _recovered:
