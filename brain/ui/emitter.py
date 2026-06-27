@@ -38,6 +38,43 @@ class ActivationEmitter:
         for q in list(self._taps):
             with contextlib.suppress(asyncio.QueueFull):
                 q.put_nowait(event)
+        # Mirror self-directed work (task_* events) to the owning partner so its UI can
+        # show a live "what it's working on" tray. No-op on the owner lane / unconfigured.
+        self._maybe_forward_work(event)
+
+    def _maybe_forward_work(self, event: dict) -> None:
+        """Forward a motor-cortex work event (task_planning/start/step_*/complete) to a
+        partner's work webhook so its UI can show a live "what it's working on" tray.
+        Generic and best-effort; only fires when AGENT_WORK_WEBHOOK_URL is configured.
+
+        Attribution: an agent-lane turn (a tenant drove the work) carries the end-user on
+        the event. But the brain's OWN self-directed/idle jobs run on the *owner* lane with
+        no end-user (execute_internal_job is not wrapped in bind_turn), so we fall back to
+        AGENT_WORK_DEFAULT_END_USER_ID — the single tenant that should see autonomous work.
+        Without that env set, owner-lane work isn't forwarded (stays private to the brain's
+        own UI). Crucially we DON'T re-lane the event: leaving channel="owner" keeps the job
+        visible in the brain's own Tasks panel while still mirroring it to the partner."""
+        import os
+
+        if not str(event.get("type", "")).startswith("task_"):
+            return
+        url = os.environ.get("AGENT_WORK_WEBHOOK_URL", "").strip()
+        secret = os.environ.get("AGENT_WEBHOOK_SECRET", "").strip()
+        if not url or not secret:
+            return
+        target = (event.get("end_user_id") or "").strip() or os.environ.get(
+            "AGENT_WORK_DEFAULT_END_USER_ID", ""
+        ).strip()
+        if not target:
+            return
+        # Copy so the other sinks (owner UI, engine taps) keep reading the unmodified event;
+        # stamp the resolved target end-user without touching the event's lane.
+        payload = dict(event)
+        payload["end_user_id"] = target
+        with contextlib.suppress(RuntimeError):  # no running loop → nothing to schedule
+            task = asyncio.create_task(self._post_partner_webhook(url, secret, payload))
+            self._webhook_tasks.add(task)
+            task.add_done_callback(self._webhook_tasks.discard)
 
     @staticmethod
     def _stamp_lane(event: dict) -> None:
@@ -146,7 +183,32 @@ class ActivationEmitter:
                 }
             )
 
+    @staticmethod
+    def _is_json_blob(text: str | None) -> bool:
+        """A raw JSON object/array rather than spoken prose. Proactive speech is
+        always natural language headed for TTS and (in engine mode) a customer's
+        channel; a degenerate local model sometimes emits an echoed tool output or
+        a confabulated response schema (e.g. ``{"has_signal": ...}``) instead.
+        Spoken text never starts with a brace/bracket — catch that here so no raw
+        JSON reaches the UI or the partner webhook, whatever the source."""
+        if not text:
+            return False
+        t = text.strip()
+        if t.startswith("```"):
+            t = t[3:].lstrip()
+            # Drop an optional language label (e.g. "json") on the fence's first line.
+            nl = t.find("\n")
+            if nl != -1 and t[:nl].strip().isalpha():
+                t = t[nl + 1 :]
+            t = t.lstrip()
+        return t.startswith("{") or t.startswith("[")
+
     async def emit_proactive_speech(self, text: str) -> None:
+        # Last-line guard: never surface a raw JSON blob as proactive speech. The
+        # source paths (result reporter, planner clarification) already filter it;
+        # this covers every other proactive caller too.
+        if self._is_json_blob(text):
+            return
         with contextlib.suppress(asyncio.QueueFull):
             self._put({"type": "proactive_speech", "text": text, "ts": time.time()})
         # Durable delivery to the owning partner's callback (works with the partner's
