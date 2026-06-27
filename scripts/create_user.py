@@ -104,6 +104,23 @@ def main(argv: list[str]) -> int:
         print(resp3.text, file=sys.stderr)
         return 1
 
+    # 4. Seed the default personas' starting self-models (their "sense of self") so
+    #    the new org has the full roster from first login — same content every other
+    #    org has. Without this the personas boot with only a bare ensure_self_schema
+    #    stub (or nothing at all). Non-fatal: the account is already usable, and the
+    #    seed is idempotent, so a failure here can be retried with the printed command.
+    try:
+        from scripts.seed_persona_selfmd import seed_org
+
+        n = seed_org(user_id, url, service_key)
+        print(f"  ✓ seeded {n} persona self-models")
+    except Exception as e:
+        print(f"  ! WARNING: failed to seed persona self-models: {e}", file=sys.stderr)
+        print(
+            f"    Retry: BRAIN_USER_ID={user_id} python scripts/seed_persona_selfmd.py",
+            file=sys.stderr,
+        )
+
     print(f"✓ Created user {email}")
     print(f"  id:  {user_id}")
     print(f"  org: {user_id} (personal)")

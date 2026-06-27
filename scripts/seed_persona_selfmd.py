@@ -21,6 +21,8 @@ import re
 import sys
 from pathlib import Path
 
+import httpx
+
 ROOT = Path(__file__).parent.parent
 BASE = ROOT / "second_brain" / "schema" / "self.md"
 
@@ -404,9 +406,50 @@ DA={da:.2f} GABA={gaba:.2f} ACh={ach:.2f} dominant=baseline ({name})
 """
 
 
+_SLUG_RE = re.compile(r"[^a-z0-9]+")
+
+
+def composed_docs() -> dict[str, str]:
+    """Every default persona's self.md keyed by persona slug. Pure — the only I/O
+    is reading the shared base template. This is the canonical "starting sense of
+    self" for the default roster; both the standalone script and the account-
+    provisioning flow (scripts/create_user.py) build from here so a new org gets
+    exactly what an existing one has."""
+    base_text = BASE.read_text(encoding="utf-8")
+    return {_SLUG_RE.sub("_", name.lower()).strip("_"): compose(name, base_text) for name in P}
+
+
+def seed_org(org_id: str, url: str, service_key: str) -> int:
+    """Upsert every default persona's self.md for one org via the Supabase REST API.
+
+    Uses REST (not supabase-py) so the provisioning path can call this with the
+    same httpx + service-key it already uses, no extra dependency. Idempotent on
+    (org_id, persona, end_user_id, filename) — re-running refreshes content and
+    overwrites any bare stub left by ensure_self_schema(). Returns the row count.
+    Raises on a non-2xx response so callers can surface a clear failure."""
+    rows = [
+        {"org_id": org_id, "persona": slug, "end_user_id": "", "filename": "self.md", "content": doc}
+        for slug, doc in composed_docs().items()
+    ]
+    resp = httpx.post(
+        f"{url.rstrip('/')}/rest/v1/brain_schemas",
+        headers={
+            "apikey": service_key,
+            "Authorization": f"Bearer {service_key}",
+            "Content-Type": "application/json",
+            # merge-duplicates = upsert; on_conflict names the table's unique key.
+            "Prefer": "resolution=merge-duplicates",
+        },
+        params={"on_conflict": "org_id,persona,end_user_id,filename"},
+        json=rows,
+        timeout=30.0,
+    )
+    resp.raise_for_status()
+    return len(rows)
+
+
 def main() -> None:
     dry = "--dry-run" in sys.argv
-    base_text = BASE.read_text(encoding="utf-8")
 
     for line in (ROOT / ".env").read_text().splitlines():
         line = line.strip()
@@ -415,32 +458,16 @@ def main() -> None:
             os.environ.setdefault(k.strip(), v.strip())
 
     org_id = os.environ["BRAIN_USER_ID"]
-    docs = {name: compose(name, base_text) for name in P}
+    docs = composed_docs()
 
     if dry:
-        for name, doc in docs.items():
-            print(f"=== {name} ({len(doc)} chars) ===")
+        for slug, doc in docs.items():
+            print(f"=== {slug} ({len(doc)} chars) ===")
             print(doc[:400], "...\n")
         return
 
-    from supabase import create_client
-
-    sb = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_KEY"])
-    slug_re = re.compile(r"[^a-z0-9]+")
-    for name, doc in docs.items():
-        slug = slug_re.sub("_", name.lower()).strip("_")
-        sb.table("brain_schemas").upsert(
-            {
-                "org_id": org_id,
-                "persona": slug,
-                "end_user_id": "",
-                "filename": "self.md",
-                "content": doc,
-                "updated_at": "now()",
-            },
-            on_conflict="org_id,persona,end_user_id,filename",
-        ).execute()
-        print(f"  ✓ {slug} ({len(doc)} chars)")
+    n = seed_org(org_id, os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_KEY"])
+    print(f"  ✓ seeded {n} persona self-models for org {org_id}")
     print("done.")
 
 
