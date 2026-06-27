@@ -419,16 +419,21 @@ class RunPodManager:
 
         models = _required_models()
 
-        # Check what's already installed
+        # Check what's already installed. Match the FULL name:tag — not the base
+        # name — so a different tag of the same family (e.g. qwen2.5:14b already on
+        # the volume) does NOT mask the absence of the one we need (qwen2.5:32b).
+        # Base-name matching silently skipped the 32b pull, leaving inference to 404
+        # on a pod that looked "ready". Ollama reports an untagged model as ":latest".
         try:
             r = await self._get_http().get(f"{host}/api/tags", timeout=15.0)
-            installed = {m["name"].split(":")[0] for m in r.json().get("models", [])}
+            installed = {m["name"] for m in r.json().get("models", [])}
         except Exception:
             installed = set()
 
         for model in models:
             base = model.split(":")[0]
-            if base in installed:
+            want = model if ":" in model else f"{model}:latest"
+            if want in installed:
                 logger.info("[RunPod] Model %s already present", model)
                 continue
             logger.info("[RunPod] Pulling %s (this may take a few minutes)...", model)
@@ -486,13 +491,16 @@ class RunPodManager:
         that pod is useless (~0.25 tok/s → every call times out). This is the real
         health signal, not /api/tags."""
         model = os.environ.get("RUNPOD_MODEL", "qwen2.5:32b")
-        base = model.split(":")[0]
+        # Full name:tag match (Ollama reports untagged as ":latest"). Matching only the
+        # base name would let a resident 14b satisfy the residency gate for 32b — the
+        # pod reports "ready" while inference 404s on the tag it actually wants.
+        want = model if ":" in model else f"{model}:latest"
         try:
             r = await self._get_http().get(f"{host}/api/ps", timeout=10.0)
             if r.status_code != 200:
                 return False
             for m in r.json().get("models", []):
-                if m.get("name", "").split(":")[0] != base:
+                if m.get("name", "") != want:
                     continue
                 size = m.get("size", 0) or 0
                 vram = m.get("size_vram", 0) or 0

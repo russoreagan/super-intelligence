@@ -1535,7 +1535,20 @@ class ModelRouter:
                             except Exception:
                                 pass
                     if text_parts or got_done:
-                        return _strip_chatml("".join(text_parts)), in_tok, out_tok
+                        _raw_joined = "".join(text_parts)
+                        _stripped = _strip_chatml(_raw_joined)
+                        # DIAG: the model answered (200, done) but the content stripped
+                        # to nothing — pure ChatML/markup. Suspected source of empty
+                        # monologue ticks. Log the raw form so we can see what it emits.
+                        if _raw_joined and not _stripped.strip():
+                            logger.warning(
+                                "[RunPod] response stripped to empty "
+                                "(out_tok=%d, raw_len=%d) raw=%r",
+                                out_tok,
+                                len(_raw_joined),
+                                _raw_joined[:300],
+                            )
+                        return _stripped, in_tok, out_tok
                     # Connected but produced nothing — treat as a soft failure and retry.
                     logger.warning(
                         "[RunPod] stream produced no content (attempt %d/%d)", attempt + 1, attempts

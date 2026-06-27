@@ -1992,6 +1992,17 @@ class DefaultModeNetwork:
                 self._record_step_failure("monologue", e)
                 model_ok = False
 
+        # DIAG: which path produced no thought, so empty ticks on a healthy model
+        # can be traced to monologue vs rumination (and correlated with the
+        # model_router strip-to-empty warning).
+        if not model_ok:
+            logger.warning(
+                "[Background reflection] DIAG empty tick — mode=%s flavor=%s drive=%.2f",
+                mode,
+                flavor,
+                drive,
+            )
+
         # Secondary steps — each isolated; they do not drive backoff.
         if self._thought_count % 3 == 0 and self._parietal:
             await self._run_step("simulation", self._run_simulation(turn_id))
