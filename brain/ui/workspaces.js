@@ -31,13 +31,28 @@
   let usageScope = 'org';     // 'org' (this org) | 'all' (platform-superadmin fleet view)
   let _scopeChosen = false;   // true once the user picks a scope — stops the admin default re-applying
   let podStatus = null;       // /__pod_status — shared GPU pod uptime + accrued cost
-  let podMeterTimer = null;   // ticking refresh while the Live dashboard is visible
+  let podMeterTimer = null;   // ticking refresh while the Agents view is visible
   let agentSel = null;        // open agent_id
   let partnerKeys = null;
   let connectorsCache = null;
 
   // ── agent helpers (shared across rail / dashboard / list) ────────────────
+  // "enabled" — the agent isn't paused. Distinct from real activity (see agentStatus).
   const isLive = (a) => !!a && a.enabled !== false;
+  // An agent counts as actively running if it logged a turn within this window
+  // (a proxy for "running now / in-flight" — the turn log is all the UI has).
+  const ACTIVE_WINDOW_MS = 5 * 60 * 1000;
+  // The status the dot communicates: paused (disabled) · active (ran in the last
+  // ~5 min) · idle (enabled but quiet). Reads real last-activity from the
+  // agent-turn log (agentActivity) rather than the mere enabled flag.
+  function agentStatus(a) {
+    if (!a || a.enabled === false) return { state: 'paused', color: 'var(--temporal)', cls: 'dot-status', label: 'paused' };
+    const act = agentActivity && agentActivity[a.agent_id];
+    const lastTs = act && act.lastTs ? act.lastTs : 0;
+    if (lastTs && (Date.now() - lastTs) <= ACTIVE_WINDOW_MS)
+      return { state: 'active', color: 'var(--ok)', cls: 'dot-status live', label: 'active' };
+    return { state: 'idle', color: 'var(--ink-4)', cls: 'dot-status', label: 'idle' };
+  }
   // Compact "time since" for tight rail/dashboard cells: 12s · 4m · 3h · 5d · —
   function agoShort(ms) {
     if (!isFinite(ms) || ms < 0) return '—';
@@ -114,7 +129,7 @@
     usageRange = { key, since: since || null, until: until || null };
     await Promise.all([loadAgentUsage(), loadPodStatus()]);
     const main = document.getElementById('ag-main');
-    if (main && agView === 'live') renderLiveDashboard(main);
+    if (main && agView === 'agents') renderAgentsView(main);
   }
   // Re-fill the per-card cost / token / call cells in place (on the 30s tick).
   function repaintUsageCells() {
@@ -134,16 +149,17 @@
     const tot = document.getElementById('range-total');
     if (tot) tot.textContent = '$' + dashboardShown().reduce((s, a) => s + agentCostUsd(agentUsage && agentUsage[a.agent_id]), 0).toFixed(2);
   }
-  // Which agents the dashboard shows for the current range: live agents always; for
-  // a historical range, also any agent that had usage in it (now-paused cost-runners
-  // included). Sorted by cost so whatever is running up the bill floats to the top.
+  // The unified Agents view lists EVERY agent — its status dot says whether each is
+  // active / idle / paused. Ordered by status (active first, paused last), and within
+  // a status band by cost, so whatever is running up the bill floats to the top.
+  const STATUS_RANK = { active: 0, idle: 1, paused: 2 };
   function dashboardShown() {
     const ags = (agentsData && agentsData.agents) || [];
-    const map = new Map();
-    ags.filter(isLive).forEach((a) => map.set(a.agent_id, a));
-    if (usageRange.key !== 'session') ags.forEach((a) => { if (agentUsage && agentUsage[a.agent_id]) map.set(a.agent_id, a); });
-    return [...map.values()].sort((x, y) =>
-      agentCostUsd(agentUsage && agentUsage[y.agent_id]) - agentCostUsd(agentUsage && agentUsage[x.agent_id]));
+    return ags.slice().sort((x, y) => {
+      const rx = STATUS_RANK[agentStatus(x).state], ry = STATUS_RANK[agentStatus(y).state];
+      if (rx !== ry) return rx - ry;
+      return agentCostUsd(agentUsage && agentUsage[y.agent_id]) - agentCostUsd(agentUsage && agentUsage[x.agent_id]);
+    });
   }
 
   // ── masthead dropdown ────────────────────────────────────────────────────
@@ -215,7 +231,7 @@
     // The cross-org "All orgs" view inside Agents stays platform-admin (isAdmin).
     const show = { labs: true, agents: orgAdmin && mandatesEnabled, api: orgAdmin };
     $$('.ws-opt').forEach((t) => t.classList.toggle('locked', !show[t.dataset.ws]));
-    // Land on Agents (the Live dashboard) on the first gating resolution after boot
+    // Land on Agents (the unified agents view) on the first gating resolution after boot
     // when it's available; otherwise Labs. Later re-gates only enforce the lock
     // fallback, so they don't yank a user back out of whatever they navigated to.
     if (!_landed) {
@@ -268,7 +284,7 @@
     paintAgents();
   }
   // Roll up the durable agent-turn log into per-agent { count, lastTs } so the
-  // Live dashboard + rail can show real activity (the engine-API path records
+  // Agents view + rail can show real activity (the engine-API path records
   // these; interactive personas without API traffic simply read as idle).
   async function loadAgentActivity() {
     try {
@@ -311,8 +327,8 @@
       podStatus = r.ok ? await r.json() : null;
     } catch (e) { podStatus = null; }
   }
-  // which sub-view is active in Agents (Live dashboard is the landing view)
-  let agView = 'live';
+  // which sub-view is active in Agents (the unified agents list is the landing view)
+  let agView = 'agents';
   let agRoleSel = null; // persists selected role across reloads
   let connectorsDetails = null; // [{name, url, display_name}]
   let connectorsEnvManaged = false; // true → registry pinned via BRAIN_CMA_MCP_SERVERS
@@ -321,16 +337,14 @@
     const host = document.getElementById('ws-agents');
     const ags = (agentsData && agentsData.agents) || [];
     const roles = (agentsData && agentsData.roles) || [];
-    const live = ags.filter(isLive);
-    const paused = ags.length - live.length;
+    const activeCount = ags.filter(a => agentStatus(a).state === 'active').length;
     host.innerHTML = `
       <div class="ws-grid" style="grid-template-columns:268px 1fr;">
         <div class="ws-rail">
           <div class="rail-head"><h2>Agents</h2><span class="n">admin</span></div>
 
           <div class="rail-sect">
-            <button class="rail-item ag-nav ${agView==='live'?'on':''}" data-view="live"><span class="ri-name"><span class="dot-status live" style="background:var(--ok)"></span>Live</span><span class="ri-meta">${live.length} running${paused?` · ${paused} paused`:''}</span></button>
-            <button class="rail-item ag-nav ${agView==='list'?'on':''}" data-view="list"><span class="ri-name">All agents</span><span class="ri-meta">${ags.length} total · ${live.length} live</span></button>
+            <button class="rail-item ag-nav ${agView==='agents'?'on':''}" data-view="agents"><span class="ri-name"><span class="dot-status ${activeCount?'live':''}" style="background:${activeCount?'var(--ok)':'var(--ink-4)'}"></span>Agents</span><span class="ri-meta">${ags.length} total · ${activeCount} active</span></button>
           </div>
 
           <div class="rail-div"></div>
@@ -358,20 +372,16 @@
     else if (agView === 'roles') renderRoles(main);
     else if (agView === 'limits') renderAccountLimits(main);
     else if (agView === 'connectors') renderConnectors(main);
-    else if (agView === 'list') renderAgentsList(main);
-    else renderLiveDashboard(main);
+    else renderAgentsView(main);
   }
   function railAgent(a) {
-    const live = isLive(a);
-    const sc = live ? 'var(--ok)' : 'var(--temporal)';
+    const st = agentStatus(a);
     const act = agentActivity && agentActivity[a.agent_id];
-    // Mirror the design's "persona · uptime" (live) / "persona · status" (idle),
-    // but read uptime as real last-activity from the agent-turn log.
-    const meta = live
-      ? `${personaName(a.persona)} · ${act && act.lastTs ? agoShort(Date.now() - act.lastTs) : 'ready'}`
-      : `${personaName(a.persona)} · paused`;
-    const dotCls = live ? 'dot-status live' : 'dot-status';
-    return `<button class="rail-item rail-agent" data-agent="${esc(a.agent_id)}"><span class="ri-name"><span class="${dotCls}" style="background:${sc}"></span>${esc(a.name || a.agent_id)}</span><span class="ri-meta">${esc(meta)}</span></button>`;
+    // "persona · <last-activity>" when it has run, else the status word.
+    const detail = st.state === 'paused' ? 'paused'
+      : (act && act.lastTs ? agoShort(Date.now() - act.lastTs) : st.state);
+    const meta = `${personaName(a.persona)} · ${detail}`;
+    return `<button class="rail-item rail-agent" data-agent="${esc(a.agent_id)}"><span class="ri-name"><span class="${st.cls}" style="background:${st.color}"></span>${esc(a.name || a.agent_id)}</span><span class="ri-meta">${esc(meta)}</span></button>`;
   }
 
   // Convert an ISO timestamp to a <input type="datetime-local"> value (local time).
@@ -389,7 +399,7 @@
     if (scope === 'all' && usageRange.key === 'session') usageRange = { key: 'today', since: null, until: null };
     await Promise.all([loadAgentUsage(), loadPodStatus()]);
     const main = document.getElementById('ag-main');
-    if (main && agView === 'live') renderLiveDashboard(main);
+    if (main && agView === 'agents') renderAgentsView(main);
   }
   // A card in the all-orgs fleet view: built from a usage row (no agentsData), with
   // an org chip and identity derived from agent_id. Not clickable (other orgs' Labs).
@@ -420,16 +430,16 @@
     </div>`;
   }
 
-  // ── Live dashboard — running agents + a date-range usage/cost monitor ─────
-  function renderLiveDashboard(main) {
+  // ── Agents — every agent (status dot = live/idle/paused) + a date-range cost monitor ──
+  function renderAgentsView(main) {
     const ags = (agentsData && agentsData.agents) || [];
-    const live = ags.filter(isLive);
-    const paused = ags.length - live.length;
+    const counts = { active: 0, idle: 0, paused: 0 };
+    ags.forEach(a => counts[agentStatus(a).state]++);
     const allMode = usageScope === 'all';
     const presets = allMode ? RANGE_PRESETS.filter(p => p.key !== 'session') : RANGE_PRESETS;
     const isSession = usageRange.key === 'session';
     const rangeLabel = (RANGE_PRESETS.find(p => p.key === usageRange.key) || {}).label || 'Range';
-    // org scope → cards from this org's agents; all scope → rows from every org.
+    // org scope → a card per agent in this org; all scope → rows from every org.
     const shown = allMode ? [] : dashboardShown();
     const allRows = allMode ? (agentUsageAll || []).slice().sort((x, y) => agentCostUsd(y) - agentCostUsd(x)) : [];
     const rangeTotal = allMode
@@ -443,13 +453,13 @@
       <div class="between" style="align-items:flex-start;">
         <div>
           <div class="page-eyebrow">Agents · operational${allMode ? ' · platform' : ''}</div>
-          <div class="page-title">${allMode ? 'All orgs' : 'Live'}</div>
+          <div class="page-title">${allMode ? 'All orgs' : 'Agents'}</div>
           <p class="page-lede">${allMode
             ? 'Every org\'s agents across the platform, by cost over the selected range — cumulative through restarts. The biggest spenders float to the top.'
-            : 'Running agents and their model usage. Pick a range to total cost + tokens across every time an agent ran — cumulative through restarts. Click an agent to open its persona in Labs.'}</p>
+            : 'Every agent and its model usage — the status dot shows whether it\'s active (ran in the last few minutes), idle, or paused. Pick a range to total cost + tokens across every time an agent ran, cumulative through restarts. Click an agent to observe its persona in Labs.'}</p>
         </div>
         <div class="row" style="gap:10px; margin-top:14px; flex-shrink:0; align-items:center;">
-          ${allMode ? '' : `<span class="chip"><span class="dot live" style="background:var(--ok);"></span>${live.length} running</span>`}
+          ${allMode ? '' : `<span class="chip"><span class="dot live" style="background:var(--ok);"></span>${counts.active} active</span>`}
           <span class="data" id="pod-meter" style="font-size:10px; color:var(--ink-4);"></span>
         </div>
       </div>
@@ -467,10 +477,13 @@
       ${(allMode ? allRows.length : shown.length)
         ? `<div class="dash-grid" style="margin-top:22px;">${allMode ? allRows.map(dashCardAll).join('') : shown.map(a => dashCard(a)).join('')}</div>
            <div class="data" style="font-size:8.5px; color:var(--ink-4); margin-top:12px; line-height:1.6;">Est. cost — real cloud spend + the agent's share of the GPU pod, valued by its compute-seconds × the pod's $/hr (hover a cost for the split). Totals are cumulative over the selected range, summed across every restart.${isSession ? ' This session = the current process uptime.' : ''}</div>`
-        : `<div class="empty" style="margin-top:22px;"><h3>No usage in this range</h3><p>No agent ${allMode ? 'across any org ' : ''}called the model in the selected window${isSession ? ' this session' : ''}.${allMode ? '' : ' Widen the range, or enable an agent under <b>All agents</b>.'}</p></div>`}
+        : `<div class="empty" style="margin-top:22px;"><h3>${allMode ? 'No usage in this range' : 'No agents yet'}</h3><p>${allMode
+            ? `No agent across any org called the model in the selected window.`
+            : 'Pair a persona with a role to create your first agent.'}</p></div>`}
       <div style="margin-top:28px; padding-top:20px; border-top:1px solid var(--line-faint); display:flex; align-items:center; justify-content:space-between;">
-        <span class="data" style="font-size:9px; color:var(--ink-4);">${allMode ? `${orgCount} org${orgCount === 1 ? '' : 's'} · ${allRows.length} agent${allRows.length === 1 ? '' : 's'}` : `${paused} paused`}</span>
-        ${allMode ? '' : `<button class="link ag-nav" data-view="list" style="font-size:9px;">All agents <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m9 18 6-6-6-6"/></svg></button>`}
+        <span class="data" style="font-size:9px; color:var(--ink-4);">${allMode
+          ? `${orgCount} org${orgCount === 1 ? '' : 's'} · ${allRows.length} agent${allRows.length === 1 ? '' : 's'}`
+          : `${counts.active} active · ${counts.idle} idle · ${counts.paused} paused`}</span>
       </div></div>`;
     main.querySelectorAll('.ws-range button[data-range]').forEach(b => b.addEventListener('click', () => setUsageRange(b.dataset.range)));
     main.querySelectorAll('#scope-toggle button[data-scope]').forEach(b => b.addEventListener('click', () => setUsageScope(b.dataset.scope)));
@@ -480,12 +493,11 @@
       to && to.value ? new Date(to.value).toISOString() : null);
     if (from) from.addEventListener('change', applyCustom);
     if (to) to.addEventListener('change', applyCustom);
-    main.querySelectorAll('.ag-nav').forEach(n => n.addEventListener('click', () => { agView = n.dataset.view; agentSel = null; paintAgents(); }));
     if (!allMode) main.querySelectorAll('.dash-card').forEach(c => c.addEventListener('click', () => openAgentInLabs(c.dataset.agent, c.dataset.name, c.dataset.persona)));
     refreshPodMeter();
   }
   // Fill (and keep ticking) the shared GPU-pod uptime + accrued-cost meter in the
-  // dashboard header. Self-cancelling: stops once the Live view is no longer shown.
+  // dashboard header. Self-cancelling: stops once the Agents view is no longer shown.
   async function refreshPodMeter() {
     const ws = document.getElementById('ws-agents');
     const el = document.getElementById('pod-meter');
@@ -514,22 +526,23 @@
     if (!podMeterTimer) podMeterTimer = setInterval(refreshPodMeter, 30000);
   }
   function dashCard(a) {
-    const live = isLive(a);
+    const st = agentStatus(a);
+    const enabled = a.enabled !== false; // cost cells read $0.00 when enabled, — when paused
     const u = (agentUsage && agentUsage[a.agent_id]) || null;
     const lt = u && u.last_ts ? Date.parse(u.last_ts)
       : (agentActivity && agentActivity[a.agent_id] ? agentActivity[a.agent_id].lastTs : 0);
     const lastActive = lt ? agoShort(Date.now() - lt) + ' ago' : '—';
-    const costLabel = u ? '$' + agentCostUsd(u).toFixed(2) : (live ? '$0.00' : '—');
-    const tokLabel = u ? fmtTokens((u.in_tok || 0) + (u.out_tok || 0)) : (live ? '0' : '—');
-    const callsLabel = u ? String(u.calls) : (live ? '0' : '—');
-    const dotCls = live ? 'dot-status live' : 'dot-status';
-    return `<button class="dash-card" data-persona="${esc(a.persona)}" data-agent="${esc(a.agent_id)}" data-name="${esc(a.name || a.agent_id)}">
+    const costLabel = u ? '$' + agentCostUsd(u).toFixed(2) : (enabled ? '$0.00' : '—');
+    const tokLabel = u ? fmtTokens((u.in_tok || 0) + (u.out_tok || 0)) : (enabled ? '0' : '—');
+    const callsLabel = u ? String(u.calls) : (enabled ? '0' : '—');
+    return `<button class="dash-card" data-status="${st.state}" data-persona="${esc(a.persona)}" data-agent="${esc(a.agent_id)}" data-name="${esc(a.name || a.agent_id)}">
       <div class="dc-head">
         <div class="dc-identity">
-          <span class="${dotCls}" style="background:${live ? 'var(--ok)' : 'var(--temporal)'};"></span>
+          <span class="${st.cls}" style="background:${st.color};" title="${esc(st.label)}"></span>
           <span class="dc-name">${esc(a.name || a.agent_id)}</span>
           <span class="chip persona"><span class="dot"></span>${esc(personaName(a.persona))}</span>
           <span class="chip role"><span class="dot"></span>${esc(a.mandate_id)}</span>
+          <span class="data" style="font-size:8px; letter-spacing:0.14em; text-transform:uppercase; color:var(--ink-4);">${esc(st.label)}</span>
         </div>
         <span class="dc-launch-hint"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg> Open in Labs</span>
       </div>
@@ -555,30 +568,6 @@
   }
   function personaSlug(id) { return String(id || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'default'; }
 
-  function renderAgentsList(main) {
-    const ags = (agentsData && agentsData.agents) || [];
-    main.innerHTML = `<div class="main-pad" style="max-width:none;">
-      <div class="page-eyebrow">Agents · deployment layer</div>
-      <div class="page-title">Agents</div>
-      <p class="page-lede">An agent is a persona paired with a role — a job with its own instructions, permissions, and spend caps. The same persona can power many agents; each is reachable through the engine API.</p>
-      <div class="ag-table" style="margin-top:26px;">
-        <div class="ag-table-head"><span>Agent</span><span>Persona × Role</span><span>Status</span><span>Permissions</span><span></span></div>
-        ${ags.map(a => agentRow(a)).join('') || '<div style="padding:22px; text-align:center;" class="data">No agents yet — pair a persona with a role.</div>'}
-      </div></div>`;
-    main.querySelectorAll('.ag-row').forEach(r => r.addEventListener('click', () => { agentSel = r.dataset.agent; agView = 'detail'; paintAgents(); }));
-  }
-  function agentRow(a) {
-    const sc = a.enabled === false ? 'var(--ink-4)' : 'var(--ok)';
-    const status = a.enabled === false ? 'paused' : 'live';
-    const nperm = a.permissions && typeof a.permissions === 'object' ? Object.keys(a.permissions).length : 0;
-    return `<button class="ag-row" data-agent="${esc(a.agent_id)}">
-      <span><span class="serif-h" style="font-size:15.5px;">${esc(a.name || a.agent_id)}</span><span class="data" style="font-size:9px; display:block; margin-top:2px;">${esc(a.agent_id)}</span></span>
-      <span class="ar-px"><span class="chip persona" style="padding:3px 8px;"><span class="dot"></span>${esc(personaName(a.persona))}</span><span class="chip role" style="padding:3px 8px;"><span class="dot"></span>${esc(a.mandate_id)}</span></span>
-      <span class="ar-status"><span class="dot-status" style="background:${sc}"></span>${status}</span>
-      <span class="data" style="font-size:11px;">${nperm ? nperm + ' override' + (nperm===1?'':'s') : 'inherits'}</span>
-      <span class="ar-chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg></span>
-    </button>`;
-  }
 
   function renderAgentDetail(main) {
     const a = ((agentsData && agentsData.agents) || []).find(x => x.agent_id === agentSel);
@@ -586,7 +575,7 @@
     if (!a) { main.innerHTML = '<div class="main-pad"><div class="empty"><h3>Agent not found</h3></div></div>'; return; }
     const perms = (a.permissions && typeof a.permissions === 'object') ? { ...a.permissions } : {};
     main.innerHTML = `<div class="main-pad" style="max-width:760px;">
-      <button class="link ag-back" style="margin-bottom:18px;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg> All agents</button>
+      <button class="link ag-back" style="margin-bottom:18px;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg> Agents</button>
       <div class="between" style="align-items:flex-start;">
         <div>
           <div class="page-eyebrow">Agent · permission editor</div>
@@ -661,7 +650,7 @@
       });
     })();
 
-    main.querySelector('.ag-back').addEventListener('click', () => { agView = 'list'; agentSel = null; paintAgents(); });
+    main.querySelector('.ag-back').addEventListener('click', () => { agView = 'agents'; agentSel = null; paintAgents(); });
     main.querySelector('#ag-view-persona').addEventListener('click', () => {
       setWorkspace('labs');
       // best-effort: open the persona in the settings studio
@@ -714,7 +703,7 @@
     try {
       const r = await fetch('/agents/' + encodeURIComponent(id), { method: 'DELETE' });
       if (!r.ok && r.status !== 404) { const j = await r.json().catch(() => ({})); throw new Error(j.detail || ('HTTP ' + r.status)); }
-      agentSel = null; agView = 'list'; await loadAgents();
+      agentSel = null; agView = 'agents'; await loadAgents();
     } catch (e) { window.alert('Could not remove agent: ' + e.message); }
   }
 
