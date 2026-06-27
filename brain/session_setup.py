@@ -256,6 +256,18 @@ class _SetupMixin:
                 and hasattr(getattr(self, "motor", None)._cloud, "reload_mcp_config")
                 else None
             ),
+            # Status of the cloud connector (Claude) the MCP connectors run through,
+            # so the Connectors UI can show whether it's hooked up + which model.
+            cloud_status_fn=lambda: (
+                {
+                    "available": bool(getattr(self.motor._cloud, "available", False)),
+                    "model": str(getattr(self.motor._cloud, "_model", "") or ""),
+                    "actions_enabled": bool(_brain_settings.get("motor_enable_cloud_actions")),
+                }
+                if getattr(self, "motor", None)
+                and getattr(getattr(self, "motor", None), "_cloud", None) is not None
+                else {"available": False}
+            ),
             # Report the resolved tier on /health so the gateway only spins the shared
             # GPU pod for full-tier brains. _local_disabled is the authoritative signal:
             # a lite brain has local routing off (every local/runpod route → cloud), so

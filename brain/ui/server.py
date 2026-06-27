@@ -127,6 +127,7 @@ class UIServer:
         approvals_fn: Callable[[], list] | None = None,
         connectors_fn: Callable[[], list] | None = None,
         connector_reload_fn: Callable[[], None] | None = None,
+        cloud_status_fn: Callable[[], dict] | None = None,
         tier_fn: Callable[[], str] | None = None,
         usage_fn: Callable[..., dict] | None = None,
         wiring=None,
@@ -153,6 +154,9 @@ class UIServer:
         self._connector_reload_fn = (
             connector_reload_fn  # () -> None; hot-reload after register/remove
         )
+        # () -> {available, model, actions_enabled}. Status of the cloud connector
+        # (Claude / Anthropic cloud actions) the MCP connectors are reached through.
+        self._cloud_status_fn = cloud_status_fn
         # () -> 'full'|'lite'. The brain's resolved runtime tier, surfaced on /health
         # so the gateway's pod reconciler knows whether THIS brain actually uses the
         # shared GPU pod: a 'lite' brain remaps every local/runpod route to cloud, so
@@ -708,11 +712,19 @@ class UIServer:
                     raise HTTPException(status_code=403, detail="org admin only")
                 from brain.clusters.cma_executor import is_env_managed, list_connector_details
 
+                cloud = None
+                if self._cloud_status_fn is not None:
+                    try:
+                        cloud = self._cloud_status_fn()
+                    except Exception:
+                        cloud = None
                 try:
                     return {
                         "connectors": names,
                         "details": list_connector_details(),
                         "env_managed": is_env_managed(),
+                        # The cloud connector (Claude) the MCP connectors run through.
+                        "cloud": cloud,
                     }
                 except Exception:
                     pass

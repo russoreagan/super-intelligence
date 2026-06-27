@@ -316,6 +316,7 @@
   let agRoleSel = null; // persists selected role across reloads
   let connectorsDetails = null; // [{name, url, display_name}]
   let connectorsEnvManaged = false; // true → registry pinned via BRAIN_CMA_MCP_SERVERS
+  let connectorsCloud = null;   // { available, model, actions_enabled } — the Claude cloud connector
   function paintAgents() {
     const host = document.getElementById('ws-agents');
     const ags = (agentsData && agentsData.agents) || [];
@@ -815,7 +816,7 @@
   async function loadConnectorDetails() {
     try {
       const r = await fetch('/connectors?full=1');
-      if (r.ok) { const d = await r.json(); connectorsDetails = d.details || []; connectorsCache = d.connectors || []; connectorsEnvManaged = !!d.env_managed; }
+      if (r.ok) { const d = await r.json(); connectorsDetails = d.details || []; connectorsCache = d.connectors || []; connectorsEnvManaged = !!d.env_managed; connectorsCloud = d.cloud || null; }
     } catch (e) { connectorsDetails = []; }
   }
   function renderConnectors(main) {
@@ -824,11 +825,29 @@
     const _plus = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>';
     const _trash = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg>';
     const _info = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 16v-4M12 8h.01"/><circle cx="12" cy="12" r="10"/></svg>';
+    // The cloud connector (Claude) is the conduit — the MCP connectors are reached
+    // through it. Show whether it's hooked up + which model, so the list isn't just
+    // a bag of MCP servers with no indication of how the agent reaches them.
+    const cl = connectorsCloud || {};
+    const clOn = !!cl.available && cl.actions_enabled !== false;
+    const clStatus = !cl.available ? 'Not connected — no Anthropic key on this org'
+      : (cl.actions_enabled === false ? 'Key present · cloud actions disabled in Account Limits'
+      : 'Connected · the agent can reach external services through Claude');
+    const cloudCard = `<div class="card" style="margin-top:18px; display:flex; align-items:center; gap:14px;">
+        <span class="dot-status ${clOn ? 'live' : ''}" style="background:${clOn ? 'var(--ok)' : 'var(--temporal)'}; flex-shrink:0;"></span>
+        <div style="flex:1; min-width:0;">
+          <div class="serif-h" style="font-size:16px;">Claude <span class="data" style="font-size:9px; opacity:.55; letter-spacing:.04em;">CLOUD CONNECTOR</span></div>
+          <div class="data" style="font-size:10px; margin-top:3px; color:var(--ink-3);">${esc(clStatus)}</div>
+        </div>
+        ${cl.available && cl.model ? `<span class="chip"><span class="dot"></span>${esc(cl.model)}</span>` : ''}
+      </div>`;
     main.innerHTML = `<div class="main-pad" style="max-width:760px;">
       <div class="between"><div><div class="page-eyebrow">Governance · MCP</div><div class="page-title">Connectors</div>
-      <p class="page-lede">MCP servers the brain's agent can call. Registering a connector generates a shared secret — copy it to both Railway and your app. The secret is shown once.</p></div>
+      <p class="page-lede">External services the agent reaches <b>through Claude</b>, the cloud connector. The brain dispatches a cloud action and Claude calls the MCP servers below. Registering one generates a shared secret — copy it to both Railway and your app. Shown once.</p></div>
       ${envManaged ? '' : `<button class="btn btn-primary" id="conn-register" style="margin-top:8px;">${_plus} Register connector</button>`}</div>
+      ${cloudCard}
       ${envManaged ? `<div class="note" style="margin-top:18px;">${_info}<p>Connectors are pinned via <b>BRAIN_CMA_MCP_SERVERS</b> and are read-only here. Unset that environment variable to manage connectors from this page.</p></div>` : ''}
+      <div class="rail-sect-lab" style="margin-top:22px; padding-left:2px;">Available through Claude${rows.length ? ` · ${rows.length}` : ''}</div>
       <div class="mint-reveal" id="conn-reveal"></div>
       <div class="ag-table" style="margin-top:24px;">
         <div class="ag-table-head" style="grid-template-columns:1fr 2fr 1fr 60px;"><span>Name</span><span>URL</span><span>Env vars</span><span></span></div>
