@@ -242,9 +242,19 @@
 .workspace .dc-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 20px 16px; }
 .workspace .dc-identity { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .workspace .dc-name { font-family: var(--serif); font-size: 18px; font-weight: 600; letter-spacing: -0.01em; color: var(--ink); }
-.workspace .dc-launch-hint { font-family: var(--mono); font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase;
-  color: var(--signal-deep); opacity: 0; transition: opacity 160ms; flex-shrink: 0; display: flex; align-items: center; gap: 4px; }
-.workspace .dc-launch-hint svg { width: 11px; height: 11px; }
+.workspace .dc-launch-hint { font-family: var(--mono); font-size: 11px; letter-spacing: 0.02em; font-weight: 600;
+  color: var(--signal-deep); opacity: 0; transition: opacity 160ms; flex-shrink: 0; display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 11px; border-radius: 999px; border: 1px solid color-mix(in oklch, var(--signal-deep) 40%, transparent);
+  background: color-mix(in oklch, var(--signal-deep) 10%, transparent); }
+.workspace .dc-launch-hint svg { width: 15px; height: 15px; }
+
+/* Prominent "Open in MRI" action (persona + agent detail) — always visible, accent. */
+.workspace .mri-open { display: inline-flex; align-items: center; gap: 7px; padding: 8px 15px; border-radius: 999px;
+  font-family: var(--mono); font-size: 12px; letter-spacing: 0.02em; font-weight: 600; cursor: pointer;
+  color: var(--signal-deep); background: color-mix(in oklch, var(--signal-deep) 12%, transparent);
+  border: 1px solid color-mix(in oklch, var(--signal-deep) 45%, transparent); transition: background 140ms; }
+.workspace .mri-open:hover { background: color-mix(in oklch, var(--signal-deep) 22%, transparent); }
+.workspace .mri-open svg { width: 16px; height: 16px; }
 .workspace .dc-metrics { display: grid; grid-template-columns: repeat(4, 1fr); border-top: 1px solid var(--line-faint); }
 .workspace .dc-metric { padding: 13px 18px; border-right: 1px solid var(--line-faint); background: var(--paper-2); min-width: 0; }
 .workspace .dc-metric:last-child { border-right: none; }

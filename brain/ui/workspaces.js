@@ -20,6 +20,8 @@
     api: '<path d="m7 8-4 4 4 4M17 8l4 4-4 4M14 4l-4 16"/>',
   };
   const WS_NAMES = { labs: 'MRI', agents: 'Agents', personas: 'Personas', api: 'API' };
+  // The MRI dropdown glyph (scan ring + pulse), reused on every "Open in MRI" action.
+  const MRI_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' + WS_ICONS.labs + '</svg>';
 
   let workspace = 'labs';
   let _landed = false;      // first gating resolution lands on Agents (or Labs if locked)
@@ -470,7 +472,7 @@
           <div class="page-title">${allMode ? 'All orgs' : 'Agents'}</div>
           <p class="page-lede">${allMode
             ? 'Every org\'s agents across the platform, by cost over the selected range — cumulative through restarts. The biggest spenders float to the top.'
-            : 'Every agent and its model usage — the status dot shows whether it\'s active (ran in the last few minutes), idle, or paused. Pick a range to total cost + tokens across every time an agent ran, cumulative through restarts. Click an agent to observe its persona in Labs.'}</p>
+            : 'Every agent and its model usage — the status dot shows whether it\'s active (ran in the last few minutes), idle, or paused. Pick a range to total cost + tokens across every time an agent ran, cumulative through restarts. Click a card to open that agent live in MRI.'}</p>
         </div>
         <div class="row" style="gap:10px; margin-top:14px; flex-shrink:0; align-items:center;">
           ${allMode ? '' : `<span class="chip"><span class="dot live" style="background:var(--ok);"></span>${counts.active} active</span>`}
@@ -558,7 +560,7 @@
           <span class="chip role"><span class="dot"></span>${esc(a.mandate_id)}</span>
           <span class="data" style="font-size:8px; letter-spacing:0.14em; text-transform:uppercase; color:var(--ink-4);">${esc(st.label)}</span>
         </div>
-        <span class="dc-launch-hint"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg> Open in Labs</span>
+        <span class="dc-launch-hint">${MRI_SVG} Open in MRI</span>
       </div>
       <div class="dc-metrics">
         <div class="dc-metric dm-cost"><div class="dm-val" data-cost-for="${esc(a.agent_id)}" title="${esc(costTitle(u))}">${esc(costLabel)}</div><div class="dm-lab">Est. cost</div></div>
@@ -688,6 +690,7 @@
           <button class="set-back" id="pers-back-btn"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg> Overview</button>
           <div class="bar-head"><div id="pers-bar-title">Persona</div><div id="pers-bar-blurb"></div></div>
           <div class="bar-actions">
+            <button class="mri-open" id="pers-open-mri" title="Watch this persona live in MRI">${MRI_SVG} Open in MRI</button>
             <div class="dirty-pill" id="pers-dirty-pill"><span class="chip"></span><span id="pers-dirty-text">0 unsaved</span></div>
             <button class="restart-banner" id="pers-restart-banner">Restart required</button>
             <button class="btn-save idle" id="pers-save-btn">Save</button>
@@ -696,6 +699,7 @@
         <div class="set-scroll" id="pers-scroll"><div class="cat-wrap" id="pers-cat-wrap"></div></div>
       </div>`;
     main.querySelector('#pers-back-btn').addEventListener('click', () => { perView = 'overview'; personaSel = null; paintPersonas(); });
+    main.querySelector('#pers-open-mri').addEventListener('click', () => openPersonaInMri(personaSlug(personaSel)));
     if (window.__settingsUI && window.__settingsUI.mountPersona) window.__settingsUI.mountPersona(personaSel);
   }
 
@@ -773,7 +777,7 @@
           <span class="chip role"><span class="dot"></span>${p.agents.length} agent${p.agents.length === 1 ? '' : 's'}</span>
           <span class="data" style="font-size:8px; letter-spacing:0.14em; text-transform:uppercase; color:var(--ink-4);">${esc(st.label)}</span>
         </div>
-        <span class="dc-launch-hint"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg> Open in MRI</span>
+        <span class="dc-launch-hint">${MRI_SVG} Open in MRI</span>
       </div>
       <div class="dc-metrics">
         <div class="dc-metric dm-cost"><div class="dm-val" title="${esc(costTitle(u))}">$${personaCostUsd(p).toFixed(2)}</div><div class="dm-lab">Est. cost</div></div>
@@ -819,7 +823,7 @@
             <span class="data" style="font-size:10px;">${esc(a.agent_id)}</span>
           </div>
         </div>
-        <button class="link" id="ag-view-persona" style="margin-top:8px;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 17 17 7M7 7h10v10"/></svg> View persona in Labs</button>
+        <button class="mri-open" id="ag-view-persona" style="margin-top:8px;" title="Watch this agent live in MRI">${MRI_SVG} Open in MRI</button>
       </div>
       <div class="note" style="margin-top:22px;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg><p>Every value is <b>bounded by the account ceiling</b> set in Account Limits — an agent can be granted less, never more. Leave a field blank to inherit.</p></div>
       <div class="card" style="margin-top:18px;">
