@@ -469,7 +469,7 @@ DEFAULTS: dict[str, float | int | str] = {
     # NOTE: no per-word diarization, so multi-speaker attribution degrades).
     "stt_provider": "deepgram",
     "openai_stt_model": "gpt-4o-transcribe",
-    "anthropic_timeout_s": 120.0,
+    "anthropic_timeout_s": 300.0,
     "anthropic_connect_timeout_s": 10.0,
     "anthropic_max_retries": 2,
     # Hard ceiling on a single structured (tool-use) call, enforced via
@@ -795,7 +795,7 @@ DEFAULTS: dict[str, float | int | str] = {
     # cma_task_timeout_s: wall-clock cap on one cloud_action (mirrors the local
     #   executor's SUBPROCESS_TIMEOUT). Primary cost/runaway guard since the SDK
     #   has no managed-agents task budget.
-    "cma_task_timeout_s": 120.0,
+    "cma_task_timeout_s": 300.0,
     # cma_session_warm_reuse: 1 = reuse one warm session per process across
     #   calls (pay cold-start once); 0 = fresh session per task (debug).
     "cma_session_warm_reuse": 1,

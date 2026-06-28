@@ -319,7 +319,7 @@ class MotorCortexCluster:
             system_prompt=planner_system,
             topics=["temporal.features"],
             max_calls_per_turn=2,
-            timeout_seconds=90.0,  # cloud: no cold-load headroom needed
+            timeout_seconds=300.0,  # 5-min window: per-step planning over large scan/result context can be slow
         )
         self._planner.set_router(router)
 
@@ -338,7 +338,7 @@ class MotorCortexCluster:
             system_prompt=_STRATEGIC_SYSTEM,
             topics=[],
             max_calls_per_turn=1,
-            timeout_seconds=90.0,  # cloud doesn't need cold-load headroom; 90s = generous
+            timeout_seconds=300.0,  # 5-min window for upfront decomposition over large context
         )
         self._strategic_planner.set_router(router)
 

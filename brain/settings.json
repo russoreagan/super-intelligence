@@ -162,7 +162,7 @@
   "motor_max_jobs_per_window": 10,
   "motor_job_window_s": 3600.0,
   "motor_max_jobs_per_session": 30,
-  "anthropic_timeout_s": 120.0,
+  "anthropic_timeout_s": 300.0,
   "anthropic_connect_timeout_s": 10.0,
   "anthropic_max_retries": 2,
   "structured_call_timeout_s": 150.0,
