@@ -288,6 +288,8 @@ class FrontalCluster:
         # Sticky across turns via parietal.active_skill_context. Gated by turn type
         # and emotion (see SkillSelector.gate_conversational).
         await self._select_skills_for_turn(features, instruction, turn_id)
+        # Session-pinned partner skills are force-included regardless of relevance.
+        self._apply_pinned_skills(turn_id)
 
         # 4. Subsystem dispatch (task planner, etc.) — first match wins
         subsystem_response = await self._try_subsystem_dispatch(
@@ -459,6 +461,43 @@ class FrontalCluster:
                 cluster=CLUSTER,
                 chosen=bundle.chosen,
             )
+
+    def _apply_pinned_skills(self, turn_id: str) -> None:
+        """Force-include session-pinned partner skills in this turn's bundle, on top of
+        relevance selection. Pins ride the engine-API session through turn_ctx (set in
+        the turn route). Only ids that resolve to a live skill in the index are honored
+        (an enabled partner skill warms in as an entry); unknown/!enabled ids are
+        silently dropped — a pin can't conjure a skill that didn't pass admission."""
+        if self._skill_selector is None:
+            return
+        try:
+            from brain.turn_ctx import current_turn
+
+            pinned = current_turn().get("pinned_skills") or []
+        except Exception:
+            return
+        valid = [p for p in pinned if self._skill_selector.get_skill(p)]
+        if not valid:
+            return
+        from brain.clusters.skill_selector import SkillBundle
+
+        bundle = self._current_skill_bundle
+        if bundle is None:
+            bundle = SkillBundle(
+                tier1=self._skill_selector.tier1_names, chosen=[], pick_source="pinned"
+            )
+        chosen = list(bundle.chosen or [])
+        for p in valid:
+            if p not in chosen:
+                chosen.append(p)
+        bundle.chosen = chosen
+        self._current_skill_bundle = bundle
+        decisions.log(
+            "skill_pinned",
+            turn_id=turn_id,
+            cluster=CLUSTER,
+            pinned=valid,
+        )
 
     def _check_canned_response(self, features: dict, affect: dict) -> str | None:
         """Return a canned response for switch-only routes, or None to continue normally."""
@@ -1722,7 +1761,16 @@ class FrontalCluster:
         if _sel is not None and _bundle is not None:
             for _sk in _bundle.chosen or []:
                 _body = _sel.native_skill_body(_sk)
-                if _body:
+                if not _body:
+                    continue
+                if _sel.is_partner_skill(_sk):
+                    # App-provided (untrusted) skill: inject behind the precedence
+                    # framing + fence, NOT the trusted-native "tools are REAL, just use
+                    # them" framing. It cannot grant tools or lift approval gates.
+                    from brain.persona_context import partner_skill_block
+
+                    parts.append(partner_skill_block(_body[:6000], fence, nonce, _sk))
+                else:
                     parts.append(
                         "Active operational skill — follow this guide. The tools it names "
                         "are REAL and callable directly via the motor cortex (do not look for "

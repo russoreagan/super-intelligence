@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +41,10 @@ class ApiSession:
     # nothing is pending. Stored per-session so concurrent sessions don't collide on
     # the executor's process-global pending slot.
     pending: dict | None = None
+    # App-provided skill ids force-included in every turn of this session (the pin),
+    # on top of relevance selection. Set at session create; only ids that warmed in as
+    # enabled skills are honored at turn time.
+    pinned_skills: list[str] = field(default_factory=list)
     created_ts: float = 0.0
 
 
@@ -56,6 +60,7 @@ class ApiSessionRegistry:
         agent_id: str | None = None,
         mandate_id: str | None = None,
         partner_id: str | None = None,
+        pinned_skills: list[str] | None = None,
     ) -> ApiSession:
         sid = self._id_fn()
         s = ApiSession(
@@ -64,6 +69,7 @@ class ApiSessionRegistry:
             agent_id=agent_id,
             mandate_id=mandate_id,
             partner_id=partner_id,
+            pinned_skills=list(pinned_skills or []),
             created_ts=self._now(),
         )
         self._sessions[sid] = s
@@ -107,6 +113,7 @@ class ApiSessionRegistry:
                     "mandate_id": s.mandate_id,
                     "partner_id": s.partner_id,
                     "pending": s.pending,
+                    "pinned_skills": s.pinned_skills,
                 },
                 on_conflict="org_id,session_id",
             ).execute()
@@ -122,7 +129,8 @@ class ApiSessionRegistry:
             res = (
                 client.table("api_sessions")
                 .select(
-                    "session_id, end_user_id, agent_id, mandate_id, partner_id, pending, created_ts"
+                    "session_id, end_user_id, agent_id, mandate_id, partner_id, pending, "
+                    "pinned_skills, created_ts"
                 )
                 .eq("org_id", org)
                 .eq("session_id", session_id)
@@ -139,6 +147,7 @@ class ApiSessionRegistry:
                 mandate_id=r.get("mandate_id"),
                 partner_id=r.get("partner_id"),
                 pending=r.get("pending"),
+                pinned_skills=list(r.get("pinned_skills") or []),
                 created_ts=0.0,
             )
         except Exception as e:

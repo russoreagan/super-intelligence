@@ -187,6 +187,9 @@ class _SetupMixin:
 
             self.skill_selector = SkillSelector(self.router)
             await self.skill_selector.warm_native_skills()
+            # App-provided skills (org's approved library) — best-effort: no Supabase
+            # or no skills → no-op, never blocks boot.
+            await self.skill_selector.warm_partner_skills()
             self.frontal.set_skill_selector(self.skill_selector, self.parietal)
         except FileNotFoundError as e:
             import logging as _logging
@@ -329,6 +332,18 @@ class _SetupMixin:
             return
         from brain.api import ApiServer
 
+        # App-provided skills: the screener runs the admission pipeline on submit; the
+        # rewarm reloads the org's approved skills into the live index after any change.
+        # Both are no-ops when the skill selector is unavailable (index missing).
+        skill_screener = None
+        skill_rewarm = None
+        if getattr(self, "skill_selector", None) is not None:
+            from brain.skills_screener import SkillScreener
+
+            _screener = SkillScreener(self.router)
+            skill_screener = _screener.screen
+            skill_rewarm = self.skill_selector.warm_partner_skills
+
         self._api_server = ApiServer(
             self.api_turn,
             consolidate_runner=self.consolidate_now,
@@ -336,6 +351,8 @@ class _SetupMixin:
             approvals_list_runner=self.api_list_approvals,
             approval_resolve_runner=self.api_resolve_approval,
             purge_runner=self.api_purge_end_user,
+            skill_screener=skill_screener,
+            skill_rewarm=skill_rewarm,
         )
         self.brainstem.register_loop(
             "api_server", lambda: self._api_server.start(), restart_on_crash=False
