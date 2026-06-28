@@ -4423,6 +4423,11 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
           <span class="opt-txt"><span class="opt-name">Agents</span><span class="opt-sub">Agents · roles · limits</span></span>
           <svg class="opt-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
         </button>
+        <button class="ws-opt" data-ws="personas" role="menuitem">
+          <span class="opt-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 3c3.6 0 6.5 2.4 6.5 6 0 5-3 9-6.5 9s-6.5-4-6.5-9c0-3.6 2.9-6 6.5-6z"/><circle cx="9.5" cy="10.5" r="1"/><circle cx="14.5" cy="10.5" r="1"/></svg></span>
+          <span class="opt-txt"><span class="opt-name">Personas</span><span class="opt-sub">Overview · chemistry · self</span></span>
+          <svg class="opt-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+        </button>
         <button class="ws-opt" data-ws="labs" role="menuitem" title="MRI — Mood & Reasoning Interface">
           <span class="opt-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="9"/><path d="M7 12h2l1.5-3 2 6 1.5-3H17"/></svg></span>
           <span class="opt-txt"><span class="opt-name">MRI</span><span class="opt-sub">Mood &amp; Reasoning Interface</span></span>
@@ -4844,6 +4849,7 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
 
   <!-- ====== WORKSPACE SURFACES (Agents / API) — siblings of #main, hidden until selected ====== -->
   <section class="workspace" id="ws-agents" data-ws="agents"></section>
+  <section class="workspace" id="ws-personas" data-ws="personas"></section>
   <section class="workspace" id="ws-api" data-ws="api"></section>
 
   <!-- ====== SETTINGS PAGE ====== -->
@@ -8059,6 +8065,15 @@ function _buildPersonaPicker() {
   neutral.addEventListener('click', () => _switchPersona('', null));
   list.appendChild(neutral);
 }
+
+// Bridge for the Personas workspace (workspaces.js): switch the running process to a
+// persona so its own live inner life can be watched in MRI. Reuses the persona picker's
+// switch path (which confirms + restarts the brain); PERSONAS holds each persona's chem.
+window.requestPersonaSwitch = function (name) {
+  if (typeof _switchPersona === 'function') {
+    _switchPersona(name, (typeof PERSONAS !== 'undefined' && PERSONAS) ? PERSONAS[name] : null);
+  }
+};
 
 async function _switchPersona(name, p) {
   const msg = name

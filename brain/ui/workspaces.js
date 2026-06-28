@@ -16,9 +16,10 @@
   const WS_ICONS = {
     labs: '<circle cx="12" cy="12" r="9"/><path d="M7 12h2l1.5-3 2 6 1.5-3H17"/>',
     agents: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
+    personas: '<path d="M12 3c3.6 0 6.5 2.4 6.5 6 0 5-3 9-6.5 9s-6.5-4-6.5-9c0-3.6 2.9-6 6.5-6z"/><circle cx="9.5" cy="10.5" r="1"/><circle cx="14.5" cy="10.5" r="1"/>',
     api: '<path d="m7 8-4 4 4 4M17 8l4 4-4 4M14 4l-4 16"/>',
   };
-  const WS_NAMES = { labs: 'MRI', agents: 'Agents', api: 'API' };
+  const WS_NAMES = { labs: 'MRI', agents: 'Agents', personas: 'Personas', api: 'API' };
 
   let workspace = 'labs';
   let _landed = false;      // first gating resolution lands on Agents (or Labs if locked)
@@ -131,6 +132,11 @@
   async function setUsageRange(key, since, until) {
     usageRange = { key, since: since || null, until: until || null };
     await Promise.all([loadAgentUsage(), loadPodStatus()]);
+    if (workspace === 'personas') {
+      const pm = document.getElementById('pers-main');
+      if (pm && perView === 'overview') renderPersonasView(pm);
+      return;
+    }
     const main = document.getElementById('ag-main');
     if (main && agView === 'agents') renderAgentsView(main);
   }
@@ -186,13 +192,16 @@
     const main = document.getElementById('main');
     const ticker = document.getElementById('activity-ticker');
     const agents = document.getElementById('ws-agents');
+    const personas = document.getElementById('ws-personas');
     const api = document.getElementById('ws-api');
     const labs = ws === 'labs';
     if (main) main.style.display = labs ? '' : 'none';
     if (ticker) ticker.style.display = labs ? '' : 'none';
     agents.classList.toggle('on', ws === 'agents');
+    if (personas) personas.classList.toggle('on', ws === 'personas');
     api.classList.toggle('on', ws === 'api');
     if (ws === 'agents') ensureAgents();
+    if (ws === 'personas') ensurePersonas();
     if (ws === 'api') ensureApi();
   }
 
@@ -232,7 +241,9 @@
     // the ceilings). API: org-admin (partner keys mint against this org; the
     // reference is informational). Plain members / companion fall back to Labs.
     // The cross-org "All orgs" view inside Agents stays platform-admin (isAdmin).
-    const show = { labs: true, agents: orgAdmin && mandatesEnabled, api: orgAdmin };
+    // Personas: open to everyone (configuring your own persona is core to the app, like
+    // Labs/MRI) — the cost columns inside reuse the same admin-gated usage feed as Agents.
+    const show = { labs: true, personas: true, agents: orgAdmin && mandatesEnabled, api: orgAdmin };
     $$('.ws-opt').forEach((t) => t.classList.toggle('locked', !show[t.dataset.ws]));
     // Land on Agents (the unified agents view) on the first gating resolution after boot
     // when it's available; otherwise Labs. Later re-gates only enforce the lock
@@ -570,6 +581,194 @@
     return p ? p.name : slug;
   }
   function personaSlug(id) { return String(id || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'default'; }
+
+  // ══════════════════════════════════════════════════════════ PERSONAS ═════
+  // Mirrors the Agents workspace, but the Overview aggregates metrics BY PERSONA:
+  // every agent that runs a persona rolls its cost / tokens / calls up to it. Reuses
+  // the Agents data feeds (/agents, /agents/usage, /agents/turns) + helpers; no new
+  // endpoint. Phase 2 = the read-only Overview + a persona rail (selecting a persona
+  // opens it live in MRI); per-persona config moves in here in Phase 3.
+  let perView = 'overview';   // 'overview' (the landing) — Phase 3 adds 'detail'
+  let personaSel = null;
+
+  function ensurePersonas() {
+    const need = [];
+    if (!agentsData) need.push(loadAgents());   // loadAgents also pulls usage + activity
+    else {
+      if (!agentActivity) need.push(loadAgentActivity());
+      if (!agentUsage) need.push(loadAgentUsage());
+    }
+    if (need.length) Promise.all(need).then(paintPersonas); else paintPersonas();
+  }
+
+  // The active process persona (whose owner-lane inner life MRI shows by default).
+  function activePersonaSlug() {
+    try { return personaSlug((typeof currentSettings !== 'undefined' && currentSettings && currentSettings.persona_name) || ''); }
+    catch (e) { return ''; }
+  }
+
+  // All personas — from the settings catalogue plus any referenced by an agent — each
+  // with its agents and summed usage. Personas with no agents still show (zero metrics).
+  function personaRollup() {
+    const ags = (agentsData && agentsData.agents) || [];
+    const known = (window.SETTINGS && window.SETTINGS.personas) || [];
+    const map = {};
+    const ensure = (slug, name) => map[slug] || (map[slug] = {
+      slug, name: name || personaName(slug), agents: [],
+      calls: 0, cloud_calls: 0, in_tok: 0, out_tok: 0, cloud_usd: 0, pod_s: 0, lastTs: 0,
+    });
+    known.forEach(p => ensure(personaSlug(p.id), p.name || p.id));
+    for (const a of ags) {
+      const e = ensure(personaSlug(a.persona), personaName(personaSlug(a.persona)));
+      e.agents.push(a);
+      const u = agentUsage && agentUsage[a.agent_id];
+      if (u) {
+        e.calls += u.calls || 0; e.cloud_calls += u.cloud_calls || 0;
+        e.in_tok += u.in_tok || 0; e.out_tok += u.out_tok || 0;
+        e.cloud_usd += u.cloud_usd || 0; e.pod_s += u.pod_s || 0;
+        const lt = u.last_ts ? Date.parse(u.last_ts) : 0; if (lt > e.lastTs) e.lastTs = lt;
+      }
+      const act = agentActivity && agentActivity[a.agent_id];
+      if (act && act.lastTs > e.lastTs) e.lastTs = act.lastTs;
+    }
+    return Object.values(map);
+  }
+
+  // Active if it's the running process persona OR any of its agents ran recently;
+  // paused if it has agents and they're all disabled; otherwise idle.
+  function personaStatus(p) {
+    if ((p.slug && p.slug === activePersonaSlug()) || p.agents.some(a => agentStatus(a).state === 'active'))
+      return { state: 'active', color: 'var(--ok)', cls: 'dot-status live', label: 'active' };
+    if (p.agents.length && !p.agents.some(a => a.enabled !== false))
+      return { state: 'paused', color: 'var(--temporal)', cls: 'dot-status', label: 'paused' };
+    return { state: 'idle', color: 'var(--ink-4)', cls: 'dot-status', label: 'idle' };
+  }
+  function personaCostUsd(p) { return (p.cloud_usd || 0) + (p.pod_s || 0) * podRate() / 3600; }
+
+  function paintPersonas() {
+    const host = document.getElementById('ws-personas');
+    if (!host) return;
+    const rows = personaRollup();
+    const activeSlug = activePersonaSlug();
+    const liveCount = rows.filter(p => personaStatus(p).state === 'active').length;
+    host.innerHTML = `
+      <div class="ws-grid" style="grid-template-columns:268px 1fr;">
+        <div class="ws-rail">
+          <div class="rail-head"><h2>Personas</h2><span class="n">${rows.length}</span></div>
+          <div class="rail-sect">
+            <button class="rail-item pe-nav ${perView==='overview'?'on':''}" data-view="overview"><span class="ri-name"><span class="dot-status ${liveCount?'live':''}" style="background:${liveCount?'var(--ok)':'var(--ink-4)'}"></span>Overview</span><span class="ri-meta">${rows.length} total · ${liveCount} active</span></button>
+          </div>
+          <div class="rail-div"></div>
+          <div class="rail-sect-lab" style="padding-left:22px; display:flex; justify-content:space-between; padding-right:18px;"><span>Personas</span><span class="n">${rows.length}</span></div>
+          <div class="rail-sect">${rows.map(p => railPersona(p, activeSlug)).join('') || '<div class="ri-meta" style="padding:6px 14px; opacity:.6;">No personas</div>'}</div>
+        </div>
+        <div class="ws-main" id="pers-main"></div>
+      </div>`;
+    host.querySelectorAll('.pe-nav').forEach(n => n.addEventListener('click', () => { perView = n.dataset.view; personaSel = null; paintPersonas(); }));
+    host.querySelectorAll('.rail-persona').forEach(n => n.addEventListener('click', () => openPersonaInMri(n.dataset.persona)));
+    renderPersonasView(host.querySelector('#pers-main'));
+  }
+
+  function railPersona(p, activeSlug) {
+    const st = personaStatus(p);
+    const detail = p.slug === activeSlug ? 'running now' : `${p.agents.length} agent${p.agents.length === 1 ? '' : 's'}`;
+    return `<button class="rail-item rail-persona" data-persona="${esc(p.slug)}"><span class="ri-name"><span class="${st.cls}" style="background:${st.color}"></span>${esc(p.name)}</span><span class="ri-meta">${esc(detail)}</span></button>`;
+  }
+
+  function renderPersonasView(main) {
+    if (!main) return;
+    const rows = personaRollup().sort((x, y) => {
+      const rx = STATUS_RANK[personaStatus(x).state], ry = STATUS_RANK[personaStatus(y).state];
+      if (rx !== ry) return rx - ry;
+      return personaCostUsd(y) - personaCostUsd(x);
+    });
+    const counts = { active: 0, idle: 0, paused: 0 };
+    rows.forEach(p => counts[personaStatus(p).state]++);
+    const rangeLabel = (RANGE_PRESETS.find(p => p.key === usageRange.key) || {}).label || 'Range';
+    const rangeTotal = rows.reduce((s, p) => s + personaCostUsd(p), 0);
+    main.innerHTML = `<div class="main-pad" style="max-width:none;">
+      <div class="between" style="align-items:flex-start;">
+        <div>
+          <div class="page-eyebrow">Personas · operational</div>
+          <div class="page-title">Personas</div>
+          <p class="page-lede">Every persona and its aggregated usage — cost, tokens and model calls summed across all of its agents. The status dot shows whether the persona is active (it's the running process, or one of its agents just ran), idle, or paused. Pick a range to total cost over time. Click a persona to open it live in MRI.</p>
+        </div>
+        <div class="row" style="gap:10px; margin-top:14px; flex-shrink:0; align-items:center;">
+          <span class="chip"><span class="dot live" style="background:var(--ok);"></span>${counts.active} active</span>
+          <span class="data" id="pers-pod-meter" style="font-size:10px; color:var(--ink-4);"></span>
+        </div>
+      </div>
+      <div class="between" style="margin-top:20px; flex-wrap:wrap; gap:12px;">
+        <div class="row" style="gap:12px; flex-wrap:wrap;">
+          <div class="ws-range">${RANGE_PRESETS.map(p => `<button class="${p.key === usageRange.key ? 'on' : ''}" data-range="${p.key}">${esc(p.label)}</button>`).join('')}</div>
+        </div>
+        <span class="data" style="font-size:10px; color:var(--ink-4);">${esc(rangeLabel)} total · <span style="color:var(--signal-deep);">$${rangeTotal.toFixed(2)}</span></span>
+      </div>
+      ${usageRange.key === 'custom' ? `<div class="row" style="gap:14px; margin-top:12px; flex-wrap:wrap;">
+        <label class="data" style="font-size:9px; color:var(--ink-4); display:flex; align-items:center; gap:6px;">FROM <input type="datetime-local" id="prange-from" class="ctrl-input" value="${esc(toLocalInput(usageRange.since))}"></label>
+        <label class="data" style="font-size:9px; color:var(--ink-4); display:flex; align-items:center; gap:6px;">TO <input type="datetime-local" id="prange-to" class="ctrl-input" value="${esc(toLocalInput(usageRange.until))}"></label>
+      </div>` : ''}
+      ${rows.length
+        ? `<div class="dash-grid" style="margin-top:22px;">${rows.map(personaCard).join('')}</div>
+           <div class="data" style="font-size:8.5px; color:var(--ink-4); margin-top:12px; line-height:1.6;">Per-persona totals roll up every agent that runs this persona — its real cloud spend plus its share of the GPU pod (compute-seconds × the pod's $/hr). Cumulative over the selected range, summed across restarts. A persona's own owner-lane idle work isn't metered here.</div>`
+        : `<div class="empty" style="margin-top:22px;"><h3>No personas</h3></div>`}
+      <div style="margin-top:28px; padding-top:20px; border-top:1px solid var(--line-faint); display:flex; align-items:center; justify-content:space-between;">
+        <span class="data" style="font-size:9px; color:var(--ink-4);">${counts.active} active · ${counts.idle} idle · ${counts.paused} paused</span>
+      </div></div>`;
+    main.querySelectorAll('.ws-range button[data-range]').forEach(b => b.addEventListener('click', () => setUsageRange(b.dataset.range)));
+    const from = main.querySelector('#prange-from'), to = main.querySelector('#prange-to');
+    const applyCustom = () => setUsageRange('custom',
+      from && from.value ? new Date(from.value).toISOString() : null,
+      to && to.value ? new Date(to.value).toISOString() : null);
+    if (from) from.addEventListener('change', applyCustom);
+    if (to) to.addEventListener('change', applyCustom);
+    main.querySelectorAll('.dash-card').forEach(c => c.addEventListener('click', () => openPersonaInMri(c.dataset.persona)));
+    const pm = main.querySelector('#pers-pod-meter');
+    if (pm && podStatus && podStatus.running && podStatus.uptime_s != null) {
+      const cost = podStatus.cost_accrued_usd != null ? ` · $${podStatus.cost_accrued_usd.toFixed(2)} accrued` : '';
+      pm.innerHTML = `GPU pod · up ${esc(fmtDur(podStatus.uptime_s))}${cost}`;
+    }
+  }
+
+  function personaCard(p) {
+    const st = personaStatus(p);
+    const u = { in_tok: p.in_tok, out_tok: p.out_tok, calls: p.calls, cloud_usd: p.cloud_usd, pod_s: p.pod_s, cloud_calls: p.cloud_calls };
+    const lastActive = p.lastTs ? agoShort(Date.now() - p.lastTs) + ' ago' : '—';
+    return `<button class="dash-card" data-status="${st.state}" data-persona="${esc(p.slug)}">
+      <div class="dc-head">
+        <div class="dc-identity">
+          <span class="${st.cls}" style="background:${st.color};" title="${esc(st.label)}"></span>
+          <span class="dc-name">${esc(p.name)}</span>
+          <span class="chip role"><span class="dot"></span>${p.agents.length} agent${p.agents.length === 1 ? '' : 's'}</span>
+          <span class="data" style="font-size:8px; letter-spacing:0.14em; text-transform:uppercase; color:var(--ink-4);">${esc(st.label)}</span>
+        </div>
+        <span class="dc-launch-hint"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg> Open in MRI</span>
+      </div>
+      <div class="dc-metrics">
+        <div class="dc-metric dm-cost"><div class="dm-val" title="${esc(costTitle(u))}">$${personaCostUsd(p).toFixed(2)}</div><div class="dm-lab">Est. cost</div></div>
+        <div class="dc-metric"><div class="dm-val" title="${esc(usageTitle(u))}">${esc(fmtTokens((p.in_tok || 0) + (p.out_tok || 0)))}</div><div class="dm-lab">Tokens</div></div>
+        <div class="dc-metric"><div class="dm-val">${esc(String(p.calls || 0))}</div><div class="dm-lab">Model calls</div></div>
+        <div class="dc-metric"><div class="dm-val">${esc(lastActive)}</div><div class="dm-lab">Last active</div></div>
+      </div>
+    </button>`;
+  }
+
+  // Open a persona in MRI (persona focus). The ACTIVE process persona shows live now —
+  // clear any agent observation so MRI paints the owner lane (its own inner life). A
+  // NON-active persona can't show live thoughts without a process restart, so we don't
+  // auto-switch — we surface an explicit "switch to this persona" choice (the restart).
+  function openPersonaInMri(slug) {
+    if (slug && slug === activePersonaSlug()) {
+      if (typeof window.setObservedAgent === 'function') window.setObservedAgent(null);
+      setWorkspace('labs');
+      return;
+    }
+    // Non-active persona: switching is a process restart, so we never auto-switch —
+    // requestPersonaSwitch (the persona picker's path) shows its own confirm + restarts.
+    const p = personaRollup().find(x => x.slug === slug);
+    const name = p ? p.name : slug;
+    if (typeof window.requestPersonaSwitch === 'function') window.requestPersonaSwitch(name);
+  }
 
 
   function renderAgentDetail(main) {
