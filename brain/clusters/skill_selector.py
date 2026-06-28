@@ -383,6 +383,9 @@ class SkillSelector:
                 "embedding": vec,
                 "_native": True,  # body-injection + capability-manifest treat it like native
                 "_partner": True,  # untrusted → fenced precedence framing on injection
+                # Agent scoping: available to every agent, or only the mapped ones.
+                "_all_agents": bool(sk.get("all_agents", True)),
+                "_agents": set(sk.get("agents") or []),
             }
             self._index.inject_partner(entry)
             self._native_body_cache[name] = body
@@ -401,6 +404,30 @@ class SkillSelector:
         """True iff this skill is app-provided (untrusted) rather than built-in/native."""
         entry = self._index.get(name)
         return bool(entry and entry.get("_partner"))
+
+    def _partner_allowed(self, entry: dict) -> bool:
+        """Agent-scope gate for a candidate skill. Non-partner skills (humanity/native)
+        are always allowed. A partner skill is allowed when it's all-agents, or mapped
+        to the agent bound for this turn (brain.agent_ctx). With no agent bound (the
+        owner's own chat / DMN), only all-agents skills apply."""
+        if not entry.get("_partner"):
+            return True
+        if entry.get("_all_agents", True):
+            return True
+        try:
+            from brain.agent_ctx import current_agent
+
+            a = current_agent()
+        except Exception:
+            a = None
+        if not a or not a.get("agent_id"):
+            return False
+        return a["agent_id"] in (entry.get("_agents") or set())
+
+    def allowed_for_current_agent(self, name: str) -> bool:
+        """Public form of _partner_allowed by skill name (used by the pin path)."""
+        entry = self._index.get(name)
+        return bool(entry) and self._partner_allowed(entry)
 
     def capability_manifest(self) -> str:
         """Compact skill manifest for the executive context.
@@ -506,6 +533,8 @@ class SkillSelector:
         # keyword (e.g. "trading tool", "check my watchlist"), short-circuit straight
         # to that skill without going through the embedding/LLM path.
         _direct = self._index.keyword_match(user_input)
+        if _direct is not None and not self._partner_allowed(_direct):
+            _direct = None  # a partner skill not scoped to this agent — ignore the match
         if _direct is not None:
             log_extras["pick_path"] = "direct_name_match"
             log_extras["direct_match"] = _direct["name"]
@@ -563,6 +592,8 @@ class SkillSelector:
 
         # 3. Rank candidates (Tier 2 + qualifying Tier 3, leaves and routers)
         ranked = self._index.rank(query_vec, include_tier_1=False)
+        # Drop partner skills not scoped to this turn's agent before shortlisting.
+        ranked = [(s, sc) for (s, sc) in ranked if self._partner_allowed(s)]
         top = ranked[:CONVERSATIONAL_TOP_K]
         if not top:
             log_extras["no_candidates"] = True
