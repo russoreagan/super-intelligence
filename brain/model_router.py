@@ -364,9 +364,16 @@ class ModelRouter:
             aid = (turn_ctx.current_turn() or {}).get("agent_id") or "owner"
         except Exception:
             aid = "owner"
-        u = self._agent_usage.get(aid)
+        # Lazily ensure the per-agent ledger exists. Tests (and any caller that
+        # builds ModelRouter via __new__) bypass __init__, so this dashboard-only
+        # metering must not assume the attribute was set — honor the "never raises"
+        # contract above rather than break the model call it's meant to observe.
+        usage = getattr(self, "_agent_usage", None)
+        if usage is None:
+            usage = self._agent_usage = {}
+        u = usage.get(aid)
         if u is None:
-            u = self._agent_usage[aid] = {
+            u = usage[aid] = {
                 "calls": 0, "cloud_calls": 0, "in_tok": 0, "out_tok": 0,
                 "cloud_usd": 0.0, "pod_s": 0.0, "last_ts": 0.0,
             }
