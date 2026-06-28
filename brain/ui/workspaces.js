@@ -647,6 +647,16 @@
   }
   function personaCostUsd(p) { return (p.cloud_usd || 0) + (p.pod_s || 0) * podRate() / 3600; }
 
+  // Guard the persona-detail pane against silently dropping unsaved config edits when
+  // navigating away (switching personas, Overview nav, or Back). Returns true when it's
+  // safe to leave — nothing unsaved, or the user chose to discard.
+  function confirmLeavePersonaDetail() {
+    if (perView !== 'detail' || !personaSel) return true;
+    const ui = window.__settingsUI;
+    if (!ui || typeof ui.hasUnsavedPersona !== 'function' || !ui.hasUnsavedPersona()) return true;
+    return confirm(`You have unsaved changes to ${personaSel}. Discard them?`);
+  }
+
   function paintPersonas() {
     const host = document.getElementById('ws-personas');
     if (!host) return;
@@ -666,11 +676,15 @@
         </div>
         <div class="ws-main" id="pers-main"></div>
       </div>`;
-    host.querySelectorAll('.pe-nav').forEach(n => n.addEventListener('click', () => { perView = n.dataset.view; personaSel = null; paintPersonas(); }));
+    host.querySelectorAll('.pe-nav').forEach(n => n.addEventListener('click', () => {
+      if (!confirmLeavePersonaDetail()) return;
+      perView = n.dataset.view; personaSel = null; paintPersonas();
+    }));
     // Rail persona → configure it INLINE (the Agents rail→detail pattern): renders the
     // persona's full config — temperament dials, chemistry, self/voice — into the pane,
     // reusing the settings engine. The Overview cards are the "watch it live" path.
     host.querySelectorAll('.rail-persona').forEach(n => n.addEventListener('click', () => {
+      if (n.dataset.name !== personaSel && !confirmLeavePersonaDetail()) return;
       personaSel = n.dataset.name; perView = 'detail'; paintPersonas();
     }));
     const main = host.querySelector('#pers-main');
@@ -698,7 +712,7 @@
         </header>
         <div class="set-scroll" id="pers-scroll"><div class="cat-wrap" id="pers-cat-wrap"></div></div>
       </div>`;
-    main.querySelector('#pers-back-btn').addEventListener('click', () => { perView = 'overview'; personaSel = null; paintPersonas(); });
+    main.querySelector('#pers-back-btn').addEventListener('click', () => { if (!confirmLeavePersonaDetail()) return; perView = 'overview'; personaSel = null; paintPersonas(); });
     main.querySelector('#pers-open-mri').addEventListener('click', () => openPersonaInMri(personaSlug(personaSel)));
     if (window.__settingsUI && window.__settingsUI.mountPersona) window.__settingsUI.mountPersona(personaSel);
   }
