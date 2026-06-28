@@ -280,6 +280,13 @@ class _SetupMixin:
             # the live in-memory meter ("This session"); a [since, until] range → the
             # durable ledger summed across restarts (migration 016).
             usage_fn=self._agent_usage_for_ui,
+            # Reload approved app-provided skills into the live index after the Skills
+            # tab approves/rejects/deletes one (no-op when the selector is unavailable).
+            skill_rewarm_fn=(
+                self.skill_selector.warm_partner_skills
+                if getattr(self, "skill_selector", None) is not None
+                else None
+            ),
             wiring=self.wiring,
             bus=self.bus,
         )

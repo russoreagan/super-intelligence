@@ -131,6 +131,7 @@ class UIServer:
         cloud_status_fn: Callable[[], dict] | None = None,
         tier_fn: Callable[[], str] | None = None,
         usage_fn: Callable[..., dict] | None = None,
+        skill_rewarm_fn: Callable[[], object] | None = None,
         wiring=None,
         bus=None,
     ) -> None:
@@ -169,6 +170,10 @@ class UIServer:
         # cloud_usd, pod_s, last_ts} }. Per-agent model usage for the Agents
         # dashboard: no range → live session meter; a range → durable ledger sum.
         self._usage_fn = usage_fn
+        # () -> Awaitable; reloads the org's approved app-provided skills into the live
+        # SkillSelector index after an approve/reject/delete in the Skills tab. None when
+        # the selector is unavailable (then admin changes apply at the next boot).
+        self._skill_rewarm_fn = skill_rewarm_fn
         self._clients: set = set()
         self._last_neuromod: dict = {}
         self._last_hormonal: dict = {}
@@ -1052,6 +1057,128 @@ class UIServer:
             except MandateError as e:
                 raise HTTPException(status_code=400, detail=str(e)) from e
             return JSONResponse({"ok": True, "assigned": assigned})
+
+        # ── App-provided skills: the org's skill library + admission review queue ──
+        # Skills are partner-supplied content injected into the agent's prompt, so a
+        # submission is SCREENED (brain/skills_screener) before going live. Authoring
+        # happens over the engine API; this surface is for the org admin to review the
+        # flagged queue (approve/reject) and manage the library. Admin-gated like roles.
+        async def _rewarm_skills() -> None:
+            if self._skill_rewarm_fn is None:
+                return
+            try:
+                await self._skill_rewarm_fn()
+            except Exception as e:  # noqa: BLE001 — a rewarm miss self-heals at next boot
+                logger.warning("[skills] rewarm failed: %s", e)
+
+        @app.get("/skills")
+        async def list_skills_ui(request: Request):
+            from fastapi.responses import JSONResponse
+
+            from brain.second_brain import supabase_client
+
+            claims = getattr(request.state, "user", None) or {}
+            is_admin = ui_auth.is_disabled() or ui_auth.is_org_admin(claims)
+            if not supabase_client.is_enabled():
+                return JSONResponse(
+                    {"enabled": False, "is_admin": is_admin, "skills": [], "flagged": []}
+                )
+            from brain import skills_registry as sr
+
+            try:
+                skills = sr.list_skills(include_inactive=False)
+                # The flagged queue carries untrusted bodies + screener notes — admin only.
+                flagged = sr.list_flagged() if is_admin else []
+            except Exception as e:
+                logger.warning("[skills] list failed: %s", e)
+                return JSONResponse(
+                    {"enabled": True, "is_admin": is_admin, "skills": [], "flagged": []}
+                )
+            return JSONResponse(
+                {"enabled": True, "is_admin": is_admin, "skills": skills, "flagged": flagged}
+            )
+
+        @app.get("/skills/{skill_id}")
+        async def get_skill_ui(skill_id: str, request: Request):
+            from fastapi import HTTPException
+            from fastapi.responses import JSONResponse
+
+            _mandate_admin_or_403(request)
+            from brain import skills_registry as sr
+            from brain.skills_registry import SkillError
+
+            try:
+                row = sr.get_skill(skill_id)
+            except SkillError as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
+            if row is None:
+                raise HTTPException(status_code=404, detail="unknown skill id")
+            return JSONResponse({"skill": row})
+
+        @app.post("/skills/{skill_id}/approve")
+        async def approve_skill_ui(skill_id: str, request: Request):
+            from fastapi import HTTPException
+            from fastapi.responses import JSONResponse
+
+            from brain.skills_registry import SkillError
+
+            _mandate_admin_or_403(request)
+            from brain import skills_registry as sr
+
+            try:
+                if sr.get_skill(skill_id) is None:
+                    raise HTTPException(status_code=404, detail="unknown skill id")
+                sr.set_status(skill_id, "enabled", reviewed_by="ui-admin")
+            except SkillError as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
+            await _rewarm_skills()
+            return JSONResponse({"ok": True, "status": "enabled"})
+
+        @app.post("/skills/{skill_id}/reject")
+        async def reject_skill_ui(skill_id: str, request: Request):
+            from fastapi import HTTPException
+            from fastapi.responses import JSONResponse
+
+            from brain.skills_registry import SkillError
+
+            _mandate_admin_or_403(request)
+            body = await request.json()
+            from brain import skills_registry as sr
+
+            try:
+                existing = sr.get_skill(skill_id)
+                if existing is None:
+                    raise HTTPException(status_code=404, detail="unknown skill id")
+                notes = dict(existing.get("screen_notes") or {})
+                notes["review"] = {
+                    "action": "rejected",
+                    "reason": str((body or {}).get("reason") or ""),
+                }
+                sr.set_status(skill_id, "rejected", screen_notes=notes, reviewed_by="ui-admin")
+            except SkillError as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
+            # A rejected edit never goes live (prior approved body, if any, keeps serving),
+            # so no rewarm is needed.
+            return JSONResponse({"ok": True, "status": "rejected"})
+
+        @app.delete("/skills/{skill_id}")
+        async def delete_skill_ui(skill_id: str, request: Request):
+            from fastapi import HTTPException
+            from fastapi.responses import JSONResponse
+
+            from brain.skills_registry import SkillError
+
+            _mandate_admin_or_403(request)
+            from brain import skills_registry as sr
+
+            try:
+                ok = sr.delete_skill(skill_id)
+            except SkillError as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
+            if not ok:
+                raise HTTPException(status_code=404, detail="unknown skill id")
+            await _rewarm_skills()
+            return JSONResponse({"ok": True})
 
         # ── Agents: the (persona, role) pairings + per-agent permission narrowing ──
         # An agent is created by assigning a role to a persona; its permissions are

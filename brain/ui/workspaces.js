@@ -1287,7 +1287,8 @@
 
   // ══════════════════════════════════════════════════════════ API ═════════
   let apiView = 'reference';
-  function ensureApi() { renderApi(); if (apiView === 'partner') loadPartnerKeys(); }
+  let skillsData = null;       // { enabled, is_admin, skills:[], flagged:[] }
+  function ensureApi() { renderApi(); if (apiView === 'partner') loadPartnerKeys(); if (apiView === 'skills') loadSkills(); }
   function renderApi() {
     const host = document.getElementById('ws-api');
     host.innerHTML = `<div class="ws-grid" style="grid-template-columns:256px 1fr;">
@@ -1295,13 +1296,16 @@
         <div class="rail-head"><h2>API</h2><span class="n">integration</span></div>
         <div class="rail-sect">
           <button class="rail-item api-nav ${apiView==='reference'?'on':''}" data-view="reference"><span class="ri-name">API Reference</span><span class="ri-meta">engine endpoints</span></button>
+          <button class="rail-item api-nav ${apiView==='skills'?'on':''}" data-view="skills"><span class="ri-name">Skills</span><span class="ri-meta">app-provided · review</span></button>
           <button class="rail-item api-nav ${apiView==='partner'?'on':''}" data-view="partner"><span class="ri-name">Partner Keys</span><span class="ri-meta">customer-facing tokens</span></button>
         </div>
       </div>
       <div class="ws-main" id="api-main"></div></div>`;
     host.querySelectorAll('.api-nav').forEach(n => n.addEventListener('click', () => { apiView = n.dataset.view; ensureApi(); }));
     const main = host.querySelector('#api-main');
-    if (apiView === 'partner') renderPartnerKeys(main); else renderReference(main);
+    if (apiView === 'partner') renderPartnerKeys(main);
+    else if (apiView === 'skills') renderSkills(main);
+    else renderReference(main);
   }
   const ENDPOINTS = [
     { m: 'post', p: '/v1/sessions', t: 'Start a session for an end-user on an agent.' },
@@ -1331,6 +1335,91 @@
     main.querySelectorAll('.ep-item').forEach(b => b.addEventListener('click', () => { main.querySelectorAll('.ep-item').forEach(x => x.classList.remove('on')); b.classList.add('on'); show(+b.dataset.i); }));
     show(0);
   }
+
+  // ─────────────────────────────────────────────────────────── Skills ──
+  const SKILL_STATUS_COLOR = { enabled: 'var(--ok)', flagged: 'var(--warn)', rejected: 'var(--danger)', pending: 'var(--ink-4)' };
+  const skStatColor = (s) => SKILL_STATUS_COLOR[s] || 'var(--ink-4)';
+  async function loadSkills() {
+    try { const r = await fetch('/skills'); skillsData = r.ok ? await r.json() : { enabled: false, is_admin: false, skills: [], flagged: [] }; }
+    catch (e) { skillsData = { enabled: false, is_admin: false, skills: [], flagged: [] }; }
+    if (apiView === 'skills') renderSkills(document.getElementById('api-main'));
+  }
+  function renderFlaggedCard(s) {
+    const notes = s.screen_notes || {};
+    const judge = notes.judge || {};
+    const stat = notes.static || {};
+    const reasons = (judge.reasons || []).map(r => esc(r)).join(', ');
+    const findings = (stat.findings || []).map(r => esc(r)).join(', ');
+    const why = [judge.verdict ? `Judge: <b>${esc(judge.verdict)}</b>` : '', reasons ? `reasons: ${reasons}` : '', findings ? `static: ${findings}` : ''].filter(Boolean).join(' · ');
+    return `<div class="es-card" style="padding:16px; margin-bottom:12px;">
+      <div class="between"><div><span class="serif-h" style="font-size:15px;">${esc(s.display_name || s.id)}</span>
+        <span class="data" style="font-size:10px; display:block; margin-top:2px;">${esc(s.id)}${s.submitted_by ? (' · ' + esc(s.submitted_by)) : ''}</span></div>
+        <span class="ar-status"><span class="dot-status" style="background:var(--warn)"></span>flagged</span></div>
+      ${s.description ? `<p class="page-lede" style="margin:8px 0 0;">${esc(s.description)}</p>` : ''}
+      ${why ? `<div class="note" style="margin-top:10px;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4M12 17h.01"/></svg><p>${why}</p></div>` : ''}
+      <div class="code" style="margin-top:12px; max-height:220px; overflow:auto; white-space:pre-wrap;">${esc(s.body || '')}</div>
+      <div class="row" style="gap:8px; margin-top:12px;">
+        <button class="btn btn-primary sk-approve" data-id="${esc(s.id)}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg> Approve</button>
+        <button class="btn sk-reject" data-id="${esc(s.id)}">Reject</button>
+      </div></div>`;
+  }
+  function renderSkills(main) {
+    if (!main) return;
+    const d = skillsData;
+    const head = `<div class="page-eyebrow">API · skills</div><div class="page-title">Skills</div>
+      <p class="page-lede">App-provided skills your apps register over the engine API — reusable instructions the agent selects per turn (or you pin per session). Every submission is screened before it can go live; anything the screener can't auto-clear waits in the review queue below. Authoring happens in your app; this is the org library + admission review.</p>`;
+    if (!d) { main.innerHTML = `<div class="main-pad" style="max-width:820px;">${head}<p class="page-lede" style="opacity:.6;">Loading…</p></div>`; return; }
+    if (!d.enabled) {
+      main.innerHTML = `<div class="main-pad" style="max-width:820px;">${head}<div class="note" style="margin-top:18px;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 16v-4M12 8h.01"/><circle cx="12" cy="12" r="10"/></svg><p>Skills require the Supabase storage backend, which isn't enabled in this deployment.</p></div></div>`;
+      return;
+    }
+    const flagged = d.flagged || [];
+    const skills = d.skills || [];
+    let queue = '';
+    if (d.is_admin && flagged.length) {
+      queue = `<div class="label" style="margin:26px 0 10px;">Review queue · ${flagged.length}</div>${flagged.map(renderFlaggedCard).join('')}`;
+    }
+    const rows = skills.map(s => `<div class="ag-row" style="grid-template-columns:1.5fr .7fr .5fr 1fr 28px; cursor:default;">
+      <span><span class="serif-h" style="font-size:14px;">${esc(s.display_name || s.id)}</span><span class="data" style="font-size:9px; display:block; margin-top:2px;">${esc(s.id)}</span></span>
+      <span class="ar-status"><span class="dot-status" style="background:${skStatColor(s.status)}"></span>${esc(s.status || 'pending')}</span>
+      <span class="data" style="font-size:11px;">T${esc(s.tier != null ? s.tier : 2)}</span>
+      <span class="data" style="font-size:11px;">${esc(s.submitted_by || '—')}</span>
+      <span class="ar-chev">${d.is_admin ? `<button class="link sk-del" data-id="${esc(s.id)}" title="Remove skill">✕</button>` : ''}</span></div>`).join('') || '<div style="padding:22px; text-align:center;" class="data">No skills registered yet.</div>';
+    main.innerHTML = `<div class="main-pad" style="max-width:820px;">${head}${queue}
+      <div class="label" style="margin:28px 0 10px;">Library · ${skills.length}</div>
+      <div class="ag-table" style="grid-template-columns:none;">
+        <div class="ag-table-head" style="grid-template-columns:1.5fr .7fr .5fr 1fr 28px;"><span>Skill</span><span>Status</span><span>Tier</span><span>Submitted by</span><span></span></div>
+        ${rows}
+      </div>
+      ${!d.is_admin ? '<p class="data" style="margin-top:14px; font-size:11px; opacity:.6;">Reviewing and approving skills is an org-admin action.</p>' : ''}</div>`;
+    main.querySelectorAll('.sk-approve').forEach(b => b.addEventListener('click', () => skillApprove(b.dataset.id)));
+    main.querySelectorAll('.sk-reject').forEach(b => b.addEventListener('click', () => skillReject(b.dataset.id)));
+    main.querySelectorAll('.sk-del').forEach(b => b.addEventListener('click', () => skillDelete(b.dataset.id)));
+  }
+  async function skillApprove(id) {
+    try {
+      const r = await fetch('/skills/' + encodeURIComponent(id) + '/approve', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.detail || ('HTTP ' + r.status)); }
+      await loadSkills();
+    } catch (e) { window.alert('Could not approve skill: ' + e.message); }
+  }
+  async function skillReject(id) {
+    const reason = (window.prompt('Reason for rejecting "' + id + '" (optional):', '') || '').trim();
+    try {
+      const r = await fetch('/skills/' + encodeURIComponent(id) + '/reject', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason }) });
+      if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.detail || ('HTTP ' + r.status)); }
+      await loadSkills();
+    } catch (e) { window.alert('Could not reject skill: ' + e.message); }
+  }
+  async function skillDelete(id) {
+    if (!window.confirm('Remove skill "' + id + '"? It will stop being injected into turns.')) return;
+    try {
+      const r = await fetch('/skills/' + encodeURIComponent(id), { method: 'DELETE' });
+      if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.detail || ('HTTP ' + r.status)); }
+      await loadSkills();
+    } catch (e) { window.alert('Could not remove skill: ' + e.message); }
+  }
+
   async function loadPartnerKeys() {
     try { const r = await fetch('/partner_keys'); partnerKeys = r.ok ? (await r.json()).keys || [] : []; }
     catch (e) { partnerKeys = []; }
