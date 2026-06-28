@@ -665,14 +665,19 @@
         <div class="ws-main" id="pers-main"></div>
       </div>`;
     host.querySelectorAll('.pe-nav').forEach(n => n.addEventListener('click', () => { perView = n.dataset.view; personaSel = null; paintPersonas(); }));
-    host.querySelectorAll('.rail-persona').forEach(n => n.addEventListener('click', () => openPersonaInMri(n.dataset.persona)));
+    // Rail persona → configure it (the Agents rail→detail pattern): opens this persona's
+    // full config — temperament dials, chemistry, self/voice — reusing the settings
+    // engine. The Overview cards are the "watch it live" path (openPersonaInMri).
+    host.querySelectorAll('.rail-persona').forEach(n => n.addEventListener('click', () => {
+      if (typeof window.openPersonaConfig === 'function') window.openPersonaConfig(n.dataset.name);
+    }));
     renderPersonasView(host.querySelector('#pers-main'));
   }
 
   function railPersona(p, activeSlug) {
     const st = personaStatus(p);
     const detail = p.slug === activeSlug ? 'running now' : `${p.agents.length} agent${p.agents.length === 1 ? '' : 's'}`;
-    return `<button class="rail-item rail-persona" data-persona="${esc(p.slug)}"><span class="ri-name"><span class="${st.cls}" style="background:${st.color}"></span>${esc(p.name)}</span><span class="ri-meta">${esc(detail)}</span></button>`;
+    return `<button class="rail-item rail-persona" data-persona="${esc(p.slug)}" data-name="${esc(p.name)}"><span class="ri-name"><span class="${st.cls}" style="background:${st.color}"></span>${esc(p.name)}</span><span class="ri-meta">${esc(detail)}</span></button>`;
   }
 
   function renderPersonasView(main) {

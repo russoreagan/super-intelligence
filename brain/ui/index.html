@@ -7951,19 +7951,26 @@ restartBanner.addEventListener('click', async () => {
 let currentSettings = {};
 let defaultSettings = {};
 
-function openSettings() {
+function openSettings(focusPersona) {
   mainPage.style.display = 'none';
   const ticker = document.getElementById('activity-ticker');
   if (ticker) ticker.style.display = 'none';
   // Hide any active workspace surface while Settings is shown (closeSettings restores it).
   document.getElementById('ws-agents')?.classList.remove('on');
+  document.getElementById('ws-personas')?.classList.remove('on');
   document.getElementById('ws-api')?.classList.remove('on');
   settingsPage.classList.add('visible');
   settingsBtn.classList.add('active');
-  // Redesigned settings engine (settings-ui.js) owns rendering + load/save.
-  // Refetch live values every time the page opens.
-  if (window.__settingsUI && window.__settingsUI.open) window.__settingsUI.open();
+  // Redesigned settings engine (settings-ui.js) owns rendering + load/save. Refetch
+  // live values every time the page opens. When opened from the Personas workspace for
+  // a specific persona, focus that persona's config (reuses the same engine + save).
+  if (window.__settingsUI) {
+    if (focusPersona && window.__settingsUI.openPersona) window.__settingsUI.openPersona(focusPersona);
+    else if (window.__settingsUI.open) window.__settingsUI.open();
+  }
 }
+// Entry point for the Personas workspace rail: configure a persona (display name).
+window.openPersonaConfig = function (personaName) { openSettings(personaName); };
 
 function closeSettings() {
   settingsPage.classList.remove('visible');
@@ -7979,6 +7986,7 @@ function closeSettings() {
     mainPage.style.display = 'none';
     if (ticker) ticker.style.display = 'none';
     document.getElementById('ws-agents')?.classList.toggle('on', ws === 'agents');
+    document.getElementById('ws-personas')?.classList.toggle('on', ws === 'personas');
     document.getElementById('ws-api')?.classList.toggle('on', ws === 'api');
   }
 }

@@ -1943,6 +1943,10 @@
       open: loadFromServer,
       reload: loadFromServer,
       openApiKeys: async () => { await loadFromServer(); selectSystem('apikeys'); },
+      // Open the settings surface focused on one persona's config — used by the
+      // Personas workspace rail so persona config is reached from there (the engine,
+      // dials + save/restart pipeline, is reused unchanged).
+      openPersona: async (id) => { await loadFromServer(); if (id && PERSONAS.find(p => p.id === id)) selectPersona(id); },
     };
     loadFromServer();
   }
