@@ -809,6 +809,20 @@ class CMAExecutor(ExecutorCommon):
         """Wire the human-approval hook for 'ask' actions (see __init__)."""
         self._approval_fn = fn
 
+    def reset_warm_session(self) -> None:
+        """Drop the cached org-level warm session so the next task opens a fresh
+        cloud conversation.
+
+        Warm reuse (cma_session_warm_reuse) is a setup-cost optimization, but the
+        SDK session also accumulates the full conversation history. Reusing it
+        across logically-separate tasks lets one task's thread bleed into the next
+        (e.g. a newsletter-extraction job's content surfacing inside a later
+        watchlist job). Callers reset at TASK/JOB boundaries; the steps within a
+        single job still share the session created right after the reset, so
+        intended within-job continuity is preserved."""
+        self._session_id = None
+        self._session_agent = None
+
     def set_connector_filter(self, names: set[str] | None) -> None:
         """Restrict which MCP connectors the NEXT agent session may use.
         None = all. Filter participates in the config hash, so a warm session

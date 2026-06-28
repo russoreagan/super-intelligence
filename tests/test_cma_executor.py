@@ -457,6 +457,20 @@ class TestWarmSession:
         # second call sees the session as terminated and creates a fresh one
         assert client.beta.sessions.create.call_count == 2
 
+    async def test_reset_warm_session_forces_fresh_conversation(self, monkeypatch):
+        # A job boundary resets the warm session so the next task can't reuse (and
+        # inherit the conversation history of) the previous one — the context-bleed fix.
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+        client = _make_client([_msg("a"), _idle()], session_status="idle")
+        exe = _make_exec(client)
+        await exe.execute_read("task one", [])
+        assert client.beta.sessions.create.call_count == 1
+        exe.reset_warm_session()
+        assert exe._session_id is None and exe._session_agent is None
+        await exe.execute_read("task two", [])
+        # reset forced a brand-new session rather than reusing task one's
+        assert client.beta.sessions.create.call_count == 2
+
 
 # ── connector registry (file fallback; Supabase off) ─────────────────────────────
 

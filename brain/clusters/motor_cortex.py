@@ -898,6 +898,15 @@ class MotorCortexCluster:
 
         self.reset_turn(job_id)
 
+        # Fresh cloud session per job. The warm CMA session is reused across a
+        # job's own steps (shared context — intended), but it must NOT carry one
+        # job's conversation into the next, or a prior job's content bleeds in
+        # (e.g. a newsletter-extraction thread surfacing inside a watchlist job).
+        # Reset at the job boundary; the job's first cloud_action opens a clean one.
+        if self._cloud is not None:
+            with contextlib.suppress(Exception):
+                self._cloud.reset_warm_session()
+
         # Mark as autonomous/background so cloud budget guards apply.
         self._router.enter_background_mode()
         try:
