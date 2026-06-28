@@ -581,13 +581,16 @@ DEFAULTS: dict[str, float | int | str] = {
     # Active persona's ElevenLabs voice ID. Applied at boot via pns.set_voice_id().
     # Empty = use ELEVENLABS_VOICE_ID env var or built-in default.
     "persona_voice_id": "",
-    # Per-persona saved voice IDs. Written when a persona is initialized with a voice.
-    # Restored automatically when that persona is switched to.
-    "persona_voice_the_visionary": "",
-    "persona_voice_the_empath": "",
-    "persona_voice_the_analyst": "",
-    "persona_voice_the_poet": "",
-    "persona_voice_the_sage": "",
+    # Per-persona saved voice IDs. A per-tenant settings.json override still wins
+    # (see Settings._load), but these canonical defaults are the floor so a persona
+    # always resolves to its designed voice — even on a tenant whose volume
+    # settings.json predates the key. Empty defaults silently fell through to the
+    # ELEVENLABS hardcoded default (Rachel/female), which is the analyst-voice bug.
+    "persona_voice_the_visionary": "4e32WqNVWRquDa1OcRYZ",
+    "persona_voice_the_empath": "pqHfZKP75CvOlQylNhV4",
+    "persona_voice_the_analyst": "c6SfcYrb2t09NHXiT80T",  # Jarnathan — warm, confident (male)
+    "persona_voice_the_poet": "LEnmbrrxYsUYS7vsRRwD",
+    "persona_voice_the_sage": "nPczCjzI2devNBz1zQrb",
     # ── Section: Channel Calibration (text vs. voice) ─────────────────────────
     # Text and voice are fundamentally different communication channels.
     # These weights scale how temporal features feed into neuromod updates
