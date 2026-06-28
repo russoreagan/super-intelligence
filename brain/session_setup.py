@@ -143,16 +143,9 @@ class _SetupMixin:
         # the persona across restarts without requiring manual re-selection.
         # Prefer the persona-specific voice (persona_voice_<slug>); fall back to
         # the generic persona_voice_id only when this persona has none set.
-        _persona_name = str(_brain_settings.get("persona_name", "")).strip()
-        _persona_vid = ""
-        if _persona_name:
-            from brain.persona_chem import _slug
+        from brain.persona_chem import voice_id_for
 
-            _persona_vid = str(
-                _brain_settings.get(f"persona_voice_{_slug(_persona_name)}", "")
-            ).strip()
-        if not _persona_vid:
-            _persona_vid = str(_brain_settings.get("persona_voice_id", "")).strip()
+        _persona_vid = voice_id_for()
         if _persona_vid:
             self.pns.set_voice_id(_persona_vid)
 

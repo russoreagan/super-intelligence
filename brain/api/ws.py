@@ -368,6 +368,16 @@ class WsSession:
                 return
 
         opts = self._audio_opts
+        # Default to the session persona's configured voice when the client didn't
+        # pin one — same persona→voice ownership as the SSE transport, so an agent
+        # session speaks in its persona's voice rather than the provider default.
+        _voice_id = opts.get("voice_id")
+        if not _voice_id:
+            from brain.persona_chem import voice_id_for
+
+            s = self._session
+            _persona = s.agent_id.split(".", 1)[0] if s.agent_id and "." in s.agent_id else None
+            _voice_id = voice_id_for(_persona)
         chars = 0
         try:
             from brain.api.audio import AudioError
@@ -375,7 +385,7 @@ class WsSession:
             async for kind, payload in self._tts_stream_runner(
                 text,
                 affect=affect,
-                voice_id=opts.get("voice_id"),
+                voice_id=_voice_id,
                 model=opts.get("model"),
                 fmt=opts.get("format"),
                 provider=opts.get("provider"),

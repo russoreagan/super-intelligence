@@ -484,11 +484,22 @@ def build_api_router(
                 _log_agent_turn(s, message, display, turn_id or "")
                 if isinstance(audio_opt, dict) and audio_opt.get("enabled"):
                     _pid = None if ctx.get("owner") else ctx.get("partner_id")
+                    # Default the voice to the session persona's configured voice
+                    # (persona_voice_<slug>) when the caller didn't pin one — the
+                    # engine owns the persona→voice mapping, so an agent session
+                    # speaks in its persona's voice instead of the provider default.
+                    _audio = audio_opt
+                    if not _audio.get("voice_id"):
+                        from brain.persona_chem import voice_id_for
+
+                        _pv = voice_id_for(_session_persona(s))
+                        if _pv:
+                            _audio = {**_audio, "voice_id": _pv}
                     async for frame in _stream_audio(
                         tts_stream_runner,
                         text,
                         affect,
-                        audio_opt,
+                        _audio,
                         turn_id,
                         partner_id=_pid,
                         quota=audio_quota,

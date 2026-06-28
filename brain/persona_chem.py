@@ -479,6 +479,26 @@ def _path(persona: str) -> Path:
     return _PERSONAS_ROOT / _slug(persona) / "chemistry.json"
 
 
+def voice_id_for(persona: str | None = None) -> str | None:
+    """The TTS voice id configured for a persona.
+
+    Precedence mirrors the boot path in session_setup: the persona-specific
+    ``persona_voice_<slug>`` override, then the generic ``persona_voice_id``,
+    then None (callers fall through to the provider/env default). A falsy
+    ``persona`` resolves the active process persona (settings ``persona_name``)
+    so the owner-facing path keeps its voice; pass an explicit slug or display
+    name for an agent session whose persona differs from the process default.
+    Accepts either form — ``_slug`` is idempotent over both."""
+    from brain.settings import settings as _s
+
+    name = (persona or str(_s.get("persona_name", "") or "")).strip()
+    if name:
+        vid = str(_s.get(f"persona_voice_{_slug(name)}", "") or "").strip()
+        if vid:
+            return vid
+    return str(_s.get("persona_voice_id", "") or "").strip() or None
+
+
 def _only_channels(d: dict) -> dict[str, float]:
     """Keep only known channels, coerced to float — defends against stray keys."""
     out: dict[str, float] = {}
