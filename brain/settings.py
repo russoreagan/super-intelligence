@@ -790,7 +790,7 @@ DEFAULTS: dict[str, float | int | str] = {
     #   brain_executor / BRAIN_EXECUTOR. 1 = on (matches the cma default).
     "cma_enabled": 1,
     # cma_model: model id for the Managed-Agents agents (read + write).
-    "cma_model": "claude-opus-4-6",
+    "cma_model": "claude-sonnet-4-6",
     # cma_networking: cloud sandbox egress — "unrestricted" (needed for web +
     #   remote MCP) or "limited".
     "cma_networking": "unrestricted",

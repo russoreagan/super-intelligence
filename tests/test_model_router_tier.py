@@ -131,3 +131,49 @@ def test_per_agent_cap_tightens_org_ceiling(monkeypatch):
     # $6 spent: under the $100 org ceiling but over the agent's $5 cap → blocked.
     with pytest.raises(CloudBudgetExceeded):
         _budget_router(local_disabled=True, spent=6.0)._enforce_cloud_budget("api", "x")
+
+
+# ── External cloud usage (CMA path): gate + record without going through call() ───
+# CMA managed-agent inference bills the API key directly and never routes through
+# call(), so it bypassed _enforce_cloud_budget (the cap) AND _meter_agent (the
+# dashboard). cloud_budget_exhausted()/record_cloud_usage() are the seam that closes
+# both gaps. Regression for ~$200/2d real spend showing ~$1 in the ledger.
+
+
+def test_cloud_budget_exhausted_gates_external_consumers(monkeypatch):
+    from brain.settings import settings
+
+    monkeypatch.setitem(settings._data, "cloud_daily_usd_budget", 5.0)
+    assert _budget_router(local_disabled=True, spent=6.0).cloud_budget_exhausted() is True
+    assert _budget_router(local_disabled=True, spent=1.0).cloud_budget_exhausted() is False
+
+
+def test_cloud_budget_exhausted_false_when_no_cap(monkeypatch):
+    from brain import model_router
+    from brain.settings import settings
+
+    # No org budget and no lite backstop → a full brain is intentionally unbounded.
+    monkeypatch.setitem(settings._data, "cloud_daily_usd_budget", 0.0)
+    monkeypatch.setattr(model_router, "_LITE_DEFAULT_DAILY_USD_CAP", 0.0)
+    assert _budget_router(local_disabled=False, spent=9999.0).cloud_budget_exhausted() is False
+
+
+def test_record_cloud_usage_charges_tally_and_attributes_to_agent(monkeypatch):
+    # External (CMA) usage must hit BOTH meters it used to bypass: the daily USD
+    # tally (→ the cap binds) and the per-agent dashboard ledger (→ attribution).
+    r = _budget_router(local_disabled=True, spent=0.0)
+    r._persist_cloud_usd = lambda: None  # don't touch the tenant volume from a test
+    r._agent_usage = {}
+    monkeypatch.setattr(
+        "brain.turn_ctx.current_turn",
+        lambda: {"agent_id": "the_analyst.day_trading_analyst"},
+    )
+    # 1M input + 1M output of Haiku 4.5 = $1 + $5 = $6.00.
+    usd = r.record_cloud_usage("claude-haiku-4-5", 1_000_000, 1_000_000)
+    assert round(usd, 2) == 6.00
+    assert round(r._cloud_usd_today, 2) == 6.00  # day-tally charged
+    usage = r.agent_usage()
+    assert "owner" not in usage  # NOT bucketed to the hidden owner lane
+    u = usage["the_analyst.day_trading_analyst"]
+    assert u["cloud_calls"] == 1 and u["in_tok"] == 1_000_000 and u["out_tok"] == 1_000_000
+    assert round(u["cloud_usd"], 2) == 6.00

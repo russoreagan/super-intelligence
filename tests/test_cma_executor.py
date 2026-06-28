@@ -110,6 +110,9 @@ def _make_exec(client=None, mcp_servers=None):
     exe._current_end_user_id = None
     exe._approval_fn = None
     exe._current_turn_id = ""
+    exe._router = None  # metering/budget off by default; set per-test to exercise it
+    exe._active_sid = None
+    exe._session_usage_seen = {}
     exe._append_tool_log = AsyncMock()  # don't touch the filesystem
     return exe
 
@@ -684,3 +687,87 @@ class TestPerUserVault:
         client.beta.vaults.create.assert_not_called()  # reused, not recreated
         client.beta.vaults.credentials.update.assert_called_once()
         assert exe._user_vault_cache["u_42"]["mcpu_exp_ms"] > 1
+
+
+# ── CMA spend metering + budget cap ─────────────────────────────────────────────
+# CMA inference bills the API key directly and never routes through ModelRouter, so
+# it was invisible to the daily USD tally AND the Agents dashboard, and unbounded by
+# the lite cap. These pin the seam that closes that gap (~$200/2d → ~$1 in ledger).
+
+
+class _FakeRouter:
+    def __init__(self, exhausted=False):
+        self._exhausted = exhausted
+        self.calls = []  # (model_id, in_tok, out_tok, cache_read)
+
+    def cloud_budget_exhausted(self):
+        return self._exhausted
+
+    def record_cloud_usage(self, model_id, in_tok, out_tok, cache_read=0):
+        self.calls.append((model_id, in_tok, out_tok, cache_read))
+        return 0.0
+
+
+def _usage(in_tok, out_tok, cache_read=0, cache_creation=None):
+    return SN(
+        input_tokens=in_tok,
+        output_tokens=out_tok,
+        cache_read_input_tokens=cache_read,
+        cache_creation=cache_creation,
+    )
+
+
+class TestCMAUsageMetering:
+    async def test_meters_session_usage_delta_across_warm_reuse(self, monkeypatch):
+        # Sessions report CUMULATIVE usage and are reused warm; each cloud_action must
+        # bill only the per-session delta, routed through the ModelRouter seam.
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+        client = _make_client([_msg("done"), _idle("end_turn")])
+        exe = _make_exec(client)
+        router = _FakeRouter()
+        exe._router = router
+
+        client.beta.sessions.retrieve = AsyncMock(
+            return_value=SN(id="sesn_1", status="idle", usage=_usage(1000, 200))
+        )
+        await exe.execute_read("task one", [])
+        assert router.calls == [("claude-opus-4-6", 1000, 200, 0)]
+
+        # Same warm session, cumulative grew → bill only the delta (500 in, 150 out).
+        client.beta.sessions.retrieve = AsyncMock(
+            return_value=SN(id="sesn_1", status="idle", usage=_usage(1500, 350))
+        )
+        await exe.execute_read("task two", [])
+        assert router.calls[-1] == ("claude-opus-4-6", 500, 150, 0)
+
+    async def test_cache_creation_folds_into_input(self, monkeypatch):
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+        client = _make_client([_msg("done"), _idle("end_turn")])
+        exe = _make_exec(client)
+        exe._router = router = _FakeRouter()
+        cc = SN(ephemeral_5m_input_tokens=300, ephemeral_1h_input_tokens=200)
+        client.beta.sessions.retrieve = AsyncMock(
+            return_value=SN(id="sesn_1", status="idle",
+                            usage=_usage(1000, 200, cache_read=400, cache_creation=cc))
+        )
+        await exe.execute_read("task", [])
+        # input 1000 + cache_creation (300+200) = 1500; cache_read passed through.
+        assert router.calls == [("claude-opus-4-6", 1500, 200, 400)]
+
+    async def test_skips_cloud_action_when_budget_exhausted(self, monkeypatch):
+        # Over the daily cap → the action is skipped before any session is dispatched.
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+        client = _make_client([_msg("should not run"), _idle("end_turn")])
+        exe = _make_exec(client)
+        exe._router = _FakeRouter(exhausted=True)
+        result = await exe.execute_read("expensive research", [])
+        assert result["success"] is False and "budget" in result["output"].lower()
+        client.beta.sessions.events.stream.assert_not_called()
+
+    async def test_no_router_is_a_noop(self, monkeypatch):
+        # Backwards-compatible: with no router wired, the path behaves exactly as before.
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+        client = _make_client([_msg("done"), _idle("end_turn")])
+        exe = _make_exec(client)  # _router defaults to None
+        result = await exe.execute_read("task", [])
+        assert result["success"] is True

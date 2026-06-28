@@ -428,7 +428,9 @@ class _SetupMixin:
         if _executor_kind == "cma":
             from brain.clusters.cma_executor import CMAExecutor
 
-            cloud = CMAExecutor(self.bus, schema_store=self.hippocampus._schema)
+            cloud = CMAExecutor(
+                self.bus, schema_store=self.hippocampus._schema, router=self.router
+            )
             logger.info("Motor cortex: using Managed Agents executor (CMA)")
         elif _executor_kind == "generic":
             from brain.clusters.generic_executor import GenericExecutor
