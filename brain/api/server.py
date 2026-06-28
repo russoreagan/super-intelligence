@@ -182,8 +182,8 @@ def build_api_router(
     auth: Callable[[str | None], bool] = check_bearer,
     consolidate_runner: ConsolidateRunner | None = None,
     confirm_runner: ConfirmRunner | None = None,
-    approvals_list_runner: Callable[[str], list] | None = None,
-    approval_resolve_runner: Callable[[str, str, bool], dict] | None = None,
+    approvals_list_runner: Callable[[str, bool], list] | None = None,
+    approval_resolve_runner: Callable[[str, str, bool, bool], dict] | None = None,
     purge_runner: PurgeRunner | None = None,
     tts_runner: TtsRunner | None = None,
     stt_runner: SttRunner | None = None,
@@ -622,10 +622,13 @@ def build_api_router(
             raise HTTPException(status_code=403, detail="session belongs to another partner")
         if approvals_list_runner is None:
             return {"session_id": session_id, "approvals": []}
+        # Owner-key callers (this deployment's single-tenant apps) also see the
+        # autonomous/owner lane — actions the brain queued while unattended — so
+        # "approve from when I was away" works from a tenant app, not just the owner UI.
         return {
             "session_id": session_id,
             "end_user_id": s.end_user_id,
-            "approvals": approvals_list_runner(s.end_user_id) or [],
+            "approvals": approvals_list_runner(s.end_user_id, bool(ctx.get("owner"))) or [],
         }
 
     @router.post("/sessions/{session_id}/approvals/{approval_id}/resolve")
@@ -645,7 +648,8 @@ def build_api_router(
         if not _owns(ctx, s):
             raise HTTPException(status_code=403, detail="session belongs to another partner")
         approve = bool((body or {}).get("approve", True))
-        res = approval_resolve_runner(approval_id, s.end_user_id, approve) or {}
+        # Owner-key callers may also resolve autonomous/owner-lane items (see GET above).
+        res = approval_resolve_runner(approval_id, s.end_user_id, approve, bool(ctx.get("owner"))) or {}
         return {"session_id": session_id, "end_user_id": s.end_user_id, "approved": approve, **res}
 
     # ── Audio (optional, partner-gated) ───────────────────────────────────────
@@ -1226,8 +1230,8 @@ class ApiServer:
         registry: ApiSessionRegistry | None = None,
         consolidate_runner: ConsolidateRunner | None = None,
         confirm_runner: ConfirmRunner | None = None,
-        approvals_list_runner: Callable[[str], list] | None = None,
-        approval_resolve_runner: Callable[[str, str, bool], dict] | None = None,
+        approvals_list_runner: Callable[[str, bool], list] | None = None,
+        approval_resolve_runner: Callable[[str, str, bool, bool], dict] | None = None,
         purge_runner: PurgeRunner | None = None,
         tts_runner: TtsRunner | None = None,
         stt_runner: SttRunner | None = None,

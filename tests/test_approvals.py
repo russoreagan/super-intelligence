@@ -83,6 +83,27 @@ def test_owner_can_resolve_any_end_user(approvals):
     assert approvals.approve(a.id, end_user_id=None) is not None
 
 
+def test_include_autonomous_surfaces_owner_lane_to_a_scoped_query(approvals):
+    # The brain queues an action while unattended (no engine end-user → "" lane)...
+    auto = approvals.record("send_briefing", {"content": "hi"}, end_user_id="")
+    # ...plus an action raised inside the trading app's own session.
+    own = approvals.record("place_order", {"symbol": "AAPL"}, end_user_id="russ:trading")
+
+    # A plain scoped query sees only its own item — the away/autonomous one is hidden,
+    # which is exactly why it only showed up in the owner UI before.
+    assert [p["id"] for p in approvals.pending("russ:trading")] == [own.id]
+
+    # With include_autonomous, the owner-key tenant query sees BOTH its own and the
+    # autonomous lane, but still NOT another end-user's items.
+    approvals.record("send_email", {"to": "x"}, end_user_id="someone:chat")
+    visible = {p["id"] for p in approvals.pending("russ:trading", include_autonomous=True)}
+    assert visible == {own.id, auto.id}
+
+    # And it can resolve the autonomous-lane item, which a plain scoped resolve cannot.
+    assert approvals.approve(auto.id, end_user_id="russ:trading") is None
+    assert approvals.approve(auto.id, end_user_id="russ:trading", include_autonomous=True) is not None
+
+
 def test_approved_expires_after_ttl(approvals, monkeypatch):
     import brain.clusters.approvals as mod
 

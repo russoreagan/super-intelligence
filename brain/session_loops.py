@@ -802,14 +802,17 @@ class _LoopsMixin:
                 await self._emitter.emit_event({"type": "task_approval", **item.to_dict()})
         return "deny"
 
-    def approve_action(self, approval_id: str, end_user_id: str | None = None) -> dict:
+    def approve_action(
+        self, approval_id: str, end_user_id: str | None = None, include_autonomous: bool = False
+    ) -> dict:
         """UI/API: approve a pending action and re-queue it so the brain runs it,
         pre-authorized, on the next idle cycle. end_user_id (engine API) scopes the
-        approval to that end-user's own items; None (owner/brain UI) = any."""
+        approval to that end-user's own items; None (owner/brain UI) = any.
+        include_autonomous also admits the autonomous/owner lane ("")."""
         approvals = getattr(self, "_approvals", None)
         if approvals is None:
             return {"ok": False, "error": "approvals unavailable"}
-        item = approvals.approve(approval_id, end_user_id=end_user_id)
+        item = approvals.approve(approval_id, end_user_id=end_user_id, include_autonomous=include_autonomous)
         if item is None:
             return {"ok": False, "error": "no such pending approval"}
         goal = f"The user approved this action — carry it out now: {item.tool}"
@@ -820,24 +823,33 @@ class _LoopsMixin:
         logger.info("[Approvals] approved + re-queued [%s] %s", item.id, item.tool)
         return {"ok": True, "tool": item.tool}
 
-    def skip_action(self, approval_id: str, end_user_id: str | None = None) -> dict:
+    def skip_action(
+        self, approval_id: str, end_user_id: str | None = None, include_autonomous: bool = False
+    ) -> dict:
         approvals = getattr(self, "_approvals", None)
         if approvals is None:
             return {"ok": False, "error": "approvals unavailable"}
-        return {"ok": approvals.skip(approval_id, end_user_id=end_user_id)}
+        return {"ok": approvals.skip(approval_id, end_user_id=end_user_id, include_autonomous=include_autonomous)}
 
-    def list_approvals(self, end_user_id: str | None = None) -> list[dict]:
+    def list_approvals(self, end_user_id: str | None = None, include_autonomous: bool = False) -> list[dict]:
         approvals = getattr(self, "_approvals", None)
-        return approvals.pending(end_user_id=end_user_id) if approvals else []
+        return approvals.pending(end_user_id=end_user_id, include_autonomous=include_autonomous) if approvals else []
 
     # ── Engine-API relay (tenant apps; scoped to the caller's end-user) ─────────
-    def api_list_approvals(self, end_user_id: str) -> list[dict]:
-        return self.list_approvals(end_user_id=end_user_id or "")
+    # `include_autonomous` is set by the route for OWNER-key callers so a single-tenant
+    # owner app (e.g. the trading copilot) also sees the actions the brain queued while
+    # unattended (the "" autonomous lane), which otherwise surface only in the owner UI.
+    # Non-owner partners never set it, so cross-tenant isolation is preserved.
+    def api_list_approvals(self, end_user_id: str, include_autonomous: bool = False) -> list[dict]:
+        return self.list_approvals(end_user_id=end_user_id or "", include_autonomous=include_autonomous)
 
-    def api_resolve_approval(self, approval_id: str, end_user_id: str, approve: bool) -> dict:
+    def api_resolve_approval(
+        self, approval_id: str, end_user_id: str, approve: bool, include_autonomous: bool = False
+    ) -> dict:
         """Resolve one approval on behalf of a tenant end-user. The end_user_id is
-        enforced, so a partner can only resolve their own end-user's items."""
+        enforced, so a partner can only resolve their own end-user's items (plus the
+        autonomous/owner lane when include_autonomous is set, for owner-key callers)."""
         euid = end_user_id or ""
         if approve:
-            return self.approve_action(approval_id, end_user_id=euid)
-        return self.skip_action(approval_id, end_user_id=euid)
+            return self.approve_action(approval_id, end_user_id=euid, include_autonomous=include_autonomous)
+        return self.skip_action(approval_id, end_user_id=euid, include_autonomous=include_autonomous)

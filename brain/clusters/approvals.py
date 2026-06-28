@@ -173,15 +173,28 @@ class PendingApprovals:
         return False
 
     @staticmethod
-    def _scoped(a: Approval, end_user_id: str | None) -> bool:
-        """end_user_id=None → no scope (owner, sees all); else must match exactly."""
-        return end_user_id is None or a.end_user_id == end_user_id
+    def _scoped(a: Approval, end_user_id: str | None, include_autonomous: bool = False) -> bool:
+        """Which approvals an end-user query may see.
 
-    def approve(self, approval_id: str, end_user_id: str | None = None) -> Approval | None:
+        end_user_id=None → no scope (the owner UI, which sees the whole ledger).
+        Otherwise the item's end_user_id must match exactly — except when
+        include_autonomous is set, which also admits the autonomous/owner lane ("")
+        so an owner-key tenant query (e.g. the trading app) surfaces the actions the
+        brain queued while unattended, not just the ones it raised in-session."""
+        if end_user_id is None:
+            return True
+        if a.end_user_id == end_user_id:
+            return True
+        return include_autonomous and a.end_user_id == ""
+
+    def approve(
+        self, approval_id: str, end_user_id: str | None = None, include_autonomous: bool = False
+    ) -> Approval | None:
         """Mark a pending item approved. Returns it (caller re-queues the work).
-        With end_user_id set, only that end-user's own item can be approved."""
+        With end_user_id set, only that end-user's own item can be approved — plus
+        the autonomous/owner lane when include_autonomous is set."""
         for a in self._items:
-            if a.id == approval_id and a.status == "pending" and self._scoped(a, end_user_id):
+            if a.id == approval_id and a.status == "pending" and self._scoped(a, end_user_id, include_autonomous):
                 a.status = "approved"
                 a.resolved_at = time.time()
                 self._save()
@@ -189,20 +202,22 @@ class PendingApprovals:
                 return a
         return None
 
-    def skip(self, approval_id: str, end_user_id: str | None = None) -> bool:
+    def skip(
+        self, approval_id: str, end_user_id: str | None = None, include_autonomous: bool = False
+    ) -> bool:
         for a in self._items:
-            if a.id == approval_id and a.status == "pending" and self._scoped(a, end_user_id):
+            if a.id == approval_id and a.status == "pending" and self._scoped(a, end_user_id, include_autonomous):
                 a.status = "skipped"
                 a.resolved_at = time.time()
                 self._save()
                 return True
         return False
 
-    def pending(self, end_user_id: str | None = None) -> list[dict]:
+    def pending(self, end_user_id: str | None = None, include_autonomous: bool = False) -> list[dict]:
         return [
             a.to_dict()
             for a in self._items
-            if a.status == "pending" and self._scoped(a, end_user_id)
+            if a.status == "pending" and self._scoped(a, end_user_id, include_autonomous)
         ]
 
     def clear_pending(self) -> int:

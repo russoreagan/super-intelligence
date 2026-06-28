@@ -408,24 +408,25 @@ def _client_approvals(list_runner=None, resolve_runner=None, keys=None):
 def test_approvals_list_and_resolve_route_to_runner():
     seen = {}
 
-    def _list(end_user_id):
-        seen["list_euid"] = end_user_id
+    def _list(end_user_id, include_autonomous):
+        seen["list"] = (end_user_id, include_autonomous)
         return [{"id": "ap1", "tool": "send_email", "reason": "would send communication"}]
 
-    def _resolve(approval_id, end_user_id, approve):
-        seen["resolve"] = (approval_id, end_user_id, approve)
+    def _resolve(approval_id, end_user_id, approve, include_autonomous):
+        seen["resolve"] = (approval_id, end_user_id, approve, include_autonomous)
         return {"ok": True, "tool": "send_email"}
 
     c = _client_approvals(list_runner=_list, resolve_runner=_resolve)
     sid = c.post("/v1/sessions", json={"end_user_id": "c1"}, headers=_AUTH).json()["session_id"]
     r = c.get(f"/v1/sessions/{sid}/approvals", headers=_AUTH)
     assert r.status_code == 200 and r.json()["approvals"][0]["id"] == "ap1"
-    assert seen["list_euid"] == "c1"  # scoped to the session's end-user
+    # Scoped to the session's end-user; owner-key caller also gets the autonomous lane.
+    assert seen["list"] == ("c1", True)
     r2 = c.post(
         f"/v1/sessions/{sid}/approvals/ap1/resolve", json={"approve": True}, headers=_AUTH
     )
     assert r2.status_code == 200 and r2.json()["approved"] is True and r2.json()["ok"] is True
-    assert seen["resolve"] == ("ap1", "c1", True)  # end_user_id enforced from session
+    assert seen["resolve"] == ("ap1", "c1", True, True)  # end_user enforced; owner sees autonomous
 
 
 def test_approvals_require_auth_and_runner():
