@@ -78,7 +78,7 @@ class _TurnMixin:
             lock = self._api_turn_lock = asyncio.Lock()
         async with lock:
             text, affect = await self.process_turn(
-                message, end_user_id=end_user_id, mandate_id=mandate_id, persona=persona
+                message, end_user_id=end_user_id, mandate_id=mandate_id, persona=persona, api=True
             )
             # A cloud WRITE that needs confirmation parks itself on the executor's
             # process-global pending slot. Move that pending action out to the
@@ -242,6 +242,7 @@ class _TurnMixin:
         end_user_id: str | None = None,
         mandate_id: str | None = None,
         persona: str | None = None,
+        api: bool = False,
     ) -> tuple[str, dict]:
         from brain.second_brain.store import bind_persona
 
@@ -264,7 +265,9 @@ class _TurnMixin:
 
         try:
             with bind_persona(persona), bind_cm:
-                return await self._run_turn_guarded(user_input, image_path, end_user_id, mandate_id)
+                return await self._run_turn_guarded(
+                    user_input, image_path, end_user_id, mandate_id, api=api
+                )
         finally:
             if registry is not None:
                 registry.persist(end_user_id)
@@ -275,12 +278,13 @@ class _TurnMixin:
         image_path: str | None = None,
         end_user_id: str | None = None,
         mandate_id: str | None = None,
+        api: bool = False,
     ) -> tuple[str, dict]:
         from brain.brainstem import TURN_TIMEOUT
 
         try:
             return await asyncio.wait_for(
-                self._process_turn_body(user_input, image_path, end_user_id, mandate_id),
+                self._process_turn_body(user_input, image_path, end_user_id, mandate_id, api=api),
                 timeout=TURN_TIMEOUT,
             )
         except TimeoutError:
@@ -383,6 +387,7 @@ class _TurnMixin:
         image_path: str | None = None,
         end_user_id: str | None = None,
         mandate_id: str | None = None,
+        api: bool = False,
     ) -> tuple[str, dict]:
         from brain.observability.firing_path import reset_current_trace, set_current_trace
         from brain.observability.timeline import TurnTrace
@@ -798,6 +803,15 @@ class _TurnMixin:
                     self.motor.reset_turn(turn_id)
                     memory["tool_result"] = "[task_queued]\nTask acknowledged — working on it now."
                     logger.info("[MotorCortex] Task mode — deferring planning to background")
+                elif api:
+                    # Engine/API path: a single synchronous (text, affect) is returned to
+                    # the caller and there is no proactive-speech channel back to it (and
+                    # the agent lane is gated silent anyway). A deferred result would be
+                    # lost — the caller would only ever see "I'm working on this." So run
+                    # the reactive tool INLINE and fold its output into the drafter context,
+                    # exactly like a confirmed cloud_action above.
+                    memory["tool_result"] = await self._run_motor_inline(features, turn_id)
+                    logger.info("[MotorCortex] Reactive — inline (API path)")
                 else:
                     # Always deferred: don't block the turn on motor planning/execution.
                     # Frontal produces an acknowledgment; result surfaces via proactive speech.
@@ -1950,6 +1964,87 @@ class _TurnMixin:
         except Exception as e:
             logger.warning("[MotorCortex] Tool result synthesis failed (%s): %s", tool_name, e)
             return ""
+
+    async def _run_motor_inline(self, features: dict, turn_id: str) -> str:
+        """Run a reactive motor action INLINE and return a tool-result string for the
+        drafter (the value stored in memory["tool_result"]).
+
+        The engine/API path returns one synchronous response and has no proactive-
+        speech channel, so the deferred model (_run_motor_reactive) would silently
+        drop the result. Running the tool before the response is drafted, and folding
+        its output into the drafter context, is the only way a pasted URL (or any
+        reactive tool) actually reaches an API caller. Mirrors the confirmed
+        cloud_action path: execute → set memory["tool_result"] → drafter synthesizes.
+
+        Best-effort: any failure returns a short marker rather than raising into the
+        turn, so the response still goes out. A cloud WRITE that needs confirmation is
+        left parked on the executor's pending slot for api_turn to harvest.
+        """
+        _timeout = float(os.environ.get("BRAIN_MOTOR_INTERACTIVE_TIMEOUT_S", "30"))
+        self.motor.reset_turn(turn_id)
+        goal = features.get("raw_text") or features.get("topic_summary", "")
+        try:
+            tool_result = await asyncio.wait_for(
+                self.motor.execute(features, turn_id),
+                timeout=_timeout,
+            )
+        except Exception as _e:
+            logger.error("[MotorCortex] Inline reactive failed: %s", _e)
+            return "[tool_error] The action could not be completed."
+
+        if not tool_result:
+            return ""
+
+        output = tool_result.get("output", "")
+        tool_name = tool_result.get("tool", "tool")
+        success = tool_result.get("success")
+
+        # Same intrinsic-correctness neuromod the deferred path applies on completion
+        # (kept in sync with _run_motor_reactive): completing a task is a correctness
+        # signal scaled by how much this persona values being right; failure drains 5HT.
+        from brain.neuron import loss_aversion as _loss_aversion
+        from brain.neuron import reward_weight as _reward_weight
+
+        _tpersona = str(settings.get("persona_name", ""))
+        _tw = _reward_weight(_tpersona, "correctness")
+        _ter = float(settings.get("emotional_reactivity_scale"))
+        if success is False:
+            _tla = _loss_aversion(_tpersona)
+            self.bus.neuromod.add("GABA", 0.08)
+            self.bus.neuromod.add("NE", 0.06)
+            self.bus.neuromod.add(
+                "DA", -float(settings.get("correctness_penalty_base")) * _tw * _ter * _tla
+            )
+            self.bus.hormonal.add(
+                "5HT", -float(settings.get("correctness_5ht_drain")) * _tw * _ter * _tla
+            )
+        elif success:
+            self.bus.neuromod.add("DA", float(settings.get("correctness_reward_base")) * _tw * _ter)
+            self.bus.neuromod.add("Glu", 0.04)
+        with contextlib.suppress(Exception):
+            if self._emitter:
+                await self._emitter.emit_neuromod(self.bus.neuromod.snapshot())
+
+        if tool_result.get("pending"):
+            # A write needs confirmation. The executor has parked it on its pending
+            # slot; api_turn moves it onto the durable session and surfaces it. Tell
+            # the drafter to ask, and DON'T clear the slot here.
+            desc = output.replace("CONFIRMATION_NEEDED:", "").strip()
+            return f"[action_pending] Ready to: {desc}. Ask the user to confirm before proceeding."
+
+        # Record for "what did you just do" follow-ups, same as the deferred path.
+        self._recent_task_results.append(
+            {"goal": goal, "summary": output[:500], "success": bool(success), "ts": time.time()}
+        )
+        if len(self._recent_task_results) > 3:
+            self._recent_task_results.pop(0)
+
+        if not output:
+            return ""
+        # Raw tool output as drafter context (NOT shown verbatim to the user — the
+        # drafter synthesizes it into the reply). fetch_url output already carries its
+        # own UNTRUSTED-EXTERNAL-CONTENT markers from the dispatcher.
+        return f"[{tool_name}]\n{output}"
 
     async def _run_motor_reactive(self, features: dict, turn_id: str) -> None:
         """Run a reactive motor action in the background.

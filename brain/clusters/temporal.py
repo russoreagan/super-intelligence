@@ -218,10 +218,19 @@ _TOOL_REQUEST_PATTERNS = [
 ]
 
 
+_URL_RE = re.compile(r"https?://\S", re.IGNORECASE)
+
+
 def _looks_like_tool_request(text: str) -> bool:
     """True if the text contains signals that the user wants a tool/action,
     not just a conversational reply. Used to short-circuit predict-and-surprise
     gating — the fast path would otherwise drop requires_action to false."""
+    # A pasted http(s) URL is itself a fetch request: the motor planner's URL rule
+    # fetches it by default (see motor_prompts.PLANNER_SYSTEM_BASE). The tool-verb
+    # lexicon below misses a bare link with no verb, so detect URLs explicitly —
+    # otherwise requires_action never flips and the planner never runs on it.
+    if _URL_RE.search(text):
+        return True
     t = text.lower()
     return any(p in t for p in _TOOL_REQUEST_PATTERNS)
 
