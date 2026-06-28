@@ -60,7 +60,7 @@ class _FakeMotor:
     def reset_turn(self, turn_id):
         self.reset_called = turn_id
 
-    async def execute(self, features, turn_id):
+    async def execute(self, features, turn_id, inline_step_cap=None):
         return self._result
 
 
@@ -138,10 +138,57 @@ def test_api_turn_transport_routing():
 
 def test_inline_motor_failure_does_not_raise():
     class _Boom(_FakeMotor):
-        async def execute(self, features, turn_id):
+        async def execute(self, features, turn_id, inline_step_cap=None):
             raise RuntimeError("planner exploded")
 
     fake = _FakeSelf(None)
     fake.motor = _Boom(None)
     out = asyncio.run(_TurnMixin._run_motor_inline(fake, {"raw_text": "x"}, "t4"))
     assert out.startswith("[tool_error]")
+
+
+# ── 3. Inline cap reached → remainder handed to a background user job ──────────
+
+
+class _FakeQueue:
+    def __init__(self):
+        self.enqueued: list = []
+
+    def enqueue(self, goal, source="self", priority=1):
+        self.enqueued.append((goal, source, priority))
+
+
+def test_inline_motor_backgrounds_remainder():
+    # execute() flagged more_pending → _run_motor_inline enqueues a source=user job for the
+    # remainder and tells the drafter the first part is done with the rest continuing.
+    fake = _FakeSelf(
+        {
+            "tool": "fetch_url",
+            "output": "FIRST PART",
+            "success": True,
+            "more_pending": True,
+            "remaining_goal": "do the rest",
+        }
+    )
+    fake._task_queue = _FakeQueue()
+    out = asyncio.run(_TurnMixin._run_motor_inline(fake, {"raw_text": "x and then y"}, "t1"))
+    assert "FIRST PART" in out
+    assert "[continuing]" in out
+    assert fake._task_queue.enqueued == [("do the rest", "user", 1)]
+
+
+def test_inline_motor_remainder_without_queue_does_not_crash():
+    # No task queue available → skip the background hand-off gracefully, still return the
+    # first part.
+    fake = _FakeSelf(
+        {
+            "tool": "fetch_url",
+            "output": "FIRST PART",
+            "success": True,
+            "more_pending": True,
+            "remaining_goal": "do the rest",
+        }
+    )
+    out = asyncio.run(_TurnMixin._run_motor_inline(fake, {"raw_text": "x"}, "t1"))
+    assert "FIRST PART" in out
+    assert "[continuing]" not in out

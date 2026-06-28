@@ -503,23 +503,77 @@ class MotorCortexCluster:
 
     # ── Public entry point ─────────────────────────────────────────────────────
 
-    async def execute(self, features: dict, turn_id: str) -> dict | None:
+    async def _dispatch_tool(
+        self, tool: str, args: dict, turn_id: str, reason: str = ""
+    ) -> tuple[str, dict | None]:
+        """Dispatch a single planned tool and return (output, last_result).
+
+        The one place the three tool families are routed: cloud_action → the cloud
+        executor (may park a pending write — no motor.result publish, the executor
+        owns that), recall_memory/analyze_image → the lobe bridge, everything else →
+        the local tool dispatch. Shared verbatim by the reactive loop (execute) and
+        per-story job execution (_execute_internal_job_body) so both process a tool
+        identically — same success rules, same motor.result publish."""
+        if tool == "cloud_action":
+            last_result = await self._dispatch_cloud(
+                args, turn_id, end_user_id=self._current_end_user_id
+            )
+            output = (last_result or {}).get("output", "")
+            return output, last_result
+        if tool in ("recall_memory", "analyze_image"):
+            output = await self._dispatch_lobe(tool, args, turn_id)
+            last_result = {
+                "tool": tool,
+                "args": args,
+                "reason": reason,
+                "output": output,
+                "success": not output.startswith("[error]"),
+            }
+            await self._bus.publish_dict("motor.result", last_result, source=CLUSTER)
+            return output, last_result
+        output = await self._dispatch(tool, args)
+        last_result = {
+            "tool": tool,
+            "args": args,
+            "reason": reason,
+            "output": output,
+            "success": not output.startswith("[error]") and not output.startswith("[blocked]"),
+        }
+        await self._bus.publish_dict("motor.result", last_result, source=CLUSTER)
+        return output, last_result
+
+    async def execute(
+        self, features: dict, turn_id: str, inline_step_cap: int | None = None
+    ) -> dict | None:
         """Bind the active agent (engine mode) so per-agent motor permissions are
         in scope for the whole dispatch, then run. No agent_id → no-op bind →
-        global config (companion/local), unchanged."""
+        global config (companion/local), unchanged.
+
+        `inline_step_cap` opts a reactive turn into adaptive-depth INLINE execution:
+        run up to that many tools synchronously, and if the planner still wants to act
+        afterwards the work is genuinely multi-part — the result is flagged
+        `more_pending` with the `remaining_goal` so the caller can hand the rest to a
+        background job (the user gets the first part now). None (the default) keeps the
+        historical single-tool reactive behavior used by the deferred/background path."""
         from brain.agent_ctx import bind_agent
 
         with bind_agent((features or {}).get("agent_id")):
-            return await self._execute_inner(features, turn_id)
+            return await self._execute_inner(features, turn_id, inline_step_cap)
 
-    async def _execute_inner(self, features: dict, turn_id: str) -> dict | None:
+    async def _execute_inner(
+        self, features: dict, turn_id: str, inline_step_cap: int | None = None
+    ) -> dict | None:
         """
         Plan and execute tools based on the user's request.
 
-        Two modes:
-        - Task mode: frontal deposited a goal → reactive loop runs until tool="none"
-          or the 3-call budget is exhausted. Fires after_job hooks on completion.
-        - Reactive mode: no task goal → single tool call, return result immediately.
+        Modes:
+        - Task mode: frontal deposited a goal → loop runs until tool="none" or the
+          chem budget is exhausted. Fires after_job hooks on completion.
+        - Reactive, deferred (inline_step_cap None): single tool, return immediately
+          (the historical background/WS behavior).
+        - Reactive, inline (inline_step_cap set): run up to inline_step_cap tools
+          synchronously; if the planner still wants to act, flag `more_pending` +
+          `remaining_goal` so the caller backgrounds the rest (first part returned now).
         """
         self._current_end_user_id = (features or {}).get("end_user_id")
         chem = self._chem_snapshot()
@@ -586,6 +640,16 @@ class MotorCortexCluster:
         results_log: list[str] = []
         last_result: dict | None = None
 
+        # Depth control. A reactive turn (no deposited task goal) historically ran ONE
+        # tool. The inline transport opts into adaptive depth via inline_step_cap: run up
+        # to `cap` tools synchronously, and if the planner STILL wants to act, the request
+        # is genuinely multi-part — stop and flag the remainder so the caller backgrounds
+        # it (the user gets the first part now). Task-mode runs the full budget loop;
+        # deferred reactive (cap None) keeps the single-tool break below.
+        reactive = task_goal is None
+        inline_mode = reactive and inline_step_cap is not None
+        cap = inline_step_cap if inline_mode else None
+
         while self._calls_this_turn < budget:
             plan_prompt = self._build_plan_prompt(
                 work_goal, features, subsystem_context, steps_taken, results_log
@@ -600,6 +664,21 @@ class MotorCortexCluster:
 
             if not plan or plan.get("tool") == "none":
                 logger.debug("[MotorCortex] Planner done: %s", plan.get("reason", ""))
+                break
+
+            # Inline depth cap reached and the planner still wants to act: the rest is a
+            # distinct remainder. The re-plan above (with full step context) IS the
+            # multi-part triage — flag it so the caller enqueues a background job, and
+            # stop. The first part is already in last_result.
+            if inline_mode and len(steps_taken) >= cap:
+                last_result = dict(last_result or {})
+                last_result["more_pending"] = True
+                last_result["remaining_goal"] = work_goal
+                logger.info(
+                    "[MotorCortex] Inline cap (%d) reached with work remaining — "
+                    "handing remainder to a background job",
+                    cap,
+                )
                 break
 
             tool = plan.get("tool", "none")
@@ -620,32 +699,7 @@ class MotorCortexCluster:
 
             self._calls_this_turn += 1
 
-            if tool == "cloud_action":
-                last_result = await self._dispatch_cloud(
-                    args, turn_id, end_user_id=self._current_end_user_id
-                )
-                output = (last_result or {}).get("output", "")
-            elif tool in ("recall_memory", "analyze_image"):
-                output = await self._dispatch_lobe(tool, args, turn_id)
-                last_result = {
-                    "tool": tool,
-                    "args": args,
-                    "reason": reason,
-                    "output": output,
-                    "success": not output.startswith("[error]"),
-                }
-                await self._bus.publish_dict("motor.result", last_result, source=CLUSTER)
-            else:
-                output = await self._dispatch(tool, args)
-                last_result = {
-                    "tool": tool,
-                    "args": args,
-                    "reason": reason,
-                    "output": output,
-                    "success": not output.startswith("[error]")
-                    and not output.startswith("[blocked]"),
-                }
-                await self._bus.publish_dict("motor.result", last_result, source=CLUSTER)
+            output, last_result = await self._dispatch_tool(tool, args, turn_id, reason)
 
             steps_taken.append({"tool": tool, "args": args, "reason": reason})
             results_log.append(output[:500] if output else "")
@@ -660,8 +714,10 @@ class MotorCortexCluster:
                     steps_taken, results_log, last_result, turn_id, chem, budget
                 )
 
-            if not task_goal:
-                # Reactive mode: one tool per turn
+            # Deferred/background reactive keeps the historical single-tool behavior;
+            # inline reactive continues (bounded by `cap` above), task-mode runs the
+            # full budget loop until the planner is done.
+            if reactive and not inline_mode:
                 break
 
         # Fire completion hooks for task-mode jobs
@@ -711,11 +767,16 @@ class MotorCortexCluster:
             max_concurrent = _cap("motor_max_concurrent_jobs", max_concurrent)
         return window_s, max_window, max_session, max_concurrent
 
-    def _check_job_rate_limit(self) -> str | None:
+    def _check_job_rate_limit(self, awaited: bool = False) -> str | None:
         """Return a human-readable decline reason if a new motor job would exceed
         any configured cap, else None. Caps: concurrent, rolling-window, session.
         Window timestamps are wall-clock + persisted, so the rolling-window cap
-        survives a process restart (it can't be reset by redeploying)."""
+        survives a process restart (it can't be reset by redeploying).
+
+        `awaited` = a user is actively waiting on this job (source="user"). Such jobs
+        respect ONLY the concurrency cap; the rolling-window and session caps are
+        autonomy spend-guards that would wrongly throttle work the user explicitly
+        asked for."""
         import time as _t
 
         now = _t.time()
@@ -724,6 +785,8 @@ class MotorCortexCluster:
         self._job_start_times = [t for t in self._job_start_times if now - t <= window_s]
         if self._active_job_count >= max_concurrent:
             return f"a job is already running (max concurrent {max_concurrent})"
+        if awaited:
+            return None
         if len(self._job_start_times) >= max_window:
             return f"rate limit reached ({max_window} jobs per {int(window_s / 60)} min)"
         if self._session_job_count >= max_session:
@@ -776,15 +839,22 @@ class MotorCortexCluster:
             pass
 
     # ── Internal-directive entry point ─────────────────────────────────────
-    async def execute_internal_job(self, goal: str, turn_id: str, budget: int = 0) -> dict:
-        """Run a self-directed multi-step job: strategic plan upfront, then
-        tactical step-by-step execution. Emits task lifecycle events for the
-        UI Tasks tab. Returns a job summary dict.
+    async def execute_internal_job(
+        self, goal: str, turn_id: str, budget: int = 0, source: str = "self"
+    ) -> dict:
+        """Run a multi-step job: strategic plan upfront, then tactical step-by-step
+        execution. Emits task lifecycle events for the UI Tasks tab. Returns a job
+        summary dict.
 
-        Differs from execute(): not gated by action_gate or per-turn budget;
-        designed for sustained autonomous work triggered by the follow-through
-        loop, not by a user-turn. Budget is chemistry-modulated (DA/CORT);
-        pass budget>0 to override.
+        Differs from execute() only in DEPTH, not initiator: this is the N-step
+        pipeline, reachable both from the autonomous follow-through loop AND from a
+        user request that triages as multi-step. Not gated by action_gate or the
+        per-turn budget; budget is chemistry-modulated (DA/CORT) — pass budget>0 to
+        override.
+
+        `source` is the initiator: "user" marks a user-AWAITED job (the user asked and
+        is waiting) — it bypasses the autonomy rate caps (see _check_job_rate_limit),
+        which exist to bound self-directed spend, not work the user requested.
 
         Runs in background mode: cloud cells (strategic_planner, verifier) are
         subject to bg_cloud_token_rate + daily USD cap; falls back to local
@@ -795,8 +865,10 @@ class MotorCortexCluster:
         job_id = f"job_{turn_id}"
 
         # ── Rate limiter (cost guard) ───────────────────────────────────────────
-        # Decline cleanly BEFORE any work / cloud spend if a cap is hit.
-        _decline = self._check_job_rate_limit()
+        # Decline cleanly BEFORE any work / cloud spend if a cap is hit. A user-awaited
+        # job respects only the concurrency cap — the rolling-window / session caps are
+        # autonomy budgets and must not throttle work the user is actively waiting on.
+        _decline = self._check_job_rate_limit(awaited=(source == "user"))
         if _decline:
             logger.warning("[InternalJob] Declined job (%s): %.80s", _decline, goal)
             with contextlib.suppress(Exception):
@@ -1228,32 +1300,7 @@ class MotorCortexCluster:
                     reason[:80],
                 )
 
-                if tool == "cloud_action":
-                    last_result = await self._dispatch_cloud(
-                        args, job_id, end_user_id=self._current_end_user_id
-                    )
-                    output = (last_result or {}).get("output", "")
-                elif tool in ("recall_memory", "analyze_image"):
-                    output = await self._dispatch_lobe(tool, args, job_id)
-                    last_result = {
-                        "tool": tool,
-                        "args": args,
-                        "reason": reason,
-                        "output": output,
-                        "success": not output.startswith("[error]"),
-                    }
-                    await self._bus.publish_dict("motor.result", last_result, source=CLUSTER)
-                else:
-                    output = await self._dispatch(tool, args)
-                    last_result = {
-                        "tool": tool,
-                        "args": args,
-                        "reason": reason,
-                        "output": output,
-                        "success": not output.startswith("[error]")
-                        and not output.startswith("[blocked]"),
-                    }
-                    await self._bus.publish_dict("motor.result", last_result, source=CLUSTER)
+                output, last_result = await self._dispatch_tool(tool, args, job_id, reason)
 
                 step_success = not output.startswith("[error]") and not output.startswith(
                     "[blocked]"
@@ -1557,26 +1604,10 @@ class MotorCortexCluster:
 
     async def _run_tool(self, tool: str, args: dict, reason: str, turn_id: str) -> tuple[str, dict]:
         """Dispatch a single tool call and return (output, last_result).
-        Shared by ballistic chunk firing; mirrors the main loop's dispatch branch."""
-        if tool == "cloud_action":
-            last_result = await self._dispatch_cloud(
-                args, turn_id, end_user_id=self._current_end_user_id
-            )
-            output = (last_result or {}).get("output", "")
-            return output, (last_result or {})
-        if tool in ("recall_memory", "analyze_image"):
-            output = await self._dispatch_lobe(tool, args, turn_id)
-        else:
-            output = await self._dispatch(tool, args)
-        last_result = {
-            "tool": tool,
-            "args": args,
-            "reason": reason,
-            "output": output,
-            "success": not output.startswith("[error]") and not output.startswith("[blocked]"),
-        }
-        await self._bus.publish_dict("motor.result", last_result, source=CLUSTER)
-        return output, last_result
+        Shared by ballistic chunk firing; delegates to _dispatch_tool and guarantees a
+        dict last_result (never None) for the chunk caller."""
+        output, last_result = await self._dispatch_tool(tool, args, turn_id, reason)
+        return output, (last_result or {})
 
     async def _maybe_fire_chunk(
         self,
@@ -1697,32 +1728,7 @@ class MotorCortexCluster:
 
             self._calls_this_turn += 1
 
-            if tool == "cloud_action":
-                last_result = await self._dispatch_cloud(
-                    args, turn_id, end_user_id=self._current_end_user_id
-                )
-                output = (last_result or {}).get("output", "")
-            elif tool in ("recall_memory", "analyze_image"):
-                output = await self._dispatch_lobe(tool, args, turn_id)
-                last_result = {
-                    "tool": tool,
-                    "args": args,
-                    "reason": reason,
-                    "output": output,
-                    "success": not output.startswith("[error]"),
-                }
-                await self._bus.publish_dict("motor.result", last_result, source=CLUSTER)
-            else:
-                output = await self._dispatch(tool, args)
-                last_result = {
-                    "tool": tool,
-                    "args": args,
-                    "reason": reason,
-                    "output": output,
-                    "success": not output.startswith("[error]")
-                    and not output.startswith("[blocked]"),
-                }
-                await self._bus.publish_dict("motor.result", last_result, source=CLUSTER)
+            output, last_result = await self._dispatch_tool(tool, args, turn_id, reason)
 
             steps_taken.append({"tool": tool, "args": args, "reason": reason})
             results_log.append(output[:500] if output else "")

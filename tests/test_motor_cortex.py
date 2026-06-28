@@ -462,6 +462,185 @@ class TestMotorExecuteRouting:
 
 
 # ---------------------------------------------------------------------------
+# MotorCortexCluster — inline adaptive depth (reactive multi-step)
+# ---------------------------------------------------------------------------
+
+
+class TestMotorInlineDepth:
+    async def test_inline_cap_flags_remainder_when_more_work(self, tmp_path):
+        # Planner keeps wanting to act → after the inline cap (1 tool) the remainder is
+        # flagged for a background job instead of blocking the synchronous reply.
+        f = tmp_path / "data.txt"
+        f.write_text("content")
+        plan = {"tool": "read_file", "args": {"path": str(f)}, "reason": "reading"}
+        m, _ = _make_motor(tmp_path, tool_plan=plan)
+        result = await m.execute(
+            {"raw_text": "read it and then do more"}, "t1", inline_step_cap=1
+        )
+        assert result is not None
+        assert result.get("more_pending") is True
+        assert result.get("remaining_goal")
+
+    async def test_inline_completes_within_cap_no_remainder(self, tmp_path):
+        # Acts once, then the planner says done before the cap is hit → no remainder.
+        f = tmp_path / "data.txt"
+        f.write_text("content")
+        plans = [
+            {"tool": "read_file", "args": {"path": str(f)}, "reason": "read"},
+            {"tool": "none", "args": {}, "reason": "done"},
+        ]
+
+        class _SeqRouter(_MotorFakeRouter):
+            def __init__(self):
+                super().__init__()
+                self._i = 0
+
+            async def call(self, model_key, system_prompt, messages, **kwargs):
+                p = plans[min(self._i, len(plans) - 1)]
+                self._i += 1
+                return json.dumps(p)
+
+        from brain.bus import Bus
+        from brain.clusters.motor_cortex import MotorCortexCluster
+
+        m = MotorCortexCluster(Bus(), _SeqRouter(), allowed_paths=[str(tmp_path)])
+        result = await m.execute({"raw_text": "read it"}, "t1", inline_step_cap=2)
+        assert result is not None
+        assert not result.get("more_pending")
+        assert "content" in result["output"]
+
+    async def test_deferred_reactive_still_single_tool(self, tmp_path):
+        # No inline_step_cap → the historical single-tool reactive behavior: one tool,
+        # no remainder, even though the planner would keep wanting to act.
+        f = tmp_path / "data.txt"
+        f.write_text("content")
+        plan = {"tool": "read_file", "args": {"path": str(f)}, "reason": "reading"}
+        m, _ = _make_motor(tmp_path, tool_plan=plan)
+        result = await m.execute({"raw_text": "read it"}, "t1")
+        assert result is not None
+        assert not result.get("more_pending")
+        assert result["tool"] == "read_file"
+
+
+# ---------------------------------------------------------------------------
+# MotorCortexCluster — job rate limit (user-awaited bypass)
+# ---------------------------------------------------------------------------
+
+
+class TestJobRateLimitAwaited:
+    def test_awaited_bypasses_window_and_session_caps(self, tmp_path):
+        import time as _t
+
+        m, _ = _make_motor(tmp_path)
+        _, max_window, max_session, _ = m._job_caps()
+        m._job_start_times = [_t.time()] * (max_window + 5)
+        m._session_job_count = max_session + 5
+        # An autonomous job is declined by the rolling-window / session caps…
+        assert m._check_job_rate_limit(awaited=False) is not None
+        # …but a user-awaited job passes them (only concurrency applies).
+        assert m._check_job_rate_limit(awaited=True) is None
+
+    def test_awaited_still_respects_concurrency(self, tmp_path):
+        m, _ = _make_motor(tmp_path)
+        _, _, _, max_concurrent = m._job_caps()
+        m._active_job_count = max_concurrent
+        assert m._check_job_rate_limit(awaited=True) is not None
+
+
+# ---------------------------------------------------------------------------
+# MotorCortexCluster — multi-part end to end (inline first part → background job)
+# ---------------------------------------------------------------------------
+
+
+class TestMultiPartEndToEnd:
+    async def test_first_part_inline_remainder_runs_as_user_job(self, tmp_path, monkeypatch):
+        """The whole multi-part chain on a real motor + real queue:
+        1) a reactive INLINE turn runs the first tool and flags the remainder,
+        2) the remainder is enqueued as a source=user task and taken off the queue,
+        3) execute_internal_job runs it as a user-AWAITED job — completing even though the
+           autonomy rolling-window / session caps are maxed out (the awaited bypass)."""
+        import time as _t
+
+        import brain.clusters.task_queue as tq
+        from brain.bus import Bus
+        from brain.clusters.motor_cortex import MotorCortexCluster
+
+        f = tmp_path / "data.txt"
+        f.write_text("PAGE CONTENT")
+        tool_plan = {"tool": "read_file", "args": {"path": str(f)}, "reason": "read"}
+        strategic = {
+            "stories": [
+                {
+                    "description": "read the rest",
+                    "expected_tool": "read_file",
+                    "acceptance_criteria": [],
+                    "id": "US-001",
+                }
+            ],
+            "complexity": "low",
+            "success_criteria": "read it",
+        }
+
+        class _ChainRouter:
+            """Drives BOTH phases: reactive/tactical `call` → a real tool (so the planner
+            keeps wanting to act); `call_structured` → a one-story strategic plan."""
+
+            async def call_structured(self, model_key, system_prompt, messages, **kwargs):
+                return dict(strategic)
+
+            async def call(self, model_key, system_prompt, messages, **kwargs):
+                return json.dumps(tool_plan)
+
+            async def embed(self, text):
+                return [0.0] * 768
+
+            def enter_background_mode(self):
+                pass
+
+            def exit_background_mode(self):
+                pass
+
+            async def warmup_local(self, model_key="local-code", **kwargs):
+                return True
+
+        motor = MotorCortexCluster(Bus(), _ChainRouter(), allowed_paths=[str(tmp_path)])
+
+        # 1) Reactive inline turn — first tool runs inline, remainder flagged.
+        inline = await motor.execute(
+            {"raw_text": "read data.txt and then read it again"}, "t1", inline_step_cap=1
+        )
+        assert inline is not None
+        assert "PAGE CONTENT" in inline.get("output", "")  # the first part actually ran
+        assert inline.get("more_pending") is True
+        remaining = inline.get("remaining_goal")
+        assert remaining
+
+        # 2) Remainder enqueued as a user-awaited task (isolate the queue file to tmp).
+        monkeypatch.setattr(tq, "TASK_QUEUE_PATH", tmp_path / "task_queue.json")
+        q = tq.PersistentTaskQueue()
+        q.enqueue(remaining, source="user", priority=1)
+        task = q.take_next()
+        assert task is not None
+        assert task.source == "user"
+        assert task.goal == remaining
+
+        # 3) The job runs as user-awaited even with the autonomy caps maxed out.
+        _, max_window, max_session, _ = motor._job_caps()
+        motor._job_start_times = [_t.time()] * (max_window + 5)
+        motor._session_job_count = max_session + 5
+
+        mock_emitter = MagicMock()
+        mock_emitter.emit_event = AsyncMock()
+        with patch("brain.ui.emitter.emitter", mock_emitter):
+            summary = await motor.execute_internal_job(
+                task.goal, f"task_{task.id}", source=task.source
+            )
+
+        assert summary.get("error") != "rate_limited"  # awaited bypass let it run
+        assert summary.get("success") is True
+
+
+# ---------------------------------------------------------------------------
 # MotorCortexCluster — cloud dispatch (confirmation gate)
 # ---------------------------------------------------------------------------
 

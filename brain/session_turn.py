@@ -1738,7 +1738,9 @@ class _TurnMixin:
         if is_autonomous:
             self.motor.enter_self_mode()
         try:
-            summary = await self.motor.execute_internal_job(task.goal, job_turn_id)
+            summary = await self.motor.execute_internal_job(
+                task.goal, job_turn_id, source=getattr(task, "source", "self")
+            )
         except Exception as _e:
             logger.warning("[TaskWorker] Task [%s] execution failed: %s", task.id, _e)
             self._task_queue.mark_done(task.id, success=False)
@@ -2001,11 +2003,15 @@ class _TurnMixin:
         left parked on the executor's pending slot for api_turn to harvest.
         """
         _timeout = float(os.environ.get("BRAIN_MOTOR_INTERACTIVE_TIMEOUT_S", "30"))
+        # How many tools a reactive turn runs INLINE before any remainder is handed to a
+        # background job. 1 = answer the first part now, continue the rest out of band
+        # (lowest synchronous latency). Raise to run more parts inline.
+        _inline_cap = int(os.environ.get("BRAIN_MOTOR_INLINE_STEP_CAP", "1") or 1)
         self.motor.reset_turn(turn_id)
         goal = features.get("raw_text") or features.get("topic_summary", "")
         try:
             tool_result = await asyncio.wait_for(
-                self.motor.execute(features, turn_id),
+                self.motor.execute(features, turn_id, inline_step_cap=_inline_cap),
                 timeout=_timeout,
             )
         except Exception as _e:
@@ -2059,12 +2065,33 @@ class _TurnMixin:
         if len(self._recent_task_results) > 3:
             self._recent_task_results.pop(0)
 
+        # Multi-part request: the inline cap was hit with the planner still wanting to
+        # act. Hand the remainder to a background job the user is awaiting (source=user
+        # → guaranteed delivery + bypasses the autonomy rate caps) and tell the drafter
+        # the first part is done and the rest is continuing out of band.
+        more = ""
+        if tool_result.get("more_pending"):
+            remaining = tool_result.get("remaining_goal") or goal
+            q = getattr(self, "_task_queue", None)
+            if q is not None:
+                with contextlib.suppress(Exception):
+                    q.enqueue(remaining, source="user", priority=1)
+                    logger.info(
+                        "[MotorCortex] Inline remainder handed to a background user job: %s",
+                        remaining[:120],
+                    )
+                    more = (
+                        "\n[continuing] The first part is handled above. The rest is a separate "
+                        "task now running in the background — tell the user you're on it and the "
+                        "result will follow; don't repeat the first part."
+                    )
+
         if not output:
-            return ""
+            return more.strip()
         # Raw tool output as drafter context (NOT shown verbatim to the user — the
         # drafter synthesizes it into the reply). fetch_url output already carries its
         # own UNTRUSTED-EXTERNAL-CONTENT markers from the dispatcher.
-        return f"[{tool_name}]\n{output}"
+        return f"[{tool_name}]\n{output}{more}"
 
     async def _run_motor_reactive(self, features: dict, turn_id: str) -> None:
         """Run a reactive motor action in the background.
