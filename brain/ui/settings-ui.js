@@ -243,6 +243,7 @@
   let mandateSel = null;                 // currently-open mandate id in the editor
   let mandateMode = 'edit';              // edit | preview
   let persona = PERSONAS[0].id;
+  let runningPersona = '';              // the persona the brain is actually running (vs. configured)
   let activeTab = 'persona';
   let view = 'persona';                 // 'persona' | 'system'
   const manualState = {};
@@ -431,6 +432,10 @@
     storeChanged = false;
 
     persona = (s.persona_name && PERSONA_CHEM[s.persona_name]) ? s.persona_name : PERSONAS[0].id;
+    // The persona the brain is actually RUNNING (vs. the one being configured). Used to
+    // decouple configure-from-switch: saving a non-running persona persists its profile
+    // without restarting the live brain (the switch stays the explicit MRI action).
+    runningPersona = (s.persona_name && PERSONA_CHEM[s.persona_name]) ? s.persona_name : persona;
     if (!('persona_name' in saved)) { values.persona_name = saved.persona_name = persona; }
     if (!(persona in manualState)) manualState[persona] = false;
     // seed the active persona's self.md from the server response
@@ -464,6 +469,31 @@
   function dirtyCount() { return Object.keys(realChangedPatch()).length + (storeChanged ? 1 : 0) + selfDirtyCount(); }
 
   async function doSave() {
+    // Configuring a NON-running persona: persist its profile WITHOUT switching the live
+    // brain (the decouple). The server writes this persona's own chemistry file + the
+    // persona_store snapshot and does NOT re-exec; switching stays the explicit
+    // Open-in-MRI / "Switch to this persona" action.
+    if (view === 'persona' && persona && persona !== runningPersona) {
+      syncStoreFromCurrent();
+      Object.keys(selfStore).forEach(id => { const e = personaStore[id] || (personaStore[id] = { custom: !isBuiltin(id) }); e.selfMd = selfStore[id]; });
+      const body = { config_persona: persona, config_chem: {}, config_chem_init: {}, persona_store: JSON.stringify(personaStore) };
+      CHANNELS.forEach(c => { body.config_chem[c.ch] = +values['chem_baseline_' + c.ch]; body.config_chem_init[c.ch] = +values['chem_init_' + c.ch]; });
+      if (selfStore[persona] != null && selfStore[persona] !== selfSaved[persona]) body.config_self_md = selfStore[persona];
+      if (saveBtn) saveBtn.textContent = 'Saving…';
+      try {
+        const res = await fetch('/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        if (res.ok) {
+          Object.keys(values).forEach(k => saved[k] = values[k]);
+          if (selfStore[persona] != null) selfSaved[persona] = selfStore[persona];
+          storeChanged = false; refreshDirty();
+          if (saveBtn) { saveBtn.textContent = 'Saved ✓'; setTimeout(() => saveBtn.textContent = 'Save', 1600); }
+        } else if (saveBtn) { saveBtn.textContent = 'Error ' + res.status; setTimeout(() => saveBtn.textContent = 'Save', 2200); }
+      } catch (e) {
+        console.error('Settings config-save error', e);
+        if (saveBtn) { saveBtn.textContent = 'Error (no server)'; setTimeout(() => saveBtn.textContent = 'Save', 2200); }
+      }
+      return;
+    }
     const patch = realChangedPatch();
     // On a persona, always carry its chemistry + saved knob snapshot so the
     // active persona's full setup persists (a brand-new persona has no dirty

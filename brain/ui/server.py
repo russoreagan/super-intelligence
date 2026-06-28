@@ -520,6 +520,45 @@ class UIServer:
                             "[settings] Non-admin tried to set motor keys %s — stripped",
                             _stripped,
                         )
+            # Config-only save: persist a (possibly non-running) persona's profile —
+            # its own resting/boot chemistry file + the persona_store snapshot + its
+            # self.md — WITHOUT switching the live brain or re-execing. Decouples
+            # "configure" from "activate": editing a persona you're not running never
+            # restarts the process (the switch stays the explicit Open-in-MRI action).
+            _config_persona = str(body.get("config_persona") or "").strip()
+            if _config_persona:
+                from fastapi.responses import JSONResponse
+
+                from brain import persona_chem
+
+                _cc = body.get("config_chem") or {}
+                _ci = body.get("config_chem_init") or {}
+                try:
+                    if _cc:
+                        persona_chem.save_resting(
+                            _config_persona,
+                            {ch: float(_cc[ch]) for ch in persona_chem.CHANNELS if ch in _cc},
+                        )
+                    if _ci:
+                        persona_chem.save_current(
+                            _config_persona,
+                            {ch: float(_ci[ch]) for ch in persona_chem.CHANNELS if ch in _ci},
+                            {},
+                        )
+                except Exception as _ce:
+                    logger.warning("[settings] config chem write failed for %s: %s", _config_persona, _ce)
+                if "persona_store" in body:
+                    settings.save({"persona_store": str(body["persona_store"])})
+                _csm = body.get("config_self_md")
+                if _csm is not None:
+                    try:
+                        from brain.second_brain.store import SchemaStore
+
+                        SchemaStore(persona=_config_persona).write("self.md", str(_csm))
+                    except Exception as _se:
+                        logger.warning("[settings] config self.md write failed: %s", _se)
+                return JSONResponse({"ok": True})
+
             try:
                 # API keys route to the Supabase Vault (per-user, encrypted) when
                 # configured; otherwise they persist to local settings.json
