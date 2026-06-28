@@ -5376,6 +5376,9 @@ document.getElementById('voice-select').addEventListener('change', function() {
 // ── Voice-narration mute toggle ──────────────────────────────────────────────
 // Client-side gate on TTS playback. Does NOT touch agent responses — only the
 // spoken narration is silenced. State persists in localStorage per browser.
+// Declared here (before first use) so the gate in handleBinaryAudio and this
+// IIFE share one source of truth without tripping a temporal-dead-zone error.
+let _ttsMuted = localStorage.getItem('brain_voice_muted') === '1';
 (function initTtsMute() {
   const btn = document.getElementById('tts-mute');
   if (!btn) return;
@@ -5391,6 +5394,12 @@ document.getElementById('voice-select').addEventListener('change', function() {
     _ttsMuted = !_ttsMuted;
     localStorage.setItem('brain_voice_muted', _ttsMuted ? '1' : '0');
     render();
+    // Tell the brain to stop synthesizing TTS entirely while muted — this is what
+    // actually saves ElevenLabs credits. The client-side gate below is a belt-and-
+    // suspenders stop for any audio already in flight when we mute.
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'tts_mute', muted: _ttsMuted }));
+    }
     // When muting mid-utterance, flush any audio already buffered/playing so it
     // stops immediately rather than draining its remaining schedule.
     if (_ttsMuted && _audioCtx) {
@@ -5494,6 +5503,9 @@ function connect() {
     currentTurnId = null;
     const vid = document.getElementById('voice-select').value;
     if (vid) ws.send(JSON.stringify({ type: 'set_voice', voice_id: vid }));
+    // Re-assert the narration mute so a freshly (re)started brain skips TTS
+    // synthesis from the first turn rather than defaulting to unmuted.
+    ws.send(JSON.stringify({ type: 'tts_mute', muted: _ttsMuted }));
     renderTopEdges();
     // Connected — the brain server is up; if no subsystem_status lands soon,
     // dismiss the splash anyway rather than sit on a live connection.
@@ -5528,9 +5540,6 @@ function connect() {
 }
 
 // ── Browser TTS audio playback (BRAIN_AUDIO_OUTPUT_DEVICE=browser) ───────────
-// Voice-narration mute. Gates playback only — agent text responses are
-// unaffected (they arrive on a separate, non-audio path). Persists per browser.
-let _ttsMuted = localStorage.getItem('brain_voice_muted') === '1';
 let _audioCtx = null;
 let _audioScheduledUntil = 0;  // AudioContext.currentTime when next chunk should start
 const AUDIO_SAMPLE_RATE = 22050;

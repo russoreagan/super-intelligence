@@ -238,6 +238,7 @@ class _SetupMixin:
             on_eval_mode=self._on_eval_mode,
             on_mic_toggle=self._on_mic_toggle,
             on_mic_ptt=self._on_mic_ptt,
+            on_tts_mute=self.pns.set_tts_muted,
             is_muted_fn=self._is_mic_muted,
             mic_status_fn=self._mic_status,
             on_interrupt=self.pns.interrupt,

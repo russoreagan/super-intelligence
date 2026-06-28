@@ -115,6 +115,10 @@ class PNS:
         # sounddevice. UIServer drains this queue and sends binary WebSocket frames.
         # Set by session_setup when BRAIN_AUDIO_OUTPUT_DEVICE=browser.
         self._tts_ws_queue: asyncio.Queue | None = None
+        # Server-side voice-narration mute (driven by the UI mute button). When
+        # True, emit() skips TTS synthesis entirely so no ElevenLabs credits are
+        # spent — agent text responses are unaffected.
+        self._tts_muted: bool = False
 
     async def receive_text(self, text: str, image_path: str | None = None) -> None:
         """Post user input to the bus."""
@@ -138,6 +142,12 @@ class PNS:
         background task, proactive DMN) queue rather than overlap.
         """
         if VOICE_MODE:
+            # Narration muted by the user — don't synthesize at all (saves the
+            # ElevenLabs call). The text response still reaches the UI via the
+            # separate emitter path, so only the spoken audio is suppressed.
+            if self._tts_muted:
+                logger.debug("[I/O] TTS narration muted — skipping synthesis")
+                return
             async with self._speak_lock:
                 await self._speak(response, affect or {})
         else:
@@ -842,6 +852,22 @@ class PNS:
         if self._tts_ws_queue is not None:
             with contextlib.suppress(asyncio.QueueFull):
                 self._tts_ws_queue.put_nowait(b"\xff")
+
+    def set_tts_muted(self, muted: bool) -> None:
+        """Server-side voice-narration mute, driven by the UI mute button.
+
+        When True, emit() skips TTS synthesis entirely (no ElevenLabs call), so
+        muting actually saves credits rather than only silencing playback. Agent
+        text responses are unaffected. If muting mid-utterance, the in-progress
+        stream is cut so we stop paying for the remainder."""
+        self._tts_muted = bool(muted)
+        logger.info("[I/O] TTS narration muted=%s", self._tts_muted)
+        if self._tts_muted and self._speaking:
+            # Deliberate mute always cuts (bypass the barge-in grace window).
+            self._interrupt_event.set()
+            if self._tts_ws_queue is not None:
+                with contextlib.suppress(asyncio.QueueFull):
+                    self._tts_ws_queue.put_nowait(b"\xff")
 
     async def _speak(self, text: str, affect: dict | None = None) -> None:
         """

@@ -117,6 +117,7 @@ class UIServer:
         on_eval_mode: Callable[[bool], None] | None = None,
         on_mic_toggle: Callable[[], bool] | None = None,
         on_mic_ptt: Callable[[bool], None] | None = None,
+        on_tts_mute: Callable[[bool], None] | None = None,
         is_muted_fn: Callable[[], bool] | None = None,
         mic_status_fn: Callable[[], str] | None = None,
         on_interrupt: Callable[[], None] | None = None,
@@ -139,6 +140,7 @@ class UIServer:
         self._on_eval_mode = on_eval_mode
         self._on_mic_toggle = on_mic_toggle  # () -> is_muted (bool) — toggles
         self._on_mic_ptt = on_mic_ptt  # (down: bool) -> None — push-to-talk hold
+        self._on_tts_mute = on_tts_mute  # (muted: bool) -> None — skip TTS synthesis when muted
         self._is_muted_fn = is_muted_fn  # () -> is_muted (bool) — read-only; None = no Python voice
         # () -> 'off'|'muted'|'active'. Authoritative status that knows whether a
         # server-side mic exists at all. 'off' tells the browser to self-capture
@@ -1922,6 +1924,10 @@ class UIServer:
                         vid = data.get("voice_id", "").strip()
                         if vid:
                             self._on_voice_change(vid)
+                    elif t == "tts_mute" and self._on_tts_mute:
+                        # Voice-narration mute. Skips TTS synthesis server-side so
+                        # muting saves ElevenLabs credits (not just client audio).
+                        self._on_tts_mute(bool(data.get("muted", False)))
                     elif t == "eval_mode" and self._on_eval_mode:
                         intensive = bool(data.get("intensive", False))
                         self._on_eval_mode(intensive)
