@@ -1149,6 +1149,39 @@ class UIServer:
                 raise HTTPException(status_code=404, detail="unknown skill id")
             return JSONResponse({"skill": row})
 
+        @app.post("/skills/{skill_id}/agents")
+        async def set_skill_agents_ui(skill_id: str, request: Request):
+            """Set a skill's audience: all agents, or a specific set. Body:
+            {all_agents: bool, agents: ['persona.mandate_id', ...]}."""
+            from fastapi import HTTPException
+            from fastapi.responses import JSONResponse
+
+            from brain.skills_registry import SkillError
+
+            _mandate_admin_or_403(request)
+            body = await request.json()
+            all_agents = bool((body or {}).get("all_agents", True))
+            agents = (body or {}).get("agents") or []
+            if not isinstance(agents, list):
+                raise HTTPException(status_code=400, detail="agents must be a list")
+            from brain import skills_registry as sr
+
+            try:
+                sr.set_skill_all_agents(skill_id, all_agents)
+                # When global, clear any specific mappings so they don't linger.
+                sr.set_skill_agents(skill_id, [] if all_agents else [str(a) for a in agents])
+            except SkillError as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
+            await _rewarm_skills()
+            return JSONResponse(
+                {
+                    "ok": True,
+                    "id": skill_id,
+                    "all_agents": all_agents,
+                    "agents": [] if all_agents else [str(a) for a in agents],
+                }
+            )
+
         @app.post("/skills/{skill_id}/approve")
         async def approve_skill_ui(skill_id: str, request: Request):
             from fastapi import HTTPException
@@ -1301,6 +1334,7 @@ class UIServer:
             persona = (body or {}).get("persona")
             mandate_id = str((body or {}).get("mandate_id", "")).strip()
             name = (body or {}).get("name")
+            skills = (body or {}).get("skills")
             try:
                 from brain import agents as _agents
                 from brain import mandates
@@ -1312,6 +1346,17 @@ class UIServer:
                 row = _agents.get(agent_id) or {}
             except MandateError as e:
                 raise HTTPException(status_code=400, detail=str(e)) from e
+            # Map the chosen specific-scope skills to the new agent.
+            if isinstance(skills, list) and skills:
+                from brain.skills_registry import SkillError
+
+                try:
+                    from brain import skills_registry as sr
+
+                    sr.set_agent_skills(persona, mandate_id, [str(s) for s in skills])
+                except SkillError as e:
+                    raise HTTPException(status_code=400, detail=str(e)) from e
+                await _rewarm_skills()
             return JSONResponse({"ok": True, "agent": row})
 
         @app.post("/agents/{agent_id}/permissions")

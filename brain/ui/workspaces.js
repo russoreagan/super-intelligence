@@ -1252,23 +1252,39 @@
     });
   }
 
-  function openNewAgent() {
+  async function openNewAgent() {
     const personas = (window.SETTINGS && window.SETTINGS.personas) || [];
     const roles = (agentsData && agentsData.roles) || [];
     if (!roles.length) { window.alert('Create a role first (Roles).'); return; }
     const modal = document.getElementById('ws-new-agent-modal');
+    // Pull the org's enabled skills for the picker: global ones apply automatically,
+    // specific-scope ones can be attached to this agent.
+    let enabledSkills = [];
+    try { const r = await fetch('/skills'); if (r.ok) enabledSkills = ((await r.json()).skills || []).filter(s => s.status === 'enabled'); } catch (e) { enabledSkills = []; }
+    const globalSkills = enabledSkills.filter(s => s.all_agents);
+    const specificSkills = enabledSkills.filter(s => !s.all_agents);
     let pSel = personas[0] ? personas[0].id : '';
     let rSel = roles[0] ? roles[0].id : '';
+    const skSel = new Set();
+    const skillsBlock = () => {
+      const globalNote = globalSkills.length ? `<div class="data" style="font-size:10.5px; opacity:.7; margin-bottom:8px;">${globalSkills.length} skill${globalSkills.length > 1 ? 's' : ''} apply to all agents automatically.</div>` : '';
+      const picker = specificSkills.length
+        ? `<div class="pick-row" id="na-skills">${specificSkills.map(s => `<button class="pick ${skSel.has(s.id) ? 'on' : ''}" data-id="${esc(s.id)}">${esc(s.display_name || s.id)}</button>`).join('')}</div>`
+        : `<div class="data" style="font-size:10.5px; opacity:.6;">No agent-specific skills yet. Mark a skill “Specific agents” in the Skills tab to assign it here.</div>`;
+      return `<div class="label" style="margin:18px 0 9px;">Skills</div>${globalNote}${picker}`;
+    };
     const draw = () => {
       modal.innerHTML = `<div class="modal">
         <div class="modal-head"><div class="serif-h" style="font-size:19px;">New agent</div><button class="tool-x" id="na-x"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>
-        <p class="page-lede" style="margin-top:4px; font-size:14px;">Pair a persona with a role. The id is derived automatically.</p>
+        <p class="page-lede" style="margin-top:4px; font-size:14px;">Pair a persona with a role, and choose which skills it carries. The id is derived automatically.</p>
         <div style="margin-top:18px;"><div class="label" style="margin-bottom:9px;">Persona</div><div class="pick-row" id="na-personas">${personas.map(p => `<button class="pick ${p.id===pSel?'on':''}" data-id="${esc(p.id)}">${esc(p.name)}</button>`).join('')}</div>
         <div class="label" style="margin:18px 0 9px;">Role</div><div class="pick-row" id="na-roles">${roles.map(r => `<button class="pick ${r.id===rSel?'on':''}" data-id="${esc(r.id)}">${esc(r.id)}</button>`).join('')}</div>
-        <div class="id-preview"><span class="label">Derived id</span><span class="data" style="color:var(--signal); font-size:13px;">${esc(personaSlug(pSel))}.${esc(rSel)}</span></div></div>
+        ${skillsBlock()}
+        <div class="id-preview" style="margin-top:18px;"><span class="label">Derived id</span><span class="data" style="color:var(--signal); font-size:13px;">${esc(personaSlug(pSel))}.${esc(rSel)}</span></div></div>
         <div class="row" style="justify-content:flex-end; margin-top:22px; gap:10px;"><button class="btn" id="na-cancel">Cancel</button><button class="btn btn-primary" id="na-create">Create agent</button></div></div>`;
       modal.querySelectorAll('#na-personas .pick').forEach(b => b.addEventListener('click', () => { pSel = b.dataset.id; draw(); }));
       modal.querySelectorAll('#na-roles .pick').forEach(b => b.addEventListener('click', () => { rSel = b.dataset.id; draw(); }));
+      modal.querySelectorAll('#na-skills .pick').forEach(b => b.addEventListener('click', () => { const id = b.dataset.id; if (skSel.has(id)) skSel.delete(id); else skSel.add(id); b.classList.toggle('on'); }));
       modal.querySelector('#na-x').addEventListener('click', close);
       modal.querySelector('#na-cancel').addEventListener('click', close);
       modal.querySelector('#na-create').addEventListener('click', create);
@@ -1276,7 +1292,7 @@
     const close = () => { modal.classList.remove('open'); modal.innerHTML = ''; };
     const create = async () => {
       try {
-        const r = await fetch('/agents', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ persona: pSel, mandate_id: rSel }) });
+        const r = await fetch('/agents', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ persona: pSel, mandate_id: rSel, skills: Array.from(skSel) }) });
         if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.detail || ('HTTP ' + r.status)); }
         close(); agentSel = `${personaSlug(pSel)}.${rSel}`; agView = 'detail'; await loadAgents();
       } catch (e) { window.alert('Could not create agent: ' + e.message); }
@@ -1384,23 +1400,62 @@
     if (d.is_admin && flagged.length) {
       queue = `<div class="label" style="margin:26px 0 10px;">Review queue · ${flagged.length}</div>${flagged.map(renderFlaggedCard).join('')}`;
     }
-    const rows = skills.map(s => `<div class="ag-row" style="grid-template-columns:1.5fr .7fr .5fr 1fr 28px; cursor:default;">
+    const GRID = '1.5fr .7fr 1fr .9fr 28px';
+    const appliesLabel = s => s.all_agents ? 'All agents' : `${(s.agents || []).length} agent${(s.agents || []).length === 1 ? '' : 's'}`;
+    const rows = skills.map(s => `<div class="ag-row" style="grid-template-columns:${GRID}; cursor:default;">
       <span><span class="serif-h" style="font-size:14px;">${esc(s.display_name || s.id)}</span><span class="data" style="font-size:9px; display:block; margin-top:2px;">${esc(s.id)}</span></span>
       <span class="ar-status"><span class="dot-status" style="background:${skStatColor(s.status)}"></span>${esc(s.status || 'pending')}</span>
-      <span class="data" style="font-size:11px;">T${esc(s.tier != null ? s.tier : 2)}</span>
+      <span>${d.is_admin ? `<button class="link sk-scope" data-id="${esc(s.id)}">${esc(appliesLabel(s))}</button>` : `<span class="data" style="font-size:11px;">${esc(appliesLabel(s))}</span>`}</span>
       <span class="data" style="font-size:11px;">${esc(s.submitted_by || '—')}</span>
       <span class="ar-chev">${d.is_admin ? `<button class="link sk-del" data-id="${esc(s.id)}" title="Remove skill">✕</button>` : ''}</span></div>`).join('') || '<div style="padding:22px; text-align:center;" class="data">No skills registered yet.</div>';
     main.innerHTML = `<div class="main-pad" style="max-width:820px;">${head}${queue}
       <div class="label" style="margin:28px 0 10px;">Library · ${skills.length}</div>
       <div class="ag-table" style="grid-template-columns:none;">
-        <div class="ag-table-head" style="grid-template-columns:1.5fr .7fr .5fr 1fr 28px;"><span>Skill</span><span>Status</span><span>Tier</span><span>Submitted by</span><span></span></div>
+        <div class="ag-table-head" style="grid-template-columns:${GRID};"><span>Skill</span><span>Status</span><span>Applies to</span><span>Submitted by</span><span></span></div>
         ${rows}
       </div>
       ${!d.is_admin ? '<p class="data" style="margin-top:14px; font-size:11px; opacity:.6;">Reviewing and approving skills is an org-admin action.</p>' : ''}</div>`;
     main.querySelectorAll('.sk-approve').forEach(b => b.addEventListener('click', () => skillApprove(b.dataset.id)));
     main.querySelectorAll('.sk-reject').forEach(b => b.addEventListener('click', () => skillReject(b.dataset.id)));
     main.querySelectorAll('.sk-del').forEach(b => b.addEventListener('click', () => skillDelete(b.dataset.id)));
+    main.querySelectorAll('.sk-scope').forEach(b => b.addEventListener('click', () => { const sk = skills.find(x => x.id === b.dataset.id); if (sk) openSkillScope(sk); }));
     const newBtn = main.querySelector('#sk-new'); if (newBtn) newBtn.addEventListener('click', openNewSkill);
+  }
+  async function openSkillScope(skill) {
+    const modal = document.getElementById('ws-api-modal');
+    if (!modal) return;
+    let agents = [];
+    try { const r = await fetch('/agents'); if (r.ok) agents = (await r.json()).agents || []; } catch (e) { agents = []; }
+    const aid = a => `${a.persona}.${a.mandate_id}`;
+    let allAgents = !!skill.all_agents;
+    const sel = new Set(skill.agents || []);
+    const draw = () => {
+      modal.innerHTML = `<div class="modal" style="max-width:520px;">
+        <div class="modal-head"><div class="serif-h" style="font-size:19px;">Applies to</div><button class="tool-x" id="ss-x"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>
+        <p class="page-lede" style="margin-top:4px; font-size:14px;">Which agents can use “${esc(skill.display_name || skill.id)}”.</p>
+        <div class="pick-row" style="margin-top:16px;">
+          <button class="pick ${allAgents ? 'on' : ''}" id="ss-all">All agents</button>
+          <button class="pick ${!allAgents ? 'on' : ''}" id="ss-specific">Specific agents</button>
+        </div>
+        ${!allAgents ? `<div style="margin-top:14px;">${agents.length ? `<div class="pick-row" id="ss-agents">${agents.map(a => `<button class="pick ${sel.has(aid(a)) ? 'on' : ''}" data-id="${esc(aid(a))}">${esc(a.name || aid(a))}</button>`).join('')}</div>` : '<div class="data" style="font-size:10.5px; opacity:.6;">No agents yet — create one first (Agents).</div>'}</div>` : ''}
+        <div class="row" style="justify-content:flex-end; margin-top:20px; gap:10px;"><button class="btn" id="ss-cancel">Cancel</button><button class="btn btn-primary" id="ss-save">Save</button></div></div>`;
+      modal.querySelector('#ss-all').addEventListener('click', () => { allAgents = true; draw(); });
+      modal.querySelector('#ss-specific').addEventListener('click', () => { allAgents = false; draw(); });
+      modal.querySelectorAll('#ss-agents .pick').forEach(b => b.addEventListener('click', () => { const id = b.dataset.id; if (sel.has(id)) sel.delete(id); else sel.add(id); b.classList.toggle('on'); }));
+      modal.querySelector('#ss-x').addEventListener('click', close);
+      modal.querySelector('#ss-cancel').addEventListener('click', close);
+      modal.querySelector('#ss-save').addEventListener('click', save);
+    };
+    const close = () => { modal.classList.remove('open'); modal.innerHTML = ''; };
+    const save = async () => {
+      try {
+        const r = await fetch('/skills/' + encodeURIComponent(skill.id) + '/agents', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ all_agents: allAgents, agents: allAgents ? [] : Array.from(sel) }) });
+        if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.detail || ('HTTP ' + r.status)); }
+        close(); await loadSkills();
+      } catch (e) { window.alert('Could not save: ' + e.message); }
+    };
+    draw(); modal.classList.add('open');
+    modal.addEventListener('click', e => { if (e.target === modal) close(); });
   }
   function openNewSkill() {
     const modal = document.getElementById('ws-api-modal');

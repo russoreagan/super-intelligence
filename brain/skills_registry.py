@@ -58,32 +58,40 @@ class SkillError(Exception):
 
 def live_skills() -> list[dict]:
     """The org's injectable skills: active, with a cleared (approved) body. Returns
-    [{id, display_name, description, body, keywords, allowed_tools, tier}] where
-    ``body`` is the APPROVED body (never the unscreened latest submission)."""
+    [{id, display_name, description, body, keywords, allowed_tools, tier, all_agents,
+    agents}] where ``body`` is the APPROVED body (never the unscreened latest
+    submission), ``all_agents`` is True for org-wide skills, and ``agents`` is the list
+    of mapped agent_ids ('persona.mandate_id') used when all_agents is False."""
     sb, org = _sb()
     res = (
         sb.table("skills")
-        .select("id, display_name, description, approved_body, keywords, allowed_tools, tier")
+        .select(
+            "id, display_name, description, approved_body, keywords, allowed_tools, tier, all_agents"
+        )
         .eq("org_id", org)
         .eq("active", True)
         .not_.is_("approved_body", "null")
         .order("id")
         .execute()
     )
+    mapping = _agent_skill_map(sb, org)
     out: list[dict] = []
     for r in res.data or []:
         body = str(r.get("approved_body") or "").strip()
         if not body:
             continue
+        sid = str(r["id"])
         out.append(
             {
-                "id": str(r["id"]),
+                "id": sid,
                 "display_name": r.get("display_name"),
                 "description": str(r.get("description") or ""),
                 "body": body,
                 "keywords": list(r.get("keywords") or []),
                 "allowed_tools": list(r.get("allowed_tools") or []),
                 "tier": int(r.get("tier") or 2),
+                "all_agents": bool(r.get("all_agents", True)),
+                "agents": mapping.get(sid, []),
             }
         )
     if out:
@@ -102,7 +110,7 @@ def list_skills(include_inactive: bool = False, status: str | None = None) -> li
     q = (
         sb.table("skills")
         .select(
-            "id, display_name, description, keywords, allowed_tools, tier, status, "
+            "id, display_name, description, keywords, allowed_tools, tier, status, all_agents, "
             "screen_notes, submitted_by, reviewed_by, reviewed_at, version, active, updated_at"
         )
         .eq("org_id", org)
@@ -111,7 +119,11 @@ def list_skills(include_inactive: bool = False, status: str | None = None) -> li
         q = q.eq("active", True)
     if status is not None:
         q = q.eq("status", _valid_status(status))
-    return list(q.order("id").execute().data or [])
+    rows = list(q.order("id").execute().data or [])
+    mapping = _agent_skill_map(sb, org)
+    for r in rows:
+        r["agents"] = mapping.get(str(r.get("id")), [])
+    return rows
 
 
 def get_skill(skill_id: str) -> dict | None:
@@ -236,6 +248,106 @@ def delete_skill(skill_id: str) -> bool:
         "id", sid
     ).execute()
     return True
+
+
+# ── skill ↔ agent mapping ───────────────────────────────────────────────────────
+
+
+def set_skill_all_agents(skill_id: str, all_agents: bool) -> dict:
+    """Set whether a skill applies to every agent (True) or only its mapped agents
+    (False). Returns {id, all_agents}."""
+    sb, org = _sb()
+    sid = _valid_id(skill_id)
+    existing = sb.table("skills").select("id").eq("org_id", org).eq("id", sid).execute()
+    if not (existing.data or []):
+        raise SkillError(f"unknown skill id '{sid}'")
+    sb.table("skills").update({"all_agents": bool(all_agents), "updated_at": _now()}).eq(
+        "org_id", org
+    ).eq("id", sid).execute()
+    return {"id": sid, "all_agents": bool(all_agents)}
+
+
+def set_skill_agents(skill_id: str, agent_ids: list[str]) -> dict:
+    """Replace the set of agents a skill is mapped to (skill-centric editing). Each
+    agent_id is 'persona.mandate_id'. Does NOT change all_agents — pair with
+    set_skill_all_agents(False) to make the mapping take effect."""
+    sb, org = _sb()
+    sid = _valid_id(skill_id)
+    pairs = [_split_agent(a) for a in (agent_ids or [])]
+    sb.table("agent_skills").delete().eq("org_id", org).eq("skill_id", sid).execute()
+    if pairs:
+        rows = [
+            {"org_id": org, "persona": p, "mandate_id": m, "skill_id": sid} for (p, m) in pairs
+        ]
+        sb.table("agent_skills").insert(rows).execute()
+    return {"id": sid, "agents": [f"{p}.{m}" for (p, m) in pairs]}
+
+
+def agent_skill_ids(persona: str, mandate_id: str) -> list[str]:
+    """The skill ids explicitly mapped to one agent (excludes all_agents skills)."""
+    from brain.mandates import _persona
+
+    sb, org = _sb()
+    p = _persona(persona)
+    mid = _valid_id(mandate_id)
+    res = (
+        sb.table("agent_skills")
+        .select("skill_id")
+        .eq("org_id", org)
+        .eq("persona", p)
+        .eq("mandate_id", mid)
+        .execute()
+    )
+    return [str(r["skill_id"]) for r in (res.data or [])]
+
+
+def set_agent_skills(persona: str, mandate_id: str, skill_ids: list[str]) -> dict:
+    """Replace the set of (specific-scope) skills mapped to one agent (agent-centric
+    editing — used by the new-agent flow). all_agents skills are not listed here."""
+    from brain.mandates import _persona
+
+    sb, org = _sb()
+    p = _persona(persona)
+    mid = _valid_id(mandate_id)
+    ids = [_valid_id(s) for s in (skill_ids or [])]
+    sb.table("agent_skills").delete().eq("org_id", org).eq("persona", p).eq(
+        "mandate_id", mid
+    ).execute()
+    if ids:
+        rows = [{"org_id": org, "persona": p, "mandate_id": mid, "skill_id": s} for s in ids]
+        sb.table("agent_skills").insert(rows).execute()
+    return {"agent_id": f"{p}.{mid}", "skills": ids}
+
+
+def _agent_skill_map(sb, org) -> dict[str, list[str]]:
+    """{skill_id: ['persona.mandate_id', ...]} for the org (best-effort)."""
+    try:
+        res = (
+            sb.table("agent_skills")
+            .select("persona, mandate_id, skill_id")
+            .eq("org_id", org)
+            .execute()
+        )
+    except Exception as e:
+        logger.debug("[Skills] agent_skills load skipped: %s", e)
+        return {}
+    out: dict[str, list[str]] = {}
+    for r in res.data or []:
+        skid = r.get("skill_id")
+        if not skid:
+            continue
+        out.setdefault(str(skid), []).append(f"{r.get('persona')}.{r.get('mandate_id')}")
+    return out
+
+
+def _split_agent(agent_id: str) -> tuple[str, str]:
+    s = str(agent_id or "").strip()
+    if "." not in s:
+        raise SkillError("agent_id must be '<persona>.<mandate_id>'")
+    persona, mandate_id = s.split(".", 1)
+    if not persona or not mandate_id:
+        raise SkillError(f"malformed agent_id '{agent_id}'")
+    return persona, mandate_id
 
 
 # ── internals ──────────────────────────────────────────────────────────────────

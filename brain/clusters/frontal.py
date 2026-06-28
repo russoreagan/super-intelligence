@@ -476,7 +476,12 @@ class FrontalCluster:
             pinned = current_turn().get("pinned_skills") or []
         except Exception:
             return
-        valid = [p for p in pinned if self._skill_selector.get_skill(p)]
+        valid = [
+            p
+            for p in pinned
+            if self._skill_selector.get_skill(p)
+            and self._skill_selector.allowed_for_current_agent(p)
+        ]
         if not valid:
             return
         from brain.clusters.skill_selector import SkillBundle
