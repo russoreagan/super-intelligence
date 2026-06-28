@@ -198,6 +198,13 @@ You will receive:
 Write a SHORT spoken summary (1-2 sentences) the brain will say aloud to the user. Speak naturally,
 first person, present-or-past tense. Lead with what you found or what happened — concrete and specific.
 
+When what you found is external content the user hasn't seen — an article, a web page, a fetched
+source — name what it is and where it's from BEFORE you summarize it. Don't launch into the claim as
+if they already have the context. Right: "I read a piece on Reuters about the Fed's rate hold — it
+argues…". Wrong: "The Fed is likely to hold rates because…" (the user never saw the article and has no
+idea what you're referring to). If a source has a title or publication, say it; if you have the link,
+it's already being logged, so a natural reference is enough.
+
 Examples of good summaries:
 - "Karaoke Hero has 47 files across the Scripts and Scenes folders — looks like a Unity 6 LTS project. The main scene is MainMenu.unity."
 - "Couldn't list that directory — the path wasn't in the allowed set. Want me to try /Users/russ/Documents/Karaoke Hero instead?"

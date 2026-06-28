@@ -2258,8 +2258,24 @@ class MotorCortexCluster:
                     args.get("file_pattern", "*"),
                 )
             elif tool == "fetch_url":
+                _url = args.get("url", "")
+                # Reuse a page already pulled recently (deduped fetch log) instead of
+                # re-fetching the identical URL — belt-and-suspenders below the
+                # DMN-level "already researched" avoidance. Stale content (news) ages
+                # out via the cache TTL.
+                _cached = (
+                    self.job_store.find_cached_fetch(_url)
+                    if getattr(self, "job_store", None) is not None
+                    else None
+                )
+                if _cached:
+                    _mins = int(_cached["age_s"] // 60)
+                    logger.info(
+                        "[Motor] Reusing cached fetch for %s (read ~%dm ago)", _url, _mins
+                    )
+                    return f"[reused — already fetched ~{_mins} min ago]\n{_cached['content']}"
                 return await self._dispatcher._fetch_url(
-                    args.get("url", ""), int(args.get("max_chars", 8000))
+                    _url, int(args.get("max_chars", 8000))
                 )
             elif tool == "query_langfuse":
                 return await self._dispatcher._query_langfuse(
