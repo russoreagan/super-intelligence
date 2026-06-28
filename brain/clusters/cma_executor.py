@@ -411,9 +411,14 @@ _SYSTEM_GUIDANCE = (
 class CMAExecutor(ExecutorCommon):
     """Managed-Agents-backed executor. Drop-in for CloudExecutor."""
 
-    def __init__(self, bus: Bus, schema_store=None) -> None:
+    def __init__(self, bus: Bus, schema_store=None, router=None) -> None:
         self._bus = bus
         self._schema = schema_store
+        # ModelRouter handle (optional) — managed-agent inference bills the API key
+        # directly and never routes through ModelRouter.call(), so we use the router
+        # only to (a) gate on the daily USD cap and (b) record CMA token usage so the
+        # day-tally and the Agents dashboard stop under-reporting it.
+        self._router = router
         self._pending: dict | None = None
 
         # Lazy/async-provisioned state (no network in __init__).
@@ -441,9 +446,16 @@ class CMAExecutor(ExecutorCommon):
         # from the org-level warm session so users get credential-isolated sessions.
         self._user_sessions: dict[str, str] = {}
         self._current_end_user_id: str | None = None
+        # Per-session cumulative token-usage high-water (sid -> {in,out,cache_read}).
+        # Managed-agent sessions report CUMULATIVE usage and we reuse them warm across
+        # many cloud_actions, so each task charges only the DELTA since the last read.
+        self._session_usage_seen: dict[str, dict] = {}
+        # The session id currently being driven, so _run's finally can meter even a
+        # task that timed out (the session keeps the tokens it already burned).
+        self._active_sid: str | None = None
 
         self._user_id = os.environ.get("BRAIN_USER_ID", "").strip()
-        self._model = str(settings.get("cma_model") or "claude-opus-4-6")
+        self._model = str(settings.get("cma_model") or "claude-sonnet-4-6")
         self._state = self._load_state()
         self._mcp_servers = self._load_mcp_config()
         # Optional connector allowlist (lowercased names) set per-dispatch by the
@@ -958,6 +970,19 @@ class CMAExecutor(ExecutorCommon):
                 "success": False,
             }
         self._current_turn_id = turn_id or ""
+        self._active_sid = None
+        # Hard cap. CMA inference bills the API key directly and bypasses the router's
+        # in-call budget gate, so enforce the daily cloud cap here or it's unbounded
+        # (this is how $200/2d ran while every meter showed ~$1). Returns a normal
+        # error result; the motor planner moves on and reports what it skipped.
+        _router = getattr(self, "_router", None)
+        if _router is not None and _router.cloud_budget_exhausted():
+            logger.warning("[CMAExecutor] daily cloud budget reached — skipping cloud_action")
+            return {
+                "tool": "cloud_action",
+                "output": "[error] Daily cloud budget reached — cloud action skipped.",
+                "success": False,
+            }
         start = time.time()
         try:
             await self._ensure_ready()
@@ -991,6 +1016,11 @@ class CMAExecutor(ExecutorCommon):
         except Exception as e:
             logger.error("[CMAExecutor] task failed: %s", e)
             raw = f"[error] {e}"
+        finally:
+            # Meter whatever the session burned — even on timeout/error — through the
+            # router so the daily USD tally, the lite cap, and the Agents dashboard
+            # all see CMA spend that would otherwise be completely invisible.
+            await self._meter_session_usage()
 
         output = self._screen_result(raw)
         # success from the RAW text — fenced clean output never starts with [error]
@@ -1069,8 +1099,54 @@ class CMAExecutor(ExecutorCommon):
         sid = await self._ensure_session(
             write_allowed, user_vault_id=user_vault_id, include_identity=include_identity
         )
+        # Record the live session so _run's finally can meter its token usage even if
+        # _consume below times out or raises.
+        self._active_sid = sid
         text = await self._consume(sid, self._compose_task(task, context_facts), write_allowed)
         return text or "(no output)"
+
+    async def _meter_session_usage(self) -> None:
+        """Charge the router for the tokens the active CMA session burned since the
+        last read. Managed-agent sessions report CUMULATIVE usage and we reuse them
+        warm across many cloud_actions, so we bill the per-session delta (keyed by
+        sid). Routes through ModelRouter.record_cloud_usage so CMA spend finally
+        lands in the daily USD tally (→ the lite cap) and the Agents dashboard
+        (→ per-agent attribution). Best-effort; never raises into the task path."""
+        sid = getattr(self, "_active_sid", None)
+        router = getattr(self, "_router", None)
+        if not sid or router is None or self._client is None:
+            return
+        try:
+            s = await self._client.beta.sessions.retrieve(sid)
+            u = getattr(s, "usage", None)
+            if u is None:
+                return
+            # Fold cache-creation tokens into input. They bill at a premium over base
+            # input, so this slightly UNDER-counts the true cost — but it is vastly
+            # closer than the prior $0, and never over-charges.
+            cc = getattr(u, "cache_creation", None)
+            cache_create = 0
+            if cc is not None:
+                cache_create = (getattr(cc, "ephemeral_5m_input_tokens", 0) or 0) + (
+                    getattr(cc, "ephemeral_1h_input_tokens", 0) or 0
+                )
+            cum = {
+                "in": (getattr(u, "input_tokens", 0) or 0) + cache_create,
+                "out": getattr(u, "output_tokens", 0) or 0,
+                "cache_read": getattr(u, "cache_read_input_tokens", 0) or 0,
+            }
+            seen = getattr(self, "_session_usage_seen", None)
+            if seen is None:
+                seen = self._session_usage_seen = {}
+            prev = seen.get(sid) or {"in": 0, "out": 0, "cache_read": 0}
+            d_in = max(0, cum["in"] - prev["in"])
+            d_out = max(0, cum["out"] - prev["out"])
+            d_cr = max(0, cum["cache_read"] - prev["cache_read"])
+            seen[sid] = cum
+            if d_in or d_out or d_cr:
+                router.record_cloud_usage(self._model, d_in, d_out, cache_read=d_cr)
+        except Exception as e:
+            logger.debug("[CMAExecutor] session usage metering failed: %s", e)
 
     async def _consume(self, sid: str, message: str, write_allowed: bool = False) -> str:
         """Stream-first event loop with bounded reconnect-and-replay."""

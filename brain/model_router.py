@@ -176,10 +176,17 @@ def _strip_chatml(text: str) -> str:
     return cleaned.strip()
 
 
-# Sonnet 4.6 and Haiku 4.5 pricing ($/1M tokens: input, output, cache_read).
-# Used only for logging/budgeting; update if Anthropic changes pricing.
+# Cloud model pricing ($/1M tokens: input, output, cache_read).
+# Used for logging/budgeting AND for metering the CMA managed-agents path (whose
+# model is the org's `cma_model`, default Sonnet 4.6; Opus tiers kept for orgs that
+# override). Both the dated and alias model strings are listed so a price lands
+# whichever form the setting carries. Update if Anthropic changes pricing.
 _CLOUD_RATES: dict[str, tuple[float, float, float]] = {
+    "claude-opus-4-8": (5.0, 25.0, 0.50),
+    "claude-opus-4-7": (5.0, 25.0, 0.50),
+    "claude-opus-4-6": (5.0, 25.0, 0.50),
     "claude-sonnet-4-6": (3.0, 15.0, 0.30),
+    "claude-haiku-4-5": (1.0, 5.0, 0.10),
     "claude-haiku-4-5-20251001": (1.0, 5.0, 0.10),
     # OpenAI (budgeting estimates; unknown models fall back to the Sonnet-class
     # default below, so a wrong guess only skews the log line, never the call).
@@ -498,6 +505,41 @@ class ModelRouter:
         on restart and does not aggregate a separate agent-worker process. Durable
         cross-process metering would persist these like agent_turns (migration 015)."""
         return {k: dict(v) for k, v in self._agent_usage.items() if k and k != "owner"}
+
+    # ── External cloud usage (calls that bypass call(), e.g. the CMA executor) ──
+
+    def cloud_budget_exhausted(self) -> bool:
+        """True when today's cloud spend is at/over the effective daily USD cap.
+
+        A pre-dispatch gate for cloud consumers that DON'T go through call() — the
+        CMA managed-agents executor runs inference on the Anthropic API directly
+        (billing the tenant's key), so the in-call _enforce_cloud_budget() never sees
+        it. This lets that path honor the same cap. Best-effort; never raises. A cap
+        of 0 (no ceiling) always returns False."""
+        try:
+            self._refresh_cloud_usd_today()
+            cap = self._effective_daily_usd_cap()
+            return cap > 0 and getattr(self, "_cloud_usd_today", 0.0) >= cap
+        except Exception:
+            return False
+
+    def record_cloud_usage(
+        self, model_id: str, in_tok: int, out_tok: int, cache_read: int = 0
+    ) -> float:
+        """Account for a completed cloud call that did NOT route through call().
+
+        Charges the daily USD tally (→ the lite cap binds next time) AND attributes
+        the tokens to the current agent lane (→ the Agents dashboard sees them). The
+        seam for CMA managed-agent inference, which bills the API key directly and is
+        otherwise invisible to every meter. Returns the call's USD. Never raises."""
+        try:
+            in_t, out_t, cr = int(in_tok or 0), int(out_tok or 0), int(cache_read or 0)
+            usd = self._charge_cloud_usd(model_id, in_t, out_t, cr)
+            self._meter_agent(model_id, in_t, out_t, is_cloud=True, cache_read=cr)
+            return usd
+        except Exception as e:
+            logger.debug("[ModelRouter] record_cloud_usage failed: %s", e)
+            return 0.0
 
     # ── Background mode controls ──────────────────────────────────────────────
 
