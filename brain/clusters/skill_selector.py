@@ -105,6 +105,30 @@ class _Index:
             self.skills.append(entry)
             self._by_name[entry["name"]] = entry
 
+    def inject_partner(self, entry: dict) -> None:
+        """Add or replace an app-provided (partner) skill. Won't shadow a built-in or
+        native skill of the same name — a partner can't override the operator's own
+        skills by reusing an id (logged + skipped)."""
+        name = entry["name"]
+        existing = self._by_name.get(name)
+        if existing is not None and not existing.get("_partner"):
+            logger.warning("partner skill id %r collides with a built-in skill — skipped", name)
+            return
+        if existing is not None:
+            self.skills = [s for s in self.skills if s["name"] != name]
+        self.skills.append(entry)
+        self._by_name[name] = entry
+
+    def remove_partner(self) -> list[str]:
+        """Drop every partner skill from the index (called before each re-warm so
+        deleted/edited skills don't linger). Returns the removed names."""
+        names = [s["name"] for s in self.skills if s.get("_partner")]
+        if names:
+            self.skills = [s for s in self.skills if not s.get("_partner")]
+            for n in names:
+                self._by_name.pop(n, None)
+        return names
+
     def keyword_match(self, user_input: str) -> dict | None:
         """Return a native skill if any of its name tokens or keywords appear in user_input."""
         lowered = user_input.lower()
@@ -313,6 +337,71 @@ class SkillSelector:
             self._index.inject_native(entry)
             logger.debug("warm_native_skills: injected %s", name)
 
+    async def warm_partner_skills(self) -> None:
+        """Load the org's APPROVED app-provided skills into the live index.
+
+        Idempotent: drops the current partner entries, then re-injects the live set
+        from brain.skills_registry. Call at boot (after warm_native_skills) and again
+        after any admin change (submit-approved / superadmin-approve / delete) so the
+        next turn selects against the current set. Only skills with a cleared
+        (approved) body are loaded — pending/flagged/rejected never inject.
+
+        Treated like native operational skills for body injection (native_skill_body
+        returns the cached body → the frontal active-skill path fences it into context,
+        reaching cloud + local), but tagged _partner so that injection uses the
+        untrusted-content precedence framing instead of the trusted-native one."""
+        try:
+            from brain import skills_registry
+
+            live = skills_registry.live_skills()
+        except Exception as e:  # SkillError when Supabase is off, or a load failure
+            logger.debug("warm_partner_skills: skipped (%s)", e)
+            self._drop_partner_skills()  # registry gone → don't keep stale entries
+            return
+
+        self._drop_partner_skills()
+        from brain.skill_loader import SkillLoader
+
+        for sk in live:
+            name = sk["id"]
+            desc = sk.get("description") or ""
+            keywords = sk.get("keywords") or []
+            body = sk.get("body") or ""
+            embed_text = f"{name} {desc} {' '.join(str(k) for k in keywords)}"
+            vec = await self._router.embed(embed_text)
+            if vec is None:
+                logger.warning("warm_partner_skills: embed failed for %s", name)
+                vec = []
+            entry = {
+                "name": name,
+                "description": desc,
+                "category": "partner",
+                "tier": int(sk.get("tier") or 2),
+                "is_router": False,
+                "keywords": keywords,
+                "allowed_tools": sk.get("allowed_tools") or [],
+                "embedding": vec,
+                "_native": True,  # body-injection + capability-manifest treat it like native
+                "_partner": True,  # untrusted → fenced precedence framing on injection
+            }
+            self._index.inject_partner(entry)
+            self._native_body_cache[name] = body
+            SkillLoader.register_partner(name, body)
+        if live:
+            logger.info("warm_partner_skills: injected %d partner skill(s)", len(live))
+
+    def _drop_partner_skills(self) -> None:
+        from brain.skill_loader import SkillLoader
+
+        for n in self._index.remove_partner():
+            self._native_body_cache.pop(n, None)
+        SkillLoader.clear_partner()
+
+    def is_partner_skill(self, name: str) -> bool:
+        """True iff this skill is app-provided (untrusted) rather than built-in/native."""
+        entry = self._index.get(name)
+        return bool(entry and entry.get("_partner"))
+
     def capability_manifest(self) -> str:
         """Compact skill manifest for the executive context.
 
@@ -359,6 +448,10 @@ class SkillSelector:
             return ""
         if name in self._native_body_cache:
             return self._native_body_cache[name]
+        # Partner skills have no disk file — their body is always pre-cached at warm
+        # time (an empty body here means it isn't live), so never fall through to disk.
+        if entry.get("_partner"):
+            return ""
         body = ""
         try:
             path = INDEX_PATH.parent / f"{name}.md"

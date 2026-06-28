@@ -26,8 +26,15 @@ from __future__ import annotations
 import contextlib
 from contextvars import ContextVar
 
-# {"channel": "owner"|"agent", "session_id": str, "agent_id": str, "end_user_id": str}
-_OWNER: dict = {"channel": "owner", "session_id": "", "agent_id": "", "end_user_id": ""}
+# {"channel": "owner"|"agent", "session_id": str, "agent_id": str, "end_user_id": str,
+#  "pinned_skills": list[str]}
+_OWNER: dict = {
+    "channel": "owner",
+    "session_id": "",
+    "agent_id": "",
+    "end_user_id": "",
+    "pinned_skills": [],
+}
 
 _current: ContextVar[dict] = ContextVar("brain_turn_ctx", default=_OWNER)
 
@@ -44,17 +51,22 @@ def bind_turn(
     session_id: str = "",
     agent_id: str | None = None,
     end_user_id: str = "",
+    pinned_skills: list[str] | None = None,
 ):
     """Bind the routing lane for the duration of a turn. ``channel`` is "agent"
     for engine-API turns (the partner-/agent-driven path) or "owner" for the
     interactive UI. The owner path can leave this unbound; only the agent path
-    must bind so its events are tagged and filtered out of the main feed."""
+    must bind so its events are tagged and filtered out of the main feed.
+
+    ``pinned_skills`` are app-provided skill ids the session forces into every turn's
+    bundle (read by frontal._apply_pinned_skills), on top of relevance selection."""
     token = _current.set(
         {
             "channel": channel or "owner",
             "session_id": session_id or "",
             "agent_id": agent_id or "",
             "end_user_id": end_user_id or "",
+            "pinned_skills": list(pinned_skills or []),
         }
     )
     try:

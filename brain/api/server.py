@@ -192,6 +192,8 @@ def build_api_router(
     audio_quota=None,
     resolver: Callable[[str | None], dict | None] | None = None,
     event_source=None,
+    skill_screener: Callable[[str, str, str], Awaitable[dict]] | None = None,
+    skill_rewarm: Callable[[], Awaitable[None]] | None = None,
 ) -> APIRouter:
     registry = registry or ApiSessionRegistry()
     router = APIRouter(prefix="/v1")
@@ -300,6 +302,15 @@ def build_api_router(
         agent_id = (body or {}).get("agent_id")
         if agent_id is not None and not isinstance(agent_id, str):
             raise HTTPException(status_code=400, detail="agent_id must be a string")
+        # Optional pin: app-provided skill ids forced into every turn of this session.
+        # Unknown/!enabled ids are silently ignored at turn time (a pin can't conjure an
+        # unscreened skill), so accept any list of strings here.
+        pinned_skills = (body or {}).get("skills")
+        if pinned_skills is not None and (
+            not isinstance(pinned_skills, list)
+            or any(not isinstance(x, str) for x in pinned_skills)
+        ):
+            raise HTTPException(status_code=400, detail="skills must be a list of strings")
         # An agent IS a (persona, role) pairing. Resolving agent_id picks the role
         # (mandate) for this process's persona — the single handle a partner passes
         # instead of juggling persona + mandate_id. Cross-persona agents live in a
@@ -317,13 +328,18 @@ def build_api_router(
             except MandateError as e:
                 raise HTTPException(status_code=400, detail=str(e)) from e
         s = registry.create(
-            end_user_id.strip(), agent_id, mandate_id, partner_id=ctx.get("partner_id")
+            end_user_id.strip(),
+            agent_id,
+            mandate_id,
+            partner_id=ctx.get("partner_id"),
+            pinned_skills=pinned_skills,
         )
         return {
             "session_id": s.session_id,
             "end_user_id": s.end_user_id,
             "agent_id": s.agent_id,
             "mandate_id": s.mandate_id,
+            "skills": s.pinned_skills,
         }
 
     @router.post("/sessions/{session_id}/turns")
@@ -340,7 +356,11 @@ def build_api_router(
         # Tag every event this turn emits with the agent lane so it never lands in
         # the owner's main feed (and can't bleed into another partner's stream).
         with bind_turn(
-            "agent", session_id=s.session_id, agent_id=s.agent_id, end_user_id=s.end_user_id
+            "agent",
+            session_id=s.session_id,
+            agent_id=s.agent_id,
+            end_user_id=s.end_user_id,
+            pinned_skills=s.pinned_skills,
         ):
             text, affect = await turn_runner(
                 message, s.end_user_id, s.mandate_id, _session_persona(s)
@@ -429,7 +449,11 @@ def build_api_router(
             # bind_turn is active across create_task so the copied context tags the
             # turn task's events with this session's lane (route_sid == session_id).
             with bind_turn(
-                "agent", session_id=session_id, agent_id=s.agent_id, end_user_id=s.end_user_id
+                "agent",
+                session_id=session_id,
+                agent_id=s.agent_id,
+                end_user_id=s.end_user_id,
+                pinned_skills=s.pinned_skills,
             ):
                 turn_task = asyncio.create_task(
                     turn_runner(message, s.end_user_id, s.mandate_id, _session_persona(s))
@@ -869,6 +893,178 @@ def build_api_router(
             raise HTTPException(status_code=404, detail="unknown agent")
         return {"ok": True, "agent_id": agent_id}
 
+    # ── App-provided skills (the partner's skill library + admission review) ────
+    # A skill is partner-supplied content injected into the agent's prompt, so every
+    # submission is SCREENED before it can go live (brain/skills_screener.py): obviously
+    # safe → auto-enabled; anything in question → flagged for the superadmin. Submit/
+    # list/delete use the same bearer as sessions, with a non-owner partner scoped to
+    # its own submissions. Approve/reject is OWNER-only — the platform superadmin acts
+    # with the owner credential and the control plane fans the queue across orgs.
+
+    def _run_skill(fn):
+        from brain.skills_registry import SkillError
+
+        try:
+            return fn()
+        except SkillError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+    def _skill_owned(ctx: dict, row: dict | None) -> bool:
+        # New id (no row) → anyone authenticated may create it. Existing → owner, or the
+        # partner that submitted it.
+        if row is None:
+            return True
+        return bool(ctx.get("owner")) or row.get("submitted_by") == ctx.get("partner_id")
+
+    def _require_owner(authorization: str | None) -> dict:
+        ctx = _require(authorization)
+        if not ctx.get("owner"):
+            raise HTTPException(status_code=403, detail="owner credential required")
+        return ctx
+
+    @router.get("/skills")
+    async def list_skills_route(
+        include_inactive: bool = False,
+        status: str | None = None,
+        authorization: str | None = Header(default=None),
+    ):
+        ctx = _require(authorization)
+        _guard()
+        from brain import skills_registry as sr
+
+        rows = _run_skill(lambda: sr.list_skills(include_inactive, status))
+        if not ctx.get("owner"):
+            pid = ctx.get("partner_id")
+            rows = [r for r in rows if r.get("submitted_by") == pid]
+        return {"skills": rows}
+
+    @router.get("/skills/{skill_id}")
+    async def get_skill_route(skill_id: str, authorization: str | None = Header(default=None)):
+        ctx = _require(authorization)
+        _guard()
+        from brain import skills_registry as sr
+
+        row = _run_skill(lambda: sr.get_skill(skill_id))
+        if row is None:
+            raise HTTPException(status_code=404, detail="unknown skill id")
+        if not _skill_owned(ctx, row):
+            raise HTTPException(status_code=403, detail="skill belongs to another partner")
+        return row
+
+    @router.put("/skills/{skill_id}")
+    async def upsert_skill_route(
+        skill_id: str, body: dict, authorization: str | None = Header(default=None)
+    ):
+        ctx = _require(authorization)
+        _guard()
+        from brain import skills_registry as sr
+
+        body = body or {}
+        skill_body = body.get("body")
+        if not isinstance(skill_body, str):
+            raise HTTPException(status_code=400, detail="body (string) is required")
+        description = body.get("description") or ""
+        if not isinstance(description, str):
+            raise HTTPException(status_code=400, detail="description must be a string")
+        existing = _run_skill(lambda: sr.get_skill(skill_id))
+        if not _skill_owned(ctx, existing):
+            raise HTTPException(status_code=403, detail="skill belongs to another partner")
+        submitted_by = None if ctx.get("owner") else ctx.get("partner_id")
+        staged = _run_skill(
+            lambda: sr.stage_skill(
+                skill_id,
+                skill_body,
+                description,
+                display_name=body.get("display_name"),
+                keywords=body.get("keywords"),
+                allowed_tools=body.get("allowed_tools"),
+                tier=int(body.get("tier", 2) or 2),
+                submitted_by=submitted_by,
+            )
+        )
+        # Run the admission screener, record the verdict, and re-warm if it went live.
+        if skill_screener is not None:
+            verdict = await skill_screener(skill_id, skill_body, description)
+            result = _run_skill(
+                lambda: sr.set_status(
+                    skill_id, verdict.get("status", "flagged"), screen_notes=verdict.get("notes")
+                )
+            )
+        else:
+            # No screener wired → fail safe to human review (never auto-enable).
+            result = _run_skill(
+                lambda: sr.set_status(
+                    skill_id,
+                    "flagged",
+                    screen_notes={"judge": {"verdict": None, "reasons": ["screener_not_configured"]}},
+                )
+            )
+        st = result.get("status")
+        if st == "enabled" and skill_rewarm is not None:
+            await skill_rewarm()
+        return {
+            "id": skill_id,
+            "status": st,
+            "version": staged.get("version"),
+            "screen_notes": result.get("screen_notes"),
+        }
+
+    @router.delete("/skills/{skill_id}")
+    async def delete_skill_route(skill_id: str, authorization: str | None = Header(default=None)):
+        ctx = _require(authorization)
+        _guard()
+        from brain import skills_registry as sr
+
+        existing = _run_skill(lambda: sr.get_skill(skill_id))
+        if existing is None:
+            raise HTTPException(status_code=404, detail="unknown skill id")
+        if not _skill_owned(ctx, existing):
+            raise HTTPException(status_code=403, detail="skill belongs to another partner")
+        _run_skill(lambda: sr.delete_skill(skill_id))
+        if skill_rewarm is not None:
+            await skill_rewarm()
+        return {"ok": True, "skill_id": skill_id, "active": False}
+
+    @router.get("/admin/skills/flagged")
+    async def list_flagged_skills_route(authorization: str | None = Header(default=None)):
+        _require_owner(authorization)
+        _guard()
+        from brain import skills_registry as sr
+
+        return {"skills": _run_skill(lambda: sr.list_flagged())}
+
+    @router.post("/admin/skills/{skill_id}/approve")
+    async def approve_skill_route(skill_id: str, authorization: str | None = Header(default=None)):
+        _require_owner(authorization)
+        _guard()
+        from brain import skills_registry as sr
+
+        existing = _run_skill(lambda: sr.get_skill(skill_id))
+        if existing is None:
+            raise HTTPException(status_code=404, detail="unknown skill id")
+        result = _run_skill(lambda: sr.set_status(skill_id, "enabled", reviewed_by="owner"))
+        if skill_rewarm is not None:
+            await skill_rewarm()
+        return {"id": skill_id, "status": result.get("status")}
+
+    @router.post("/admin/skills/{skill_id}/reject")
+    async def reject_skill_route(
+        skill_id: str, body: dict | None = None, authorization: str | None = Header(default=None)
+    ):
+        _require_owner(authorization)
+        _guard()
+        from brain import skills_registry as sr
+
+        existing = _run_skill(lambda: sr.get_skill(skill_id))
+        if existing is None:
+            raise HTTPException(status_code=404, detail="unknown skill id")
+        notes = dict(existing.get("screen_notes") or {})
+        notes["review"] = {"action": "rejected", "reason": str((body or {}).get("reason") or "")}
+        result = _run_skill(
+            lambda: sr.set_status(skill_id, "rejected", screen_notes=notes, reviewed_by="owner")
+        )
+        return {"id": skill_id, "status": result.get("status")}
+
     # ── End-user lifecycle ────────────────────────────────────────────────────
     # Erase one customer's footprint across every per-end-user table + the
     # process's in-memory caches (ops / GDPR right-to-erasure).
@@ -1038,6 +1234,8 @@ class ApiServer:
         tts_stream_runner: TtsStreamRunner | None = None,
         stt_live_runner: SttLiveRunner | None = None,
         audio_quota=None,
+        skill_screener: Callable[[str, str, str], Awaitable[dict]] | None = None,
+        skill_rewarm: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         self._registry = registry or ApiSessionRegistry()
         # Default the audio runners to the stateless synth/transcribe helpers.
@@ -1072,6 +1270,8 @@ class ApiServer:
                 tts_stream_runner=tts_stream_runner,
                 stt_live_runner=stt_live_runner,
                 audio_quota=audio_quota,
+                skill_screener=skill_screener,
+                skill_rewarm=skill_rewarm,
             )
         )
 

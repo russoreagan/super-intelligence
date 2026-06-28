@@ -767,16 +767,26 @@ class ModelRouter:
             float(_s("bg_cloud_timeout_s") or 20.0) if (self._bg_mode and _is_cloud) else None
         )
 
-        # Inject skill text into the system prompt — LOCAL/RunPod backends ONLY.
-        # Cloud models (Claude, Gemini) already have these reasoning/skill frameworks
-        # natively, so injecting local skill copies is redundant prompt bloat (and cost).
-        # Gating on the resolved route (_is_cloud) means this adapts automatically as
-        # cells are moved between local and cloud models — the DMN and other Ollama/
-        # RunPod cells keep their skills; anything routed to Claude does not.
-        if skills and not _is_cloud:
+        # Inject skill text into the system prompt. Two classes, two rules:
+        #  • Humanity/native frameworks → LOCAL/RunPod ONLY. Cloud models (Claude,
+        #    Gemini) already have these reasoning/skill frameworks natively, so local
+        #    copies are redundant prompt bloat. Gating on the resolved route (_is_cloud)
+        #    adapts automatically as cells move between local and cloud models.
+        #  • App-provided (partner) skills → ALWAYS injected, cloud or local. A partner
+        #    skill is domain knowledge the model does NOT have (the embedding app's own
+        #    data/tools/house style), and it's untrusted, so it's injected fenced behind
+        #    a precedence framing (load_partner_block) on every route.
+        if skills:
             from brain.skill_loader import SkillLoader
 
-            skill_block = SkillLoader.load_many(skills)
+            partner_names = [s for s in skills if SkillLoader.is_partner(s)]
+            other_names = [s for s in skills if not SkillLoader.is_partner(s)]
+            blocks: list[str] = []
+            if partner_names:
+                blocks.append(SkillLoader.load_partner_block(partner_names))
+            if other_names and not _is_cloud:
+                blocks.append(SkillLoader.load_many(other_names))
+            skill_block = "\n\n".join(b for b in blocks if b)
             if skill_block:
                 system_prompt = f"{system_prompt}\n\n{skill_block}"
 

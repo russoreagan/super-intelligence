@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import uuid
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -21,10 +22,17 @@ SKILLS_DIR = Path(__file__).parent / "skills"
 
 class SkillLoader:
     _cache: dict[str, str] = {}
+    # App-provided skill bodies, registered by SkillSelector.warm_partner_skills.
+    # Untrusted partner content — kept separate from disk skills so it can be fenced
+    # when injected and so model_router can inject it on CLOUD routes too (a partner
+    # skill is domain knowledge Claude does NOT have, unlike the humanity frameworks).
+    _partner_bodies: dict[str, str] = {}
 
     @classmethod
     def load(cls, name: str) -> str:
         """Return skill content by name, or empty string if not found."""
+        if name in cls._partner_bodies:
+            return cls._partner_bodies[name]
         if name in cls._cache:
             return cls._cache[name]
 
@@ -46,6 +54,36 @@ class SkillLoader:
             if content:
                 parts.append(f"--- SKILL: {name} ---\n{content}")
         return "\n\n".join(parts)
+
+    # ── app-provided (partner) skills ──────────────────────────────────────────
+
+    @classmethod
+    def register_partner(cls, name: str, body: str) -> None:
+        """Register an approved partner skill body (called at warm time)."""
+        cls._partner_bodies[name] = str(body or "")
+
+    @classmethod
+    def clear_partner(cls) -> None:
+        """Drop all partner bodies (called before each re-warm)."""
+        cls._partner_bodies.clear()
+
+    @classmethod
+    def is_partner(cls, name: str) -> bool:
+        return name in cls._partner_bodies
+
+    @classmethod
+    def load_partner_block(cls, names: list[str]) -> str:
+        """Fenced, precedence-framed block for the given partner skills — the form
+        injected on both local and cloud routes. "" when none resolve."""
+        bodies = [(n, cls._partner_bodies.get(n, "")) for n in names]
+        bodies = [(n, b) for n, b in bodies if b.strip()]
+        if not bodies:
+            return ""
+        from brain.persona_context import partner_skill_block
+        from brain.security import fence
+
+        nonce = str(uuid.uuid4())[:8]
+        return "\n\n".join(partner_skill_block(b, fence, nonce, n) for n, b in bodies)
 
     @classmethod
     def available(cls) -> list[str]:
