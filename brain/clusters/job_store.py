@@ -32,6 +32,11 @@ JOBS_DIR = SECOND_BRAIN_ROOT / "jobs"
 _DEFAULT_MAX_JOBS = 100
 _DEFAULT_MAX_MB = 100
 
+# How long the cached job-file listing stays valid between scans. Short enough that a
+# just-written job is picked up promptly even without explicit invalidation; long
+# enough to coalesce a burst of scans within one research/idle pass.
+_LISTING_TTL_S = 2.0
+
 
 def _max_jobs() -> int:
     try:
@@ -68,6 +73,51 @@ class JobStore:
 
     def __init__(self) -> None:
         JOBS_DIR.mkdir(parents=True, exist_ok=True)
+        # Read-path caches. The scan helpers (find_cached_fetch / recent_sources /
+        # list_recent) are hit in bursts during research + idle loops and otherwise
+        # re-glob + re-read + re-parse EVERY job file on each call. The record cache is
+        # keyed by mtime so an unchanged file is parsed once; the listing is cached for
+        # a short TTL and invalidated on write/cleanup so a burst doesn't re-stat the dir.
+        self._record_cache: dict[str, tuple[float, dict]] = {}
+        self._listing: list[Path] | None = None
+        self._listing_ts: float = 0.0
+
+    def _job_files(self) -> list[Path]:
+        """Job files newest-first, with the directory listing cached for _LISTING_TTL_S.
+        A burst of scans (a research loop reusing fetches) reuses one glob instead of
+        re-globbing+stat-ing the whole dir per call. Invalidated on every write/cleanup,
+        so a just-saved job is visible immediately."""
+        now = time.time()
+        if self._listing is not None and (now - self._listing_ts) < _LISTING_TTL_S:
+            return self._listing
+        files = sorted(JOBS_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+        self._listing = files
+        self._listing_ts = now
+        # Drop cached records for files that no longer exist (trimmed by _cleanup),
+        # keeping the record cache bounded to roughly the live job count.
+        if len(self._record_cache) > len(files):
+            live = {str(p) for p in files}
+            for stale in [k for k in self._record_cache if k not in live]:
+                del self._record_cache[stale]
+        return files
+
+    def _load_record(self, path: Path) -> dict | None:
+        """Parsed job record for `path`, memoised by mtime so an unchanged file is read +
+        parsed once across scans. Returns None on a missing/corrupt file. The returned
+        dict is shared — callers treat it read-only (the scan paths only read)."""
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            return None
+        cached = self._record_cache.get(str(path))
+        if cached is not None and cached[0] == mtime:
+            return cached[1]
+        try:
+            record = json.loads(path.read_text())
+        except Exception:
+            return None
+        self._record_cache[str(path)] = (mtime, record)
+        return record
 
     # ── Write ─────────────────────────────────────────────────────────────────
 
@@ -195,11 +245,10 @@ class JobStore:
 
     def list_recent(self, limit: int = 20) -> list[dict]:
         """Return the most recent jobs (metadata only, no step results)."""
-        files = sorted(JOBS_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
         out = []
-        for f in files[:limit]:
-            try:
-                record = json.loads(f.read_text())
+        for f in self._job_files()[:limit]:
+            record = self._load_record(f)
+            if record is not None:
                 out.append(
                     {
                         "job_id": record.get("job_id"),
@@ -214,8 +263,6 @@ class JobStore:
                         "steps_count": len(record.get("steps", [])),
                     }
                 )
-            except Exception:
-                pass
         return out
 
     def recent_sources(self, limit: int = 12, max_urls: int = 40) -> list[dict]:
@@ -226,15 +273,13 @@ class JobStore:
         read a source are included. Each entry: {goal, summary, urls:[...]}, where
         `urls` holds only the URLs not already seen in a more-recent job.
         """
-        files = sorted(JOBS_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
         seen: set[str] = set()
         out: list[dict] = []
-        for f in files:
+        for f in self._job_files():
             if len(out) >= limit or len(seen) >= max_urls:
                 break
-            try:
-                record = json.loads(f.read_text())
-            except Exception:
+            record = self._load_record(f)
+            if record is None:
                 continue
             fresh: list[str] = []
             for link in record.get("source_links") or []:
@@ -268,14 +313,15 @@ class JobStore:
             except Exception:
                 max_age_s = 21600.0
         now = time.time()
-        files = sorted(JOBS_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
-        for f in files:
-            age = now - f.stat().st_mtime
+        for f in self._job_files():
+            try:
+                age = now - f.stat().st_mtime
+            except OSError:
+                continue
             if age > max_age_s:
                 break  # newest-first: everything past here is older still
-            try:
-                record = json.loads(f.read_text())
-            except Exception:
+            record = self._load_record(f)
+            if record is None:
                 continue
             steps = record.get("steps") or []
             results = record.get("results") or []
@@ -318,6 +364,7 @@ class JobStore:
                 logger.warning("[JobStore] cleanup: could not delete %s: %s", oldest.name, e)
 
         if removed:
+            self._listing = None  # files unlinked → next scan re-globs + prunes record cache
             logger.info("[JobStore] Cleanup removed %d old job file(s)", removed)
 
     # ── Internal ──────────────────────────────────────────────────────────────
@@ -327,6 +374,11 @@ class JobStore:
         tmp = path.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(record, indent=2))
         os.replace(tmp, path)
+        # Invalidate both caches for this write: the listing (a new/changed file), and
+        # this path's parsed record — evicted explicitly (not just by mtime) so an
+        # overwrite within the filesystem's mtime resolution can't serve stale content.
+        self._listing = None
+        self._record_cache.pop(str(path), None)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

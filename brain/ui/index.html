@@ -4404,9 +4404,9 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
           <span class="opt-txt"><span class="opt-name">Agents</span><span class="opt-sub">Agents · roles · limits</span></span>
           <svg class="opt-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
         </button>
-        <button class="ws-opt" data-ws="labs" role="menuitem">
-          <span class="opt-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M9 3v6.5L4.2 18a2 2 0 0 0 1.8 3h12a2 2 0 0 0 1.8-3L15 9.5V3M8 3h8M9 14h6"/></svg></span>
-          <span class="opt-txt"><span class="opt-name">Labs</span><span class="opt-sub">Personas · companion</span></span>
+        <button class="ws-opt" data-ws="labs" role="menuitem" title="MRI — Mood & Reasoning Interface">
+          <span class="opt-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="9"/><path d="M7 12h2l1.5-3 2 6 1.5-3H17"/></svg></span>
+          <span class="opt-txt"><span class="opt-name">MRI</span><span class="opt-sub">Mood &amp; Reasoning Interface</span></span>
           <svg class="opt-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
         </button>
         <button class="ws-opt" data-ws="api" role="menuitem">
@@ -5769,12 +5769,14 @@ function _applyObservedIdentity(pslug, agentLabel) {
 // Restore the owner persona's identity + resting bars when observation clears.
 function _restoreOwnerIdentity() {
   if (typeof _renderPersonaState === 'function') _renderPersonaState();
-  const titleEl = document.getElementById('convo-title');
-  if (titleEl) titleEl.textContent = 'Conversation';
   const owner = currentSettings && currentSettings.persona_name;
   // _renderPersonaState only knows the 5 core personas; fill the tag from the full
   // list for the rest (e.g. The Admin) so the owner identity isn't left blank.
   const op = _personaBySlug(_personaSlugJS(owner));
+  // Persona focus (the default MRI view, no agent observed): the chat header names
+  // the persona whose own inner life you're watching — not a generic "Conversation".
+  const titleEl = document.getElementById('convo-title');
+  if (titleEl) titleEl.textContent = (op && op.name) || owner || 'Conversation';
   const tagEl = document.getElementById('persona-tag-display');
   if (op && tagEl && !tagEl.textContent) tagEl.textContent = op.tag;
   const chem = owner && window.PERSONA_CHEM && window.PERSONA_CHEM[owner];
@@ -5888,17 +5890,41 @@ function _exitObservedView() {
   forceScrollChat();
 }
 
-// Route an observed agent's lane event into the same surfaces the owner lane uses:
-// its conversation + self-directed work into the read-only view, and the shared
-// single-instance panels (brain map, chemistry, mood, decisions, work tray)
-// repainted from its events — the owner handlers skip while observing.
-function applyObservedEvent(e) {
-  const obs = _observedChatEl();
+// The render half of a lane event, shared by the owner feed (handle, container =
+// #messages) and the observed-agent view (applyObservedEvent, container =
+// #observed-messages). One mapping of event type → render so the two lanes can't
+// drift in HOW they paint. Chat events take the container; the shared single-instance
+// panels (brain map, chemistry, mood, decisions, work tray) ignore it. Lane GATING
+// (who may paint a shared panel) stays at the call sites — this only renders.
+function renderLaneEvent(e, container) {
   switch (e.type) {
     case 'neuromod': renderNeuromod(e); break;
     case 'hormonal': renderHormonal(e); break;
     case 'stream_thought': renderThought(e); break;
     case 'emotion': renderEmotion(e); break;
+    case 'cell_activation': nmFireCell(e.cluster, e.cell); break;
+    case 'decision': handleDecisionEvent(e); break;
+    case 'task_planning':
+    case 'task_start':
+    case 'task_step_start':
+    case 'task_step_done':
+    case 'task_clarification':
+    case 'task_complete':
+    case 'task_summary': handleTaskEvent(e); break;
+    case 'proactive_speech': if (e.text) appendProactiveSpeech(e.text, container); break;
+    case 'data_table': appendDataTable(e, container); break;
+    case 'chart': appendChart(e, container); break;
+  }
+}
+
+// Route an observed agent's lane event into the same surfaces the owner lane uses:
+// its conversation + self-directed work into the read-only view, and the shared
+// single-instance panels repainted from its events — the owner handlers skip while
+// observing. turn_start/turn_end/activation differ from the owner lane (no owner-only
+// side effects here), so they stay inline; everything else delegates to renderLaneEvent.
+function applyObservedEvent(e) {
+  const obs = _observedChatEl();
+  switch (e.type) {
     case 'turn_start':
       if (e.user_input) { forceScrollChat(); appendUserMessage(e.user_input, obs); }
       setTyping(true);
@@ -5910,26 +5936,13 @@ function applyObservedEvent(e) {
           e.elapsed_s ? e.elapsed_s.toFixed(1) + 's' : '', obs);
       }
       break;
-    case 'proactive_speech':
-      if (e.text) appendProactiveSpeech(e.text, obs);
-      break;
-    case 'data_table': appendDataTable(e, obs); break;
-    case 'chart': appendChart(e, obs); break;
     case 'activation': {
       const regionId = CLUSTER_MAP[e.cluster];
       if (regionId && REGIONS[regionId]) activateRegion(regionId, e.intensity, e.note);
       break;
     }
-    case 'cell_activation': nmFireCell(e.cluster, e.cell); break;
-    case 'decision': handleDecisionEvent(e); break;
-    case 'task_planning':
-    case 'task_start':
-    case 'task_step_start':
-    case 'task_step_done':
-    case 'task_clarification':
-    case 'task_complete':
-    case 'task_summary':
-      handleTaskEvent(e); break;
+    default:
+      renderLaneEvent(e, obs);
   }
 }
 
@@ -5961,24 +5974,23 @@ function handle(msg) {
       break;
     }
     case 'cell_activation': {
-      if (!ownerLanePaints()) break;
-      nmFireCell(msg.cluster, msg.cell);
+      if (ownerLanePaints()) renderLaneEvent(msg);
       break;
     }
     case 'neuromod': {
-      // Owner lane paints the panels only when not observing an agent.
-      if (ownerLanePaints()) renderNeuromod(msg);
+      // Owner lane paints the shared panels only when not observing an agent.
+      if (ownerLanePaints()) renderLaneEvent(msg);
       break;
     }
-        case 'hormonal': {
-          if (ownerLanePaints()) renderHormonal(msg);
-          break;
-        }
+    case 'hormonal': {
+      if (ownerLanePaints()) renderLaneEvent(msg);
+      break;
+    }
     case 'emotion': {
       // While observing a client agent, the mood badge tracks THAT agent (painted
       // from its lane in applyObservedEvent); the owner's own emotion is suppressed
       // so the two don't fight (mirrors the neuromod/stream_thought gate).
-      if (ownerLanePaints()) renderEmotion(msg);
+      if (ownerLanePaints()) renderLaneEvent(msg);
       break;
     }
     case 'emotion_lock_cleared': {
@@ -6048,11 +6060,11 @@ function handle(msg) {
       break;
     }
     case 'data_table': {
-      appendDataTable(msg);
+      renderLaneEvent(msg);
       break;
     }
     case 'chart': {
-      appendChart(msg);
+      renderLaneEvent(msg);
       break;
     }
     case 'trading_alert': {
@@ -6069,11 +6081,11 @@ function handle(msg) {
       break;
     }
     case 'stream_thought': {
-      if (ownerLanePaints()) renderThought(msg);
+      if (ownerLanePaints()) renderLaneEvent(msg);
       break;
     }
     case 'proactive_speech': {
-      if (msg.text) appendProactiveSpeech(msg.text);
+      renderLaneEvent(msg);
       break;
     }
     case 'speaking': {
@@ -6118,7 +6130,7 @@ function handle(msg) {
     case 'mic_state':        handleMicState(msg.status); break;
     // Decisions log + work tray are shared single surfaces — while observing they
     // track the agent's lane (applyObservedEvent); the owner's own are suppressed.
-    case 'decision':         if (ownerLanePaints()) handleDecisionEvent(msg); break;
+    case 'decision':         if (ownerLanePaints()) renderLaneEvent(msg); break;
     case 'wiring_status': {
       const tag = document.getElementById('frozen-tag');
       if (tag) tag.style.display = msg.frozen ? 'inline' : 'none';
@@ -6157,7 +6169,7 @@ function handle(msg) {
     case 'task_clarification':
     case 'task_complete':
     case 'task_summary':
-      if (ownerLanePaints()) handleTaskEvent(msg);
+      if (ownerLanePaints()) renderLaneEvent(msg);
       break;
     case 'task_approval':
       handleApprovalEvent(msg);
@@ -7954,6 +7966,13 @@ function _renderPersonaState() {
   const pcfg   = name ? PERSONAS[name] : null;
   if (nameEl) nameEl.textContent = name || 'Default';
   if (tagEl)  tagEl.textContent  = pcfg ? pcfg.tag : (name ? '' : 'Neutral baseline chemistry');
+  // Persona focus (default MRI view): name the persona in the chat header. Never
+  // while observing an agent — that header carries the agent name (set in
+  // _applyObservedIdentity); clearing observation restores this via _restoreOwnerIdentity.
+  if (!observedAgentId) {
+    const titleEl = document.getElementById('convo-title');
+    if (titleEl) titleEl.textContent = name || 'Conversation';
+  }
 }
 
 function _personaSlug(name) {
@@ -8234,9 +8253,14 @@ function renderTasks() {
     const killBtn = isRunning
       ? `<button class="task-kill-btn" data-kill="${escapeHtml(job.job_id || '')}" title="Stop this job">✕</button>`
       : '';
-    return `<div class="task-card ${cls}${expandedCls}" data-job-id="${escapeHtml(job.job_id || '')}">
+    // Which agent triggered this job — shown in the persona view so own jobs ("self")
+    // and agent-started jobs are distinguishable (resource-contention overlay).
+    const agentChip = job.agent
+      ? `<span class="task-agent" title="Started by agent ${escapeHtml(job.agent)}">${escapeHtml(job.agent)}</span>`
+      : '';
+    return `<div class="task-card ${cls}${expandedCls}${job.agent ? ' from-agent' : ''}" data-job-id="${escapeHtml(job.job_id || '')}">
       ${killBtn}
-      <div class="task-goal">${escapeHtml(job.goal || '')}${workingChip}</div>
+      <div class="task-goal">${agentChip}${escapeHtml(job.goal || '')}${workingChip}</div>
       <div class="task-meta">${meta}</div>
       ${summary}
       <ul class="task-steps">${stepsHtml}</ul>
@@ -8294,10 +8318,15 @@ function escapeHtml(s) {
 function handleTaskEvent(msg) {
   const id = msg.job_id;
   if (!id) return;
+  // Agent-lane events carry the triggering agent (stamped by emitter._stamp_lane);
+  // the persona's own (owner-lane) jobs carry none → labeled "self". Lets the persona
+  // view show which agent started each job (the resource-contention overlay).
+  const agent = msg.agent_id || '';
   if (msg.type === 'task_planning') {
     TASKS[id] = {
       job_id: id,
       goal: msg.goal,
+      agent,
       steps: [],
       statuses: [], tools: [], outputs: [],
       stepStartedAt: [], stepEndedAt: [],
@@ -8312,6 +8341,7 @@ function handleTaskEvent(msg) {
     TASKS[id] = {
       job_id: id,
       goal: msg.goal || existing.goal,
+      agent: agent || existing.agent || '',
       steps: msg.steps || [],
       statuses: (msg.steps || []).map(() => 'queued'),
       tools: (msg.steps || []).map(() => ''),
