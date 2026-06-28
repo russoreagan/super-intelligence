@@ -4936,7 +4936,9 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
       </header>
 
       <div class="set-scroll" id="scroll">
-        <div class="cat-wrap" id="cat-wrap"></div>
+        <!-- Slim Settings render target (operational + API keys). Persona config moved
+             to the Personas workspace; this no longer hosts the persona scaffold. -->
+        <div class="cat-wrap" id="settings-generic"></div>
       </div>
     </main>
 
@@ -7951,7 +7953,7 @@ restartBanner.addEventListener('click', async () => {
 let currentSettings = {};
 let defaultSettings = {};
 
-function openSettings(focusPersona) {
+function openSettings() {
   mainPage.style.display = 'none';
   const ticker = document.getElementById('activity-ticker');
   if (ticker) ticker.style.display = 'none';
@@ -7961,16 +7963,10 @@ function openSettings(focusPersona) {
   document.getElementById('ws-api')?.classList.remove('on');
   settingsPage.classList.add('visible');
   settingsBtn.classList.add('active');
-  // Redesigned settings engine (settings-ui.js) owns rendering + load/save. Refetch
-  // live values every time the page opens. When opened from the Personas workspace for
-  // a specific persona, focus that persona's config (reuses the same engine + save).
-  if (window.__settingsUI) {
-    if (focusPersona && window.__settingsUI.openPersona) window.__settingsUI.openPersona(focusPersona);
-    else if (window.__settingsUI.open) window.__settingsUI.open();
-  }
+  // The gear now opens the SLIM Settings (operational + API keys + UI prefs). Persona
+  // config lives in the Personas workspace, not here.
+  if (window.__settingsUI && window.__settingsUI.openSlim) window.__settingsUI.openSlim();
 }
-// Entry point for the Personas workspace rail: configure a persona (display name).
-window.openPersonaConfig = function (personaName) { openSettings(personaName); };
 
 function closeSettings() {
   settingsPage.classList.remove('visible');

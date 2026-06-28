@@ -438,16 +438,21 @@
 
     seedDials(false);
     view = 'persona'; activeTab = 'persona';
-    buildScaffold();
-    renderPersonaRail();
-    renderTabs();
-    renderAllDials();
-    renderChem();
-    applyChemDisplay(false);
-    syncPersonaHead();
-    refreshManualUI();
-    selectTab('persona');
-    refreshDirty();
+    // Render only if a persona scaffold is currently mounted (the Personas workspace
+    // pane). At boot the scaffold doesn't exist yet — mountPersona() builds + renders
+    // it on demand — so loadFromServer is data-only there. This also prevents a stray
+    // boot-time scaffold in the (now slim) Settings page and the duplicate-id clash.
+    if (document.getElementById('pers-cat-wrap')) {
+      buildScaffold();
+      renderTabs();
+      renderAllDials();
+      renderChem();
+      applyChemDisplay(false);
+      syncPersonaHead();
+      refreshManualUI();
+      selectTab('persona');
+      refreshDirty();
+    }
   }
 
   function realChangedPatch() {
@@ -713,7 +718,7 @@
 
   /* ---- API keys (System) ---- */
   function renderApiKeys() {
-    const wrap = document.getElementById('tab-generic'); if (!wrap) return;
+    const wrap = document.getElementById('settings-generic'); if (!wrap) return;
     wrap.innerHTML = ''; Object.keys(genReg).forEach(k => delete genReg[k]);
     const cat = SET.categories.find(c => c.id === 'apikeys'); if (!cat) return;
     if (cat.summary) { const b = document.createElement('div'); b.className = 'es-cat-blurb'; b.textContent = cat.summary; wrap.appendChild(b); }
@@ -740,7 +745,7 @@
 
   /* ---- API docs (System) ---- */
   function renderApiDocs() {
-    const wrap = document.getElementById('tab-generic'); if (!wrap) return;
+    const wrap = document.getElementById('settings-generic'); if (!wrap) return;
     wrap.innerHTML = ''; Object.keys(genReg).forEach(k => delete genReg[k]);
 
     const origin = window.location.origin;
@@ -1241,7 +1246,9 @@
      ===================================================================== */
   function buildScaffold() {
     if (scaffolded) return;
-    const wrap = document.getElementById('cat-wrap'); if (!wrap) return;
+    // Persona config now lives in the Personas workspace (#pers-cat-wrap); the old
+    // settings-page #cat-wrap is the fallback (kept only while migrating).
+    const wrap = document.getElementById('pers-cat-wrap') || document.getElementById('cat-wrap'); if (!wrap) return;
     wrap.innerHTML =
       `<div class="st-head">` +
         `<div class="ch-top"><div class="ch-id">` +
@@ -1694,7 +1701,7 @@
     }).catch(() => {});
   }
   function renderOperational() {
-    const wrap = document.getElementById('tab-generic'); if (!wrap) return;
+    const wrap = document.getElementById('settings-generic'); if (!wrap) return;
     wrap.innerHTML = ''; Object.keys(genReg).forEach(k => delete genReg[k]);
     const note = document.createElement('div'); note.className = 'es-cat-blurb';
     note.textContent = 'System-wide operational settings — the same for every persona. Perception (how it hears/sees), background compute budgets, and self-maintenance.';
@@ -1927,26 +1934,77 @@
   /* =====================================================================
      BOOT
      ===================================================================== */
+  // Re-point the save/dirty/restart chrome refs to whichever surface is currently
+  // mounted (the Personas workspace persona detail, or the slim Settings page) and
+  // wire the save/reset buttons idempotently (onclick, never duplicate listeners).
+  function bindChrome(prefix) {
+    const byId = (id) => document.getElementById(id);
+    if (prefix === 'pers') {
+      saveBtn = byId('pers-save-btn'); restartBanner = byId('pers-restart-banner');
+      dirtyPill = byId('pers-dirty-pill'); dirtyText = byId('pers-dirty-text');
+      scroll = byId('pers-scroll'); resetBtn = byId('pers-reset-btn');
+    } else {
+      saveBtn = byId('settings-save-btn'); restartBanner = byId('settings-restart-banner');
+      dirtyPill = byId('dirty-pill'); dirtyText = byId('dirty-text');
+      scroll = byId('scroll'); resetBtn = byId('settings-reset-btn');
+    }
+    if (saveBtn) saveBtn.onclick = doSave;
+    if (resetBtn) resetBtn.onclick = () => { if (confirm('Reset ALL settings across every category to their defaults?')) doResetAll(); };
+  }
+
+  // Mount the persona-config engine into the Personas workspace pane (#pers-cat-wrap),
+  // re-homing the scaffold there and focusing persona `id`. The workspace re-renders
+  // its pane on every persona click, so rebuild the scaffold each mount (scaffolded
+  // reset). Data is loaded once at boot; load on demand if mounted before that.
+  async function mountPersona(id) {
+    if (!PERSONAS.length) await loadFromServer();
+    bindChrome('pers');
+    scaffolded = false; buildScaffold();
+    const target = (id && PERSONAS.find(p => p.id === id)) ? id : (PERSONAS[0] && PERSONAS[0].id);
+    if (target) selectPersona(target);
+  }
+
+  // The slim Settings rail: provider keys (everyone) + Operational (admin). Persona
+  // config is no longer here — it lives in the Personas workspace.
+  function renderSlimRail() {
+    const rail = document.getElementById('rail-nav'); if (!rail) return;
+    rail.innerHTML = '';
+    const item = (sys, name, tag) => {
+      const b = document.createElement('button'); b.className = 'pmenu-item sys'; b.dataset.sys = sys;
+      b.innerHTML = `<div class="pmenu-name">${name}</div><div class="pmenu-tag">${tag}</div>`;
+      b.addEventListener('click', () => { selectSystem(sys); syncRailSel(); });
+      rail.appendChild(b);
+    };
+    item('apikeys', 'API Keys', 'Providers · credentials');
+    item('apidocs', 'API Reference', 'Endpoints · auth');
+    if (isAdmin) item('operational', 'Operational', 'Perception · resources · maintenance');
+  }
+
+  // Open the slim Settings surface (gear): operational + keys only.
+  async function openSlim() {
+    bindChrome('settings');
+    if (!Object.keys(values).length) await loadFromServer();
+    renderSlimRail();
+    selectSystem(isAdmin ? 'operational' : 'apikeys');
+    syncRailSel();
+  }
+
   function boot() {
-    if (!document.getElementById('rail-nav')) return;
-    saveBtn = document.getElementById('settings-save-btn');
-    resetBtn = document.getElementById('settings-reset-btn');
-    restartBanner = document.getElementById('settings-restart-banner');
-    dirtyPill = document.getElementById('dirty-pill');
-    dirtyText = document.getElementById('dirty-text');
-    scroll = document.getElementById('scroll');
-    if (saveBtn) saveBtn.addEventListener('click', doSave);
-    if (resetBtn) resetBtn.addEventListener('click', () => { if (confirm('Reset ALL settings across every category to their defaults?')) doResetAll(); });
-    // openApiKeys: provider keys are account-level (reached from the account menu).
-    // Load fresh, then render the API Keys page in the settings surface.
+    // Always boot: the persona surface is hosted in the Personas workspace now, and
+    // the slim Settings page hosts operational + keys. Bind the slim-settings chrome
+    // up front (the gear opens it); mountPersona re-points to the workspace on demand.
+    if (!document.getElementById('settings-page') && !document.getElementById('ws-personas')) return;
+    bindChrome('settings');
     window.__settingsUI = {
-      open: loadFromServer,
+      open: openSlim,
       reload: loadFromServer,
-      openApiKeys: async () => { await loadFromServer(); selectSystem('apikeys'); },
-      // Open the settings surface focused on one persona's config — used by the
-      // Personas workspace rail so persona config is reached from there (the engine,
-      // dials + save/restart pipeline, is reused unchanged).
-      openPersona: async (id) => { await loadFromServer(); if (id && PERSONAS.find(p => p.id === id)) selectPersona(id); },
+      openSlim,
+      openApiKeys: async () => { bindChrome('settings'); if (!Object.keys(values).length) await loadFromServer(); renderSlimRail(); selectSystem('apikeys'); syncRailSel(); },
+      // Render persona `id`'s full config inline in the Personas workspace pane.
+      mountPersona,
+      // Back-compat: the slim Settings no longer hosts persona config, so this just
+      // mounts into the workspace surface (callers that still ask for it get it there).
+      openPersona: mountPersona,
     };
     loadFromServer();
   }

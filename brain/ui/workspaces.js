@@ -665,19 +665,45 @@
         <div class="ws-main" id="pers-main"></div>
       </div>`;
     host.querySelectorAll('.pe-nav').forEach(n => n.addEventListener('click', () => { perView = n.dataset.view; personaSel = null; paintPersonas(); }));
-    // Rail persona → configure it (the Agents rail→detail pattern): opens this persona's
-    // full config — temperament dials, chemistry, self/voice — reusing the settings
-    // engine. The Overview cards are the "watch it live" path (openPersonaInMri).
+    // Rail persona → configure it INLINE (the Agents rail→detail pattern): renders the
+    // persona's full config — temperament dials, chemistry, self/voice — into the pane,
+    // reusing the settings engine. The Overview cards are the "watch it live" path.
     host.querySelectorAll('.rail-persona').forEach(n => n.addEventListener('click', () => {
-      if (typeof window.openPersonaConfig === 'function') window.openPersonaConfig(n.dataset.name);
+      personaSel = n.dataset.name; perView = 'detail'; paintPersonas();
     }));
-    renderPersonasView(host.querySelector('#pers-main'));
+    const main = host.querySelector('#pers-main');
+    if (perView === 'detail' && personaSel) renderPersonaDetail(main);
+    else renderPersonasView(main);
+  }
+
+  // Inline persona config: a save header + the scaffold container the settings engine
+  // mounts into (#pers-cat-wrap). mountPersona() re-points the engine's chrome refs to
+  // this header and rebuilds the scaffold here, so the dials/chem/self/save pipeline is
+  // reused unchanged — just hosted in the workspace instead of the Settings overlay.
+  function renderPersonaDetail(main) {
+    if (!main) return;
+    main.innerHTML = `
+      <div style="display:flex; flex-direction:column; height:100%; min-height:0;">
+        <header class="set-bar">
+          <button class="set-back" id="pers-back-btn"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg> Overview</button>
+          <div class="bar-head"><div id="pers-bar-title">Persona</div><div id="pers-bar-blurb"></div></div>
+          <div class="bar-actions">
+            <div class="dirty-pill" id="pers-dirty-pill"><span class="chip"></span><span id="pers-dirty-text">0 unsaved</span></div>
+            <button class="restart-banner" id="pers-restart-banner">Restart required</button>
+            <button class="btn-save idle" id="pers-save-btn">Save</button>
+          </div>
+        </header>
+        <div class="set-scroll" id="pers-scroll"><div class="cat-wrap" id="pers-cat-wrap"></div></div>
+      </div>`;
+    main.querySelector('#pers-back-btn').addEventListener('click', () => { perView = 'overview'; personaSel = null; paintPersonas(); });
+    if (window.__settingsUI && window.__settingsUI.mountPersona) window.__settingsUI.mountPersona(personaSel);
   }
 
   function railPersona(p, activeSlug) {
     const st = personaStatus(p);
     const detail = p.slug === activeSlug ? 'running now' : `${p.agents.length} agent${p.agents.length === 1 ? '' : 's'}`;
-    return `<button class="rail-item rail-persona" data-persona="${esc(p.slug)}" data-name="${esc(p.name)}"><span class="ri-name"><span class="${st.cls}" style="background:${st.color}"></span>${esc(p.name)}</span><span class="ri-meta">${esc(detail)}</span></button>`;
+    const on = (perView === 'detail' && personaSel === p.name) ? ' on' : '';
+    return `<button class="rail-item rail-persona${on}" data-persona="${esc(p.slug)}" data-name="${esc(p.name)}"><span class="ri-name"><span class="${st.cls}" style="background:${st.color}"></span>${esc(p.name)}</span><span class="ri-meta">${esc(detail)}</span></button>`;
   }
 
   function renderPersonasView(main) {
