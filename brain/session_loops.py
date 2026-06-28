@@ -235,9 +235,19 @@ class _LoopsMixin:
             chem_delta = msg.payload.get("chem_delta", {}) if not msg.expired else {}
             proactive = bool(msg.payload.get("proactive", False)) if not msg.expired else False
             ts = msg.payload.get("ts") if not msg.expired else None
+            # Ranking hints for the inner-thought panel (None when absent → emitter omits).
+            salience = msg.payload.get("salience") if not msg.expired else None
+            urgency = msg.payload.get("urgency") if not msg.expired else None
+            from_job = msg.payload.get("from_job") if not msg.expired else None
             if thought:
                 await self._emitter.emit_stream_thought(
-                    thought, chem_delta=chem_delta, proactive=proactive, ts=ts
+                    thought,
+                    chem_delta=chem_delta,
+                    proactive=proactive,
+                    ts=ts,
+                    salience=salience,
+                    urgency=urgency,
+                    from_job=from_job,
                 )
 
     async def _heartbeat_with_ui(self) -> None:

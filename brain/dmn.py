@@ -3107,6 +3107,12 @@ class DefaultModeNetwork:
             else:
                 self._bus.neuromod.add(channel, delta)
 
+        # Ranking hints for the inner-thought panel (the persona view shows every
+        # thought — its own musings + agent job-reasoning — and ranks/dims by these,
+        # which the brain already computes). A coarse urgency: the deferred-thought
+        # urgency when this tick filed a deferral, else derived from speak-flag/salience.
+        # `from_job` marks reasoning that reacted to a finished job vs a pure idle musing.
+        # (The owner/agent source label is added downstream by emitter._stamp_lane.)
         await self._bus.publish_dict(
             "stream.thought",
             {
@@ -3116,6 +3122,13 @@ class DefaultModeNetwork:
                 "direction": direction,
                 "proactive": spoken_form is not None,
                 "chem_delta": chem_delta,
+                "salience": round(
+                    max(da_level, abs(em_valence), 1.0 if spoken_form is not None else 0.0), 3
+                ),
+                "from_job": self._active_event_depth is not None,
+                "urgency": defer_urgency
+                if defer_text
+                else ("high" if spoken_form is not None else ("normal" if salient else "low")),
                 **({"rumination": True} if source_tag == "rumination" else {}),
             },
             source="dmn",

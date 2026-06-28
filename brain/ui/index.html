@@ -4188,6 +4188,25 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
 .thought-tx { font-family: var(--serif); font-style: italic; font-size: 12.5px; line-height: 1.5; color: var(--ink-2); text-wrap: pretty; }
 .thought-item--latest .thought-tx { color: var(--ink); }
 
+/* Persona view overlays: agent-sourced reasoning + ranking. The source chip names the
+   agent whose job-reasoning this is; low-urgency background musings dim; job-reactions
+   get a subtle accent so prioritised thoughts read prominently. */
+.thought-src {
+  display: inline-block; margin-right: 6px; padding: 0 5px; border-radius: 4px;
+  font-family: var(--mono); font-style: normal; font-size: 9px; letter-spacing: 0.04em;
+  vertical-align: 1px; color: var(--accent); background: color-mix(in oklch, var(--accent) 14%, transparent);
+}
+.thought-item.thought-u-low { opacity: 0.62; }
+.thought-item.thought-fromjob .thought-tx { border-left: 2px solid color-mix(in oklch, var(--accent) 55%, transparent); padding-left: 7px; }
+
+/* Work tray: which agent triggered a job (persona resource-contention view). */
+.task-agent {
+  display: inline-block; margin-right: 6px; padding: 0 5px; border-radius: 4px;
+  font-family: var(--mono); font-size: 9px; letter-spacing: 0.03em; vertical-align: 1px;
+  color: var(--accent); background: color-mix(in oklch, var(--accent) 14%, transparent);
+}
+.task-card.from-agent { border-left: 2px solid color-mix(in oklch, var(--accent) 45%, transparent); }
+
 /* turn-log: readable empty-state when a turn recorded no steps */
 .turn-log-empty {
   font-family: var(--mono); font-size: 10px; letter-spacing: 0.06em;
@@ -5827,8 +5846,16 @@ function renderHormonal(e) {
     if (n) n.textContent = pct + '%';
   });
 }
-function renderThought(e) {
-  if (e.thought) appendThought(e.thought, e.chem_delta || {}, e.ts);
+function renderThought(e, source) {
+  // source: '' for the persona's own (owner-lane) musings — rendered as today; an
+  // agent_id for agent job-reasoning surfaced in the persona view (labeled). The
+  // salience/urgency/from_job hints let the panel rank/dim (the brain computes them).
+  if (e.thought) appendThought(e.thought, e.chem_delta || {}, e.ts, {
+    source: source || '',
+    urgency: e.urgency || '',
+    salience: e.salience,
+    fromJob: !!e.from_job,
+  });
 }
 // Paint the mood badge/label from one emotion event (owner-lane or observed agent).
 function renderEmotion(msg) {
@@ -5955,7 +5982,22 @@ function handle(msg) {
     // OBSERVING an agent, so its inner-life events paint the Labs panels.
     case 'agent_event': {
       const ev = msg.event || {};
-      if (observedAgentId && ev.agent_id === observedAgentId) applyObservedEvent(ev);
+      if (observedAgentId && ev.agent_id === observedAgentId) { applyObservedEvent(ev); break; }
+      // Persona focus (the default MRI view — not observing a specific agent): overlay
+      // this process's AGENT activity that competes for the persona's resources — motor
+      // jobs (work tray, labeled by agent) and job-reasoning (thought panel, labeled).
+      // NOT their conversations or chemistry. Read-only and additive; the owner-lane
+      // gate ownerLanePaints() is untouched, so the persona's own events still paint.
+      if (!observedAgentId) {
+        const t = ev.type;
+        if (t === 'task_planning' || t === 'task_start' || t === 'task_step_start'
+          || t === 'task_step_done' || t === 'task_clarification' || t === 'task_complete'
+          || t === 'task_summary') {
+          handleTaskEvent(ev);
+        } else if (t === 'stream_thought') {
+          renderThought(ev, ev.agent_id || '(agent)');
+        }
+      }
       break;
     }
     case 'activation': {
@@ -6594,7 +6636,8 @@ function updateQualityBadge(badge, qs) {
   `;
 }
 
-function appendThought(text, chemDelta, tsEpoch) {
+function appendThought(text, chemDelta, tsEpoch, opts) {
+  opts = opts || {};
   const feed = document.getElementById('thoughts-feed');
   const empty = feed.querySelector('.log-empty');
   if (empty) empty.remove();
@@ -6606,7 +6649,16 @@ function appendThought(text, chemDelta, tsEpoch) {
   const div = document.createElement('div');
   const prev = feed.querySelector('.thought-item--latest');
   if (prev) prev.classList.remove('thought-item--latest');
-  div.className = 'thought-item thought-item--latest';
+  // Ranking hints (persona view): dim low-urgency background musings, mark job-reactions,
+  // and tag agent-sourced reasoning so it's distinguishable from the persona's own.
+  let cls = 'thought-item thought-item--latest';
+  if (opts.urgency) cls += ' thought-u-' + opts.urgency;
+  if (opts.fromJob) cls += ' thought-fromjob';
+  if (opts.source) cls += ' thought-sourced';
+  div.className = cls;
+  const srcHtml = opts.source
+    ? `<span class="thought-src" title="Reasoning from agent ${escapeHtml(opts.source)}">${escapeHtml(opts.source)}</span>`
+    : '';
 
   let chemHtml = '';
   if (chemDelta && Object.keys(chemDelta).length > 0) {
@@ -6620,7 +6672,7 @@ function appendThought(text, chemDelta, tsEpoch) {
     if (pills) chemHtml = `<div class="thought-chem">${pills}</div>`;
   }
 
-  div.innerHTML = `<span class="thought-ts">${ts}</span><span class="thought-tx">${text}${chemHtml}</span>`;
+  div.innerHTML = `<span class="thought-ts">${ts}</span><span class="thought-tx">${srcHtml}${text}${chemHtml}</span>`;
   feed.prepend(div);
 
   // Keep only the 5 most recent thoughts

@@ -10,12 +10,15 @@
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
   const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
+  // 'labs' is the internal key for the live visualizer (the #main view); it's
+  // surfaced to users as "MRI — Mood & Reasoning Interface". Key kept as 'labs'
+  // so the #main plumbing and data-ws routing stay untouched.
   const WS_ICONS = {
-    labs: '<path d="M9 3v6.5L4.2 18a2 2 0 0 0 1.8 3h12a2 2 0 0 0 1.8-3L15 9.5V3M8 3h8M9 14h6"/>',
+    labs: '<circle cx="12" cy="12" r="9"/><path d="M7 12h2l1.5-3 2 6 1.5-3H17"/>',
     agents: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
     api: '<path d="m7 8-4 4 4 4M17 8l4 4-4 4M14 4l-4 16"/>',
   };
-  const WS_NAMES = { labs: 'Labs', agents: 'Agents', api: 'API' };
+  const WS_NAMES = { labs: 'MRI', agents: 'Agents', api: 'API' };
 
   let workspace = 'labs';
   let _landed = false;      // first gating resolution lands on Agents (or Labs if locked)

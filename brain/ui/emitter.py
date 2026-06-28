@@ -171,19 +171,29 @@ class ActivationEmitter:
         chem_delta: dict | None = None,
         proactive: bool = False,
         ts: float | None = None,
+        salience: float | None = None,
+        urgency: str | None = None,
+        from_job: bool | None = None,
     ) -> None:
         # ts = when the thought was generated (so the UI shows the real time,
         # not render time — important for thoughts replayed on reconnect).
+        # salience/urgency/from_job = ranking hints for the persona-view thought panel
+        # (omitted when None so the payload stays minimal for callers that don't pass them).
+        event: dict = {
+            "type": "stream_thought",
+            "thought": thought,
+            "chem_delta": chem_delta or {},
+            "proactive": proactive,
+            "ts": ts if ts is not None else time.time(),
+        }
+        if salience is not None:
+            event["salience"] = salience
+        if urgency is not None:
+            event["urgency"] = urgency
+        if from_job is not None:
+            event["from_job"] = from_job
         with contextlib.suppress(asyncio.QueueFull):
-            self._put(
-                {
-                    "type": "stream_thought",
-                    "thought": thought,
-                    "chem_delta": chem_delta or {},
-                    "proactive": proactive,
-                    "ts": ts if ts is not None else time.time(),
-                }
-            )
+            self._put(event)
 
     async def emit_proactive_speech(
         self, text: str, *, affect: dict | None = None, partner_target: str = ""
