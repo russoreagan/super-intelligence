@@ -358,6 +358,7 @@ class _SetupMixin:
             approvals_list_runner=self.api_list_approvals,
             approval_resolve_runner=self.api_resolve_approval,
             purge_runner=self.api_purge_end_user,
+            extract_runner=self.api_extract,
             skill_screener=skill_screener,
             skill_rewarm=skill_rewarm,
         )

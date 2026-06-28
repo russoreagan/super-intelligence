@@ -510,12 +510,14 @@ DEFAULTS: dict[str, float | int | str] = {
     #   (DMN ticks, metacognition, motor background). Separate pool from cloud_max_concurrent
     #   so background work can never starve interactive-turn cells waiting for a slot.
     "bg_cloud_max_concurrent": 2,
-    # cloud_daily_usd_budget: hard ceiling on total cloud spend per calendar day
-    #   (UTC). 0 = no cap. Persisted to second_brain/cloud_usage.json so it
-    #   survives restarts. When hit, all cloud calls fall back to local for the
-    #   remainder of the day.
-    #   Default $5.00 — generous for normal interactive use; tighten if needed.
-    "cloud_daily_usd_budget": 5.0,
+    # cloud_daily_usd_budget: per-ORG hard ceiling on total cloud spend per calendar
+    #   day (UTC) — one daily total across every cloud call this brain makes, NOT
+    #   per-agent (a bound agent can only narrow it further, never raise it). 0 = no
+    #   cap. The running total is persisted to second_brain/cloud_usage.json so it
+    #   survives restarts. When hit, a FULL brain falls back to local for the rest of
+    #   the day; a LITE brain (no local pod) raises CloudBudgetExceeded → HTTP 402.
+    #   Default $20.00 — generous for normal interactive use; tighten per-org if needed.
+    "cloud_daily_usd_budget": 20.0,
     # ── Section: RunPod ───────────────────────────────────────────────────────
     # Overrides the RUNPOD_HOST / RUNPOD_MODEL env vars at runtime — no restart
     # needed. Empty string = fall back to env var.

@@ -63,6 +63,20 @@ _LOCAL_VARIANTS = frozenset(
 # permission gate (see ModelRouter._local_disabled).
 _LITE_CLOUD_KEY = os.environ.get("BRAIN_LITE_CLOUD_MODEL_KEY", "haiku")
 
+# A lite brain has no local pod, so the daily-USD ceiling can't "degrade to local"
+# the way a full brain does — it must HARD-STOP instead. This gives every lite brain
+# a finite ceiling out of the box so a misbehaving tenant/job (e.g. a runaway ingest
+# loop) can never bill unbounded. Overridable via env; 0 disables the default (an
+# explicit org/agent cap still applies). A full brain ignores this entirely.
+_LITE_DEFAULT_DAILY_USD_CAP = float(os.environ.get("BRAIN_LITE_DAILY_USD_CAP", "25") or 0)
+
+
+class CloudBudgetExceeded(RuntimeError):
+    """A cloud call was blocked because the org/agent daily USD ceiling is reached AND
+    there is no local pod to fall back to (lite tier). On a full brain the same
+    condition degrades to local instead of raising. Raised BEFORE the cloud call is
+    dispatched, so it never costs anything; the engine API maps it to HTTP 402."""
+
 
 def _provider_for(model_id: str) -> str:
     """Which client a resolved model id dispatches to. Anything that isn't
@@ -339,6 +353,64 @@ class ModelRouter:
             self._cloud_usd_today = getattr(self, "_cloud_usd_today", 0.0) + usd
             self._persist_cloud_usd()
         return usd
+
+    def _refresh_cloud_usd_today(self) -> None:
+        """Roll today's accumulated cloud spend over at the UTC date boundary."""
+        import datetime as _dt
+
+        today_str = _dt.date.today().isoformat()
+        if getattr(self, "_cloud_usd_date", "") != today_str:
+            self._cloud_usd_date = today_str
+            self._cloud_usd_today = self._load_cloud_usd_today()
+
+    def _effective_daily_usd_cap(self) -> float:
+        """Today's USD ceiling: the org `cloud_daily_usd_budget` setting folded with any
+        tighter per-agent cap (the lower wins). On a lite brain, fall back to
+        BRAIN_LITE_DAILY_USD_CAP when neither is set, so a lite tenant is never
+        unbounded. 0 = no cap."""
+        from brain.settings import settings as _settings
+
+        cap = float(_settings.get("cloud_daily_usd_budget") or 0.0)
+        # A bound agent may carry a tighter spend cap WITHIN the org ceiling
+        # (e.g. org $100k, this agent $20k) — the lower of the two wins.
+        try:
+            from brain.agent_ctx import current_agent
+
+            _a = current_agent()
+            _ac = (_a or {}).get("permissions", {}).get("cloud_daily_usd_budget") if _a else None
+            if _ac not in (None, ""):
+                _acf = float(_ac)
+                cap = _acf if cap <= 0 else min(cap, _acf)
+        except Exception:
+            pass
+        # Lite has no local pod to shed onto, so default it to a finite ceiling.
+        if cap <= 0 and getattr(self, "_local_disabled", False):
+            cap = _LITE_DEFAULT_DAILY_USD_CAP
+        return cap
+
+    def _enforce_cloud_budget(self, cluster: str, cell: str) -> bool:
+        """Gate a cloud call on the daily USD ceiling. Returns True when the caller
+        should REDIRECT the call to local (a full brain over cap). Raises
+        CloudBudgetExceeded on a lite brain over cap (no local fallback). Returns
+        False to proceed on cloud. Checked BEFORE dispatch, so a block costs nothing."""
+        self._refresh_cloud_usd_today()
+        cap = self._effective_daily_usd_cap()
+        if cap <= 0 or getattr(self, "_cloud_usd_today", 0.0) < cap:
+            return False
+        if getattr(self, "_local_disabled", False):
+            raise CloudBudgetExceeded(
+                f"daily cloud budget reached (${self._cloud_usd_today:.4f} ≥ ${cap:.2f}); "
+                f"lite brain has no local fallback — blocking {cluster}/{cell}"
+            )
+        logger.warning(
+            "[Resource] Daily cloud USD cap reached ($%.4f / $%.2f) "
+            "— routing %s/%s to local for the rest of today.",
+            self._cloud_usd_today,
+            cap,
+            cluster,
+            cell,
+        )
+        return True
 
     def _meter_agent(
         self,
@@ -703,43 +775,13 @@ class ModelRouter:
                     )
                     max_tokens = call_cap
 
-        # Daily cloud USD budget — hard ceiling across all cloud providers.
-        if _is_cloud:
-            import datetime as _dt
-
-            today_str = _dt.date.today().isoformat()
-            # Guard with getattr: tests may construct ModelRouter via __new__,
-            # bypassing __init__; these attributes might not exist in that case.
-            if getattr(self, "_cloud_usd_date", "") != today_str:
-                self._cloud_usd_date = today_str
-                self._cloud_usd_today = self._load_cloud_usd_today()
-            daily_cap = float(_s("cloud_daily_usd_budget") or 0.0)
-            # A bound agent may carry a tighter spend cap WITHIN the org ceiling
-            # (e.g. org $100k, this agent $20k) — the lower of the two wins.
-            try:
-                from brain.agent_ctx import current_agent
-
-                _a = current_agent()
-                _ac = (
-                    (_a or {}).get("permissions", {}).get("cloud_daily_usd_budget") if _a else None
-                )
-                if _ac not in (None, ""):
-                    _acf = float(_ac)
-                    daily_cap = _acf if daily_cap <= 0 else min(daily_cap, _acf)
-            except Exception:
-                pass
-            if daily_cap > 0 and self._cloud_usd_today >= daily_cap and not self._local_disabled:
-                logger.warning(
-                    "[Resource] Daily cloud USD cap reached ($%.4f / $%.2f) "
-                    "— routing %s/%s to local for the rest of today.",
-                    self._cloud_usd_today,
-                    daily_cap,
-                    cluster,
-                    cell,
-                )
-                model_key = "local"
-                model_id = "local"
-                _is_cloud = False
+        # Daily cloud USD budget — hard ceiling across all cloud providers. A full
+        # brain degrades to local at the cap; a lite brain (no pod) raises
+        # CloudBudgetExceeded instead, so it can never bill past the ceiling.
+        if _is_cloud and self._enforce_cloud_budget(cluster, cell):
+            model_key = "local"
+            model_id = "local"
+            _is_cloud = False
 
         # ── R1 egress pseudonymization (gateway backstop before every cloud call) ──
         # Idempotent: already-tokenized content (⟨type_n⟩) doesn't match PII patterns.
@@ -1000,6 +1042,11 @@ class ModelRouter:
 
         model_key, model_id = self._resolve_model_id(model_key, cluster)
         provider = _provider_for(model_id)
+        # Daily USD ceiling. A lite brain over cap raises CloudBudgetExceeded
+        # (propagates → HTTP 402); a full brain over cap ends the agentic loop
+        # cleanly with a no-tool answer rather than dispatching another paid call.
+        if provider != "local" and self._enforce_cloud_budget(cluster, cell):
+            return {"text": ""}
         try:
             if provider == "anthropic":
                 client = self._get_anthropic()
@@ -1104,6 +1151,12 @@ class ModelRouter:
         _s = _settings.get
         model_key, model_id = self._resolve_model_id(model_key, cluster)
         _is_cloud = _provider_for(model_id) != "local"
+
+        # Daily USD ceiling (same gate as call()). A structured call has no local
+        # tool-use path to degrade to, so a full brain over cap fails soft to the {}
+        # contract; a lite brain raises CloudBudgetExceeded (propagates → HTTP 402).
+        if _is_cloud and self._enforce_cloud_budget(cluster, cell):
+            return {}
 
         # Background mode: apply per-hour rate limit — if exhausted, fall back gracefully.
         if self._bg_mode and _is_cloud:

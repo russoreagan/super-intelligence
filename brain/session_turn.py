@@ -107,6 +107,37 @@ class _TurnMixin:
                 cloud.clear_pending()
             return text, affect
 
+    async def api_extract(
+        self,
+        input_text: str,
+        schema: dict,
+        instructions: str = "",
+        tool_name: str = "extract",
+    ) -> dict:
+        """Engine entry point for SESSIONLESS structured extraction. Forces a single
+        cheap model call to return JSON matching `schema`, with NO session, persona,
+        memory, motor, or DMN — none of the conversational-turn machinery. Built for
+        high-volume utility classification (a partner pulling structured fields out of
+        text, e.g. a tradeable signal from an article) that must not pay for a full
+        turn and needs reliable JSON, not free-form prose.
+
+        Bounded by the daily USD ceiling like every cloud call: on a lite brain over
+        budget, call_structured raises CloudBudgetExceeded → the API maps it to 402.
+        Not turn-locked: extraction is stateless and read-only, so it can run
+        concurrently with (and without blocking) live conversational turns."""
+        system = instructions.strip() or "Extract structured data from the user's text."
+        return await self.router.call_structured(
+            "haiku",
+            system,
+            [{"role": "user", "content": input_text}],
+            tool_name or "extract",
+            "Return the extracted fields as a single structured object.",
+            schema,
+            cluster="api",
+            cell="extract",
+            max_tokens=1024,
+        )
+
     async def api_confirm(
         self,
         pending: dict,
