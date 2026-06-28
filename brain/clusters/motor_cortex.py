@@ -271,6 +271,11 @@ class MotorCortexCluster:
         # initiated itself (vs a live user command). Tightens tool access per
         # the motor_self_* settings — set by the task worker around each job.
         self._self_mode = False
+        # True only while an InternalJob runs (set in execute_internal_job). Unlike
+        # _self_mode (off for user-awaited work), this is on for ANY job — so a
+        # write gated in a job, and the user-approved re-run of it, both route
+        # through the approval ledger rather than an in-conversation confirmation.
+        self._in_internal_job = False
         self._current_end_user_id: str | None = None
 
         self._dispatcher = ToolDispatcher(
@@ -910,6 +915,12 @@ class MotorCortexCluster:
         # Mark as autonomous/background so cloud budget guards apply.
         self._router.enter_background_mode()
         try:
+            # Inside an InternalJob there's no conversational user to answer a write
+            # confirmation, so write-gating routes through the approval ledger (see
+            # _dispatch_cloud) — including the user-approved re-run, which re-queues
+            # as source="user" yet still runs here. Reset in the finally so live
+            # interactive turns keep confirming in-conversation.
+            self._in_internal_job = True
             # HARD wall-clock bound on the ENTIRE job. The internal _job_deadline
             # is only POLLED inside the story loop, so it can't interrupt a hung
             # await (e.g. a stalled strategic-plan call before the loop even
@@ -945,6 +956,7 @@ class MotorCortexCluster:
         finally:
             self._router.exit_background_mode()
             self._active_job_count = max(0, self._active_job_count - 1)
+            self._in_internal_job = False
 
     async def _execute_internal_job_body(
         self, goal: str, turn_id: str, job_id: str, budget: int, emitter
@@ -1115,6 +1127,7 @@ class MotorCortexCluster:
         results_log: list[str] = list(resume.get("results", [])) if resume else []
         last_result: dict | None = None
         clarification_question: str | None = None
+        awaiting_approval = False  # set if a write step is blocked pending the user's approval
         # productive_steps = tool calls that executed and returned real (non-error,
         # non-blocked, non-mismatch) output. Job success is judged on whether real
         # work happened — NOT on whether every story's strict acceptance criteria
@@ -1311,12 +1324,44 @@ class MotorCortexCluster:
 
                 output, last_result = await self._dispatch_tool(tool, args, job_id, reason)
 
-                step_success = not output.startswith("[error]") and not output.startswith(
-                    "[blocked]"
+                # A gated write (awaiting approval) or an interactive confirmation
+                # prompt is NOT productive work — it must not count toward job success.
+                step_success = (
+                    not output.startswith("[error]")
+                    and not output.startswith("[blocked]")
+                    and not output.startswith("AWAITING_APPROVAL:")
+                    and not output.startswith("CONFIRMATION_NEEDED:")
                 )
                 steps_taken.append({"tool": tool, "args": args, "reason": reason})
                 results_log.append(output[:500] if output else "")
                 self._fire_outcome_switches(output, tool, self._chem_snapshot())
+
+                if output.startswith("AWAITING_APPROVAL:"):
+                    # Self-directed write blocked on the user. A pending approval now
+                    # exists (recorded by the gate); stop the job cleanly rather than
+                    # retry — retrying can't approve it, and the user resolves it from
+                    # the app, after which the re-queued action runs pre-authorized.
+                    awaiting_approval = True
+                    stopped_early = "awaiting your approval"
+                    logger.info(
+                        "[InternalJob] Story %d/%d blocked pending your approval: %s",
+                        idx + 1,
+                        len(stories_planned),
+                        output[len("AWAITING_APPROVAL:") :][:80],
+                    )
+                    await emitter.emit_event(
+                        {
+                            "type": "task_step_done",
+                            "job_id": job_id,
+                            "step_index": idx,
+                            "tool": tool,
+                            "success": False,
+                            "criteria_verified": False,
+                            "output": output[:300],
+                            "attempt": attempt,
+                        }
+                    )
+                    break
 
                 # Deterministic tool-appropriateness guard (no LLM). If the chosen
                 # tool is an obvious mismatch, fail the story like an unmet criterion
@@ -1412,7 +1457,7 @@ class MotorCortexCluster:
                     self._bus.neuromod.add("GABA", _g * 0.5)
                     self._bus.neuromod.add("DA", -_g * 0.5)
 
-            if clarification_question:
+            if clarification_question or awaiting_approval:
                 break
             if not story_passed:
                 # Record the unverified story as a caveat — but do NOT fail the whole
@@ -1454,7 +1499,13 @@ class MotorCortexCluster:
         # Advisory only — its issues are surfaced for the spoken summary, but a
         # rejection no longer fails a job that did productive work.
         verification_issues = ""
-        if use_ralph and productive_steps > 0 and not clarification_question and steps_taken:
+        if (
+            use_ralph
+            and productive_steps > 0
+            and not clarification_question
+            and not awaiting_approval
+            and steps_taken
+        ):
             approved, issues = await self._verify_job(
                 goal, success_criteria, steps_taken, results_log, job_id
             )
@@ -1477,7 +1528,7 @@ class MotorCortexCluster:
         # Job success = did we accomplish real work and weren't we blocked on the
         # user? Strict criteria/verifier verdicts are advisory caveats, not failures.
         # A job only fails if it produced nothing usable or is waiting on the user.
-        success = productive_steps > 0 and not clarification_question
+        success = productive_steps > 0 and not clarification_question and not awaiting_approval
         if stopped_early and not success:
             logger.warning(
                 "[InternalJob] Stopped early (%s) with no productive steps", stopped_early
@@ -1502,6 +1553,7 @@ class MotorCortexCluster:
                 "success": success,
                 "steps_completed": len(steps_taken),
                 "clarification": clarification_question,
+                "awaiting_approval": awaiting_approval,
             }
         )
         logger.info(
@@ -2134,6 +2186,50 @@ class MotorCortexCluster:
                 result = await self._cloud.execute_pending(turn_id)
                 await self._bus.publish_dict("motor.result", result, source=CLUSTER)
                 return result
+
+            # Self-directed work has no user in the loop to answer a confirmation
+            # prompt mid-job, so route the write through the approval ledger — the
+            # same hook the per-tool gate uses. If this exact write was already
+            # approved, run it now (the resume path). Otherwise the hook records a
+            # pending approval the user can act on from the app, and we report the
+            # step as NOT done so the job can't claim success for a write it never
+            # performed (the old path returned CONFIRMATION_NEEDED, which the story
+            # loop miscounted as success and surfaced no approval at all).
+            approval_hook = getattr(self._cloud, "_approval_fn", None)
+            if self._in_internal_job and approval_hook is not None:
+                verdict = "deny"
+                try:
+                    _v = approval_hook(
+                        {
+                            # A distinct tool label (not "cloud_action") so the
+                            # approval's same-tool resume window is scoped to motor
+                            # writes — approving one doesn't briefly green-light the
+                            # CMA executor's unrelated cloud actions. The re-run uses
+                            # this same label, so replay still matches.
+                            "tool": "cloud_write",
+                            "input": {"task": task, "description": description},
+                            "reason": description or "write action needs your approval",
+                            "turn_id": turn_id,
+                            "end_user_id": end_user_id or "",
+                        }
+                    )
+                    verdict = await _v if asyncio.iscoroutine(_v) else _v
+                except Exception as _ae:
+                    logger.warning("[MotorCortex] approval hook failed: %s", _ae)
+                if verdict == "allow":
+                    logger.info("[MotorCortex] Write pre-approved — executing: %s", description)
+                    result = await self._cloud.execute_pending(turn_id)
+                    await self._bus.publish_dict("motor.result", result, source=CLUSTER)
+                    return result
+                logger.info("[MotorCortex] Write queued for your approval: %s", description)
+                return {
+                    "tool": "cloud_action",
+                    "args": args,
+                    "output": f"AWAITING_APPROVAL:{description}",
+                    "success": False,
+                    "pending": True,
+                }
+
             await self._bus.publish_dict(
                 "motor.confirmation_needed",
                 {"description": description, "task": task},
