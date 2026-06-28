@@ -1629,7 +1629,60 @@ class _TurnMixin:
             pass
         return {"emotion": emotion}
 
+    async def _deliver_proactive(
+        self, text: str, mood: dict, *, partner_target: str = ""
+    ) -> None:
+        """Deliver an unprompted message (a finished job's result, a clarification, a
+        failure) on the correct two channels — the single place the proactive lane
+        gate lives, so callers can't drift back to a weaker check.
+
+          • Partner / observed delivery (``emit_proactive_speech``) ALWAYS fires when
+            an emitter is present: the owning tenant may be away, which is exactly when
+            a completed job's result matters most. Best-effort.
+          • Local TTS (``pns.emit``) fires ONLY when ``_proactive_voice_allowed()`` —
+            a connected listener AND the owner lane. On the agent lane (a third-party
+            app driving this agent through the engine API) the brain stays silent;
+            anyone in that app is observing the run, not conversing with it. Best-effort.
+
+        Owner-lane behaviour is unchanged (there the lane check reduces to the existing
+        listener gate); only the agent lane is held silent, which is the contract
+        locked by tests/test_proactive_voice_lane_gate.py.
+        """
+        if self._emitter:
+            with contextlib.suppress(Exception):
+                await self._emitter.emit_proactive_speech(
+                    text, affect=mood, partner_target=partner_target
+                )
+        if self._proactive_voice_allowed():
+            with contextlib.suppress(Exception):
+                await self.pns.emit(text, mood)
+
     async def _run_task(self, task) -> None:
+        """Run a queued job under its originating lane.
+
+        Two buckets (see task_queue.Task.origin_*): a job that descends from an
+        agent-lane turn runs bound to that agent, so every event it emits — the
+        work tray, the spoken result, the reflection it seeds — is tagged with
+        that agent and kept out of the owner's main feed (observable instead as
+        that agent's self-directed work). The brain's OWN idle/self-directed jobs
+        carry no agent origin and run on the owner lane, exactly as before — its
+        private inner life, visible only in its own UI."""
+        from brain.turn_ctx import bind_turn
+
+        if getattr(task, "origin_channel", "owner") == "agent" and getattr(
+            task, "origin_session_id", ""
+        ):
+            with bind_turn(
+                "agent",
+                session_id=task.origin_session_id,
+                agent_id=getattr(task, "origin_agent_id", "") or None,
+                end_user_id=getattr(task, "origin_end_user_id", ""),
+            ):
+                await self._run_task_body(task)
+        else:
+            await self._run_task_body(task)
+
+    async def _run_task_body(self, task) -> None:
         job_turn_id = f"task_{task.id}"
         job_id = f"job_{job_turn_id}"
         # Record the job_id on the task so the queue entry links to the store
@@ -1665,16 +1718,11 @@ class _TurnMixin:
             # be away). Autonomous work fails quietly and only feeds reflection below.
             if is_user:
                 _fail_msg = "I ran into an error working on that and couldn't finish it."
-                if self._emitter:
-                    with contextlib.suppress(Exception):
-                        await self._emitter.emit_proactive_speech(
-                            _fail_msg,
-                            affect={"emotion": "concerned"},
-                            partner_target=self._partner_proactive_target(),
-                        )
-                if self._proactive_speech_allowed():
-                    with contextlib.suppress(Exception):
-                        await self.pns.emit(_fail_msg, {"emotion": "concerned"})
+                await self._deliver_proactive(
+                    _fail_msg,
+                    {"emotion": "concerned"},
+                    partner_target=self._partner_proactive_target(),
+                )
             # Feed the crash back into reflection so the entity can react to / act on
             # the failure (result→reasoning loop; the DMN decides what, if anything).
             if self.dmn is not None:
@@ -1728,22 +1776,12 @@ class _TurnMixin:
             )
             if should_report:
                 # Partner delivery isn't gated on a local listener (the user may be
-                # waiting remotely in the copilot); local TTS still is.
-                mood = self._genuine_mood()
-                if self._emitter:
-                    await self._emitter.emit_proactive_speech(
-                        question,
-                        affect=mood,
-                        partner_target=self._partner_proactive_target(),
-                    )
-                if self._proactive_speech_allowed():
-                    await self.pns.emit(question, mood)
-                else:
-                    logger.debug(
-                        "[TaskWorker] Task [%s] clarification delivered to partner; local "
-                        "TTS skipped — no connected listener",
-                        task.id,
-                    )
+                # waiting remotely in the copilot); local TTS is gated by lane+listener.
+                await self._deliver_proactive(
+                    question,
+                    self._genuine_mood(),
+                    partner_target=self._partner_proactive_target(),
+                )
             else:
                 logger.info(
                     "[TaskWorker] Task [%s] clarification held — off-topic autonomous work "
@@ -1821,22 +1859,20 @@ class _TurnMixin:
                     "summary": spoken_summary,
                 }
             )
-            if should_report:
-                # Partner delivery isn't gated on a local listener (a user awaiting in the
-                # copilot may be away); local TTS below still is.
-                await self._emitter.emit_proactive_speech(
-                    spoken_summary,
-                    affect=mood,
-                    partner_target=self._partner_proactive_target(),
-                )
-            else:
-                logger.info(
-                    "[TaskWorker] Task [%s] result held from speech — off-topic autonomous "
-                    "work (will surface in LLM context on next turn)",
-                    task.id,
-                )
-        if should_report and self._proactive_speech_allowed():
-            await self.pns.emit(spoken_summary, mood)
+        if should_report:
+            # Partner delivery isn't gated on a local listener (a user awaiting in the
+            # copilot may be away); local TTS is gated by lane+listener in the helper.
+            await self._deliver_proactive(
+                spoken_summary,
+                mood,
+                partner_target=self._partner_proactive_target(),
+            )
+        else:
+            logger.info(
+                "[TaskWorker] Task [%s] result held from speech — off-topic autonomous "
+                "work (will surface in LLM context on next turn)",
+                task.id,
+            )
 
     async def _synthesize_lobe_result(self, tool_name: str, output: str, turn_id: str) -> str:
         """Synthesize a natural spoken utterance from a lobe tool's raw context output.
@@ -2010,20 +2046,12 @@ class _TurnMixin:
             success,
         )
         if self._proactive_speech_allowed():
-            # Deliver to the owning partner + the observed lane regardless of who
-            # drove the turn. But only VOICE it aloud on the owner lane: when a
-            # third-party app drives this agent through the engine API the result
-            # must stay silent in the Elyceum app — anyone there is observing the
-            # run, not conversing — while still reaching the partner above.
+            # Deliver to the owning partner + the observed lane regardless of who drove
+            # the turn; _deliver_proactive only VOICES it aloud on the owner lane (the
+            # agent lane stays silent in the partner app — observing, not conversing).
             # The tool's reward/outcome already moved the chemistry, so the genuine mood
             # reflects how it landed — voice that, not a hardcoded success/fail label.
-            mood = self._genuine_mood()
-            with contextlib.suppress(Exception):
-                if self._emitter:
-                    await self._emitter.emit_proactive_speech(msg, affect=mood)
-            if self._proactive_voice_allowed():
-                with contextlib.suppress(Exception):
-                    await self.pns.emit(msg, mood)
+            await self._deliver_proactive(msg, self._genuine_mood())
 
 
 # ── Module-level helpers (used inside _process_turn_body) ─────────────────────

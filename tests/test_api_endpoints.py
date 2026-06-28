@@ -112,7 +112,12 @@ def test_turn_surfaces_mood_but_not_internal_fields():
     mood = c.post(f"/v1/sessions/{sid}/turns", json={"message": "hi"}, headers=_AUTH).json()["mood"]
     assert mood["emotion"] == "warm"
     assert mood["user_emotion"] == "curious"
-    assert mood["hormonal"] == {"OXT": 0.3}
+    # Chemistry is deliberately withheld from partners — only the mood OUTPUT crosses
+    # the boundary (see commit 2fed0fa and brain.api._affect.mood_from_affect), so the
+    # affect model can't be reverse-engineered. The fake supplies hormonal + appraisal
+    # in the source affect precisely to prove they're stripped here.
+    assert "hormonal" not in mood
+    assert "neuromod" not in mood
     assert "appraisal" not in mood  # internal affect fields are not leaked
 
 

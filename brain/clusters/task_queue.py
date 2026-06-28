@@ -59,6 +59,16 @@ class Task:
     # seeds a reflection that spawns a follow-up task tags that follow-up depth+1,
     # so the result→reasoning→act loop is bounded (see DMN.note_job_result).
     reflex_depth: int = 0
+    # Routing origin: the lane this task descended from, captured at enqueue time
+    # from the turn context (brain.turn_ctx). When a job is deferred DURING an
+    # agent-lane turn, it carries that agent so its later execution can run on the
+    # same lane — its events, result delivery, and reflection are attributed to
+    # (and observable as) that agent's self-directed work. Empty / "owner" → the
+    # brain's OWN idle reasoning, which stays on the owner lane (its private life).
+    origin_channel: str = "owner"
+    origin_session_id: str = ""
+    origin_agent_id: str = ""
+    origin_end_user_id: str = ""
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -165,12 +175,24 @@ class PersistentTaskQueue:
                         goal[:60],
                     )
                     return None
+        # Capture the lane this task is being deferred from. A job spawned during an
+        # agent-lane turn (the partner/agent path) is tagged with that agent so its
+        # eventual execution runs bound to the same lane; the brain's own idle work
+        # enqueues on the owner lane and carries no agent identity.
+        from brain.turn_ctx import current_turn
+
+        octx = current_turn()
+        _is_agent = octx.get("channel") == "agent"
         task = Task(
             id=str(uuid.uuid4())[:8],
             goal=goal,
             source=source,
             priority=priority,
             reflex_depth=reflex_depth,
+            origin_channel="agent" if _is_agent else "owner",
+            origin_session_id=octx.get("session_id", "") if _is_agent else "",
+            origin_agent_id=octx.get("agent_id", "") if _is_agent else "",
+            origin_end_user_id=octx.get("end_user_id", "") if _is_agent else "",
         )
         self._tasks.append(task)
         # Trim oldest completed/failed if over limit

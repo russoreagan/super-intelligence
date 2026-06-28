@@ -149,6 +149,13 @@ class PNS:
                 logger.debug("[I/O] TTS narration muted — skipping synthesis")
                 return
             async with self._speak_lock:
+                # Re-check under the lock: a mute click can land after the fast-path
+                # check above while this caller is queued behind an in-flight
+                # utterance. Without this, that queued call would still synthesize
+                # (and bill ElevenLabs) the moment the lock frees.
+                if self._tts_muted:
+                    logger.debug("[I/O] TTS muted while queued — skipping synthesis")
+                    return
                 await self._speak(response, affect or {})
         else:
             print(f"\nBrain: {response}\n", flush=True)
@@ -1196,6 +1203,15 @@ class PNS:
                     audio_queue: asyncio.Queue = asyncio.Queue(maxsize=64)
 
                     async def _producer() -> None:
+                        # Bail out of a systematically-failing provider instead of
+                        # hammering it chunk after chunk (wasted credits + a broken,
+                        # gap-riddled utterance). A single transient chunk failure is
+                        # skipped; BRAIN_TTS_MAX_CHUNK_FAILURES failures IN A ROW abort
+                        # the whole stream (interrupt → consumer stops, producer breaks).
+                        max_chunk_failures = max(
+                            1, int(os.environ.get("BRAIN_TTS_MAX_CHUNK_FAILURES", "2"))
+                        )
+                        fail_streak = 0
                         try:
                             for i, (sentence, chunk_vs) in enumerate(chunked):
                                 if self._interrupt_event.is_set():
@@ -1221,6 +1237,17 @@ class PNS:
                                         self._emit_tts_error(
                                             f"Chunk {i + 1} failed: {type(_g_err).__name__}"
                                         )
+                                        fail_streak += 1
+                                        if fail_streak >= max_chunk_failures:
+                                            logger.error(
+                                                "[I/O] TTS aborting after %d consecutive chunk "
+                                                "failures (provider unhealthy)",
+                                                fail_streak,
+                                            )
+                                            self._interrupt_event.set()
+                                            break
+                                    else:
+                                        fail_streak = 0
                                     _gap_ms = int(os.environ.get("BRAIN_TTS_CHUNK_GAP_MS", "20"))
                                     if (
                                         _gap_ms > 0
@@ -1254,6 +1281,17 @@ class PNS:
                                         self._emit_tts_error(
                                             f"Chunk {i + 1} failed: {type(_oai_err).__name__}"
                                         )
+                                        fail_streak += 1
+                                        if fail_streak >= max_chunk_failures:
+                                            logger.error(
+                                                "[I/O] TTS aborting after %d consecutive chunk "
+                                                "failures (provider unhealthy)",
+                                                fail_streak,
+                                            )
+                                            self._interrupt_event.set()
+                                            break
+                                    else:
+                                        fail_streak = 0
                                     # Inter-chunk gap handled below, shared with ElevenLabs.
                                     _gap_ms = int(os.environ.get("BRAIN_TTS_CHUNK_GAP_MS", "20"))
                                     if (
@@ -1311,6 +1349,17 @@ class PNS:
                                     self._emit_tts_error(
                                         f"Chunk {i + 1} failed: {type(_sent_err).__name__}"
                                     )
+                                    fail_streak += 1
+                                    if fail_streak >= max_chunk_failures:
+                                        logger.error(
+                                            "[I/O] TTS aborting after %d consecutive chunk "
+                                            "failures (provider unhealthy)",
+                                            fail_streak,
+                                        )
+                                        self._interrupt_event.set()
+                                        break
+                                else:
+                                    fail_streak = 0
                                 finally:
                                     # Release the async generator's HTTP connection even
                                     # if we broke out early (interrupt or exception).

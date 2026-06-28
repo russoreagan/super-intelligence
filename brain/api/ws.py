@@ -18,7 +18,8 @@ base64-encoded in the JSON payload (consistent with the existing audio_chunk
 SSE shape).
 
 This module never imports from brain.api.server to avoid circular imports.
-Helper functions (_affect_view, _mood_from_affect) are inlined here.
+The curated affect/mood views (_affect_view, _mood_from_affect) are shared with the
+SSE transport via brain.api._affect — neither transport depends on the other.
 """
 
 from __future__ import annotations
@@ -413,20 +414,7 @@ class WsSession:
 # ── module-level helpers (no server.py import) ────────────────────────────────
 
 
-def _affect_view(text: str, affect: dict | None) -> tuple[str, dict]:
-    try:
-        from brain.api.audio import affect_view
-
-        return affect_view(text, affect)
-    except Exception:
-        return text, {"base_tag": None, "segments": []}
-
-
-def _mood_from_affect(affect: dict | None) -> dict:
-    # Mood OUTPUT only — emotion (+ the user's read emotion). The hormonal/chemical
-    # layer is intentionally withheld so partners can't reverse-engineer the model.
-    affect = affect or {}
-    mood: dict = {"emotion": affect.get("emotion", "neutral")}
-    if affect.get("user_emotion"):
-        mood["user_emotion"] = affect["user_emotion"]
-    return mood
+# Curated public affect/mood views live in brain.api._affect — one definition shared
+# with the SSE transport (server.py) so the chemistry-not-exposed contract can't drift.
+from brain.api._affect import affect_view as _affect_view
+from brain.api._affect import mood_from_affect as _mood_from_affect

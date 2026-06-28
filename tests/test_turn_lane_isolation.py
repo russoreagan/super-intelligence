@@ -98,6 +98,49 @@ def test_two_streams_do_not_bleed_and_owner_idle_reaches_neither():
     assert not any(e.get("route_sid") in ("A", "B") for e in owner_feed)
 
 
+def test_deferred_job_captures_agent_origin(tmp_path, monkeypatch):
+    """A job deferred DURING an agent-lane turn carries that agent on the task, so
+    its later execution can be re-bound to the same lane (two-bucket attribution).
+    The brain's OWN idle enqueue (nothing bound) stays owner-lane with no agent."""
+    import brain.clusters.task_queue as tq
+
+    monkeypatch.setattr(tq, "TASK_QUEUE_PATH", tmp_path / "task_queue.json")
+    q = tq.PersistentTaskQueue()
+
+    # Deferred while serving an agent (engine-API) turn → tagged with that agent.
+    with bind_turn(
+        "agent", session_id="sess_A", agent_id="the_analyst.day_trader", end_user_id="cust-1"
+    ):
+        agent_task = q.enqueue("pull the latest AAPL fills", source="user")
+    assert agent_task is not None
+    assert agent_task.origin_channel == "agent"
+    assert agent_task.origin_session_id == "sess_A"
+    assert agent_task.origin_agent_id == "the_analyst.day_trader"
+    assert agent_task.origin_end_user_id == "cust-1"
+
+    # The brain's own idle reasoning (nothing bound) → owner lane, no agent identity.
+    own_task = q.enqueue("reflect on today's mood", source="self")
+    assert own_task is not None
+    assert own_task.origin_channel == "owner"
+    assert own_task.origin_session_id == ""
+    assert own_task.origin_agent_id == ""
+
+
+def test_task_origin_survives_persist_reload(tmp_path, monkeypatch):
+    """Origin attribution is durable: a tagged task reloaded from disk (boot
+    recovery / page refresh) still knows which agent it descends from."""
+    import brain.clusters.task_queue as tq
+
+    monkeypatch.setattr(tq, "TASK_QUEUE_PATH", tmp_path / "task_queue.json")
+    q = tq.PersistentTaskQueue()
+    with bind_turn("agent", session_id="sess_A", agent_id="the_analyst.day_trader"):
+        q.enqueue("deferred work", source="user")
+
+    reloaded = tq.PersistentTaskQueue()._tasks[0]  # fresh load from the same file
+    assert reloaded.origin_channel == "agent"
+    assert reloaded.origin_agent_id == "the_analyst.day_trader"
+
+
 def test_ui_diverts_agent_turn_out_of_main_chat():
     """The UI broadcast loop routes a channel=="agent" turn to the Agents history
     (and re-wraps it as ``agent_event``), never the main ``_chat_history``."""

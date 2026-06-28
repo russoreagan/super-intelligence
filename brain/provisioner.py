@@ -392,7 +392,7 @@ class Provisioner:
                 from brain import persona_chem
 
                 display = persona_chem.display_name_for(default_persona) or default_persona
-                with contextlib.suppress(Exception):
+                try:
                     data = {}
                     with contextlib.suppress(Exception):
                         data = json.loads(settings_path.read_text(encoding="utf-8"))
@@ -407,6 +407,20 @@ class Provisioner:
                         user_id[:8],
                         display,
                         prior,
+                    )
+                except Exception:
+                    # A failed switch must be VISIBLE, not swallowed: otherwise the
+                    # tenant boots on the stale persona with chemistry that doesn't
+                    # match its default agent, and nothing says why. Log loudly; boot
+                    # continues on the prior persona (degraded, but not stuck).
+                    logger.error(
+                        "[provisioner] tenant %s FAILED to switch boot persona to default "
+                        "agent %r (was %r) — booting on the prior persona; chemistry may "
+                        "not match the agent",
+                        user_id[:8],
+                        display,
+                        prior,
+                        exc_info=True,
                     )
 
             # Repair a tenant whose volume settings.json predates the persona system

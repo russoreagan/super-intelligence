@@ -24,24 +24,10 @@ from brain.model_router import ModelRouter
 logger = logging.getLogger(__name__)
 
 
-def looks_like_json_blob(text: str | None) -> bool:
-    """True when ``text`` is a raw JSON object/array rather than spoken prose.
-
-    Background-job cells (the result reporter, the planner) run on the local
-    model and are instructed to emit plain spoken text. A degenerate local model
-    ignores that and echoes the tool transcript or confabulates a response
-    schema — e.g. ``{"has_signal": ...}`` or ``{"speech": ...}`` — which must
-    never be spoken to a user. Spoken summaries never start with a brace/bracket,
-    so treat a leading ``{``/``[`` (after stripping any code fence) as a
-    non-answer.
-    """
-    if not text:
-        return False
-    t = text.strip()
-    if t.startswith("```"):
-        t = re.sub(r"^```[a-zA-Z]*\s*", "", t)
-        t = re.sub(r"\s*```$", "", t).strip()
-    return t.startswith("{") or t.startswith("[")
+# JSON-blob detection lives in one place (brain.text_guards) so the UI emitter, the
+# partner webhook, and this module's drafter-output guard all share one definition
+# and can't drift. Re-exported here for existing callers (e.g. session_turn).
+from brain.text_guards import looks_like_json_blob  # noqa: E402
 
 
 SYSTEM = """You read a single utterance an AI assistant just spoke aloud and

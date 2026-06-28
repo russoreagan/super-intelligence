@@ -169,30 +169,10 @@ async def _stream_audio(
             quota.record(partner_id, TTS_CHARS, chars)
 
 
-def _affect_view(text: str, affect: dict | None) -> tuple[str, dict]:
-    """Clean display text + structured affect block for a turn response. Lazy
-    import keeps the router free of the PNS dependency at module load; on any
-    failure fall back to the raw text with an empty affect block so a turn never
-    500s over presentation."""
-    try:
-        from brain.api.audio import affect_view
-
-        return affect_view(text, affect)
-    except Exception:  # noqa: BLE001 — presentation must never break a turn
-        logger.warning("affect_view failed; returning raw text", exc_info=True)
-        return text, {"base_tag": None, "segments": []}
-
-
-def _mood_from_affect(affect: dict | None) -> dict:
-    """Curate the public mood view from the internal affect dict — the mood OUTPUT
-    only (emotion + the user's read emotion). The hormonal/chemical layer and every
-    internal field (neuromod, enrollment, appraisal, …) are withheld so the affect
-    model can't be reverse-engineered from the API."""
-    affect = affect or {}
-    mood: dict = {"emotion": affect.get("emotion", "neutral")}
-    if affect.get("user_emotion"):
-        mood["user_emotion"] = affect["user_emotion"]
-    return mood
+# Curated public affect/mood views live in brain.api._affect — one definition shared
+# with the WS transport so the chemistry-not-exposed contract can't drift between them.
+from brain.api._affect import affect_view as _affect_view  # noqa: E402
+from brain.api._affect import mood_from_affect as _mood_from_affect  # noqa: E402
 
 
 def build_api_router(

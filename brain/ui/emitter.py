@@ -9,6 +9,8 @@ import asyncio
 import contextlib
 import time
 
+from brain.text_guards import looks_like_json_blob
+
 
 class ActivationEmitter:
     def __init__(self) -> None:
@@ -183,33 +185,14 @@ class ActivationEmitter:
                 }
             )
 
-    @staticmethod
-    def _is_json_blob(text: str | None) -> bool:
-        """A raw JSON object/array rather than spoken prose. Proactive speech is
-        always natural language headed for TTS and (in engine mode) a customer's
-        channel; a degenerate local model sometimes emits an echoed tool output or
-        a confabulated response schema (e.g. ``{"has_signal": ...}``) instead.
-        Spoken text never starts with a brace/bracket — catch that here so no raw
-        JSON reaches the UI or the partner webhook, whatever the source."""
-        if not text:
-            return False
-        t = text.strip()
-        if t.startswith("```"):
-            t = t[3:].lstrip()
-            # Drop an optional language label (e.g. "json") on the fence's first line.
-            nl = t.find("\n")
-            if nl != -1 and t[:nl].strip().isalpha():
-                t = t[nl + 1 :]
-            t = t.lstrip()
-        return t.startswith("{") or t.startswith("[")
-
     async def emit_proactive_speech(
         self, text: str, *, affect: dict | None = None, partner_target: str = ""
     ) -> None:
-        # Last-line guard: never surface a raw JSON blob as proactive speech. The
-        # source paths (result reporter, planner clarification) already filter it;
-        # this covers every other proactive caller too.
-        if self._is_json_blob(text):
+        # Last-line guard: never surface a raw JSON blob as proactive speech (TTS and,
+        # in engine mode, a customer's channel). The source paths (result reporter,
+        # planner clarification) already filter it; this covers every other proactive
+        # caller too. Shared definition in brain.text_guards so it can't drift.
+        if looks_like_json_blob(text):
             return
         # affect carries the mood the brain already computed for this message (same
         # {"emotion": ...} shape pns.emit voices locally). Attaching it here lets the
