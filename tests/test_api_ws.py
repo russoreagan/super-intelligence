@@ -28,8 +28,11 @@ class _FakeTurnRunner:
         self._text = text
         self._affect = affect or {"emotion": "warm", "user_emotion": "curious", "hormonal": {}}
 
-    async def __call__(self, message, end_user_id, mandate_id=None, persona=None):
-        self.calls.append((message, end_user_id, mandate_id))
+    # Mirrors BrainSession.api_turn: the WS transport passes inline_tools=False so
+    # reactive tools keep the non-blocking defer→proactive loop (request/response
+    # transports default to True / inline). Recorded so tests can assert the contract.
+    async def __call__(self, message, end_user_id, mandate_id=None, persona=None, inline_tools=True):
+        self.calls.append((message, end_user_id, mandate_id, inline_tools))
         return self._text, self._affect
 
 
@@ -200,7 +203,8 @@ def test_text_message_produces_done():
         assert done["type"] == "done"
         assert done["response"] == "hi there"
         assert "mood" in done
-    assert runner.calls == [("hello", "cust-1", None)]
+    # inline_tools=False: the WS transport keeps the deferred→proactive loop.
+    assert runner.calls == [("hello", "cust-1", None, False)]
 
 
 def test_text_message_requires_nonempty_message():

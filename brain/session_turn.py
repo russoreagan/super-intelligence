@@ -61,7 +61,12 @@ class _TurnMixin:
     # ── Turn processing ───────────────────────────────────────────────────────
 
     async def api_turn(
-        self, message: str, end_user_id: str, mandate_id: str | None = None, persona: str | None = None
+        self,
+        message: str,
+        end_user_id: str,
+        mandate_id: str | None = None,
+        persona: str | None = None,
+        inline_tools: bool = True,
     ) -> tuple[str, dict]:
         """Engine entry point: run one turn for a specific end-user (the partner's
         customer), under the assignment selected by mandate_id (the catalog is
@@ -72,13 +77,23 @@ class _TurnMixin:
         process_turn via end_user_id, so each queued turn runs in its own mood.
         `persona` (multi-persona Path B) binds that persona's memory + mandate +
         chemistry for the turn, so one process serves many personas; None = the
-        process persona, unchanged."""
+        process persona, unchanged.
+
+        `inline_tools` is the transport's async capability: a request/response
+        transport (POST /turns, /turns/stream) has no channel for a later result, so
+        it runs reactive tools INLINE (default True). A long-lived WS transport CAN
+        receive an out-of-band proactive_speech after turn_end, so it passes False to
+        keep the non-blocking defer→proactive loop (the trading-job path)."""
         lock = getattr(self, "_api_turn_lock", None)
         if lock is None:
             lock = self._api_turn_lock = asyncio.Lock()
         async with lock:
             text, affect = await self.process_turn(
-                message, end_user_id=end_user_id, mandate_id=mandate_id, persona=persona, api=True
+                message,
+                end_user_id=end_user_id,
+                mandate_id=mandate_id,
+                persona=persona,
+                inline_tools=inline_tools,
             )
             # A cloud WRITE that needs confirmation parks itself on the executor's
             # process-global pending slot. Move that pending action out to the
@@ -242,7 +257,7 @@ class _TurnMixin:
         end_user_id: str | None = None,
         mandate_id: str | None = None,
         persona: str | None = None,
-        api: bool = False,
+        inline_tools: bool = False,
     ) -> tuple[str, dict]:
         from brain.second_brain.store import bind_persona
 
@@ -266,7 +281,7 @@ class _TurnMixin:
         try:
             with bind_persona(persona), bind_cm:
                 return await self._run_turn_guarded(
-                    user_input, image_path, end_user_id, mandate_id, api=api
+                    user_input, image_path, end_user_id, mandate_id, inline_tools=inline_tools
                 )
         finally:
             if registry is not None:
@@ -278,13 +293,15 @@ class _TurnMixin:
         image_path: str | None = None,
         end_user_id: str | None = None,
         mandate_id: str | None = None,
-        api: bool = False,
+        inline_tools: bool = False,
     ) -> tuple[str, dict]:
         from brain.brainstem import TURN_TIMEOUT
 
         try:
             return await asyncio.wait_for(
-                self._process_turn_body(user_input, image_path, end_user_id, mandate_id, api=api),
+                self._process_turn_body(
+                    user_input, image_path, end_user_id, mandate_id, inline_tools=inline_tools
+                ),
                 timeout=TURN_TIMEOUT,
             )
         except TimeoutError:
@@ -387,7 +404,7 @@ class _TurnMixin:
         image_path: str | None = None,
         end_user_id: str | None = None,
         mandate_id: str | None = None,
-        api: bool = False,
+        inline_tools: bool = False,
     ) -> tuple[str, dict]:
         from brain.observability.firing_path import reset_current_trace, set_current_trace
         from brain.observability.timeline import TurnTrace
@@ -803,18 +820,19 @@ class _TurnMixin:
                     self.motor.reset_turn(turn_id)
                     memory["tool_result"] = "[task_queued]\nTask acknowledged — working on it now."
                     logger.info("[MotorCortex] Task mode — deferring planning to background")
-                elif api:
-                    # Engine/API path: a single synchronous (text, affect) is returned to
-                    # the caller and there is no proactive-speech channel back to it (and
-                    # the agent lane is gated silent anyway). A deferred result would be
-                    # lost — the caller would only ever see "I'm working on this." So run
-                    # the reactive tool INLINE and fold its output into the drafter context,
-                    # exactly like a confirmed cloud_action above.
+                elif inline_tools:
+                    # Request/response transport (POST /turns, /turns/stream): the caller
+                    # gets one synchronous (text, affect) and has no channel for a later
+                    # result — a deferred one would be lost (the caller would only ever see
+                    # "I'm working on this"). Run the reactive tool INLINE and fold its
+                    # output into the drafter context, like a confirmed cloud_action above.
                     memory["tool_result"] = await self._run_motor_inline(features, turn_id)
-                    logger.info("[MotorCortex] Reactive — inline (API path)")
+                    logger.info("[MotorCortex] Reactive — inline (request/response transport)")
                 else:
-                    # Always deferred: don't block the turn on motor planning/execution.
-                    # Frontal produces an acknowledgment; result surfaces via proactive speech.
+                    # Deferred: don't block the turn on motor planning/execution. Frontal
+                    # produces an acknowledgment; the result surfaces out-of-band via
+                    # proactive speech — the owner UI, and the WS engine transport, both
+                    # forward it (ws.py forwards proactive_speech after turn_end).
                     memory["tool_result"] = "[task_queued]\nI'm working on this."
                     asyncio.create_task(self._run_motor_reactive(features, turn_id))
                     logger.info("[MotorCortex] Reactive — deferred to background")
@@ -1969,12 +1987,14 @@ class _TurnMixin:
         """Run a reactive motor action INLINE and return a tool-result string for the
         drafter (the value stored in memory["tool_result"]).
 
-        The engine/API path returns one synchronous response and has no proactive-
-        speech channel, so the deferred model (_run_motor_reactive) would silently
-        drop the result. Running the tool before the response is drafted, and folding
-        its output into the drafter context, is the only way a pasted URL (or any
-        reactive tool) actually reaches an API caller. Mirrors the confirmed
-        cloud_action path: execute → set memory["tool_result"] → drafter synthesizes.
+        A request/response engine transport (POST /turns, /turns/stream) returns one
+        synchronous response and has no channel for a later result, so the deferred
+        model (_run_motor_reactive → proactive_speech) would silently drop it. Running
+        the tool before the response is drafted, and folding its output into the
+        drafter context, is the only way a pasted URL (or any reactive tool) reaches
+        such a caller. The WS transport keeps the deferred loop (inline_tools=False).
+        Mirrors the confirmed cloud_action path: execute → set memory["tool_result"]
+        → drafter synthesizes.
 
         Best-effort: any failure returns a short marker rather than raising into the
         turn, so the response still goes out. A cloud WRITE that needs confirmation is

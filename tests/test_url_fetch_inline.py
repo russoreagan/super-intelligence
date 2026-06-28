@@ -112,6 +112,30 @@ def test_inline_motor_no_tool_returns_empty():
     assert asyncio.run(_TurnMixin._run_motor_inline(_FakeSelf(None), {"raw_text": "hi"}, "t3")) == ""
 
 
+def test_api_turn_transport_routing():
+    # Transport contract: a request/response transport (POST /turns, /turns/stream)
+    # leaves inline_tools at its default True → tools run inline. The WS transport,
+    # which forwards proactive_speech out-of-band, passes False → deferred loop.
+    captured: dict = {}
+
+    class _FakeApiSelf:
+        motor = None
+
+        async def process_turn(
+            self, message, end_user_id=None, mandate_id=None, persona=None, inline_tools=False
+        ):
+            captured["inline_tools"] = inline_tools
+            return "ok", {}
+
+    fake = _FakeApiSelf()
+
+    asyncio.run(_TurnMixin.api_turn(fake, "hi", "u1"))
+    assert captured["inline_tools"] is True  # HTTP default → inline
+
+    asyncio.run(_TurnMixin.api_turn(fake, "hi", "u1", inline_tools=False))
+    assert captured["inline_tools"] is False  # WS transport → defer to proactive loop
+
+
 def test_inline_motor_failure_does_not_raise():
     class _Boom(_FakeMotor):
         async def execute(self, features, turn_id):

@@ -310,8 +310,13 @@ class WsSession:
                     agent_id=s.agent_id,
                     end_user_id=s.end_user_id,
                 ):
+                    # This is the one engine transport that survives turn_end, so it
+                    # keeps the non-blocking defer→proactive loop: a reactive tool's
+                    # result arrives out-of-band as a `proactive` event (see
+                    # _emitter_loop / _FORWARD_TYPES), not inline in this reply. The
+                    # request/response transports (server.py) default to inline.
                     text, affect = await self._turn_runner(
-                        message, s.end_user_id, s.mandate_id, _persona
+                        message, s.end_user_id, s.mandate_id, _persona, inline_tools=False
                     )
             except Exception as e:
                 logger.warning("[WsSession] turn error: %s", e)
