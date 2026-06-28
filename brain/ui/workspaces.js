@@ -1402,8 +1402,11 @@
     }
     const GRID = '1.5fr .7fr 1fr .9fr 28px';
     const appliesLabel = s => s.all_agents ? 'All agents' : `${(s.agents || []).length} agent${(s.agents || []).length === 1 ? '' : 's'}`;
+    const nameCell = s => d.is_admin
+      ? `<button class="sk-open" data-id="${esc(s.id)}" style="background:none; border:none; padding:0; cursor:pointer; text-align:left; display:block;"><span class="serif-h" style="font-size:14px;">${esc(s.display_name || s.id)}</span><span class="data" style="font-size:9px; display:block; margin-top:2px;">${esc(s.id)}</span></button>`
+      : `<span class="serif-h" style="font-size:14px;">${esc(s.display_name || s.id)}</span><span class="data" style="font-size:9px; display:block; margin-top:2px;">${esc(s.id)}</span>`;
     const rows = skills.map(s => `<div class="ag-row" style="grid-template-columns:${GRID}; cursor:default;">
-      <span><span class="serif-h" style="font-size:14px;">${esc(s.display_name || s.id)}</span><span class="data" style="font-size:9px; display:block; margin-top:2px;">${esc(s.id)}</span></span>
+      <span>${nameCell(s)}</span>
       <span class="ar-status"><span class="dot-status" style="background:${skStatColor(s.status)}"></span>${esc(s.status || 'pending')}</span>
       <span>${d.is_admin ? `<button class="link sk-scope" data-id="${esc(s.id)}">${esc(appliesLabel(s))}</button>` : `<span class="data" style="font-size:11px;">${esc(appliesLabel(s))}</span>`}</span>
       <span class="data" style="font-size:11px;">${esc(s.submitted_by || '—')}</span>
@@ -1419,7 +1422,62 @@
     main.querySelectorAll('.sk-reject').forEach(b => b.addEventListener('click', () => skillReject(b.dataset.id)));
     main.querySelectorAll('.sk-del').forEach(b => b.addEventListener('click', () => skillDelete(b.dataset.id)));
     main.querySelectorAll('.sk-scope').forEach(b => b.addEventListener('click', () => { const sk = skills.find(x => x.id === b.dataset.id); if (sk) openSkillScope(sk); }));
+    main.querySelectorAll('.sk-open').forEach(b => b.addEventListener('click', () => openSkillEditor(b.dataset.id)));
     const newBtn = main.querySelector('#sk-new'); if (newBtn) newBtn.addEventListener('click', openNewSkill);
+  }
+  async function openSkillEditor(id) {
+    const modal = document.getElementById('ws-api-modal');
+    if (!modal) return;
+    let sk = null;
+    try { const r = await fetch('/skills/' + encodeURIComponent(id)); if (r.ok) sk = (await r.json()).skill; } catch (e) { sk = null; }
+    if (!sk) { window.alert('Could not load skill “' + id + '”.'); return; }
+    const applies = sk.all_agents ? 'all agents' : `${(sk.agents || []).length} agent${(sk.agents || []).length === 1 ? '' : 's'}`;
+    modal.innerHTML = `<div class="modal" style="max-width:640px; max-height:90vh; overflow:auto;">
+      <div class="modal-head"><div class="serif-h" style="font-size:19px;">Edit skill</div><button class="tool-x" id="se-x"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>
+      <div class="data" style="font-size:10px; margin-top:2px; opacity:.75;">${esc(sk.id)} · <span style="color:${skStatColor(sk.status)};">${esc(sk.status || 'pending')}</span> · ${esc(applies)}</div>
+      <div style="margin-top:16px;">
+        <div class="label" style="margin-bottom:6px;">Name</div>
+        <div class="input-line"><input id="se-name" type="text" value="${esc(sk.display_name || '')}" autocomplete="off" /></div>
+        <div class="label" style="margin:16px 0 6px;">Description <span style="opacity:.5; font-size:10px; text-transform:none; letter-spacing:0;">· used to match it to a turn</span></div>
+        <div class="input-line"><input id="se-desc" type="text" value="${esc(sk.description || '')}" autocomplete="off" /></div>
+        <div class="label" style="margin:16px 0 6px;">Skill body</div>
+        <textarea class="self-area" id="se-body" spellcheck="false" style="min-height:52vh; width:100%; box-sizing:border-box;">${esc(sk.body || sk.approved_body || '')}</textarea>
+        <div class="label" style="margin:16px 0 6px;">Keywords <span style="opacity:.5; font-size:10px; text-transform:none; letter-spacing:0;">· comma-separated</span></div>
+        <div class="input-line"><input id="se-kw" type="text" value="${esc((sk.keywords || []).join(', '))}" autocomplete="off" /></div>
+        <div id="se-err" style="color:#c84; font-family:var(--mono); font-size:10px; margin-top:8px; min-height:14px;"></div>
+      </div>
+      <div class="row" style="justify-content:space-between; align-items:center; margin-top:16px; gap:10px;">
+        <span class="data" id="se-count" style="font-size:10px; opacity:.6;"></span>
+        <div class="row" style="gap:10px;"><button class="btn" id="se-cancel">Cancel</button><button class="btn btn-primary" id="se-save">Save</button></div>
+      </div></div>`;
+    const nameIn = modal.querySelector('#se-name');
+    const descIn = modal.querySelector('#se-desc');
+    const bodyIn = modal.querySelector('#se-body');
+    const kwIn = modal.querySelector('#se-kw');
+    const errDiv = modal.querySelector('#se-err');
+    const saveBtn = modal.querySelector('#se-save');
+    const countEl = modal.querySelector('#se-count');
+    const updateCount = () => { countEl.textContent = `${bodyIn.value.length.toLocaleString()} chars`; };
+    bodyIn.addEventListener('input', updateCount);
+    updateCount();
+    const close = () => { modal.classList.remove('open'); modal.innerHTML = ''; };
+    const save = async () => {
+      const body = bodyIn.value;
+      if (!body.trim()) { errDiv.textContent = 'Body cannot be empty.'; return; }
+      saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
+      try {
+        const keywords = kwIn.value.split(',').map(s => s.trim()).filter(Boolean);
+        const r = await fetch('/skills', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: sk.id, display_name: nameIn.value.trim() || null, description: descIn.value.trim(), body, keywords, tier: sk.tier }) });
+        if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.detail || ('HTTP ' + r.status)); }
+        close(); await loadSkills();
+      } catch (e) { errDiv.textContent = e.message; saveBtn.disabled = false; saveBtn.textContent = 'Save'; }
+    };
+    modal.querySelector('#se-x').addEventListener('click', close);
+    modal.querySelector('#se-cancel').addEventListener('click', close);
+    saveBtn.addEventListener('click', save);
+    modal.classList.add('open');
+    modal.addEventListener('click', e => { if (e.target === modal) close(); });
+    nameIn.focus();
   }
   async function openSkillScope(skill) {
     const modal = document.getElementById('ws-api-modal');
@@ -1462,7 +1520,7 @@
     if (!modal) return;
     const VALID_ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
     const slugify = s => s.toLowerCase().trim().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
-    modal.innerHTML = `<div class="modal" style="max-width:560px;">
+    modal.innerHTML = `<div class="modal" style="max-width:640px; max-height:90vh; overflow:auto;">
       <div class="modal-head"><div class="serif-h" style="font-size:19px;">New skill</div><button class="tool-x" id="ns-x"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>
       <p class="page-lede" style="margin-top:4px; font-size:14px;">A reusable instruction your agent applies when it's relevant. Authored here it goes live immediately — skills submitted over the engine API are screened first.</p>
       <div style="margin-top:18px;">
@@ -1473,7 +1531,7 @@
         <div class="label" style="margin:16px 0 6px;">Description <span style="opacity:.5; font-size:10px; text-transform:none; letter-spacing:0;">· what it's for — used to match it to a turn</span></div>
         <div class="input-line"><input id="ns-desc" type="text" placeholder="How to read the portfolio tables and summarize holdings" autocomplete="off" /></div>
         <div class="label" style="margin:16px 0 6px;">Skill body</div>
-        <textarea class="self-area" id="ns-body" spellcheck="false" style="min-height:150px; width:100%; box-sizing:border-box;" placeholder="The instructions the agent should follow when this skill applies…"></textarea>
+        <textarea class="self-area" id="ns-body" spellcheck="false" style="min-height:44vh; width:100%; box-sizing:border-box;" placeholder="The instructions the agent should follow when this skill applies…"></textarea>
         <div class="label" style="margin:16px 0 6px;">Keywords <span style="opacity:.5; font-size:10px; text-transform:none; letter-spacing:0;">· optional, comma-separated</span></div>
         <div class="input-line"><input id="ns-kw" type="text" placeholder="portfolio, holdings, positions" autocomplete="off" /></div>
         <div id="ns-err" style="color:#c84; font-family:var(--mono); font-size:10px; margin-top:8px; min-height:14px;"></div>
