@@ -19,6 +19,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
+import time
 from datetime import UTC, datetime
 
 from brain.second_brain.store import SECOND_BRAIN_ROOT
@@ -98,6 +100,7 @@ class JobStore:
         already-finished stories.
         """
         written_files = _extract_written_files(steps)
+        source_links = _extract_source_links(steps, results)
         record = {
             "job_id": job_id,
             "task_id": task_id,
@@ -110,6 +113,7 @@ class JobStore:
             "steps": steps,
             "results": results,
             "written_files": written_files,
+            "source_links": source_links,
             "plan_steps": plan_steps or [],
             "stories_completed": stories_completed,
             "productive_steps": productive_steps,
@@ -123,12 +127,13 @@ class JobStore:
         self._write(job_id, record)
         self._cleanup()
         logger.info(
-            "[JobStore] Saved job %s (done=%s, success=%s, %d steps, %d files)",
+            "[JobStore] Saved job %s (done=%s, success=%s, %d steps, %d files, %d links)",
             job_id,
             done,
             success,
             len(steps),
             len(written_files),
+            len(source_links),
         )
 
     def update_summary(self, job_id: str, spoken_summary: str) -> bool:
@@ -203,6 +208,7 @@ class JobStore:
                         "success": record.get("success"),
                         "source": record.get("source"),
                         "written_files": record.get("written_files", []),
+                        "source_links": record.get("source_links", []),
                         "spoken_summary": record.get("spoken_summary"),
                         "created_at": record.get("created_at"),
                         "steps_count": len(record.get("steps", [])),
@@ -211,6 +217,80 @@ class JobStore:
             except Exception:
                 pass
         return out
+
+    def recent_sources(self, limit: int = 12, max_urls: int = 40) -> list[dict]:
+        """Recently-read external sources across jobs, deduped by URL (newest first).
+
+        Lets the idle loop see what it has already read so it doesn't re-fetch the
+        same article or re-research a topic it just covered. Only jobs that actually
+        read a source are included. Each entry: {goal, summary, urls:[...]}, where
+        `urls` holds only the URLs not already seen in a more-recent job.
+        """
+        files = sorted(JOBS_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+        seen: set[str] = set()
+        out: list[dict] = []
+        for f in files:
+            if len(out) >= limit or len(seen) >= max_urls:
+                break
+            try:
+                record = json.loads(f.read_text())
+            except Exception:
+                continue
+            fresh: list[str] = []
+            for link in record.get("source_links") or []:
+                url = link.get("url") if isinstance(link, dict) else None
+                if url and url not in seen:
+                    seen.add(url)
+                    fresh.append(url)
+            if fresh:
+                out.append(
+                    {
+                        "goal": record.get("goal", ""),
+                        "summary": record.get("spoken_summary") or "",
+                        "urls": fresh,
+                    }
+                )
+        return out
+
+    def find_cached_fetch(self, url: str, max_age_s: float | None = None) -> dict | None:
+        """Most recent successfully-fetched content for `url`, if read within the
+        freshness window. Lets the executor reuse a page it already pulled instead of
+        re-fetching the identical URL. Returns {content, goal, age_s} or None.
+
+        max_age_s defaults to BRAIN_FETCH_CACHE_TTL_S (or 6h) so genuinely stale
+        content (news moves) is re-fetched rather than served from a week-old job.
+        """
+        if not url:
+            return None
+        if max_age_s is None:
+            try:
+                max_age_s = float(os.environ.get("BRAIN_FETCH_CACHE_TTL_S", "21600"))
+            except Exception:
+                max_age_s = 21600.0
+        now = time.time()
+        files = sorted(JOBS_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+        for f in files:
+            age = now - f.stat().st_mtime
+            if age > max_age_s:
+                break  # newest-first: everything past here is older still
+            try:
+                record = json.loads(f.read_text())
+            except Exception:
+                continue
+            steps = record.get("steps") or []
+            results = record.get("results") or []
+            for i, step in enumerate(steps):
+                if step.get("tool") not in _FETCH_TOOLS:
+                    continue
+                if (step.get("args") or {}).get("url") != url:
+                    continue
+                content = results[i] if i < len(results) else ""
+                if not isinstance(content, str) or not content.strip():
+                    continue
+                if _looks_like_fetch_error(content):
+                    continue
+                return {"content": content, "goal": record.get("goal", ""), "age_s": age}
+        return None
 
     @property
     def count(self) -> int:
@@ -251,6 +331,18 @@ class JobStore:
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+# Tools whose output is fetched external page content (native + cloud-agent names).
+_FETCH_TOOLS = frozenset({"fetch_url", "web_fetch"})
+
+
+def _looks_like_fetch_error(content: str) -> bool:
+    """Cheap screen so a cached blocked/failed fetch isn't reused as if it were real
+    page content. Only the very start matters — fetch errors lead with a marker."""
+    head = content.lstrip()[:80].lower()
+    return head.startswith(("[blocked]", "[error", "[fetch failed", "error:")) or (
+        "network fetch is disabled" in head
+    )
+
 
 def _extract_written_files(steps: list[dict]) -> list[str]:
     """Collect paths from any write_file or append_file steps."""
@@ -261,3 +353,45 @@ def _extract_written_files(steps: list[dict]) -> list[str]:
             if p and p not in paths:
                 paths.append(p)
     return paths
+
+
+# URL embedded in tool output (search results, fetched-page text, connector JSON).
+# Stops at whitespace and common trailing punctuation/brackets so we don't swallow
+# closing parens or quotes that surround a link in prose.
+_URL_RE = re.compile(r"https?://[^\s)\]}>\"'`]+")
+_MAX_SOURCE_LINKS = 25
+
+
+def _extract_source_links(steps: list[dict], results: list[str]) -> list[dict]:
+    """Collect external source URLs the job actually read — web_fetch/read targets
+    and links surfaced in web_search / connector outputs — so an idle research job's
+    sources are refer-back-able from the durable job record instead of being buried
+    in raw step output. Mirrors _extract_written_files. Each entry is {url, via}
+    where `via` is the tool that surfaced it (e.g. "web_fetch", "web_search")."""
+    seen: set[str] = set()
+    links: list[dict] = []
+
+    def _add(url: str, via: str) -> None:
+        url = url.rstrip(".,;:!?)]}>\"'`")
+        if not url or url in seen:
+            return
+        seen.add(url)
+        links.append({"url": url, "via": via})
+
+    for i, step in enumerate(steps):
+        tool = step.get("tool", "") or "result"
+        args = step.get("args") or {}
+        # Explicit fetch/read targets passed in the call args.
+        for key in ("url", "link", "uri", "href"):
+            val = args.get(key)
+            if isinstance(val, str) and val.startswith("http"):
+                _add(val, tool)
+        # URLs embedded in this step's output (search hits, connector JSON, page text).
+        out = results[i] if i < len(results) else ""
+        if isinstance(out, str):
+            for match in _URL_RE.findall(out):
+                _add(match, tool)
+        if len(links) >= _MAX_SOURCE_LINKS:
+            break
+
+    return links[:_MAX_SOURCE_LINKS]

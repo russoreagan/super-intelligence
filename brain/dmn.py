@@ -446,6 +446,7 @@ class DefaultModeNetwork:
         self._parietal = parietal
         self._obs = obs
         self._skill_selector = None  # wired by session_setup after instantiation
+        self._sources_fn = None  # recently-read sources provider (JobStore), wired later
         self._running = False
         self._skip_next_tick = False  # set by pause(); cleared after one tick is skipped
         self._last_context: str = ""
@@ -759,6 +760,13 @@ class DefaultModeNetwork:
         # top of it and reset back to it each tick.
         self._monologue_baseline_skills = list(monologue_skills)
         self._judge_cell.skills = list(tier1)
+
+    def set_sources_provider(self, fn) -> None:
+        """Wire a callable returning recently-read external sources (from the JobStore)
+        so the idle loop can avoid re-fetching the same article or re-researching a
+        topic it just covered. fn() -> list[{goal, summary, urls:[...]}]. Optional;
+        absent it simply skips the 'already researched' prompt block."""
+        self._sources_fn = fn
 
     def _inherited_skill_names(self) -> list[str]:
         """Skill names from parietal.active_skill_context, if any."""
@@ -1946,6 +1954,46 @@ class DefaultModeNetwork:
             pass
         return "\n".join(lines)
 
+    def _recent_sources_block(self) -> str:
+        """Compact 'already researched' prompt section from the JobStore's deduped
+        source log. Empty string when no provider is wired or nothing's been read."""
+        fn = getattr(self, "_sources_fn", None)
+        if fn is None:
+            return ""
+        try:
+            entries = fn() or []
+        except Exception:
+            return ""
+        if not entries:
+            return ""
+        from urllib.parse import urlparse
+
+        lines: list[str] = []
+        for entry in entries[:8]:
+            goal = (entry.get("goal") or "").strip()[:90]
+            summary = (entry.get("summary") or "").strip()[:100]
+            domains: list[str] = []
+            for url in entry.get("urls") or []:
+                try:
+                    host = urlparse(url).netloc.lstrip("www.")
+                except Exception:
+                    host = ""
+                if host and host not in domains:
+                    domains.append(host)
+                if len(domains) >= 4:
+                    break
+            tail = f" — {summary}" if summary else ""
+            src = f"  [{', '.join(domains)}]" if domains else ""
+            if goal or src:
+                lines.append(f"- {goal}{tail}{src}")
+        if not lines:
+            return ""
+        return (
+            "\nALREADY RESEARCHED (you've already read these sources — do NOT re-fetch "
+            "the same articles or re-open a topic you've just covered unless you have a "
+            "genuinely new angle):\n" + "\n".join(lines)
+        )
+
     def _ensure_runtime_state(self) -> None:
         """Lazily initialize resilience / rumination state.
 
@@ -1997,6 +2045,8 @@ class DefaultModeNetwork:
             self._user_topics = deque(maxlen=6)
         if not hasattr(self, "_skill_selector"):
             self._skill_selector = None
+        if not hasattr(self, "_sources_fn"):
+            self._sources_fn = None
         if not hasattr(self, "_monologue_baseline_skills"):
             self._monologue_baseline_skills = []
 
@@ -2667,6 +2717,13 @@ class DefaultModeNetwork:
                 "\nALREADY CONCLUDED (treat as settled — build on or move past these, "
                 "don't re-derive):\n" + "\n".join(f"- {c[:120]}" for c in concluded[-3:])
             )
+        # ALREADY RESEARCHED — sources the brain has already read (logged + deduped by
+        # the JobStore). Stops the idle loop re-fetching the same article or re-opening
+        # a topic it just covered. Topic-level avoidance is the LLM's call from the
+        # goal/summary; the domain list gives it the source-level signal too.
+        researched = self._recent_sources_block()
+        if researched:
+            prompt_parts.append(researched)
         if self._recent_thoughts:
             # Show only the last few verbatim — dumping the whole window primes the
             # model to continue its own pattern. The angle list below carries the

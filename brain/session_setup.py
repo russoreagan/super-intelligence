@@ -662,6 +662,17 @@ class _SetupMixin:
         if getattr(self, "skill_selector", None) is not None:
             self.dmn.set_skill_selector(self.skill_selector)
 
+        # Let the idle loop see what it has already read (deduped source log) so it
+        # avoids re-fetching the same article or re-researching a covered topic.
+        self.dmn.set_sources_provider(
+            lambda: (
+                self.motor.job_store.recent_sources()
+                if getattr(self, "motor", None) is not None
+                and hasattr(self.motor, "job_store")
+                else []
+            )
+        )
+
         if self._emitter:
             self._dmn_orig_tick = self.dmn._tick
             self.dmn._tick = self._dmn_tick_with_ui
