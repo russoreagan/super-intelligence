@@ -75,6 +75,9 @@ def _log_agent_turn(s, prompt: str, response: str, turn_id: str = "") -> None:
 ConsolidateRunner = Callable[[str], Awaitable[dict]]
 # (pending_action, end_user_id, mandate_id, approve) -> (text, affect)
 ConfirmRunner = Callable[[dict, str, "str | None", bool], Awaitable[tuple[str, dict]]]
+# (input_text, json_schema, instructions, tool_name) -> extracted object. Sessionless
+# structured extraction: one forced-tool model call, no persona/memory/motor/DMN.
+ExtractRunner = Callable[[str, dict, str, str], Awaitable[dict]]
 # (end_user_id) -> deletion summary
 PurgeRunner = Callable[[str], Awaitable[dict]]
 # (text, **opts) -> audio result dict ; (audio_bytes, **opts) -> transcript dict
@@ -185,6 +188,7 @@ def build_api_router(
     approvals_list_runner: Callable[[str, bool], list] | None = None,
     approval_resolve_runner: Callable[[str, str, bool, bool], dict] | None = None,
     purge_runner: PurgeRunner | None = None,
+    extract_runner: ExtractRunner | None = None,
     tts_runner: TtsRunner | None = None,
     stt_runner: SttRunner | None = None,
     tts_stream_runner: TtsStreamRunner | None = None,
@@ -341,6 +345,31 @@ def build_api_router(
             "mandate_id": s.mandate_id,
             "skills": s.pinned_skills,
         }
+
+    @router.post("/extract")
+    async def extract(body: dict, authorization: str | None = Header(default=None)):
+        """Sessionless structured extraction: force ONE cheap model call to return JSON
+        matching `schema`, with no session, persona, memory, motor, or DMN. Built for
+        high-volume utility classification (e.g. pulling a tradeable signal out of an
+        article) that must never pay for — or be unreliably answered by — a full
+        conversational turn. Metered + bounded by the daily USD ceiling (over budget on
+        a lite brain → 402). Body: {input, schema, instructions?, name?}."""
+        _require(authorization)
+        if extract_runner is None:
+            raise HTTPException(status_code=501, detail="structured extraction not available")
+        body = body or {}
+        input_text = body.get("input")
+        schema = body.get("schema")
+        instructions = body.get("instructions") or ""
+        name = body.get("name") or "extract"
+        if not isinstance(input_text, str) or not input_text.strip():
+            raise HTTPException(status_code=400, detail="input (non-empty string) is required")
+        if not isinstance(schema, dict) or not schema:
+            raise HTTPException(status_code=400, detail="schema (JSON Schema object) is required")
+        if not isinstance(instructions, str) or not isinstance(name, str):
+            raise HTTPException(status_code=400, detail="instructions and name must be strings")
+        data = await extract_runner(input_text, schema, instructions, name)
+        return {"data": data if isinstance(data, dict) else {}}
 
     @router.post("/sessions/{session_id}/turns")
     async def run_turn(
@@ -1233,6 +1262,7 @@ class ApiServer:
         approvals_list_runner: Callable[[str, bool], list] | None = None,
         approval_resolve_runner: Callable[[str, str, bool, bool], dict] | None = None,
         purge_runner: PurgeRunner | None = None,
+        extract_runner: ExtractRunner | None = None,
         tts_runner: TtsRunner | None = None,
         stt_runner: SttRunner | None = None,
         tts_stream_runner: TtsStreamRunner | None = None,
@@ -1260,6 +1290,18 @@ class ApiServer:
 
             audio_quota = AudioQuota()  # inert until settings caps are set
         self._app = FastAPI(docs_url="/v1/docs", redoc_url=None)
+
+        # A cloud-budget block surfaces as 402 Payment Required (not an opaque 500), so
+        # a partner can distinguish "you're over your daily ceiling" from a real fault.
+        from fastapi.responses import JSONResponse
+
+        from brain.model_router import CloudBudgetExceeded
+
+        async def _budget_handler(_request, exc):  # noqa: ANN001
+            return JSONResponse(status_code=402, content={"detail": str(exc)})
+
+        self._app.add_exception_handler(CloudBudgetExceeded, _budget_handler)
+
         self._app.include_router(
             build_api_router(
                 turn_runner,
@@ -1269,6 +1311,7 @@ class ApiServer:
                 approvals_list_runner=approvals_list_runner,
                 approval_resolve_runner=approval_resolve_runner,
                 purge_runner=purge_runner,
+                extract_runner=extract_runner,
                 tts_runner=tts_runner,
                 stt_runner=stt_runner,
                 tts_stream_runner=tts_stream_runner,

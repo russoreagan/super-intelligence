@@ -688,3 +688,100 @@ def test_apiserver_app_serves_routes_with_env_key(monkeypatch):
     assert r.status_code == 200
     assert r.json()["response"] == "echo: yo"
     assert runner.calls == [("yo", "cust-9", None)]
+
+
+# ── POST /v1/extract — sessionless structured extraction ──────────────────────────
+
+
+class _FakeExtractRunner:
+    """Records (input, schema, instructions, name); returns a scripted dict or raises."""
+
+    def __init__(self, result=None, raises=None):
+        self.calls = []
+        self._result = {"has_signal": False} if result is None else result
+        self._raises = raises
+
+    async def __call__(self, input_text, schema, instructions, name):
+        self.calls.append((input_text, schema, instructions, name))
+        if self._raises is not None:
+            raise self._raises
+        return self._result
+
+
+def _extract_client(extract_runner, *, keys=None, handler=False):
+    keys = keys or {"sk_test_123"}
+    app = FastAPI()
+    if handler:
+        from fastapi.responses import JSONResponse
+
+        from brain.model_router import CloudBudgetExceeded
+
+        async def _h(_req, exc):  # noqa: ANN001
+            return JSONResponse(status_code=402, content={"detail": str(exc)})
+
+        app.add_exception_handler(CloudBudgetExceeded, _h)
+    app.include_router(
+        build_api_router(
+            _FakeRunner(),
+            ApiSessionRegistry(now_fn=lambda: 1000.0, id_fn=lambda: "s"),
+            auth=lambda h: _ok(h, keys),
+            extract_runner=extract_runner,
+        )
+    )
+    return TestClient(app, raise_server_exceptions=False)
+
+
+def test_extract_requires_api_key():
+    c = _extract_client(_FakeExtractRunner())
+    r = c.post("/v1/extract", json={"input": "x", "schema": {"type": "object"}})
+    assert r.status_code == 401
+
+
+def test_extract_returns_structured_data_and_forwards_args():
+    runner = _FakeExtractRunner(result={"has_signal": True, "symbol": "NVDA"})
+    c = _extract_client(runner)
+    r = c.post(
+        "/v1/extract",
+        json={
+            "input": "NVDA looks cheap",
+            "schema": {"type": "object"},
+            "instructions": "pull a signal",
+            "name": "signal",
+        },
+        headers=_AUTH,
+    )
+    assert r.status_code == 200
+    assert r.json()["data"] == {"has_signal": True, "symbol": "NVDA"}
+    assert runner.calls == [("NVDA looks cheap", {"type": "object"}, "pull a signal", "signal")]
+
+
+def test_extract_validates_input_and_schema():
+    c = _extract_client(_FakeExtractRunner())
+    obj = {"type": "object"}
+    assert c.post("/v1/extract", json={"schema": obj}, headers=_AUTH).status_code == 400
+    assert c.post("/v1/extract", json={"input": "x"}, headers=_AUTH).status_code == 400
+    assert c.post("/v1/extract", json={"input": "  ", "schema": obj}, headers=_AUTH).status_code == 400
+
+
+def test_extract_501_when_unwired():
+    c = _extract_client(None)
+    r = c.post("/v1/extract", json={"input": "x", "schema": {"type": "object"}}, headers=_AUTH)
+    assert r.status_code == 501
+
+
+def test_extract_budget_exceeded_maps_to_402():
+    from brain.model_router import CloudBudgetExceeded
+
+    runner = _FakeExtractRunner(raises=CloudBudgetExceeded("over daily budget"))
+    c = _extract_client(runner, handler=True)
+    r = c.post("/v1/extract", json={"input": "x", "schema": {"type": "object"}}, headers=_AUTH)
+    assert r.status_code == 402
+    assert "budget" in r.json()["detail"]
+
+
+def test_apiserver_registers_budget_handler():
+    from brain.api import ApiServer
+    from brain.model_router import CloudBudgetExceeded
+
+    s = ApiServer(_FakeRunner())
+    assert CloudBudgetExceeded in s.app.exception_handlers
