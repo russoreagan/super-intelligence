@@ -1300,7 +1300,8 @@
           <button class="rail-item api-nav ${apiView==='partner'?'on':''}" data-view="partner"><span class="ri-name">Partner Keys</span><span class="ri-meta">customer-facing tokens</span></button>
         </div>
       </div>
-      <div class="ws-main" id="api-main"></div></div>`;
+      <div class="ws-main" id="api-main"></div></div>
+      <div class="modal-veil" id="ws-api-modal"></div>`;
     host.querySelectorAll('.api-nav').forEach(n => n.addEventListener('click', () => { apiView = n.dataset.view; ensureApi(); }));
     const main = host.querySelector('#api-main');
     if (apiView === 'partner') renderPartnerKeys(main);
@@ -1366,8 +1367,12 @@
   function renderSkills(main) {
     if (!main) return;
     const d = skillsData;
-    const head = `<div class="page-eyebrow">API · skills</div><div class="page-title">Skills</div>
-      <p class="page-lede">App-provided skills your apps register over the engine API — reusable instructions the agent selects per turn (or you pin per session). Every submission is screened before it can go live; anything the screener can't auto-clear waits in the review queue below. Authoring happens in your app; this is the org library + admission review.</p>`;
+    const canAdd = d && d.enabled && d.is_admin;
+    const addBtn = canAdd ? `<button class="btn btn-primary" id="sk-new" style="margin-top:8px; flex:0 0 auto;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg> Add skill</button>` : '';
+    const head = `<div class="between"><div>
+        <div class="page-eyebrow">API · skills</div><div class="page-title">Skills</div>
+        <p class="page-lede" style="max-width:600px;">App-provided skills your apps register over the engine API — reusable instructions the agent selects per turn (or you pin per session). Submissions over the API are screened before they go live; anything the screener can't auto-clear waits in the review queue below. Add your own here, or review submissions.</p>
+      </div>${addBtn}</div>`;
     if (!d) { main.innerHTML = `<div class="main-pad" style="max-width:820px;">${head}<p class="page-lede" style="opacity:.6;">Loading…</p></div>`; return; }
     if (!d.enabled) {
       main.innerHTML = `<div class="main-pad" style="max-width:820px;">${head}<div class="note" style="margin-top:18px;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 16v-4M12 8h.01"/><circle cx="12" cy="12" r="10"/></svg><p>Skills require the Supabase storage backend, which isn't enabled in this deployment.</p></div></div>`;
@@ -1395,6 +1400,70 @@
     main.querySelectorAll('.sk-approve').forEach(b => b.addEventListener('click', () => skillApprove(b.dataset.id)));
     main.querySelectorAll('.sk-reject').forEach(b => b.addEventListener('click', () => skillReject(b.dataset.id)));
     main.querySelectorAll('.sk-del').forEach(b => b.addEventListener('click', () => skillDelete(b.dataset.id)));
+    const newBtn = main.querySelector('#sk-new'); if (newBtn) newBtn.addEventListener('click', openNewSkill);
+  }
+  function openNewSkill() {
+    const modal = document.getElementById('ws-api-modal');
+    if (!modal) return;
+    const VALID_ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+    const slugify = s => s.toLowerCase().trim().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+    modal.innerHTML = `<div class="modal" style="max-width:560px;">
+      <div class="modal-head"><div class="serif-h" style="font-size:19px;">New skill</div><button class="tool-x" id="ns-x"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>
+      <p class="page-lede" style="margin-top:4px; font-size:14px;">A reusable instruction your agent applies when it's relevant. Authored here it goes live immediately — skills submitted over the engine API are screened first.</p>
+      <div style="margin-top:18px;">
+        <div class="label" style="margin-bottom:6px;">Name</div>
+        <div class="input-line"><input id="ns-name" type="text" placeholder="e.g. Portfolio Reader" autocomplete="off" /></div>
+        <div class="label" style="margin:16px 0 6px;">System id <span style="opacity:.5; font-size:10px; text-transform:none; letter-spacing:0;">· editable</span></div>
+        <div class="input-line"><input id="ns-id" type="text" placeholder="portfolio_reader" autocomplete="off" /></div>
+        <div class="label" style="margin:16px 0 6px;">Description <span style="opacity:.5; font-size:10px; text-transform:none; letter-spacing:0;">· what it's for — used to match it to a turn</span></div>
+        <div class="input-line"><input id="ns-desc" type="text" placeholder="How to read the portfolio tables and summarize holdings" autocomplete="off" /></div>
+        <div class="label" style="margin:16px 0 6px;">Skill body</div>
+        <textarea class="self-area" id="ns-body" spellcheck="false" style="min-height:150px; width:100%; box-sizing:border-box;" placeholder="The instructions the agent should follow when this skill applies…"></textarea>
+        <div class="label" style="margin:16px 0 6px;">Keywords <span style="opacity:.5; font-size:10px; text-transform:none; letter-spacing:0;">· optional, comma-separated</span></div>
+        <div class="input-line"><input id="ns-kw" type="text" placeholder="portfolio, holdings, positions" autocomplete="off" /></div>
+        <div id="ns-err" style="color:#c84; font-family:var(--mono); font-size:10px; margin-top:8px; min-height:14px;"></div>
+      </div>
+      <div class="row" style="justify-content:flex-end; margin-top:18px; gap:10px;">
+        <button class="btn" id="ns-cancel">Cancel</button>
+        <button class="btn btn-primary" id="ns-create" disabled>Create skill</button>
+      </div></div>`;
+    const nameIn = modal.querySelector('#ns-name');
+    const idIn = modal.querySelector('#ns-id');
+    const descIn = modal.querySelector('#ns-desc');
+    const bodyIn = modal.querySelector('#ns-body');
+    const kwIn = modal.querySelector('#ns-kw');
+    const errDiv = modal.querySelector('#ns-err');
+    const createBtn = modal.querySelector('#ns-create');
+    let idEdited = false;
+    const validate = () => {
+      const id = idIn.value.trim();
+      const hasBody = bodyIn.value.trim().length > 0;
+      if (id && !VALID_ID.test(id)) { errDiv.textContent = 'Use lowercase letters, digits, _ or - (must start with a letter or digit)'; createBtn.disabled = true; return; }
+      errDiv.textContent = '';
+      createBtn.disabled = !(id && VALID_ID.test(id) && hasBody);
+    };
+    nameIn.addEventListener('input', () => { if (!idEdited) idIn.value = slugify(nameIn.value); validate(); });
+    idIn.addEventListener('input', () => { idEdited = true; validate(); });
+    bodyIn.addEventListener('input', validate);
+    const close = () => { modal.classList.remove('open'); modal.innerHTML = ''; };
+    const create = async () => {
+      const id = idIn.value.trim();
+      if (!id || !VALID_ID.test(id) || !bodyIn.value.trim()) return;
+      createBtn.disabled = true; createBtn.textContent = 'Creating…';
+      try {
+        const keywords = kwIn.value.split(',').map(s => s.trim()).filter(Boolean);
+        const r = await fetch('/skills', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, display_name: nameIn.value.trim() || null, description: descIn.value.trim(), body: bodyIn.value, keywords }) });
+        if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.detail || ('HTTP ' + r.status)); }
+        close(); await loadSkills();
+      } catch (e) { errDiv.textContent = e.message; createBtn.disabled = false; createBtn.textContent = 'Create skill'; }
+    };
+    modal.querySelector('#ns-x').addEventListener('click', close);
+    modal.querySelector('#ns-cancel').addEventListener('click', close);
+    createBtn.addEventListener('click', create);
+    nameIn.addEventListener('keydown', e => { if (e.key === 'Enter') idIn.focus(); });
+    modal.classList.add('open');
+    modal.addEventListener('click', e => { if (e.target === modal) close(); });
+    nameIn.focus();
   }
   async function skillApprove(id) {
     try {

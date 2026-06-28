@@ -1098,6 +1098,40 @@ class UIServer:
                 {"enabled": True, "is_admin": is_admin, "skills": skills, "flagged": flagged}
             )
 
+        @app.post("/skills")
+        async def create_skill_ui(request: Request):
+            from fastapi import HTTPException
+            from fastapi.responses import JSONResponse
+
+            from brain.skills_registry import SkillError
+
+            _mandate_admin_or_403(request)
+            body = await request.json()
+            sid = str((body or {}).get("id", "")).strip()
+            skill_body = (body or {}).get("body", "")
+            if not isinstance(skill_body, str) or not skill_body.strip():
+                raise HTTPException(status_code=400, detail="body (non-empty string) is required")
+            from brain import skills_registry as sr
+
+            try:
+                sr.stage_skill(
+                    sid,
+                    skill_body,
+                    str((body or {}).get("description", "") or ""),
+                    display_name=(body or {}).get("display_name") or None,
+                    keywords=(body or {}).get("keywords") or None,
+                    tier=int((body or {}).get("tier", 2) or 2),
+                    submitted_by="ui-admin",
+                )
+                # Authored in the trusted settings surface by the org admin (who could
+                # approve any submission anyway), so it goes live directly. The screener
+                # gates UNTRUSTED engine-API submissions, not the owner's own authoring.
+                sr.set_status(sid, "enabled", reviewed_by="ui-admin")
+            except SkillError as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
+            await _rewarm_skills()
+            return JSONResponse({"ok": True, "id": sid, "status": "enabled"})
+
         @app.get("/skills/{skill_id}")
         async def get_skill_ui(skill_id: str, request: Request):
             from fastapi import HTTPException
