@@ -12,8 +12,8 @@ from __future__ import annotations
 
 from collections import deque
 
-from brain.dmn import REFLEX_MAX_DEPTH, DefaultModeNetwork
 from brain.clusters.task_queue import PersistentTaskQueue, Task
+from brain.dmn import REFLEX_MAX_DEPTH, DefaultModeNetwork
 
 
 def _bare_dmn() -> DefaultModeNetwork:
@@ -97,3 +97,70 @@ def test_enqueue_threads_reflex_depth(tmp_path, monkeypatch):
     assert t.reflex_depth == 1
     # Survives the disk round-trip (to_dict/from_dict).
     assert PersistentTaskQueue()._tasks[0].reflex_depth == 1
+
+
+def test_recovery_count_round_trips():
+    t = Task(id="r", goal="g", recovery_count=2)
+    assert Task.from_dict(t.to_dict()).recovery_count == 2
+    # Backward compatible: a queue entry written before this field defaults to 0.
+    assert Task.from_dict({"id": "z", "goal": "g"}).recovery_count == 0
+
+
+def test_interrupted_task_quarantined_after_recovery_cap(tmp_path, monkeypatch):
+    # A job that hard-crashes the pod mid-run is left 'running' and recovered at boot.
+    # Without a ceiling it re-runs on EVERY boot forever (bounded only by the daily $
+    # cap). After MAX_RECOVERY_ATTEMPTS recoveries it must be quarantined instead.
+    import brain.clusters.task_queue as tq
+
+    monkeypatch.setattr(tq, "TASK_QUEUE_PATH", tmp_path / "tasks.json")
+    monkeypatch.setattr(tq, "MAX_RECOVERY_ATTEMPTS", 3)
+
+    q = PersistentTaskQueue()
+    t = q.enqueue("a job that wedges the pod mid-run", source="self", priority=2)
+    assert t is not None
+    tid = t.id
+
+    recoveries = 0
+    for _ in range(6):
+        # Simulate the crash-loop: the recovered task gets picked up, starts, and the
+        # pod dies again before it can finish — so it's 'running' at the next boot.
+        task = next(x for x in q._tasks if x.id == tid)
+        task.status = "running"
+        out = q.recover_interrupted()
+        if out:
+            recoveries += 1
+            assert out[0].id == tid and out[0].status == "pending"
+        else:
+            break
+
+    # Exactly 3 recoveries, then quarantine — not an unbounded loop.
+    assert recoveries == 3, f"expected 3 recoveries before quarantine, got {recoveries}"
+    task = next(x for x in q._tasks if x.id == tid)
+    assert task.status == "failed" and task.success is False
+    assert task.recovery_count == 3
+
+    # The counter PERSISTS across a fresh boot (else a real restart would reset it and
+    # the cap would never bite): a quarantined task is not resurrected.
+    q2 = PersistentTaskQueue()
+    task2 = next(x for x in q2._tasks if x.id == tid)
+    assert task2.recovery_count == 3 and task2.status == "failed"
+    task2.status = "running"  # even if something flips it back, it re-quarantines at once
+    assert q2.recover_interrupted() == []
+
+
+def test_recovery_under_cap_still_re_runs(tmp_path, monkeypatch):
+    # Regression guard: a task within its recovery budget is still recovered normally,
+    # so a genuine one-off interruption (e.g. a single deploy restart) isn't lost.
+    import brain.clusters.task_queue as tq
+
+    monkeypatch.setattr(tq, "TASK_QUEUE_PATH", tmp_path / "tasks.json")
+    monkeypatch.setattr(tq, "MAX_RECOVERY_ATTEMPTS", 3)
+
+    q = PersistentTaskQueue()
+    t = q.enqueue("finish the half-done research", source="user", priority=1)
+    assert t is not None
+    next(x for x in q._tasks if x.id == t.id).status = "running"
+    out = q.recover_interrupted()
+    assert len(out) == 1 and out[0].id == t.id
+    assert out[0].status == "pending" and out[0].source == "recovery"
+    assert out[0].recovery_count == 1

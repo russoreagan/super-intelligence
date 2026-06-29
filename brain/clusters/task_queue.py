@@ -41,6 +41,13 @@ DEDUP_THRESHOLD = 0.70
 SELF_DEDUP_THRESHOLD = 0.55
 # How many seconds back to check completed tasks when deduplicating self-tasks
 SELF_DEDUP_RECENCY = 2 * 60 * 60  # 2 hours
+# Boot-recovery ceiling. A task left in pending/running at boot was interrupted
+# mid-run and is re-queued by recover_interrupted(). But a job that HARD-crashes or
+# wedges the pod mid-execution (so it never marks itself failed) would otherwise be
+# re-run on EVERY boot forever — a crash-loop bounded only by the daily cloud-USD cap.
+# After this many automatic recoveries we QUARANTINE the task (mark it failed) instead
+# of re-running it, so a poison job stops itself. Override via BRAIN_MAX_JOB_RECOVERIES.
+MAX_RECOVERY_ATTEMPTS = int(os.environ.get("BRAIN_MAX_JOB_RECOVERIES", "3"))
 
 
 @dataclass
@@ -59,6 +66,12 @@ class Task:
     # seeds a reflection that spawns a follow-up task tags that follow-up depth+1,
     # so the result→reasoning→act loop is bounded (see DMN.note_job_result).
     reflex_depth: int = 0
+    # Boot-recovery counter: how many times recover_interrupted() has re-queued this
+    # task after an interrupted run. Capped at MAX_RECOVERY_ATTEMPTS, after which the
+    # task is quarantined (status='failed') instead of re-run — so a job that crashes
+    # the pod mid-execution can't re-run on every boot indefinitely. Defaults to 0 for
+    # entries written before this field existed (see from_dict).
+    recovery_count: int = 0
     # Routing origin: the lane this task descended from, captured at enqueue time
     # from the turn context (brain.turn_ctx). When a job is deferred DURING an
     # agent-lane turn, it carries that agent so its later execution can run on the
@@ -117,24 +130,53 @@ class PersistentTaskQueue:
 
     def recover_interrupted(self) -> list[Task]:
         """
-        Called once at boot. Returns any tasks that were pending or running
-        when the brain last shut down, re-marking them as pending with
-        priority 0 and source 'recovery'.
+        Called once at boot. Re-queues tasks that were pending or running when the
+        brain last shut down (interrupted mid-execution) as pending, priority 0,
+        source 'recovery' — so the brain picks up where it left off.
+
+        A task that has already been recovered MAX_RECOVERY_ATTEMPTS times is
+        QUARANTINED instead (status='failed'): a job that hard-crashes or wedges the
+        pod mid-run would otherwise re-run on every boot forever, bounded only by the
+        daily cloud-USD cap. Quarantining converts that crash-loop into a clean
+        give-up. Returns only the tasks actually re-queued (quarantined ones excluded).
         """
         # Blocked tasks are intentionally excluded — they need user input, not retry.
         interrupted = [t for t in self._tasks if t.status in ("pending", "running")]
         if not interrupted:
             return []
+        recovered: list[Task] = []
+        quarantined: list[Task] = []
         for task in interrupted:
+            if task.recovery_count >= MAX_RECOVERY_ATTEMPTS:
+                # Exhausted its recovery budget — stop re-running it. Marking it failed
+                # lets the MAX_TASKS trim eventually drop it, and the self-dedup recency
+                # window suppresses an immediate identical re-spawn by the DMN.
+                task.status = "failed"
+                task.success = False
+                task.completed_at = time.time()
+                quarantined.append(task)
+                continue
+            task.recovery_count += 1
             task.status = "pending"
             task.source = "recovery"
             task.priority = 0
             task.started_at = None
+            recovered.append(task)
         self._save()
-        logger.info(
-            "[TaskQueue] Recovered %d interrupted task(s) from previous session", len(interrupted)
-        )
-        return interrupted
+        if quarantined:
+            logger.warning(
+                "[TaskQueue] Quarantined %d task(s) past the %d-recovery cap "
+                "(probable crash-loop): %s",
+                len(quarantined),
+                MAX_RECOVERY_ATTEMPTS,
+                "; ".join(t.goal[:60] for t in quarantined),
+            )
+        if recovered:
+            logger.info(
+                "[TaskQueue] Recovered %d interrupted task(s) from previous session",
+                len(recovered),
+            )
+        return recovered
 
     # ── Queue operations ──────────────────────────────────────────────────────
 
