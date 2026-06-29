@@ -229,7 +229,8 @@
   /* ---- state ---- */
   const values = {}, saved = {}, refDefault = {}, dialCenter = {}, dial = {}, rest = {};
   let secretsSet = {};
-  let isAdmin = false;                   // from /auth/me — gates the operational/system pages
+  let isAdmin = false;                   // from /auth/me — platform super-admin (unrestricted ceilings)
+  let orgAdmin = false;                  // from /auth/me — this org's admin; gates the operational/ops pages
   let mandatesEnabled = false;           // from GET /mandates — false in companion/local mode → hide Roles
   // Three top-level modes (ElevenLabs-style): Labs (build personas) · Agents
   // (roles + agents + per-agent limits) · API (provider keys + reference).
@@ -391,8 +392,8 @@
     // (or a failed fetch) stays non-admin and gets the curated view.
     try {
       const me = await fetch('/auth/me');
-      if (me.ok) { isAdmin = !!(await me.json()).is_admin; }
-    } catch (e) { isAdmin = false; }
+      if (me.ok) { const j = await me.json(); isAdmin = !!j.is_admin; orgAdmin = !!(j.org_admin ?? j.is_admin); }
+    } catch (e) { isAdmin = false; orgAdmin = false; }
     // Roles tab visibility: only when the Supabase backend is on (companion/local
     // mode has no mandate store). Cheap probe; the full library loads on demand.
     try {
@@ -1655,8 +1656,8 @@
       renderMotor();
     } else if (which === 'operational') {
       set('st-eyebrow', 'System'); set('st-name', 'Operational'); set('st-tag', '');
-      set('st-note', 'System-wide settings shared across every persona — perception, background compute budgets, and self-maintenance. Not part of any one persona’s temperament.');
-      if (bt) bt.textContent = 'Operational'; if (bb) bb.textContent = 'System · shared settings';
+      set('st-note', 'Org-wide operational controls, shared across every persona — compute & spend budgets, what the brain is authorized to do with its motor cortex (which folders it may read/write, which tool families are enabled), perception, and self-maintenance. Not part of any one persona’s temperament.');
+      if (bt) bt.textContent = 'Operational'; if (bb) bb.textContent = 'System · budgets & permissions';
       renderOperational();
     } else if (which === 'apidocs') {
       set('st-eyebrow', 'System'); set('st-name', 'API Reference'); set('st-tag', '');
@@ -1734,14 +1735,17 @@
     const wrap = document.getElementById('settings-generic'); if (!wrap) return;
     wrap.innerHTML = ''; Object.keys(genReg).forEach(k => delete genReg[k]);
     const note = document.createElement('div'); note.className = 'es-cat-blurb';
-    note.textContent = 'System-wide operational settings — the same for every persona. Perception (how it hears/sees), background compute budgets, and self-maintenance.';
+    note.textContent = 'Org-wide operational settings — the same for every persona. Compute & spend budgets, motor permissions (which folders the brain may read/write and which tool families are enabled), perception, and self-maintenance.';
     wrap.appendChild(note);
-    SET.categories.filter(c => c.system).forEach(cat => {
+    // System categories (budgets, perception, maintenance) + the motor-permission
+    // category (write/host authorization) — the operations the org admin controls.
+    SET.categories.filter(c => c.system || c.motor).forEach(cat => {
       const h = document.createElement('div'); h.className = 'es-group';
       h.innerHTML = `<span>${cat.name}</span>` + (cat.blurb ? `<em>${cat.blurb}</em>` : '');
       wrap.appendChild(h);
       (cat.sections || []).forEach(sec => wrap.appendChild(genSection(sec)));
     });
+    upgradeConnectorRows();   // turn the connector allowlists into live toggles
   }
 
   /* =====================================================================
@@ -2007,7 +2011,7 @@
     };
     item('apikeys', 'API Keys', 'Providers · credentials');
     item('apidocs', 'API Reference', 'Endpoints · auth');
-    if (isAdmin) item('operational', 'Operational', 'Perception · resources · maintenance');
+    if (orgAdmin) item('operational', 'Operational', 'Budgets · permissions · maintenance');
   }
 
   // Open the slim Settings surface (gear): operational + keys only.
@@ -2015,7 +2019,7 @@
     bindChrome('settings');
     if (!Object.keys(values).length) await loadFromServer();
     renderSlimRail();
-    selectSystem(isAdmin ? 'operational' : 'apikeys');
+    selectSystem(orgAdmin ? 'operational' : 'apikeys');
     syncRailSel();
   }
 
