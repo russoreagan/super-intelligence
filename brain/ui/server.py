@@ -40,6 +40,72 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
+def _tenant_root() -> Path | None:
+    """The pod's own tenant directory — the boundary org-admin filesystem grants
+    are jailed to. settings.json lives at the org root (BRAIN_SETTINGS_PATH); fall
+    back to the grandparent of the persona-namespaced SECOND_BRAIN_PATH. Returns
+    None when it can't be resolved (callers then fail closed)."""
+    sp = os.environ.get("BRAIN_SETTINGS_PATH", "").strip()
+    if sp:
+        try:
+            return Path(sp).resolve().parent
+        except Exception:
+            return None
+    sb = os.environ.get("SECOND_BRAIN_PATH", "").strip()
+    if sb:
+        try:
+            p = Path(sb).resolve()
+            return p.parent.parent if p.parent.name == "personas" else p
+        except Exception:
+            return None
+    return None
+
+
+def _within_root(path: str, root: Path | None) -> bool:
+    """True iff ``path`` resolves inside the tenant root. Fail closed (deny) when
+    the root is unknown — better to reject a new grant than to leak one."""
+    if root is None:
+        return False
+    try:
+        rp = Path(path).resolve()
+    except Exception:
+        return False
+    return rp == root or str(rp).startswith(str(root) + os.sep)
+
+
+def _jail_motor_dirs(body: dict) -> None:
+    """Confine an org-admin's filesystem grants to their own tenant root. Mutates
+    ``body`` in place: keeps each path that is inside the tenant root OR already
+    stored (a platform super-admin may have set out-of-jail roots on a self-hosted
+    box — those are grandfathered); drops the rest. Defence in depth so a tenant
+    can't point the motor cortex at the host or another pod's volume."""
+    keys = ("motor_allowed_dirs", "motor_read_only_dirs")
+    if not any(k in body for k in keys):
+        return
+    from brain.settings import settings as _settings
+
+    root = _tenant_root()
+    for k in keys:
+        if k not in body:
+            continue
+        grandfathered = {
+            ln.strip() for ln in str(_settings.get(k) or "").splitlines() if ln.strip()
+        }
+        kept, dropped = [], []
+        for ln in str(body.get(k) or "").splitlines():
+            p = ln.strip()
+            if not p:
+                continue
+            (kept if (p in grandfathered or _within_root(p, root)) else dropped).append(p)
+        body[k] = "\n".join(kept)
+        if dropped:
+            logger.warning(
+                "[settings] org-admin filesystem path(s) outside tenant root %s dropped: %s",
+                root,
+                dropped,
+            )
+
+
 def _persona_dial_positions() -> dict:
     """Per-persona non-chemistry dial positions for the settings UI.
     Cognitive + lingering: the authored fingerprint (persona_chem). Motivation
@@ -506,13 +572,22 @@ class UIServer:
             from brain.settings import settings
 
             body = await request.json()
-            # Motor authorization keys are admin-only (they govern host
-            # filesystem + capability grants). The UI hides the page from
-            # non-admins; enforce it here too so a hand-crafted POST can't
-            # widen the sandbox. Skipped when auth is disabled (local dev).
+            # Motor authorization keys govern host filesystem + capability grants,
+            # so who may set them is gated here too (not just in the UI) — a
+            # hand-crafted POST must not be able to widen the sandbox. Policy:
+            #   • auth disabled (local dev)  → unrestricted;
+            #   • platform super-admin       → unrestricted (self-hosted / cross-org);
+            #   • org admin                  → may set its OWN org's motor capability
+            #     + paths, but filesystem roots are jailed to the tenant root
+            #     (can't escape the pod's own volume — defence in depth);
+            #   • anyone else                → motor keys stripped.
             if not ui_auth.is_disabled():
                 _claims = getattr(request.state, "user", None) or {}
-                if not ui_auth.is_admin(_claims):
+                if ui_auth.is_admin(_claims):
+                    pass  # platform super-admin: unrestricted
+                elif ui_auth.is_org_admin(_claims):
+                    _jail_motor_dirs(body)  # confine FS roots to this tenant
+                else:
                     _stripped = [
                         k
                         for k in list(body)

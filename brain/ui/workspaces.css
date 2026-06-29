@@ -96,7 +96,9 @@
 .workspace .method { font-family: var(--mono); font-size: 9px; font-weight: 600; letter-spacing: 0.08em; padding: 3px 8px; border-radius: 4px; }
 .workspace .method.get { color: var(--parietal); background: color-mix(in oklch, var(--parietal) 12%, transparent); }
 .workspace .method.post { color: var(--frontal); background: color-mix(in oklch, var(--frontal) 12%, transparent); }
+.workspace .method.put { color: var(--temporal); background: color-mix(in oklch, var(--temporal) 14%, transparent); }
 .workspace .method.del { color: var(--motor); background: color-mix(in oklch, var(--motor) 12%, transparent); }
+.workspace .method.ws { color: var(--occipital); background: color-mix(in oklch, var(--occipital) 14%, transparent); }
 
 .workspace .toggle { width: 38px; height: 21px; border-radius: 999px; background: var(--paper-3); border: 1px solid var(--line);
   position: relative; flex-shrink: 0; cursor: pointer; transition: all 160ms; }

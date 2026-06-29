@@ -161,14 +161,20 @@
     if (tot) tot.textContent = '$' + dashboardShown().reduce((s, a) => s + agentCostUsd(agentUsage && agentUsage[a.agent_id]), 0).toFixed(2);
   }
   // The unified Agents view lists EVERY agent — its status dot says whether each is
-  // active / idle / paused. Ordered by status (active first, paused last), and within
-  // a status band by cost, so whatever is running up the bill floats to the top.
+  // active / idle / paused. Ordered by last active (most recent first), so whatever ran
+  // most recently floats to the top; agents that have never run sink to the bottom
+  // (ordered by name there for a stable layout). Cost breaks a last-active tie.
   const STATUS_RANK = { active: 0, idle: 1, paused: 2 };
+  function agentLastActive(a) {
+    const act = agentActivity && agentActivity[a.agent_id];
+    return act && act.lastTs ? act.lastTs : 0;
+  }
   function dashboardShown() {
     const ags = (agentsData && agentsData.agents) || [];
     return ags.slice().sort((x, y) => {
-      const rx = STATUS_RANK[agentStatus(x).state], ry = STATUS_RANK[agentStatus(y).state];
-      if (rx !== ry) return rx - ry;
+      const lx = agentLastActive(x), ly = agentLastActive(y);
+      if (lx !== ly) return ly - lx;  // most recently active first; never-run (0) last
+      if (!lx) return (x.name || x.agent_id).localeCompare(y.name || y.agent_id);
       return agentCostUsd(agentUsage && agentUsage[y.agent_id]) - agentCostUsd(agentUsage && agentUsage[x.agent_id]);
     });
   }
@@ -1203,10 +1209,11 @@
   function renderAccountLimits(main) {
     const ceilings = (agentsData && agentsData.ceilings) || {};
     const patch = {};
-    // Ceilings are a platform concern (they govern host reach + spend). An
-    // org-admin sees them but cannot widen them — only the platform super-user
-    // (isAdmin) sets them. Render read-only for everyone else.
-    const readOnly = !isAdmin;
+    // The org admin sets their own org's ceilings (motor reach + spend) — these
+    // bound every agent in the org, which the per-agent editors narrow within.
+    // Filesystem grants saved here are jailed to the tenant root server-side.
+    // Read-only for plain members (who can't reach this workspace anyway).
+    const readOnly = !orgAdmin;
     main.innerHTML = `<div class="main-pad" style="max-width:720px;">
       <div class="page-eyebrow">Governance · org-level</div>
       <div class="page-title">Account Limits</div>
@@ -1325,29 +1332,119 @@
     else renderReference(main);
   }
   const ENDPOINTS = [
-    { m: 'post', p: '/v1/sessions', t: 'Start a session for an end-user on an agent.' },
-    { m: 'post', p: '/v1/sessions/{id}/turns', t: 'Run one turn; returns the response + mood (and a confirmation block if a write is pending).' },
-    { m: 'post', p: '/v1/sessions/{id}/turns/stream', t: 'Stream the turn over SSE — inner thoughts + mood deltas, then a final done event.', tag: 'SSE' },
-    { m: 'post', p: '/v1/sessions/{id}/confirm', t: 'Approve or discard a pending cloud-write action.' },
-    { m: 'get', p: '/v1/agents', t: 'List the org\'s agents and the account permission ceilings.' },
-    { m: 'post', p: '/v1/partner_keys', t: 'Mint a partner key (the token is returned once).' },
-    { m: 'del', p: '/v1/end_users/{id}', t: 'Erase one end-user\'s memory + state (owner key).' },
+    // ── Sessions & turns ──
+    { grp: 'Sessions', m: 'post', p: '/v1/sessions', t: 'Start a session for an end-user on an agent. Optionally pin app-provided skills into every turn of the session.',
+      body: { agent_id: 'the_visionary.research_lead', end_user_id: 'u_8821', skills: ['house_policy_v2'] } },
+    { grp: 'Sessions', m: 'post', p: '/v1/sessions/{id}/turns', t: 'Run one turn. Returns clean display text, the structured affect block + mood, and a confirmation block when a cloud write is pending. Send message OR audio_input for voice-in.',
+      body: { message: 'What changed in the market today?' } },
+    { grp: 'Sessions', m: 'post', p: '/v1/sessions/{id}/turns/stream', t: 'Stream the turn over SSE — an open event, inner-thought + mood-delta events, a final done event, then optional audio_chunk frames when audio.enabled.', tag: 'SSE',
+      body: { message: 'Summarise the thread', audio: { enabled: true } } },
+    { grp: 'Sessions', m: 'ws', p: '/v1/sessions/{id}/stream', t: 'Realtime duplex WebSocket: stream PCM16 audio in (live STT), receive inner-life events and TTS chunks back. Auth is checked on the upgrade request; unauthorised connections close 1008.', tag: 'WS' },
+    { grp: 'Sessions', m: 'post', p: '/v1/sessions/{id}/consolidate', t: 'Run the session-end Hebbian/sleep consolidation now and persist learning, without tearing the brain down. Idempotent and single-flight.',
+      body: { reason: 'debate_end' } },
+    { grp: 'Sessions', m: 'post', p: '/v1/sessions/{id}/confirm', t: 'Approve or discard the cloud-write action a turn parked for sign-off.',
+      body: { approve: true } },
+    { grp: 'Sessions', m: 'get', p: '/v1/sessions/{id}/approvals', t: 'List sensitive tool-actions the brain skipped and is waiting on a yes/no for. Owner keys also see the autonomous (unattended) lane.' },
+    { grp: 'Sessions', m: 'post', p: '/v1/sessions/{id}/approvals/{approval_id}/resolve', t: 'Approve (run it) or skip one pending tool-action on behalf of the end-user.',
+      body: { approve: true } },
+
+    // ── Utility ──
+    { grp: 'Utility', m: 'post', p: '/v1/extract', t: 'Sessionless structured extraction — one cheap model call returns JSON matching your schema. No persona, memory, motor, or DMN. Metered and bounded by the daily USD ceiling (402 when over budget).',
+      body: { input: 'Apple beat earnings expectations…', schema: { type: 'object', properties: { ticker: { type: 'string' }, sentiment: { type: 'string' } } }, instructions: 'Pull the tradeable signal.' } },
+
+    // ── Audio ──
+    { grp: 'Audio', m: 'post', p: '/v1/tts', t: 'Text-to-speech with the affect→voice mapping: pass affect to drive mood-aware prosody. Stateless; 503 when no provider key is configured.',
+      body: { text: 'Markets are calm today.', affect: { valence: 0.4, arousal: 0.2 }, voice_id: '…' } },
+    { grp: 'Audio', m: 'post', p: '/v1/stt', t: 'Speech-to-text (base64 audio in) — the commodity transcription path, with optional diarisation. Stateless.',
+      body: { audio: '<base64>', mimetype: 'audio/wav', diarize: false } },
+
+    // ── Mandates (the role library) ──
+    { grp: 'Mandates', m: 'get', p: '/v1/mandates', t: 'List the org role library. Pass ?include_inactive=true to include deactivated roles.' },
+    { grp: 'Mandates', m: 'put', p: '/v1/mandates/{id}', t: 'Create or update a role (mandate). conduct_rules / reward_weights are stored for partner sync.',
+      body: { role_text: 'You are a meticulous research lead…', conduct_rules: null, reward_weights: null } },
+    { grp: 'Mandates', m: 'del', p: '/v1/mandates/{id}', t: 'Deactivate a role.' },
+    { grp: 'Mandates', m: 'get', p: '/v1/personas/{persona}/mandates', t: 'List the roles assigned to a persona, in order.' },
+    { grp: 'Mandates', m: 'put', p: '/v1/personas/{persona}/mandates/{id}', t: 'Assign a role to a persona (idempotent). Optional sort_order.',
+      body: { sort_order: 0 } },
+    { grp: 'Mandates', m: 'del', p: '/v1/personas/{persona}/mandates/{id}', t: 'Unassign a role from a persona.' },
+
+    // ── Agents (the persona×role pairing) ──
+    { grp: 'Agents', m: 'get', p: '/v1/agents', t: 'List the org\'s agents and the account permission ceilings.' },
+    { grp: 'Agents', m: 'get', p: '/v1/agents/{id}', t: 'Fetch one agent (persona×role) — its name, permissions, and model tier.' },
+    { grp: 'Agents', m: 'put', p: '/v1/agents/{id}', t: 'Create-or-update an agent: set its display name, per-agent permission narrowing, and model tier.',
+      body: { name: 'Research Lead', tier: 'full', permissions: { cloud_writes: false } } },
+    { grp: 'Agents', m: 'del', p: '/v1/agents/{id}', t: 'Delete an agent (unassign the persona×role pairing).' },
+
+    // ── App-provided skills ──
+    { grp: 'Skills', m: 'get', p: '/v1/skills', t: 'List app-provided skills. Filters: ?status= and ?include_inactive=. A non-owner partner sees only its own submissions.' },
+    { grp: 'Skills', m: 'get', p: '/v1/skills/{id}', t: 'Fetch one skill.' },
+    { grp: 'Skills', m: 'put', p: '/v1/skills/{id}', t: 'Submit or update an app-provided skill. Runs the admission screener: obviously-safe → enabled, anything in question → flagged for review.',
+      body: { body: 'When the user asks about returns, cite the 30-day policy…', description: 'House return-policy answers', keywords: ['returns', 'policy'], tier: 2 } },
+    { grp: 'Skills', m: 'del', p: '/v1/skills/{id}', t: 'Remove a skill.' },
+
+    // ── Admin (owner credential) ──
+    { grp: 'Admin', scope: 'owner', m: 'get', p: '/v1/admin/skills/flagged', t: 'List skills the screener flagged, awaiting superadmin review.' },
+    { grp: 'Admin', scope: 'owner', m: 'post', p: '/v1/admin/skills/{id}/approve', t: 'Approve a flagged skill — it goes live.' },
+    { grp: 'Admin', scope: 'owner', m: 'post', p: '/v1/admin/skills/{id}/reject', t: 'Reject a flagged skill.',
+      body: { reason: 'duplicates built-in behaviour' } },
+
+    // ── Keys & end-user lifecycle (owner credential) ──
+    { grp: 'Keys', scope: 'owner', m: 'get', p: '/v1/partner_keys', t: 'List the org\'s partner keys (metadata only — never the token).' },
+    { grp: 'Keys', scope: 'owner', m: 'post', p: '/v1/partner_keys', t: 'Mint a partner key — the token is returned once, at creation.',
+      body: { partner_id: 'acme', label: 'Acme production' } },
+    { grp: 'Keys', scope: 'owner', m: 'del', p: '/v1/partner_keys/{id}', t: 'Revoke a partner key.' },
+    { grp: 'Keys', scope: 'owner', m: 'del', p: '/v1/end_users/{id}', t: 'Erase one end-user\'s memory + state across every per-user table and in-memory cache (GDPR right-to-erasure).' },
+
+    // ── Per-end-user MCP tokens ──
+    { grp: 'MCP tokens', m: 'post', p: '/v1/mcp/tokens', t: 'Store a per-end-user MCP access token (vault-encrypted at rest) after the partner completes the OAuth flow, so managed agents can build per-user Vaults.',
+      body: { end_user_id: 'u_8821', server_name: 'gmail', server_url: 'https://mcp.example.com', access_token: '…', expires_at: null } },
+    { grp: 'MCP tokens', m: 'get', p: '/v1/mcp/tokens/{end_user_id}', t: 'List an end-user\'s connected MCP servers (metadata only — never the token).' },
+    { grp: 'MCP tokens', m: 'del', p: '/v1/mcp/tokens/{end_user_id}/{server_name}', t: 'Delete one stored MCP token connection.' },
   ];
+  // Pretty-print a JS object as syntax-highlighted JSON for the example blocks.
+  const hlJson = (v, ind = 0) => {
+    const pad = '  '.repeat(ind), pad1 = '  '.repeat(ind + 1);
+    if (Array.isArray(v)) return v.length ? `[\n${v.map(x => pad1 + hlJson(x, ind + 1)).join(',\n')}\n${pad}]` : '[]';
+    if (v && typeof v === 'object') {
+      const ks = Object.keys(v);
+      return ks.length ? `{\n${ks.map(k => `${pad1}<span class="k">"${esc(k)}"</span>: ${hlJson(v[k], ind + 1)}`).join(',\n')}\n${pad}}` : '{}';
+    }
+    if (typeof v === 'string') return `<span class="s">"${esc(v)}"</span>`;
+    return `<span class="p">${esc(String(v))}</span>`;
+  };
   function renderReference(main) {
-    main.innerHTML = `<div style="display:grid; grid-template-columns:300px 1fr; grid-template-rows:minmax(0,1fr); height:100%;">
-      <div class="ws-rail" style="border-right:1px solid var(--line-soft);">
-        <div class="rail-head"><h2>Reference</h2><span class="n">v1</span></div>
-        <div class="rail-sect" id="ep-list">${ENDPOINTS.map((e, i) => `<button class="rail-item ep-item ${i===0?'on':''}" data-i="${i}" style="padding:9px 14px;"><span class="ri-name" style="font-size:12px; gap:9px;"><span class="method ${e.m}">${e.m.toUpperCase()}</span><span class="data" style="font-size:11px;">${esc(e.p)}</span></span>${e.tag?`<span class="ri-meta" style="margin-left:auto;">${e.tag}</span>`:''}</button>`).join('')}</div>
+    // Build the rail grouped by section, preserving declaration order.
+    const groups = [];
+    ENDPOINTS.forEach((e, i) => {
+      let g = groups.find(x => x.name === (e.grp || ''));
+      if (!g) { g = { name: e.grp || '', items: [] }; groups.push(g); }
+      g.items.push({ e, i });
+    });
+    const railHtml = groups.map(g =>
+      `<div class="rail-sect-lab">${esc(g.name)}</div>` +
+      g.items.map(({ e, i }) => `<button class="rail-item ep-item ${i===0?'on':''}" data-i="${i}" style="padding:9px 14px;"><span class="ri-name" style="font-size:12px; gap:9px;"><span class="method ${e.m}">${e.m.toUpperCase()}</span><span class="data" style="font-size:11px;">${esc(e.p)}</span></span>${e.tag?`<span class="ri-meta" style="margin-left:auto;">${e.tag}</span>`:''}</button>`).join('')
+    ).join('');
+    main.innerHTML = `<div style="display:grid; grid-template-columns:320px 1fr; grid-template-rows:minmax(0,1fr); height:100%;">
+      <div class="ws-rail" style="border-right:1px solid var(--line-soft); overflow-y:auto;">
+        <div class="rail-head"><h2>Reference</h2><span class="n">v1 · ${ENDPOINTS.length} endpoints</span></div>
+        <div class="rail-sect" id="ep-list" style="padding-top:0;">${railHtml}</div>
       </div>
       <div class="ws-main"><div class="main-pad" style="max-width:680px;" id="ep-detail"></div></div></div>`;
     const detail = main.querySelector('#ep-detail');
     const show = (i) => {
       const e = ENDPOINTS[i];
-      detail.innerHTML = `<div class="row" style="gap:12px;"><span class="method ${e.m}">${e.m.toUpperCase()}</span><span class="data" style="font-size:15px; color:var(--ink);">${esc(e.p)}</span>${e.tag?`<span class="chip">${e.tag}</span>`:''}</div>
+      const owner = e.scope === 'owner';
+      const authNote = owner
+        ? 'This route requires the <b>owner credential</b> (the org/superadmin key set via <span class="data" style="font-size:11px;">BRAIN_API_KEYS</span>), not a partner key.'
+        : 'Authenticated with a <b>partner key</b> (<span class="data" style="font-size:11px;">Authorization: Bearer sk_…</span>). Mint one under <b>Partner Keys</b>. The owner credential works on every route too.';
+      const example = e.m === 'ws'
+        ? `<span class="k">GET</span> ${esc(e.p)}\n<span class="k">Upgrade</span>: websocket\n<span class="k">Authorization</span>: Bearer <span class="p">sk_•••</span>`
+        : `<span class="k">${e.m.toUpperCase()}</span> ${esc(e.p)}\n<span class="k">Authorization</span>: Bearer <span class="p">sk_•••</span>${e.body?`\n\n${hlJson(e.body)}`:''}`;
+      detail.innerHTML = `<div class="row" style="gap:12px;"><span class="method ${e.m}">${e.m.toUpperCase()}</span><span class="data" style="font-size:15px; color:var(--ink);">${esc(e.p)}</span>${e.tag?`<span class="chip">${e.tag}</span>`:''}${owner?'<span class="chip role">owner</span>':''}</div>
         <p class="page-lede">${esc(e.t)}</p>
-        <div class="note" style="margin-top:18px;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 16v-4M12 8h.01"/><circle cx="12" cy="12" r="10"/></svg><p>All engine routes are authenticated with a <b>partner key</b> (<span class="data" style="font-size:11px;">Authorization: Bearer ely_pk_…</span>). Mint one under <b>Partner Keys</b>.</p></div>
-        <div class="label" style="margin:22px 0 8px;">Example</div>
-        <div class="code"><span class="k">${e.m.toUpperCase()}</span> ${esc(e.p)}\n<span class="k">Authorization</span>: Bearer <span class="p">ely_pk_•••</span>${e.m==='post'&&e.p==='/v1/sessions'?`\n\n{\n  <span class="k">"agent_id"</span>: <span class="s">"the_visionary.research_lead"</span>,\n  <span class="k">"end_user_id"</span>: <span class="s">"u_8821"</span>\n}`:''}</div>`;
+        <div class="note" style="margin-top:18px;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 16v-4M12 8h.01"/><circle cx="12" cy="12" r="10"/></svg><p>${authNote}</p></div>
+        <div class="label" style="margin:22px 0 8px;">Example ${e.m==='ws'?'handshake':'request'}</div>
+        <div class="code">${example}</div>`;
     };
     main.querySelectorAll('.ep-item').forEach(b => b.addEventListener('click', () => { main.querySelectorAll('.ep-item').forEach(x => x.classList.remove('on')); b.classList.add('on'); show(+b.dataset.i); }));
     show(0);
