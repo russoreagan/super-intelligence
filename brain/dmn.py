@@ -302,6 +302,17 @@ logger = logging.getLogger(__name__)
 DMN_INTERVAL = float(os.environ.get("BRAIN_DMN_INTERVAL", "15"))  # seconds between thoughts
 DMN_ENABLED = os.environ.get("BRAIN_DMN", "false").lower() == "true"
 
+# Round-robin DMN: when one process serves several FULL-tier personas, the idle
+# loop rotates which persona it thinks as each tick. The tick interval is divided
+# by the roster size so each persona keeps a usable cadence (a fixed total rate
+# would starve each persona to interval×N). The result is clamped to this floor so
+# we never hammer the shared local-model pod beyond a safe spacing. At roster size
+# 1 the floor is below the base interval, so behavior is byte-for-byte as before.
+DMN_MIN_TICK_INTERVAL = float(os.environ.get("BRAIN_DMN_MIN_TICK_INTERVAL", "5"))
+# How long the full-tier persona roster is cached before re-querying the agents
+# table (personas can be added/enabled live). Cheap Supabase read, so ~60s.
+DMN_ROSTER_TTL_S = float(os.environ.get("BRAIN_DMN_ROSTER_TTL_S", "60"))
+
 # How similar a new thought can be to recent ones before we discard it as
 # redundant. Word-set Jaccard — 0.35 catches near-duplicates while still
 # letting genuinely different thoughts through. (Semantic angle tracking,
@@ -436,10 +447,147 @@ def _classify_thought(thought: str) -> str:
     return "inward" if any(m in lower for m in _INWARD_MARKERS) else "outward"
 
 
+class _PerPersona:
+    """Descriptor that routes a per-persona DMN attribute into the *active* persona's
+    state bundle (round-robin DMN). Reads/writes go to ``obj._bundle()`` — the bundle
+    for ``active_persona() or home`` — so one DMN instance keeps a SEPARATE stream of
+    thought per persona without any change to the ~hundreds of ``self._attr`` access
+    sites. Correct under asyncio interleaving because the persona is resolved from the
+    task-local ContextVar at each access (same mechanism turns/memory/wiring use), not
+    from a swapped-in "current" pointer (which would bleed across an await).
+
+    The factory supplies the per-persona default (matching the old __init__ value) the
+    first time an attribute is touched for a given persona. Robust to test doubles built
+    via ``__new__`` (no __init__): ``_bundle`` lazily creates the backing dict."""
+
+    __slots__ = ("_factory", "_name")
+
+    def __init__(self, factory):
+        self._factory = factory
+
+    def __set_name__(self, owner, name):
+        self._name = name
+
+    def __get__(self, obj, owner=None):
+        if obj is None:
+            return self
+        bundle = obj._bundle()
+        if self._name not in bundle:
+            bundle[self._name] = self._factory()
+        return bundle[self._name]
+
+    def __set__(self, obj, value):
+        obj._bundle()[self._name] = value
+
+
 class DefaultModeNetwork:
+    # ── Per-persona transient "stream of thought" (round-robin DMN) ──────────────
+    # Each of these is stored per active persona via the _PerPersona descriptor, so a
+    # rotated tick (or a turn bound to persona X) reads/writes X's bundle. Everything
+    # NOT listed here stays a normal shared instance attribute (model-health backoff,
+    # the engagement clock, the idle gate, the LLM cells, owner/user work context, the
+    # loop lifecycle) — see reports/round_robin_dmn_design.md §2.
+    _last_context = _PerPersona(lambda: "")
+    _thought_count = _PerPersona(lambda: 0)
+    _recent_thoughts = _PerPersona(lambda: deque(maxlen=DMN_RECENT_THOUGHTS))
+    _recent_angles = _PerPersona(lambda: deque(maxlen=DMN_RECENT_ANGLES))
+    _recent_embeddings = _PerPersona(lambda: deque(maxlen=DMN_RECENT_THOUGHTS))
+    _recent_frames = _PerPersona(lambda: deque(maxlen=DMN_RECENT_FRAMES))
+    _consec_suppressed = _PerPersona(lambda: 0)
+    _seq_predictor = _PerPersona(SequencePredictor)
+    _memory_seed = _PerPersona(lambda: "")
+    _event_seed = _PerPersona(lambda: "")
+    _event_seed_depth = _PerPersona(lambda: 0)
+    _active_event_depth = _PerPersona(lambda: None)
+    _last_rumination_seed = _PerPersona(lambda: "")
+    _consecutive_ruminations = _PerPersona(lambda: 0)
+    _last_emotion = _PerPersona(lambda: "neutral")
+    _last_speaker_name = _PerPersona(lambda: None)
+    _last_affection_score = _PerPersona(lambda: 0)
+    _last_familiarity = _PerPersona(lambda: "new")
+    _last_self_schema = _PerPersona(lambda: "")
+    _open_threads = _PerPersona(list)
+    _recent_conclusions = _PerPersona(lambda: deque(maxlen=5))
+    _routing_weights = _PerPersona(dict)
+    _routing_weights_loaded = _PerPersona(dict)
+    _last_routed_ids = _PerPersona(list)
+    _session_thought_buf = _PerPersona(list)
+    _candidate_q = _PerPersona(lambda: deque(maxlen=8))
+    _proactive_q = _PerPersona(lambda: deque(maxlen=2))
+    _self_task_q = _PerPersona(lambda: deque(maxlen=4))
+    _last_predicted_angle = _PerPersona(lambda: None)
+    _last_angle_confidence = _PerPersona(lambda: 0.0)
+    _last_angle_informativeness = _PerPersona(lambda: 0.0)
+    # Conversation-anticipation state — produced in idle ticks, consumed at the next
+    # turn (both bound to the same persona), so it is per-persona too. Public names.
+    predicted_next = _PerPersona(lambda: None)
+    last_was_question = _PerPersona(lambda: False)
+    last_assistant_message = _PerPersona(lambda: "")
+    anticipations = _PerPersona(list)
+    prefetched = _PerPersona(list)
+
+    def _bundle(self) -> dict:
+        """The active persona's transient-state bundle (round-robin DMN). Keyed by the
+        canonical persona slug so the home display name and its slug share one bundle.
+        Resolves from the task-local ContextVar (active_persona) with the home persona
+        as the unbound fallback. Defensive against __new__-built test doubles that never
+        ran __init__ (lazily creates the backing dict)."""
+        pstate = self.__dict__.get("_pstate")
+        if pstate is None:
+            pstate = self.__dict__["_pstate"] = {}
+        try:
+            from brain.second_brain.store import _persona_key, active_persona
+
+            # Cache home via _resolve_home so the unbound fallback here matches the home
+            # that start()/prime_startup bind — otherwise a write bound to home and an
+            # unbound read would land in different bundles (the value, then the default).
+            home = self.__dict__.get("_home")
+            if not home:
+                home = self.__dict__["_home"] = self._resolve_home()
+            key = _persona_key(active_persona() or home)
+        except Exception:
+            key = "default"
+        bundle = pstate.get(key)
+        if bundle is None:
+            bundle = pstate[key] = {}
+        return bundle
+
+    @staticmethod
+    def _resolve_home() -> str:
+        """The process's home persona — the rotation anchor and the unbound fallback.
+        Display name from settings (canonicalized downstream), else env, else 'default'.
+        Mirrors the old once-bind in _loop so a single-persona deployment is unchanged."""
+        try:
+            return (
+                str(settings.get("persona_name", ""))
+                or os.environ.get("BRAIN_PERSONA_NAME", "")
+                or "default"
+            )
+        except Exception:
+            return os.environ.get("BRAIN_PERSONA_NAME", "") or "default"
+
+    def _reward_persona(self) -> str:
+        """Persona whose reward valuations scale THIS tick's learning — the active bound
+        persona under round-robin (so a rotated tick reinforces its own chemistry), else
+        home. reward_weight/loss_aversion canonicalize, so display name or slug is fine."""
+        try:
+            from brain.second_brain.store import active_persona
+
+            return active_persona() or str(settings.get("persona_name", "")) or self._home
+        except Exception:
+            return str(settings.get("persona_name", ""))
+
     def __init__(
         self, bus: Bus, router: ModelRouter, hippocampus=None, parietal=None, obs=None
     ) -> None:
+        # Per-persona bundle store + rotation bookkeeping — set FIRST so the descriptor
+        # assignments below (self._last_context = …) route into the home bundle.
+        self._pstate: dict[str, dict] = {}
+        self._home: str = self._resolve_home()
+        self._hydrated_personas: set[str] = set()
+        self._roster_cache: list[str] = []
+        self._roster_ts: float = 0.0
+        self._rr_idx: int = 0
         self._bus = bus
         self._router = router
         self._hippocampus = hippocampus
@@ -697,12 +845,22 @@ class DefaultModeNetwork:
     async def start(self, session_id: str) -> None:
         self._session_id = session_id
         self._running = True
-        # Restore novelty memory so a restart doesn't resurface yesterday's ideas.
-        self._load_novelty()
-        # Restore the open-threads ledger (and enforce wall-clock age-out).
-        await self._load_threads()
-        # Restore learned routing weights (decayed toward rest on load).
-        self._load_routing_weights()
+        # Hydrate the HOME persona eagerly + bound, so prime_startup() (which fires
+        # before the loop) sees home's restored state. Other full-tier personas hydrate
+        # lazily the first time the loop rotates into them (_loop → _hydrate).
+        from brain.second_brain.store import _persona_key, bind_persona
+
+        home = self.__dict__.get("_home") or self._resolve_home()
+        with contextlib.suppress(Exception), bind_persona(home):
+            # Restore novelty memory so a restart doesn't resurface yesterday's ideas.
+            self._load_novelty()
+            # Restore the open-threads ledger (and enforce wall-clock age-out).
+            await self._load_threads()
+            # Restore learned routing weights (decayed toward rest on load).
+            self._load_routing_weights()
+        if not hasattr(self, "_hydrated_personas"):
+            self._hydrated_personas = set()
+        self._hydrated_personas.add(_persona_key(home))
         active = float(settings.get("dmn_interval") or DMN_INTERVAL)
         idle = float(settings.get("dmn_idle_interval") or active * 3)
         logger.info(
@@ -719,30 +877,38 @@ class DefaultModeNetwork:
         Skips the chemistry gate — this is a deliberate wakeup, not a random
         idle thought."""
         logger.info("[DMN] Startup prime tick — seeding first thought from last session memory")
+        # The prime tick IS the home persona waking up — bind it so its thought + state
+        # land in home's bundle (mirrors a normal rotated tick, which binds per persona).
+        from brain.second_brain.store import bind_persona
+
         try:
-            self._ensure_runtime_state()
-            # First meeting? An empty episodic store means this persona has never
-            # actually talked with this person — the startup prompt must not
-            # perform "good to be back" familiarity it doesn't have. On any
-            # error, default to first-meeting: a fresh greeting to someone we
-            # know is merely bland; invented shared history is a lie.
-            self._startup_first_meeting = True
-            try:
-                if self._hippocampus is not None and self._hippocampus._episodic.sample_random(1):
-                    self._startup_first_meeting = False
-            except Exception as _fm_err:
-                logger.debug("[DMN] First-meeting probe failed: %s", _fm_err)
-            self._thought_count += 1
-            turn_id = f"dmn_{self._thought_count}"
-            chem = self._chem_snapshot()
-            thought_clean, metadata = await self._run_monologue(turn_id, chem, startup=True)
-            if self._startup_first_meeting:
-                # No self-study errands before we've even said hello — the prompt
-                # forbids it, but the model doesn't always listen.
-                metadata["task_goal"] = None
-            if thought_clean:
-                await self._process_thought(thought_clean, metadata, turn_id)
-            queued = len(self._candidate_q)
+            with bind_persona(self.__dict__.get("_home") or self._resolve_home()):
+                self._ensure_runtime_state()
+                # First meeting? An empty episodic store means this persona has never
+                # actually talked with this person — the startup prompt must not
+                # perform "good to be back" familiarity it doesn't have. On any
+                # error, default to first-meeting: a fresh greeting to someone we
+                # know is merely bland; invented shared history is a lie.
+                self._startup_first_meeting = True
+                try:
+                    if (
+                        self._hippocampus is not None
+                        and self._hippocampus._episodic.sample_random(1)
+                    ):
+                        self._startup_first_meeting = False
+                except Exception as _fm_err:
+                    logger.debug("[DMN] First-meeting probe failed: %s", _fm_err)
+                self._thought_count += 1
+                turn_id = f"dmn_{self._thought_count}"
+                chem = self._chem_snapshot()
+                thought_clean, metadata = await self._run_monologue(turn_id, chem, startup=True)
+                if self._startup_first_meeting:
+                    # No self-study errands before we've even said hello — the prompt
+                    # forbids it, but the model doesn't always listen.
+                    metadata["task_goal"] = None
+                if thought_clean:
+                    await self._process_thought(thought_clean, metadata, turn_id)
+                queued = len(self._candidate_q)
             logger.info("[DMN] Startup prime tick done — %d speak candidate(s) queued", queued)
         except Exception as e:
             logger.warning("[DMN] Startup prime tick failed: %s", e)
@@ -803,7 +969,13 @@ class DefaultModeNetwork:
     async def shutdown(self) -> None:
         """Cancel the background loop. Called at session shutdown."""
         self._running = False
-        self._persist_novelty()
+        # Persist EVERY persona hydrated this session (round-robin DMN) — not just home —
+        # so each rotated persona's novelty/routing learning survives the restart. If
+        # nothing was hydrated (e.g. test skeletons), fall back to the active context.
+        if getattr(self, "_hydrated_personas", None):
+            await self._persist_all_hydrated()
+        else:
+            self._persist_novelty()
         if self._loop_task is not None and not self._loop_task.done():
             self._loop_task.cancel()
         self._loop_task = None
@@ -827,17 +999,28 @@ class DefaultModeNetwork:
     # ── Novelty memory persistence ──────────────────────────────────────────
 
     def _dmn_sb(self):
-        """Return (client, user_id, persona) when BRAIN_STORAGE_BACKEND=supabase,
-        else None. DMN state (novelty + routing weights) lives in the dmn_state
-        table, keyed by (user_id, persona). Falls back to local files on any error
-        so a transient Supabase issue never stalls the idle loop."""
+        """Return (client, user_id, persona_key) when BRAIN_STORAGE_BACKEND=supabase,
+        else None. DMN state (novelty + routing weights) lives in the dmn_state table,
+        keyed by (user_id, persona). Round-robin DMN: the persona is the ACTIVE bound
+        persona (the rotated tick or a persona-bound turn), NOT the process env — so a
+        rotated persona loads/saves ITS OWN row. Canonicalized to the persona slug so it
+        is consistent with episodes/schema/wiring keys (the old env path used the raw
+        display name). Falls back to home, then env, so the single-persona path is
+        unchanged. Any failure → None (local files) so a transient Supabase issue never
+        stalls the idle loop."""
         if os.environ.get("BRAIN_STORAGE_BACKEND", "local").lower() != "supabase":
             return None
         try:
+            from brain.second_brain.store import _persona_key, active_persona
             from brain.second_brain.supabase_client import get_client, get_user_id
 
-            persona = os.environ.get("BRAIN_PERSONA_NAME", "default")
-            return get_client(), get_user_id(), persona
+            raw = (
+                active_persona()
+                or getattr(self, "_home", "")
+                or os.environ.get("BRAIN_PERSONA_NAME", "")
+                or "default"
+            )
+            return get_client(), get_user_id(), _persona_key(raw)
         except Exception as e:
             logger.warning("[DMN] Supabase unavailable, using local files: %s", e)
             return None
@@ -869,7 +1052,10 @@ class DefaultModeNetwork:
                 ).execute()
             except Exception as e:
                 logger.warning("[DMN] Could not persist novelty state to Supabase: %s", e)
-        else:
+        elif self._is_home_active():
+            # Local-file fallback is a SINGLE shared path (not persona-keyed), so only
+            # the home persona writes it — a rotated persona would otherwise clobber
+            # home's novelty. (Supabase mode above is per-persona via dmn_state.)
             try:
                 NOVELTY_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
                 tmp = NOVELTY_STATE_PATH.with_suffix(".json.tmp")
@@ -877,7 +1063,11 @@ class DefaultModeNetwork:
                 os.replace(tmp, NOVELTY_STATE_PATH)
             except Exception as e:
                 logger.warning("[DMN] Could not persist novelty state: %s", e)
-        self._seq_predictor.save()
+        # The seq-predictor weights file is likewise process-global; only home
+        # save/loads it so a rotated persona can't overwrite it (per-persona seq
+        # persistence is a follow-up — the in-memory predictor IS already per-persona).
+        if self._is_home_active():
+            self._seq_predictor.save()
 
     # ── Open-threads ledger (open_questions.md) ─────────────────────────────
 
@@ -990,11 +1180,12 @@ class DefaultModeNetwork:
                     .execute()
                 )
                 data = (res.data or {}).get("novelty_cache") if res else None
-            else:
-                if not NOVELTY_STATE_PATH.exists():
-                    self._seq_predictor.load()
-                    return
+            elif self._is_home_active() and NOVELTY_STATE_PATH.exists():
+                # Shared local file → home only; a rotated persona starts cold rather
+                # than inheriting home's dedup history. (Supabase mode is per-persona.)
                 data = json.loads(NOVELTY_STATE_PATH.read_text(encoding="utf-8"))
+            else:
+                data = None
             if data:
                 for t in (data.get("recent_thoughts") or [])[-DMN_RECENT_THOUGHTS:]:
                     self._recent_thoughts.append(t)
@@ -1009,7 +1200,9 @@ class DefaultModeNetwork:
                 )
         except Exception as e:
             logger.warning("[DMN] Could not load novelty state: %s", e)
-        self._seq_predictor.load()
+        # Shared weights file → home loads it; rotated personas keep a fresh predictor.
+        if self._is_home_active():
+            self._seq_predictor.load()
 
     def health(self) -> dict:
         """Lightweight health snapshot so dark degradation becomes visible.
@@ -1824,32 +2017,136 @@ class DefaultModeNetwork:
                 pass
         return snap
 
+    # ── Round-robin persona rotation (one process, one loop, N personas) ─────
+    def _roster(self) -> list[str]:
+        """Full-tier personas this process rotates idle thinking across. There is no
+        personas table — they're derived from the agents table and cached for
+        DMN_ROSTER_TTL_S (personas can be enabled live). Home is always present and
+        FIRST; LITE personas are excluded (they learn from explicit consolidation only,
+        per agents.effective_tier). Any failure — or simply no other full-tier persona —
+        falls back to [home], so a single-persona deployment behaves exactly as before.
+
+        Defensive against __new__-built test doubles that skipped __init__ (the rotation
+        bookkeeping is read via __dict__ with defaults, like _bundle)."""
+        now = time.time()
+        cache = self.__dict__.get("_roster_cache")
+        if cache and (now - self.__dict__.get("_roster_ts", 0.0)) < DMN_ROSTER_TTL_S:
+            return cache
+        home = self.__dict__.get("_home") or self._resolve_home()
+        roster = [home]
+        try:
+            from brain import agents
+            from brain.second_brain.store import _persona_key
+
+            seen = {_persona_key(home)}
+            rows = agents.list_agents()
+            for p in sorted({str(r.get("persona") or "") for r in (rows or []) if r.get("enabled")}):
+                key = _persona_key(p)
+                if not p or key in seen:
+                    continue
+                try:
+                    if agents.effective_tier(p) == "full":
+                        roster.append(p)
+                        seen.add(key)
+                except Exception:
+                    continue
+        except Exception as e:
+            logger.debug("[DMN] roster query failed — home-only rotation: %s", e)
+            roster = [home]
+        self.__dict__["_roster_cache"] = roster
+        self.__dict__["_roster_ts"] = now
+        return roster
+
+    def _next_persona(self) -> str:
+        """Advance the round-robin cursor and return the persona for THIS tick. Called
+        only when a tick is actually about to fire, so suppressed ticks don't burn a
+        slot (keeps the rotation fair — no persona starves behind a quiet one)."""
+        roster = self._roster()
+        if not roster:
+            return self.__dict__.get("_home") or self._resolve_home()
+        idx = self.__dict__.get("_rr_idx", 0)
+        persona = roster[idx % len(roster)]
+        self.__dict__["_rr_idx"] = idx + 1
+        return persona
+
+    async def _hydrate(self, persona: str) -> None:
+        """Lazily load a persona's DURABLE DMN state (novelty cache + dedup history,
+        open-threads ledger, routing weights) the first time the loop rotates into it.
+        Idempotent per persona; runs already bound to `persona` so each load scopes
+        correctly. Best-effort — a transient storage error just leaves a cold bundle."""
+        from brain.second_brain.store import _persona_key
+
+        key = _persona_key(persona)
+        if key in self._hydrated_personas:
+            return
+        self._hydrated_personas.add(key)
+        with contextlib.suppress(Exception):
+            self._load_novelty()
+        with contextlib.suppress(Exception):
+            await self._load_threads()
+        with contextlib.suppress(Exception):
+            self._load_routing_weights()
+
+    async def _persist_active(self) -> None:
+        """Persist the currently-bound persona's durable DMN state. Best-effort."""
+        with contextlib.suppress(Exception):
+            self._persist_novelty()
+        with contextlib.suppress(Exception):
+            self._persist_routing_weights()
+
+    async def _persist_all_hydrated(self) -> None:
+        """At shutdown, persist EVERY persona hydrated this session — not just home — so
+        each rotated persona's novelty/routing learning survives the restart."""
+        from brain.second_brain.store import bind_persona
+
+        for key in list(self._hydrated_personas):
+            with contextlib.suppress(Exception), bind_persona(key):
+                await self._persist_active()
+
+    def _is_home_active(self) -> bool:
+        """True when the active persona resolves to home — used to gate process-global
+        durable state (the seq-predictor weights file) to the home persona so a rotated
+        persona can't clobber it. Per-persona seq persistence is a follow-up."""
+        try:
+            from brain.second_brain.store import _persona_key, active_persona
+
+            home = self.__dict__.get("_home") or self._resolve_home()
+            return _persona_key(active_persona() or home) == _persona_key(home)
+        except Exception:
+            return True
+
     def _current_interval(self) -> float:
         """Adaptive tick interval: faster during a live conversation, slower once the
         user has disengaged from the AGENT (>60s since their last turn) so we don't burn
         LLM calls — or contend with other subsystems for the local model — while they're
-        away. Engagement-based (not device HID), consistent with the rumination gate."""
+        away. Engagement-based (not device HID), consistent with the rumination gate.
+
+        Round-robin DMN: divide the per-persona target by the roster size so each persona
+        keeps a usable cadence (a fixed total rate would starve each to interval×N),
+        clamped to DMN_MIN_TICK_INTERVAL so we never out-run the shared local-model pod.
+        Roster size 1 ⇒ max(floor, target) = target ⇒ byte-for-byte the prior behavior."""
         base = float(settings.get("dmn_interval") or DMN_INTERVAL)
         idle_base = float(settings.get("dmn_idle_interval") or base * 3)
         # Runs before the tick (sets the NEXT sleep), so read the phase live rather than the
         # per-tick cache — same definition, just a fresh sample.
-        interval = idle_base if self._idle_phase() >= IdlePhase.WANDERING else base
+        target = idle_base if self._idle_phase() >= IdlePhase.WANDERING else base
+        n = max(1, len(self._roster()))
+        floor = float(settings.get("dmn_min_tick_interval") or DMN_MIN_TICK_INTERVAL)
+        interval = max(floor, target / n)
         # Skip-and-backoff: while the local model is failing, lengthen the
         # interval geometrically so we stop hammering it. _backoff_mult is 1.0
         # when healthy and reset on the first successful tick.
         return interval * self._backoff_mult
 
     async def _loop(self) -> None:
-        # Persona-bind the idle loop: the DMN IS the home persona thinking, so every tick's memory
-        # / wiring / recall writes (and the sub-tasks ticks spawn, which copy this task's context)
-        # scope to the home persona — never a stray default. Set once for the loop's lifetime (this
-        # task is dedicated to the DMN, so no reset is needed).
-        with contextlib.suppress(Exception):
-            from brain.second_brain.store import _active_persona_var
+        # Round-robin DMN: the loop's gating (idle decay, idle-gate, skip-prob, interval)
+        # stays SHARED/global and runs unbound — it only decides WHETHER a tick fires.
+        # When one does, we bind the next full-tier persona for the duration of THAT tick
+        # so its memory / wiring / recall (and the sub-tasks it spawns, which copy this
+        # task's context) scope to that persona, then unbind. A single-persona roster
+        # binds home every tick — equivalent to the old once-for-the-loop-lifetime bind.
+        from brain.second_brain.store import bind_persona
 
-            _home = str(settings.get("persona_name", "")) or os.environ.get("BRAIN_PERSONA_NAME", "")
-            if _home:
-                _active_persona_var.set(_home)
         try:
             while self._running:
                 await asyncio.sleep(self._current_interval())
@@ -1916,8 +2213,14 @@ class DefaultModeNetwork:
                         snap["GABA"],
                     )
                     continue
+                # A tick is firing: pick the next persona round-robin and bind it for
+                # the tick (and everything it awaits / spawns). Reset on exit so the
+                # next iteration's gating runs unbound again.
+                persona = self._next_persona()
                 try:
-                    await self._tick()
+                    with bind_persona(persona):
+                        await self._hydrate(persona)
+                        await self._tick()
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:
@@ -2297,7 +2600,7 @@ class DefaultModeNetwork:
             pr = prediction_reward(conf, actual_angle == predicted, info)
             if not pr:
                 return
-            persona = str(settings.get("persona_name", ""))
+            persona = self._reward_persona()
             delta = (
                 pr
                 * float(settings.get("prediction_reward_base"))
@@ -2324,7 +2627,7 @@ class DefaultModeNetwork:
                 return
             from brain.neuron import reward_weight
 
-            persona = str(settings.get("persona_name", ""))
+            persona = self._reward_persona()
             delta = (
                 float(settings.get("idle_thought_quality_base"))
                 * quality
@@ -2496,7 +2799,7 @@ class DefaultModeNetwork:
                 _diff, _mod = accomplishment_factor(
                     float(steps), float(settings.get("accomplishment_expected_low"))
                 )
-                _w = reward_weight(str(settings.get("persona_name", "")), "mastery")
+                _w = reward_weight(self._reward_persona(), "mastery")
                 _er = float(settings.get("emotional_reactivity_scale"))
                 self._bus.neuromod.add(
                     "DA", float(settings.get("accomplishment_base")) * _diff * _mod * _w * _er
@@ -3327,7 +3630,7 @@ class DefaultModeNetwork:
                 _diff, _mod = accomplishment_factor(
                     _advances, float(settings.get("accomplishment_expected_medium"))
                 )
-                _w = reward_weight(str(settings.get("persona_name", "")), "mastery")
+                _w = reward_weight(self._reward_persona(), "mastery")
                 _er = float(settings.get("emotional_reactivity_scale"))
                 _nm.add("DA", float(settings.get("accomplishment_base")) * _diff * _mod * _w * _er)
         logger.info("[DMN] Concluded thread %s → memory: %r", thread_id, conclusion_text[:80])
@@ -3451,11 +3754,12 @@ class DefaultModeNetwork:
                     .execute()
                 )
                 weights = ((res.data or {}).get("routing_weights") if res else None) or {}
-            else:
-                if not ROUTING_WEIGHTS_PATH.exists():
-                    return
+            elif self._is_home_active() and ROUTING_WEIGHTS_PATH.exists():
+                # Shared local file → home only (Supabase mode above is per-persona).
                 data = json.loads(ROUTING_WEIGHTS_PATH.read_text(encoding="utf-8"))
                 weights = data.get("weights") or {}
+            else:
+                return
             # Decay toward rest (1.0) on load so stale associations relax — the
             # analog of Hebbian decay_toward_rest.
             rate = 0.1
@@ -3486,6 +3790,8 @@ class DefaultModeNetwork:
             except Exception as e:
                 logger.warning("[DMN] Could not persist routing weights to Supabase: %s", e)
             return
+        if not self._is_home_active():
+            return  # shared local file → home only (Supabase mode above is per-persona)
         try:
             ROUTING_WEIGHTS_PATH.parent.mkdir(parents=True, exist_ok=True)
             tmp = ROUTING_WEIGHTS_PATH.with_suffix(".json.tmp")
@@ -3603,7 +3909,7 @@ class DefaultModeNetwork:
         # global emotional reactivity. This is delayed, outcome-based reinforcement (RPE-like).
         from brain.neuron import loss_aversion, reward_weight
 
-        _persona = str(settings.get("persona_name", ""))
+        _persona = self._reward_persona()
         _w = reward_weight(_persona, "correctness")
         _la = loss_aversion(_persona)  # λ: weights the verified-wrong sting, never the affirm reward
         _er = float(settings.get("emotional_reactivity_scale"))
@@ -3893,7 +4199,7 @@ class DefaultModeNetwork:
                     uncertainty_aversion,
                 )
 
-                _persona = str(settings.get("persona_name", ""))
+                _persona = self._reward_persona()
                 _scale = float(settings.get("anticipation_reward_scale"))
                 _w = reward_weight(_persona, "correctness")
                 _la = loss_aversion(_persona)
