@@ -55,16 +55,23 @@ class Wiring:
         self._user_id = user_id
         self._persona = persona
         self._use_supabase = _WIRING_STORAGE == "supabase"
-        self._edges: dict[tuple[str, str], Edge] = {}
-        # Snapshot of weights at session boot — used for session-delta reports
-        self._session_baseline: dict[tuple[str, str], float] = {}
-        # N1 (colony-features-ii): transient, NON-PERSISTED "trail" overlay — fast
-        # within-session plasticity over the slow, sleep-consolidated weights. Paths
-        # that fire AND pay off get reinforced live (stigmergy: trails strengthen as
-        # they're walked); the overlay decays each turn and evaporates at session end.
-        self._trail: dict[tuple[str, str], float] = {}
-        self._trail_decay_ts: float | None = None
-        self._load()
+        # ── Per-persona state ──────────────────────────────────────────────────
+        # One brain process serves MANY personas via per-turn binding (store.bind_persona);
+        # wiring must follow the bound persona the same way memory / chemistry / mandates do,
+        # or every persona's Hebbian update lands on the boot persona's graph. So edges, the
+        # session baseline (delta reports), and the N1 trail overlay (transient within-session
+        # plasticity that decays each turn) are kept PER PERSONA and resolved on access from the
+        # active persona (the contextvar), lazily loaded + topology-seeded on first use.
+        self._by_persona: dict[str, dict[tuple[str, str], Edge]] = {}
+        self._baseline_by_persona: dict[str, dict[tuple[str, str], float]] = {}
+        self._trail_by_persona: dict[str, dict[tuple[str, str], float]] = {}
+        self._trail_ts_by_persona: dict[str, float | None] = {}
+        self._loaded: set[str] = set()
+        # The first persona seeded = the construction/boot persona; its topology is seeded by
+        # the explicit bootstrap() call in session_setup (preserving prior behavior + tests).
+        # Personas discovered LATER are topology-seeded automatically on load.
+        self._construction_persona: str | None = None
+        self._ensure_loaded(self._persona_name())
 
     def _sb(self):
         from brain.second_brain.supabase_client import get_client
@@ -79,9 +86,76 @@ class Wiring:
         return get_user_id()
 
     def _persona_name(self) -> str:
-        if self._persona:
-            return self._persona
-        return os.environ.get("BRAIN_PERSONA_NAME", "default")
+        # Resolve the ACTIVE persona: explicit construction persona, else the per-turn
+        # contextvar (store.bind_persona), else env — canonicalized to match stored keys.
+        # Guarded so an unbound access never raises (store._resolve_persona can raise in
+        # BRAIN_MULTITENANT mode); wiring falls back rather than crash a turn.
+        from brain.second_brain.store import _persona_key, _resolve_persona
+
+        try:
+            return _persona_key(_resolve_persona(self._persona))
+        except Exception:
+            return _persona_key(self._persona or os.environ.get("BRAIN_PERSONA_NAME", ""))
+
+    def _ensure_loaded(self, name: str) -> None:
+        """Load (and, for runtime-discovered personas, topology-seed) a persona's wiring on
+        first access. Idempotent. Marks `name` loaded BEFORE loading so the reentrant _edges
+        access inside _load()/bootstrap() doesn't recurse."""
+        if name in self._loaded:
+            return
+        self._loaded.add(name)
+        self._by_persona[name] = {}
+        self._baseline_by_persona[name] = {}
+        self._trail_by_persona[name] = {}
+        self._trail_ts_by_persona[name] = None
+        self._load()  # loads the active (== name) persona's persisted weights
+        if self._construction_persona is None:
+            # Boot persona — session_setup calls bootstrap() explicitly (prior behavior + tests).
+            self._construction_persona = name
+        else:
+            # A persona first seen at runtime: seed the default topology so Hebbian updates
+            # (which only touch EXISTING edges) have edges to learn on. add() is idempotent, so
+            # loaded weights are preserved and only missing edges are seeded at rest.
+            from brain.wiring_bootstrap import bootstrap
+
+            bootstrap(self)
+        self._baseline_by_persona[name] = {k: e.weight for k, e in self._by_persona[name].items()}
+
+    @property
+    def _edges(self) -> dict[tuple[str, str], Edge]:
+        name = self._persona_name()
+        self._ensure_loaded(name)
+        return self._by_persona[name]
+
+    @property
+    def _session_baseline(self) -> dict[tuple[str, str], float]:
+        name = self._persona_name()
+        self._ensure_loaded(name)
+        return self._baseline_by_persona[name]
+
+    @_session_baseline.setter
+    def _session_baseline(self, value: dict[tuple[str, str], float]) -> None:
+        name = self._persona_name()
+        self._ensure_loaded(name)
+        self._baseline_by_persona[name] = value
+
+    @property
+    def _trail(self) -> dict[tuple[str, str], float]:
+        name = self._persona_name()
+        self._ensure_loaded(name)
+        return self._trail_by_persona[name]
+
+    @property
+    def _trail_decay_ts(self) -> float | None:
+        name = self._persona_name()
+        self._ensure_loaded(name)
+        return self._trail_ts_by_persona[name]
+
+    @_trail_decay_ts.setter
+    def _trail_decay_ts(self, value: float | None) -> None:
+        name = self._persona_name()
+        self._ensure_loaded(name)
+        self._trail_ts_by_persona[name] = value
 
     def add(
         self, source: str, target: str, weight: float = 1.0, polarity: str = "excitatory"

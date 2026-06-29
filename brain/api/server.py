@@ -438,7 +438,14 @@ def build_api_router(
         if consolidate_runner is None:
             raise HTTPException(status_code=501, detail="consolidation is not available on this server")
         reason = (body or {}).get("reason") or "api"
-        result = await consolidate_runner(str(reason))
+        # Bind the SESSION's persona for the consolidation so the Hebbian wiring update lands on
+        # THAT persona's graph (wiring resolves the active persona from this contextvar). Without
+        # this, every agent's learning collapses onto the boot persona. The await runs inside the
+        # binding (same task → contextvar propagates).
+        from brain.second_brain.store import bind_persona
+
+        with bind_persona(_session_persona(s) or ""):
+            result = await consolidate_runner(str(reason))
         return {"session_id": session_id, "consolidation": result}
 
     @router.post("/sessions/{session_id}/turns/stream")
