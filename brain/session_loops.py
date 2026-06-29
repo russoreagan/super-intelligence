@@ -508,8 +508,14 @@ class _LoopsMixin:
             return {"ran": False, "reason": "already_running"}
         if not self._session_traces:
             return {"ran": False, "reason": "no_buffered_turns"}
+        from brain.second_brain.store import active_persona, bind_persona
+
         async with self._consolidation_lock:
-            return await self._run_consolidation(reason)
+            # Persona-bind the consolidation so the Hebbian/wiring/memory writes land on the right
+            # persona: the /consolidate route sets the SESSION persona; a trace-cap or UI/CLI call
+            # has none bound → fall back to this brain's home persona (never a stray default).
+            with bind_persona(active_persona() or getattr(self, "persona_name", "")):
+                return await self._run_consolidation(reason)
 
     async def _run_consolidation(self, reason: str) -> dict:
         """Body of a consolidation pass. Snapshots & clears the trace buffers

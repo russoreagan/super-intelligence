@@ -1840,6 +1840,16 @@ class DefaultModeNetwork:
         return interval * self._backoff_mult
 
     async def _loop(self) -> None:
+        # Persona-bind the idle loop: the DMN IS the home persona thinking, so every tick's memory
+        # / wiring / recall writes (and the sub-tasks ticks spawn, which copy this task's context)
+        # scope to the home persona — never a stray default. Set once for the loop's lifetime (this
+        # task is dedicated to the DMN, so no reset is needed).
+        with contextlib.suppress(Exception):
+            from brain.second_brain.store import _active_persona_var
+
+            _home = str(settings.get("persona_name", "")) or os.environ.get("BRAIN_PERSONA_NAME", "")
+            if _home:
+                _active_persona_var.set(_home)
         try:
             while self._running:
                 await asyncio.sleep(self._current_interval())

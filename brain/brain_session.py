@@ -528,12 +528,17 @@ class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
                     "Running end-of-session memory consolidation "
                     "(summarising facts, updating self-model, applying Hebbian updates)..."
                 )
-                await sleep.consolidate(
-                    self.session_id,
-                    self._session_traces,
-                    full_traces=self._session_traces_full,
-                    session_thoughts=self.dmn.session_thoughts() if self.dmn else [],
-                )
+                from brain.second_brain.store import active_persona, bind_persona
+
+                # End-of-session consolidation: bind the persona so the Hebbian/wiring writes land
+                # on it (the bound session persona if any, else this brain's home persona).
+                with bind_persona(active_persona() or getattr(self, "persona_name", "")):
+                    await sleep.consolidate(
+                        self.session_id,
+                        self._session_traces,
+                        full_traces=self._session_traces_full,
+                        session_thoughts=self.dmn.session_thoughts() if self.dmn else [],
+                    )
                 if self.dmn:
                     try:
                         _oq_refreshed = self.hippocampus._schema.read("open_questions.md")
