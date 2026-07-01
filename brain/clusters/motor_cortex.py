@@ -881,6 +881,7 @@ class MotorCortexCluster:
         if dec.reason_human:
             outcome.reason_human = outcome.summary = dec.reason_human
         logger.info("[InternalJob] STOP (budget) job %s: %s", job_id, outcome.reason_human)
+        self._persist_gated_outcome(outcome, done=True)
         await self._emit_outcome(emitter, outcome, goal)
         return outcome.to_record()
 
@@ -892,6 +893,7 @@ class MotorCortexCluster:
         reason = dec.defer_reason or DeferReason.CLOUD_UNREACHABLE
         outcome = JobOutcome.deferred(job_id, goal, reason=reason, backoff_s=dec.backoff_s)
         logger.info("[InternalJob] DEFER (%s) job %s", reason.value, job_id)
+        self._persist_gated_outcome(outcome, done=False)
         await self._emit_outcome(emitter, outcome, goal)
         return outcome.to_record()
 
@@ -908,6 +910,16 @@ class MotorCortexCluster:
             productive_steps=0, steps=steps, results=results, plan_steps=plan_steps,
         )
         logger.info("[InternalJob] mid-flight DEFER (%s) job %s", reason.value, job_id)
+        # Surface it WITHOUT clobbering the resumable checkpoint: if a done=False
+        # checkpoint already exists (stories completed so far), mirror it as deferred;
+        # otherwise write a minimal deferred record so the pause is never invisible.
+        _existing = None
+        with contextlib.suppress(Exception):
+            _existing = self.job_store.get(job_id)
+        if _existing:
+            self._mirror_job_to_table(job_id, state_override="deferred")
+        else:
+            self._persist_gated_outcome(outcome, done=False)
         await self._emit_outcome(emitter, outcome, goal)
         return outcome.to_record()
 
@@ -1709,6 +1721,7 @@ class MotorCortexCluster:
             state=outcome.state.value,
             reason_code=outcome.reason_code,
             reason_human=outcome.reason_human,
+            productive_steps=productive_steps,
         )
         await emitter.emit_event(
             {
@@ -2223,17 +2236,44 @@ class MotorCortexCluster:
             lines.append(f"- [{st}] {goal}: {summ}")
         return "Prior job results (reuse instead of re-running):\n" + "\n".join(lines)
 
-    def _mirror_job_to_table(self, job_id: str) -> None:
+    def _mirror_job_to_table(self, job_id: str, *, state_override: str | None = None) -> None:
         """Best-effort upsert of the JobStore record (state, results, links) into the
-        durable agent_jobs DB table. No-op in local/companion mode (no Supabase)."""
+        durable agent_jobs DB table. No-op in local/companion mode (no Supabase).
+        state_override lets a mid-flight defer surface as state='deferred' WITHOUT
+        rewriting the resumable JSON checkpoint (which must keep stories_completed)."""
         try:
             from brain import agent_jobs_store
 
             record = self.job_store.get(job_id)
             if record:
+                if state_override:
+                    record["state"] = state_override
                 agent_jobs_store.upsert(record)
         except Exception as e:
             logger.debug("[InternalJob] agent_jobs mirror failed (non-fatal): %s", e)
+
+    def _persist_gated_outcome(self, outcome, *, done: bool) -> None:
+        """Persist a gated (up-front deferred / stopped) outcome to the JobStore + the
+        durable agent_jobs table so it is VISIBLE, not silently invisible. Used only
+        when there is no prior checkpoint to preserve; done=True for a terminal stop,
+        False for a re-plannable defer."""
+        with contextlib.suppress(Exception):
+            self.job_store.save(
+                job_id=outcome.job_id,
+                goal=outcome.goal,
+                steps=outcome.steps,
+                results=outcome.results,
+                success=False,
+                done=done,
+                state=outcome.state.value,
+                reason_code=outcome.reason_code,
+                reason_human=outcome.reason_human,
+                backoff_s=outcome.backoff_s,
+                productive_steps=outcome.productive_steps,
+                plan_steps=outcome.plan_steps,
+                source=getattr(self, "_current_source", "self"),
+            )
+            self._mirror_job_to_table(outcome.job_id)
 
     async def _notify_job_complete(
         self,
@@ -2251,6 +2291,7 @@ class MotorCortexCluster:
         state: str = "",
         reason_code: str = "",
         reason_human: str = "",
+        productive_steps: int = 0,
     ) -> None:
         """Fire after_job hooks and persist the job record (JSON store + durable table)."""
         # Persist output before subsystem hooks (hooks may raise)
@@ -2265,6 +2306,8 @@ class MotorCortexCluster:
                     state=state,
                     reason_code=reason_code,
                     reason_human=reason_human,
+                    productive_steps=productive_steps,
+                    stories_completed=len(steps),
                     task_id=task_id,
                     source=source,
                     ralph_mode=ralph_mode,
