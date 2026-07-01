@@ -821,6 +821,17 @@ class _LoopsMixin:
         item = approvals.approve(approval_id, end_user_id=end_user_id, include_autonomous=include_autonomous)
         if item is None:
             return {"ok": False, "error": "no such pending approval"}
+        # Soft-pause sentinel: approving "continue autonomous spending" lifts the pause
+        # for the rest of the UTC day (up to the hard cap) rather than re-queuing a tool.
+        from brain.autonomy import CONTINUE_SPEND_TOOL
+
+        if item.tool == CONTINUE_SPEND_TOOL:
+            gate = getattr(self, "_spend_gate", None)
+            if gate is not None:
+                with contextlib.suppress(Exception):
+                    gate._budget.clear_soft_pause()
+            logger.info("[Approvals] owner approved continue-spending — soft pause lifted")
+            return {"ok": True, "tool": item.tool, "continued": True}
         goal = f"The user approved this action — carry it out now: {item.tool}"
         if item.preview:
             goal += f" ({item.preview})"
@@ -859,3 +870,38 @@ class _LoopsMixin:
         if approve:
             return self.approve_action(approval_id, end_user_id=euid, include_autonomous=include_autonomous)
         return self.skip_action(approval_id, end_user_id=euid, include_autonomous=include_autonomous)
+
+    # ── Autonomous job history (durable results surface) ────────────────────────
+    def api_list_jobs(self, limit: int = 20, state: str | None = None) -> list[dict]:
+        """Recent job outcomes. Prefers the durable agent_jobs table; falls back to the
+        JSON JobStore (local/companion mode or before the table exists)."""
+        try:
+            from brain import agent_jobs_store
+
+            rows = agent_jobs_store.list_recent(limit=limit, state=state)
+            if rows:
+                return rows
+        except Exception:
+            pass
+        motor = getattr(self, "motor", None)
+        store = getattr(motor, "job_store", None) if motor else None
+        if store is None:
+            return []
+        out = store.list_recent(limit=limit)
+        if state:
+            out = [j for j in out if j.get("state") == state]
+        return out
+
+    def api_get_job(self, job_id: str) -> dict | None:
+        """Full record for one job — agent_jobs table first, then the JSON JobStore."""
+        try:
+            from brain import agent_jobs_store
+
+            rec = agent_jobs_store.get(job_id)
+            if rec:
+                return rec
+        except Exception:
+            pass
+        motor = getattr(self, "motor", None)
+        store = getattr(motor, "job_store", None) if motor else None
+        return store.get(job_id) if store is not None else None

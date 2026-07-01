@@ -141,6 +141,10 @@ class JobStore:
         unverified_stories: list[str] | None = None,
         success_criteria: str = "",
         complexity: str = "",
+        state: str = "",
+        reason_code: str = "",
+        reason_human: str = "",
+        backoff_s: float = 0.0,
     ) -> None:
         """Save or overwrite a job record. Triggers cleanup afterward.
 
@@ -148,6 +152,10 @@ class JobStore:
         story; get_resumable() finds these. The final save passes done=True.
         stories_completed + plan_steps are what a resumed run reads to skip
         already-finished stories.
+
+        state/reason_code/reason_human/backoff_s carry the brain.autonomy JobState
+        model. Default-safe: when state is unset (legacy callers), the read path
+        synthesizes it from `success`/`done` so old records still load.
         """
         written_files = _extract_written_files(steps)
         source_links = _extract_source_links(steps, results)
@@ -157,6 +165,10 @@ class JobStore:
             "goal": goal,
             "success": success,
             "done": done,
+            "state": state or ("running" if not done else ("completed" if success else "failed")),
+            "reason_code": reason_code,
+            "reason_human": reason_human,
+            "backoff_s": backoff_s,
             "source": source,
             "ralph_mode": ralph_mode,
             "total_attempts": total_attempts,
@@ -216,12 +228,25 @@ class JobStore:
 
     # ── Read ──────────────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _synth_state(record: dict) -> str:
+        """State for a record, synthesizing from legacy success/done when absent so
+        pre-migration records still render in the jobs surface."""
+        st = record.get("state")
+        if st:
+            return st
+        if not record.get("done", True):
+            return "running"
+        return "completed" if record.get("success") else "failed"
+
     def get(self, job_id: str) -> dict | None:
         path = JOBS_DIR / f"{job_id}.json"
         if not path.exists():
             return None
         try:
-            return json.loads(path.read_text())
+            record = json.loads(path.read_text())
+            record.setdefault("state", self._synth_state(record))
+            return record
         except Exception as e:
             logger.warning("[JobStore] get failed for %s: %s", job_id, e)
             return None
@@ -255,10 +280,13 @@ class JobStore:
                         "task_id": record.get("task_id"),
                         "goal": record.get("goal"),
                         "success": record.get("success"),
+                        "state": self._synth_state(record),
+                        "reason_human": record.get("reason_human", ""),
                         "source": record.get("source"),
                         "written_files": record.get("written_files", []),
                         "source_links": record.get("source_links", []),
                         "spoken_summary": record.get("spoken_summary"),
+                        "summary": record.get("spoken_summary") or record.get("reason_human", ""),
                         "created_at": record.get("created_at"),
                         "steps_count": len(record.get("steps", [])),
                     }

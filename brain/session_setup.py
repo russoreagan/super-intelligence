@@ -357,6 +357,8 @@ class _SetupMixin:
             confirm_runner=self.api_confirm,
             approvals_list_runner=self.api_list_approvals,
             approval_resolve_runner=self.api_resolve_approval,
+            jobs_list_runner=self.api_list_jobs,
+            job_get_runner=self.api_get_job,
             purge_runner=self.api_purge_end_user,
             extract_runner=self.api_extract,
             skill_screener=skill_screener,
@@ -534,6 +536,21 @@ class _SetupMixin:
         self._approvals = PendingApprovals()
         if hasattr(self.motor, "_cloud") and hasattr(self.motor._cloud, "set_approval_fn"):
             self.motor._cloud.set_approval_fn(self._gate_action)
+
+        # Spend/risk gate (brain.autonomy): the single autonomy policy point — autonomous
+        # budget (soft $30 pause / hard $50 stop), rate, cloud-health → RUN/DEFER/STOP, and
+        # external-side-effect → approval. Injected into the motor, which also hands it to
+        # the router so bg cloud-health (timeout/success) feeds the CLOUD_UNREACHABLE cooldown.
+        try:
+            from brain.autonomy import AutonomousBudget, SpendRiskGate
+
+            self._spend_gate = SpendRiskGate(
+                AutonomousBudget(self.router), self._approvals, self.router
+            )
+            if hasattr(self.motor, "set_spend_gate"):
+                self.motor.set_spend_gate(self._spend_gate)
+        except Exception as e:
+            logger.warning("[Autonomy] SpendRiskGate wiring failed (non-fatal): %s", e)
 
         _recovered = self._task_queue.recover_interrupted()
         if _recovered:

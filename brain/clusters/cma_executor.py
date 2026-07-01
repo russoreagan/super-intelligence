@@ -357,22 +357,34 @@ def _write_approval_bytes() -> int:
 def _classify_action(tool: str, args, write_allowed: bool) -> tuple[str, str]:
     """Classify a pending tool call. Returns (decision, reason) where decision is
     'allow' (run unattended) | 'ask' (needs user approval) | 'block' (never run).
-    Conservative: anything not confidently safe falls through to 'ask'."""
+
+    Policy is set by `autonomy_approve_external_only` (default true): approvals are
+    reserved for EXTERNAL side-effects (communication out) and irreversible destructive
+    actions; money movement stays blocked; internal reads and sandboxed writes/edits/shell
+    run unattended. Set the flag false to restore the older, broader gate (writes/bash/
+    edit also ask) as a one-line rollback."""
     name = (tool or "").strip().lower()
     args = args if isinstance(args, dict) else {}
     toks = _name_tokens(tool)  # original casing → camelCase split works
+    external_only = bool(settings.get("autonomy_approve_external_only", True))
     # 1) Reads first — never mis-block a data pull.
     if name in _READ_TOOLS or name.startswith(_READ_PREFIXES):
         return ("allow", "")
-    # 2) Money movement is blocked outright (also covered by the platform trade ban).
+    # 2) External side-effects — always gated, regardless of policy.
+    #    Money movement stays BLOCKED outright (never run unattended, even with an
+    #    approver) — the platform trade-safety control; comms out → approval.
     if toks & _MONEY_WORDS:
         return ("block", f"{tool} moves money or places an order")
-    # 3) Communication out.
     if toks & _COMMS_WORDS:
         return ("ask", f"{tool} would send communication")
-    # 4) Destructive mutation.
+    # 3) Destructive/irreversible mutation stays gated even under external-only — a
+    #    silent autonomous delete is a distinct risk class from a routine write.
     if toks & _DESTRUCTIVE_WORDS:
         return ("ask", f"{tool} is destructive")
+    # 4) External-only policy: everything else (internal writes/edits/shell) runs
+    #    unattended (routine sandboxed writes, non-destructive mutations).
+    if external_only:
+        return ("allow", "")
     # 5) Arbitrary shell / edits to existing content (often code).
     if name == "bash":
         return ("ask", "runs a shell command")
@@ -1023,8 +1035,18 @@ class CMAExecutor(ExecutorCommon):
             await self._meter_session_usage()
 
         output = self._screen_result(raw)
-        # success from the RAW text — fenced clean output never starts with [error]
-        success = not raw.startswith("[error]") and not output.startswith("[error]")
+        # Fail-loud: an empty / no-output run is a FAILURE, not a silent success. Only
+        # real fenced content counts. Previously `""` → `_screen_result` "(no output)"
+        # with `raw` not starting with "[error]" → success=True, so a blank managed-agent
+        # run reported "done" with nothing. Surface it as an error instead.
+        _empty = (not (raw or "").strip()) or output == "(no output)" or not output.strip()
+        if _empty and not raw.startswith("[error]"):
+            output = "[error] The managed agent produced no output."
+        success = (
+            not _empty
+            and not raw.startswith("[error]")
+            and not output.startswith("[error]")
+        )
         logger.info(
             "[CMAExecutor] Completed in %.1fs (success=%s, %d chars)",
             time.time() - start,

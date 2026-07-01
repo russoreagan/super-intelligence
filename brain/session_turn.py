@@ -812,13 +812,29 @@ class _TurnMixin:
             )
 
         # ── Recent background task results ────────────────────────────────────
-        # Inject completed async task results so the LLM knows what actually
-        # happened — prevents confabulation when the user asks about past tasks.
-        if getattr(self, "_recent_task_results", None):
+        # Inject recent background job outcomes so the LLM knows what actually happened
+        # (prevents confabulation) AND stays aware of paused/stopped work it should not
+        # re-plan. The in-memory ring buffer is primary (it also holds reactive inline
+        # results); when it's empty (e.g. just after a restart) fall back to the durable
+        # agent_jobs table so awareness of finished work survives the restart.
+        _job_rows: list[dict] = [
+            {"goal": r.get("goal", ""), "summary": r.get("summary", ""),
+             "state": r.get("state") or ("completed" if r.get("success") else "failed")}
+            for r in getattr(self, "_recent_task_results", []) or []
+        ]
+        if not _job_rows:
+            with contextlib.suppress(Exception):
+                _job_rows = self.api_list_jobs(limit=5) or []
+        if _job_rows:
             lines = []
-            for r in self._recent_task_results:
-                status = "completed" if r["success"] else "failed"
-                lines.append(f"- [{status}] {r['goal'][:80]}: {r['summary']}")
+            for r in _job_rows:
+                state = r.get("state") or ("completed" if r.get("success") else "failed")
+                summ = r.get("summary") or r.get("reason_human") or ""
+                lines.append(f"- [{state}] {str(r.get('goal', ''))[:80]}: {summ}")
+            lines.append(
+                "(Older/full results are in the jobs store — call recall_jobs to retrieve "
+                "them instead of re-running work.)"
+            )
             memory["recent_task_results"] = "\n".join(lines)
 
         # ── Motor Cortex: tool execution ──────────────────────────────────────
@@ -1720,6 +1736,23 @@ class _TurnMixin:
             with contextlib.suppress(Exception):
                 await self.pns.emit(text, mood)
 
+    def _push_task_result(self, goal: str, state: str, summary_text: str) -> None:
+        """Append one entry to the agent-awareness ring buffer for ANY terminal state,
+        with a state token the frontal `completed_tasks` fence renders — so a deferred /
+        stopped / awaiting job stays visible to the agent (never re-planned or forgotten),
+        not just completed/failed ones."""
+        self._recent_task_results.append(
+            {
+                "goal": goal,
+                "summary": summary_text,
+                "state": state,
+                "success": state == "completed",
+                "ts": time.time(),
+            }
+        )
+        while len(self._recent_task_results) > 5:
+            self._recent_task_results.pop(0)
+
     async def _run_task(self, task) -> None:
         """Run a queued job under its originating lane.
 
@@ -1855,6 +1888,38 @@ class _TurnMixin:
                 )
             return
 
+        # ── Terminal-state routing (brain.autonomy JobState) ──────────────────────
+        # A job that DEFERRED (cloud unavailable / soft-budget pause) or was STOPPED
+        # (hard budget) or is AWAITING_APPROVAL is not "done" — route it so it resumes
+        # or waits, feed the agent's awareness (so it doesn't re-plan or forget it), and
+        # never fire the failure/partner "ran into an error" path.
+        _state = summary.get("state") or ("completed" if summary.get("success") else "failed")
+        if _state in ("deferred", "stopped_budget", "awaiting_approval"):
+            reason = summary.get("reason_human") or _state.replace("_", " ")
+            if _state == "deferred":
+                backoff = float(summary.get("backoff_s") or 30.0)
+                self._task_queue.mark_deferred(task.id, backoff_s=backoff, reason=reason)
+            else:
+                self._task_queue.mark_blocked(task.id, reason=reason)
+            self._push_task_result(task.goal, _state, reason)
+            # Feed awareness to reflection WITHOUT spawning a follow-up: a paused job is
+            # not finished, so it must not churn the bounded reflect→act loop.
+            if self.dmn is not None:
+                with contextlib.suppress(Exception):
+                    self.dmn.note_job_result(
+                        task.goal, reason, False,
+                        depth=getattr(task, "reflex_depth", 0), already_reported=True,
+                    )
+            # Surface stop/approval to the user (deferred is low-urgency: buffer only).
+            if _state != "deferred" and should_report:
+                with contextlib.suppress(Exception):
+                    await self._deliver_proactive(
+                        reason, self._genuine_mood(),
+                        partner_target=self._partner_proactive_target(),
+                    )
+            logger.info("[TaskWorker] Task [%s] → %s: %s", task.id, _state, reason[:80])
+            return
+
         self._task_queue.mark_done(task.id, success=bool(summary.get("success")))
         # Stage 6: accomplishment / mastery — satisfaction from overcoming difficulty, no
         # prediction needed (cleaning a big mess, solving a hard problem). Effort-overcome ×
@@ -1870,6 +1935,10 @@ class _TurnMixin:
                 self.motor.job_store.link_task(job_id, task.id)
                 if spoken_summary:
                     self.motor.job_store.update_summary(job_id, spoken_summary)
+                # Re-mirror to the durable agent_jobs table so the spoken summary (and
+                # task linkage) land there too, not just in the JSON store.
+                if hasattr(self.motor, "_mirror_job_to_table"):
+                    self.motor._mirror_job_to_table(job_id)
             except Exception as _je:
                 logger.debug("[TaskWorker] job_store update failed: %s", _je)
         if not spoken_summary:
@@ -1888,16 +1957,9 @@ class _TurnMixin:
             except Exception as _pe:
                 logger.debug("[TaskWorker] project check-in failed: %s", _pe)
         # Always store in ring buffer — LLM context gets the result regardless of topic.
-        self._recent_task_results.append(
-            {
-                "goal": task.goal,
-                "summary": spoken_summary,
-                "success": bool(summary.get("success")),
-                "ts": time.time(),
-            }
+        self._push_task_result(
+            task.goal, "completed" if summary.get("success") else "failed", spoken_summary
         )
-        if len(self._recent_task_results) > 3:
-            self._recent_task_results.pop(0)
         # Feed the outcome back into reflection (result→reasoning loop). The DMN reasons
         # over what just finished and decides — via the existing speak-gate / self-task /
         # deferred pathways — whether to act further, and (for autonomous work) whether to

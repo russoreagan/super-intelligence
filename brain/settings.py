@@ -518,6 +518,39 @@ DEFAULTS: dict[str, float | int | str] = {
     #   the day; a LITE brain (no local pod) raises CloudBudgetExceeded → HTTP 402.
     #   Default $20.00 — generous for normal interactive use; tighten per-org if needed.
     "cloud_daily_usd_budget": 20.0,
+    # ── Section: Autonomy (brain.autonomy — cloud-only autonomous work) ─────────
+    # autonomous_soft_usd / autonomous_hard_usd: the AUTONOMOUS-ONLY daily spend pool,
+    #   separate from interactive (tracked as usd_autonomous in cloud_usage.json). At the
+    #   soft cap, new autonomous jobs PAUSE and record one owner "continue spending"
+    #   approval; at the hard cap they STOP for the UTC day. 0 disables that tier.
+    "autonomous_soft_usd": 30.0,
+    "autonomous_hard_usd": 50.0,
+    # autonomy_approve_external_only: 1 = approvals are reserved for EXTERNAL side-effects
+    #   (comms out) + irreversible destructive actions; internal reads/sandboxed writes
+    #   run unattended. 0 = the older, broader gate (writes/bash/edit also ask).
+    "autonomy_approve_external_only": 1,
+    # bg_cloud_timeout_trip: consecutive background cloud-call timeouts before the gate
+    #   parks autonomous work (CLOUD_UNREACHABLE) for a cooldown instead of hammering.
+    "bg_cloud_timeout_trip": 3,
+    # cloud_unreachable_cooldown_s: how long autonomous work stays parked after tripping.
+    "cloud_unreachable_cooldown_s": 120.0,
+    # semaphore_acquire_timeout_s: bound on acquiring the interactive cloud semaphore so a
+    #   saturated pool can't pin a structured call indefinitely.
+    "semaphore_acquire_timeout_s": 30.0,
+    # job_defer_backoff_base_s: base wall-clock backoff for a deferred (requeued) job;
+    #   compounds on repeated defers so a dead cloud parks the queue rather than spinning.
+    "job_defer_backoff_base_s": 30.0,
+    # ── Section: Motor chunking + API pacing ────────────────────────────────────
+    # motor_query_page_size: default records per list/search step, so a job requests one
+    #   bounded page at a time (small, fast) and pages via the "[... offset=X]" signal.
+    "motor_query_page_size": 50,
+    # motor_pacing_enabled / motor_pacing_min_interval_s: minimum spacing between calls to
+    #   the same EXTERNAL endpoint (fetch_url / world_* / cloud_action) so a multi-page
+    #   sweep doesn't trip provider rate limits. Internal filesystem tools are unthrottled.
+    "motor_pacing_enabled": 1,
+    "motor_pacing_min_interval_s": 0.5,
+    # motor_http_retries: attempts for a fetch_url GET on 429/503 (exponential backoff).
+    "motor_http_retries": 3,
     # ── Section: RunPod ───────────────────────────────────────────────────────
     # Overrides the RUNPOD_HOST / RUNPOD_MODEL env vars at runtime — no restart
     # needed. Empty string = fall back to env var.
