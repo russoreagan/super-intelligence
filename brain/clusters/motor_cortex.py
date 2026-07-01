@@ -131,6 +131,7 @@ _DISPATCHABLE_TOOLS = frozenset(
         "set_mood",
         "cloud_action",
         "recall_memory",
+        "recall_jobs",
         "analyze_image",
         "ask_user",
         "none",
@@ -391,6 +392,13 @@ class MotorCortexCluster:
         self._job_start_times: list[float] = self._load_job_starts()
         self._session_job_count: int = 0
         self._active_job_count: int = 0
+        # SpendRiskGate (brain.autonomy) — injected at session setup. Consulted up-front
+        # for autonomous jobs (budget soft/hard, rate, cloud health → RUN/DEFER/STOP) and
+        # per external-side-effect step (RUN/ASK). Optional; None disables autonomy policy.
+        self._gate = None
+        # Last-call timestamps per external endpoint, for inter-request pacing so a
+        # multi-page sweep doesn't hammer a provider into rate-limiting us.
+        self._pace_last: dict[str, float] = {}
 
         # Switches (~6 total; 2 inhibitory ≈ 33% — acceptable for small action cluster)
         # Modulator profiles per plan /Users/russ/.claude/plans/and-what-affects-these-memoized-parnas.md.
@@ -519,6 +527,7 @@ class MotorCortexCluster:
         the local tool dispatch. Shared verbatim by the reactive loop (execute) and
         per-story job execution (_execute_internal_job_body) so both process a tool
         identically — same success rules, same motor.result publish."""
+        await self._pace_external(tool)
         if tool == "cloud_action":
             last_result = await self._dispatch_cloud(
                 args, turn_id, end_user_id=self._current_end_user_id
@@ -533,6 +542,14 @@ class MotorCortexCluster:
                 "reason": reason,
                 "output": output,
                 "success": not output.startswith("[error]"),
+            }
+            await self._bus.publish_dict("motor.result", last_result, source=CLUSTER)
+            return output, last_result
+        if tool == "recall_jobs":
+            output = self._recall_jobs(args)
+            last_result = {
+                "tool": tool, "args": args, "reason": reason,
+                "output": output, "success": not output.startswith("[error]"),
             }
             await self._bus.publish_dict("motor.result", last_result, source=CLUSTER)
             return output, last_result
@@ -844,6 +861,70 @@ class MotorCortexCluster:
             pass
 
     # ── Internal-directive entry point ─────────────────────────────────────
+    def set_spend_gate(self, gate) -> None:
+        """Inject the SpendRiskGate (brain.autonomy). Also hands the gate to the router
+        so cloud-health (bg timeout/success) feeds the CLOUD_UNREACHABLE cooldown."""
+        self._gate = gate
+        with contextlib.suppress(Exception):
+            self._router.set_spend_gate(gate)
+
+    def _take_bg_defer(self):
+        """Consume the router's one-shot autonomous-defer signal (a DeferReason or None)."""
+        fn = getattr(self._router, "take_bg_defer", None)
+        return fn() if fn is not None else None
+
+    async def _gated_stop(self, goal: str, job_id: str, dec, emitter) -> dict:
+        """Autonomous job stopped up-front by the hard budget cap — zero cloud work."""
+        from brain.autonomy import JobOutcome
+
+        outcome = JobOutcome.stopped_budget(job_id, goal)
+        if dec.reason_human:
+            outcome.reason_human = outcome.summary = dec.reason_human
+        logger.info("[InternalJob] STOP (budget) job %s: %s", job_id, outcome.reason_human)
+        await self._emit_outcome(emitter, outcome, goal)
+        return outcome.to_record()
+
+    async def _gated_defer(self, goal: str, job_id: str, dec, emitter) -> dict:
+        """Autonomous job deferred up-front (soft-pause / rate / cloud health)."""
+        from brain.autonomy import JobOutcome
+        from brain.autonomy.reasons import DeferReason
+
+        reason = dec.defer_reason or DeferReason.CLOUD_UNREACHABLE
+        outcome = JobOutcome.deferred(job_id, goal, reason=reason, backoff_s=dec.backoff_s)
+        logger.info("[InternalJob] DEFER (%s) job %s", reason.value, job_id)
+        await self._emit_outcome(emitter, outcome, goal)
+        return outcome.to_record()
+
+    async def _deferred_outcome(
+        self, goal, job_id, reason, steps, results, plan_steps, emitter
+    ) -> dict:
+        """Mid-flight defer (cloud went away while the job was running). Leaves the
+        last done=False checkpoint in place so the job RESUMES on requeue."""
+        from brain.autonomy import JobOutcome
+
+        backoff = float(_brain_settings.get("job_defer_backoff_base_s") or 30.0)
+        outcome = JobOutcome.deferred(
+            job_id, goal, reason=reason, backoff_s=backoff,
+            productive_steps=0, steps=steps, results=results, plan_steps=plan_steps,
+        )
+        logger.info("[InternalJob] mid-flight DEFER (%s) job %s", reason.value, job_id)
+        await self._emit_outcome(emitter, outcome, goal)
+        return outcome.to_record()
+
+    async def _emit_outcome(self, emitter, outcome, goal: str) -> None:
+        """Emit the single terminal task_outcome event (durable + gate-independent)."""
+        with contextlib.suppress(Exception):
+            await emitter.emit_event(
+                {
+                    "type": "task_outcome",
+                    "job_id": outcome.job_id,
+                    "state": outcome.state.value,
+                    "reason_human": outcome.reason_human,
+                    "summary": outcome.summary,
+                    "goal": goal[:200],
+                }
+            )
+
     async def execute_internal_job(
         self, goal: str, turn_id: str, budget: int = 0, source: str = "self"
     ) -> dict:
@@ -891,6 +972,20 @@ class MotorCortexCluster:
                 "summary": f"Job declined — {_decline}.",
                 "error": "rate_limited",
             }
+
+        # ── Spend/risk gate (cloud-only autonomy) ───────────────────────────────
+        # Up-front, before any cloud spend: an AUTONOMOUS job that can't reach cloud
+        # DEFERS (soft-budget pause / rate / cloud-unreachable) or STOPS (hard budget),
+        # cleanly and with a surfaced reason — never degrading to a dead local backend.
+        # User-awaited jobs are interactive and bypass this (they run on the owner's dime).
+        if self._gate is not None and source != "user":
+            from brain.autonomy import RunOutcome
+
+            _dec = self._gate.check_spend()
+            if _dec.outcome is RunOutcome.STOP:
+                return await self._gated_stop(goal, job_id, _dec, emitter)
+            if _dec.outcome is RunOutcome.DEFER:
+                return await self._gated_defer(goal, job_id, _dec, emitter)
 
         # Accepted: record for the limiter and mark one job active. Wall-clock +
         # persist so the rolling-window count outlives a restart.
@@ -1050,6 +1145,13 @@ class MotorCortexCluster:
                 turn_id=job_id,
                 max_tokens=4096,
             )
+            # Autonomous cloud-only: if the strategic planner couldn't reach cloud
+            # (rate / budget / timeout), defer the whole job instead of planning on an
+            # empty result → a single mega-story that stalls. Nothing persisted yet, so
+            # it simply re-plans on requeue.
+            _bgd = self._take_bg_defer()
+            if _bgd is not None:
+                return await self._deferred_outcome(goal, job_id, _bgd, [], [], [], emitter)
             # Support Ralph-style "stories" (with acceptance_criteria) and legacy "steps" format.
             stories_planned = (
                 plan.get("stories")
@@ -1128,6 +1230,7 @@ class MotorCortexCluster:
         last_result: dict | None = None
         clarification_question: str | None = None
         awaiting_approval = False  # set if a write step is blocked pending the user's approval
+        _deferred_reason = None  # set if an autonomous cloud call went away mid-flight
         # productive_steps = tool calls that executed and returned real (non-error,
         # non-blocked, non-mismatch) output. Job success is judged on whether real
         # work happened — NOT on whether every story's strict acceptance criteria
@@ -1148,6 +1251,8 @@ class MotorCortexCluster:
         for idx, story in enumerate(stories_planned):
             if idx < resume_from:
                 continue  # already completed in a prior (interrupted) run
+            if _deferred_reason is not None:
+                break  # cloud went away mid-flight → defer + resume from the checkpoint
             if self._calls_this_turn >= effective_budget:
                 logger.warning(
                     "[InternalJob] Budget exhausted (%d) at story %d/%d",
@@ -1249,6 +1354,16 @@ class MotorCortexCluster:
 
                 self._calls_this_turn += 1
                 total_attempts += 1
+
+                # Autonomous cloud-only: an empty tactical plan may be a genuine planner
+                # failure OR the cloud went away. Distinguish them via the router's defer
+                # signal so cloud-unavailability DEFERS (resumable) instead of counting as
+                # a failed step and burning the job to nothing.
+                if planner_failed:
+                    _bgd = self._take_bg_defer()
+                    if _bgd is not None:
+                        _deferred_reason = _bgd
+                        break
 
                 if planner_failed:
                     # Planner produced nothing usable (local-model timeout/error
@@ -1525,10 +1640,56 @@ class MotorCortexCluster:
                 }
             )
 
-        # Job success = did we accomplish real work and weren't we blocked on the
-        # user? Strict criteria/verifier verdicts are advisory caveats, not failures.
-        # A job only fails if it produced nothing usable or is waiting on the user.
-        success = productive_steps > 0 and not clarification_question and not awaiting_approval
+        # ── Derive the terminal state (replaces the old success = productive_steps>0) ──
+        # Every path yields a JobOutcome with a machine + human reason and a non-empty
+        # summary. A mid-flight defer resumes; awaiting-user is not a failure; zero
+        # productive work fails honestly (never silent empty-success).
+        from brain.autonomy import JobOutcome
+
+        if _deferred_reason is not None:
+            return await self._deferred_outcome(
+                goal, job_id, _deferred_reason, steps_taken, results_log, stories_planned, emitter
+            )
+
+        _extra = {
+            "steps_taken_count": len(steps_taken),
+            "steps_planned_count": len(stories_planned),
+            "last_output": (last_result or {}).get("output", "") if last_result else "",
+            "ralph_mode": use_ralph,
+            "verification_issues": verification_issues,
+            "unverified_stories": unverified_stories,
+            "stopped_early": stopped_early,
+            "total_attempts": total_attempts,
+            "attempt_cap": _MAX_TOTAL_ATTEMPTS,
+            "complexity": complexity,
+            "predictions_made": predictions_made,
+            "predictions_confirmed": predictions_confirmed,
+        }
+        _common = dict(
+            steps=steps_taken, results=results_log, plan_steps=stories_planned,
+            stories_completed=len(steps_taken), stories_total=len(stories_planned), extra=_extra,
+        )
+        if clarification_question or awaiting_approval:
+            outcome = JobOutcome.awaiting_approval(
+                job_id, goal,
+                reason_human=clarification_question or "Waiting on your approval to proceed.",
+                clarification=clarification_question, productive_steps=productive_steps, **_common,
+            )
+        elif productive_steps > 0:
+            _prov = (results_log[-1][:200] if results_log and results_log[-1]
+                     else f"Completed {productive_steps} step(s).")
+            outcome = JobOutcome.completed(
+                job_id, goal, productive_steps=productive_steps, summary=_prov, **_common,
+            )
+        else:
+            _why = "The job ran but produced no usable result."
+            if stopped_early:
+                _why += f" ({stopped_early})"
+            outcome = JobOutcome.failed(
+                job_id, goal, reason_code="no_productive_steps", reason_human=_why,
+                productive_steps=productive_steps, **_common,
+            )
+        success = outcome.success
         if stopped_early and not success:
             logger.warning(
                 "[InternalJob] Stopped early (%s) with no productive steps", stopped_early
@@ -1545,6 +1706,9 @@ class MotorCortexCluster:
             ralph_mode=use_ralph,
             total_attempts=total_attempts,
             plan_steps=stories_planned,
+            state=outcome.state.value,
+            reason_code=outcome.reason_code,
+            reason_human=outcome.reason_human,
         )
         await emitter.emit_event(
             {
@@ -1556,6 +1720,9 @@ class MotorCortexCluster:
                 "awaiting_approval": awaiting_approval,
             }
         )
+        # Single terminal outcome event (durable + gate-independent): completed / failed
+        # / awaiting_approval all surface here regardless of the spoken-delivery gates.
+        await self._emit_outcome(emitter, outcome, goal)
         logger.info(
             "[InternalJob] Done: %s (success=%s, ralph=%s, %d/%d stories)",
             goal[:60],
@@ -1576,6 +1743,11 @@ class MotorCortexCluster:
             "job_id": job_id,
             "goal": goal,
             "success": success,
+            # Terminal-state model (brain.autonomy) — session_turn routes on `state`.
+            "state": outcome.state.value,
+            "reason_code": outcome.reason_code,
+            "reason_human": outcome.reason_human,
+            "backoff_s": outcome.backoff_s,
             "steps_taken_count": len(steps_taken),
             "steps_planned_count": len(stories_planned),
             "productive_steps": productive_steps,
@@ -1970,6 +2142,7 @@ class MotorCortexCluster:
                 results=results,
                 success=productive_steps > 0,
                 done=False,
+                state="running",
                 source=source,
                 ralph_mode=ralph_mode,
                 total_attempts=total_attempts,
@@ -1980,8 +2153,87 @@ class MotorCortexCluster:
                 success_criteria=success_criteria,
                 complexity=complexity,
             )
+            # Mirror the partial (state='running') outcome to the durable agent_jobs
+            # table after each chunk — so completed-so-far results survive even if the
+            # whole job later fails/defers/is killed (crash-safe, not all-or-nothing).
+            self._mirror_job_to_table(job_id)
         except Exception as e:
             logger.debug("[InternalJob] progress checkpoint failed (non-fatal): %s", e)
+
+    async def _pace_external(self, tool: str) -> None:
+        """Enforce a minimum inter-call interval per EXTERNAL endpoint (fetch_url,
+        world_*, cloud_action) so paging through data doesn't trip provider rate limits.
+        Internal filesystem/shell tools are never throttled. Off via motor_pacing_enabled."""
+        try:
+            if not bool(_brain_settings.get("motor_pacing_enabled", True)):
+                return
+            if tool == "cloud_action":
+                key = "cloud"
+            elif tool == "fetch_url":
+                key = "fetch"
+            elif tool in _WORLD_TOOLS:
+                key = "world"
+            else:
+                return  # internal tool — unthrottled
+            import time as _t
+
+            interval = float(_brain_settings.get("motor_pacing_min_interval_s") or 0.5)
+            wait = interval - (_t.monotonic() - self._pace_last.get(key, 0.0))
+            if wait > 0:
+                await asyncio.sleep(min(wait, interval))
+            self._pace_last[key] = _t.monotonic()
+        except Exception:
+            pass
+
+    def _recall_jobs(self, args: dict) -> str:
+        """recall_jobs tool: retrieve prior job results from the durable store so the
+        planner can REUSE past work instead of re-running it. Reads the agent_jobs table
+        (falls back to the JSON JobStore), filters by an optional topic, returns a compact
+        digest of state + summary per matching job."""
+        topic = str(args.get("topic") or args.get("query") or "").strip().lower()
+        try:
+            limit = max(1, min(int(args.get("limit") or 10), 25))
+        except Exception:
+            limit = 10
+        rows: list[dict] = []
+        try:
+            from brain import agent_jobs_store
+
+            rows = agent_jobs_store.list_recent(limit=50) or []
+        except Exception:
+            rows = []
+        if not rows:
+            try:
+                rows = self.job_store.list_recent(limit=50)
+            except Exception:
+                rows = []
+        if topic:
+            rows = [
+                r for r in rows
+                if topic in f"{r.get('goal', '')} {r.get('summary') or r.get('spoken_summary') or ''}".lower()
+            ]
+        rows = rows[:limit]
+        if not rows:
+            return "[recall_jobs] No prior job results match."
+        lines = []
+        for r in rows:
+            st = r.get("state") or ("completed" if r.get("success") else "failed")
+            goal = (r.get("goal") or "")[:90]
+            summ = (r.get("summary") or r.get("spoken_summary") or r.get("reason_human") or "")[:220]
+            lines.append(f"- [{st}] {goal}: {summ}")
+        return "Prior job results (reuse instead of re-running):\n" + "\n".join(lines)
+
+    def _mirror_job_to_table(self, job_id: str) -> None:
+        """Best-effort upsert of the JobStore record (state, results, links) into the
+        durable agent_jobs DB table. No-op in local/companion mode (no Supabase)."""
+        try:
+            from brain import agent_jobs_store
+
+            record = self.job_store.get(job_id)
+            if record:
+                agent_jobs_store.upsert(record)
+        except Exception as e:
+            logger.debug("[InternalJob] agent_jobs mirror failed (non-fatal): %s", e)
 
     async def _notify_job_complete(
         self,
@@ -1996,8 +2248,11 @@ class MotorCortexCluster:
         ralph_mode: bool = False,
         total_attempts: int = 0,
         plan_steps: list[dict] | None = None,
+        state: str = "",
+        reason_code: str = "",
+        reason_human: str = "",
     ) -> None:
-        """Fire after_job hooks and persist the job record."""
+        """Fire after_job hooks and persist the job record (JSON store + durable table)."""
         # Persist output before subsystem hooks (hooks may raise)
         if job_id:
             try:
@@ -2007,12 +2262,17 @@ class MotorCortexCluster:
                     steps=steps,
                     results=results,
                     success=success,
+                    state=state,
+                    reason_code=reason_code,
+                    reason_human=reason_human,
                     task_id=task_id,
                     source=source,
                     ralph_mode=ralph_mode,
                     total_attempts=total_attempts,
                     plan_steps=plan_steps,
                 )
+                # Terminal upsert to the durable agent_jobs table (same row by job_id).
+                self._mirror_job_to_table(job_id)
             except Exception as e:
                 logger.warning("[MotorCortex] JobStore.save failed: %s", e)
 
@@ -2357,6 +2617,8 @@ class MotorCortexCluster:
                     args.get("path", "."),
                     args.get("pattern", "*"),
                     args.get("recursive", False),
+                    args.get("limit"),
+                    args.get("offset", 0),
                 )
             elif tool == "run_command":
                 return await self._dispatcher._run_command(args.get("cmd", ""), args.get("cwd", ""))
@@ -2367,6 +2629,8 @@ class MotorCortexCluster:
                     args.get("path", "."),
                     args.get("query", ""),
                     args.get("file_pattern", "*"),
+                    args.get("limit"),
+                    args.get("offset", 0),
                 )
             elif tool == "fetch_url":
                 _url = args.get("url", "")

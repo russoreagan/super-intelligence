@@ -187,6 +187,8 @@ def build_api_router(
     confirm_runner: ConfirmRunner | None = None,
     approvals_list_runner: Callable[[str, bool], list] | None = None,
     approval_resolve_runner: Callable[[str, str, bool, bool], dict] | None = None,
+    jobs_list_runner: Callable[[int, str | None], list] | None = None,
+    job_get_runner: Callable[[str], dict | None] | None = None,
     purge_runner: PurgeRunner | None = None,
     extract_runner: ExtractRunner | None = None,
     tts_runner: TtsRunner | None = None,
@@ -687,6 +689,33 @@ def build_api_router(
         # Owner-key callers may also resolve autonomous/owner-lane items (see GET above).
         res = approval_resolve_runner(approval_id, s.end_user_id, approve, bool(ctx.get("owner"))) or {}
         return {"session_id": session_id, "end_user_id": s.end_user_id, "approved": approve, **res}
+
+    # ── Autonomous job history (durable; gate-independent) ─────────────────────
+    # Job outcomes are pollable here regardless of any WS/voice gate — a client that
+    # was disconnected while a job ran still reads its state + results. Backed by the
+    # agent_jobs table (falls back to the JSON JobStore in local/companion mode).
+    @router.get("/jobs")
+    async def list_jobs(
+        limit: int = 20,
+        state: str | None = None,
+        authorization: str | None = Header(default=None),
+    ):
+        """Recent autonomous job outcomes (state, reason, summary) for this deployment."""
+        _require(authorization)
+        if jobs_list_runner is None:
+            return {"jobs": []}
+        return {"jobs": jobs_list_runner(int(limit or 20), state) or []}
+
+    @router.get("/jobs/{job_id}")
+    async def get_job(job_id: str, authorization: str | None = Header(default=None)):
+        """Full record for one job (steps, results, source links, summary)."""
+        _require(authorization)
+        if job_get_runner is None:
+            raise HTTPException(status_code=501, detail="job history is not available on this server")
+        rec = job_get_runner(job_id)
+        if rec is None:
+            raise HTTPException(status_code=404, detail="unknown job_id")
+        return rec
 
     # ── Audio (optional, partner-gated) ───────────────────────────────────────
     # Stateless: no session needed. TTS exposes the affect→voice mapping (the
@@ -1268,6 +1297,8 @@ class ApiServer:
         confirm_runner: ConfirmRunner | None = None,
         approvals_list_runner: Callable[[str, bool], list] | None = None,
         approval_resolve_runner: Callable[[str, str, bool, bool], dict] | None = None,
+        jobs_list_runner: Callable[[int, str | None], list] | None = None,
+        job_get_runner: Callable[[str], dict | None] | None = None,
         purge_runner: PurgeRunner | None = None,
         extract_runner: ExtractRunner | None = None,
         tts_runner: TtsRunner | None = None,
@@ -1317,6 +1348,8 @@ class ApiServer:
                 confirm_runner=confirm_runner,
                 approvals_list_runner=approvals_list_runner,
                 approval_resolve_runner=approval_resolve_runner,
+                jobs_list_runner=jobs_list_runner,
+                job_get_runner=job_get_runner,
                 purge_runner=purge_runner,
                 extract_runner=extract_runner,
                 tts_runner=tts_runner,

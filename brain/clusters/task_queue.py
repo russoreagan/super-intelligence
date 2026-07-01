@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 TASK_QUEUE_PATH = SECOND_BRAIN_ROOT / "task_queue.json"
 
-Status = Literal["pending", "running", "completed", "failed", "blocked"]
+Status = Literal["pending", "running", "completed", "failed", "blocked", "deferred"]
 Source = Literal["user", "self", "recovery"]
 
 # Cap total stored tasks (completed + failed entries are trimmed when over limit)
@@ -72,6 +72,11 @@ class Task:
     # the pod mid-execution can't re-run on every boot indefinitely. Defaults to 0 for
     # entries written before this field existed (see from_dict).
     recovery_count: int = 0
+    # Deferral backoff: when a job DEFERS (autonomous cloud unavailable — soft-budget
+    # pause / rate / cloud-unreachable), it is parked as status='deferred' with a
+    # not_before wall-clock time. take_next() auto-promotes it back to 'pending' once
+    # due; before that it reads as idle (not busy-work). Default 0.0 = due immediately.
+    not_before: float = 0.0
     # Routing origin: the lane this task descended from, captured at enqueue time
     # from the turn context (brain.turn_ctx). When a job is deferred DURING an
     # agent-lane turn, it carries that agent so its later execution can run on the
@@ -253,11 +258,26 @@ class PersistentTaskQueue:
         )
         return task
 
+    def _promote_due_deferred(self) -> None:
+        """Return any deferred task whose backoff has elapsed to the pending pool."""
+        now = time.time()
+        promoted = 0
+        for t in self._tasks:
+            if t.status == "deferred" and t.not_before <= now:
+                t.status = "pending"
+                t.not_before = 0.0
+                promoted += 1
+        if promoted:
+            self._save()
+            logger.info("[TaskQueue] Promoted %d due deferred task(s) → pending", promoted)
+
     def take_next(self) -> Task | None:
         """
         Pop the highest-priority pending task, marking it 'running'.
-        Returns None if the queue is empty.
+        Returns None if the queue is empty. Deferred tasks whose backoff has elapsed
+        are promoted to pending first, so a requeued (deferred) job resumes when due.
         """
+        self._promote_due_deferred()
         pending = sorted(
             [t for t in self._tasks if t.status == "pending"],
             key=lambda t: (t.priority, t.created_at),
@@ -300,6 +320,27 @@ class PersistentTaskQueue:
                 logger.info("[TaskQueue] Task [%s] blocked: %s", task_id, reason[:80])
                 return
         logger.warning("[TaskQueue] mark_blocked: task %r not found", task_id)
+
+    def mark_deferred(self, task_id: str, backoff_s: float = 30.0, reason: str = "") -> None:
+        """Park a running task as deferred with an exponential-ish backoff. The task
+        keeps its job_id so it RESUMES from its last checkpoint when promoted. Unlike
+        'blocked' (awaiting the user) a deferred task auto-promotes once not_before
+        elapses — no user action needed. Excluded from has_pending() until due."""
+        now = time.time()
+        for t in self._tasks:
+            if t.id == task_id:
+                # Compound the backoff on repeated defers so a persistently-unreachable
+                # cloud parks the queue instead of spinning (bounded to ~1h).
+                prior = 2 if t.status == "deferred" else 1
+                t.status = "deferred"
+                t.not_before = now + min(3600.0, max(1.0, backoff_s) * prior)
+                t.started_at = None
+                self._save()
+                logger.info(
+                    "[TaskQueue] Task [%s] deferred %.0fs (%s)", task_id, t.not_before - now, reason[:60]
+                )
+                return
+        logger.warning("[TaskQueue] mark_deferred: task %r not found", task_id)
 
     def unblock(self, task_id: str) -> bool:
         """Re-queue a blocked task as pending so it runs on the next idle cycle.
@@ -366,11 +407,18 @@ class PersistentTaskQueue:
 
     # ── Introspection ─────────────────────────────────────────────────────────
 
+    def _is_ready(self, t: Task, now: float) -> bool:
+        """Pending, or a deferred task whose backoff has elapsed (ready to resume).
+        A not-yet-due deferred task reads as idle so the brain doesn't busy-wait on it."""
+        return t.status == "pending" or (t.status == "deferred" and t.not_before <= now)
+
     def has_pending(self) -> bool:
-        return any(t.status == "pending" for t in self._tasks)
+        now = time.time()
+        return any(self._is_ready(t, now) for t in self._tasks)
 
     def pending_count(self) -> int:
-        return sum(1 for t in self._tasks if t.status == "pending")
+        now = time.time()
+        return sum(1 for t in self._tasks if self._is_ready(t, now))
 
     def is_running(self) -> bool:
         return any(t.status == "running" for t in self._tasks)

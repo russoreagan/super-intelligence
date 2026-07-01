@@ -208,23 +208,11 @@ class ResultReporter:
     """Generates a spoken summary of a completed internal job."""
 
     def __init__(self, router: ModelRouter) -> None:
+        # Cloud-first (Haiku): the old RunPod-primary was the wrong first hop on hosted
+        # (no local backend) and returned "" whenever the pod was down. Haiku is cheap,
+        # fast, and reliable; a deterministic template is the floor when it yields nothing.
         self._cell = IntegratorCell(
             name="result_reporter",
-            cluster="frontal",
-            model="runpod",
-            system_prompt=_REPORTER_SYSTEM,
-            topics=[],
-            max_calls_per_turn=1,
-            timeout_seconds=10.0,
-            locality="cloud",
-            max_tokens=200,
-        )
-        self._cell.set_router(router)
-        # Fallback: a short spoken summary is cheap and latency-tolerant, so if the
-        # local/RunPod model returns nothing usable (cold pod, degeneration), retry
-        # once on Haiku rather than persisting an empty/garbled summary into the job.
-        self._fallback_cell = IntegratorCell(
-            name="result_reporter_fallback",
             cluster="frontal",
             model="haiku",
             system_prompt=_REPORTER_SYSTEM,
@@ -234,10 +222,19 @@ class ResultReporter:
             locality="cloud",
             max_tokens=200,
         )
-        self._fallback_cell.set_router(router)
+        self._cell.set_router(router)
 
     async def report(self, job_summary: dict, turn_id: str) -> str:
-        """Return a 1-2 sentence summary suitable for TTS. Empty string on failure."""
+        """Return a 1-2 sentence summary suitable for TTS. NEVER empty — falls back to a
+        deterministic template built from the job outcome, so a completed (or deferred/
+        stopped/failed) job always has a retrievable, non-empty summary."""
+        state = job_summary.get("state") or ("completed" if job_summary.get("success") else "failed")
+
+        # Non-completed terminal states are narrated deterministically from the outcome —
+        # more accurate (and cheaper) than asking a model to describe a pause/stop.
+        if state in ("deferred", "stopped_budget", "awaiting_approval", "failed"):
+            return self._state_summary(job_summary, state)
+
         goal = job_summary.get("goal", "")
         success = job_summary.get("success", False)
         steps = job_summary.get("steps") or []
@@ -261,29 +258,44 @@ class ResultReporter:
 
         def _clean(text: str | None) -> str:
             cleaned = (text or "").strip().strip('"').strip()
-            # A JSON echo from the local model is a non-answer — drop it so the
-            # primary path falls through to the Haiku fallback (and the fallback,
-            # if it also degenerates, yields "" rather than a raw {"...": ...}
-            # blob spoken to the user).
+            # A JSON echo is a non-answer — drop it so we fall through to the template.
             return "" if looks_like_json_blob(cleaned) else cleaned
 
-        # Primary: local/RunPod model.
         try:
             self._cell.reset_turn(turn_id)
             text = _clean(await self._cell.call([{"role": "user", "content": prompt}]))
         except Exception as e:
-            logger.debug("[ResultReporter] primary (runpod) failed: %s", e)
+            logger.debug("[ResultReporter] Haiku report failed: %s", e)
             text = ""
+        return text or self._deterministic_summary(job_summary)
 
-        if text:
-            return text
+    @staticmethod
+    def _state_summary(job_summary: dict, state: str) -> str:
+        """Owner-facing line for a non-completed terminal state (never empty)."""
+        reason = (job_summary.get("reason_human") or "").strip()
+        if reason:
+            return reason
+        goal = (job_summary.get("goal") or "the task").strip()[:80]
+        return {
+            "deferred": f"I paused “{goal}” and will retry it shortly.",
+            "stopped_budget": "I hit today's autonomous spend limit and stopped.",
+            "awaiting_approval": f"“{goal}” needs your approval before I can continue.",
+            "failed": f"I couldn't complete “{goal}”.",
+        }.get(state, f"Update on “{goal}”.")
 
-        # Fallback: Haiku. The router already strips ChatML tokens, so an empty
-        # result here means the local model produced nothing usable.
-        try:
-            self._fallback_cell.reset_turn(f"{turn_id}_fallback")
-            logger.info("[ResultReporter] primary empty — falling back to Haiku")
-            return _clean(await self._fallback_cell.call([{"role": "user", "content": prompt}]))
-        except Exception as e:
-            logger.debug("[ResultReporter] Haiku fallback failed: %s", e)
-            return ""
+    @staticmethod
+    def _deterministic_summary(job_summary: dict) -> str:
+        """Template floor for a completed job when the model yields nothing — guarantees
+        report() is never empty, so the job always carries a retrievable summary."""
+        goal = (job_summary.get("goal") or "the task").strip()[:80]
+        ps = int(job_summary.get("productive_steps") or 0)
+        links = job_summary.get("source_links") or []
+        files = job_summary.get("written_files") or []
+        bits = [f"Finished “{goal}”"]
+        if ps:
+            bits.append(f"in {ps} step{'s' if ps != 1 else ''}")
+        if files:
+            bits.append(f"(wrote {len(files)} file{'s' if len(files) != 1 else ''})")
+        elif links:
+            bits.append(f"(from {len(links)} source{'s' if len(links) != 1 else ''})")
+        return " ".join(bits) + "."

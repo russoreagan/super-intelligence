@@ -98,6 +98,22 @@ READONLY_COMMANDS = {
 }
 
 
+def _page_size(limit: int | None = None) -> int:
+    """Records per list/search page: the caller's explicit limit, else the
+    motor_query_page_size setting (default 50). Bounded so a single step stays small."""
+    if limit:
+        try:
+            return max(1, min(int(limit), 500))
+        except Exception:
+            pass
+    try:
+        from brain.settings import settings as _s
+
+        return max(1, min(int(_s.get("motor_query_page_size") or 50), 500))
+    except Exception:
+        return 50
+
+
 class ToolDispatcher:
     """Validates and executes filesystem/shell tool calls on behalf of MotorCortexCluster."""
 
@@ -300,7 +316,10 @@ class ToolDispatcher:
         except PermissionError:
             return f"[error] Permission denied: {resolved}"
 
-    def _list_files(self, path: str, pattern: str = "*", recursive: bool = False) -> str:
+    def _list_files(
+        self, path: str, pattern: str = "*", recursive: bool = False,
+        limit: int | None = None, offset: int = 0,
+    ) -> str:
         safe, resolved = self._validate_path(path)
         if not safe:
             return f"[blocked] {resolved}"
@@ -308,13 +327,18 @@ class ToolDispatcher:
             p = Path(resolved)
             if not p.is_dir():
                 return f"[error] Not a directory: {resolved}"
-            matches = list(p.rglob(pattern)) if recursive else list(p.glob(pattern))
+            matches = sorted(list(p.rglob(pattern)) if recursive else list(p.glob(pattern)))
             if not matches:
                 return "[empty] no files matched"
-            lines = [str(m.relative_to(p)) for m in sorted(matches)[:200]]
-            result = "\n".join(lines)
-            if len(matches) > 200:
-                result += f"\n[... {len(matches) - 200} more files not shown ...]"
+            # Bounded page + machine-readable pagination signal so the planner requests
+            # ~one page at a time (small, fast, easy-to-process) and pages for the rest.
+            page_size = _page_size(limit)
+            off = max(0, int(offset or 0))
+            page = matches[off:off + page_size]
+            result = "\n".join(str(m.relative_to(p)) for m in page)
+            end = off + len(page)
+            if len(matches) > end:
+                result += f"\n[... {len(matches) - end} more — call again with offset={end}]"
             return result
         except PermissionError:
             return f"[error] Permission denied: {resolved}"
@@ -374,7 +398,10 @@ class ToolDispatcher:
         except Exception as e:
             return f"[error] {e}"
 
-    def _search_files(self, path: str, query: str, file_pattern: str = "*") -> str:
+    def _search_files(
+        self, path: str, query: str, file_pattern: str = "*",
+        limit: int | None = None, offset: int = 0,
+    ) -> str:
         safe, resolved = self._validate_path(path)
         if not safe:
             return f"[blocked] {resolved}"
@@ -382,7 +409,11 @@ class ToolDispatcher:
             return "[error] Empty search query."
         try:
             p = Path(resolved)
+            page_size = _page_size(limit)
+            off = max(0, int(offset or 0))
+            cap = off + page_size  # collect exactly enough to fill the requested page
             matches: list[str] = []
+            more = False
             for fpath in p.rglob(file_pattern):
                 if not fpath.is_file():
                     continue
@@ -392,17 +423,19 @@ class ToolDispatcher:
                         if query.lower() in line.lower():
                             rel = fpath.relative_to(p)
                             matches.append(f"{rel}:{i}: {line.rstrip()}")
-                            if len(matches) >= 100:
+                            if len(matches) > cap:  # one past the page → there's more
+                                more = True
                                 break
                 except Exception:
                     continue
-                if len(matches) >= 100:
+                if more:
                     break
             if not matches:
                 return f"(no matches for '{query}' in {resolved})"
-            result = "\n".join(matches)
-            if len(matches) == 100:
-                result += "\n[... search limited to 100 results ...]"
+            page = matches[off:cap]
+            result = "\n".join(page)
+            if more:
+                result += f"\n[... more — call again with offset={cap}]"
             return result
         except PermissionError:
             return f"[error] Permission denied: {resolved}"
@@ -462,11 +495,24 @@ class ToolDispatcher:
             async with httpx.AsyncClient(
                 follow_redirects=True, timeout=15, headers=headers
             ) as client:
-                # One retry with backoff on rate-limit / transient upstream errors.
-                for attempt in range(2):
+                # Exponential backoff (+jitter) on rate-limit / transient upstream
+                # errors — riding out a brief 429 instead of failing the step, without
+                # hammering the endpoint into a longer block. Honor Retry-After if given.
+                from brain.settings import settings as _s_http
+
+                _max = int(_s_http.get("motor_http_retries") or 3)
+                for attempt in range(_max):
                     r = await client.get(url)
-                    if r.status_code in (429, 503) and attempt == 0:
-                        await asyncio.sleep(1.5)
+                    if r.status_code in (429, 503) and attempt < _max - 1:
+                        ra = r.headers.get("retry-after")
+                        try:
+                            delay = float(ra) if ra else 0.0
+                        except Exception:
+                            delay = 0.0
+                        if delay <= 0:
+                            # 0.75, 1.5, 3.0, … + jitter derived from attempt (no RNG).
+                            delay = 0.75 * (2 ** attempt) + (attempt * 0.13)
+                        await asyncio.sleep(min(delay, 10.0))
                         continue
                     break
                 r.raise_for_status()

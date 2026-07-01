@@ -57,7 +57,15 @@ def _eval_trigger(value: float | None, trigger: str, level: float | None) -> boo
 
 async def scan_watchlist(md: MarketData) -> list[dict]:
     alerts: list[dict] = []
-    for entry in store.watchlist_symbols():
+    # Bound the scan so one pass stays small and doesn't hammer the market-data API
+    # (trading_max_scan_symbols was defined but never enforced here).
+    try:
+        from brain.settings import settings as _s
+
+        _cap = int(_s.get("trading_max_scan_symbols") or 50)
+    except Exception:
+        _cap = 50
+    for entry in store.watchlist_symbols()[:_cap]:
         symbol = entry["symbol"].upper()
         bars = await md.history(symbol, days=250)
         if not bars:

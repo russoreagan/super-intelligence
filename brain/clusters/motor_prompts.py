@@ -85,6 +85,9 @@ Return JSON with exactly this shape:
 }}
 
 If the request is conversational and needs no tool, return {{"tool": "none", "args": {{}}, "reason": "..."}}.
+If a prior step's output ends with a pagination marker like "[... N more — call again with offset=X]",
+do NOT re-request the whole list: issue the SAME tool with that offset to fetch the next page. Keep
+each request bounded (a page at a time) so steps stay small and external APIs aren't overloaded.
 If you genuinely need information from the user to proceed and cannot reasonably guess, return
 {{"tool": "ask_user", "args": {{"question": "..."}}, "reason": "..."}} — use sparingly; only when blocked.
 Return ONLY the JSON object. No explanation."""
@@ -151,7 +154,15 @@ Guidelines:
 - acceptance_criteria must be verifiable from tool output (not vague like "it works")
 - complexity=high when: multiple interdependent changes, external services, or unclear path
 - complexity=low for single read/lookup operations
-- Adjust plan ambition based on the "Brain state" provided in the user message"""
+- Adjust plan ambition based on the "Brain state" provided in the user message
+- BOUNDED REQUESTS: when a story lists / searches / queries data (files, API records,
+  a watchlist, search results), keep each step to at most ONE page (~50 records). Do NOT
+  ask to "list everything" or pull a whole large dataset in one step — add a follow-up
+  story to continue (page) if more may exist. Small, easy-to-process steps finish fast and
+  don't trip external rate limits.
+- REUSE PRIOR WORK: before a data-gathering job, consider a first story that calls the
+  `recall_jobs` tool to check whether a previous job already produced these results —
+  reuse them instead of re-running the work."""
 
 CRITERIA_CHECK_SYSTEM = """You are a quality gate verifying whether a task story's acceptance criteria were met.
 Given the story description, acceptance criteria, and the tool execution output, evaluate each criterion.

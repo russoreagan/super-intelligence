@@ -283,6 +283,21 @@ class ModelRouter:
         # Daily cloud USD tracking — in-memory; loaded from disk lazily.
         self._cloud_usd_today: float = 0.0
         self._cloud_usd_date: str = ""  # "YYYY-MM-DD" (UTC)
+        # Autonomous-only slice of today's spend (charged when _bg_mode). A separate
+        # pool so a busy interactive day never trips the autonomous soft/hard caps and
+        # vice-versa; persisted alongside `usd` in cloud_usage.json (see AutonomousBudget).
+        self._cloud_usd_autonomous_today: float = 0.0
+        # UTC date on which the owner cleared the autonomous soft-pause ("keep spending
+        # today"); soft pause is lifted while this == today, still bounded by the hard cap.
+        self._autonomous_soft_cleared_date: str = ""
+        # One-shot signal set when an autonomous (bg) cloud call could not proceed
+        # (rate bucket empty / budget / cloud unreachable) instead of degrading to a
+        # (non-existent) local backend. The motor consumes it via take_bg_defer() to
+        # turn the empty planner result into a clean DEFERRED job rather than a failure.
+        self._bg_defer_reason = None
+        # Injected SpendRiskGate (session setup) so the router can feed it cloud-health
+        # timeouts/successes. Optional — never assume it's set.
+        self._spend_gate = None
         # Per-agent token + cost meter for the Agents dashboard: which engine-API
         # agent drove the model, how much. Keyed by agent_id (turn_ctx lane);
         # owner/idle turns bucket under "owner" and are hidden from the dashboard.
@@ -319,8 +334,9 @@ class ModelRouter:
 
     # ── Daily cloud USD budget ────────────────────────────────────────────────
 
-    def _load_cloud_usd_today(self) -> float:
-        """Load today's (UTC) accumulated cloud USD from the persistent usage file."""
+    def _load_cloud_usage(self) -> dict:
+        """Load today's (UTC) persisted usage record ({usd, usd_autonomous, soft_cleared}).
+        Empty dict if the file is missing or from a previous UTC day."""
         import datetime as _dt
         import json
 
@@ -330,20 +346,33 @@ class ModelRouter:
             with open(path) as f:
                 data = json.load(f)
             if data.get("date") == today:
-                return float(data.get("usd", 0.0))
+                return data
         except (FileNotFoundError, Exception):
             pass
-        return 0.0
+        return {}
+
+    def _load_cloud_usd_today(self) -> float:
+        """Back-compat: today's total cloud USD (interactive + autonomous)."""
+        return float(self._load_cloud_usage().get("usd", 0.0))
 
     def _persist_cloud_usd(self) -> None:
-        """Persist today's cloud USD spend to disk (best-effort)."""
+        """Persist today's cloud USD spend to disk (best-effort). Carries the autonomous
+        slice and the soft-pause 'cleared' date so both survive a restart within the day."""
         import json
 
         try:
             path = os.path.realpath(_CLOUD_USAGE_PATH)
             os.makedirs(os.path.dirname(path), exist_ok=True)
             with open(path, "w") as f:
-                json.dump({"date": self._cloud_usd_date, "usd": self._cloud_usd_today}, f)
+                json.dump(
+                    {
+                        "date": self._cloud_usd_date,
+                        "usd": self._cloud_usd_today,
+                        "usd_autonomous": getattr(self, "_cloud_usd_autonomous_today", 0.0),
+                        "soft_cleared": getattr(self, "_autonomous_soft_cleared_date", ""),
+                    },
+                    f,
+                )
         except Exception as e:
             logger.debug("[ModelRouter] cloud_usage persist failed: %s", e)
 
@@ -354,10 +383,15 @@ class ModelRouter:
         return (in_tok * ri + out_tok * ro + cache_read * rc) / 1_000_000
 
     def _charge_cloud_usd(self, model_id: str, in_tok: int, out_tok: int, cache_read: int) -> float:
-        """Compute and accumulate USD for a completed cloud call. Returns call cost."""
+        """Compute and accumulate USD for a completed cloud call. Returns call cost.
+        When in background mode, the spend also accrues to the autonomous-only pool."""
         usd = self._price_usd(model_id, in_tok, out_tok, cache_read)
         if usd > 0:
             self._cloud_usd_today = getattr(self, "_cloud_usd_today", 0.0) + usd
+            if self._bg_mode:
+                self._cloud_usd_autonomous_today = (
+                    getattr(self, "_cloud_usd_autonomous_today", 0.0) + usd
+                )
             self._persist_cloud_usd()
         return usd
 
@@ -368,7 +402,10 @@ class ModelRouter:
         today_str = _dt.date.today().isoformat()
         if getattr(self, "_cloud_usd_date", "") != today_str:
             self._cloud_usd_date = today_str
-            self._cloud_usd_today = self._load_cloud_usd_today()
+            data = self._load_cloud_usage()
+            self._cloud_usd_today = float(data.get("usd", 0.0))
+            self._cloud_usd_autonomous_today = float(data.get("usd_autonomous", 0.0))
+            self._autonomous_soft_cleared_date = data.get("soft_cleared", "") or ""
 
     def _effective_daily_usd_cap(self) -> float:
         """Today's USD ceiling: the org `cloud_daily_usd_budget` setting folded with any
@@ -540,6 +577,76 @@ class ModelRouter:
         except Exception as e:
             logger.debug("[ModelRouter] record_cloud_usage failed: %s", e)
             return 0.0
+
+    # ── Autonomy: separate spend pool + defer signalling (see brain.autonomy) ───
+
+    def set_spend_gate(self, gate) -> None:
+        """Inject the SpendRiskGate so the router can report cloud-health (bg call
+        timeouts/successes) that feed the gate's CLOUD_UNREACHABLE cooldown."""
+        self._spend_gate = gate
+
+    def autonomous_usd_today(self) -> float:
+        """Today's (UTC) autonomous-only cloud spend — the pool the soft/hard caps bind."""
+        self._refresh_cloud_usd_today()
+        return getattr(self, "_cloud_usd_autonomous_today", 0.0)
+
+    def autonomous_soft_cleared(self) -> bool:
+        """True if the owner cleared the soft pause for the current UTC day."""
+        self._refresh_cloud_usd_today()
+        import datetime as _dt
+
+        return getattr(self, "_autonomous_soft_cleared_date", "") == _dt.date.today().isoformat()
+
+    def clear_autonomous_soft_pause(self) -> None:
+        """Lift the autonomous soft pause for the rest of today (owner approved 'continue')."""
+        import datetime as _dt
+
+        self._refresh_cloud_usd_today()
+        self._autonomous_soft_cleared_date = _dt.date.today().isoformat()
+        self._persist_cloud_usd()
+
+    def bg_bucket_empty(self) -> bool:
+        """True when the background cloud token bucket is exhausted (rate-limited)."""
+        self._refill_bg_bucket()
+        return self._bg_cloud_bucket <= 0
+
+    def take_bg_defer(self):
+        """Consume (and clear) the one-shot bg-defer signal. Returns a DeferReason or None.
+        The motor calls this right after an autonomous cloud call that came back empty, to
+        tell a genuine planner failure apart from 'cloud was unavailable → defer the job'."""
+        r = getattr(self, "_bg_defer_reason", None)
+        self._bg_defer_reason = None
+        return r
+
+    def _bg_precheck(self, cluster: str, cell: str):
+        """Up-front autonomous-call gate: returns a DeferReason if a bg cloud call must
+        NOT proceed (rate bucket empty, or the global daily USD ceiling is exhausted),
+        else None. The autonomous soft/hard caps themselves are enforced by the gate
+        before the job plans; this is the per-call backstop that replaces degrade-to-local."""
+        from brain.autonomy.reasons import DeferReason
+
+        self._refill_bg_bucket()
+        if self._bg_cloud_bucket <= 0:
+            return DeferReason.RATE_BUCKET_EMPTY
+        if self.cloud_budget_exhausted():
+            return DeferReason.BUDGET_SOFT_PAUSE
+        return None
+
+    def _note_cloud_timeout(self) -> None:
+        g = getattr(self, "_spend_gate", None)
+        if g is not None:
+            try:
+                g.note_cloud_timeout()
+            except Exception:
+                pass
+
+    def _notify_cloud_ok(self) -> None:
+        g = getattr(self, "_spend_gate", None)
+        if g is not None:
+            try:
+                g.note_cloud_success()
+            except Exception:
+                pass
 
     # ── Background mode controls ──────────────────────────────────────────────
 
@@ -759,6 +866,7 @@ class ModelRouter:
         from brain.settings import settings as _settings
 
         _s = _settings.get
+        self._bg_defer_reason = None  # cleared each call; set only if this call defers
 
         model_key, model_id = self._resolve_model_id(model_key, cluster)
         # A lite brain can't honor a local-only cell (no pod) — relax locality so the
@@ -785,42 +893,31 @@ class ModelRouter:
             model_id = model_key
             _is_cloud = False
 
-        # Background mode: apply per-hour rate limit + per-call caps to protect
-        # against runaway spend on autonomous work.
+        # Background mode (autonomous): CLOUD-ONLY. Instead of degrading to a local
+        # backend that doesn't exist on hosted, an autonomous cloud call that can't
+        # proceed (rate bucket empty / daily USD ceiling) sets the one-shot defer signal
+        # and returns empty — the motor turns that into a cleanly DEFERRED (requeued) job.
         if self._bg_mode and _is_cloud:
-            self._refill_bg_bucket()
-            rate_per_hr = float(_s("bg_cloud_token_rate") or 100_000)
-            if self._bg_cloud_bucket <= 0 and not self._local_disabled:
-                logger.warning(
-                    "[Resource] Background rate-limited (bucket: %d tokens, "
-                    "refilling at %.0f/hr, session total: %d) "
-                    "— routing %s/%s to local for this call.",
-                    int(self._bg_cloud_bucket),
-                    rate_per_hr,
-                    self._bg_cloud_tokens_used,
+            _defer = self._bg_precheck(cluster, cell)
+            if _defer is not None:
+                self._bg_defer_reason = _defer
+                return ""
+            # Cap output tokens for background calls.
+            call_cap = int(_s("bg_cloud_max_tokens_per_call") or 512)
+            if max_tokens > call_cap:
+                logger.debug(
+                    "[Resource] Background call %s/%s: capping max_tokens %d→%d",
                     cluster,
                     cell,
+                    max_tokens,
+                    call_cap,
                 )
-                model_key = "local"
-                model_id = "local"
-                _is_cloud = False
-            else:
-                # Cap output tokens for background calls
-                call_cap = int(_s("bg_cloud_max_tokens_per_call") or 512)
-                if max_tokens > call_cap:
-                    logger.debug(
-                        "[Resource] Background call %s/%s: capping max_tokens %d→%d",
-                        cluster,
-                        cell,
-                        max_tokens,
-                        call_cap,
-                    )
-                    max_tokens = call_cap
+                max_tokens = call_cap
 
-        # Daily cloud USD budget — hard ceiling across all cloud providers. A full
-        # brain degrades to local at the cap; a lite brain (no pod) raises
-        # CloudBudgetExceeded instead, so it can never bill past the ceiling.
-        if _is_cloud and self._enforce_cloud_budget(cluster, cell):
+        # Daily cloud USD budget — hard ceiling across all cloud providers. INTERACTIVE
+        # only: a full brain degrades to local at the cap; a lite brain (no pod) raises
+        # CloudBudgetExceeded. Autonomous (bg) budget is handled by _bg_precheck above.
+        if not self._bg_mode and _is_cloud and self._enforce_cloud_budget(cluster, cell):
             model_key = "local"
             model_id = "local"
             _is_cloud = False
@@ -895,8 +992,19 @@ class ModelRouter:
                     else:
                         text, in_tok, out_tok, cache_read, cache_write = await coro
             except TimeoutError:
+                if self._bg_mode:
+                    from brain.autonomy.reasons import DeferReason
+
+                    logger.warning(
+                        "[Resource] Background cloud call %s/%s timed out after %.0fs — deferring "
+                        "(cloud-only; no local fallback for autonomous work).",
+                        cluster, cell, bg_timeout,
+                    )
+                    self._note_cloud_timeout()
+                    self._bg_defer_reason = DeferReason.CLOUD_UNREACHABLE
+                    return ""
                 logger.warning(
-                    "[Resource] Background cloud call %s/%s timed out after %.0fs — falling back to local.",
+                    "[Resource] Cloud call %s/%s timed out after %.0fs — falling back to local.",
                     cluster,
                     cell,
                     bg_timeout,
@@ -949,8 +1057,19 @@ class ModelRouter:
                     else:
                         text, in_tok, out_tok = await coro
             except TimeoutError:
+                if self._bg_mode:
+                    from brain.autonomy.reasons import DeferReason
+
+                    logger.warning(
+                        "[Resource] Background cloud call %s/%s timed out after %.0fs — deferring "
+                        "(cloud-only; no local fallback for autonomous work).",
+                        cluster, cell, bg_timeout,
+                    )
+                    self._note_cloud_timeout()
+                    self._bg_defer_reason = DeferReason.CLOUD_UNREACHABLE
+                    return ""
                 logger.warning(
-                    "[Resource] Background cloud call %s/%s timed out after %.0fs — falling back to local.",
+                    "[Resource] Cloud call %s/%s timed out after %.0fs — falling back to local.",
                     cluster,
                     cell,
                     bg_timeout,
@@ -970,8 +1089,19 @@ class ModelRouter:
                 else:
                     text, in_tok, out_tok = await coro
             except TimeoutError:
+                if self._bg_mode:
+                    from brain.autonomy.reasons import DeferReason
+
+                    logger.warning(
+                        "[Resource] Background cloud call %s/%s timed out after %.0fs — deferring "
+                        "(cloud-only; no local fallback for autonomous work).",
+                        cluster, cell, bg_timeout,
+                    )
+                    self._note_cloud_timeout()
+                    self._bg_defer_reason = DeferReason.CLOUD_UNREACHABLE
+                    return ""
                 logger.warning(
-                    "[Resource] Background cloud call %s/%s timed out after %.0fs — falling back to local.",
+                    "[Resource] Cloud call %s/%s timed out after %.0fs — falling back to local.",
                     cluster,
                     cell,
                     bg_timeout,
@@ -1010,8 +1140,19 @@ class ModelRouter:
                     else:
                         text, in_tok, out_tok = await coro
             except TimeoutError:
+                if self._bg_mode:
+                    from brain.autonomy.reasons import DeferReason
+
+                    logger.warning(
+                        "[Resource] Background cloud call %s/%s timed out after %.0fs — deferring "
+                        "(cloud-only; no local fallback for autonomous work).",
+                        cluster, cell, bg_timeout,
+                    )
+                    self._note_cloud_timeout()
+                    self._bg_defer_reason = DeferReason.CLOUD_UNREACHABLE
+                    return ""
                 logger.warning(
-                    "[Resource] Background cloud call %s/%s timed out after %.0fs — falling back to local.",
+                    "[Resource] Cloud call %s/%s timed out after %.0fs — falling back to local.",
                     cluster,
                     cell,
                     bg_timeout,
@@ -1033,6 +1174,9 @@ class ModelRouter:
                 text = self._egress.depseudonymize(text)
 
         latency = time.time() - start
+        # A completed autonomous cloud call resets the gate's cloud-health streak.
+        if _is_cloud and self._bg_mode:
+            self._notify_cloud_ok()
         self._meter_agent(
             model_id, in_tok, out_tok, is_cloud=_is_cloud, latency=latency, cache_read=cache_read
         )
@@ -1084,10 +1228,16 @@ class ModelRouter:
 
         model_key, model_id = self._resolve_model_id(model_key, cluster)
         provider = _provider_for(model_id)
-        # Daily USD ceiling. A lite brain over cap raises CloudBudgetExceeded
-        # (propagates → HTTP 402); a full brain over cap ends the agentic loop
-        # cleanly with a no-tool answer rather than dispatching another paid call.
-        if provider != "local" and self._enforce_cloud_budget(cluster, cell):
+        self._bg_defer_reason = None
+        # Daily USD ceiling. INTERACTIVE: a lite brain over cap raises CloudBudgetExceeded
+        # (→ HTTP 402); a full brain ends the agentic loop cleanly with a no-tool answer.
+        # AUTONOMOUS (bg): rate bucket / budget set the defer signal + stop the loop.
+        if provider != "local" and self._bg_mode:
+            _defer = self._bg_precheck(cluster, cell)
+            if _defer is not None:
+                self._bg_defer_reason = _defer
+                return {"text": ""}
+        elif provider != "local" and self._enforce_cloud_budget(cluster, cell):
             return {"text": ""}
         try:
             if provider == "anthropic":
@@ -1193,29 +1343,20 @@ class ModelRouter:
         _s = _settings.get
         model_key, model_id = self._resolve_model_id(model_key, cluster)
         _is_cloud = _provider_for(model_id) != "local"
+        self._bg_defer_reason = None  # cleared each call; set only if this call defers
 
-        # Daily USD ceiling (same gate as call()). A structured call has no local
-        # tool-use path to degrade to, so a full brain over cap fails soft to the {}
-        # contract; a lite brain raises CloudBudgetExceeded (propagates → HTTP 402).
-        if _is_cloud and self._enforce_cloud_budget(cluster, cell):
-            return {}
-
-        # Background mode: apply per-hour rate limit — if exhausted, fall back gracefully.
+        # Daily USD ceiling. INTERACTIVE: a structured call has no local tool-use path
+        # to degrade to, so a full brain over cap fails soft to {} and a lite brain
+        # raises CloudBudgetExceeded (→ HTTP 402). AUTONOMOUS (bg): rate bucket / budget
+        # set the defer signal and return {} so the strategic planner requeues the job
+        # instead of planning on an empty result (the direct caller sees this, not a cell).
         if self._bg_mode and _is_cloud:
-            self._refill_bg_bucket()
-            rate_per_hr = float(_s("bg_cloud_token_rate") or 100_000)
-            if self._bg_cloud_bucket <= 0:
-                logger.warning(
-                    "[Resource] Background rate-limited (bucket: %d tokens, "
-                    "refilling at %.0f/hr, session total: %d) "
-                    "— call_structured %s/%s falling back to empty dict.",
-                    int(self._bg_cloud_bucket),
-                    rate_per_hr,
-                    self._bg_cloud_tokens_used,
-                    cluster,
-                    cell,
-                )
+            _defer = self._bg_precheck(cluster, cell)
+            if _defer is not None:
+                self._bg_defer_reason = _defer
                 return {}
+        elif _is_cloud and self._enforce_cloud_budget(cluster, cell):
+            return {}
 
         if _provider_for(model_id) == "openai":
             return await self._call_structured_openai(
@@ -1245,7 +1386,13 @@ class ModelRouter:
             # planning call can never outlive its budget AND never holds the
             # cloud semaphore indefinitely (which would starve other cloud cells).
             _struct_to = float(_s("structured_call_timeout_s") or 150.0)
-            async with self._get_cloud_semaphore():
+            # Bound the semaphore ACQUIRE too (not just the call) so a saturated cloud
+            # pool can't pin a caller indefinitely — the acquire sits outside the
+            # per-call wait_for, so without this a wedged holder blocks forever.
+            _acq_to = float(_s("semaphore_acquire_timeout_s") or 30.0)
+            _sem = self._get_cloud_semaphore()
+            await asyncio.wait_for(_sem.acquire(), timeout=_acq_to)
+            try:
                 response = await asyncio.wait_for(
                     client.messages.create(
                         model=model_id,
@@ -1263,6 +1410,8 @@ class ModelRouter:
                     ),
                     timeout=_struct_to,
                 )
+            finally:
+                _sem.release()
             usage = getattr(response, "usage", None)
             in_tok = getattr(usage, "input_tokens", 0) if usage else 0
             out_tok = getattr(usage, "output_tokens", 0) if usage else 0
@@ -1282,6 +1431,8 @@ class ModelRouter:
                     self._bg_cloud_tokens_used,
                 )
             self._charge_cloud_usd(model_id, in_tok, out_tok, cache_read)
+            if self._bg_mode:
+                self._notify_cloud_ok()
             if cache_read > 0:
                 logger.info(
                     "[Cache] %s/%s: %d cache-read tokens (%.4f¢ saved vs uncached)",
@@ -1297,6 +1448,16 @@ class ModelRouter:
             logger.warning(
                 "[ModelRouter] call_structured %s/%s: no tool_use block in response", cluster, cell
             )
+            return {}
+        except TimeoutError:
+            # Autonomous: a wedged structured call defers (cloud-health streak) instead
+            # of silently returning {} → single mega-story. Interactive: soft {} as before.
+            if self._bg_mode:
+                from brain.autonomy.reasons import DeferReason
+
+                self._note_cloud_timeout()
+                self._bg_defer_reason = DeferReason.CLOUD_UNREACHABLE
+            logger.warning("[ModelRouter] call_structured %s/%s timed out", cluster, cell)
             return {}
         except Exception as e:
             logger.warning("[ModelRouter] call_structured %s/%s failed: %s", cluster, cell, e)

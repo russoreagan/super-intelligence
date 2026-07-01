@@ -46,6 +46,11 @@ _FORWARD_TYPES = frozenset(
         # Out-of-band: a backgrounded/always-on job's result. Fires after turn_end,
         # so it's exempt from the active-turn filter below.
         "proactive_speech",
+        # Terminal job outcome (state + reason + summary) for every autonomous job —
+        # completed / deferred / failed / stopped_budget / awaiting_approval. Out-of-band
+        # like proactive_speech; gate-independent so a client sees terminal state live
+        # even when the spoken-delivery gates suppress TTS.
+        "task_outcome",
     }
 )
 
