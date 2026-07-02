@@ -98,6 +98,11 @@ _MIN_GPU_FRACTION = 0.9
 # shortage — that path stays cooldown-free so the reconciler keeps hunting for a
 # good-fit GPU rather than settling for a worse one.
 _UNHEALTHY_COOLDOWN_S = 1800.0
+# How long an unhealthy mark on a pod sticks (env RUNPOD_UNHEALTHY_TTL_S). A transient
+# resume failure — a RunPod API hiccup, a host briefly out of GPUs — must not blacklist
+# the known-good pod for the life of the process (which discarded warm pods and forced
+# cold creates). A genuinely bad pod fails health again after the TTL and re-earns it.
+_UNHEALTHY_TTL_S = 3600.0
 
 # Warmup runs in the background (never blocks boot). Loading a 32B model from disk
 # routinely exceeds the RunPod proxy's request timeout, so we kick the load and then
@@ -125,6 +130,25 @@ def _unhealthy_cooldown_s() -> float:
         except ValueError:
             pass
     return _UNHEALTHY_COOLDOWN_S
+
+
+def _unhealthy_ttl_s() -> float:
+    """How long an unhealthy-pod mark sticks before the pod may be tried again."""
+    raw = os.environ.get("RUNPOD_UNHEALTHY_TTL_S", "").strip()
+    if raw:
+        try:
+            return float(raw)
+        except ValueError:
+            pass
+    return _UNHEALTHY_TTL_S
+
+
+def _keep_alive() -> str:
+    """Ollama keep_alive for the pod's model. Default "-1m" (negative = never unload):
+    the pod bills per-second whether or not the weights sit in VRAM, so unloading saves
+    nothing — it only let the model go "absent" during quiet spells, which the owner
+    then mistook for an unhealthy pod (terminate→recreate churn)."""
+    return os.environ.get("RUNPOD_KEEP_ALIVE", "").strip() or "-1m"
 
 
 class RunPodManager:
@@ -156,8 +180,10 @@ class RunPodManager:
         self._status_since: float = time.time()
         self._status_detail: str = ""
         self._http = None  # httpx.AsyncClient, created lazily in _get_http()
-        # Pods we proved unhealthy (CPU-only) this session — never resume them again.
-        self._unhealthy: set[str] = set()
+        # Pods we proved unhealthy (CPU-only / un-resumable), pod_id → mark expiry.
+        # TTL'd (see _mark_unhealthy) so a transient failure can't blacklist the
+        # known-good pod for the life of the process.
+        self._unhealthy: dict[str, float] = {}
         # After we fail to bring up ANY healthy pod, back off creating for a while so
         # a systemic problem doesn't churn create→terminate every reconciler tick.
         self._cooldown_until: float = 0.0
@@ -554,12 +580,22 @@ class RunPodManager:
             try:
                 if host_file.exists():
                     host = host_file.read_text(encoding="utf-8").strip()
-                    # Only adopt a real pod host; never clobber with empty/localhost.
+                    # Adopt a real pod host; never clobber with localhost.
                     if host and "localhost" not in host:
                         if str(settings.get("runpod_host") or "") != host:
                             settings.update({"runpod_host": host})
                             logger.info(
                                 "[RunPod] consumer host refreshed → %s (gateway pod change)", host
+                            )
+                    elif not host:
+                        # Empty file = the gateway declared the pod OFF (terminated,
+                        # no replacement yet). Adopt the 'off' sentinel so runpod
+                        # calls fail fast instead of burning a full HTTP timeout per
+                        # call against the dead pod's proxy host.
+                        if str(settings.get("runpod_host") or "") not in ("", "off"):
+                            settings.update({"runpod_host": "off"})
+                            logger.info(
+                                "[RunPod] consumer host refreshed → off (pod terminated)"
                             )
             except Exception as e:
                 logger.debug("[RunPod] consumer host refresh error: %s", e)
@@ -583,7 +619,7 @@ class RunPodManager:
         try:
             await self._get_http().post(
                 f"{host}/api/generate",
-                json={"model": model, "prompt": "", "keep_alive": "30m"},
+                json={"model": model, "prompt": "", "keep_alive": _keep_alive()},
                 timeout=_WARMUP_KICK_TIMEOUT_S,
             )
         except Exception as e:
@@ -838,11 +874,27 @@ class RunPodManager:
             if host and await self._model_on_gpu(host):
                 self._set_status("ready")
                 return True
-            # Held pod is alive but CPU-only (or dead): retire it before replacing.
+            # Held pod answers but the model isn't (fully) on the GPU. That is usually
+            # BENIGN — keep_alive expiry unloaded it during a quiet spell, ollama
+            # restarted inside the pod, we adopted a running-but-cold pod after a
+            # gateway redeploy, or a load is mid-flight — so re-warm IN PLACE first.
+            # Only a warmup failure (the model never becomes GPU-resident → true CPU
+            # spill) retires the pod. Terminating on mere "model absent" was the churn
+            # bug: a healthy pod got destroyed and recreated cold every time the model
+            # went un-resident.
             if self._pod_id is not None:
                 if await self._probe_alive(self._pod_id):
-                    logger.warning("[RunPod] Held pod %s is CPU-only — retiring", self._pod_id)
-                    await self._retire_unhealthy(self._pod_id)
+                    pod_id = self._pod_id
+                    self._set_status("warming", "reloading model onto GPU")
+                    if await self._pull_models(host) and await self._warmup_model(host):
+                        self._apply_host(pod_id)
+                        self._start_watcher()
+                        logger.info("[RunPod] Pod %s re-warmed in place", pod_id)
+                        return True
+                    logger.warning(
+                        "[RunPod] Held pod %s never became GPU-resident — retiring", pod_id
+                    )
+                    await self._retire_unhealthy(pod_id)
                 else:
                     self._cancel_watcher()
                     self._pod_id = None
@@ -854,7 +906,7 @@ class RunPodManager:
             # Pick a pod to bring up: the known-good one, else a discovered one,
             # skipping any we've proven unhealthy this session.
             candidates: list[str] = []
-            if self._known_pod_id and self._known_pod_id not in self._unhealthy:
+            if self._known_pod_id and not self._is_unhealthy(self._known_pod_id):
                 candidates.append(self._known_pod_id)
             else:
                 existing = await self._find_existing_pods()
@@ -862,7 +914,7 @@ class RunPodManager:
                     p for p in existing if not p.get("runtime")
                 ]
                 for p in ordered:
-                    if p["id"] not in self._unhealthy:
+                    if not self._is_unhealthy(p["id"]):
                         candidates.append(p["id"])
                         break
 
@@ -881,11 +933,11 @@ class RunPodManager:
                     logger.warning("[RunPod] ensure_running resume of %s failed: %s", pod_id, e)
                     self._pod_id = None
                     # Don't chase a pod that won't resume (dead, or its host is out of
-                    # GPUs): mark it unhealthy for this session so the next cycle skips it
-                    # and falls through to discover/create instead of retrying the same
-                    # dead pod every reconcile tick. Drop it as the known pod too so it
+                    # GPUs): mark it unhealthy (TTL'd) so the next cycles skip it and
+                    # fall through to discover/create instead of retrying the same dead
+                    # pod every reconcile tick. Drop it as the known pod too so it
                     # isn't re-adopted as a candidate.
-                    self._unhealthy.add(pod_id)
+                    self._mark_unhealthy(pod_id)
                     if self._known_pod_id == pod_id:
                         self._known_pod_id = None
                     # Network-volume mode: a stopped pod that won't resume still holds
@@ -895,6 +947,7 @@ class RunPodManager:
                     # pod is safe and frees the volume for a fresh create.
                     if self._network_volume_id():
                         await self._terminate_pod(pod_id)
+                        self._unpublish_host()  # its host is dead for good
 
             # Nothing healthy to resume — create on the best GPU. In network-volume mode
             # this tries SECURE+volume first (warm), then a COMMUNITY+no-volume fallback
@@ -983,6 +1036,9 @@ class RunPodManager:
                     )
                     # Nothing to resume — create fresh next time (re-attaches the volume).
                     self._known_pod_id = None
+                    # The terminated pod's host is dead for good; flip consumers to
+                    # fail-fast "off" until the next pod publishes a new host.
+                    self._unpublish_host()
                 else:
                     await self._stop_pod(self._pod_id)
                     logger.info("[RunPod] Pod %s paused (no live brains)", self._pod_id)
@@ -1068,14 +1124,52 @@ class RunPodManager:
         except Exception as e:
             logger.warning("[RunPod] Failed to terminate pod %s: %s", pod_id, e)
 
+    def _mark_unhealthy(self, pod_id: str) -> None:
+        """Blacklist a pod for RUNPOD_UNHEALTHY_TTL_S — NOT forever. A transient
+        resume failure (API hiccup, host briefly out of GPUs) must not discard a
+        known-good pod for the life of the process; a genuinely bad pod fails
+        health again after the TTL and simply re-earns the mark."""
+        self._unhealthy[pod_id] = time.time() + _unhealthy_ttl_s()
+
+    def _is_unhealthy(self, pod_id: str) -> bool:
+        """True while the pod's unhealthy mark is unexpired (expired marks prune)."""
+        exp = self._unhealthy.get(pod_id)
+        if exp is None:
+            return False
+        if time.time() >= exp:
+            del self._unhealthy[pod_id]
+            return False
+        return True
+
+    def _unpublish_host(self) -> None:
+        """The published proxy host is permanently dead (pod terminated). Publish
+        "pod off" — blank the shared host file and drop RUNPOD_HOST — so running
+        consumers flip to the fail-fast 'off' sentinel instead of burning a full
+        HTTP timeout per call against the dead host, and new spawns don't inherit
+        it. Stop-mode pause never unpublishes: a stopped pod resumes with the same
+        id, so its host stays valid. Skipped when no host file was ever published
+        (single-brain/local mode — nothing polls it)."""
+        try:
+            from brain.provisioner import HOST_SYNC_FILE, publish_runpod_host
+
+            if HOST_SYNC_FILE.exists():
+                publish_runpod_host("")
+        except Exception as e:
+            logger.debug("[RunPod] host unpublish skipped: %s", e)
+        os.environ.pop("RUNPOD_HOST", None)
+
     async def _retire_unhealthy(self, pod_id: str) -> None:
-        """Mark a pod unhealthy and delete it so we never resume it again."""
-        self._unhealthy.add(pod_id)
+        """Mark a pod unhealthy (TTL'd) and delete it so we don't resume it again."""
+        self._mark_unhealthy(pod_id)
         await self._terminate_pod(pod_id)
         if self._pod_id == pod_id:
             self._pod_id = None
         if self._known_pod_id == pod_id:
             self._known_pod_id = None
+        # Retire only runs when no healthy pod is serving, so the published host —
+        # whichever pod it named — is dead; tell consumers rather than let them
+        # time out against it until a replacement publishes a new host.
+        self._unpublish_host()
 
     async def stop(self) -> None:
         """Stop the active pod (preserves volume) and cancel the watcher.

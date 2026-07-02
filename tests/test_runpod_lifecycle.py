@@ -12,6 +12,8 @@ re-created it, and the reaper killed brains without stopping the pod.
 from __future__ import annotations
 
 import asyncio
+import os
+import time
 
 import brain.provisioner as pv
 import brain.runpod_manager as rm
@@ -107,11 +109,58 @@ def test_consumer_host_refresh_adopts_new_host_without_respawn(tmp_path, monkeyp
     asyncio.run(_run())
     assert captured.get("runpod_host") == "https://newpod-11434.proxy.runpod.net"
 
-    # A localhost/empty host must NEVER be adopted (would dead-end inference).
+    # A localhost host must NEVER be adopted (would dead-end inference).
     captured.clear()
     host_file.write_text("http://localhost:11434", encoding="utf-8")
     asyncio.run(_run())
     assert "runpod_host" not in captured
+
+    # An EMPTY file = the gateway declared the pod OFF (terminated): the consumer
+    # must flip to the fail-fast 'off' sentinel instead of keeping the dead host
+    # and burning a full HTTP timeout per call.
+    captured.clear()
+    captured["runpod_host"] = "https://deadpod-11434.proxy.runpod.net"
+    host_file.write_text("", encoding="utf-8")
+    asyncio.run(_run())
+    assert captured.get("runpod_host") == "off"
+
+
+def test_call_local_runpod_fails_fast_when_pod_off(monkeypatch):
+    """With runpod_host='off' the router must return the standard failure result
+    immediately — no HTTP attempt, no 180s timeout against a dead proxy host."""
+    import brain.settings as settings_mod
+    from brain.model_router import ModelRouter
+
+    monkeypatch.setattr(
+        settings_mod.settings, "get", lambda k, d=None: "off" if k == "runpod_host" else d
+    )
+    r = ModelRouter.__new__(ModelRouter)  # no client init — the guard fires first
+
+    def boom():  # pragma: no cover - must not be reached
+        raise AssertionError("pod off must not open an HTTP client")
+
+    r._get_http = boom  # type: ignore[assignment]
+    out = asyncio.run(
+        r._call_local("sys", [{"role": "user", "content": "hi"}], local_variant="runpod")
+    )
+    assert out == ("", 0, 0)
+
+
+def test_warmup_local_runpod_skips_when_pod_off(monkeypatch):
+    """warmup_local must also honor the 'off' sentinel (no kick at a dead host)."""
+    import brain.settings as settings_mod
+    from brain.model_router import ModelRouter
+
+    monkeypatch.setattr(
+        settings_mod.settings, "get", lambda k, d=None: "off" if k == "runpod_host" else d
+    )
+    r = ModelRouter.__new__(ModelRouter)
+
+    def boom():  # pragma: no cover - must not be reached
+        raise AssertionError("pod off must not open an HTTP client")
+
+    r._get_http = boom  # type: ignore[assignment]
+    assert asyncio.run(r.warmup_local("runpod")) is False
 
 
 def test_ensure_running_idempotent_when_model_on_gpu():
@@ -125,9 +174,11 @@ def test_ensure_running_idempotent_when_model_on_gpu():
     assert asyncio.run(m.ensure_running()) is True
 
 
-def test_ensure_running_retires_cpu_only_pod():
-    """A held pod that serves /api/tags but runs on CPU must be terminated and
-    replaced, not treated as ready (that was the silent 'no idle thoughts' bug)."""
+def test_ensure_running_retires_cpu_only_pod(tmp_path, monkeypatch):
+    """A held pod whose model never becomes GPU-resident even after a re-warm
+    attempt (true CPU spill) must be terminated and replaced, not treated as ready
+    (that was the silent 'no idle thoughts' bug)."""
+    monkeypatch.setattr(pv, "HOST_SYNC_FILE", tmp_path / ".runpod_host")  # hermetic unpublish
     m = _mgr()
     m._pod_id = "podCPU"
     m._known_pod_id = "podCPU"
@@ -138,6 +189,12 @@ def test_ensure_running_retires_cpu_only_pod():
 
     async def alive(_pid):
         return True
+
+    async def pull_ok(_host):
+        return True
+
+    async def warm_fail(_host):
+        return False  # never GPU-resident → genuinely CPU-only
 
     async def fake_terminate(pid):
         terminated.append(pid)
@@ -150,6 +207,8 @@ def test_ensure_running_retires_cpu_only_pod():
 
     m._model_on_gpu = not_on_gpu  # type: ignore[assignment]
     m._probe_alive = alive  # type: ignore[assignment]
+    m._pull_models = pull_ok  # type: ignore[assignment]
+    m._warmup_model = warm_fail  # type: ignore[assignment]
     m._terminate_pod = fake_terminate  # type: ignore[assignment]
     m._find_existing_pods = no_pods  # type: ignore[assignment]
     m._fetch_gpu_types = no_gpus  # type: ignore[assignment]
@@ -159,6 +218,60 @@ def test_ensure_running_retires_cpu_only_pod():
     assert "podCPU" in m._unhealthy
     assert m._pod_id is None and m._known_pod_id is None
     assert m.status()["state"] == "failed"
+
+
+def test_ensure_running_rewarns_unloaded_model_in_place():
+    """A held pod that answers /api/tags with the model merely NOT RESIDENT
+    (keep_alive expiry, ollama restart, adopted cold after a gateway redeploy) must
+    be re-warmed IN PLACE — never terminated and replaced. Terminating on 'model
+    absent' was the churn bug: healthy pods destroyed + recreated cold every time
+    the model went un-resident."""
+    m = _mgr()
+    m._pod_id = "podWarm"
+    m._known_pod_id = "podWarm"
+    terminated: list[str] = []
+
+    async def not_on_gpu(_host):
+        return False
+
+    async def alive(_pid):
+        return True
+
+    async def pull_ok(_host):
+        return True
+
+    async def warm_ok(_host):
+        m._set_status("ready")
+        return True
+
+    async def fake_terminate(pid):  # pragma: no cover - must not be called
+        terminated.append(pid)
+
+    m._model_on_gpu = not_on_gpu  # type: ignore[assignment]
+    m._probe_alive = alive  # type: ignore[assignment]
+    m._pull_models = pull_ok  # type: ignore[assignment]
+    m._warmup_model = warm_ok  # type: ignore[assignment]
+    m._terminate_pod = fake_terminate  # type: ignore[assignment]
+    m._apply_host = lambda pid: None  # type: ignore[assignment]
+    m._start_watcher = lambda: None  # type: ignore[assignment]
+
+    assert asyncio.run(m.ensure_running()) is True
+    assert terminated == [], "an unloaded model must never terminate a healthy pod"
+    assert m._pod_id == "podWarm" and m._known_pod_id == "podWarm"
+    assert "podWarm" not in m._unhealthy
+    assert m.status()["state"] == "ready"
+
+
+def test_unhealthy_mark_expires(monkeypatch):
+    """The unhealthy blacklist is TTL'd: a transient resume failure must not
+    discard the known-good pod for the life of the process."""
+    monkeypatch.setenv("RUNPOD_UNHEALTHY_TTL_S", "0.01")
+    m = _mgr()
+    m._mark_unhealthy("podA")
+    assert m._is_unhealthy("podA") is True
+    time.sleep(0.02)
+    assert m._is_unhealthy("podA") is False
+    assert "podA" not in m._unhealthy, "expired marks must be pruned"
 
 
 def test_ensure_running_resumes_known_pod_not_create():
@@ -546,6 +659,48 @@ def test_pause_stops_pod_without_network_volume(monkeypatch):
     assert terminated == []
     assert m._pod_id is None
     assert m._known_pod_id == "podX", "known id retained for resume"
+
+
+def test_pause_unpublishes_host_in_network_volume_mode(tmp_path, monkeypatch):
+    """Terminating on pause makes the published host permanently dead: pause must
+    blank the shared host file (consumers flip to the fail-fast 'off' sentinel
+    instead of timing out against the dead proxy) and drop RUNPOD_HOST so new
+    spawns don't inherit it."""
+    monkeypatch.setenv("RUNPOD_NETWORK_VOLUME_ID", "vol123")
+    monkeypatch.setenv("RUNPOD_HOST", "https://podX-11434.proxy.runpod.net")
+    host_file = tmp_path / ".runpod_host"
+    host_file.write_text("https://podX-11434.proxy.runpod.net", encoding="utf-8")
+    monkeypatch.setattr(pv, "HOST_SYNC_FILE", host_file)
+    m = _mgr()
+    m._pod_id = "podX"
+
+    async def fake_terminate(_pid):
+        pass
+
+    m._terminate_pod = fake_terminate  # type: ignore[assignment]
+    asyncio.run(m.pause())
+    assert host_file.read_text(encoding="utf-8") == "", "host file must be blanked (pod off)"
+    assert "RUNPOD_HOST" not in os.environ
+
+
+def test_pause_keeps_host_published_without_network_volume(tmp_path, monkeypatch):
+    """Stop-mode pause must NOT unpublish: the stopped pod resumes with the same id,
+    so its proxy host stays valid for the next ensure_running."""
+    monkeypatch.delenv("RUNPOD_NETWORK_VOLUME_ID", raising=False)
+    monkeypatch.setenv("RUNPOD_HOST", "https://podX-11434.proxy.runpod.net")
+    host_file = tmp_path / ".runpod_host"
+    host_file.write_text("https://podX-11434.proxy.runpod.net", encoding="utf-8")
+    monkeypatch.setattr(pv, "HOST_SYNC_FILE", host_file)
+    m = _mgr()
+    m._pod_id = "podX"
+
+    async def fake_stop(_pid):
+        pass
+
+    m._stop_pod = fake_stop  # type: ignore[assignment]
+    asyncio.run(m.pause())
+    assert host_file.read_text(encoding="utf-8") == "https://podX-11434.proxy.runpod.net"
+    assert os.environ.get("RUNPOD_HOST") == "https://podX-11434.proxy.runpod.net"
 
 
 def test_ensure_running_terminates_unresumable_pod_in_netvol_mode(monkeypatch):

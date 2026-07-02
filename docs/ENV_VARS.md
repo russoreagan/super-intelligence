@@ -225,12 +225,13 @@ directly by brain code, so it has no row here.
 | `RUNPOD_HOST` | `OLLAMA_HOST` | both ⚠ | Shared-pod Ollama URL. Import-time snapshot `brain/model_router.py:123` ⚠; the gateway sets/clears it at runtime (`brain/gateway/server.py:838,839,901,908`) and tenants read it at `brain/runpod_manager.py:685` |
 | `RUNPOD_MODEL` | `qwen2.5:32b` | both ⚠ | Model served on the pod (drives VRAM floor + health check + warmup). `brain/model_router.py:129` ⚠, `brain/runpod_manager.py:112,236,501,580` |
 | `RUNPOD_HTTP_TIMEOUT_SECONDS` | `180` | import ⚠ | Per-request timeout to the pod. `brain/model_router.py:130` |
-| `RUNPOD_KEEP_ALIVE` | `30m` | import ⚠ | Pod-side model keep-alive. `brain/model_router.py:131` |
+| `RUNPOD_KEEP_ALIVE` | `-1m` (never unload) | import ⚠ | Pod-side model keep-alive. Negative = keep resident forever: the pod bills per-second regardless of VRAM residency, and an unloaded model looks "absent" to the health gate (terminate→recreate churn). `brain/model_router.py:135`, `brain/runpod_manager.py` (`_keep_alive`) |
 | `RUNPOD_MAX_HOURS` | `8` | call | Watchdog kills the pod after N hours. `brain/runpod_manager.py:615` |
 | `RUNPOD_MIN_VRAM_GB` | derived from model size (32b→40) | call | Override the model-aware VRAM floor for GPU selection. `brain/runpod_manager.py:230` |
 | `RUNPOD_NETWORK_VOLUME_ID` | `""` (ephemeral disk) | call | Persistent network volume holding models across pod churn; re-read each call (no restart needed). `brain/runpod_manager.py:301` |
 | `RUNPOD_DATA_CENTER_ID` | `""` (inferred from volume) | call | Pin GPU deploys to the volume's datacenter. `brain/runpod_manager.py:307` |
 | `RUNPOD_UNHEALTHY_COOLDOWN_S` | `1800` (module constant) | call | Back-off after a pod came up but failed health (never applies to supply shortage). `brain/runpod_manager.py:121` |
+| `RUNPOD_UNHEALTHY_TTL_S` | `3600` | call | How long an unhealthy-pod mark sticks before the pod may be tried again — a transient resume failure must not blacklist the known pod for the life of the process. `brain/runpod_manager.py` (`_unhealthy_ttl_s`) |
 | `BRAIN_LOCAL_MODEL` | `qwen` | import ⚠ | Default model key for the pod scheduler. `brain/pod_scheduler.py:29` |
 | `BRAIN_POD_CAPACITY` | `1` | import ⚠ | Brains per shared pod. `brain/pod_scheduler.py:30` |
 | `BRAIN_POD_IDLE_GRACE_S` | `600` | call | Gateway: live-brain count must be 0 this long before the pod pauses. `brain/gateway/server.py:827` |

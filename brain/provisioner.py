@@ -58,6 +58,26 @@ TENANTS_DIR = Path(os.environ.get("BRAIN_TENANTS_DIR", "tenants")).resolve()
 # pod host WITHOUT a respawn — closing the gap where the reconciler's host-sync only
 # reached new spawns. All tenants share the pod, so a single file suffices.
 HOST_SYNC_FILE = TENANTS_DIR / ".runpod_host"
+
+
+def publish_runpod_host(host: str) -> None:
+    """Write the shared pod host to HOST_SYNC_FILE for running consumer brains.
+
+    An EMPTY host means "pod off" (terminated, no replacement yet): consumers flip
+    runpod_host to the fail-fast 'off' sentinel instead of burning a full HTTP
+    timeout per call against a dead proxy host. Atomic (temp + rename), idempotent
+    (skip if unchanged), best-effort — used by both the gateway host-sync and the
+    RunPodManager's terminate paths."""
+    try:
+        if HOST_SYNC_FILE.exists() and HOST_SYNC_FILE.read_text(encoding="utf-8").strip() == host:
+            return
+        HOST_SYNC_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = HOST_SYNC_FILE.with_suffix(".tmp")
+        tmp.write_text(host, encoding="utf-8")
+        os.replace(tmp, HOST_SYNC_FILE)
+        logger.info("[provisioner] shared pod host published: %s", host or "(off)")
+    except Exception as e:
+        logger.warning("[provisioner] failed to publish pod host: %s", e)
 # brain.run flags for tenant processes. Mirrors the shared deploy's set; override
 # via BRAIN_TENANT_ARGS.
 # --ears (AuditoryCluster: prosody / speaker-ID / fingerprinting) IS used on hosted:

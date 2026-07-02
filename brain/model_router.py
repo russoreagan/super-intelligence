@@ -128,7 +128,11 @@ RUNPOD_HOST = os.environ.get("RUNPOD_HOST", OLLAMA_HOST)
 # direction (a cloud cell shedding to local under timeout / budget cap) is still allowed.
 RUNPOD_MODEL = os.environ.get("RUNPOD_MODEL", "qwen2.5:32b")
 RUNPOD_HTTP_TIMEOUT = float(os.environ.get("RUNPOD_HTTP_TIMEOUT_SECONDS", "180"))
-RUNPOD_KEEP_ALIVE = os.environ.get("RUNPOD_KEEP_ALIVE", "30m")
+# Negative keep_alive ("-1m") = never unload. The pod bills per-second whether or not
+# the weights sit in VRAM, so unloading saves nothing — it only let the model go
+# "absent" during quiet spells, which the pod owner then mistook for an unhealthy pod
+# (terminate→recreate churn). Must match brain/runpod_manager._keep_alive's default.
+RUNPOD_KEEP_ALIVE = os.environ.get("RUNPOD_KEEP_ALIVE", "-1m")
 # The motor planner ("local-code") defaults to the SAME model as the rest of the
 # brain (local → qwen2.5:14b). Reason: every other cell (DMN, hippocampus,
 # skill_selector, sleep) keeps qwen2.5:14b hot. If the planner used a distinct
@@ -827,6 +831,8 @@ class ModelRouter:
             from brain.settings import settings as _s
 
             host = str(_s.get("runpod_host") or "") or RUNPOD_HOST
+            if host == "off":  # pod declared off by the gateway — nothing to warm
+                return False
             keep_alive = RUNPOD_KEEP_ALIVE
         else:
             host = OLLAMA_HOST
@@ -1850,6 +1856,13 @@ class ModelRouter:
             from brain.settings import settings as _s
 
             host = str(_s.get("runpod_host") or "") or RUNPOD_HOST
+            if host == "off":
+                # The gateway declared the shared pod OFF (terminated, no replacement
+                # yet). Same contract as an unreachable pod — runpod cells have no
+                # cloud fallback — but failing here skips the full HTTP timeout the
+                # dead pod's proxy host would otherwise cost every call.
+                logger.debug("[RunPod] pod is off — skipping local call")
+                return "", 0, 0
             http_timeout = RUNPOD_HTTP_TIMEOUT
             keep_alive = RUNPOD_KEEP_ALIVE
         else:

@@ -841,20 +841,12 @@ def main() -> None:
             _publish_host_file(host)
 
     def _publish_host_file(host: str) -> None:
-        """Write the live pod host to the shared file running consumer brains poll.
-        Atomic (temp + rename) and idempotent (skip if unchanged)."""
-        from brain.provisioner import HOST_SYNC_FILE
+        """Write the live pod host to the shared file running consumer brains poll
+        (empty = pod off). Delegates to the provisioner helper — atomic, idempotent
+        — which the RunPodManager's terminate paths also use to unpublish."""
+        from brain.provisioner import publish_runpod_host
 
-        try:
-            if HOST_SYNC_FILE.exists() and HOST_SYNC_FILE.read_text(encoding="utf-8").strip() == host:
-                return
-            HOST_SYNC_FILE.parent.mkdir(parents=True, exist_ok=True)
-            tmp = HOST_SYNC_FILE.with_suffix(".tmp")
-            tmp.write_text(host, encoding="utf-8")
-            os.replace(tmp, HOST_SYNC_FILE)
-            logger.info("[gateway] published live pod host to %s", HOST_SYNC_FILE.name)
-        except Exception as e:
-            logger.warning("[gateway] failed to write host file: %s", e)
+        publish_runpod_host(host)
 
     async def _pod_reconciler(runpod):
         zero_since: float | None = None
