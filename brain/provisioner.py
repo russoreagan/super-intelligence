@@ -131,9 +131,9 @@ def _free_port() -> int:
 
 def _persona_slug(name: str) -> str:
     """Slugify a persona display name the same way run.py / the stores do."""
-    import re
+    from brain.persona_key import persona_slug
 
-    return re.sub(r"[^a-z0-9]+", "_", str(name or "").lower()).strip("_")
+    return persona_slug(name)
 
 
 def _org_default_agent(user_id: str) -> tuple[str | None, set[str]]:

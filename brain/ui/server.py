@@ -115,11 +115,7 @@ def _persona_dial_positions() -> dict:
     try:
         from brain.neuron import _PERSONA_REWARD_WEIGHTS, _PERSONA_RISK_POSTURE
         from brain.persona_chem import PERSONA_COG_POSITIONS
-
-        def _slug(name: str) -> str:
-            import re as _re
-
-            return _re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
+        from brain.persona_key import persona_slug as _slug
 
         def _pos(w: float) -> float:
             return max(0.0, min(1.0, (float(w) - 0.5) / 1.1))
@@ -765,13 +761,12 @@ class UIServer:
                 #     at import time and can only re-namespace through a boot. Do
                 #     it automatically rather than trusting the operator to restart.
                 if is_switch:
-                    import re as _re
                     import sys as _sys
 
+                    from brain.persona_key import persona_slug as _pslug
+
                     _new_persona = str(settings.get("persona_name", ""))
-                    _new_slug = (
-                        _re.sub(r"[^a-z0-9]+", "_", _new_persona.lower()).strip("_") or "unnamed"
-                    )
+                    _new_slug = _pslug(_new_persona, "unnamed")
                     os.environ["BRAIN_PERSONA_NAME"] = _new_slug
 
                     async def _restart_for_switch():

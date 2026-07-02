@@ -60,6 +60,7 @@ logging.basicConfig(
     level=os.environ.get("BRAIN_LOG_LEVEL", "INFO"),
     format="%(asctime)s %(name)s %(levelname)s %(message)s",
 )
+from brain.persona_key import persona_slug  # noqa: E402
 from brain.security import SecretRedactingFilter  # noqa: E402
 
 _redact_filter = SecretRedactingFilter()
@@ -359,7 +360,6 @@ def _route_persona_state() -> None:
     log stays shared and is tagged by persona_name instead.
     """
     import json
-    import re
     from pathlib import Path
 
     # Multi-tenant mode: the per-user pod already carries SECOND_BRAIN_PATH (the
@@ -419,7 +419,7 @@ def _route_persona_state() -> None:
         # Always normalize to the slug, even when the env carried a raw display
         # name ("The Companion") — dmn_state and friends key off this env var and
         # must agree with the slugified keys the Supabase stores use.
-        slug = re.sub(r"[^a-z0-9]+", "_", persona.lower()).strip("_") or "unnamed"
+        slug = persona_slug(persona, "unnamed")
         os.environ["BRAIN_PERSONA_NAME"] = slug
         # Persona-namespace ALL volume-backed state, exactly like local mode does.
         # The tenant root is per-ORG; without this subdir every persona of the org
@@ -454,7 +454,7 @@ def _route_persona_state() -> None:
 
     keys = ("SECOND_BRAIN_PATH", "BRAIN_WIRING_PATH", "BRAIN_WIRING_HISTORY_DIR")
     if persona:
-        slug = re.sub(r"[^a-z0-9]+", "_", persona.lower()).strip("_") or "unnamed"
+        slug = persona_slug(persona, "unnamed")
         # The Supabase stores key rows by this slug (matches the migrated persona
         # names); local file paths use it below. Set it either way.
         os.environ["BRAIN_PERSONA_NAME"] = slug

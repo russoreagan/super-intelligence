@@ -37,15 +37,14 @@ _STORAGE_BACKEND = os.environ.get("BRAIN_STORAGE_BACKEND", "local").lower()
 EMBEDDING_DIM = 768
 
 
-_PERSONA_SLUG_RE = re.compile(r"[^a-z0-9]+")
-
-
 def _persona_key(persona: str) -> str:
     """Canonical persona key for the schema/episode stores. Slugifies so the hosted
     path (provisioner injects the RAW display name, e.g. 'The Visionary') and the
     local path (already slugified to 'the_visionary') read/write the SAME store.
     Idempotent on an already-slugged name; empty falls back to 'default'."""
-    return _PERSONA_SLUG_RE.sub("_", (persona or "").lower()).strip("_") or "default"
+    from brain.persona_key import persona_slug
+
+    return persona_slug(persona, "default")
 
 
 # Per-turn persona override (multi-persona Path B). When a turn binds a persona, all

@@ -383,3 +383,26 @@ def test_verifier_outage_is_not_approval():
     approved, issues = asyncio.run(m._verify_job("g", "crit", [], [], "j1"))
     assert approved is False
     assert "unavailable" in issues
+
+
+# ── Canonical persona slug (one implementation, per-site fallbacks) ──────────
+def test_persona_slug_canonical():
+    from brain.persona_key import persona_slug
+
+    assert persona_slug("The Visionary") == "the_visionary"
+    assert persona_slug("the_visionary") == "the_visionary"  # idempotent
+    assert persona_slug("  Tortured-Artist! ") == "tortured_artist"
+    assert persona_slug("") == "" and persona_slug(None) == ""
+    assert persona_slug("", "default") == "default"
+    assert persona_slug(None, "unnamed") == "unnamed"
+
+
+def test_persona_slug_call_sites_agree():
+    # The historical bug class: hosted raw display name vs local slug forking one
+    # persona into two stores. Every wrapper must produce the same key.
+    from brain.persona_chem import _slug as chem_slug
+    from brain.provisioner import _persona_slug as prov_slug
+    from brain.second_brain.store import _persona_key as store_key
+
+    for raw in ("The Visionary", "the_visionary"):
+        assert chem_slug(raw) == prov_slug(raw) == store_key(raw) == "the_visionary"

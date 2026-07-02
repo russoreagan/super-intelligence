@@ -472,7 +472,9 @@ _PERSONAS_ROOT = (
 
 def _slug(persona: str) -> str:
     """Same slugging _route_persona_state uses, so paths line up."""
-    return re.sub(r"[^a-z0-9]+", "_", persona.lower()).strip("_") or "unnamed"
+    from brain.persona_key import persona_slug
+
+    return persona_slug(persona, "unnamed")
 
 
 def _path(persona: str) -> Path:

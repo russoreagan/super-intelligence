@@ -307,9 +307,9 @@ def sensory_gain(persona_seed: str, category: str) -> float:
     # Callers pass settings["persona_name"], the DISPLAY name ("The Analyst"),
     # but the lean table is keyed by slug ("the_analyst"). Normalize so the
     # lookup actually matches instead of silently falling through to neutral.
-    import re
+    from brain.persona_key import persona_slug
 
-    key = re.sub(r"[^a-z0-9]+", "_", str(persona_seed).lower()).strip("_")
+    key = persona_slug(persona_seed)
     lean = _PERSONA_SENSORY_LEANS.get(key, {}).get(category, 0.0)
     return max(0.1, 1.0 + lean * span)
 
@@ -502,9 +502,9 @@ def reward_weight(persona_seed: str, source: str) -> float:
     (reward_weight_<source>, centred 1.0 — the Motivation dials) multiplies on
     top, so motivation is tunable without editing this table. Mandates may later
     layer their own reward_weights the same way."""
-    import re
+    from brain.persona_key import persona_slug
 
-    key = re.sub(r"[^a-z0-9]+", "_", str(persona_seed).lower()).strip("_")
+    key = persona_slug(persona_seed)
     base = float(_PERSONA_REWARD_WEIGHTS.get(key, {}).get(source, 1.0))
     try:
         from brain.settings import settings as _settings
@@ -524,11 +524,10 @@ def loss_aversion(persona_seed: str) -> float:
 
     base table × per-deployment settings dial (loss_aversion_scale, centred 1.0), bounded
     [loss_aversion_min, loss_aversion_max]. Unknown persona → 1.0 (symmetric)."""
-    import re
-
+    from brain.persona_key import persona_slug
     from brain.settings import settings as _settings
 
-    key = re.sub(r"[^a-z0-9]+", "_", str(persona_seed).lower()).strip("_")
+    key = persona_slug(persona_seed)
     base = float(_PERSONA_RISK_POSTURE.get(key, {}).get("loss_aversion", 1.0))
     try:
         scale = float(_settings.get("loss_aversion_scale", 1.0) or 1.0)
@@ -547,11 +546,10 @@ def uncertainty_aversion(persona_seed: str) -> float:
 
     base table × per-deployment settings dial (uncertainty_aversion_scale, centred 1.0), bounded
     [0.0, uncertainty_aversion_max]. Unknown persona → 0.0 (risk-neutral)."""
-    import re
-
+    from brain.persona_key import persona_slug
     from brain.settings import settings as _settings
 
-    key = re.sub(r"[^a-z0-9]+", "_", str(persona_seed).lower()).strip("_")
+    key = persona_slug(persona_seed)
     base = float(_PERSONA_RISK_POSTURE.get(key, {}).get("uncertainty_aversion", 0.0))
     try:
         scale = float(_settings.get("uncertainty_aversion_scale", 1.0) or 1.0)
