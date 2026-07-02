@@ -1,3 +1,0 @@
-# Task
-
-- Write to file
