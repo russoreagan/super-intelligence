@@ -541,3 +541,113 @@ def test_planning_hint_resolves_by_slug():
         assert "Visionary" in m._persona_planning_hint()
     with bind_persona("the_unknown_custom"):
         assert m._persona_planning_hint() == ""
+
+
+# ── Premise-audit fixes: DA provenance, per-job cap, criteria novelty gate ────
+def test_da_source_tally_splits_intrinsic_and_external():
+    from brain.bus import Neuromodulators
+
+    nm = Neuromodulators()
+    nm.add("DA", 0.10)  # default = intrinsic (self-administered)
+    nm.add("DA", 0.05, source="external")  # user/world grounded
+    nm.add("DA", -0.02, source="external")  # penalties count by magnitude
+    nm.add("GABA", 0.30)  # non-DA writes never enter the tally
+    t = nm.da_source_tally()
+    assert t["intrinsic"] == pytest.approx(0.10)
+    assert t["external"] == pytest.approx(0.07)
+
+
+def test_bus_da_tally_aggregates_resting_and_client_pairs():
+    from brain.bus import Bus
+
+    bus = Bus()
+    bus.resting_chem.neuromod.add("DA", 0.10)  # brain's own idle reward
+    pair = bus.new_chem()
+    pair.neuromod.add("DA", 0.04, source="external")  # a customer's warmth
+
+    class FakeReg:
+        _live = {"u1": pair}
+
+    bus._chem_registry = FakeReg()
+    total = bus.da_source_tally()
+    assert total["intrinsic"] == pytest.approx(0.10)
+    assert total["external"] == pytest.approx(0.04)
+
+
+def test_criteria_novelty_gate_blocks_thin_and_duplicate():
+    from brain.clusters.motor_cortex import MotorCortexCluster as M
+
+    seen: list[frozenset] = []
+    ok, toks = M._criteria_reward_eligible(
+        ["response contains three ticker symbols with current prices"], seen
+    )
+    assert ok
+    seen.append(toks)
+    # Copy-pasted (verbatim/reordered) criteria — the realistic farming case → no reward
+    dup, toks2 = M._criteria_reward_eligible(
+        ["response contains three ticker symbols with current prices"], seen
+    )
+    assert not dup
+    # Too thin/generic → no reward
+    thin, _ = M._criteria_reward_eligible(["output is not empty"], [])
+    assert not thin
+    # Genuinely different criteria still eligible
+    ok2, _ = M._criteria_reward_eligible(
+        ["summary cites at least two distinct news sources published today"], seen
+    )
+    assert ok2
+
+
+def test_accomplishment_respects_per_job_intrinsic_cap(monkeypatch):
+    from brain.session_turn import _TurnMixin  # the mixin that defines the reward
+    from brain.settings import settings
+
+    values = {
+        "accomplishment_expected_medium": 6.0,
+        "emotional_reactivity_scale": 1.0,
+        "accomplishment_base": 0.07,
+        "job_intrinsic_da_cap": 0.10,
+        "accomplishment_fail_ratio": 0.40,
+        "correctness_5ht_drain": 0.02,
+    }
+    monkeypatch.setattr(settings, "get", lambda k, d=None: values.get(k, d if d is not None else 1.0))
+
+    class FakeNM:
+        def __init__(self):
+            self.adds = []
+
+        def add(self, ch, v, source="intrinsic"):
+            self.adds.append((ch, v))
+
+    class FakeBus:
+        def __init__(self):
+            self.neuromod = FakeNM()
+            self.hormonal = FakeNM()
+
+    class S(_TurnMixin):
+        pass
+
+    s = S.__new__(S)
+    s.bus = FakeBus()
+    # Job already paid itself 0.08 mid-run; cap 0.10 → at most 0.02 more.
+    s._emit_accomplishment_reward(
+        {"success": True, "complexity": "medium", "productive_steps": 6,
+         "predictions_confirmed": 2, "intrinsic_da_spent": 0.08}
+    )
+    das = [v for ch, v in s.bus.neuromod.adds if ch == "DA"]
+    assert das and das[0] <= 0.02 + 1e-9
+    # Fresh job with no mid-run spend gets the normal (larger) reward.
+    s2 = S.__new__(S)
+    s2.bus = FakeBus()
+    s2._emit_accomplishment_reward(
+        {"success": True, "complexity": "medium", "productive_steps": 6,
+         "predictions_confirmed": 2, "intrinsic_da_spent": 0.0}
+    )
+    das2 = [v for ch, v in s2.bus.neuromod.adds if ch == "DA"]
+    assert das2 and das2[0] > das[0]
+
+
+def test_colony_trail_apply_default_is_live():
+    from brain.settings import DEFAULTS
+
+    assert DEFAULTS["colony_trail_apply"] == 1

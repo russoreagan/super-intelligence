@@ -210,7 +210,7 @@ class HypothalamusCluster:
             * _affect_gain
             * _connection_value
         ) - (hostility * settings.get("hostility_DA_weight"))
-        nm.add("DA", valence_delta * turns)
+        nm.add("DA", valence_delta * turns, source="external")
 
         # GABA: threat / caution signal (inhibitory). Graded with hostility — a dead
         # zone below the med threshold, then a smooth ramp up to the high-band value,
@@ -318,7 +318,7 @@ class HypothalamusCluster:
                 nm.add("NE", settings.get("ne_prosody_stressed") * ps)
             elif prosody_tone == "energetic":
                 nm.add("Glu", 0.06 * ps)
-                nm.add("DA", 0.04 * ps)
+                nm.add("DA", 0.04 * ps, source="external")
             elif prosody_tone == "whisper":
                 nm.add("ACh", 0.10 * ps)
             # "calm" and "monotone" need no correction
@@ -350,7 +350,7 @@ class HypothalamusCluster:
                 nm.add("NE", settings.get("ne_rush_increment") * pace_scale)
             elif pace == "brisk":
                 nm.add("Glu", 0.04 * pace_scale)
-                nm.add("DA", 0.02 * pace_scale)  # mild positive valence — animated
+                nm.add("DA", 0.02 * pace_scale, source="external")  # mild positive valence — animated
             elif pace == "halting":
                 nm.add("ACh", 0.06 * pace_scale)  # uncertainty → pay attention
             elif pace == "measured":
@@ -382,15 +382,15 @@ class HypothalamusCluster:
             mood = music.get("mood_label", "calm")
             if mood == "energetic":
                 nm.add("Glu", 0.05)
-                nm.add("DA", 0.04)
+                nm.add("DA", 0.04, source="external")
             elif mood == "bright":
-                nm.add("DA", 0.05)
+                nm.add("DA", 0.05, source="external")
                 nm.add("ACh", 0.02)
             elif mood == "tense":
                 nm.add("GABA", 0.04)
                 nm.add("NE", 0.03)
             elif mood == "melancholic":
-                nm.add("DA", -0.03)
+                nm.add("DA", -0.03, source="external")
             elif mood == "calm":
                 nm.add("Glu", -0.02)
             logger.debug(
@@ -420,9 +420,9 @@ class HypothalamusCluster:
                     # and the resulting DA swing feeds the Hebbian funnel, so
                     # what earned laughs gets reinforced.
                     _levity_value = reward_weight(_persona, "levity")
-                    nm.add("DA", laughter * settings.get("text_para_laughter_DA") * _levity_value)
+                    nm.add("DA", laughter * settings.get("text_para_laughter_DA") * _levity_value, source="external")
                 if warmth > 0.0:
-                    nm.add("DA", warmth * settings.get("text_para_warmth_DA"))
+                    nm.add("DA", warmth * settings.get("text_para_warmth_DA"), source="external")
                 if negativity > 0.0:
                     nm.add("GABA", negativity * settings.get("text_para_negativity_GABA"))
                 if excitement > 0.0:

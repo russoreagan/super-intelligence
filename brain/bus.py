@@ -109,9 +109,26 @@ class Neuromodulators:
         # only when flock_dynamics is on), so flag-off behaviour is unchanged.
         self._velocity: dict[str, float] = dict.fromkeys(self.CHANNELS, 0.0)
         self._prev_levels: dict[str, float] | None = None
+        # DA provenance tally (premise-audit instrumentation): cumulative |delta|
+        # of DA writes by source. "external" = grounded outside the brain (user
+        # sentiment/prosody/paralinguistics, user verdicts, world events);
+        # "intrinsic" = self-administered (accomplishment, prediction/criteria,
+        # relief, idle rewards). The ratio is the honest measure of how much the
+        # reward signal — and therefore Hebbian learning — is self-graded.
+        self._da_tally: dict[str, float] = {"intrinsic": 0.0, "external": 0.0}
 
-    def add(self, channel: str, delta: float) -> None:
+    def add(self, channel: str, delta: float, source: str = "intrinsic") -> None:
         self._levels[channel] = max(0.0, min(1.0, self._levels[channel] + delta))
+        if channel == "DA" and delta:
+            key = "external" if source == "external" else "intrinsic"
+            tally = getattr(self, "_da_tally", None)
+            if tally is None:  # bare test instances constructed via __new__
+                tally = self._da_tally = {"intrinsic": 0.0, "external": 0.0}
+            tally[key] += abs(float(delta))
+
+    def da_source_tally(self) -> dict[str, float]:
+        """Cumulative |DA delta| by provenance since this instance was created."""
+        return dict(getattr(self, "_da_tally", None) or {"intrinsic": 0.0, "external": 0.0})
 
     def get(self, channel: str) -> float:
         return self._levels[channel]
@@ -413,6 +430,20 @@ class Bus:
         single chemistry in companion mode. Bind to it explicitly for background
         loops (DMN, idle decay) that must never touch a client's active mood."""
         return self._resting
+
+    def da_source_tally(self) -> dict[str, float]:
+        """Process-wide DA provenance: resting pair + every live client pair.
+        intrinsic ≫ external means the brain is mostly rewarding itself — the
+        self-graded-learning risk the premise audit flagged; watch the ratio."""
+        total = {"intrinsic": 0.0, "external": 0.0}
+        pairs = [self._resting]
+        reg = getattr(self, "_chem_registry", None)
+        pairs.extend(getattr(reg, "_live", {}).values() if reg else ())
+        for p in pairs:
+            t = p.neuromod.da_source_tally()
+            total["intrinsic"] += float(t.get("intrinsic", 0.0))
+            total["external"] += float(t.get("external", 0.0))
+        return total
 
     @property
     def is_bound(self) -> bool:

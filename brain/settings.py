@@ -51,6 +51,10 @@ DEFAULTS: dict[str, float | int | str] = {
     "prediction_reward_turn_cap": 0.08,  # max prediction-confirmation DA per turn (anti-farm)
     # ── Accomplishment / mastery (Stage 6): effort overcome × success ────────
     "accomplishment_base": 0.07,  # DA at completion, before difficulty scaling
+    # Per-JOB ceiling on self-administered DA (story-criteria rewards mid-run +
+    # the terminal accomplishment reward together). Keeps one job's self-reward
+    # in the same league as an explicit user affirm (~0.10) instead of 3-4×. 0 = off.
+    "job_intrinsic_da_cap": 0.20,
     "accomplishment_fail_ratio": 0.40,  # failed-hard-task penalty = base*difficulty*this (< reward)
     # Expectation baselines: effort the upfront complexity label braces for (r = measured/expected).
     "accomplishment_expected_low": 2.0,
@@ -745,8 +749,10 @@ DEFAULTS: dict[str, float | int | str] = {
     # feature categories (the real division-of-labor axis; supersedes Phase 5).
     "colony_sensory_filter": 0,  # 1 = apply per-persona sensitivity gains; 0 = off
     "colony_sensory_gain_span": 0.30,  # ± span of the per-(persona,category) sensitivity gain
-    # N1 — live trail reinforcement (highest-risk; shadow-first).
-    "colony_trail_apply": 0,  # 1 = apply overlay to live weights; 0 = shadow (log only)
+    # N1 — live trail reinforcement. Ran shadow-only (log, don't apply) from
+    # graduation until 2026-07-01; flipped live per russ after the premise audit
+    # confirmed the write path + read path are sound.
+    "colony_trail_apply": 1,  # 1 = apply overlay to live weights; 0 = shadow (log only)
     "colony_trail_gain": 0.05,  # per-turn trail bump scale (× outcome)
     "colony_trail_clamp": 0.50,  # max |overlay| added to any edge's persisted weight
     "colony_trail_half_life_s": 120.0,  # trail overlay decay half-life within a session

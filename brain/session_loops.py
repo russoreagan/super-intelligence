@@ -304,12 +304,23 @@ class _LoopsMixin:
         except Exception:
             return {"scope": scope, "usage": {}, "rows": []}
         _r = getattr(self, "router", None)
+        try:
+            _da = self.bus.da_source_tally()
+        except Exception:
+            _da = {"intrinsic": 0.0, "external": 0.0}
         return {
             "scope": "org",
             "usage": _r.agent_usage() if _r else {},
             # >0 = this process failed to meter some out-of-band cloud spend (CMA
             # usage reads errored) — the dashboard should distrust a clean tally.
             "unmetered_spend_suspected": getattr(_r, "unmetered_spend_suspected", 0) if _r else 0,
+            # DA provenance this session: how much of the reward signal was
+            # self-administered vs grounded in the user/world. intrinsic ≫ external
+            # = the brain is mostly grading itself (premise-audit watch metric).
+            "da_reward_sources": {
+                "intrinsic": round(_da["intrinsic"], 4),
+                "external": round(_da["external"], 4),
+            },
         }
 
     async def _speak_gate_loop(self) -> None:

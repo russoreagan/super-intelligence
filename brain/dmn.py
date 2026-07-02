@@ -3680,7 +3680,10 @@ class DefaultModeNetwork:
         _nm = getattr(getattr(self, "_bus", None), "neuromod", None)  # best-effort; None in tests
         if verdict == "affirm":
             if _nm:
-                _nm.add("DA", float(settings.get("correctness_reward_base")) * _w * _er)
+                _nm.add(
+                    "DA", float(settings.get("correctness_reward_base")) * _w * _er,
+                    source="external",
+                )
             text = thread.pending_conclusion or thread.summary
             if self._hippocampus is not None:
                 asyncio.create_task(
@@ -3701,7 +3704,10 @@ class DefaultModeNetwork:
             # Verified wrong — DA dip plus 5HT drain (the sting that lingers); resting
             # chemistry decides whether that reads as brooding (Poet) or bristling (Analyst).
             if _nm:
-                _nm.add("DA", -float(settings.get("correctness_penalty_base")) * _w * _er * _la)
+                _nm.add(
+                    "DA", -float(settings.get("correctness_penalty_base")) * _w * _er * _la,
+                    source="external",
+                )
                 _nm.add("5HT", -float(settings.get("correctness_5ht_drain")) * _w * _er * _la)
             self._open_threads = ot.remove_thread(self._open_threads, thread.id)
             await self._save_threads()
@@ -3709,7 +3715,10 @@ class DefaultModeNetwork:
             return {"action": "conclusion_rejected", "thread_id": thread.id}
         # correction → partially wrong: a softer penalty (half), then re-open the thread.
         if _nm:
-            _nm.add("DA", -0.5 * float(settings.get("correctness_penalty_base")) * _w * _er * _la)
+            _nm.add(
+                "DA", -0.5 * float(settings.get("correctness_penalty_base")) * _w * _er * _la,
+                source="external",
+            )
         thread.status = ot.STATUS_OPEN
         thread.pending_conclusion = ""
         self._open_threads, _ = ot.advance_thread(

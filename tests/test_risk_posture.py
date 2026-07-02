@@ -120,7 +120,7 @@ class _RecordingNeuromod:
     def __init__(self):
         self.deltas: dict[str, float] = {}
 
-    def add(self, channel, delta):
+    def add(self, channel, delta, source="intrinsic"):
         self.deltas[channel] = self.deltas.get(channel, 0.0) + delta
 
 

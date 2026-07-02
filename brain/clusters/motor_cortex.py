@@ -15,6 +15,7 @@ import asyncio
 import contextlib
 import logging
 import os
+import re
 
 from brain.bus import Bus
 from brain.cell import IntegratorCell
@@ -100,6 +101,17 @@ _PLANNER_RETRIES: int = int(
 _JOB_TIMEOUT_S: float = float(
     os.environ.get("BRAIN_JOB_TIMEOUT_SECONDS") or _brain_settings.get("job_timeout_seconds", 1800)
 )
+# Function words ignored when judging whether a story's acceptance criteria carry
+# real content (the criteria-reward novelty gate). Deliberately minimal: generic
+# nouns like "output"/"result" still count as content so we don't over-reject.
+_CRITERIA_STOPWORDS = frozenset(
+    {
+        "the", "and", "for", "that", "with", "this", "are", "was", "were",
+        "from", "have", "has", "not", "its", "any", "all", "will", "should",
+        "must", "can", "each", "than", "then", "when", "into",
+    }
+)
+
 # Grace added on top of the internal poll-deadline before the HARD wait_for bound
 # force-kills the job. The internal deadline should normally stop the job first
 # (graceful); the hard bound only catches a genuinely hung await. Module-level so
@@ -1263,6 +1275,7 @@ class MotorCortexCluster:
         predictions_made = 0
         predictions_confirmed = 0
         _pred_reward_total = 0.0
+        _criteria_seen: list[frozenset] = []  # token sets of prior stories' criteria (novelty gate)
 
         for idx, story in enumerate(stories_planned):
             if idx < resume_from:
@@ -1569,28 +1582,43 @@ class MotorCortexCluster:
             # the hypothesis, so neither the DA reward nor the loss dip applies.
             if story_criteria and not story_check_unavailable:
                 predictions_made += 1
+                # Novelty/substance gate: trivial or duplicate criteria still get
+                # VERIFIED (the flow is untouched) but carry no hypothesis value —
+                # no reward, no dip. Stops the planner farming DA off its own
+                # rubber-stampable exam questions.
+                _eligible, _ctokens = self._criteria_reward_eligible(
+                    story_criteria, _criteria_seen
+                )
+                _criteria_seen.append(_ctokens)
                 if story_criteria_verified:
                     predictions_confirmed += 1
-                with contextlib.suppress(Exception):
-                    from brain.neuron import loss_aversion as _la_fn
-                    from brain.neuron import reward_weight as _rw
-                    from brain.persona_key import active_or_home_persona as _aohp
+                if not _eligible:
+                    logger.info(
+                        "[InternalJob] Story %d criteria too generic/duplicate — verified "
+                        "but no DA",
+                        idx + 1,
+                    )
+                if _eligible:
+                    with contextlib.suppress(Exception):
+                        from brain.neuron import loss_aversion as _la_fn
+                        from brain.neuron import reward_weight as _rw
+                        from brain.persona_key import active_or_home_persona as _aohp
 
-                    _persona = _aohp()
-                    _base = float(_brain_settings.get("prediction_reward_base"))
-                    _er = float(_brain_settings.get("emotional_reactivity_scale"))
-                    _cap = float(_brain_settings.get("prediction_reward_turn_cap"))
-                    _w = _rw(_persona, "correctness")
-                    if story_criteria_verified:
-                        _room = max(0.0, _cap - _pred_reward_total)
-                        _delta = min(_base * _w * _er, _room)
-                        if _delta > 0:
-                            self._bus.neuromod.add("DA", _delta)
-                            _pred_reward_total += _delta
-                    else:
-                        # Predicted its story would verify; reality refuted it — a loss, so the
-                        # dip scales by loss aversion (λ). The reward branch above stays unweighted.
-                        self._bus.neuromod.add("DA", -0.5 * _base * _w * _er * _la_fn(_persona))
+                        _persona = _aohp()
+                        _base = float(_brain_settings.get("prediction_reward_base"))
+                        _er = float(_brain_settings.get("emotional_reactivity_scale"))
+                        _cap = float(_brain_settings.get("prediction_reward_turn_cap"))
+                        _w = _rw(_persona, "correctness")
+                        if story_criteria_verified:
+                            _room = max(0.0, _cap - _pred_reward_total)
+                            _delta = min(_base * _w * _er, _room)
+                            if _delta > 0:
+                                self._bus.neuromod.add("DA", _delta)
+                                _pred_reward_total += _delta
+                        else:
+                            # Predicted its story would verify; reality refuted it — a loss, so the
+                            # dip scales by loss aversion (λ). The reward branch above stays unweighted.
+                            self._bus.neuromod.add("DA", -0.5 * _base * _w * _er * _la_fn(_persona))
 
             # Stage 6(c): in-the-moment frustration. The job is dragging past the effort it was
             # braced for (complexity estimate) — accrue NE/GABA + a small DA/5HT dip as the slog
@@ -1697,6 +1725,7 @@ class MotorCortexCluster:
             "complexity": complexity,
             "predictions_made": predictions_made,
             "predictions_confirmed": predictions_confirmed,
+            "intrinsic_da_spent": round(_pred_reward_total, 4),
         }
         _common = dict(
             steps=steps_taken, results=results_log, plan_steps=stories_planned,
@@ -1800,7 +1829,34 @@ class MotorCortexCluster:
             "complexity": complexity,
             "predictions_made": predictions_made,
             "predictions_confirmed": predictions_confirmed,
+            # Self-administered DA this job already paid itself (story-criteria
+            # rewards) — the accomplishment reward deducts it from the per-job
+            # intrinsic cap so one job can't stack unbounded self-reward.
+            "intrinsic_da_spent": round(_pred_reward_total, 4),
         }
+
+    @staticmethod
+    def _criteria_reward_eligible(
+        criteria: list, seen: list[frozenset]
+    ) -> tuple[bool, frozenset]:
+        """Whether a story's acceptance criteria are substantive and novel enough to
+        EARN DA when verified. The planner writes its own criteria and a same-family
+        cell grades them (self-grading, per the premise audit), so trivially generic
+        or copy-pasted criteria must not farm reward. Ineligible when the combined
+        criteria carry fewer than 4 distinct content words, or when the token set
+        overlaps ≥ 0.8 (Jaccard) with a previous story's criteria in this job. The
+        verify flow itself is untouched — only the reward/dip is gated."""
+        text = " ".join(str(c) for c in (criteria or [])).lower()
+        tokens = frozenset(
+            w for w in re.findall(r"[a-z0-9]{3,}", text) if w not in _CRITERIA_STOPWORDS
+        )
+        if len(tokens) < 4:
+            return False, tokens
+        for prev in seen:
+            union = len(tokens | prev)
+            if union and len(tokens & prev) / union >= 0.8:
+                return False, tokens
+        return True, tokens
 
     async def _tactical_plan(
         self, plan_prompt: str, job_id: str, retries: int = _PLANNER_RETRIES

@@ -382,7 +382,16 @@ class _TurnMixin:
         er = float(settings.get("emotional_reactivity_scale"))
         base = float(settings.get("accomplishment_base"))
         if bool(summary.get("success")):
-            self.bus.neuromod.add("DA", base * difficulty * modifier * w * er)
+            # Per-job intrinsic ceiling: the job may already have paid itself
+            # story-criteria DA mid-run (summary.intrinsic_da_spent). One success
+            # must not stack unbounded self-reward across emission points — the
+            # premise audit measured ~0.34 DA/job vs ~0.10 for real user praise.
+            cap = float(settings.get("job_intrinsic_da_cap"))
+            already = float(summary.get("intrinsic_da_spent", 0.0) or 0.0)
+            room = max(0.0, cap - already) if cap > 0 else float("inf")
+            delta = min(base * difficulty * modifier * w * er, room)
+            if delta > 0:
+                self.bus.neuromod.add("DA", delta)
         else:
             # Failing a braced-for hard task is a loss — weight the dip by this persona's loss
             # aversion (λ), independently of the symmetric mastery reward weight (w). The reward
