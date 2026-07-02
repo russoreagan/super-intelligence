@@ -536,7 +536,10 @@
         : '';
       html = `GPU pod · up ${esc(fmtDur(p.uptime_s))}${cost}`;
     } else if (p && ['resuming', 'pulling', 'warming'].includes(p.state)) {
-      html = `GPU pod · ${esc(p.state)}…`;
+      // "reloading model onto GPU" = in-place reconnect on the SAME pod (model went
+      // un-resident), not a fresh boot — name it so the two read differently.
+      const phase = p.detail === 'reloading model onto GPU' ? 'reconnecting' : p.state;
+      html = `GPU pod · ${esc(phase)}…`;
     } else if (p) {
       html = 'cloud inference';
     }

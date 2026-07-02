@@ -8537,6 +8537,19 @@ const POD_PHASE_TEXT = {
   warming:  'Loading the local model into memory…',
   failed:   'Local model unavailable — running on cloud',
 };
+// Detail-specific refinements. The gateway's status detail distinguishes a fresh
+// boot from a RECONNECT — a re-warm on the SAME pod after the model went
+// un-resident (keep-alive expiry, ollama restart, redeploy adoption) — and the
+// two very different "failed" postures (out of stock → still hunting each minute
+// vs unhealthy → cooling down before another attempt).
+const POD_DETAIL_TEXT = {
+  'reloading model onto GPU':                  'Reconnecting the local model — reloading it onto the GPU…',
+  'starting GPU pod':                          'Restarting the local GPU…',
+  'provisioning a GPU':                        'Provisioning a GPU for the local model…',
+  'preferred GPU out of stock — searching':    'No right-sized GPU in stock — on cloud, still searching…',
+  'no healthy GPU pod — using cloud':          'Local GPU failed health checks — on cloud, cooling down before retry',
+  'GPU unavailable — using cloud (cooling down)': 'Local GPU unavailable — on cloud, cooling down before retry',
+};
 function fmtPodElapsed(s) {
   s = Math.max(0, Math.round(s));
   if (s < 60) return s + 's';
@@ -8554,19 +8567,22 @@ function renderPodStatus(d) {
   const detail  = (d && d.detail) || '';
   const booting = (state === 'resuming' || state === 'pulling' || state === 'warming');
 
+  // Detail-refined phase label (falls back detail → state → generic).
+  let label = POD_DETAIL_TEXT[detail] || POD_PHASE_TEXT[state] || 'Booting the local model…';
+  if (state === 'pulling' && detail) label = 'Downloading the local model — ' + detail.replace('downloading ', '');
+  if (state === 'failed' && detail && !POD_DETAIL_TEXT[detail]) label += ' (' + detail + ')';
+
   // Tooltip dot reflects the phase at a glance.
   const dotClass = state === 'ready' ? 'ready'
                  : state === 'failed' ? 'failed'
                  : booting ? 'booting' : 'off';
   dot.className = 'status-row-dot ' + dotClass;
   dot.title = state === 'ready' ? 'Local model ready'
-            : state === 'failed' ? ('Local model failed' + (detail ? ' — ' + detail : ''))
-            : booting ? (POD_PHASE_TEXT[state] || 'Booting')
+            : state === 'failed' ? label
+            : booting ? label
             : 'No local model — using cloud';
 
   if (booting || state === 'failed') {
-    let label = POD_PHASE_TEXT[state] || 'Booting the local model…';
-    if (state === 'pulling' && detail) label = 'Downloading the local model — ' + detail.replace('downloading ', '');
     // Stall hint: a long phase says so rather than looking frozen/dead.
     if (booting && elapsed > 240) label = label.replace(/…$/, '') + ' — slower than usual, still working…';
     textEl.textContent = label;
