@@ -157,7 +157,7 @@ All of `brain/dmn.py`'s module-level knobs are import-time ⚠.
 | `BRAIN_STT_ENDPOINTING_MS` | `500` | call | Deepgram endpointing. `brain/streaming_mic.py:153`, `brain/api/stt_live.py:82` |
 | `BRAIN_STT_UTTERANCE_END_MS` | `1200` | call | Deepgram utterance-end. `brain/streaming_mic.py:154`, `brain/api/stt_live.py:83` |
 | `BRAIN_STT_LANGUAGE` | `en` | call | STT language. `brain/streaming_mic.py:155`, `brain/ui/server.py:2027`, `brain/api/stt_live.py:84` |
-| `BRAIN_STT_KEYWORDS` | **two different defaults** (see §12) | call | Deepgram keyword boosts (`word:weight,` list). `brain/streaming_mic.py:156` (long default list), `brain/api/stt_live.py:85` (`""`) |
+| `BRAIN_STT_KEYWORDS` | `claude:5,chloé:3,…` | call | Deepgram keyword boosts (`word:weight,` list). Shared default in `brain/stt_config.py` (`DEFAULT_STT_KEYWORDS`), used by both `brain/streaming_mic.py` and `brain/api/stt_live.py` |
 | `BRAIN_TTS_CHUNK_TIMEOUT` | `30` | import ⚠ | Abort TTS if no audio chunk arrives within this (hung-call watchdog). `brain/pns.py:30` |
 | `BRAIN_TTS_CHUNK_GAP_MS` | `20` | call | Inter-chunk silence between TTS sentences (0 disables). `brain/pns.py:1251,1296,1372` |
 | `BRAIN_TTS_MAX_CHUNK_FAILURES` | `2` | call | Consecutive chunk failures that abort the whole TTS stream. `brain/pns.py:1212` |
@@ -315,9 +315,10 @@ read `SUPABASE_URL` / `SUPABASE_ANON_KEY` / `SUPABASE_SERVICE_KEY` / `BRAIN_USER
 - `BRAIN_SESSION_IDLE_TIMEOUT_S` — `600` in `brain/session_manager.py:26` vs `86400` in
   `brain/provisioner.py:52`. Two different subsystems reusing one name with 144×
   different fallbacks; setting the env var changes both at once.
-- `BRAIN_STT_KEYWORDS` — `brain/streaming_mic.py:156` defaults to a populated boost list
-  (`claude:5,chloé:3,ableton:5,...`) while `brain/api/stt_live.py:85` defaults to `""`.
-  The engine-API STT path silently loses the keyword boosts unless the env var is set.
+- `BRAIN_STT_KEYWORDS` — RESOLVED: both STT paths now resolve through
+  `brain/stt_config.py` (`DEFAULT_STT_KEYWORDS`); `tests/test_stt_keywords_shared.py`
+  guards against re-divergence. (Was: `brain/streaming_mic.py` populated list vs
+  `brain/api/stt_live.py` `""` — engine-API STT silently lost the boosts.)
 - `BRAIN_USER_ID` — defaults to `""` everywhere except `brain/gateway/server.py:370`,
   which defaults to `"dev"` (local single-user path). Minor, but a real divergence.
 - `LANGFUSE_HOST` vs `LANGFUSE_BASE_URL` — precedence is inconsistent:
@@ -383,6 +384,7 @@ and why `/restart` re-execs the process.
 *Totals at generation time: 188 distinct named variables (178 read under `brain/`,
 9 `BRAIN_EVAL_*` eval-only, 1 scripts-only `USER_ID`), plus the 4-suffix
 `BRAIN_CMA_MCP_<NAME>_*` dynamic family. 74 variables have import-time reads.
-2 hard duplicate-default conflicts (`BRAIN_SESSION_IDLE_TIMEOUT_S`, `BRAIN_STT_KEYWORDS`),
-plus the `BRAIN_USER_ID` `"dev"` divergence and the `LANGFUSE_HOST`/`LANGFUSE_BASE_URL`
-precedence inconsistency. 1 dead documented var (`BRAIN_DISABLE_PREDICT_GATING`).*
+1 hard duplicate-default conflict (`BRAIN_SESSION_IDLE_TIMEOUT_S`; `BRAIN_STT_KEYWORDS`
+resolved via `brain/stt_config.py`), plus the `BRAIN_USER_ID` `"dev"` divergence and the
+`LANGFUSE_HOST`/`LANGFUSE_BASE_URL` precedence inconsistency. 1 dead documented var
+(`BRAIN_DISABLE_PREDICT_GATING`).*

@@ -140,8 +140,12 @@ class StreamingMicSession:
           BRAIN_STT_KEYWORDS         — comma-separated word:boost pairs to bias
                                        transcription toward expected vocabulary,
                                        e.g. 'claude:5,chloé:3,ableton:5'.
+                                       Default lives in brain/stt_config.py,
+                                       shared with the engine-API STT path.
         """
         from deepgram import AsyncDeepgramClient
+
+        from brain.stt_config import stt_keyterms
 
         client = AsyncDeepgramClient(api_key=os.environ["DEEPGRAM_API_KEY"])
 
@@ -153,11 +157,7 @@ class StreamingMicSession:
         endpointing_ms = int(os.environ.get("BRAIN_STT_ENDPOINTING_MS", "500"))
         utterance_end_ms = int(os.environ.get("BRAIN_STT_UTTERANCE_END_MS", "1200"))
         language = os.environ.get("BRAIN_STT_LANGUAGE", "en").strip() or "en"
-        keywords_raw = os.environ.get(
-            "BRAIN_STT_KEYWORDS",
-            "claude:5,chloé:3,ableton:5,imessage:3,github:3,ollama:3,deepgram:3,elevenlabs:3",
-        )
-        keywords = [k.strip() for k in keywords_raw.split(",") if k.strip()]
+        keyterms = stt_keyterms()
 
         connect_kwargs = {
             "model": "nova-3",
@@ -175,10 +175,9 @@ class StreamingMicSession:
             "numerals": True,  # "five" → "5"
         }
         # nova-3 uses `keyterm` (whole phrases, no boost number);
-        # older models use `keywords` (word:boost pairs). Try keyterm first
-        # for nova-3 — strip any :boost suffix.
-        if keywords:
-            keyterms = [k.split(":")[0] for k in keywords if k]
+        # older models use `keywords` (word:boost pairs). stt_keyterms()
+        # strips the :boost suffix for nova-3.
+        if keyterms:
             connect_kwargs["keyterm"] = keyterms
 
         self._socket_cm = client.listen.v1._raw_client.connect(**connect_kwargs)
@@ -189,7 +188,7 @@ class StreamingMicSession:
             language,
             endpointing_ms,
             utterance_end_ms,
-            len(keywords),
+            len(keyterms),
         )
 
     async def _close_deepgram(self) -> None:

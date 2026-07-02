@@ -15,7 +15,8 @@ Configuration uses the same env vars as streaming_mic.py:
   BRAIN_STT_ENDPOINTING_MS    (silence before utterance ends; default 500)
   BRAIN_STT_UTTERANCE_END_MS  (grace after endpointing; default 1200)
   BRAIN_STT_LANGUAGE          (hint; default 'en')
-  BRAIN_STT_KEYWORDS          (comma-separated word:boost pairs)
+  BRAIN_STT_KEYWORDS          (comma-separated word:boost pairs; default
+                               shared with streaming_mic via brain/stt_config.py)
 """
 
 from __future__ import annotations
@@ -77,13 +78,14 @@ class DeepgramLiveSession:
 
         from deepgram import AsyncDeepgramClient
 
+        from brain.stt_config import stt_keyterms
+
         client = AsyncDeepgramClient(api_key=os.environ["DEEPGRAM_API_KEY"])
 
         endpointing_ms = int(os.environ.get("BRAIN_STT_ENDPOINTING_MS", "500"))
         utterance_end_ms = int(os.environ.get("BRAIN_STT_UTTERANCE_END_MS", "1200"))
         language = (os.environ.get("BRAIN_STT_LANGUAGE") or "en").strip() or "en"
-        keywords_raw = os.environ.get("BRAIN_STT_KEYWORDS", "")
-        keywords = [k.strip() for k in keywords_raw.split(",") if k.strip()]
+        keyterms = stt_keyterms()
 
         connect_kwargs: dict = {
             "model": "nova-3",
@@ -98,8 +100,8 @@ class DeepgramLiveSession:
             "smart_format": True,
             "language": language,
         }
-        if keywords:
-            connect_kwargs["keyterm"] = [k.split(":")[0] for k in keywords]
+        if keyterms:
+            connect_kwargs["keyterm"] = keyterms
 
         self._socket_cm = client.listen.v1._raw_client.connect(**connect_kwargs)
         self._socket = await self._socket_cm.__aenter__()
