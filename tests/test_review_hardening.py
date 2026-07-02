@@ -447,3 +447,32 @@ def test_motor_budgets_use_canonical_curve():
     calm = {"DA": 0.0, "CORT": 1.0}
     assert m._effective_budget(hot) == 5 and m._effective_budget(calm) == 1
     assert m._effective_job_budget(hot) == 18 and m._effective_job_budget(calm) == 6
+
+
+# ── Settings load: unknown keys warned, bad values don't nuke the rest ───────
+def test_settings_load_warns_unknown_and_survives_bad_values(monkeypatch, tmp_path, caplog):
+    import json
+    import logging
+
+    import brain.settings as st
+
+    # A real numeric key from the schema, fed an uncoercible value.
+    num_key = next(k for k, v in st.DEFAULTS.items() if isinstance(v, float))
+    p = tmp_path / "settings.json"
+    p.write_text(
+        json.dumps(
+            {
+                "persona_name": "The Analyst",  # valid
+                num_key: "not-a-number",  # coercion fails
+                "presona_name": "typo",  # unknown key
+            }
+        )
+    )
+    monkeypatch.setattr(st, "SETTINGS_PATH", p)
+    with caplog.at_level(logging.WARNING):
+        s = st.Settings()
+    assert s.get("persona_name") == "The Analyst"  # good override survived
+    assert s.get(num_key) == st.DEFAULTS[num_key]  # bad value fell back, not fatal
+    text = caplog.text
+    assert "presona_name" in text and "unknown key" in text
+    assert num_key in text and "cannot coerce" in text

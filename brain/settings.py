@@ -922,12 +922,35 @@ class Settings:
             return
         try:
             on_disk = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
-            for k, v in on_disk.items():
-                if k in DEFAULTS:
-                    self._data[k] = type(DEFAULTS[k])(v)
-            logger.info("[Settings] Loaded %d overrides from %s", len(on_disk), SETTINGS_PATH)
         except Exception as e:
             logger.warning("[Settings] Could not load settings.json: %s", e)
+            return
+        unknown: list[str] = []
+        for k, v in on_disk.items():
+            if k not in DEFAULTS:
+                unknown.append(k)
+                continue
+            try:
+                self._data[k] = type(DEFAULTS[k])(v)
+            except Exception as e:
+                # One malformed value must not discard every other override.
+                logger.warning(
+                    "[Settings] Ignoring %s=%r (cannot coerce to %s): %s",
+                    k,
+                    v,
+                    type(DEFAULTS[k]).__name__,
+                    e,
+                )
+        if unknown:
+            # A typo'd key silently doing nothing is the worst failure mode of a
+            # 240-key schema — say which keys were dropped.
+            logger.warning(
+                "[Settings] %d unknown key(s) in %s ignored (typo or removed setting?): %s",
+                len(unknown),
+                SETTINGS_PATH,
+                ", ".join(sorted(unknown)[:20]),
+            )
+        logger.info("[Settings] Loaded %d overrides from %s", len(on_disk), SETTINGS_PATH)
 
     def get(self, key: str, default=None):
         return self._data.get(key, default if default is not None else DEFAULTS.get(key))

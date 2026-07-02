@@ -52,6 +52,10 @@ CLUSTER = "motor_cortex"
 # subprocess). Set them generously above real worst-case latency so slow-but-
 # healthy work always completes; rely on retries to ride out transient blips.
 
+# NOTE: the tunables below are read ONCE at import (deliberately: hot paths and
+# tests patch them as module constants). A settings.json edit to any of them does
+# NOT apply until the brain process restarts — the env override is the live knob.
+#
 # Per-tool dispatch timeout: kills a single tool call only if it truly hangs.
 # Filesystem ops are sub-second; run_command/fetch_url have their own inner
 # limits. 120s is far above any healthy tool call but still catches a stuck mount.
