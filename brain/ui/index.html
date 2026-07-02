@@ -4198,6 +4198,8 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
 }
 .thought-item.thought-u-low { opacity: 0.62; }
 .thought-item.thought-fromjob .thought-tx { border-left: 2px solid color-mix(in oklch, var(--accent) 55%, transparent); padding-left: 7px; }
+/* High-salience thoughts (the brain's own ranking) read at full ink, like the latest. */
+.thought-item.thought-salient .thought-tx { color: var(--ink); }
 
 /* Work tray: which agent triggered a job (persona resource-contention view). */
 .task-agent {
@@ -6663,6 +6665,9 @@ function appendThought(text, chemDelta, tsEpoch, opts) {
   if (opts.urgency) cls += ' thought-u-' + opts.urgency;
   if (opts.fromJob) cls += ' thought-fromjob';
   if (opts.source) cls += ' thought-sourced';
+  // Salient thoughts (high dopamine / strong valence / spoken — the score the brain
+  // computes) read more prominently; the panel was threading salience but not using it.
+  if (typeof opts.salience === 'number' && opts.salience >= 0.66) cls += ' thought-salient';
   div.className = cls;
   const srcHtml = opts.source
     ? `<span class="thought-src" title="Reasoning from agent ${escapeHtml(opts.source)}">${escapeHtml(opts.source)}</span>`
@@ -6680,7 +6685,7 @@ function appendThought(text, chemDelta, tsEpoch, opts) {
     if (pills) chemHtml = `<div class="thought-chem">${pills}</div>`;
   }
 
-  div.innerHTML = `<span class="thought-ts">${ts}</span><span class="thought-tx">${srcHtml}${text}${chemHtml}</span>`;
+  div.innerHTML = `<span class="thought-ts">${ts}</span><span class="thought-tx">${srcHtml}${escapeHtml(text)}${chemHtml}</span>`;
   feed.prepend(div);
 
   // Keep only the 5 most recent thoughts

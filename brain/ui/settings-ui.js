@@ -2036,6 +2036,9 @@
       openApiKeys: async () => { bindChrome('settings'); if (!Object.keys(values).length) await loadFromServer(); renderSlimRail(); selectSystem('apikeys'); syncRailSel(); },
       // Render persona `id`'s full config inline in the Personas workspace pane.
       mountPersona,
+      // Whether the currently-mounted persona has unsaved config edits — the workspace
+      // uses this to warn before switching personas/views would silently drop them.
+      hasUnsavedPersona: () => { try { return dirtyCount() > 0; } catch (e) { return false; } },
       // Back-compat: the slim Settings no longer hosts persona config, so this just
       // mounts into the workspace surface (callers that still ask for it get it there).
       openPersona: mountPersona,
