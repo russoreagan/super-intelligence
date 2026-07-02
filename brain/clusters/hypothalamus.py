@@ -188,8 +188,9 @@ class HypothalamusCluster:
         # division-of-labor axis — differential detection, not response threshold).
         # Identity (1.0) unless colony_features AND colony_sensory_filter are on.
         from brain.neuron import reward_weight, sensory_gain
+        from brain.persona_key import active_or_home_persona
 
-        _persona = str(settings.get("persona_name", ""))
+        _persona = active_or_home_persona()
         _affect_gain = sensory_gain(_persona, "affective")
         _novelty_gain = sensory_gain(_persona, "novelty")
         # reward_weight is VALUATION (how much this persona values the source) vs sensory_gain's

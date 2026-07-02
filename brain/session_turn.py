@@ -375,7 +375,9 @@ class _TurnMixin:
             )
         )
         difficulty, modifier = accomplishment_factor(measured_effort, expected)
-        persona = str(settings.get("persona_name", ""))
+        from brain.persona_key import active_or_home_persona
+
+        persona = active_or_home_persona()
         w = reward_weight(persona, "mastery")
         er = float(settings.get("emotional_reactivity_scale"))
         base = float(settings.get("accomplishment_base"))
@@ -417,7 +419,9 @@ class _TurnMixin:
             pr = prediction_reward(confidence, correct, informativeness=1.0)
             if not pr:
                 return
-            persona = str(settings.get("persona_name", ""))
+            from brain.persona_key import active_or_home_persona
+
+            persona = active_or_home_persona()
             delta = (
                 pr
                 * float(settings.get("prediction_reward_base"))
@@ -1146,7 +1150,9 @@ class _TurnMixin:
 
                 best = max(draft_scores, key=lambda d: d.get("overall", 0.5))
                 overall = best.get("overall", 0.5)
-                _persona = str(settings.get("persona_name", ""))
+                from brain.persona_key import active_or_home_persona
+
+                _persona = active_or_home_persona()
                 _w = reward_weight(_persona, "correctness")
                 _er = float(settings.get("emotional_reactivity_scale"))
                 if overall < 0.4:
@@ -1257,7 +1263,12 @@ class _TurnMixin:
         # raw os.execv that skips _shutdown, so per-turn saving is what survives.
         try:
             _persona = str(settings.get("persona_name", ""))
-            if _persona:
+            # Skip while a NON-resting pair is bound (engine turn in a client's or
+            # bound persona's mood): snapshotting the bus then would persist that
+            # transient state as the HOME persona's evolved chemistry — a client's
+            # mood leaking into the persona's durable profile. Client pairs persist
+            # through their own registry; the resting pair is what this save owns.
+            if _persona and not self.bus.is_bound:
                 _now = time.monotonic()
                 if _now - getattr(self, "_last_chem_save_ts", 0.0) >= 5.0:
                     from brain import persona_chem
@@ -1768,11 +1779,22 @@ class _TurnMixin:
         if getattr(task, "origin_channel", "owner") == "agent" and getattr(
             task, "origin_session_id", ""
         ):
-            with bind_turn(
-                "agent",
-                session_id=task.origin_session_id,
-                agent_id=getattr(task, "origin_agent_id", "") or None,
-                end_user_id=getattr(task, "origin_end_user_id", ""),
+            # Bind the originating agent's PERSONA too (agent_id = "persona.mandate"),
+            # so the job's completion rewards scale by that persona's temperament and
+            # its memory writes stay in that persona's stores — not the home persona's
+            # (the turn-lane half of the 2026-07 persona-misattribution fix).
+            _agent_id = getattr(task, "origin_agent_id", "") or ""
+            _task_persona = _agent_id.split(".", 1)[0] if "." in _agent_id else ""
+            from brain.second_brain.store import bind_persona
+
+            with (
+                bind_persona(_task_persona),
+                bind_turn(
+                    "agent",
+                    session_id=task.origin_session_id,
+                    agent_id=_agent_id or None,
+                    end_user_id=getattr(task, "origin_end_user_id", ""),
+                ),
             ):
                 await self._run_task_body(task)
         else:
@@ -2123,8 +2145,9 @@ class _TurnMixin:
         # signal scaled by how much this persona values being right; failure drains 5HT.
         from brain.neuron import loss_aversion as _loss_aversion
         from brain.neuron import reward_weight as _reward_weight
+        from brain.persona_key import active_or_home_persona as _aohp
 
-        _tpersona = str(settings.get("persona_name", ""))
+        _tpersona = _aohp()
         _tw = _reward_weight(_tpersona, "correctness")
         _ter = float(settings.get("emotional_reactivity_scale"))
         if success is False:
@@ -2224,8 +2247,9 @@ class _TurnMixin:
         # persona values being right, and failure also drains 5HT (the sting that lingers).
         from brain.neuron import loss_aversion as _loss_aversion
         from brain.neuron import reward_weight as _reward_weight
+        from brain.persona_key import active_or_home_persona as _aohp
 
-        _tpersona = str(settings.get("persona_name", ""))
+        _tpersona = _aohp()
         _tw = _reward_weight(_tpersona, "correctness")
         _ter = float(settings.get("emotional_reactivity_scale"))
         if success is False:

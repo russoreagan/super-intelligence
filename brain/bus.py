@@ -414,6 +414,16 @@ class Bus:
         loops (DMN, idle decay) that must never touch a client's active mood."""
         return self._resting
 
+    @property
+    def is_bound(self) -> bool:
+        """True when a NON-resting chemistry pair is bound to the current async
+        context (an engine turn running in a client's or bound persona's mood).
+        Persistence paths that write the PERSONA's evolved state must skip while
+        this is True — snapshotting the bus then would leak a client's transient
+        mood into the persona's durable chemistry (the one-way valve's inverse)."""
+        pair = _active_chem.get()
+        return pair is not None and pair is not self._resting
+
     def new_chem(self) -> ChemPair:
         """A fresh per-client chemistry pair seeded from the persona temperament
         baseline. Restore a returning client's snapshot onto it before binding."""

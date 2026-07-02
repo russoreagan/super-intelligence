@@ -699,7 +699,9 @@ class FrontalCluster:
             pr = prediction_reward(confidence, correct, info)
             if not pr:
                 return
-            persona = str(settings.get("persona_name", ""))
+            from brain.persona_key import active_or_home_persona
+
+            persona = active_or_home_persona()
             delta = (
                 pr
                 * float(settings.get("prediction_reward_base"))

@@ -1574,8 +1574,9 @@ class MotorCortexCluster:
                 with contextlib.suppress(Exception):
                     from brain.neuron import loss_aversion as _la_fn
                     from brain.neuron import reward_weight as _rw
+                    from brain.persona_key import active_or_home_persona as _aohp
 
-                    _persona = str(_brain_settings.get("persona_name", ""))
+                    _persona = _aohp()
                     _base = float(_brain_settings.get("prediction_reward_base"))
                     _er = float(_brain_settings.get("emotional_reactivity_scale"))
                     _cap = float(_brain_settings.get("prediction_reward_turn_cap"))
@@ -2937,9 +2938,19 @@ class MotorCortexCluster:
     }
 
     def _persona_planning_hint(self) -> str:
-        """Return the active persona's planning orientation, or empty string if neutral."""
-        persona = str(_brain_settings.get("persona_name", ""))
-        return self._PERSONA_PLANNING_HINTS.get(persona, "")
+        """Return the active persona's planning orientation, or empty string if neutral.
+        Resolved from the turn-bound persona (falls back to home) and matched by
+        SLUG — the table is keyed by display name, but hosted settings carry the
+        slug, which silently missed every hint until the 2026-07 audit."""
+        from brain.persona_key import active_or_home_persona, persona_slug
+
+        want = persona_slug(active_or_home_persona())
+        if not want:
+            return ""
+        for name, hint in self._PERSONA_PLANNING_HINTS.items():
+            if persona_slug(name) == want:
+                return hint
+        return ""
 
     def _chem_description(self, chem: dict[str, float]) -> str:
         """Short human-readable description of the brain's current chemical state,

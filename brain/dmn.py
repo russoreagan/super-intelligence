@@ -319,14 +319,11 @@ class DefaultModeNetwork:
     def _reward_persona(self) -> str:
         """Persona whose reward valuations scale THIS tick's learning — the active bound
         persona under round-robin (so a rotated tick reinforces its own chemistry), else
-        home. reward_weight/loss_aversion canonicalize, so display name or slug is fine."""
-        try:
-            from brain.second_brain.store import active_persona
+        home. reward_weight/loss_aversion canonicalize, so display name or slug is fine.
+        Delegates to the shared resolver the turn-path reward sites now use too."""
+        from brain.persona_key import active_or_home_persona
 
-            return active_persona() or str(settings.get("persona_name", "")) or self._home
-        except Exception as e:
-            logger.debug("[DMN] Reward persona resolution failed, using settings name: %s", e)
-            return str(settings.get("persona_name", ""))
+        return active_or_home_persona() or self._home
 
     def __init__(
         self, bus: Bus, router: ModelRouter, hippocampus=None, parietal=None, obs=None

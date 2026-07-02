@@ -476,3 +476,68 @@ def test_settings_load_warns_unknown_and_survives_bad_values(monkeypatch, tmp_pa
     text = caplog.text
     assert "presona_name" in text and "unknown key" in text
     assert num_key in text and "cannot coerce" in text
+
+
+# ── Persona misattribution fix: temperament follows the BOUND persona ─────────
+def test_active_or_home_persona_prefers_bound():
+    from brain.persona_key import active_or_home_persona
+    from brain.second_brain.store import bind_persona
+
+    home = active_or_home_persona()  # settings fallback (whatever the process has)
+    with bind_persona("the_adversary"):
+        assert active_or_home_persona() == "the_adversary"
+    assert active_or_home_persona() == home  # reset on exit
+
+
+def test_reward_weight_uses_bound_persona_not_home(monkeypatch):
+    # The audit's failure mode: a bound agent turn must get ITS persona's reward
+    # valuation, not the home persona's. the_analyst and the_empath value
+    # "connection" differently in _PERSONA_REWARD_WEIGHTS — assert the resolved
+    # weights differ and match a direct per-persona lookup.
+    from brain.neuron import _PERSONA_REWARD_WEIGHTS, reward_weight
+    from brain.persona_key import active_or_home_persona
+    from brain.second_brain.store import bind_persona
+    from brain.settings import settings
+
+    monkeypatch.setattr(settings, "get", lambda k, d=None: "the_analyst" if k == "persona_name" else d)
+    analyst_w = _PERSONA_REWARD_WEIGHTS["the_analyst"]["connection"]
+    empath_w = _PERSONA_REWARD_WEIGHTS["the_empath"]["connection"]
+    assert analyst_w != empath_w, "test personas must differ on this source"
+
+    assert reward_weight(active_or_home_persona(), "connection") == pytest.approx(analyst_w)
+    with bind_persona("the_empath"):
+        assert reward_weight(active_or_home_persona(), "connection") == pytest.approx(empath_w)
+
+
+def test_dmn_reward_persona_delegates_to_shared_resolver():
+    from brain.dmn import DefaultModeNetwork
+    from brain.second_brain.store import bind_persona
+
+    dmn = DefaultModeNetwork.__new__(DefaultModeNetwork)
+    dmn._home = "home_persona"
+    with bind_persona("the_sage"):
+        assert dmn._reward_persona() == "the_sage"
+
+
+def test_bus_is_bound_distinguishes_client_pair():
+    from brain.bus import Bus
+
+    bus = Bus()
+    assert bus.is_bound is False
+    with bus.bind(bus.new_chem()):
+        assert bus.is_bound is True
+    assert bus.is_bound is False
+    with bus.bind(bus.resting_chem):  # explicit resting bind is NOT a client bind
+        assert bus.is_bound is False
+
+
+def test_planning_hint_resolves_by_slug():
+    m = _bare_motor()
+    from brain.second_brain.store import bind_persona
+
+    with bind_persona("the_visionary"):  # slug form — used to miss the display-name keys
+        assert "Visionary" in m._persona_planning_hint()
+    with bind_persona("The Visionary"):  # display form still works
+        assert "Visionary" in m._persona_planning_hint()
+    with bind_persona("the_unknown_custom"):
+        assert m._persona_planning_hint() == ""

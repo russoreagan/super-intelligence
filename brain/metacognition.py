@@ -415,8 +415,9 @@ class MetacognitionCell:
         if candidate == "relieved":
             with contextlib.suppress(Exception):
                 from brain.neuron import reward_weight
+                from brain.persona_key import active_or_home_persona
 
-                _w = reward_weight(str(settings.get("persona_name", "")), "relief")
+                _w = reward_weight(active_or_home_persona(), "relief")
                 _er = float(settings.get("emotional_reactivity_scale"))
                 self._bus.neuromod.add(
                     "DA", float(settings.get("correctness_self_base")) * _w * _er
