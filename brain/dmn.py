@@ -545,7 +545,8 @@ class DefaultModeNetwork:
             if not home:
                 home = self.__dict__["_home"] = self._resolve_home()
             key = _persona_key(active_persona() or home)
-        except Exception:
+        except Exception as e:
+            logger.debug("[DMN] Persona-state key resolution failed, using 'default': %s", e)
             key = "default"
         bundle = pstate.get(key)
         if bundle is None:
@@ -563,7 +564,8 @@ class DefaultModeNetwork:
                 or os.environ.get("BRAIN_PERSONA_NAME", "")
                 or "default"
             )
-        except Exception:
+        except Exception as e:
+            logger.debug("[DMN] Home persona settings lookup failed, using env fallback: %s", e)
             return os.environ.get("BRAIN_PERSONA_NAME", "") or "default"
 
     def _reward_persona(self) -> str:
@@ -574,7 +576,8 @@ class DefaultModeNetwork:
             from brain.second_brain.store import active_persona
 
             return active_persona() or str(settings.get("persona_name", "")) or self._home
-        except Exception:
+        except Exception as e:
+            logger.debug("[DMN] Reward persona resolution failed, using settings name: %s", e)
             return str(settings.get("persona_name", ""))
 
     def __init__(
@@ -993,7 +996,8 @@ class DefaultModeNetwork:
             if inspect.isawaitable(result):
                 result = await result
             return result if isinstance(result, list) else None
-        except Exception:
+        except Exception as e:
+            logger.debug("[DMN] Semantic-dedup embedding failed: %s", e)
             return None
 
     # ── Novelty memory persistence ──────────────────────────────────────────
@@ -1542,7 +1546,8 @@ class DefaultModeNetwork:
             if verdict not in {"yes", "wait", "drop"}:
                 verdict = "wait"
             return (verdict, reason)
-        except Exception:
+        except Exception as e:
+            logger.debug("[Speak gate] Judge JSON parse failed, using heuristic fallback: %s", e)
             # Heuristic fallback — look for the verdict words in raw text.
             lower = raw.lower()
             if "drop" in lower:
@@ -1599,7 +1604,8 @@ class DefaultModeNetwork:
         if relationship is not None:
             try:
                 self._last_affection_score = int(relationship.get("score", 0))
-            except Exception:
+            except Exception as e:
+                logger.debug("[DMN] Relationship score parse failed, using 0: %s", e)
                 self._last_affection_score = 0
             fam = (relationship.get("familiarity") or "new").strip().lower()
             if fam in {"new", "acquainted", "close"}:
@@ -1942,7 +1948,8 @@ class DefaultModeNetwork:
                         "proposed": proposed_m.group(1).strip() if proposed_m else "",
                     }
                 )
-            except Exception:
+            except Exception as e:
+                logger.debug("[DMN] Could not parse proposal doc %s: %s", p.name, e)
                 pass
         return results
 
@@ -1962,7 +1969,8 @@ class DefaultModeNetwork:
             fixed = re.sub(r"^```(?:json)?\s*", "", fixed)
             fixed = re.sub(r"\s*```$", "", fixed).strip()
             return json.loads(fixed)
-        except Exception:
+        except Exception as e:
+            logger.debug("[DMN] Monologue JSON parse failed after +N fix: %s", e)
             return None
 
     def _tick_skip_probability(self) -> float:
@@ -2000,11 +2008,13 @@ class DefaultModeNetwork:
         generic 0.5-centred SwitchNeuron modulator path."""
         try:
             nm = self._bus.neuromod.snapshot()
-        except Exception:
+        except Exception as e:
+            logger.debug("[DMN] Neuromodulator snapshot failed: %s", e)
             nm = {}
         try:
             hs = self._bus.hormonal.snapshot()
-        except Exception:
+        except Exception as e:
+            logger.debug("[DMN] Hormonal snapshot failed: %s", e)
             hs = {}
         snap = {**nm, **hs}
         if settings.get("flock_dynamics", 0):
@@ -2013,7 +2023,8 @@ class DefaultModeNetwork:
                     snap[f"vel_{ch}"] = v
                 for ch, v in self._bus.hormonal.velocity().items():
                     snap[f"vel_{ch}"] = v
-            except Exception:
+            except Exception as e:
+                logger.debug("[DMN] Flock velocity snapshot failed: %s", e)
                 pass
         return snap
 
@@ -2048,7 +2059,8 @@ class DefaultModeNetwork:
                     if agents.effective_tier(p) == "full":
                         roster.append(p)
                         seen.add(key)
-                except Exception:
+                except Exception as e:
+                    logger.debug("[DMN] Tier check failed for persona %r: %s", p, e)
                     continue
         except Exception as e:
             logger.debug("[DMN] roster query failed — home-only rotation: %s", e)
@@ -2112,7 +2124,8 @@ class DefaultModeNetwork:
 
             home = self.__dict__.get("_home") or self._resolve_home()
             return _persona_key(active_persona() or home) == _persona_key(home)
-        except Exception:
+        except Exception as e:
+            logger.debug("[DMN] Home-active check failed, assuming home: %s", e)
             return True
 
     def _current_interval(self) -> float:
@@ -2263,7 +2276,8 @@ class DefaultModeNetwork:
                 f"Idle since last engagement: {idle_s}s  "
                 f"({'user away' if away else 'user present'})"
             )
-        except Exception:
+        except Exception as e:
+            logger.debug("[DMN] Idle-status line build failed: %s", e)
             pass
         return "\n".join(lines)
 
@@ -2275,7 +2289,8 @@ class DefaultModeNetwork:
             return ""
         try:
             entries = fn() or []
-        except Exception:
+        except Exception as e:
+            logger.debug("[DMN] Recently-read sources provider failed: %s", e)
             return ""
         if not entries:
             return ""
@@ -2289,7 +2304,8 @@ class DefaultModeNetwork:
             for url in entry.get("urls") or []:
                 try:
                     host = urlparse(url).netloc.lstrip("www.")
-                except Exception:
+                except Exception as e:
+                    logger.debug("[DMN] Source URL parse failed: %s", e)
                     host = ""
                 if host and host not in domains:
                     domains.append(host)
@@ -2677,7 +2693,8 @@ class DefaultModeNetwork:
         )
         try:
             max_adv = max((int(getattr(t, "advances", 0)) for t in self._open_threads), default=0)
-        except Exception:
+        except Exception as e:
+            logger.debug("[DMN] Open-thread advance scan failed: %s", e)
             max_adv = 0
         unfinished = min(1.0, max_adv / max(1.0, float(settings.get("rum_unfinished_cap") or 4.0)))
         tonic = (
@@ -2982,7 +2999,8 @@ class DefaultModeNetwork:
         if self._skill_selector is not None:
             try:
                 _caps = self._skill_selector.capability_manifest()
-            except Exception:
+            except Exception as e:
+                logger.debug("[DMN] Capability manifest fetch failed: %s", e)
                 _caps = ""
             if _caps:
                 prompt_parts.append(
@@ -3852,7 +3870,8 @@ class DefaultModeNetwork:
         self._ensure_runtime_state()
         try:
             ach = float(self._bus.neuromod.snapshot().get("ACh", 0.3))
-        except Exception:
+        except Exception as e:
+            logger.debug("[DMN] ACh snapshot failed for routing budget, using default: %s", e)
             ach = 0.3
         verbosity_trend, topic_jump_rate = self._user_load_signals()
         return self._routing_budget_from(ach, verbosity_trend, topic_jump_rate)
@@ -4001,7 +4020,8 @@ class DefaultModeNetwork:
                 self.predicted_next.get("predicted_input", "")[:60],
                 self.predicted_next.get("confidence", 0),
             )
-        except Exception:
+        except Exception as e:
+            logger.debug("[Background reflection] Prediction parse/publish failed: %s", e)
             pass
 
     def _idle_decay(self) -> None:
