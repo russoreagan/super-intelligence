@@ -82,7 +82,7 @@ settings/Vault into `os.environ`). Write sites are noted inline where relevant.
 | `BRAIN_TENANT_ARGS` | `--ui --dmn --metacognition --ears --voice --motor` | import ⚠ | Feature flags passed to each spawned tenant brain. `brain/provisioner.py:69` |
 | `BRAIN_TENANT_CMD` | `""` (real brain) | call | Override tenant spawn command (`{port}` substituted); integration-test/ops escape hatch. `brain/provisioner.py:198` |
 | `BRAIN_TENANT_READY_TIMEOUT_S` | `180` | import ⚠ | How long the provisioner waits for a tenant to become ready. `brain/provisioner.py:53` |
-| `BRAIN_SESSION_IDLE_TIMEOUT_S` | **`600` and `86400`** (conflict — see §12) | import ⚠ | Idle timeout before a session/tenant is reaped. `brain/session_manager.py:26` (600), `brain/provisioner.py:52` (86400) |
+| `BRAIN_SESSION_IDLE_TIMEOUT_S` | `86400` | import ⚠ | Safety-backstop reaper: reap a tenant brain whose user hasn't connected at all in this span (24h — brains stay awake for the DMN while the user is away; explicit stop is the Sleep button). `<= 0` disables reaping. `brain/provisioner.py:52` |
 | `BRAIN_SUPABASE_JWT` | `""` | call | Org-scoped JWT for the Supabase client (preferred over service key). `brain/second_brain/supabase_client.py:35` |
 | `SUPABASE_URL` | `""` | call | Supabase project URL. `brain/second_brain/supabase_client.py:34`, `brain/vault.py:50`, `brain/provisioner.py:148`, `brain/ui/auth.py:75,182`, `brain/ui/server.py:401,525,649`, `brain/gateway/server.py:222`, `brain/gateway/org_token.py:52` |
 | `SUPABASE_ANON_KEY` | `""` | call | Publishable anon key (auth, reset page, user-context clients). `brain/ui/auth.py:75,186`, `brain/ui/server.py:402,525,650`, `brain/vault.py:51`, `brain/second_brain/supabase_client.py:36`, `brain/gateway/server.py:223`, `brain/gateway/org_token.py:58` |
@@ -312,10 +312,12 @@ read `SUPABASE_URL` / `SUPABASE_ANON_KEY` / `SUPABASE_SERVICE_KEY` / `BRAIN_USER
 
 **Different defaults for the same var (genuine conflicts):**
 
-- `BRAIN_SESSION_IDLE_TIMEOUT_S` — `600` in `brain/session_manager.py:26` vs `86400` in
-  `brain/provisioner.py:52`. Two different subsystems reusing one name with 144×
-  different fallbacks; setting the env var changes both at once.
-- `BRAIN_STT_KEYWORDS` — RESOLVED: both STT paths now resolve through
+- ~~`BRAIN_SESSION_IDLE_TIMEOUT_S`~~ — RESOLVED: the `600` default lived in
+  `brain/session_manager.py`, dead code (never imported) from the pre-provisioner
+  in-process multi-session design; deleted. The sole read site is now
+  `brain/provisioner.py:52` (`86400`, the abandoned-tenant backstop).
+  `tests/test_env_var_single_default.py` guards against a second default reappearing.
+- ~~`BRAIN_STT_KEYWORDS`~~ — RESOLVED: both STT paths now resolve through
   `brain/stt_config.py` (`DEFAULT_STT_KEYWORDS`); `tests/test_stt_keywords_shared.py`
   guards against re-divergence. (Was: `brain/streaming_mic.py` populated list vs
   `brain/api/stt_live.py` `""` — engine-API STT silently lost the boosts.)
@@ -384,7 +386,8 @@ and why `/restart` re-execs the process.
 *Totals at generation time: 188 distinct named variables (178 read under `brain/`,
 9 `BRAIN_EVAL_*` eval-only, 1 scripts-only `USER_ID`), plus the 4-suffix
 `BRAIN_CMA_MCP_<NAME>_*` dynamic family. 74 variables have import-time reads.
-1 hard duplicate-default conflict (`BRAIN_SESSION_IDLE_TIMEOUT_S`; `BRAIN_STT_KEYWORDS`
-resolved via `brain/stt_config.py`), plus the `BRAIN_USER_ID` `"dev"` divergence and the
-`LANGFUSE_HOST`/`LANGFUSE_BASE_URL` precedence inconsistency. 1 dead documented var
-(`BRAIN_DISABLE_PREDICT_GATING`).*
+0 open duplicate-default conflicts (`BRAIN_SESSION_IDLE_TIMEOUT_S` resolved by
+deleting dead `brain/session_manager.py`; `BRAIN_STT_KEYWORDS` resolved via
+`brain/stt_config.py`), plus the `BRAIN_USER_ID` `"dev"` divergence and the
+`LANGFUSE_HOST`/`LANGFUSE_BASE_URL` precedence inconsistency. 1 dead documented
+var (`BRAIN_DISABLE_PREDICT_GATING`).*
