@@ -406,3 +406,44 @@ def test_persona_slug_call_sites_agree():
 
     for raw in ("The Visionary", "the_visionary"):
         assert chem_slug(raw) == prov_slug(raw) == store_key(raw) == "the_visionary"
+
+
+# ── Canonical chemistry→effort curve (brain/budget.py) ───────────────────────
+def _legacy_curve(chem, base, gain, lo, hi):
+    if not chem:
+        return base
+    da = float(chem.get("DA", 0.5))
+    cort = float(chem.get("CORT", 0.5))
+    shift = (da - 0.5) * gain - (cort - 0.5) * gain
+    return max(lo, min(hi, base + int(round(shift))))
+
+
+def test_chem_budget_matches_legacy_motor_curves_exactly():
+    from brain.budget import chem_budget
+
+    grid = [x / 10 for x in range(0, 11)]
+    for da in grid:
+        for cort in grid:
+            chem = {"DA": da, "CORT": cort}
+            assert chem_budget(chem, base=3, gain=2.0, lo=1, hi=5) == _legacy_curve(
+                chem, 3, 2.0, 1, 5
+            )
+            assert chem_budget(chem, base=12, gain=6.0, lo=6, hi=20) == _legacy_curve(
+                chem, 12, 6.0, 6, 20
+            )
+
+
+def test_chem_budget_resting_and_empty():
+    from brain.budget import chem_budget
+
+    assert chem_budget({}, base=3, gain=2.0, lo=1, hi=5) == 3
+    assert chem_budget(None, base=12, gain=6.0, lo=6, hi=20) == 12
+    assert chem_budget({"DA": 0.5, "CORT": 0.5}, base=3, gain=2.0, lo=1, hi=5) == 3
+
+
+def test_motor_budgets_use_canonical_curve():
+    m = _bare_motor()
+    hot = {"DA": 1.0, "CORT": 0.0}
+    calm = {"DA": 0.0, "CORT": 1.0}
+    assert m._effective_budget(hot) == 5 and m._effective_budget(calm) == 1
+    assert m._effective_job_budget(hot) == 18 and m._effective_job_budget(calm) == 6

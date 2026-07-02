@@ -2882,25 +2882,17 @@ class MotorCortexCluster:
     def _effective_budget(self, chem: dict[str, float]) -> int:
         """Tool-call budget per turn, modulated by DA (pursuit) and CORT (stress).
         Base is 3; bounded to [1, 5]."""
-        base = 3
-        if not chem:
-            return base
-        da = float(chem.get("DA", 0.5))
-        cort = float(chem.get("CORT", 0.5))
-        shift = (da - 0.5) * 2.0 - (cort - 0.5) * 2.0
-        return max(1, min(5, base + int(round(shift))))
+        from brain.budget import chem_budget
+
+        return chem_budget(chem, base=3, gain=2.0, lo=1, hi=5)
 
     def _effective_job_budget(self, chem: dict[str, float]) -> int:
         """Step budget for background jobs — higher base than reactive turns.
         DA raises it (motivated pursuit); CORT lowers it (stress-induced caution).
         Base is 12; bounded to [6, 20]."""
-        base = 12
-        if not chem:
-            return base
-        da = float(chem.get("DA", 0.5))
-        cort = float(chem.get("CORT", 0.5))
-        shift = (da - 0.5) * 6.0 - (cort - 0.5) * 6.0
-        return max(6, min(20, base + int(round(shift))))
+        from brain.budget import chem_budget
+
+        return chem_budget(chem, base=12, gain=6.0, lo=6, hi=20)
 
     # Per-persona planning orientations injected into the strategic planner's user
     # message alongside the chemistry context. Each entry describes the cognitive
