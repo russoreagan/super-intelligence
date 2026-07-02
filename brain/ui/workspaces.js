@@ -1366,6 +1366,10 @@
     { grp: 'Utility', m: 'post', p: '/v1/extract', t: 'Sessionless structured extraction — one cheap model call returns JSON matching your schema. No persona, memory, motor, or DMN. Metered and bounded by the daily USD ceiling (402 when over budget).',
       body: { input: 'Apple beat earnings expectations…', schema: { type: 'object', properties: { ticker: { type: 'string' }, sentiment: { type: 'string' } } }, instructions: 'Pull the tradeable signal.' } },
 
+    // ── Autonomous jobs ──
+    { grp: 'Jobs', m: 'get', p: '/v1/jobs', t: 'Recent autonomous job outcomes (state, reason, summary) — durable and pollable, so a client that was disconnected while a job ran still reads its result. Filters: ?limit= and ?state=.' },
+    { grp: 'Jobs', m: 'get', p: '/v1/jobs/{job_id}', t: 'Full record for one job — steps, results, source links, summary. 404 for an unknown job id; 501 when job history isn\'t available on this server.' },
+
     // ── Audio ──
     { grp: 'Audio', m: 'post', p: '/v1/tts', t: 'Text-to-speech with the affect→voice mapping: pass affect to drive mood-aware prosody. Stateless; 503 when no provider key is configured.',
       body: { text: 'Markets are calm today.', affect: { valence: 0.4, arousal: 0.2 }, voice_id: '…' } },
