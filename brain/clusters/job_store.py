@@ -145,6 +145,8 @@ class JobStore:
         reason_code: str = "",
         reason_human: str = "",
         backoff_s: float = 0.0,
+        stories_total: int = 0,
+        cloud_usd: float = 0.0,
     ) -> None:
         """Save or overwrite a job record. Triggers cleanup afterward.
 
@@ -159,13 +161,21 @@ class JobStore:
         """
         written_files = _extract_written_files(steps)
         source_links = _extract_source_links(steps, results)
+        resolved_state = state or (
+            "running" if not done else ("completed" if success else "failed")
+        )
+        # A failed record must never persist reasonless (legacy callers predate the
+        # JobOutcome guarantee) — the durable table otherwise shows a bare 'failed'.
+        if resolved_state == "failed" and not reason_code:
+            reason_code = "unspecified_failure"
+            reason_human = reason_human or "The job failed before a reason was recorded."
         record = {
             "job_id": job_id,
             "task_id": task_id,
             "goal": goal,
             "success": success,
             "done": done,
-            "state": state or ("running" if not done else ("completed" if success else "failed")),
+            "state": resolved_state,
             "reason_code": reason_code,
             "reason_human": reason_human,
             "backoff_s": backoff_s,
@@ -178,6 +188,8 @@ class JobStore:
             "source_links": source_links,
             "plan_steps": plan_steps or [],
             "stories_completed": stories_completed,
+            "stories_total": int(stories_total or len(plan_steps or [])),
+            "cloud_usd": round(float(cloud_usd or 0.0), 4),
             "productive_steps": productive_steps,
             "unverified_stories": unverified_stories or [],
             "success_criteria": success_criteria,

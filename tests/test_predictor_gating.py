@@ -180,3 +180,35 @@ def test_switch_fire_noop_without_trace():
     # Should simply return the payload without error.
     payload = sw.fire(0.5, "tag")
     assert payload["tag"] == "tag"
+
+
+# ── Surprise tag-space consistency (regression: surprise pinned at 0.6) ──────
+
+
+def test_predictor_intent_space_can_reach_low_surprise():
+    """The temporal predictor records parsed INTENTS, so surprise must be scored
+    in the same tag space. A repeated intent for a matching signature must yield
+    near-zero surprise — under the old length-tag comparison this was impossible
+    (prod distribution pinned at 0.6+, novelty gates never closed)."""
+    p = PredictorSwitch(name="t", cluster="c")
+    sig = input_signature("what is the plan for today?")
+    for _ in range(6):
+        p.record(sig, "question")
+    predicted, conf = p.predict(sig)
+    assert predicted == "question"
+    assert conf == 1.0
+    assert p.surprise(predicted, "question", conf) == 0.0
+    # A genuinely wrong prediction still lands in the high band.
+    assert p.surprise(predicted, "statement", conf) >= 0.6
+
+
+def test_temporal_never_mixes_length_tags_into_intent_predictor():
+    """Drift guard for the tag-space mismatch: temporal.run must not record the
+    length bucket into the intent predictor, nor score surprise against it."""
+    import inspect
+
+    import brain.clusters.temporal as temporal
+
+    src = inspect.getsource(temporal)
+    assert "record(sig, length_tag)" not in src
+    assert "surprise(predicted_tag, length_tag" not in src

@@ -392,6 +392,9 @@ class ModelRouter:
         usd = self._price_usd(model_id, in_tok, out_tok, cache_read)
         if usd > 0:
             self._cloud_usd_today = getattr(self, "_cloud_usd_today", 0.0) + usd
+            # Monotonic per-process total (no day rollover) — per-job cloud_usd is
+            # metered as a start/end delta of this counter.
+            self._cloud_usd_process_total = getattr(self, "_cloud_usd_process_total", 0.0) + usd
             if self._bg_mode:
                 self._cloud_usd_autonomous_today = (
                     getattr(self, "_cloud_usd_autonomous_today", 0.0) + usd
@@ -606,6 +609,12 @@ class ModelRouter:
         """Today's (UTC) autonomous-only cloud spend — the pool the soft/hard caps bind."""
         self._refresh_cloud_usd_today()
         return getattr(self, "_cloud_usd_autonomous_today", 0.0)
+
+    @property
+    def cloud_usd_process_total(self) -> float:
+        """Monotonic cloud spend since process start (no day rollover). Job records
+        meter their own cost as a start/end delta of this counter."""
+        return getattr(self, "_cloud_usd_process_total", 0.0)
 
     def autonomous_soft_cleared(self) -> bool:
         """True if the owner cleared the soft pause for the current UTC day."""

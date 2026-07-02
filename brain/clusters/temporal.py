@@ -553,9 +553,15 @@ class TemporalCluster:
         # chemistry modulation (granularity should not depend on mood).
         self._length_switch.fire(0.6, length_tag, snapshot=chem)
 
-        # Predictor
+        # Predictor (intent space). Every record() below stores the committed intent,
+        # so prediction, history, and surprise share one tag space — comparing the
+        # predicted intent against length_tag here used to guarantee a mismatch
+        # (surprise pinned to 0.6+) once LLM-path intents filled the window.
         predicted_tag, confidence = self._predictor.predict(sig)
-        surprise = self._predictor.surprise(predicted_tag, length_tag, confidence)
+        # Before the parse the honest surprise is the EXPECTED one (1 − confidence;
+        # cold start → 1.0); the true prediction-vs-actual surprise is recomputed
+        # once the integrator has parsed the real intent.
+        surprise = 1.0 if predicted_tag is None else 1.0 - confidence
         should_wake = self._predictor.should_wake_integrator(surprise)
 
         # Embedding-based intent detection (literal seeds as fast path / fallback).
@@ -591,9 +597,11 @@ class TemporalCluster:
         # and reduce surprise. This is "compute scales with novelty" extended
         # with predictive processing — the brain bypasses understanding for
         # inputs it had already imagined.
+        dmn_surprise_discount = 0.0
         if dmn_hit_overlap >= 0.5:
             confidence_floor = max(0.3, confidence_floor - 0.25 * dmn_hit_overlap)
-            surprise = max(0.0, surprise - 0.4 * dmn_hit_overlap)
+            dmn_surprise_discount = 0.4 * dmn_hit_overlap
+            surprise = max(0.0, surprise - dmn_surprise_discount)
             should_wake = self._predictor.should_wake_integrator(surprise)
 
         # Pre-flight bypass check (emotion vetoes are still cheap; we have no
@@ -641,7 +649,7 @@ class TemporalCluster:
                 "msg_length": length_tag,
                 "user_register": classify_register(text),
             }
-            self._predictor.record(sig, length_tag)
+            self._predictor.record(sig, features["intent"])
             await self._bus.publish_dict("temporal.features", features, source=CLUSTER)
             self._integrator_inhibitor.fire(confidence, "integrator_skipped", snapshot=chem)
             decisions.log(
@@ -790,6 +798,14 @@ class TemporalCluster:
 
         # Record actual for predictor learning + post-hoc accuracy
         actual_tag = features.get("intent", "other")
+        # True surprise now that the actual intent is known: confident-correct → low
+        # (can reach 0), wrong prediction → 0.6–1.0, cold start → 1.0. Overwrites the
+        # pre-parse expected value so downstream novelty gates (encoder skip, recall
+        # fan-out, episode salience) see prediction ERROR, not just low confidence.
+        surprise = self._predictor.surprise(predicted_tag, actual_tag, confidence)
+        if dmn_surprise_discount:
+            surprise = max(0.0, surprise - dmn_surprise_discount)
+        features["surprise_score"] = round(surprise, 4)
         trace = self._record_trace()
         if trace is not None:
             trace.predictor_outcomes.append(

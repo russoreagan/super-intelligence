@@ -415,6 +415,9 @@ class MotorCortexCluster:
         # Last-call timestamps per external endpoint, for inter-request pacing so a
         # multi-page sweep doesn't hammer a provider into rate-limiting us.
         self._pace_last: dict[str, float] = {}
+        # Router spend snapshot at job start, keyed by job_id — per-job cloud_usd is
+        # the delta against the router's monotonic process total at persist time.
+        self._job_usd_start: dict[str, float] = {}
 
         # Switches (~6 total; 2 inhibitory ≈ 33% — acceptable for small action cluster)
         # Modulator profiles per plan /Users/russ/.claude/plans/and-what-affects-these-memoized-parnas.md.
@@ -1023,6 +1026,12 @@ class MotorCortexCluster:
         self._save_job_starts()
         self._session_job_count += 1
         self._active_job_count += 1
+        # Spend meter: every subsequent persist records this job's cloud cost as the
+        # delta against the router's monotonic process total.
+        with contextlib.suppress(Exception):
+            self._job_usd_start[job_id] = float(
+                getattr(self._router, "cloud_usd_process_total", 0.0)
+            )
 
         self.reset_turn(job_id)
 
@@ -2217,6 +2226,23 @@ class MotorCortexCluster:
             parts.append("Select the right tool and arguments.")
         return "\n".join(parts)
 
+    def _job_cloud_usd(self, job_id: str, *, terminal: bool = False) -> float:
+        """This job's cloud spend so far: router process-total delta since job start.
+        terminal=True also drops the start snapshot (call on the final persist).
+        Returns 0.0 when no snapshot exists (e.g. gated before the meter started)."""
+        try:
+            start = (
+                self._job_usd_start.pop(job_id, None)
+                if terminal
+                else self._job_usd_start.get(job_id)
+            )
+            if start is None:
+                return 0.0
+            total = float(getattr(self._router, "cloud_usd_process_total", 0.0))
+            return max(0.0, total - start)
+        except Exception:
+            return 0.0
+
     def _persist_progress(
         self,
         *,
@@ -2250,6 +2276,8 @@ class MotorCortexCluster:
                 total_attempts=total_attempts,
                 plan_steps=plan_steps,
                 stories_completed=stories_completed,
+                stories_total=len(plan_steps or []),
+                cloud_usd=self._job_cloud_usd(job_id),
                 productive_steps=productive_steps,
                 unverified_stories=unverified_stories,
                 success_criteria=success_criteria,
@@ -2362,6 +2390,9 @@ class MotorCortexCluster:
                 backoff_s=outcome.backoff_s,
                 productive_steps=outcome.productive_steps,
                 plan_steps=outcome.plan_steps,
+                stories_completed=outcome.stories_completed,
+                stories_total=outcome.stories_total or len(outcome.plan_steps or []),
+                cloud_usd=self._job_cloud_usd(outcome.job_id, terminal=done),
                 source=getattr(self, "_current_source", "self"),
             )
             self._mirror_job_to_table(outcome.job_id)
@@ -2399,6 +2430,8 @@ class MotorCortexCluster:
                     reason_human=reason_human,
                     productive_steps=productive_steps,
                     stories_completed=len(steps),
+                    stories_total=len(plan_steps or []),
+                    cloud_usd=self._job_cloud_usd(job_id, terminal=True),
                     task_id=task_id,
                     source=source,
                     ralph_mode=ralph_mode,
