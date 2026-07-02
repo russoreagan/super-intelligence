@@ -399,16 +399,30 @@ class _SetupMixin:
         # User-managed allowlist (Settings → Motor Cortex). On a hosted tenant
         # this is the only path source besides BRAIN_MOTOR_PATHS, since there's
         # no Claude Desktop to inherit trusted folders from. One dir per line.
-        for _p in str(_settings.get("motor_allowed_dirs") or "").splitlines():
-            _p = _p.strip()
-            if _p and _p not in _motor_paths:
-                _motor_paths.append(_p)
+        _settings_dirs = [
+            _p.strip()
+            for _p in str(_settings.get("motor_allowed_dirs") or "").splitlines()
+            if _p.strip()
+        ]
         # Read-only roots + capability switches (Settings → Motor Permissions).
         _motor_ro_paths = [
             _p.strip()
             for _p in str(_settings.get("motor_read_only_dirs") or "").splitlines()
             if _p.strip()
         ]
+        # Hosted: re-enforce the tenant-root jail on the TENANT-EDITABLE dirs at
+        # bake time. The settings-save path already jails them, but a dir that
+        # resolved inside the root at save time can be swapped for a symlink
+        # pointing outside it before the next boot (TOCTOU) — re-check what each
+        # path resolves to NOW. Operator-set BRAIN_MOTOR_PATHS is trusted as-is.
+        if os.environ.get("BRAIN_MULTITENANT", "").lower() in ("1", "true", "yes"):
+            from brain.security import jail_dirs_to_tenant_root
+
+            _settings_dirs = jail_dirs_to_tenant_root(_settings_dirs, label="motor rw")
+            _motor_ro_paths = jail_dirs_to_tenant_root(_motor_ro_paths, label="motor ro")
+        for _p in _settings_dirs:
+            if _p not in _motor_paths:
+                _motor_paths.append(_p)
         _motor_enable_shell = bool(int(_settings.get("motor_enable_shell", 1) or 0))
         _motor_enable_network = bool(int(_settings.get("motor_enable_network", 1) or 0))
         _motor_enable_cloud = bool(int(_settings.get("motor_enable_cloud_actions", 1) or 0))
@@ -559,6 +573,23 @@ class _SetupMixin:
                 len(_recovered),
                 "; ".join(t.goal[:60] for t in _recovered),
             )
+
+        # Repair the job-outcome mirror split-brain: local JobStore JSON and the
+        # durable agent_jobs table are written independently best-effort, so a job
+        # can finish locally yet stay missing/stuck-'running' in the table. Runs
+        # off-thread (network I/O); silent no-op in local/companion mode.
+        _job_store = getattr(getattr(self, "motor", None), "job_store", None)
+        if _job_store is not None:
+
+            async def _reconcile_jobs() -> None:
+                from brain import agent_jobs_store
+
+                try:
+                    await asyncio.to_thread(agent_jobs_store.reconcile, _job_store)
+                except Exception as e:
+                    logger.warning("[agent_jobs] boot reconcile failed: %s", e)
+
+            asyncio.create_task(_reconcile_jobs())
 
         self._lobe_bridge = LobeBridge()
         self._lobe_bridge.register("recall_memory", self._recall_memory)

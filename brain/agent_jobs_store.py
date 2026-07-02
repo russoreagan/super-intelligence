@@ -81,8 +81,69 @@ def upsert(record: dict) -> bool:
         client.table("agent_jobs").upsert(_row(org, record), on_conflict="job_id").execute()
         return True
     except Exception as e:
-        logger.debug("[agent_jobs] upsert skipped: %s", e)
+        # Warning, not debug: a failed upsert means a real job outcome is now
+        # invisible in the durable table (boot reconcile() is the repair path).
+        logger.warning("[agent_jobs] upsert FAILED for job %s: %s", record.get("job_id"), e)
         return False
+
+
+def reconcile(job_store, limit: int = 50) -> int:
+    """Boot-time repair for the mirror split-brain: the local JSON JobStore and this
+    table are written independently and best-effort, so a network blip can leave a
+    job that completed locally missing (or stuck at state='running') in the durable
+    table. Compare the most recent local records against the table and re-upsert any
+    that are missing or stale. Returns the number of rows repaired. Best-effort —
+    returns 0 on any read failure and never raises into boot."""
+    sb = _sb()
+    if sb is None:
+        return 0
+    try:
+        local = job_store.list_recent(limit=limit) or []
+    except Exception:
+        return 0
+    ids = [str(r.get("job_id")) for r in local if r.get("job_id")]
+    if not ids:
+        return 0
+    client, org = sb
+    try:
+        rows = (
+            client.table("agent_jobs")
+            .select("job_id,state")
+            .eq("org_id", org)
+            .in_("job_id", ids)
+            .execute()
+            .data
+            or []
+        )
+        remote = {str(r.get("job_id")): str(r.get("state") or "") for r in rows}
+    except Exception as e:
+        logger.warning("[agent_jobs] reconcile read failed: %s", e)
+        return 0
+    fixed = 0
+    for meta in local:
+        jid = str(meta.get("job_id") or "")
+        if not jid:
+            continue
+        local_state = str(
+            meta.get("state") or ("completed" if meta.get("success") else "failed")
+        )
+        remote_state = remote.get(jid)
+        if remote_state is not None and not (
+            remote_state == "running" and local_state != "running"
+        ):
+            continue  # present and not stale — nothing to repair
+        try:
+            record = job_store.get(jid)  # full record (steps/results), not the digest
+        except Exception:
+            record = None
+        if record and upsert(record):
+            fixed += 1
+    if fixed:
+        logger.info(
+            "[agent_jobs] reconciled %d job outcome(s) that were missing/stale in the durable table",
+            fixed,
+        )
+    return fixed
 
 
 def list_recent(limit: int = 20, state: str | None = None) -> list[dict]:

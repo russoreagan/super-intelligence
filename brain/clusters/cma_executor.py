@@ -32,6 +32,7 @@ this SDK version, so per-task cost control is the wall-clock timeout
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import logging
@@ -1168,7 +1169,64 @@ class CMAExecutor(ExecutorCommon):
             if d_in or d_out or d_cr:
                 router.record_cloud_usage(self._model, d_in, d_out, cache_read=d_cr)
         except Exception as e:
-            logger.debug("[CMAExecutor] session usage metering failed: %s", e)
+            # Loud, not debug: a failed usage read means real dollars may have billed
+            # the key without landing in any tally (the invisible-$200 failure class).
+            logger.warning(
+                "[CMAExecutor] session usage metering FAILED for %s — spend may be unmetered: %s",
+                sid,
+                e,
+            )
+            note = getattr(router, "note_unmetered_spend_suspected", None)
+            if note is not None:
+                with contextlib.suppress(Exception):
+                    note()
+
+    async def _budget_stop_check(self) -> str | None:
+        """Mid-flight budget backstop for a live managed-agent session: meter the
+        delta burned so far, then report why the run must stop — today's cloud
+        budget gone, or (for autonomous work) the hard spend cap — or None to keep
+        going. On a background-mode trip it also raises the router's one-shot defer
+        signal so the motor checkpoints and defers the job; the gate re-decides
+        defer-vs-stop on requeue. Fails open (None) so a broken check can't kill a
+        healthy run. Never raises."""
+        router = getattr(self, "_router", None)
+        if router is None:
+            return None
+        try:
+            await self._meter_session_usage()
+            bg = bool(getattr(router, "_bg_mode", False))
+            reason: str | None = None
+            if router.cloud_budget_exhausted():
+                reason = "daily cloud budget reached"
+            elif bg:
+                from brain.autonomy.budget import AutonomousBudget, BudgetTier
+
+                if AutonomousBudget(router).tier() is BudgetTier.HARD_EXCEEDED:
+                    reason = "autonomous hard spend cap reached"
+            if reason and bg:
+                from brain.autonomy.reasons import DeferReason
+
+                router._bg_defer_reason = DeferReason.BUDGET_SOFT_PAUSE
+            return reason
+        except Exception as e:
+            logger.debug("[CMAExecutor] mid-flight budget check failed: %s", e)
+            return None
+
+    async def _stop_session(self, sid: str) -> None:
+        """Best-effort kill of a live managed-agent session on a budget stop:
+        abandoning the event stream alone leaves the server-side agent running (and
+        billing), so delete the session and drop it from the warm caches. Losing the
+        warm session is free here — the budget is spent for the day anyway."""
+        try:
+            await self._client.beta.sessions.delete(sid)
+        except Exception as e:
+            logger.warning("[CMAExecutor] could not delete session %s on budget stop: %s", sid, e)
+        if self._session_id == sid:
+            self._session_id = None
+        with contextlib.suppress(Exception):
+            self._user_sessions = {
+                k: v for k, v in (self._user_sessions or {}).items() if v != sid
+            }
 
     async def _consume(self, sid: str, message: str, write_allowed: bool = False) -> str:
         """Stream-first event loop with bounded reconnect-and-replay."""
@@ -1178,6 +1236,12 @@ class CMAExecutor(ExecutorCommon):
         max_reconnects = int(settings.get("cma_max_reconnects") or 3)
         sent = False
         attempts = 0
+        # Mid-flight budget backstop: the pre-start gate can't bound a session that is
+        # already running (CMA bills the key continuously), so re-check on a cadence
+        # and at every tool-approval pause — the two points where more spend gets
+        # authorized.
+        check_interval = float(settings.get("cma_budget_check_interval_s") or 30.0)
+        last_budget_check = time.monotonic()
 
         while True:
             try:
@@ -1195,10 +1259,22 @@ class CMAExecutor(ExecutorCommon):
                         )
                         sent = True
                     async for ev in stream:
+                        if time.monotonic() - last_budget_check >= check_interval:
+                            last_budget_check = time.monotonic()
+                            stop = await self._budget_stop_check()
+                            if stop:
+                                await self._stop_session(sid)
+                                return f"[error] budget-stop: {stop} — cloud action stopped mid-task."
                         done, err, pending = self._handle_event(ev, seen, buf, tools)
                         if err is not None:
                             return err
                         if pending:
+                            # Approving paused tool calls authorizes more spend — the
+                            # natural checkpoint for the budget backstop.
+                            stop = await self._budget_stop_check()
+                            if stop:
+                                await self._stop_session(sid)
+                                return f"[error] budget-stop: {stop} — cloud action stopped mid-task."
                             # Agent paused on tool calls that need our go-ahead.
                             # Classify each: reads + small data writes auto-approve,
                             # money is blocked, and anything sensitive is routed to

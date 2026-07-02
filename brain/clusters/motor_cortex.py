@@ -1297,6 +1297,7 @@ class MotorCortexCluster:
             story_criteria = story.get("acceptance_criteria", [])
             story_passed = False
             story_criteria_verified = False  # Tier C: a real criteria check passed (not a skip)
+            story_check_unavailable = False  # the CHECKER failed — no verdict either way
             # Low complexity still gets ONE retry so a failed criteria/appropriateness
             # check can self-correct (the retry feeds the prior output back as a hint).
             # Extra attempts only fire on an actual failure, so happy-path stays single-attempt.
@@ -1503,16 +1504,19 @@ class MotorCortexCluster:
                 # complexity levels (not just Ralph) — it's the only thing that can
                 # detect "tool ran fine but produced the wrong kind of output."
                 elif story_criteria:
-                    verified, unmet = await self._check_story_criteria(
+                    verified, unmet, _checked = await self._check_story_criteria(
                         story, output, f"{job_id}_{idx}_{attempt}"
                     )
+                    if not _checked:
+                        story_check_unavailable = True
                     if verified:
                         story_criteria_verified = True  # hypothesis confirmed by the test
                     logger.info(
-                        "[InternalJob] Story %d criteria: verified=%s unmet=%s",
+                        "[InternalJob] Story %d criteria: verified=%s unmet=%s checked=%s",
                         idx + 1,
                         verified,
                         unmet,
+                        _checked,
                     )
                 else:
                     verified = step_success
@@ -1540,6 +1544,16 @@ class MotorCortexCluster:
                 if verified:
                     story_passed = True
                     break
+                if story_check_unavailable:
+                    # Checker outage, not a failed story — re-running the tool won't
+                    # make the check runnable. Stop burning attempts; the story is
+                    # recorded below as an unverified caveat.
+                    logger.warning(
+                        "[InternalJob] Story %d criteria checker unavailable — "
+                        "recording as unverified without retry",
+                        idx + 1,
+                    )
+                    break
                 # criteria not met — retry if attempts remain
 
             # Stage 5 Tier C: score the hypothesis. A story with acceptance_criteria stated a
@@ -1547,7 +1561,9 @@ class MotorCortexCluster:
             # verified it against reality. Confirmed → intrinsic correctness DA (capped per job,
             # persona-scaled); a criteria-bearing story that never verified → a small dip. No
             # user needed — this is objective self-verification.
-            if story_criteria:
+            # A checker outage is no verdict — reality neither confirmed nor refuted
+            # the hypothesis, so neither the DA reward nor the loss dip applies.
+            if story_criteria and not story_check_unavailable:
                 predictions_made += 1
                 if story_criteria_verified:
                     predictions_confirmed += 1
@@ -1813,13 +1829,16 @@ class MotorCortexCluster:
 
     async def _check_story_criteria(
         self, story: dict, output: str, check_id: str
-    ) -> tuple[bool, list[str]]:
+    ) -> tuple[bool, list[str], bool]:
         """Verify a story's acceptance criteria against the tool output.
-        Returns (verified, unmet_criteria). Falls back to error-status check if no criteria."""
+        Returns (verified, unmet_criteria, checked). checked=False means the CHECKER
+        itself failed (cell returned empty / unparseable) — not evidence against the
+        story; the caller records a caveat instead of retrying or treating the
+        outage as verified. Falls back to error-status check if no criteria."""
         criteria = story.get("acceptance_criteria", [])
         if not criteria:
             ok = not output.startswith("[error]") and not output.startswith("[blocked]")
-            return ok, []
+            return ok, [], True
         prompt = (
             f"Story: {story.get('description', '')}\n"
             f"Acceptance criteria:\n" + "\n".join(f"- {c}" for c in criteria) + "\n\n"
@@ -1827,8 +1846,12 @@ class MotorCortexCluster:
         )
         self._criteria_checker.reset_turn(check_id)
         raw = await self._criteria_checker.call([{"role": "user", "content": prompt}])
-        result = safe_json_parse(raw) or {}
-        return bool(result.get("verified", True)), result.get("unmet", [])
+        result = safe_json_parse(raw)
+        if not raw or result is None:
+            # The old parse-failure path defaulted to verified=True — a checker
+            # OUTAGE silently passed the story (and paid it correctness DA).
+            return False, ["criteria check unavailable (model call failed)"], False
+        return bool(result.get("verified", True)), result.get("unmet", []), True
 
     async def _verify_job(
         self, goal: str, success_criteria: str, steps: list[dict], results: list[str], job_id: str
@@ -1845,7 +1868,12 @@ class MotorCortexCluster:
         )
         self._verifier.reset_turn(f"{job_id}_verify")
         raw = await self._verifier.call([{"role": "user", "content": prompt}])
-        result = safe_json_parse(raw) or {}
+        result = safe_json_parse(raw)
+        if not raw or result is None:
+            # Verifier outage is not approval. The verdict is advisory, so the job
+            # still succeeds on productive work — but the summary carries the gap
+            # instead of a silent green light.
+            return False, "final verification unavailable (verifier model call failed)"
         return bool(result.get("approved", True)), result.get("issues", "")
 
     async def _run_tool(self, tool: str, args: dict, reason: str, turn_id: str) -> tuple[str, dict]:
@@ -2250,7 +2278,9 @@ class MotorCortexCluster:
                     record["state"] = state_override
                 agent_jobs_store.upsert(record)
         except Exception as e:
-            logger.debug("[InternalJob] agent_jobs mirror failed (non-fatal): %s", e)
+            # Warning, not debug: the job's outcome is now invisible in the durable
+            # table until the boot reconcile pass repairs it.
+            logger.warning("[InternalJob] agent_jobs mirror FAILED for job %s: %s", job_id, e)
 
     def _persist_gated_outcome(self, outcome, *, done: bool) -> None:
         """Persist a gated (up-front deferred / stopped) outcome to the JobStore + the

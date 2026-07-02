@@ -303,7 +303,14 @@ class _LoopsMixin:
                 return {"scope": "org", "usage": agent_usage_store.aggregate(since, until)}
         except Exception:
             return {"scope": scope, "usage": {}, "rows": []}
-        return {"scope": "org", "usage": self.router.agent_usage() if getattr(self, "router", None) else {}}
+        _r = getattr(self, "router", None)
+        return {
+            "scope": "org",
+            "usage": _r.agent_usage() if _r else {},
+            # >0 = this process failed to meter some out-of-band cloud spend (CMA
+            # usage reads errored) — the dashboard should distrust a clean tally.
+            "unmetered_spend_suspected": getattr(_r, "unmetered_spend_suspected", 0) if _r else 0,
+        }
 
     async def _speak_gate_loop(self) -> None:
         SPEAK_GATE_INTERVAL = float(_brain_settings.get("speak_gate_poll_interval") or 5.0)

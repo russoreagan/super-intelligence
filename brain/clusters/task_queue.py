@@ -46,8 +46,11 @@ SELF_DEDUP_RECENCY = 2 * 60 * 60  # 2 hours
 # wedges the pod mid-execution (so it never marks itself failed) would otherwise be
 # re-run on EVERY boot forever — a crash-loop bounded only by the daily cloud-USD cap.
 # After this many automatic recoveries we QUARANTINE the task (mark it failed) instead
-# of re-running it, so a poison job stops itself. Override via BRAIN_MAX_JOB_RECOVERIES.
-MAX_RECOVERY_ATTEMPTS = int(os.environ.get("BRAIN_MAX_JOB_RECOVERIES", "3"))
+# of re-running it, so a poison job stops itself. One retry is the cost/safety balance:
+# a genuine pod blip gets its second chance, while a poison job buys at most one extra
+# run of cloud spend (three re-runs of a spendy job proved too generous). Override via
+# BRAIN_MAX_JOB_RECOVERIES.
+MAX_RECOVERY_ATTEMPTS = int(os.environ.get("BRAIN_MAX_JOB_RECOVERIES", "1"))
 
 
 @dataclass

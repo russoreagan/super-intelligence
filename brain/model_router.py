@@ -578,6 +578,19 @@ class ModelRouter:
             logger.debug("[ModelRouter] record_cloud_usage failed: %s", e)
             return 0.0
 
+    def note_unmetered_spend_suspected(self) -> None:
+        """Count a failed attempt to meter out-of-band cloud spend (e.g. a CMA
+        session whose usage read errored). Each tick means real dollars may have
+        billed the key without landing in any tally — the exact failure class behind
+        the invisible-$200 incident — so consumers surface it instead of trusting a
+        clean-looking meter."""
+        self._unmetered_spend_suspected = self.unmetered_spend_suspected + 1
+
+    @property
+    def unmetered_spend_suspected(self) -> int:
+        """How many times this process failed to meter out-of-band cloud spend."""
+        return int(getattr(self, "_unmetered_spend_suspected", 0))
+
     # ── Autonomy: separate spend pool + defer signalling (see brain.autonomy) ───
 
     def set_spend_gate(self, gate) -> None:

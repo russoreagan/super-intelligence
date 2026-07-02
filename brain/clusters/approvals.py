@@ -38,6 +38,12 @@ MAX_APPROVALS = 50
 # A one-time approval is honored only this long after it's granted, so a stale
 # signature can't silently green-light a much-later action.
 APPROVAL_TTL_S = 24 * 60 * 60
+# Pending items expire too: an approval nobody acted on for this long is stale — the
+# job it belonged to has deferred and will re-raise a fresh one if still relevant
+# (the autonomous spend pool resets at the UTC day boundary), and approving an old
+# action later would fire it with dead context. Expired items are auto-skipped.
+# Override via BRAIN_APPROVAL_PENDING_TTL_S.
+PENDING_TTL_S = float(os.environ.get("BRAIN_APPROVAL_PENDING_TTL_S", 24 * 60 * 60))
 # Right after approval the work is re-queued; the re-run may phrase the same tool
 # call with slightly different args, so within this short window a same-tool call
 # is also accepted (still one-time). Outside it, only an exact signature matches.
@@ -124,6 +130,7 @@ class PendingApprovals:
     ) -> Approval:
         """Record a sensitive action as pending. Deduplicates against an existing
         pending item with the same signature (returns that one instead)."""
+        self.expire_stale()  # a stale twin must not dedupe-block a fresh request
         sig = action_signature(tool, tool_input)
         for a in self._items:
             if a.status == "pending" and a.signature == sig:
@@ -213,7 +220,30 @@ class PendingApprovals:
                 return True
         return False
 
+    def expire_stale(self) -> int:
+        """Auto-skip pending items older than PENDING_TTL_S. Without this, an
+        unactioned approval (e.g. yesterday's continue-spending sentinel) dangles in
+        the panel forever, and approving it much later would fire an action whose
+        job context is long gone. Returns how many were expired."""
+        now = time.time()
+        n = 0
+        for a in self._items:
+            if a.status == "pending" and now - a.created_at > PENDING_TTL_S:
+                a.status = "skipped"
+                a.resolved_at = now
+                n += 1
+                logger.info(
+                    "[Approvals] expired stale pending [%s] %s (unactioned for >%dh)",
+                    a.id,
+                    a.tool,
+                    int(PENDING_TTL_S // 3600),
+                )
+        if n:
+            self._save()
+        return n
+
     def pending(self, end_user_id: str | None = None, include_autonomous: bool = False) -> list[dict]:
+        self.expire_stale()
         return [
             a.to_dict()
             for a in self._items

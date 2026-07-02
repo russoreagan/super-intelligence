@@ -331,3 +331,59 @@ class PseudonymizationGateway:
                 t = m.group(1)
                 counts[t] = counts.get(t, 0) + 1
         return counts
+
+
+# ── Tenant filesystem jail (multitenant motor-cortex boundary) ─────────────────
+# The settings-edit path (brain/ui/server._jail_motor_dirs) validates grants when an
+# org admin SAVES them — but a dir that resolved inside the tenant root at save time
+# can later be swapped for a symlink pointing outside it (TOCTOU). These helpers let
+# session bake-time re-enforce the same boundary on whatever the paths resolve to NOW.
+
+
+def tenant_root():
+    """The pod's own tenant directory — the boundary org filesystem grants are
+    jailed to. Mirrors brain/ui/server._tenant_root (kept dependency-free here so
+    session setup can use it without importing the UI server). None when it can't
+    be resolved — callers fail closed."""
+    from pathlib import Path
+
+    sp = os.environ.get("BRAIN_SETTINGS_PATH", "").strip()
+    if sp:
+        try:
+            return Path(sp).resolve().parent
+        except Exception:
+            return None
+    sb = os.environ.get("SECOND_BRAIN_PATH", "").strip()
+    if sb:
+        try:
+            p = Path(sb).resolve()
+            return p.parent.parent if p.parent.name == "personas" else p
+        except Exception:
+            return None
+    return None
+
+
+def jail_dirs_to_tenant_root(dirs: list[str], *, label: str = "motor") -> list[str]:
+    """Keep only dirs that RESOLVE (symlinks followed, at call time) inside the
+    tenant root; drop and warn about the rest. Fail closed: unknown tenant root →
+    every tenant-editable grant is dropped."""
+    from pathlib import Path
+
+    root = tenant_root()
+    kept: list[str] = []
+    for d in dirs:
+        try:
+            rp = Path(d).resolve()
+        except Exception:
+            logger.warning("[security] %s dir %r dropped (unresolvable)", label, d)
+            continue
+        if root is not None and (rp == root or str(rp).startswith(str(root) + os.sep)):
+            kept.append(d)
+        else:
+            logger.warning(
+                "[security] %s dir %r resolves outside tenant root %s — dropped",
+                label,
+                d,
+                root,
+            )
+    return kept
