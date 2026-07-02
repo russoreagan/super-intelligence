@@ -522,9 +522,9 @@ def main() -> None:
     if args.motor:
         os.environ["BRAIN_MOTOR"] = "true"
 
-    # Supabase backend: the single-session entrypoint doesn't go through
-    # SessionManager, so inject the user_id here from BRAIN_USER_ID. Without it
-    # every store call would raise "No user_id set".
+    # Supabase backend: each brain process serves exactly one tenant (spawned by
+    # the provisioner, or run directly), so inject the user_id here from
+    # BRAIN_USER_ID. Without it every store call would raise "No user_id set".
     from brain.second_brain import supabase_client
 
     if supabase_client.is_enabled():
