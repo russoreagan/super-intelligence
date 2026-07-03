@@ -137,6 +137,37 @@ class TestAvailability:
         s = exe.connectors_summary()
         assert "gmail" in s and "cal" in s
 
+    def test_connectors_summary_includes_descriptions(self):
+        # Capability descriptions are what let the planner route work to a
+        # connector's tools instead of generic web search — they must surface.
+        exe = _make_exec(
+            mcp_servers=[
+                {"name": "trading", "url": "u", "description": "quotes, movers, screening"},
+                {"name": "cal", "url": "u"},
+            ]
+        )
+        s = exe.connectors_summary()
+        assert "trading (quotes, movers, screening)" in s
+        assert "cal" in s
+
+    def test_compose_task_appends_connectors_note(self):
+        exe = _make_exec(
+            mcp_servers=[
+                {"name": "trading", "url": "u", "description": "quotes, movers", "identity": True,
+                 "access_token": "t"},
+            ]
+        )
+        note = exe._connectors_note()
+        assert "trading (quotes, movers)" in note
+        assert "prefer these connectors" in note.lower()
+        msg = exe._compose_task("find market movers", [], connectors_note=note)
+        assert msg.startswith("find market movers")
+        assert "trading (quotes, movers)" in msg
+
+    def test_connectors_note_empty_without_servers(self):
+        exe = _make_exec()
+        assert exe._connectors_note() == ""
+
 
 # ── confirmation/pending parity (inherited mixin) ──────────────────────────────
 

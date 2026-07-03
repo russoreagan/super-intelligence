@@ -499,8 +499,14 @@ class CMAExecutor(ExecutorCommon):
         return bool(os.environ.get("ANTHROPIC_API_KEY"))
 
     def connectors_summary(self) -> str:
+        """Names + capability descriptions of the configured connectors. The
+        descriptions matter: they are what lets the planner route a task to a
+        connector's tools instead of generic web search."""
         if self._mcp_servers:
-            return ", ".join(sorted(s["name"] for s in self._mcp_servers))
+            return "; ".join(
+                f"{s['name']} ({s['description']})" if s.get("description") else s["name"]
+                for s in sorted(self._mcp_servers, key=lambda s: s["name"])
+            )
         return "no MCP connectors configured"
 
     # ── State + config persistence ─────────────────────────────────────────────
@@ -560,6 +566,13 @@ class CMAExecutor(ExecutorCommon):
             if not name or not url:
                 continue
             srv: dict = {"name": name, "url": url}
+            # Optional capability description — surfaced to the planner and the cloud
+            # agent so they know what the connector DOES and reach for its tools
+            # instead of falling back to generic web search (a bare name like
+            # "trading" tells the planner nothing). Falls back to display_name.
+            desc = str(it.get("description") or it.get("display_name") or "").strip()
+            if desc:
+                srv["description"] = desc[:300]
             # Identity-aware = brain mints a per-end-user HMAC bearer from our shared
             # secret. Supabase rows and locally-registered file entries carry our
             # secret (default on); env-pinned connectors may carry a real OAuth bearer
@@ -1059,13 +1072,37 @@ class CMAExecutor(ExecutorCommon):
 
     # ── Task composition + session drive loop ──────────────────────────────────
 
-    def _compose_task(self, task: str, context_facts: list[str]) -> str:
+    def _compose_task(
+        self, task: str, context_facts: list[str], connectors_note: str = ""
+    ) -> str:
         parts = [task]
         if context_facts:
             facts_str = "; ".join(f.strip() for f in context_facts if f.strip())
             if facts_str:
                 parts.append(f"Context: {facts_str}")
+        if connectors_note:
+            parts.append(connectors_note)
         return "\n".join(parts)
+
+    def _connectors_note(self, include_identity: bool = True) -> str:
+        """Per-call steering for the cloud agent: name the connectors attached to
+        this session and require their tools over generic web search. Without this
+        the agent obeys whatever the (connector-blind) planner wrote — e.g. 'search
+        the live web for market movers' with a trading connector sitting attached."""
+        servers = self._active_mcp_servers(include_identity)
+        if not servers:
+            return ""
+        listing = "; ".join(
+            f"{s['name']} ({s['description']})" if s.get("description") else s["name"]
+            for s in servers
+        )
+        return (
+            f"Connected services (MCP connectors) in this session: {listing}. "
+            "ALWAYS prefer these connectors' tools when they cover the request — "
+            "use generic web search or public endpoints only for data no connector "
+            "provides, and never guess at raw provider URLs for data a connector "
+            "already serves."
+        )
 
     async def _ensure_session(
         self, write_allowed: bool, user_vault_id: str | None = None, include_identity: bool = True
@@ -1125,7 +1162,13 @@ class CMAExecutor(ExecutorCommon):
         # Record the live session so _run's finally can meter its token usage even if
         # _consume below times out or raises.
         self._active_sid = sid
-        text = await self._consume(sid, self._compose_task(task, context_facts), write_allowed)
+        text = await self._consume(
+            sid,
+            self._compose_task(
+                task, context_facts, connectors_note=self._connectors_note(include_identity)
+            ),
+            write_allowed,
+        )
         return text or "(no output)"
 
     async def _meter_session_usage(self) -> None:

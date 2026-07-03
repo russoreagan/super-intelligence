@@ -308,7 +308,9 @@ class MotorCortexCluster:
         if self._cloud and self._cloud.available:
             self._cloud_hint = (
                 f"Cloud connectors currently enabled: {self._cloud.connectors_summary()}. "
-                "Use cloud_action for any request that involves these services."
+                "Use cloud_action for any request that involves these services, and when "
+                "a connector covers the request, write the task to use that connector's "
+                "tools BY NAME — not generic web search."
             )
         else:
             self._cloud_hint = "No cloud connectors available — use local tools only."
@@ -1170,6 +1172,11 @@ class MotorCortexCluster:
             plan_ctx = f"Goal: {goal}\nBrain state: {chem_ctx}"
             if persona_hint:
                 plan_ctx += f"\n{persona_hint}"
+            # Connector awareness: STRATEGIC_SYSTEM's connector-first rule refers to
+            # this line. Without it the planner is connector-blind and writes every
+            # data story as "search the live web ..." even when a connector (e.g.
+            # trading: quotes/movers/prediction markets) serves that exact data.
+            plan_ctx += f"\n{self._cloud_hint}"
             plan = await self._router.call_structured(
                 "sonnet",
                 _STRATEGIC_SYSTEM,

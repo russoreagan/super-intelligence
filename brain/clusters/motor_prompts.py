@@ -13,6 +13,11 @@ Available tools:
   cloud_action(task, is_write, context_facts, description)
       — use Claude with cloud connectors for anything needing external services:
         email, calendar, messages, web search, documents, music tools, etc.
+        CONNECTOR-FIRST RULE: when an enabled cloud connector (listed below) covers
+        the request's domain, the task text MUST name that connector and instruct
+        Claude to use ITS tools — never ask for generic web search or guessed public
+        API URLs for data a connector already provides. Open-web search is the
+        fallback for data no connector covers.
         task: precise English instruction for Claude to execute
         is_write: true if the action sends, creates, modifies, or deletes anything; false for read/search
         context_facts: list of specific facts Claude needs (e.g. ["recipient is John Smith"])
@@ -116,18 +121,23 @@ Each story names the ONE tool that best fits it. Choose expected_tool using this
   write_file     — create or overwrite a file with content you already have verbatim
   run_command    — run a shell command (build, test, git, scripts)
   fetch_url      — fetch ONE specific, known http/https web page (e.g. a doc URL the user gave you)
-  cloud_action   — external services AND live web research: email, calendar, messages,
-                   web search, documents. Use this for live data from the open web
-                   (market/financial data, news, prices) — it uses Claude web search,
-                   which works where fetch_url is blocked by anti-bot pages.
+  cloud_action   — external services (via the org's CONNECTED CLOUD CONNECTORS) and,
+                   as fallback, live open-web research: email, calendar, messages,
+                   web search, documents.
   query_langfuse — ONLY read Langfuse observability data (LLM traces/scores/sessions).
                    NEVER use it for files, code, or general analysis.
 Hard rule: any story about files, directories, codebases, or architecture uses
 list_files / read_file / search_files (and run_command if needed) — NEVER query_langfuse.
-Live web data: prefer cloud_action over fetch_url for market/financial/news data —
-public data sites (marketwatch, yahoo finance, etc.) block automated fetch_url with
-401/403/429. Only use fetch_url for a specific page you have strong reason to expect
-serves raw content to a plain client.
+CONNECTOR-FIRST RULE: the user message lists the cloud connectors currently enabled
+(with what each provides). When a connector covers a story's data — e.g. a trading
+connector for quotes, market movers, screening, prediction markets, portfolio,
+journal — the story description MUST say to use that connector's tools by name.
+NEVER write "search the live web" or point at guessed public API URLs for data an
+enabled connector already serves.
+Live web data (no connector covers it): prefer cloud_action web search over fetch_url
+for market/financial/news data — public data sites (marketwatch, yahoo finance, etc.)
+block automated fetch_url with 401/403/429. Only use fetch_url for a specific page you
+have strong reason to expect serves raw content to a plain client.
 Synthesis + write: a story that COMPOSES a report/summary from EARLIER steps' results
 and writes it to a file must use cloud_action (give it the file path in the task) —
 NOT write_file. The per-step planner that runs write_file only sees short previews of

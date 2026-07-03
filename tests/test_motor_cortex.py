@@ -2370,7 +2370,16 @@ class TestStrategicPromptGuidance:
         # blocked by anti-bot pages (the marketwatch/yahoo 401/429 failures).
         from brain.clusters.motor_prompts import STRATEGIC_SYSTEM
 
-        assert "prefer cloud_action over fetch_url" in STRATEGIC_SYSTEM
+        assert "prefer cloud_action web search over fetch_url" in STRATEGIC_SYSTEM
+
+    def test_strategic_prompt_puts_connectors_before_web_search(self):
+        # Data an enabled connector serves must be routed to that connector's tools,
+        # never re-derived from open-web search (the trading jobs were web-searching
+        # for market movers with a trading connector attached).
+        from brain.clusters.motor_prompts import STRATEGIC_SYSTEM
+
+        assert "CONNECTOR-FIRST RULE" in STRATEGIC_SYSTEM
+        assert 'NEVER write "search the live web"' in STRATEGIC_SYSTEM
 
     def test_strategic_prompt_routes_synthesis_writes_to_cloud_action(self):
         # A report composed from earlier steps must be written via cloud_action,
