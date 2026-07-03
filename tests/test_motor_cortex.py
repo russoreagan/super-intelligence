@@ -2381,6 +2381,14 @@ class TestStrategicPromptGuidance:
         assert "CONNECTOR-FIRST RULE" in STRATEGIC_SYSTEM
         assert 'NEVER write "search the live web"' in STRATEGIC_SYSTEM
 
+    def test_strategic_prompt_requires_targeted_searches(self):
+        # Broad multi-source research sweeps were eating the token budget — every
+        # web-research story must be one narrow, named-entity question.
+        from brain.clusters.motor_prompts import STRATEGIC_SYSTEM
+
+        assert "TARGETED SEARCH RULE" in STRATEGIC_SYSTEM
+        assert "never a broad survey" in STRATEGIC_SYSTEM
+
     def test_strategic_prompt_routes_synthesis_writes_to_cloud_action(self):
         # A report composed from earlier steps must be written via cloud_action,
         # not write_file (the per-step planner only sees short previews).

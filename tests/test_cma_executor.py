@@ -168,6 +168,25 @@ class TestAvailability:
         exe = _make_exec()
         assert exe._connectors_note() == ""
 
+    def test_web_budget_note_caps_searches(self, monkeypatch):
+        from brain.settings import settings as _settings
+
+        monkeypatch.setitem(_settings._data, "cloud_web_search_max", 2)
+        note = CMAExecutor._web_budget_note()
+        assert "at most 2 targeted searches" in note
+
+    def test_web_budget_note_disabled_at_zero(self, monkeypatch):
+        from brain.settings import settings as _settings
+
+        monkeypatch.setitem(_settings._data, "cloud_web_search_max", 0)
+        assert CMAExecutor._web_budget_note() == ""
+
+    def test_system_guidance_has_web_discipline(self):
+        from brain.clusters.cma_executor import _SYSTEM_GUIDANCE
+
+        assert "Web research discipline" in _SYSTEM_GUIDANCE
+        assert "FALLBACK" in _SYSTEM_GUIDANCE
+
 
 # ── confirmation/pending parity (inherited mixin) ──────────────────────────────
 

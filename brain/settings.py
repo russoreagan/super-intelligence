@@ -533,6 +533,10 @@ DEFAULTS: dict[str, float | int | str] = {
     #   (comms out) + irreversible destructive actions; internal reads/sandboxed writes
     #   run unattended. 0 = the older, broader gate (writes/bash/edit also ask).
     "autonomy_approve_external_only": 1,
+    # cloud_web_search_max: per-cloud-task budget of web searches, injected into every
+    #   composed task ("at most N targeted searches"). Web search is the token-burn
+    #   fallback — connectors first; broad multi-query sweeps were eating the budget.
+    "cloud_web_search_max": 3,
     # bg_cloud_timeout_trip: consecutive background cloud-call timeouts before the gate
     #   parks autonomous work (CLOUD_UNREACHABLE) for a cooldown instead of hammering.
     "bg_cloud_timeout_trip": 3,

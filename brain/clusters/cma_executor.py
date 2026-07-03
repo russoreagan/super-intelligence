@@ -411,6 +411,12 @@ def _classify_action(tool: str, args, write_allowed: bool) -> tuple[str, str]:
 _SYSTEM_GUIDANCE = (
     "You are the action-execution arm of an AI brain. Carry out the user's task "
     "using your tools and connected services, then report back concisely.\n"
+    "Web research discipline: web search is the FALLBACK, never the default — "
+    "prefer connected services' tools for any data they cover. When you do "
+    "search, make each query narrow and specific (exact entity names, metrics, "
+    "dates, site: filters), never a broad topic sweep. Stop searching the moment "
+    "you have what the task needs; do not re-search the same question with "
+    "rephrasings, and open only the one or two most authoritative results.\n"
     "If your response will be lengthy (more than ~400 words), write the full "
     "findings to a file under /mnt/session/outputs/ and return only a concise "
     "summary referencing the file.\n"
@@ -1104,6 +1110,23 @@ class CMAExecutor(ExecutorCommon):
             "already serves."
         )
 
+    @staticmethod
+    def _web_budget_note() -> str:
+        """Per-task web-search budget (settings: cloud_web_search_max, 0 = no note).
+        The hard numeric cap is what actually stops broad multi-query sweeps from
+        eating tokens — the system-prompt discipline alone is too soft."""
+        try:
+            n = int(settings.get("cloud_web_search_max", 3) or 0)
+        except Exception:
+            n = 3
+        if n <= 0:
+            return ""
+        return (
+            f"Web-search budget: at most {n} targeted searches for this whole task. "
+            "If the budget doesn't suffice, return what you found plus what's "
+            "missing — do not keep searching."
+        )
+
     async def _ensure_session(
         self, write_allowed: bool, user_vault_id: str | None = None, include_identity: bool = True
     ) -> str:
@@ -1162,11 +1185,12 @@ class CMAExecutor(ExecutorCommon):
         # Record the live session so _run's finally can meter its token usage even if
         # _consume below times out or raises.
         self._active_sid = sid
+        note = " ".join(
+            p for p in (self._connectors_note(include_identity), self._web_budget_note()) if p
+        )
         text = await self._consume(
             sid,
-            self._compose_task(
-                task, context_facts, connectors_note=self._connectors_note(include_identity)
-            ),
+            self._compose_task(task, context_facts, connectors_note=note),
             write_allowed,
         )
         return text or "(no output)"

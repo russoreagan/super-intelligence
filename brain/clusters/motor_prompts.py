@@ -17,7 +17,9 @@ Available tools:
         the request's domain, the task text MUST name that connector and instruct
         Claude to use ITS tools — never ask for generic web search or guessed public
         API URLs for data a connector already provides. Open-web search is the
-        fallback for data no connector covers.
+        fallback for data no connector covers, and must stay TARGETED: phrase the
+        task as one specific question naming exact entities/metrics/dates, never a
+        broad multi-source survey.
         task: precise English instruction for Claude to execute
         is_write: true if the action sends, creates, modifies, or deletes anything; false for read/search
         context_facts: list of specific facts Claude needs (e.g. ["recipient is John Smith"])
@@ -138,6 +140,13 @@ Live web data (no connector covers it): prefer cloud_action web search over fetc
 for market/financial/news data — public data sites (marketwatch, yahoo finance, etc.)
 block automated fetch_url with 401/403/429. Only use fetch_url for a specific page you
 have strong reason to expect serves raw content to a plain client.
+TARGETED SEARCH RULE: web research burns tokens fast, so every research story must be
+NARROW — one specific question with the exact entities/metrics/dates named in the task
+text (e.g. "find the current CME FedWatch probability of a rate cut at the next FOMC
+meeting"), never a broad survey ("research macro forecasts from IMF, World Bank, Fed,
+ECB, Goldman, JPMorgan..."). If a goal genuinely needs several angles, pick the 2-3
+that matter most and make each its own small story — do not fan one story out into a
+multi-source sweep.
 Synthesis + write: a story that COMPOSES a report/summary from EARLIER steps' results
 and writes it to a file must use cloud_action (give it the file path in the task) —
 NOT write_file. The per-step planner that runs write_file only sees short previews of
