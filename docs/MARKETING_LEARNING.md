@@ -62,6 +62,38 @@ file spends indiscriminately on everything.
 **Same request: fewer model calls than day 1, faster than day 1, results that
 compound. Experience made the agent cheaper, not more expensive.**
 
+## What learning is actually made of
+
+The reason a context file can't do this is *where* it stores experience: as
+text, which has to be re-read and re-interpreted on every call. Our engine
+encodes experience as structure — in four distinct forms, none of which is a
+note in a prompt:
+
+- **Strengthened pathways.** Every outcome feeds a graded internal value
+  signal, and that signal adjusts the specific decision routes that produced
+  the result — good outcomes strengthen them, bad ones weaken them. The
+  agent's preferences are weights on its own machinery, not sentences it has
+  to re-read and hopefully obey.
+- **Practiced routines.** Work sequences that succeed repeatedly are
+  consolidated during the engine's downtime into compact, replayable form —
+  the difference between following a recipe and knowing how to cook. A routine
+  that stops matching reality is automatically benched until it re-earns its
+  place.
+- **Outcome memory with an approach fingerprint.** Results are stored with
+  *how* the problem was approached, separate from what it was about. That's
+  what makes experience transferable: a brand-new problem with a familiar
+  shape can recall the strategy that worked, even from a completely different
+  domain — something no amount of keyword-matched notes can do.
+- **Earned instincts.** The value signal is deliberately hard to please — it
+  pays out only for wins that were genuinely uncertain, so the agent can't
+  inflate its own confidence by repeating what's easy. And it's individual:
+  two agents starting from identical configurations, given different
+  histories, become measurably different decision-makers. That divergence is
+  the proof it's learning, not just accumulating.
+
+Text informs. Structure *behaves*. That's the encoding difference, and it's
+why this layer compounds while a context file just grows.
+
 ## The one-sentence difference
 
 > Context changes what the model reads. Learning changes how it decides.
