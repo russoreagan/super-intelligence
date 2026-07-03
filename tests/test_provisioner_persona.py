@@ -103,3 +103,149 @@ def test_live_count_spans_all_personas():
         prov._key("u", "the_sage"): pv._Proc(_FakeProc(False), 9103),  # died, unreaped
     }
     assert prov.live_count() == 2
+
+
+# ── Capacity guardrail + RSS telemetry (Railway Pro density work, 2026-07-03) ──
+
+
+def _inject_live(prov: pv.Provisioner, key: str, tier: str = "full") -> None:
+    entry = pv._Proc(_FakeProc(alive=True), port=1000 + len(prov._procs), api_port=None)
+    entry.tier = tier
+    entry.booting = False
+    prov._procs[key] = entry
+
+
+def test_ensure_refuses_past_max_tenants(monkeypatch):
+    """At the BRAIN_MAX_TENANTS ceiling a NEW spawn raises CapacityError; an
+    EXISTING live brain keeps resolving (reuse must never be capped)."""
+    import asyncio
+
+    monkeypatch.setattr(pv, "MAX_TENANTS", 2)
+    prov = pv.Provisioner(cmd_builder=lambda _p, _e: ["true"])
+    _inject_live(prov, "org-a")
+    _inject_live(prov, "org-b")
+
+    async def _run():
+        # Existing tenant: allowed (reuse path, no spawn).
+        port = await prov.ensure("org-a")
+        assert isinstance(port, int)
+        # New tenant: refused at cap.
+        try:
+            await prov.ensure("org-c")
+        except pv.CapacityError as e:
+            assert "BRAIN_MAX_TENANTS" in str(e)
+            return True
+        return False
+
+    assert asyncio.run(_run()) is True
+    assert "org-c" not in prov._procs
+
+
+def test_ensure_uncapped_when_zero(monkeypatch):
+    """MAX_TENANTS=0 disables the gate (spawn proceeds to _spawn — stubbed)."""
+    import asyncio
+
+    monkeypatch.setattr(pv, "MAX_TENANTS", 0)
+    prov = pv.Provisioner(cmd_builder=lambda _p, _e: ["true"])
+    _inject_live(prov, "org-a")
+
+    async def _fake_spawn(user_id, persona=None):
+        return 4242
+
+    prov._spawn = _fake_spawn
+
+    async def _run():
+        return await prov.ensure("org-new")
+
+    assert asyncio.run(_run()) == 4242
+
+
+def test_tenant_stats_reports_live_only():
+    prov = pv.Provisioner(cmd_builder=lambda _p, _e: ["true"])
+    _inject_live(prov, "org-a", tier="full")
+    _inject_live(prov, "org-b", tier="lite")
+    dead = pv._Proc(_FakeProc(alive=False), port=1, api_port=None)
+    prov._procs["org-dead"] = dead
+
+    stats = prov.tenant_stats()
+    keys = {s["key"] for s in stats}
+    assert keys == {"org-a", "org-b"}
+    for s in stats:
+        assert s["uptime_s"] >= 0
+        assert s["tier"] in ("full", "lite")
+        # rss may be None for fake pids — the field must exist either way
+        assert "rss_mb" in s
+
+
+# ── Elastic placement primitives (Phase 1, 2026-07-03) ──────────────────────
+
+
+def test_keys_for_and_dedicated_count():
+    prov = pv.Provisioner(cmd_builder=lambda _p, _e: ["true"])
+    _inject_live(prov, "org-a")
+    _inject_live(prov, "org-a::the_analyst")
+    _inject_live(prov, "org-a::the_poet")
+    _inject_live(prov, "org-b")
+    dead = pv._Proc(_FakeProc(alive=False), port=1, api_port=None)
+    prov._procs["org-a::the_sage"] = dead  # dead → excluded
+
+    keys = prov.keys_for("org-a")
+    assert keys == ["org-a::the_analyst", "org-a::the_poet", "org-a"]  # default LAST
+    assert prov.dedicated_count("org-a") == 2
+    assert prov.promoted_personas("org-a") == ["the_analyst", "the_poet"]
+    assert prov.keys_for("org-b") == ["org-b"]
+    # org-b must not match a prefix of another org id
+    _inject_live(prov, "org-bb")
+    assert "org-bb" not in prov.keys_for("org-b")
+
+
+def test_max_dedicated_gates_persona_spawns_only(monkeypatch):
+    import asyncio
+
+    monkeypatch.setattr(pv, "MAX_TENANTS", 0)
+    monkeypatch.setattr(pv, "MAX_DEDICATED", 1)
+    prov = pv.Provisioner(cmd_builder=lambda _p, _e: ["true"])
+    _inject_live(prov, "org-a")
+    _inject_live(prov, "org-a::the_analyst")
+
+    async def _fake_spawn(user_id, persona=None):
+        return 4242
+
+    prov._spawn = _fake_spawn
+
+    async def _run():
+        # Second dedicated spawn → refused.
+        try:
+            await prov.ensure("org-a", "the_poet")
+            raised = False
+        except pv.CapacityError as e:
+            raised = "BRAIN_MAX_DEDICATED" in str(e)
+        # Default-instance spawn for another org: NOT gated by MAX_DEDICATED.
+        port = await prov.ensure("org-new")
+        return raised, port
+
+    raised, port = asyncio.run(_run())
+    assert raised is True
+    assert port == 4242
+
+
+def test_write_placement_files_derives_and_removes(tmp_path, monkeypatch):
+    monkeypatch.setattr(pv, "TENANTS_DIR", tmp_path)
+    pv._placement_last.clear()
+    prov = pv.Provisioner(cmd_builder=lambda _p, _e: ["true"])
+    _inject_live(prov, "org-a")
+    _inject_live(prov, "org-a::the_analyst")
+
+    pv.write_placement_files(prov)
+    pfile = pv.placement_file("org-a")
+    assert pfile.exists()
+    import json as _json
+
+    data = _json.loads(pfile.read_text())
+    assert data["promoted"] == ["the_analyst"]
+
+    # Dedicated instance dies → next derivation removes the file (self-healing).
+    prov._procs["org-a::the_analyst"]._alive = False
+    prov._procs["org-a::the_analyst"].proc._alive = False
+    pv.write_placement_files(prov)
+    assert not pfile.exists()

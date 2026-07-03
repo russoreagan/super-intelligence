@@ -51,6 +51,16 @@ logger = logging.getLogger(__name__)
 # reap doesn't lose memory. Override with BRAIN_SESSION_IDLE_TIMEOUT_S if needed.
 IDLE_TIMEOUT_S = float(os.environ.get("BRAIN_SESSION_IDLE_TIMEOUT_S", "86400"))
 READY_TIMEOUT_S = float(os.environ.get("BRAIN_TENANT_READY_TIMEOUT_S", "180"))
+# Global ceiling on concurrently live brain processes. All tenants share ONE
+# container on usage-billed Railway, so unbounded spawning turns a signup wave
+# (or a spawn loop bug) into a runaway bill / memory blowup that takes every org
+# down together. 0 = uncapped. Size from measured per-brain RSS (the reconcile
+# tick logs it): floor((plan_ram - gateway - headroom) / per_brain_rss).
+MAX_TENANTS = int(os.environ.get("BRAIN_MAX_TENANTS", "25"))
+# Per-org ceiling on DEDICATED persona instances (Path A spawns, key org::persona).
+# The scarce resource they multiply is the shared GPU pod, not Railway RAM: each
+# dedicated brain runs its own DMN against one serialized 32B. 0 = uncapped.
+MAX_DEDICATED = int(os.environ.get("BRAIN_MAX_DEDICATED", "3"))
 # Per-user data root on the app host. Each user: <root>/<user_id>/{settings.json,second_brain}
 TENANTS_DIR = Path(os.environ.get("BRAIN_TENANTS_DIR", "tenants")).resolve()
 # Shared file the gateway writes the live RunPod host into (one shared pod → one
@@ -111,12 +121,78 @@ def _start_log_relay(proc, user_id: str) -> None:
     threading.Thread(target=_read, daemon=True, name=f"log-relay-{user_id[:8]}").start()
 
 
+def placement_file(user_id: str) -> Path:
+    """Per-org placement file: which personas currently run on DEDICATED instances.
+    The org's SHARED instance polls it (placement_client) and drops those personas
+    from its DMN roster — no duplicated idle thinking while a sibling process IS
+    that persona. Derived from live processes each gateway reconcile tick, so it
+    self-heals when a dedicated instance dies or is reaped."""
+    return TENANTS_DIR / user_id / ".placement.json"
+
+
+# Last content written per org — skip unchanged writes (same idiom as the pod
+# host file). Process-local cache; the file itself is the source of truth.
+_placement_last: dict[str, str] = {}
+
+
+def write_placement_files(provisioner: "Provisioner") -> None:
+    """Derive and publish every org's placement file. Best-effort; never raises."""
+    import time as _time
+
+    try:
+        orgs = {k.split("::", 1)[0] for k in provisioner.keys_for_all()}
+        for org in orgs:
+            promoted = provisioner.promoted_personas(org)
+            payload = json.dumps({"promoted": promoted, "ts": _time.time()})
+            cache_key = f"{org}:{','.join(promoted)}"
+            if _placement_last.get(org) == cache_key:
+                continue
+            path = placement_file(org)
+            try:
+                if not promoted:
+                    with contextlib.suppress(FileNotFoundError):
+                        path.unlink()
+                else:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    tmp = path.with_suffix(".json.tmp")
+                    tmp.write_text(payload, encoding="utf-8")
+                    os.replace(tmp, path)
+                _placement_last[org] = cache_key
+                logger.info(
+                    "[provisioner] placement for %s: %s",
+                    org[:8],
+                    promoted or "(none promoted)",
+                )
+            except Exception as e:
+                logger.warning("[provisioner] placement write failed for %s: %s", org[:8], e)
+    except Exception as e:
+        logger.debug("[provisioner] placement derivation failed: %s", e)
+
+
+def tenant_state_root(user_id: str, persona: str | None = None) -> Path:
+    """The second_brain root injected into a tenant spawn — ALWAYS the ORG-canonical
+    tenants/<org>/second_brain, for default AND persona (Path A) spawns alike.
+    run.py's persona routing appends personas/<slug>, so a persona's learned state
+    resolves to the SAME directory whether the org's shared instance binds it per
+    turn or a dedicated process hosts it. A per-instance tree here (the pre-elastic
+    behavior: tenants/<org>/personas/<X>/second_brain) FORKED the persona's state
+    on promotion — ledger, stories, chemistry, chunks all split."""
+    del persona  # one canonical root regardless — kept in the signature for intent
+    return TENANTS_DIR / user_id / "second_brain"
+
+
+class CapacityError(RuntimeError):
+    """Raised by ensure() when BRAIN_MAX_TENANTS live brains already run — the
+    caller (gateway) logs it loudly instead of spawning past the host's budget."""
+
+
 class _Proc:
     def __init__(self, proc, port: int, api_port: int | None = None) -> None:
         self.proc = proc
         self.port = port
         self.api_port = api_port  # tenant's engine-API port (for /v1 gateway routing)
         self.last_active: float = time.time()
+        self.started_at: float = time.time()
         self.booting: bool = True
         # Runtime tier this brain resolved to, reported on /health and captured at
         # boot. 'full' = uses the shared GPU pod (own local-thinking brain); 'lite' =
@@ -125,6 +201,29 @@ class _Proc:
         # brain never keeps a GPU pod alive. Default 'full' until /health is read —
         # a real full brain must never be denied its pod on an unknown tier.
         self.tier: str = "full"
+
+
+def _proc_rss_mb(pid: int) -> float | None:
+    """Resident set size of a child process in MB, or None if unreadable.
+
+    /proc/<pid>/statm on Linux (Railway — no extra dependency); `ps` fallback for
+    dev machines. Cheap enough to sample every reconcile tick."""
+    try:
+        with open(f"/proc/{pid}/statm") as f:
+            pages = int(f.read().split()[1])  # field 2 = resident pages
+        return round(pages * os.sysconf("SC_PAGE_SIZE") / (1024 * 1024), 1)
+    except Exception:
+        pass
+    try:
+        out = subprocess.run(  # noqa: S603 — fixed argv, pid is an int
+            ["ps", "-o", "rss=", "-p", str(int(pid))],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        ).stdout.strip()
+        return round(int(out) / 1024, 1) if out else None
+    except Exception:
+        return None
 
 
 def _free_port() -> int:
@@ -279,6 +378,52 @@ class Provisioner:
             1 for p in self._procs.values() if p.proc.poll() is None and p.tier != "lite"
         )
 
+    def keys_for_all(self) -> list[str]:
+        """Every live process key (both 'org' and 'org::persona' forms)."""
+        return [k for k, p in self._procs.items() if p.proc.poll() is None]
+
+    def keys_for(self, user_id: str) -> list[str]:
+        """Live process keys belonging to one org: the default instance ('org')
+        and any dedicated persona instances ('org::persona'). The gateway's sleep
+        sweep consolidates ALL of them, default last."""
+        out = []
+        for key, p in self._procs.items():
+            if p.proc.poll() is not None:
+                continue
+            if key == user_id or key.startswith(f"{user_id}::"):
+                out.append(key)
+        # Dedicated first, default last (the sweep shuts the fallback down last).
+        return sorted(out, key=lambda k: (0 if "::" in k else 1, k))
+
+    def dedicated_count(self, user_id: str) -> int:
+        """Live DEDICATED persona instances for this org (excludes the default)."""
+        return sum(1 for k in self.keys_for(user_id) if "::" in k)
+
+    def promoted_personas(self, user_id: str) -> list[str]:
+        """Persona slugs of this org's live dedicated instances — the derived
+        content of the org's placement file."""
+        return sorted(k.split("::", 1)[1] for k in self.keys_for(user_id) if "::" in k)
+
+    def tenant_stats(self) -> list[dict]:
+        """Live per-tenant resource snapshot: [{key, pid, rss_mb, uptime_s, tier,
+        booting}]. The sizing ground truth for 'how many brains fit on this plan' —
+        the gateway logs it every reconcile tick and aggregates it on /health."""
+        out: list[dict] = []
+        for key, p in self._procs.items():
+            if p.proc.poll() is not None:
+                continue
+            out.append(
+                {
+                    "key": key,
+                    "pid": p.proc.pid,
+                    "rss_mb": _proc_rss_mb(p.proc.pid),
+                    "uptime_s": round(time.time() - p.started_at),
+                    "tier": p.tier,
+                    "booting": p.booting,
+                }
+            )
+        return out
+
     async def ensure(self, user_id: str, persona: str | None = None) -> int:
         """Resume-or-spawn this (user, persona) brain process; return its localhost
         port. With no persona this is the original tenant-only process; with one, a
@@ -299,6 +444,19 @@ class Provisioner:
                     p.proc.poll(),
                 )
                 self._procs.pop(key, None)
+            if MAX_TENANTS > 0 and self.live_count() >= MAX_TENANTS:
+                raise CapacityError(
+                    f"tenant cap reached ({self.live_count()}/{MAX_TENANTS} live brains) — "
+                    f"refusing to spawn {key[:16]}; raise BRAIN_MAX_TENANTS if the host "
+                    "has headroom (check the gateway's rss_total log line)"
+                )
+            if persona and MAX_DEDICATED > 0 and self.dedicated_count(user_id) >= MAX_DEDICATED:
+                raise CapacityError(
+                    f"dedicated-persona cap reached for {user_id[:8]} "
+                    f"({self.dedicated_count(user_id)}/{MAX_DEDICATED}) — persona "
+                    f"{persona!r} stays on the shared instance (per-turn binding); "
+                    "raise BRAIN_MAX_DEDICATED if the GPU pod has headroom"
+                )
             return await self._spawn(user_id, persona)
 
     async def _spawn(self, user_id: str, persona: str | None = None) -> int:
@@ -362,8 +520,13 @@ class Provisioner:
         # An explicit persona gets its own data dir so its settings/local caches
         # (and local-mode wiring.json) never collide with a sibling persona under
         # the same tenant. The default (no persona) keeps the original path.
+        # `root` holds this INSTANCE's settings.json (a persona spawn keeps its own
+        # tuning file); learned state goes to the ORG-canonical second_brain via
+        # tenant_state_root() so a persona's state never forks across instances.
         root = TENANTS_DIR / user_id / "personas" / persona if persona else TENANTS_DIR / user_id
-        (root / "second_brain").mkdir(parents=True, exist_ok=True)
+        state_root = tenant_state_root(user_id, persona)
+        state_root.mkdir(parents=True, exist_ok=True)
+        root.mkdir(parents=True, exist_ok=True)
         settings_path = root / "settings.json"
         # Seed a fresh tenant's settings.json from the bundled defaults so they
         # start with sane chemistry; thereafter it's theirs and never overwritten.
@@ -493,7 +656,7 @@ class Provisioner:
                 # buffer fills or the process exits — i.e. boot errors stay invisible.
                 "PYTHONUNBUFFERED": "1",
                 "BRAIN_SETTINGS_PATH": str(settings_path),
-                "SECOND_BRAIN_PATH": str(root / "second_brain"),
+                "SECOND_BRAIN_PATH": str(state_root),
                 # Hosted tenants render/capture audio in the browser, not via a
                 # server-side sound device. Without this, BROWSER_AUDIO_MODE is
                 # false, attach_tts_queue never runs, and TTS audio is never
@@ -505,6 +668,16 @@ class Provisioner:
                 "BRAIN_API_PORT": str(api_port),
             }
         )
+        if persona:
+            # Path A: this process exists FOR one persona. Pin it so the DMN
+            # rosters only itself — otherwise every persona process would rotate
+            # over the whole org roster (N× duplicated idle work, and racy writes
+            # into sibling personas' learning state from multiple processes).
+            env["BRAIN_PERSONA_PINNED"] = "1"
+        else:
+            # The org's SHARED instance polls the placement file so its DMN drops
+            # personas that a dedicated sibling process currently hosts.
+            env["BRAIN_PLACEMENT_FILE"] = str(placement_file(user_id))
         if persona_name:
             env["BRAIN_PERSONA_NAME"] = persona_name
         else:

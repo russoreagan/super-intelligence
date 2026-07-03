@@ -47,6 +47,10 @@ class _FakeProv:
     def is_running(self, t, persona=None):
         return False
 
+    def keys_for(self, t):
+        # Sleep-sweep surface: these tests model a single default instance.
+        return [t]
+
     def touch(self, t, persona=None):
         self.touched.append((t, persona))
 

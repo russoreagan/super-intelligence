@@ -19,9 +19,12 @@ from brain.ui import auth as ui_auth
 
 
 class _FakeProv:
-    def __init__(self, live_count=0):
+    def __init__(self, live_count=0, org_keys=None):
         self.stopped: list[str] = []
         self._live = live_count
+        # Keys the sleep sweep iterates: default just the org itself; tests for
+        # the multi-instance sweep inject ["org::persona", ..., "org"].
+        self._org_keys = org_keys
 
     async def start(self):  # pragma: no cover - not exercised
         pass
@@ -29,16 +32,19 @@ class _FakeProv:
     async def stop(self):  # pragma: no cover
         pass
 
-    def status(self, t):
+    def status(self, t, persona=None):
         # booting=True makes _sleep skip the brain HTTP call + graceful wait,
         # keeping the test free of real sockets/timing.
         return {"port": 0, "booting": True, "pid": 1}
 
-    def is_running(self, t):
+    def is_running(self, t, persona=None):
         return False
 
-    async def stop_user(self, t):
-        self.stopped.append(t)
+    async def stop_user(self, t, persona=None):
+        self.stopped.append(f"{t}::{persona}" if persona else t)
+
+    def keys_for(self, t):
+        return list(self._org_keys) if self._org_keys is not None else [t]
 
     def live_count(self):
         return self._live
@@ -135,6 +141,21 @@ def test_sleep_keeps_pod_when_other_brains_live():
     assert final["pod"] == "kept"
     assert runpod.paused is False
     assert "u1" in prov.stopped
+
+
+def test_sleep_sweeps_all_org_instances_default_last():
+    """An org with dedicated persona instances gets a full sweep: every instance
+    consolidated + stopped, the default (fallback) instance last — this is the
+    'all persona learning per org consolidates' guarantee under elastic placement."""
+    with _auth_patched():
+        prov = _FakeProv(
+            live_count=0,
+            org_keys=["u1::the_analyst", "u1::the_poet", "u1"],
+        )
+        runpod = _FakeRunpod()
+        final = asyncio.run(_run_sleep(prov, runpod))
+    assert final["state"] == "asleep"
+    assert prov.stopped == ["u1::the_analyst", "u1::the_poet", "u1"]  # default LAST
 
 
 def test_sleep_status_awake_by_default():

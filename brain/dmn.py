@@ -1790,6 +1790,13 @@ class DefaultModeNetwork:
             return cache
         home = self.__dict__.get("_home") or self._resolve_home()
         roster = [home]
+        # Path A (per-persona processes): this process IS one persona — its DMN
+        # thinks only as itself. Without the pin, each of N persona processes
+        # would rotate over the whole org roster: N× duplicated idle work and
+        # concurrent writes into sibling personas' learning state.
+        if os.environ.get("BRAIN_PERSONA_PINNED", "").lower() in ("1", "true"):
+            self._roster_cache, self._roster_ts = roster, now
+            return roster
         try:
             from brain import agents
             from brain.second_brain.store import _persona_key
@@ -1810,6 +1817,22 @@ class DefaultModeNetwork:
         except Exception as e:
             logger.debug("[DMN] roster query failed — home-only rotation: %s", e)
             roster = [home]
+        # Elastic placement: personas promoted to their OWN brain instance think
+        # there, not here — drop them so idle work isn't duplicated across
+        # processes. Home is never dropped (this process IS home; a promoted
+        # "home" would mean the placement file is confused — serving is safer).
+        try:
+            from brain.placement_client import promoted_personas
+            from brain.second_brain.store import _persona_key
+
+            promoted = {_persona_key(p) for p in promoted_personas()}
+            if promoted:
+                home_key = _persona_key(home)
+                roster = [
+                    p for p in roster if _persona_key(p) == home_key or _persona_key(p) not in promoted
+                ]
+        except Exception as e:
+            logger.debug("[DMN] placement filter failed — full roster: %s", e)
         self.__dict__["_roster_cache"] = roster
         self.__dict__["_roster_ts"] = now
         return roster

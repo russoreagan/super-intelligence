@@ -18,8 +18,11 @@ Run:  python -m brain.gateway   (binds 0.0.0.0:$PORT on Railway)
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
+import shutil
+import subprocess
 import time
 from html import escape as html_escape
 from pathlib import Path
@@ -170,7 +173,18 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
     # ── Public auth routes (reused from the brain UI) ───────────────────────
     @app.get("/health")
     async def health():
-        return {"status": "ok"}
+        # Aggregate tenant footprint only — this route is unauthenticated, so no
+        # per-org detail here (that's in the reconcile-tick log lines).
+        try:
+            stats = provisioner.tenant_stats()
+            return {
+                "status": "ok",
+                "tenants": len(stats),
+                "tenants_booting": sum(1 for s in stats if s["booting"]),
+                "rss_total_mb": round(sum(s["rss_mb"] or 0 for s in stats)),
+            }
+        except Exception:
+            return {"status": "ok"}
 
     @app.post("/auth/logout")
     @app.get("/auth/logout")
@@ -384,31 +398,48 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
     def _set_sleep(tenant: str, state: str, **extra) -> None:
         sleep_status[tenant] = {"state": state, "since": time.time(), **extra}
 
+    async def _consolidate_and_stop(org: str, persona: str | None) -> None:
+        """Gracefully shut ONE instance (default or dedicated persona): POST its
+        /shutdown (SIGTERM handler runs end-of-session consolidation), wait for a
+        clean exit, then reap. Waiting matters — force-killing mid-consolidation
+        loses the Hebbian/narrator pass for whatever traces that instance holds."""
+        st = provisioner.status(org, persona)
+        if st and not st["booting"]:
+            try:
+                async with httpx.AsyncClient(timeout=10.0) as _c:
+                    await _c.post(f"http://127.0.0.1:{st['port']}/shutdown")
+            except Exception:
+                pass
+            deadline = time.time() + SLEEP_CONSOLIDATE_WAIT_S
+            while time.time() < deadline and provisioner.is_running(org, persona):
+                await asyncio.sleep(1.0)
+        await provisioner.stop_user(org, persona)
+
     async def _do_sleep(tenant: str) -> None:
-        """Sleep one org's brain and release its cost: consolidate → stop the process
-        → pause the shared pod if no other brain needs it. Shared by the UI Sleep
-        button and the engine API POST /v1/sleep, with progress in sleep_status."""
+        """Sleep one ORG — every instance of it: each dedicated persona brain first,
+        the default (shared) instance last, then pause the shared pod if no other
+        org's brain needs it. Sweeping ALL instances is what guarantees the org's
+        learning consolidates regardless of how personas were placed: every trace
+        buffer lives in exactly one instance, and each instance's shutdown runs its
+        own per-persona-grouped consolidation. Shared by the UI Sleep button and
+        the engine API POST /v1/sleep, with progress in sleep_status."""
         phase = "consolidating"  # tracked so an error names the step that failed
         try:
-            # 1. Consolidate: ask the brain to shut itself down gracefully — its
-            # SIGTERM handler runs end-of-session memory consolidation. Wait for
-            # the process to actually exit so we don't force-kill it mid-write.
+            # 1+2. Consolidate + stop every live instance of this org. keys_for()
+            # orders dedicated instances first, the default (fallback) last.
             _set_sleep(tenant, "consolidating")
-            st = provisioner.status(tenant)
-            if st and not st["booting"]:
-                try:
-                    async with httpx.AsyncClient(timeout=10.0) as _c:
-                        await _c.post(f"http://127.0.0.1:{st['port']}/shutdown")
-                except Exception:
-                    pass
-                deadline = time.time() + SLEEP_CONSOLIDATE_WAIT_S
-                while time.time() < deadline and provisioner.is_running(tenant):
-                    await asyncio.sleep(1.0)
-
-            # 2. Stop: reap the process (no-op if it already exited gracefully).
+            keys = provisioner.keys_for(tenant) or [tenant]
+            for key in keys:
+                org, _, persona = key.partition("::")
+                if persona:
+                    logger.info(
+                        "[gateway] sleep sweep: consolidating dedicated instance %s::%s",
+                        org[:8],
+                        persona,
+                    )
+                await _consolidate_and_stop(org, persona or None)
             phase = "stopping"
             _set_sleep(tenant, "stopping")
-            await provisioner.stop_user(tenant)
 
             # 3. Pause the shared pod — only if NO other FULL-tier brain still needs it.
             # A lingering lite brain runs entirely on cloud and never touches the pod,
@@ -606,6 +637,77 @@ async def _loop_heartbeat_task() -> None:
         await asyncio.sleep(1.0)
 
 
+# ── CPU embedding sidecar ─────────────────────────────────────────────────────
+# Embeddings are the highest-volume model call (10-15/turn: recall, DMN dedup)
+# but need no GPU — nomic-embed-text runs on CPU in tens of ms. Without this,
+# hosted tenants embed against OLLAMA_HOST (nothing local on Railway) and flip
+# permanently to Google — cost + latency + memory content leaving the box. The
+# gateway runs ONE CPU Ollama for the whole host (the model loads once, not per
+# brain) and points every tenant at it via OLLAMA_EMBED_HOST (env-inherited at
+# spawn; running brains pick it up on their next respawn).
+_EMBED_SIDECAR = os.environ.get("BRAIN_EMBED_SIDECAR", "1").lower() not in ("0", "false")
+_EMBED_SIDECAR_PORT = int(os.environ.get("BRAIN_EMBED_SIDECAR_PORT", "11500"))
+
+
+def _start_embed_sidecar() -> subprocess.Popen | None:
+    """Start the CPU Ollama embed sidecar; returns the process or None (skipped).
+
+    No-ops when disabled, when OLLAMA_EMBED_HOST is already pointed somewhere,
+    or when the image has no ollama binary (dev machines run their own). The
+    embed model pull happens in a background thread — embeds fall through the
+    existing chain (OLLAMA_HOST → Google) until the sidecar is warm."""
+    if not _EMBED_SIDECAR or os.environ.get("OLLAMA_EMBED_HOST"):
+        return None
+    binary = shutil.which("ollama")
+    if binary is None:
+        logger.info("[gateway] embed sidecar skipped — no ollama binary in image")
+        return None
+    listen = f"127.0.0.1:{_EMBED_SIDECAR_PORT}"
+    env = os.environ.copy()
+    env["OLLAMA_HOST"] = listen
+    env["OLLAMA_MAX_LOADED_MODELS"] = "1"
+    env["OLLAMA_NUM_PARALLEL"] = "2"
+    env["OLLAMA_KEEP_ALIVE"] = "-1m"  # ~0.3 GB model — keep resident
+    try:
+        proc = subprocess.Popen(  # noqa: S603 — fixed argv from shutil.which
+            [binary, "serve"],
+            env=env,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception as e:
+        logger.warning("[gateway] embed sidecar failed to start: %s", e)
+        return None
+    os.environ["OLLAMA_EMBED_HOST"] = f"http://{listen}"
+    logger.info("[gateway] embed sidecar starting on %s (pid %d)", listen, proc.pid)
+
+    embed_model = os.environ.get("OLLAMA_EMBED_MODEL", "nomic-embed-text")
+
+    def _pull():
+        time.sleep(3)  # let serve bind
+        try:
+            r = subprocess.run(  # noqa: S603
+                [binary, "pull", embed_model],
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=600,
+            )
+            if r.returncode == 0:
+                logger.info("[gateway] embed sidecar ready — %s pulled", embed_model)
+            else:
+                logger.warning(
+                    "[gateway] embed sidecar pull failed (%s): %s",
+                    embed_model,
+                    (r.stderr or "")[-300:],
+                )
+        except Exception as e:
+            logger.warning("[gateway] embed sidecar pull error: %s", e)
+
+    threading.Thread(target=_pull, daemon=True, name="embed-sidecar-pull").start()
+    return proc
+
+
 def _start_loop_watchdog() -> None:
     import time as _t
 
@@ -660,7 +762,14 @@ async def _safe_ensure(provisioner: Provisioner, uid: str, persona: str | None =
     try:
         await provisioner.ensure(uid, persona)
     except Exception as e:
-        logger.error("[gateway] ensure failed for %s/%s: %s", uid[:8], persona or "-", e)
+        from brain.provisioner import CapacityError
+
+        if isinstance(e, CapacityError):
+            # Deliberate refusal, not a fault: the host is at its configured brain
+            # budget. The user keeps seeing "booting"; this line is the diagnosis.
+            logger.warning("[gateway] AT CAPACITY — %s", e)
+        else:
+            logger.error("[gateway] ensure failed for %s/%s: %s", uid[:8], persona or "-", e)
 
 
 async def _safe_pod_ensure(runpod) -> None:
@@ -813,6 +922,7 @@ def main() -> None:
 
     provisioner = Provisioner()
     runpod_holder: list = [None]
+    embed_sidecar_holder: list = [None]
     app = build_gateway_app(provisioner, runpod_holder)
 
     # The gateway is the SINGLE owner of the shared RunPod pod. Tenant children run
@@ -848,11 +958,38 @@ def main() -> None:
 
         publish_runpod_host(host)
 
+    def _log_tenant_stats():
+        """One RSS line per reconcile tick — the sizing ground truth for how many
+        brains this Railway plan actually fits (per-brain footprint was never
+        measured on the hosted image; the dev-Mac figure includes Ollama)."""
+        try:
+            stats = provisioner.tenant_stats()
+            if not stats:
+                return
+            total = sum(s["rss_mb"] or 0 for s in stats)
+            detail = " ".join(
+                f"{s['key'][:16]}={s['rss_mb'] or '?'}MB/{s['tier']}"
+                f"{'(booting)' if s['booting'] else ''}"
+                for s in stats
+            )
+            logger.info(
+                "[gateway] tenants=%d rss_total=%.0fMB %s", len(stats), total, detail
+            )
+        except Exception as e:
+            logger.debug("[gateway] tenant stats failed: %s", e)
+
     async def _pod_reconciler(runpod):
         zero_since: float | None = None
         while True:
             try:
                 await asyncio.sleep(reconcile_interval_s)
+                _log_tenant_stats()
+                # Publish per-org placement (which personas run dedicated) so each
+                # org's SHARED instance drops them from its DMN roster. Derived
+                # from live procs → self-heals when a dedicated instance dies.
+                from brain.provisioner import write_placement_files
+
+                write_placement_files(provisioner)
                 # Gate on FULL-tier brains, not all live brains: a lite brain remaps
                 # every local/runpod route to cloud and never uses the pod, so spinning
                 # a GPU for a lite-only host is pure waste. full_count() reads each
@@ -879,6 +1016,9 @@ def main() -> None:
     @app.on_event("startup")
     async def _startup():
         _start_loop_watchdog()  # self-heal: force-restart if the event loop ever wedges
+        # Before the provisioner: the sidecar sets OLLAMA_EMBED_HOST, which tenant
+        # spawns inherit via os.environ.copy().
+        embed_sidecar_holder[0] = _start_embed_sidecar()
         await provisioner.start()
         logger.info("[gateway] provisioner started")
         try:
@@ -918,6 +1058,10 @@ def main() -> None:
         runpod = runpod_holder[0]
         if runpod is not None:
             runpod._cancel_watcher()
+        sidecar = embed_sidecar_holder[0]
+        if sidecar is not None:
+            with contextlib.suppress(Exception):
+                sidecar.terminate()
 
     port = int(os.environ.get("PORT", "8765"))
     host = "0.0.0.0" if os.environ.get("RAILWAY_ENVIRONMENT") else "127.0.0.1"  # nosec B104
