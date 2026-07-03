@@ -79,6 +79,12 @@ SECTIONS: list[tuple[str, str, tuple[str, ...]]] = [
         ("/v1/admin",),
     ),
     (
+        "Brain controls",
+        "Owner-credential runtime switches on the brain itself — currently the DMN "
+        "idle-thought loop (read/flip without a restart).",
+        ("/v1/dmn",),
+    ),
+    (
         "Keys",
         "Credential and end-user lifecycle: mint/revoke partner keys and honor "
         "right-to-erasure for an end-user.",
@@ -93,7 +99,7 @@ SECTIONS: list[tuple[str, str, tuple[str, ...]]] = [
 ]
 
 # Routes gated on the owner credential (matched by prefix; rendered as a chip).
-OWNER_PREFIXES = ("/v1/admin", "/v1/partner_keys", "/v1/end_users")
+OWNER_PREFIXES = ("/v1/admin", "/v1/partner_keys", "/v1/end_users", "/v1/dmn")
 
 # Extra transport tags the route object can't express.
 _TRANSPORT_TAGS = {"/v1/sessions/{session_id}/turns/stream": "SSE"}
