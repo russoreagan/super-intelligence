@@ -40,25 +40,115 @@ def _cosine(a: list[float], b: list[float]) -> float:
     return dot / (math.sqrt(na) * math.sqrt(nb))
 
 
+class _PersonaIntentState:
+    """One persona's exemplar bank + per-turn detection cache."""
+
+    __slots__ = ("bank", "dirty", "seeded", "last_vec", "last_text", "last_fired")
+
+    def __init__(self, seeds: dict[str, list[str]]) -> None:
+        self.bank: dict[str, list[dict]] = {k: [] for k in seeds}
+        self.dirty = False
+        self.seeded = False  # True once the bank has been populated (loaded or embedded)
+        self.last_vec: list[float] | None = None
+        self.last_text: str = ""
+        self.last_fired: dict[str, bool] = {}
+
+
 class IntentDetector:
     """Per-intent exemplar banks matched by embedding cosine, with a literal-seed
-    fast path / fallback and an LLM-taught growth loop."""
+    fast path / fallback and an LLM-taught growth loop. Banks are PER PERSONA
+    (each grows from its own traffic), resolved from the turn binding at each
+    access — the constructor path serves the home persona; bound personas route
+    to their own intent_bank.json (persona_state_root)."""
 
     def __init__(self, bank_path: str | Path, seeds: dict[str, list[str]]) -> None:
         self._path = Path(bank_path)
         self._seeds = {k: [s.lower() for s in v] for k, v in seeds.items()}
-        self._bank: dict[str, list[dict]] = {k: [] for k in seeds}
-        self._dirty = False
-        self._seeded = False  # True once the bank has been populated (loaded or embedded)
-        self._last_vec: list[float] | None = None
-        self._last_text: str = ""
-        self._last_fired: dict[str, bool] = {}
-        self._load()
+        # Persona → state; each bundle hydrates from its persisted bank on first
+        # access (_state), so no eager load here.
+        self._by_persona: dict[str, _PersonaIntentState] = {}
+
+    def _active(self) -> str:
+        try:
+            from brain.second_brain.store import active_persona
+
+            return active_persona() or ""
+        except Exception:
+            return ""
+
+    def _state(self) -> _PersonaIntentState:
+        try:
+            from brain.persona_key import persona_slug
+
+            key = persona_slug(self._active())
+        except Exception:
+            key = ""
+        st = self._by_persona.get(key)
+        if st is None:
+            st = self._by_persona[key] = _PersonaIntentState(self._seeds)
+            self._load()  # lazily hydrate a first-seen persona's persisted bank
+        return st
+
+    def _bank_path(self) -> Path:
+        persona = self._active()
+        if persona:
+            try:
+                from brain.persona_key import persona_state_root
+
+                return persona_state_root(persona) / "intent_bank.json"
+            except Exception:
+                pass
+        return self._path
+
+    # Legacy attribute names — method bodies address the ACTIVE persona's state.
+    @property
+    def _bank(self) -> dict[str, list[dict]]:
+        return self._state().bank
+
+    @property
+    def _dirty(self) -> bool:
+        return self._state().dirty
+
+    @_dirty.setter
+    def _dirty(self, value: bool) -> None:
+        self._state().dirty = value
+
+    @property
+    def _seeded(self) -> bool:
+        return self._state().seeded
+
+    @_seeded.setter
+    def _seeded(self, value: bool) -> None:
+        self._state().seeded = value
+
+    @property
+    def _last_vec(self) -> list[float] | None:
+        return self._state().last_vec
+
+    @_last_vec.setter
+    def _last_vec(self, value: list[float] | None) -> None:
+        self._state().last_vec = value
+
+    @property
+    def _last_text(self) -> str:
+        return self._state().last_text
+
+    @_last_text.setter
+    def _last_text(self, value: str) -> None:
+        self._state().last_text = value
+
+    @property
+    def _last_fired(self) -> dict[str, bool]:
+        return self._state().last_fired
+
+    @_last_fired.setter
+    def _last_fired(self, value: dict[str, bool]) -> None:
+        self._state().last_fired = value
 
     # ── persistence ──────────────────────────────────────────────────────────
     def _load(self) -> None:
         try:
-            data = json.loads(self._path.read_text(encoding="utf-8"))
+            data = json.loads(self._bank_path().read_text(encoding="utf-8"))
             for k, items in data.items():
                 self._bank[k] = [{"t": i["t"], "v": i["v"]} for i in items if i.get("v")]
             if any(self._bank.values()):
@@ -70,8 +160,9 @@ class IntentDetector:
         if not self._dirty:
             return
         try:
-            self._path.parent.mkdir(parents=True, exist_ok=True)
-            self._path.write_text(json.dumps(self._bank), encoding="utf-8")
+            path = self._bank_path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(self._bank), encoding="utf-8")
             self._dirty = False
         except Exception as e:
             logger.debug("[IntentDetector] save failed: %s", e)

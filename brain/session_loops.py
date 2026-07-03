@@ -664,8 +664,15 @@ class _LoopsMixin:
                 # the next tick. Avoids competing for the LLM and audio path.
                 if getattr(self.pns, "is_speaking", False):
                     continue
+                # Same persona binding as consolidate_now: the loop runs in a bare
+                # background task (nothing bound), so memory/self-model writes must
+                # be pinned to the home persona explicitly, never a stray default.
+                # (Hebbian attribution itself is per-trace inside the pass.)
+                from brain.second_brain.store import active_persona, bind_persona
+
                 async with self._consolidation_lock:
-                    await self._run_consolidation(reason)
+                    with bind_persona(active_persona() or getattr(self, "persona_name", "")):
+                        await self._run_consolidation(reason)
             except asyncio.CancelledError:
                 return
             except Exception as exc:

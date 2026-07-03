@@ -103,6 +103,20 @@ def fake_router() -> FakeRouter:
 
 
 @pytest.fixture(autouse=True)
+def _isolate_second_brain_root(tmp_path, monkeypatch):
+    """Keep call-time persona-state writes out of the real ``second_brain/``.
+
+    persona_key.persona_state_root (learning ledger/stories, sequence weights,
+    angle synonyms, per-persona wiring siblings) resolves SECOND_BRAIN_PATH at
+    CALL time, so any test that binds a persona and triggers a save would
+    otherwise write real ``second_brain/personas/<slug>/`` files (this bit —
+    a DMN test truncated the_analyst's tracked sequence_weights.json). Route
+    the root to tmp; tests needing a specific layout setenv their own (their
+    fixtures run after this autouse one and win)."""
+    monkeypatch.setenv("SECOND_BRAIN_PATH", str(tmp_path / "second_brain"))
+
+
+@pytest.fixture(autouse=True)
 def _isolate_dmn_novelty_state(tmp_path, monkeypatch):
     """Keep DMN tests from polluting the real ``second_brain/`` directory.
 

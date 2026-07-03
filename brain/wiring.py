@@ -320,16 +320,38 @@ class Wiring:
     def edge_count(self) -> int:
         return len(self._edges)
 
+    def _file_path(self) -> Path:
+        """File-backend path for the ACTIVE persona's graph. The boot persona keeps
+        WIRING_PATH (env, frozen at boot); a persona discovered at runtime (per-turn
+        binding) gets a sibling personas/<slug>/wiring.json — the Supabase backend
+        already keys rows per persona, and without this the file backend would load
+        the boot persona's weights into every persona and let a bound save clobber
+        the boot persona's file."""
+        name = self._persona_name()
+        if self._construction_persona is None or name == self._construction_persona:
+            return WIRING_PATH
+        root = WIRING_PATH.parent
+        if root.parent.name == "personas":  # boot path already persona-namespaced
+            return root.parent / name / "wiring.json"
+        return root / "personas" / name / "wiring.json"
+
+    def _file_history_dir(self) -> Path:
+        name = self._persona_name()
+        if self._construction_persona is None or name == self._construction_persona:
+            return WIRING_HISTORY_DIR
+        return self._file_path().parent / "wiring_history"
+
     def save(self) -> None:
         if self._use_supabase:
             self._sb_save()
             return
-        WIRING_PATH.parent.mkdir(parents=True, exist_ok=True)
+        path = self._file_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
         data = [
             {"src": e.source, "tgt": e.target, "w": e.weight, "pol": e.polarity}
             for e in self._edges.values()
         ]
-        WIRING_PATH.write_text(json.dumps(data))
+        path.write_text(json.dumps(data))
 
     def _sb_save(self) -> None:
         try:
@@ -362,8 +384,9 @@ class Wiring:
         if self._use_supabase:
             return self._sb_snapshot(session_id)
         try:
-            WIRING_HISTORY_DIR.mkdir(parents=True, exist_ok=True)
-            path = WIRING_HISTORY_DIR / f"{session_id}.json"
+            hist_dir = self._file_history_dir()
+            hist_dir.mkdir(parents=True, exist_ok=True)
+            path = hist_dir / f"{session_id}.json"
             data = {
                 "session_id": session_id,
                 "ts": time.time(),
@@ -375,7 +398,7 @@ class Wiring:
             path.write_text(json.dumps(data))
 
             # Keep history bounded: remove oldest files if over limit
-            snapshots = sorted(WIRING_HISTORY_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime)
+            snapshots = sorted(hist_dir.glob("*.json"), key=lambda p: p.stat().st_mtime)
             for old in snapshots[: -self._MAX_HISTORY_SNAPSHOTS]:
                 with contextlib.suppress(Exception):
                     old.unlink()
@@ -423,10 +446,11 @@ class Wiring:
         if self._use_supabase:
             self._sb_load()
             return
-        if not WIRING_PATH.exists():
+        path = self._file_path()
+        if not path.exists():
             return
         try:
-            data = json.loads(WIRING_PATH.read_text())
+            data = json.loads(path.read_text())
             for item in data:
                 self._edges[(item["src"], item["tgt"])] = Edge(
                     item["src"], item["tgt"], item["w"], item["pol"]

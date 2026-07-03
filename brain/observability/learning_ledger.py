@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import threading
 from pathlib import Path
 
@@ -44,33 +43,15 @@ _lock = threading.Lock()
 _line_counts: dict[Path, int] = {}  # per-file cache; entry invalidated on rotation
 
 
-def _repo_root() -> Path:
-    return Path(__file__).resolve().parent.parent.parent
-
-
-def _active_root() -> Path:
-    return Path(os.environ.get("SECOND_BRAIN_PATH", str(_repo_root() / "second_brain")))
-
-
 def persona_root(persona: str = "") -> Path:
     """Write-side persona routing. SECOND_BRAIN_PATH is frozen at boot to the
     HOME persona's root, but records are stamped with the TURN-BOUND persona
     (agent lanes, round-robin DMN) — without routing, every persona's learning
     lands in the home persona's files and the Learning surface never lists them.
-    Home/unstamped → the active root; anything else → the sibling
-    personas/<slug> dir (append() creates it), mirroring learning_reader."""
-    from brain.persona_key import persona_slug
+    Delegates to the canonical rule in persona_key."""
+    from brain.persona_key import persona_state_root
 
-    slug = persona_slug(persona)
-    root = _active_root()
-    if not slug:
-        return root
-    if root.parent.name == "personas":  # active root IS a persona dir
-        return root if slug == root.name else root.parent / slug
-    home = persona_slug(os.environ.get("BRAIN_PERSONA_NAME", ""))
-    if slug == home:
-        return root
-    return root / "personas" / slug
+    return persona_state_root(persona)
 
 
 def ledger_path(persona: str = "") -> Path:

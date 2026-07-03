@@ -35,14 +35,6 @@ from brain.model_router import ModelRouter
 
 logger = logging.getLogger(__name__)
 
-_SECOND_BRAIN = Path(
-    os.environ.get(
-        "SECOND_BRAIN_PATH",
-        str(Path(__file__).parent.parent.parent / "second_brain"),
-    )
-)
-_CHUNKS_PATH = _SECOND_BRAIN / "chunks.json"
-
 # Mining parameters
 _MIN_LEN = 2  # shortest sub-sequence worth tracking
 _MAX_LEN = 4  # longest sub-sequence worth tracking
@@ -183,20 +175,95 @@ def mine_chunks(jobs: list[dict]) -> dict:
     return {"chunks": chunks, "ts": now}
 
 
-class ChunkMemorySubsystem(MotorSubsystem):
-    """Runtime consumer of chunks.json. Read-only; sleep owns the writes."""
+class _ChunkState:
+    """One persona's runtime chunk state: loaded chunks + session-local
+    suppression/reinforcement."""
+
+    __slots__ = ("chunks", "mtime", "suppressed", "session_success")
 
     def __init__(self) -> None:
-        self._chunks: dict[str, dict] = {}
-        self._mtime: float = 0.0
+        self.chunks: dict[str, dict] = {}
+        self.mtime: float = 0.0
         # Chunks that diverged this session are suppressed until the next sleep
         # pass re-derives their success rate from the (now lower-quality) history.
-        self._suppressed: set[str] = set()
+        self.suppressed: set[str] = set()
         # Session-local count of clean ballistic completions per chunk — live
         # reinforcement that biases ranking until the next mining pass folds the
         # successes into the durable counts.
-        self._session_success: dict[str, int] = {}
-        self._load()
+        self.session_success: dict[str, int] = {}
+
+
+class ChunkMemorySubsystem(MotorSubsystem):
+    """Runtime consumer of the per-persona chunks.json files. Read-only; sleep
+    owns the writes. One subsystem instance serves every persona: state is kept
+    per persona and resolved from the binding at each access (jobs run inside
+    bind_persona), so each persona is primed with ITS OWN automatized routines,
+    not everyone's pooled habits."""
+
+    def __init__(self) -> None:
+        self._by_persona: dict[str, _ChunkState] = {}
+        self._load()  # warm the home persona's state at boot
+
+    def _state(self) -> _ChunkState:
+        try:
+            from brain.persona_key import persona_slug
+            from brain.second_brain.store import active_persona
+
+            key = persona_slug(active_persona() or "")
+        except Exception:
+            key = ""
+        st = self._by_persona.get(key)
+        if st is None:
+            st = self._by_persona[key] = _ChunkState()
+        return st
+
+    def _chunks_path(self) -> Path:
+        try:
+            from brain.persona_key import persona_state_root
+            from brain.second_brain.store import active_persona
+
+            return persona_state_root(active_persona() or "") / "chunks.json"
+        except Exception:
+            return Path(
+                os.environ.get(
+                    "SECOND_BRAIN_PATH",
+                    str(Path(__file__).parent.parent.parent / "second_brain"),
+                )
+            ) / "chunks.json"
+
+    # Legacy attribute names — method bodies and tests address the ACTIVE
+    # persona's state through these, exactly as before the per-persona split.
+    @property
+    def _chunks(self) -> dict[str, dict]:
+        return self._state().chunks
+
+    @_chunks.setter
+    def _chunks(self, value: dict[str, dict]) -> None:
+        self._state().chunks = value
+
+    @property
+    def _mtime(self) -> float:
+        return self._state().mtime
+
+    @_mtime.setter
+    def _mtime(self, value: float) -> None:
+        self._state().mtime = value
+
+    @property
+    def _suppressed(self) -> set[str]:
+        return self._state().suppressed
+
+    @_suppressed.setter
+    def _suppressed(self, value: set[str]) -> None:
+        self._state().suppressed = value
+
+    @property
+    def _session_success(self) -> dict[str, int]:
+        return self._state().session_success
+
+    @_session_success.setter
+    def _session_success(self, value: dict[str, int]) -> None:
+        self._state().session_success = value
 
     @property
     def name(self) -> str:
@@ -206,12 +273,13 @@ class ChunkMemorySubsystem(MotorSubsystem):
 
     def _load(self) -> None:
         try:
-            if not _CHUNKS_PATH.exists():
+            path = self._chunks_path()
+            if not path.exists():
                 return
-            mtime = _CHUNKS_PATH.stat().st_mtime
+            mtime = path.stat().st_mtime
             if mtime == self._mtime and self._chunks:
                 return
-            with open(_CHUNKS_PATH) as f:
+            with open(path) as f:
                 data = json.load(f)
             self._chunks = data.get("chunks", {}) or {}
             had_prior = self._mtime > 0.0

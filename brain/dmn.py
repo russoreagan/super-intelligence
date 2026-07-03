@@ -242,11 +242,7 @@ class DefaultModeNetwork:
     _recent_embeddings = _PerPersona(lambda: deque(maxlen=DMN_RECENT_THOUGHTS))
     _recent_frames = _PerPersona(lambda: deque(maxlen=DMN_RECENT_FRAMES))
     _consec_suppressed = _PerPersona(lambda: 0)
-    # Factory loads: a persona first bound at runtime resumes ITS OWN persisted
-    # thought-transition history (per-persona sequence_weights.json) instead of
-    # starting blank each boot. Home's instance is assigned in __init__ and
-    # loaded by the novelty-state restore, same as always.
-    _seq_predictor = _PerPersona(lambda: _loaded_seq_predictor())
+    _seq_predictor = _PerPersona(SequencePredictor)
     _memory_seed = _PerPersona(lambda: "")
     _event_seed = _PerPersona(lambda: "")
     _event_seed_depth = _PerPersona(lambda: 0)
@@ -952,8 +948,9 @@ class DefaultModeNetwork:
                 )
         except Exception as e:
             logger.warning("[DMN] Could not load novelty state: %s", e)
-        # Per-persona weights files: load whichever persona's predictor is bound
-        # (rotated personas' instances are factory-loaded on first access).
+        # Per-persona weights files: _load_novelty runs bound (home eagerly at
+        # start(), rotated personas via _hydrate), so this loads the bound
+        # persona's OWN predictor from its own file.
         self._seq_predictor.load()
 
     def health(self) -> dict:

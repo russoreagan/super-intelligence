@@ -374,7 +374,34 @@ class HebbianUpdater:
         return updated
 
     def run(self, session_id: str, full_traces: list) -> None:
-        """Apply gentle decay then per-turn Hebbian updates along firing paths."""
+        """Apply the Hebbian pass per originating persona.
+
+        The trace buffer is process-wide and one process serves many personas
+        (agent lanes bind per turn), while consolidation is triggered under a
+        SINGLE binding (the /consolidate route's session persona, or none at all
+        from the idle loop). Applying the whole buffer under that one binding
+        credits every persona's turns to whoever consolidated first. So: group
+        traces by their persona stamp and bind each group's persona around its
+        updates — attribution no longer depends on who pulled the trigger.
+        Unstamped traces (older builds, no-persona deployments) run under the
+        ambient binding, exactly the old behavior."""
+        import contextlib
+
+        from brain.persona_key import persona_slug
+        from brain.second_brain.store import bind_persona
+
+        groups: dict[str, list] = {}
+        for trace in full_traces:
+            groups.setdefault(persona_slug(getattr(trace, "persona_name", "") or ""), []).append(
+                trace
+            )
+        for key, traces in groups.items():
+            with bind_persona(key) if key else contextlib.nullcontext():
+                self._run_for_persona(session_id, traces)
+
+    def _run_for_persona(self, session_id: str, full_traces: list) -> None:
+        """Decay + per-turn Hebbian updates along firing paths, for ONE persona's
+        traces (the wiring resolves the bound persona's graph on every access)."""
         self._wiring.decay_toward_rest(rest=1.0, rate=0.01)
 
         plasticity = self._plasticity_modulator(full_traces)

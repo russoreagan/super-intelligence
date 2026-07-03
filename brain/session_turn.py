@@ -484,10 +484,15 @@ class _TurnMixin:
         turn_id = turn.turn_id
         self.obs.begin_turn(turn_id, user_input)
 
+        # Stamp the trace with the TURN-BOUND persona (agent lanes bind per turn),
+        # not the boot home persona — the Hebbian pass groups traces by this stamp
+        # to credit each persona's own wiring, and eval rows tag by it.
+        from brain.persona_key import active_or_home_persona
+
         trace = TurnTrace(
             turn_id=turn_id,
             session_id=self.session_id,
-            persona_name=self.persona_name,
+            persona_name=active_or_home_persona() or self.persona_name,
             user_input=user_input,
         )
         trace.prior_neuromod = self.bus.neuromod.snapshot()

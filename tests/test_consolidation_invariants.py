@@ -39,9 +39,7 @@ class ScriptedCellRouter:
 @pytest.fixture
 def sandbox(tmp_path, monkeypatch):
     """Redirect every second_brain artifact the consolidation touches to tmp."""
-    import brain.clusters.chunk_memory as cm
     import brain.second_brain.store as store_mod
-    import brain.sequence_predictor as sp
     import brain.wiring as wiring_mod
 
     schema_dir = tmp_path / "schema"
@@ -50,9 +48,9 @@ def sandbox(tmp_path, monkeypatch):
     monkeypatch.setattr(store_mod, "EPISODES_DIR", tmp_path / "episodes")
     monkeypatch.setattr(wiring_mod, "WIRING_PATH", tmp_path / "wiring.json")
     monkeypatch.setattr(wiring_mod, "WIRING_HISTORY_DIR", tmp_path / "wiring_history")
-    monkeypatch.setattr(sp, "_WEIGHTS_PATH", str(tmp_path / "sequence_weights.json"))
-    monkeypatch.setattr(sp, "_SYNONYMS_PATH", str(tmp_path / "angle_synonyms.json"))
-    monkeypatch.setattr(cm, "_CHUNKS_PATH", tmp_path / "chunks.json")
+    # sequence_predictor + chunk paths resolve per persona at CALL time from
+    # SECOND_BRAIN_PATH (persona_key.persona_state_root) — route the root to tmp.
+    monkeypatch.setenv("SECOND_BRAIN_PATH", str(tmp_path))
     monkeypatch.setenv("BRAIN_STORAGE_BACKEND", "local")
     return tmp_path
 

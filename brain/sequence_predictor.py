@@ -21,15 +21,6 @@ from collections import Counter, deque
 
 logger = logging.getLogger(__name__)
 
-# Honor the active persona's namespaced second-brain root (set in run.py
-# _route_persona_state before this module imports), so each persona learns its
-# own DMN thought-transition patterns instead of sharing one global memory.
-# Falls back to the shared second_brain/ for the neutral (no-persona) brain.
-_SECOND_BRAIN_ROOT = os.environ.get(
-    "SECOND_BRAIN_PATH", os.path.join(os.path.dirname(__file__), "..", "second_brain")
-)
-_WEIGHTS_PATH = os.path.join(_SECOND_BRAIN_ROOT, "sequence_weights.json")
-_SYNONYMS_PATH = os.path.join(_SECOND_BRAIN_ROOT, "angle_synonyms.json")
 _MAX_HISTORY = 200
 _MIN_CONFIDENCE = 0.35
 _MIN_OBSERVATIONS = 2  # require at least this many observations before predicting
@@ -69,6 +60,30 @@ class SequencePredictor:
         # last_synonym_pass_ts) — carried through save() so we never drop them.
         self._extra: dict = {}
         self._dirty = False
+        # The persona whose thought stream this instance belongs to. The DMN keeps
+        # one predictor per persona (_PerPersona bundle, constructed under that
+        # persona's binding), so capture the binding at construction — persistence
+        # then routes to that persona's own files instead of everyone clobbering
+        # the home persona's (last-saver-wins, and every persona booted with
+        # home's history). Empty (unbound/tests/single-persona) → home paths.
+        try:
+            from brain.second_brain.store import active_persona
+
+            self._persona: str = active_persona() or ""
+        except Exception:
+            self._persona = ""
+
+    # ── persona-routed paths (resolved at call time, see persona_state_root) ──
+
+    def _weights_path(self) -> str:
+        from brain.persona_key import persona_state_root
+
+        return str(persona_state_root(self._persona) / "sequence_weights.json")
+
+    def _synonyms_path(self) -> str:
+        from brain.persona_key import persona_state_root
+
+        return str(persona_state_root(self._persona) / "angle_synonyms.json")
 
     # ── canonical form ───────────────────────────────────────────────────────
 
@@ -162,11 +177,12 @@ class SequencePredictor:
     def load(self) -> None:
         self._load_synonyms()
         try:
-            path = os.path.abspath(_WEIGHTS_PATH)
+            path = os.path.abspath(self._weights_path())
             if not os.path.exists(path):
                 return
             with open(path) as f:
                 data = json.load(f)
+            self._history.clear()  # idempotent: a re-load must not duplicate history
             for a in data.get("history", []):
                 if a:
                     self._history.append(str(a))
@@ -192,7 +208,8 @@ class SequencePredictor:
         if not self._dirty:
             return
         try:
-            path = os.path.abspath(_WEIGHTS_PATH)
+            path = os.path.abspath(self._weights_path())
+            os.makedirs(os.path.dirname(path), exist_ok=True)
             # Pick up bookkeeping another writer (the sleep synonym pass) may have
             # stamped since our load, then overlay our learned state on top.
             try:
@@ -222,7 +239,7 @@ class SequencePredictor:
         """(Re)load the synonym map when the file is new or changed — cheap stat
         per call, so hot callers (_canonical) can invoke it freely."""
         try:
-            path = os.path.abspath(_SYNONYMS_PATH)
+            path = os.path.abspath(self._synonyms_path())
             if not os.path.exists(path):
                 return
             mtime = os.stat(path).st_mtime

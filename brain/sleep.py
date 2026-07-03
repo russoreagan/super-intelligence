@@ -858,19 +858,34 @@ class SleepConsolidation:
     _SYNONYM_MIN_INTERVAL_DAYS = 7  # minimum days between passes
 
     async def angle_synonym_pass(self, session_id: str) -> None:
-        """Cluster semantically similar angle labels and write angle_synonyms.json.
+        """Cluster semantically similar angle labels into angle_synonyms.json,
+        once per persona with on-disk state (sequence weights are per-persona —
+        each persona's DMN vocabulary drifts independently). Per-persona gates
+        (history size, days since last run) keep the extra passes cheap."""
+        try:
+            from brain.observability import learning_reader
 
-        Only runs when the angle history is large enough to be meaningful and
-        enough time has passed since the last run. Reads/writes
-        second_brain/sequence_weights.json for history + timestamp bookkeeping,
-        and second_brain/angle_synonyms.json for the output mapping.
-        """
+            personas = learning_reader.list_personas() or [""]
+        except Exception:
+            personas = [""]
+        for persona in personas:
+            try:
+                await self._angle_synonym_pass_for(session_id, persona)
+            except Exception as e:
+                logger.warning("[AngleSynonyms] pass failed for %s: %s", persona, e)
+
+    async def _angle_synonym_pass_for(self, session_id: str, persona: str = "") -> None:
+        """One persona's synonym pass over ITS sequence_weights.json history,
+        writing ITS angle_synonyms.json. Gated on history size + time since the
+        last run (timestamp bookkeeping lives in the same weights file)."""
         import os
 
-        from brain.sequence_predictor import _SYNONYMS_PATH, _WEIGHTS_PATH, _normalize
+        from brain.persona_key import persona_slug, persona_state_root
+        from brain.sequence_predictor import _normalize
 
-        weights_path = os.path.abspath(_WEIGHTS_PATH)
-        synonyms_path = os.path.abspath(_SYNONYMS_PATH)
+        root = persona_state_root(persona)
+        weights_path = os.path.abspath(str(root / "sequence_weights.json"))
+        synonyms_path = os.path.abspath(str(root / "angle_synonyms.json"))
 
         # Load weights file — need history + last-run timestamp.
         try:
@@ -929,7 +944,9 @@ class SleepConsolidation:
             len(history),
         )
 
-        self._angle_synonym_cell.reset_turn(f"sleep_{session_id}_synonyms")
+        self._angle_synonym_cell.reset_turn(
+            f"sleep_{session_id}_synonyms_{persona_slug(persona)}"
+        )
         raw = await self._angle_synonym_cell.call([{"role": "user", "content": prompt}])
         result: dict = safe_json_parse(raw) or {}
 
@@ -989,69 +1006,80 @@ class SleepConsolidation:
 
     async def chunk_mining_pass(self, session_id: str) -> None:
         """Mine recurring tool sub-sequences from second_brain/jobs/*.json into
-        second_brain/chunks.json (consumed at runtime by ChunkMemorySubsystem).
+        PER-PERSONA chunks.json files (consumed at runtime by ChunkMemorySubsystem).
 
-        Pure n-gram counting — no LLM call. Gated on having enough jobs and on
-        time since the last pass; recomputed from scratch over the current jobs
+        Jobs are grouped by their persona stamp — the persona bound while the job
+        ran — so each persona automatizes its own recurring sequences instead of
+        every agent pooling into one home-attributed skill set. Unstamped legacy
+        records attribute to home, so pre-stamp chunks don't vanish. Pure n-gram
+        counting — no LLM call. Per-persona gates: enough jobs, and time since
+        that persona's last pass; recomputed from scratch over the current jobs
         window so chunks that stop recurring naturally demote.
         """
         import os
 
-        from brain.clusters.chunk_memory import _CHUNKS_PATH, mine_chunks
+        from brain.clusters.chunk_memory import mine_chunks
         from brain.clusters.job_store import JOBS_DIR
+        from brain.persona_key import persona_slug, persona_state_root
 
-        chunks_path = str(_CHUNKS_PATH)
-
-        # Interval gate.
-        last_ts = 0.0
-        try:
-            if os.path.exists(chunks_path):
-                with open(chunks_path) as f:
-                    prev = json.load(f)
-                last_ts = float(prev.get("ts_epoch", 0))
-        except Exception:
-            last_ts = 0.0
-        now = time.time()
-        if last_ts and now - last_ts < self._CHUNK_MIN_INTERVAL_HOURS * 3600:
-            logger.debug(
-                "[ChunkMining] Last pass was %.1f h ago — skipping", (now - last_ts) / 3600
-            )
-            return
-
-        # Load job records.
-        jobs: list[dict] = []
+        # Load job records, grouped by originating persona.
+        by_persona: dict[str, list[dict]] = {}
         try:
             for path in JOBS_DIR.glob("*.json"):
                 with contextlib.suppress(Exception), open(path) as f:
-                    jobs.append(json.load(f))
+                    job = json.load(f)
+                    by_persona.setdefault(persona_slug(job.get("persona") or ""), []).append(job)
         except Exception as e:
             logger.warning("[ChunkMining] Could not read jobs dir: %s", e)
             return
 
-        if len(jobs) < self._CHUNK_MIN_JOBS:
-            logger.debug(
-                "[ChunkMining] Not enough jobs (%d/%d) — skipping",
-                len(jobs),
-                self._CHUNK_MIN_JOBS,
-            )
-            return
+        now = time.time()
+        for persona, jobs in by_persona.items():
+            chunks_path = str(persona_state_root(persona) / "chunks.json")
 
-        data = mine_chunks(jobs)
-        data["ts_epoch"] = now
-        n_active = sum(1 for c in data["chunks"].values() if c.get("state") == "active")
-        try:
-            tmp = chunks_path + ".tmp"
-            with open(tmp, "w") as f:
-                json.dump(data, f, indent=2)
-            os.replace(tmp, chunks_path)
-            logger.info(
-                "[ChunkMining] Wrote %d chunks (%d active) from %d jobs",
-                len(data["chunks"]),
-                n_active,
-                len(jobs),
-            )
-        except Exception as e:
-            logger.warning("[ChunkMining] Could not write chunks.json: %s", e)
+            # Interval gate — per persona file.
+            last_ts = 0.0
+            try:
+                if os.path.exists(chunks_path):
+                    with open(chunks_path) as f:
+                        last_ts = float(json.load(f).get("ts_epoch", 0))
+            except Exception:
+                last_ts = 0.0
+            if last_ts and now - last_ts < self._CHUNK_MIN_INTERVAL_HOURS * 3600:
+                logger.debug(
+                    "[ChunkMining] Last pass for %s was %.1f h ago — skipping",
+                    persona or "home",
+                    (now - last_ts) / 3600,
+                )
+                continue
+
+            if len(jobs) < self._CHUNK_MIN_JOBS:
+                logger.debug(
+                    "[ChunkMining] Not enough jobs for %s (%d/%d) — skipping",
+                    persona or "home",
+                    len(jobs),
+                    self._CHUNK_MIN_JOBS,
+                )
+                continue
+
+            data = mine_chunks(jobs)
+            data["ts_epoch"] = now
+            n_active = sum(1 for c in data["chunks"].values() if c.get("state") == "active")
+            try:
+                os.makedirs(os.path.dirname(chunks_path), exist_ok=True)
+                tmp = chunks_path + ".tmp"
+                with open(tmp, "w") as f:
+                    json.dump(data, f, indent=2)
+                os.replace(tmp, chunks_path)
+                logger.info(
+                    "[ChunkMining] Wrote %d chunks (%d active) from %d jobs for %s",
+                    len(data["chunks"]),
+                    n_active,
+                    len(jobs),
+                    persona or "home",
+                )
+            except Exception as e:
+                logger.warning("[ChunkMining] Could not write chunks.json for %s: %s", persona, e)
 
     # ── Learning narration pass ──────────────────────────────────────────────
 

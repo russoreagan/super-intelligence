@@ -50,8 +50,9 @@ def test_sql_quote_escapes_filter_metacharacters():
 def _predictor(tmp_path, monkeypatch):
     import brain.sequence_predictor as sp
 
-    monkeypatch.setattr(sp, "_WEIGHTS_PATH", str(tmp_path / "sequence_weights.json"))
-    monkeypatch.setattr(sp, "_SYNONYMS_PATH", str(tmp_path / "angle_synonyms.json"))
+    # Paths resolve per persona at call time from SECOND_BRAIN_PATH
+    # (persona_key.persona_state_root); an unbound predictor uses the root.
+    monkeypatch.setenv("SECOND_BRAIN_PATH", str(tmp_path))
     return sp.SequencePredictor()
 
 
@@ -73,7 +74,6 @@ def test_save_preserves_foreign_bookkeeping_keys(tmp_path, monkeypatch):
     assert json.loads(path.read_text())["last_synonym_pass_ts"] == 12345.0
     # And a fresh load round-trips it into _extra.
     p2 = sp.SequencePredictor()
-    monkeypatch.setattr(sp, "_WEIGHTS_PATH", str(path))
     p2.load()
     assert p2._extra.get("last_synonym_pass_ts") == 12345.0
 
@@ -104,11 +104,13 @@ def _active_chunk_sub():
 def test_suppression_lifted_by_new_mining_pass(tmp_path, monkeypatch):
     import brain.clusters.chunk_memory as cm
 
+    # Chunk paths resolve per persona at call time from SECOND_BRAIN_PATH
+    # (persona_state_root); an unbound subsystem reads the root chunks.json.
+    monkeypatch.setenv("SECOND_BRAIN_PATH", str(tmp_path))
     chunks_path = tmp_path / "chunks.json"
     chunks_path.write_text(
         json.dumps({"chunks": {"k1": {"sequence": [], "occurrences": 5, "state": "active"}}})
     )
-    monkeypatch.setattr(cm, "_CHUNKS_PATH", chunks_path)
     sub = cm.ChunkMemorySubsystem()
     sub.suppress("chunk:k1")
     assert "k1" in sub._suppressed

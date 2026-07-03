@@ -569,3 +569,85 @@ def test_graded_plasticity_keeps_hard_skips(monkeypatch, tmp_path):
     flat = _make_trace(emotion="flat")
     skip2, reason2 = sc._should_skip_hebbian(flat, outcome=0.5)
     assert skip2 is True and "dissociated" in reason2
+
+
+# ── Per-persona attribution (mixed-persona trace buffers) ───────────────────
+
+
+def test_hebbian_pass_credits_each_traces_own_persona(monkeypatch, tmp_path):
+    """One consolidation over a mixed-persona buffer: each trace's update lands
+    on ITS persona's graph, regardless of what's bound when the pass runs (the
+    /consolidate route binds the session persona; the idle loop binds home —
+    neither may sweep the other persona's turns onto its own wiring)."""
+    from brain.second_brain.store import bind_persona
+    from brain.sleep import SleepConsolidation
+
+    w = _isolated_wiring(monkeypatch, tmp_path)
+    edge = ("frontal.executive", "frontal.drafter_A")
+    for p in ("persona_home", "persona_analyst"):
+        with bind_persona(p):
+            w.add(*edge, weight=1.0)
+    sc = SleepConsolidation(_StubRouter(), _StubSchema(), _StubEpisodic(), wiring=w)
+    fired = [
+        {"name": "frontal.executive", "cluster": "frontal", "kind": "integrator"},
+        {"name": "frontal.drafter_A", "cluster": "frontal", "kind": "integrator"},
+    ]
+    home_trace = _make_trace("t_home", DA=0.9, prior_DA=0.5, critic_overall=0.95)
+    home_trace.fired_path = fired
+    home_trace.persona_name = "persona_home"
+    analyst_trace = _make_trace("t_analyst", DA=0.1, prior_DA=0.7, critic_overall=0.2)
+    analyst_trace.fired_path = fired
+    analyst_trace.persona_name = "persona_analyst"
+
+    with bind_persona("persona_home"):  # trigger bound to home, buffer is mixed
+        sc._run_hebbian_pass("session_mix", [home_trace, analyst_trace])
+
+    with bind_persona("persona_home"):
+        w_home = w.get_edge_weight(*edge)
+    with bind_persona("persona_analyst"):
+        w_analyst = w.get_edge_weight(*edge)
+    assert w_home > 1.0  # home's positive outcome credited to home
+    assert w_analyst < 1.0  # analyst's negative outcome credited to analyst
+
+
+def test_hebbian_pass_unstamped_traces_use_ambient_binding(monkeypatch, tmp_path):
+    """Traces without a persona stamp keep the old behavior: whatever the
+    consolidation trigger bound (or the boot persona when nothing is)."""
+    from brain.second_brain.store import bind_persona
+    from brain.sleep import SleepConsolidation
+
+    w = _isolated_wiring(monkeypatch, tmp_path)
+    edge = ("frontal.executive", "frontal.drafter_A")
+    with bind_persona("persona_bound"):
+        w.add(*edge, weight=1.0)
+    sc = SleepConsolidation(_StubRouter(), _StubSchema(), _StubEpisodic(), wiring=w)
+    trace = _make_trace("t_anon", DA=0.9, prior_DA=0.5, critic_overall=0.95)
+    trace.fired_path = [
+        {"name": "frontal.executive", "cluster": "frontal", "kind": "integrator"},
+        {"name": "frontal.drafter_A", "cluster": "frontal", "kind": "integrator"},
+    ]
+    with bind_persona("persona_bound"):
+        sc._run_hebbian_pass("session_anon", [trace])
+    with bind_persona("persona_bound"):
+        assert w.get_edge_weight(*edge) > 1.0
+
+
+def test_file_backend_persona_save_does_not_clobber_boot_file(monkeypatch, tmp_path):
+    """File backend: a runtime-bound persona saves to its own sibling
+    personas/<slug>/wiring.json, never over the boot persona's file."""
+    from brain.second_brain.store import bind_persona
+
+    w = _isolated_wiring(monkeypatch, tmp_path)
+    w.add("a", "b", weight=1.0)
+    w.save()
+    boot_bytes = (tmp_path / "wiring.json").read_text()
+
+    with bind_persona("persona_q"):
+        w.add("a", "b", weight=1.0)
+        w.hebbian_update(["a", "b"], 0.5)
+        w.save()
+
+    q_file = tmp_path / "personas" / "persona_q" / "wiring.json"
+    assert q_file.exists()
+    assert (tmp_path / "wiring.json").read_text() == boot_bytes
+    assert any(e["src"] == "a" and e["w"] > 1.0 for e in __import__("json").loads(q_file.read_text()))

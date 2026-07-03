@@ -161,6 +161,15 @@ class JobStore:
         """
         written_files = _extract_written_files(steps)
         source_links = _extract_source_links(steps, results)
+        # Stamp the persona bound while the job ran (jobs execute inside
+        # bind_persona) — sleep's chunk mining groups by this so each persona
+        # automatizes ITS OWN recurring tool sequences. Unstamped = home.
+        try:
+            from brain.persona_key import active_or_home_persona, persona_slug
+
+            persona = persona_slug(active_or_home_persona())
+        except Exception:
+            persona = ""
         resolved_state = state or (
             "running" if not done else ("completed" if success else "failed")
         )
@@ -172,6 +181,7 @@ class JobStore:
         record = {
             "job_id": job_id,
             "task_id": task_id,
+            "persona": persona,
             "goal": goal,
             "success": success,
             "done": done,
