@@ -121,6 +121,12 @@ OLLAMA_EMBED_MODEL = os.environ.get("OLLAMA_EMBED_MODEL", "nomic-embed-text")
 GOOGLE_EMBED_MODEL = os.environ.get("GOOGLE_EMBED_MODEL", "gemini-embedding-001")
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 RUNPOD_HOST = os.environ.get("RUNPOD_HOST", OLLAMA_HOST)
+# Dedicated embeddings host (import-time ⚠). Embeddings are the highest-volume
+# model call (10-15/turn) but need no GPU — nomic-embed-text runs fine on CPU.
+# On Railway the gateway runs a CPU Ollama sidecar and points every tenant here,
+# so embeds stop depending on the GPU pod (or silently falling back to Google).
+# Empty → fall through to OLLAMA_HOST, byte-identical to the old behavior.
+OLLAMA_EMBED_HOST = os.environ.get("OLLAMA_EMBED_HOST", "").strip()
 # NO runpod/local → cloud fallback. A cell whose model is local/runpod is designed to
 # run on the GPU pod (or a real local Ollama); it must NEVER silently bill Claude when
 # the pod is unreachable. If the pod is down, the local call fails and the calling cell
@@ -2058,28 +2064,41 @@ class ModelRouter:
                 self._embed_cache.popitem(last=False)
         return vec
 
+    @staticmethod
+    def _embed_hosts() -> list[str]:
+        """Ordered Ollama hosts to try for embeddings: the dedicated CPU embed
+        host first (when configured), then the general Ollama host (pod/local).
+        Deduped so the unconfigured case is exactly the old single-host path."""
+        hosts = []
+        if OLLAMA_EMBED_HOST:
+            hosts.append(OLLAMA_EMBED_HOST)
+        if OLLAMA_HOST not in hosts:
+            hosts.append(OLLAMA_HOST)
+        return hosts
+
     async def _embed_ollama(self, text: str) -> list[float] | None:
-        try:
-            r = await self._get_http().post(
-                f"{OLLAMA_HOST}/api/embeddings",
-                json={"model": OLLAMA_EMBED_MODEL, "prompt": text},
-                timeout=10,
-            )
-            r.raise_for_status()
-            vec = r.json().get("embedding")
-            if vec and len(vec) == EMBEDDING_DIM:
-                return vec
-            if vec:
-                logger.warning(
-                    "Ollama returned %d-dimensional embeddings but %d were expected — "
-                    "wrong model pulled? Check OLLAMA_EMBED_MODEL in .env (should be 'nomic-embed-text').",
-                    len(vec),
-                    EMBEDDING_DIM,
+        for host in self._embed_hosts():
+            try:
+                r = await self._get_http().post(
+                    f"{host}/api/embeddings",
+                    json={"model": OLLAMA_EMBED_MODEL, "prompt": text},
+                    timeout=10,
                 )
-            return None
-        except Exception as e:
-            logger.debug("Ollama embed failed: %s", e)
-            return None
+                r.raise_for_status()
+                vec = r.json().get("embedding")
+                if vec and len(vec) == EMBEDDING_DIM:
+                    return vec
+                if vec:
+                    logger.warning(
+                        "Ollama (%s) returned %d-dimensional embeddings but %d were expected — "
+                        "wrong model pulled? Check OLLAMA_EMBED_MODEL in .env (should be 'nomic-embed-text').",
+                        host,
+                        len(vec),
+                        EMBEDDING_DIM,
+                    )
+            except Exception as e:
+                logger.debug("Ollama embed failed on %s: %s", host, e)
+        return None
 
     async def _embed_google(self, text: str) -> list[float] | None:
         try:

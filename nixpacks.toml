@@ -13,3 +13,14 @@
 cmds = [
   "python -m venv --copies /opt/venv && . /opt/venv/bin/activate && pip install uv==0.10.7 && uv sync --no-dev --frozen --active",
 ]
+
+# Ship the ollama binary so the gateway can run its CPU embedding sidecar
+# (nomic-embed-text on Railway CPU — see _start_embed_sidecar in
+# brain/gateway/server.py). CPU-only: no GPU on Railway, the installer's driver
+# detection just no-ops. The embed model itself (~0.3 GB) is pulled at gateway
+# startup, not baked into the image. Failure is tolerated (|| true): without the
+# binary the sidecar no-ops and embeds fall back to the pod/Google chain exactly
+# as before this existed.
+[phases.ollama]
+dependsOn = ["install"]
+cmds = ["curl -fsSL https://ollama.com/install.sh | sh || true"]
