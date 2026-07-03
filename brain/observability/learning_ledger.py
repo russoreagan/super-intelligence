@@ -41,24 +41,47 @@ _MAX_LINES = 5000  # rotation threshold …
 _KEEP_LINES = 4000  # … and what survives a trim
 
 _lock = threading.Lock()
-_line_count: int | None = None  # cached; invalidated on rotation
+_line_counts: dict[Path, int] = {}  # per-file cache; entry invalidated on rotation
 
 
 def _repo_root() -> Path:
     return Path(__file__).resolve().parent.parent.parent
 
 
-def ledger_path() -> Path:
-    """Resolved at call time: SECOND_BRAIN_PATH is set per persona at boot
-    (run.py), so the ledger lands in the active persona's root automatically."""
-    root = Path(os.environ.get("SECOND_BRAIN_PATH", str(_repo_root() / "second_brain")))
-    return root / "learning_ledger.jsonl"
+def _active_root() -> Path:
+    return Path(os.environ.get("SECOND_BRAIN_PATH", str(_repo_root() / "second_brain")))
+
+
+def persona_root(persona: str = "") -> Path:
+    """Write-side persona routing. SECOND_BRAIN_PATH is frozen at boot to the
+    HOME persona's root, but records are stamped with the TURN-BOUND persona
+    (agent lanes, round-robin DMN) — without routing, every persona's learning
+    lands in the home persona's files and the Learning surface never lists them.
+    Home/unstamped → the active root; anything else → the sibling
+    personas/<slug> dir (append() creates it), mirroring learning_reader."""
+    from brain.persona_key import persona_slug
+
+    slug = persona_slug(persona)
+    root = _active_root()
+    if not slug:
+        return root
+    if root.parent.name == "personas":  # active root IS a persona dir
+        return root if slug == root.name else root.parent / slug
+    home = persona_slug(os.environ.get("BRAIN_PERSONA_NAME", ""))
+    if slug == home:
+        return root
+    return root / "personas" / slug
+
+
+def ledger_path(persona: str = "") -> Path:
+    """The ledger file for a persona (empty → the home/boot persona)."""
+    return persona_root(persona) / "learning_ledger.jsonl"
 
 
 def append(record: dict) -> None:
-    """Stamp persona + session and append one line. Never raises — observability
-    must not be able to break the learning path it observes."""
-    global _line_count
+    """Stamp persona + session and append one line to the STAMPED persona's
+    ledger. Never raises — observability must not be able to break the learning
+    path it observes."""
     try:
         rec = dict(record)
         if not rec.get("persona"):
@@ -70,20 +93,22 @@ def append(record: dict) -> None:
                 rec["persona"] = ""
         if not rec.get("session_id"):
             rec["session_id"] = _session_id()
-        path = ledger_path()
+        path = ledger_path(rec["persona"])
         with _lock:
             path.parent.mkdir(parents=True, exist_ok=True)
             with path.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(rec, default=str) + "\n")
-            if _line_count is None:
+            count = _line_counts.get(path)
+            if count is None:
                 try:
                     with path.open("rb") as f:
-                        _line_count = sum(1 for _ in f)
+                        count = sum(1 for _ in f)
                 except Exception:
-                    _line_count = 0
+                    count = 0
             else:
-                _line_count += 1
-            if _line_count > _MAX_LINES:
+                count += 1
+            _line_counts[path] = count
+            if count > _MAX_LINES:
                 _rotate(path)
     except Exception as e:
         logger.debug("[learning_ledger] append failed: %s", e)
@@ -91,17 +116,16 @@ def append(record: dict) -> None:
 
 def _rotate(path: Path) -> None:
     """Keep the newest _KEEP_LINES lines. Called under _lock."""
-    global _line_count
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
         keep = lines[-_KEEP_LINES:]
         tmp = path.with_suffix(".jsonl.tmp")
         tmp.write_text("\n".join(keep) + "\n", encoding="utf-8")
         tmp.replace(path)
-        _line_count = len(keep)
+        _line_counts[path] = len(keep)
     except Exception as e:
         logger.debug("[learning_ledger] rotation failed: %s", e)
-        _line_count = None
+        _line_counts.pop(path, None)
 
 
 _session = ""

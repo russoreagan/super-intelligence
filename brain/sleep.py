@@ -1057,14 +1057,16 @@ class SleepConsolidation:
 
     _STORIES_KEEP = 500  # rolling cap on learning_stories.jsonl
 
-    def _learning_evidence(self, session_id: str) -> list[dict]:
+    def _learning_evidence(self, session_id: str, persona: str = "") -> list[dict]:
         """Deterministic numeric digest of this session's learning events, grouped
         per edge/switch/pathway. Numbers and route names only — no user text (the
         narrator cell runs sensitivity=low on the strength of that)."""
         from brain.observability import learning_ledger
 
         evidence: list[dict] = []
-        recs = learning_ledger.read(limit=2000, session_id=session_id)
+        recs = learning_ledger.read(
+            limit=2000, session_id=session_id, path=learning_ledger.ledger_path(persona)
+        )
 
         by_edge: dict[str, list[dict]] = defaultdict(list)
         for r in recs:
@@ -1159,15 +1161,13 @@ class SleepConsolidation:
             )
         return evidence
 
-    def _stories_path(self) -> str:
-        root = os.environ.get(
-            "SECOND_BRAIN_PATH",
-            os.path.join(os.path.dirname(__file__), "..", "second_brain"),
-        )
-        return os.path.join(root, "learning_stories.jsonl")
+    def _stories_path(self, persona: str = "") -> str:
+        from brain.observability import learning_ledger
 
-    def _persist_stories(self, stories: list[dict]) -> None:
-        path = self._stories_path()
+        return str(learning_ledger.persona_root(persona) / "learning_stories.jsonl")
+
+    def _persist_stories(self, stories: list[dict], persona: str = "") -> None:
+        path = self._stories_path(persona)
         try:
             os.makedirs(os.path.dirname(path), exist_ok=True)
             existing: list[str] = []
@@ -1184,26 +1184,47 @@ class SleepConsolidation:
     async def learning_story_pass(self, session_id: str) -> None:
         """Narrate this session's learning as first-person stories with citations.
 
-        Evidence is assembled deterministically from the ledger; the LLM only
-        PHRASES claims and cites evidence by index (joined back structurally, so
-        hallucinated citations are impossible). LLM failure or an off flag falls
-        back to template phrasing — the surface is never empty. Fail-open: this
-        pass must never block the rest of sleep."""
+        Runs once per persona with on-disk learning state: the ledger routes each
+        persona's records to its own file (agent lanes, round-robin DMN), so
+        narrating only the home persona would silently drop everything the bound
+        personas learned. Fail-open: this pass must never block the rest of sleep."""
+        try:
+            from brain.observability import learning_reader
+
+            personas = learning_reader.list_personas() or [""]
+        except Exception:
+            personas = [""]
+        for persona in personas:
+            try:
+                await self._narrate_persona(session_id, persona)
+            except Exception as e:
+                logger.warning("[LearningNarrator] pass failed for %s: %s", persona, e)
+
+    async def _narrate_persona(self, session_id: str, persona: str = "") -> None:
+        """One persona's narration: evidence from ITS ledger, stories into ITS
+        learning_stories.jsonl. Evidence is assembled deterministically; the LLM
+        only PHRASES claims and cites evidence by index (joined back structurally,
+        so hallucinated citations are impossible). LLM failure or an off flag
+        falls back to template phrasing — the surface is never empty."""
         try:
             from brain.persona_key import active_or_home_persona, persona_slug
 
-            evidence = self._learning_evidence(session_id)
+            evidence = self._learning_evidence(session_id, persona)
             if not evidence:
-                logger.debug("[LearningNarrator] no learning evidence for %s — skipping", session_id)
+                logger.debug(
+                    "[LearningNarrator] no learning evidence for %s (persona=%s) — skipping",
+                    session_id,
+                    persona,
+                )
                 return
-            slug = persona_slug(active_or_home_persona())
+            slug = persona_slug(persona) or persona_slug(active_or_home_persona())
             now = time.time()
             stories: list[dict] = []
 
             def _mk(claim: str, subsystem: str, refs: list[int], generator: str, confidence: float = 0.0) -> dict:
                 cited = [evidence[i] for i in refs]
                 return {
-                    "id": f"st_{int(now)}_{len(stories)}",
+                    "id": f"st_{int(now)}_{slug}_{len(stories)}",
                     "session_id": session_id,
                     "persona": slug,
                     "ts": now,
@@ -1221,7 +1242,7 @@ class SleepConsolidation:
 
             try:
                 digest = "\n".join(f"[{i}] {e['text']}" for i, e in enumerate(evidence))
-                self._learning_narrator.reset_turn(f"sleep_{session_id}_learning")
+                self._learning_narrator.reset_turn(f"sleep_{session_id}_learning_{slug}")
                 raw = await self._learning_narrator.call([{"role": "user", "content": digest}])
                 parsed: dict = safe_json_parse(raw) or {}
                 for s in (parsed.get("stories") or [])[:6]:
@@ -1253,7 +1274,7 @@ class SleepConsolidation:
 
             if not stories:
                 return
-            self._persist_stories(stories)
+            self._persist_stories(stories, slug)
             for s in stories:
                 decisions.log(
                     "learning_story",
@@ -1267,12 +1288,13 @@ class SleepConsolidation:
                     persona=s["persona"],
                 )
             logger.info(
-                "[LearningNarrator] %d stories (%s) for session %s",
+                "[LearningNarrator] %d stories (%s) for session %s persona %s",
                 len(stories),
                 stories[0]["generator"],
                 session_id,
+                slug,
             )
         except Exception as e:
-            logger.warning("[LearningNarrator] pass failed: %s", e)
+            logger.warning("[LearningNarrator] persona pass failed (%s): %s", persona, e)
 
     # ── Hebbian pass ─────────────────────────────────────────────────────────

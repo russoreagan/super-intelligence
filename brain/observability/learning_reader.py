@@ -144,7 +144,16 @@ def _decisions(persona: str = "", kinds: set[str] | None = None) -> list[dict]:
         ]
     if kinds:
         recs = [r for r in recs if r.get("decision") in kinds]
-    return recs
+    return _own_persona_only(recs, persona)
+
+
+def _own_persona_only(recs: list[dict], persona: str = "") -> list[dict]:
+    """Drop records stamped for a DIFFERENT persona. Before per-persona write
+    routing (2026-07-03) every record landed in the home persona's file, so the
+    home view double-counted agent-lane personas; unstamped records (pre-ledger
+    eval log) are kept."""
+    slug = persona_slug(persona) or _active_slug()
+    return [r for r in recs if not r.get("persona") or persona_slug(r.get("persona")) == slug]
 
 
 def _wiring_file_edges(persona: str = "") -> list[dict]:
@@ -458,7 +467,7 @@ def _template_stories(persona: str = "", live_wiring=None) -> list[dict]:
 def stories(persona: str = "", limit: int = 50, before_ts: float | None = None, live_wiring=None) -> dict:
     """Newest-first learning stories: persisted (narrator) first, template
     synthesis when none exist yet."""
-    recs = _read_jsonl_tail(_stories_path(persona))
+    recs = _own_persona_only(_read_jsonl_tail(_stories_path(persona)), persona)
     generated = False
     if not recs:
         recs = _template_stories(persona, live_wiring=live_wiring)
