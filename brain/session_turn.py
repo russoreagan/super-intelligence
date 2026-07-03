@@ -391,14 +391,19 @@ class _TurnMixin:
             room = max(0.0, cap - already) if cap > 0 else float("inf")
             delta = min(base * difficulty * modifier * w * er, room)
             if delta > 0:
-                self.bus.neuromod.add("DA", delta)
+                self.bus.neuromod.add("DA", delta, reward_source="mastery", reason="job_success")
         else:
             # Failing a braced-for hard task is a loss — weight the dip by this persona's loss
             # aversion (λ), independently of the symmetric mastery reward weight (w). The reward
             # branch above is never λ-scaled; the asymmetry IS loss aversion.
             la = loss_aversion(persona)
             fail_ratio = float(settings.get("accomplishment_fail_ratio"))
-            self.bus.neuromod.add("DA", -base * difficulty * fail_ratio * w * er * la)
+            self.bus.neuromod.add(
+                "DA",
+                -base * difficulty * fail_ratio * w * er * la,
+                reward_source="mastery",
+                reason="job_failure",
+            )
             self.bus.hormonal.add("5HT", -float(settings.get("correctness_5ht_drain")) * w * er * la)
 
     async def _verify_world_prediction(self, pred: dict, actual_input: str) -> None:
@@ -438,7 +443,12 @@ class _TurnMixin:
                 * float(settings.get("emotional_reactivity_scale"))
             )
             cap = float(settings.get("prediction_reward_turn_cap"))
-            self.bus.neuromod.add("DA", max(-cap, min(cap, delta)))
+            self.bus.neuromod.add(
+                "DA",
+                max(-cap, min(cap, delta)),
+                reward_source="correctness",
+                reason="world_prediction",
+            )
         except Exception:
             pass
 
@@ -2172,13 +2182,21 @@ class _TurnMixin:
             self.bus.neuromod.add("GABA", 0.08)
             self.bus.neuromod.add("NE", 0.06)
             self.bus.neuromod.add(
-                "DA", -float(settings.get("correctness_penalty_base")) * _tw * _ter * _tla
+                "DA",
+                -float(settings.get("correctness_penalty_base")) * _tw * _ter * _tla,
+                reward_source="correctness",
+                reason="tool_failure",
             )
             self.bus.hormonal.add(
                 "5HT", -float(settings.get("correctness_5ht_drain")) * _tw * _ter * _tla
             )
         elif success:
-            self.bus.neuromod.add("DA", float(settings.get("correctness_reward_base")) * _tw * _ter)
+            self.bus.neuromod.add(
+                "DA",
+                float(settings.get("correctness_reward_base")) * _tw * _ter,
+                reward_source="correctness",
+                reason="tool_success",
+            )
             self.bus.neuromod.add("Glu", 0.04)
         with contextlib.suppress(Exception):
             if self._emitter:
@@ -2276,13 +2294,21 @@ class _TurnMixin:
             self.bus.neuromod.add("GABA", 0.08)
             self.bus.neuromod.add("NE", 0.06)
             self.bus.neuromod.add(
-                "DA", -float(settings.get("correctness_penalty_base")) * _tw * _ter * _tla
+                "DA",
+                -float(settings.get("correctness_penalty_base")) * _tw * _ter * _tla,
+                reward_source="correctness",
+                reason="tool_failure",
             )
             self.bus.hormonal.add(
                 "5HT", -float(settings.get("correctness_5ht_drain")) * _tw * _ter * _tla
             )
         elif success:
-            self.bus.neuromod.add("DA", float(settings.get("correctness_reward_base")) * _tw * _ter)
+            self.bus.neuromod.add(
+                "DA",
+                float(settings.get("correctness_reward_base")) * _tw * _ter,
+                reward_source="correctness",
+                reason="tool_success",
+            )
             self.bus.neuromod.add("Glu", 0.04)
         with contextlib.suppress(Exception):
             if self._emitter:

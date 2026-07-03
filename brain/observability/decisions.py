@@ -66,6 +66,15 @@ class DecisionLog:
                 self._eval_logger._append(record)  # noqa: SLF001 — same record path
             except Exception as e:
                 logger.debug("DecisionLog disk write failed: %s", e)
+        # Learning ledger: the per-persona query surface behind the Learning tab.
+        # Central hook so no learning call site knows the ledger exists.
+        try:
+            from brain.observability import learning_ledger
+
+            if decision in learning_ledger.LEDGER_TYPES:
+                learning_ledger.append(record)
+        except Exception as e:
+            logger.debug("DecisionLog ledger write failed: %s", e)
         # UI: emit via WebSocket (async — fire-and-forget if loop running)
         if self._emitter is not None:
             try:

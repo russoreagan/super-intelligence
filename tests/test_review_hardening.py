@@ -616,7 +616,7 @@ def test_accomplishment_respects_per_job_intrinsic_cap(monkeypatch):
         def __init__(self):
             self.adds = []
 
-        def add(self, ch, v, source="intrinsic"):
+        def add(self, ch, v, source="intrinsic", **attribution):
             self.adds.append((ch, v))
 
     class FakeBus:

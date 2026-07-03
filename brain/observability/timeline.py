@@ -151,6 +151,17 @@ class TurnTrace:
     #           "tool_exception", "draft_quality_low", "draft_quality_high"
     neuromod_midturn: list[dict] = field(default_factory=list)
 
+    # ── Reward-emission attribution (appended by bus.NeuromodState.add) ───────
+    # One entry per DA write this turn: {"delta", "signal_type", "reward_source",
+    # "reason"}. len() is the emissions-per-turn count — the audited answer to
+    # "how many times did one success pay itself" and "what share is self-graded".
+    reward_emissions: list[dict] = field(default_factory=list)
+
+    # ── External grade (thumbs / validator; consumed by hebbian composite) ────
+    # -1..+1; None = absent (composite falls back to the legacy 0.5/0.3/0.2 mix).
+    external_grade: float | None = None
+    external_grade_source: str = ""  # "user_thumbs" | "validator" | "api"
+
     # ── Input modality ────────────────────────────────────────────────────────
     # "voice" when prosody data arrived (Deepgram STT pipeline active);
     # "text" for typed input. Derived after hypothalamus.process() returns.

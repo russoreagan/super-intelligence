@@ -189,6 +189,7 @@ def build_api_router(
     approval_resolve_runner: Callable[[str, str, bool, bool], dict] | None = None,
     jobs_list_runner: Callable[[int, str | None], list] | None = None,
     job_get_runner: Callable[[str], dict | None] | None = None,
+    learning_runner: Callable[..., dict] | None = None,
     purge_runner: PurgeRunner | None = None,
     extract_runner: ExtractRunner | None = None,
     tts_runner: TtsRunner | None = None,
@@ -716,6 +717,48 @@ def build_api_router(
         if rec is None:
             raise HTTPException(status_code=404, detail="unknown job_id")
         return rec
+
+    # ── Learning surface (read-only views over the learning subsystems) ───────
+    # Owner keys may name a persona; partner keys are pinned to the org's home
+    # persona (partners are org-scoped, not persona-scoped — mirrors mandates).
+
+    def _learning_persona(ctx: dict, persona: str) -> str:
+        return persona if ctx.get("owner") else ""
+
+    @router.get("/learning/stories")
+    async def learning_stories(
+        persona: str = "",
+        limit: int = 50,
+        authorization: str | None = Header(default=None),
+    ):
+        """Plain-language learning stories with structured evidence citations."""
+        ctx = _require(authorization)
+        if learning_runner is None:
+            raise HTTPException(status_code=501, detail="learning surface not available")
+        return learning_runner("stories", persona=_learning_persona(ctx, persona), limit=int(limit or 50))
+
+    @router.get("/learning/wiring")
+    async def learning_wiring(
+        persona: str = "",
+        edge: str = "",
+        authorization: str | None = Header(default=None),
+    ):
+        """Top learned edges + session deltas (+ drift series for a named edge)."""
+        ctx = _require(authorization)
+        if learning_runner is None:
+            raise HTTPException(status_code=501, detail="learning surface not available")
+        return learning_runner("wiring", persona=_learning_persona(ctx, persona), edge=edge)
+
+    @router.get("/learning/summary")
+    async def learning_summary(
+        persona: str = "",
+        authorization: str | None = Header(default=None),
+    ):
+        """Learning vitals: plasticity, reward-source mix, switch bands, chunks, predictor."""
+        ctx = _require(authorization)
+        if learning_runner is None:
+            raise HTTPException(status_code=501, detail="learning surface not available")
+        return learning_runner("summary", persona=_learning_persona(ctx, persona))
 
     # ── Audio (optional, partner-gated) ───────────────────────────────────────
     # Stateless: no session needed. TTS exposes the affect→voice mapping (the
@@ -1299,6 +1342,7 @@ class ApiServer:
         approval_resolve_runner: Callable[[str, str, bool, bool], dict] | None = None,
         jobs_list_runner: Callable[[int, str | None], list] | None = None,
         job_get_runner: Callable[[str], dict | None] | None = None,
+        learning_runner: Callable[..., dict] | None = None,
         purge_runner: PurgeRunner | None = None,
         extract_runner: ExtractRunner | None = None,
         tts_runner: TtsRunner | None = None,
@@ -1350,6 +1394,7 @@ class ApiServer:
                 approval_resolve_runner=approval_resolve_runner,
                 jobs_list_runner=jobs_list_runner,
                 job_get_runner=job_get_runner,
+                learning_runner=learning_runner,
                 purge_runner=purge_runner,
                 extract_runner=extract_runner,
                 tts_runner=tts_runner,

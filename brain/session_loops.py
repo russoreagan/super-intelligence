@@ -842,7 +842,17 @@ class _LoopsMixin:
         )
         with contextlib.suppress(Exception):
             if self._emitter:
-                await self._emitter.emit_event({"type": "task_approval", **item.to_dict()})
+                # Explicit job linkage: job-originated approvals carry turn_id == job_id
+                # (ids prefixed "job_"), so the UI can deep-link the approval to its job
+                # without depending on the turn-id format staying that way forever.
+                _tid = str(item.turn_id or "")
+                await self._emitter.emit_event(
+                    {
+                        "type": "task_approval",
+                        **item.to_dict(),
+                        "job_id": _tid if _tid.startswith("job_") else "",
+                    }
+                )
         return "deny"
 
     def approve_action(
@@ -948,6 +958,62 @@ class _LoopsMixin:
         if state:
             out = [j for j in out if j.get("state") == state]
         return out
+
+    def api_grade_turn(self, turn_id: str, grade, source: str = "user_thumbs") -> dict:
+        """Record an EXTERNAL grade for a turn (thumbs press, validator verdict).
+
+        Writes three places: the live TurnTrace when the turn hasn't consolidated
+        yet (so the grade re-weights the Hebbian composite at the next sleep), the
+        eval log via patch_turn (auditable even post-consolidation), and the
+        decision stream (ledger + live UI). Optionally nudges DA as a genuinely
+        external signal — off by default (external_grade_da_nudge=0) so this ships
+        observability-first."""
+        from eval.external_grading import normalize_grade
+
+        g = normalize_grade(grade)
+        if not turn_id or g is None:
+            return {"ok": False, "error": "missing turn_id or unusable grade"}
+        applied_live = False
+        for trace in getattr(self, "_session_traces_full", []) or []:
+            if getattr(trace, "turn_id", "") == turn_id:
+                trace.external_grade = g
+                trace.external_grade_source = source
+                applied_live = True
+                break
+        with contextlib.suppress(Exception):
+            if self._eval_logger is not None:
+                self._eval_logger.patch_turn(turn_id, external_grade=g, external_grade_source=source)
+        with contextlib.suppress(Exception):
+            from brain.observability.decisions import decisions
+
+            decisions.log(
+                "external_grade_recorded", turn_id=turn_id, grade=g, source=source
+            )
+        with contextlib.suppress(Exception):
+            nudge = float(_brain_settings.get("external_grade_da_nudge", 0) or 0)
+            if nudge > 0:
+                self.bus.neuromod.add(
+                    "DA",
+                    nudge * g,
+                    source="external_grader",
+                    reward_source="user_emotion",
+                    reason="thumbs",
+                )
+        return {"ok": True, "grade": g, "applied_live": applied_live}
+
+    def api_learning(self, view: str, persona: str = "", edge: str = "", limit: int = 50) -> dict:
+        """Learning-surface views for the engine API (mirrors the owner UI's
+        /learning/* routes). Live wiring/bus flow in so the active persona's
+        unsaved in-session state is visible; other personas read their files."""
+        from brain.observability import learning_reader
+
+        if view == "stories":
+            return learning_reader.stories(persona=persona, limit=limit, live_wiring=self.wiring)
+        if view == "wiring":
+            return learning_reader.wiring_view(persona=persona, edge=edge, live_wiring=self.wiring)
+        return learning_reader.summary(
+            persona=persona, live_wiring=self.wiring, live_bus=self.bus
+        )
 
     def api_get_job(self, job_id: str) -> dict | None:
         """Full record for one job — agent_jobs table first, then the JSON JobStore."""

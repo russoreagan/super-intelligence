@@ -31,6 +31,11 @@ class HebbianUpdater:
         - DA delta (50%): how much DA changed THIS turn vs start of turn.
         - Critic score (30%): actual LLM critic assessment; only when critic_ran=True.
         - User emotion valence (20%): valence of the user's detected emotional state.
+
+        When the turn carries an EXTERNAL grade (a thumbs verdict, a validator) the
+        mix re-weights to make room for it — the one signal here that is grounded
+        outside the brain's own appraisal (the premise-audit's self-grading fix).
+        Absent a grade, the legacy 0.5/0.3/0.2 path is untouched.
         """
         nm = trace.neuromod or {}
         da = float(nm.get("DA", 0.5))
@@ -49,15 +54,27 @@ class HebbianUpdater:
         user_emotion = getattr(trace, "user_emotion", "") or ""
         user_term = self._emotion_valence(user_emotion)
 
-        outcome = 0.5 * da_delta + 0.3 * critic_term + 0.2 * user_term
+        ext_grade = getattr(trace, "external_grade", None)
+        if ext_grade is not None:
+            ext = max(-1.0, min(1.0, float(ext_grade)))
+            w_da = float(settings.get("hebbian_w_da_ext", 0.4))
+            w_critic = float(settings.get("hebbian_w_critic_ext", 0.2))
+            w_user = float(settings.get("hebbian_w_user_ext", 0.2))
+            w_ext = float(settings.get("hebbian_w_external", 0.2))
+            outcome = w_da * da_delta + w_critic * critic_term + w_user * user_term + w_ext * ext
+        else:
+            outcome = 0.5 * da_delta + 0.3 * critic_term + 0.2 * user_term
         outcome = max(-1.0, min(1.0, outcome))
-        return outcome, {
+        breakdown = {
             "da_delta": round(da_delta, 3),
             "da_prior": round(da_prior, 3),
             "da_current": round(da, 3),
             "critic": round(critic_term, 3),
             "user_emotion": round(user_term, 3),
         }
+        if ext_grade is not None:
+            breakdown["external"] = round(float(ext_grade), 3)
+        return outcome, breakdown
 
     def _plasticity_modulator(self, full_traces: list) -> float:
         """Session-averaged DA + ACh → plasticity scalar in [0.3, 1.2]."""

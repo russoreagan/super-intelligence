@@ -27,6 +27,7 @@ from brain.settings import settings
 from brain.sleep_prompts import (
     ANGLE_SYNONYM_SYSTEM,
     EPISODE_SYNTHESIS_SYSTEM,
+    LEARNING_NARRATOR_SYSTEM,
     PERSONALITY_OBSERVATION_SYSTEM,
     SELF_UPDATE_SYSTEM,
     THOUGHT_CONSOLIDATION_SYSTEM,
@@ -109,6 +110,21 @@ class SleepConsolidation:
             sensitivity="low",
         )
         self._angle_synonym_cell.set_router(router)
+
+        # Learning narrator — phrases the session's numeric learning digest as
+        # first-person stories. sensitivity=low: the digest is edge names and
+        # numbers only, never conversation text.
+        self._learning_narrator = IntegratorCell(
+            name="learning_narrator",
+            cluster="sleep",
+            model="runpod-general",
+            system_prompt=LEARNING_NARRATOR_SYSTEM,
+            topics=[],
+            max_calls_per_turn=1,
+            locality="local",
+            sensitivity="low",
+        )
+        self._learning_narrator.set_router(router)
 
     async def consolidate(
         self,
@@ -253,6 +269,12 @@ class SleepConsolidation:
 
         # 5. Chunk mining — consolidate recurring tool sub-sequences into motor chunks.
         await self.chunk_mining_pass(session_id)
+
+        # 6. Learning stories — narrate what this session's Hebbian pass changed.
+        # Must run AFTER the Hebbian pass (reads its ledger records) and inside the
+        # same persona binding (consolidate_now binds; a detached task would lose it).
+        if settings.get("learning_narrator", 1):
+            await self.learning_story_pass(session_id)
 
         elapsed = time.time() - start
         logger.info("[Memory consolidation] Done in %.2fs", elapsed)
@@ -1030,5 +1052,227 @@ class SleepConsolidation:
             )
         except Exception as e:
             logger.warning("[ChunkMining] Could not write chunks.json: %s", e)
+
+    # ── Learning narration pass ──────────────────────────────────────────────
+
+    _STORIES_KEEP = 500  # rolling cap on learning_stories.jsonl
+
+    def _learning_evidence(self, session_id: str) -> list[dict]:
+        """Deterministic numeric digest of this session's learning events, grouped
+        per edge/switch/pathway. Numbers and route names only — no user text (the
+        narrator cell runs sensitivity=low on the strength of that)."""
+        from brain.observability import learning_ledger
+
+        evidence: list[dict] = []
+        recs = learning_ledger.read(limit=2000, session_id=session_id)
+
+        by_edge: dict[str, list[dict]] = defaultdict(list)
+        for r in recs:
+            if r.get("decision") == "hebbian_update_applied" and r.get("src") and r.get("tgt"):
+                by_edge[f"{r['src']}→{r['tgt']}"].append(r)
+        edge_groups = sorted(
+            by_edge.items(),
+            key=lambda kv: abs(sum(float(x.get("delta") or 0) for x in kv[1])),
+            reverse=True,
+        )[:10]
+        for edge, rows in edge_groups:
+            net = sum(float(r.get("delta") or 0) for r in rows)
+            if abs(net) < 0.005:
+                continue
+            first_w = rows[0].get("from_weight")
+            last_w = rows[-1].get("to_weight")
+            outcomes = [float(r.get("outcome") or 0) for r in rows]
+            evidence.append(
+                {
+                    "text": (
+                        f"route {edge}: {len(rows)} updates, weight {first_w}→{last_w} "
+                        f"(net {net:+.3f}), mean outcome {sum(outcomes) / len(outcomes):+.2f}"
+                    ),
+                    "subsystem": "routing",
+                    "edges": [{"edge": edge, "from_w": first_w, "to_w": last_w, "delta": round(net, 4)}],
+                    "decision_types": ["hebbian_update_applied"],
+                    "turn_ids": [r.get("turn_id", "") for r in rows if r.get("turn_id")][:8],
+                    "metrics": {"n_updates": len(rows), "mean_outcome": round(sum(outcomes) / len(outcomes), 3)},
+                }
+            )
+
+        for kind, subsystem, keyfield in (
+            ("switch_routing_credit_applied", "switches", "switch"),
+            ("recall_routing_credit_applied", "recall", "strategy"),
+            ("drafter_competition_applied", "drafters", "drafter"),
+        ):
+            by_key: dict[str, list[dict]] = defaultdict(list)
+            for r in recs:
+                if r.get("decision") == kind:
+                    by_key[str(r.get(keyfield) or r.get("tgt") or "?")].append(r)
+            for key, rows in sorted(by_key.items(), key=lambda kv: -len(kv[1]))[:4]:
+                net = sum(float(r.get("delta") or 0) for r in rows)
+                if abs(net) < 0.005:
+                    continue
+                evidence.append(
+                    {
+                        "text": f"{subsystem} credit for {key}: {len(rows)} events, net delta {net:+.3f}",
+                        "subsystem": subsystem,
+                        "edges": [{"edge": key, "delta": round(net, 4)}],
+                        "decision_types": [kind],
+                        "turn_ids": [r.get("turn_id", "") for r in rows if r.get("turn_id")][:8],
+                        "metrics": {"n_events": len(rows)},
+                    }
+                )
+
+        summaries = [r for r in recs if r.get("decision") == "session_plasticity_summary"]
+        if summaries:
+            s = summaries[-1]
+            evidence.append(
+                {
+                    "text": (
+                        f"session plasticity {s.get('plasticity_modulator')}, "
+                        f"{s.get('edges_updated')} edges updated, signal quality {s.get('signal_quality')}"
+                    ),
+                    "subsystem": "reward",
+                    "edges": [],
+                    "decision_types": ["session_plasticity_summary"],
+                    "turn_ids": [],
+                    "metrics": {
+                        "plasticity_modulator": s.get("plasticity_modulator"),
+                        "edges_updated": s.get("edges_updated"),
+                    },
+                }
+            )
+
+        emissions = [r for r in recs if r.get("decision") == "reward_emission"]
+        if emissions:
+            by_type = Counter(r.get("signal_type") or "self_graded" for r in emissions)
+            total = sum(by_type.values())
+            evidence.append(
+                {
+                    "text": (
+                        f"reward mix this session: {dict(by_type)} "
+                        f"({100 * by_type.get('self_graded', 0) // max(total, 1)}% self-graded)"
+                    ),
+                    "subsystem": "reward",
+                    "edges": [],
+                    "decision_types": ["reward_emission"],
+                    "turn_ids": [],
+                    "metrics": {"by_signal_type": dict(by_type)},
+                }
+            )
+        return evidence
+
+    def _stories_path(self) -> str:
+        root = os.environ.get(
+            "SECOND_BRAIN_PATH",
+            os.path.join(os.path.dirname(__file__), "..", "second_brain"),
+        )
+        return os.path.join(root, "learning_stories.jsonl")
+
+    def _persist_stories(self, stories: list[dict]) -> None:
+        path = self._stories_path()
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            existing: list[str] = []
+            if os.path.exists(path):
+                with open(path, encoding="utf-8") as f:
+                    existing = [ln for ln in f.read().splitlines() if ln.strip()]
+            lines = existing + [json.dumps(s, default=str) for s in stories]
+            with open(path + ".tmp", "w", encoding="utf-8") as f:
+                f.write("\n".join(lines[-self._STORIES_KEEP:]) + "\n")
+            os.replace(path + ".tmp", path)
+        except Exception as e:
+            logger.warning("[LearningNarrator] could not persist stories: %s", e)
+
+    async def learning_story_pass(self, session_id: str) -> None:
+        """Narrate this session's learning as first-person stories with citations.
+
+        Evidence is assembled deterministically from the ledger; the LLM only
+        PHRASES claims and cites evidence by index (joined back structurally, so
+        hallucinated citations are impossible). LLM failure or an off flag falls
+        back to template phrasing — the surface is never empty. Fail-open: this
+        pass must never block the rest of sleep."""
+        try:
+            from brain.persona_key import active_or_home_persona, persona_slug
+
+            evidence = self._learning_evidence(session_id)
+            if not evidence:
+                logger.debug("[LearningNarrator] no learning evidence for %s — skipping", session_id)
+                return
+            slug = persona_slug(active_or_home_persona())
+            now = time.time()
+            stories: list[dict] = []
+
+            def _mk(claim: str, subsystem: str, refs: list[int], generator: str, confidence: float = 0.0) -> dict:
+                cited = [evidence[i] for i in refs]
+                return {
+                    "id": f"st_{int(now)}_{len(stories)}",
+                    "session_id": session_id,
+                    "persona": slug,
+                    "ts": now,
+                    "claim": claim,
+                    "subsystem": subsystem,
+                    "evidence": {
+                        "edges": [e for c in cited for e in c["edges"]],
+                        "decision_types": sorted({d for c in cited for d in c["decision_types"]}),
+                        "turn_ids": [t for c in cited for t in c["turn_ids"]][:10],
+                        "metrics": cited[0]["metrics"] if cited else {},
+                    },
+                    "confidence": confidence,
+                    "generator": generator,
+                }
+
+            try:
+                digest = "\n".join(f"[{i}] {e['text']}" for i, e in enumerate(evidence))
+                self._learning_narrator.reset_turn(f"sleep_{session_id}_learning")
+                raw = await self._learning_narrator.call([{"role": "user", "content": digest}])
+                parsed: dict = safe_json_parse(raw) or {}
+                for s in (parsed.get("stories") or [])[:6]:
+                    refs = [
+                        i
+                        for i in (s.get("evidence_refs") or [])
+                        if isinstance(i, int) and 0 <= i < len(evidence)
+                    ]
+                    claim = str(s.get("claim") or "").strip()
+                    if not claim or not refs:
+                        continue
+                    subsystem = str(s.get("subsystem") or evidence[refs[0]]["subsystem"])
+                    stories.append(_mk(claim, subsystem, refs, "llm", float(s.get("confidence") or 0)))
+            except Exception as e:
+                logger.debug("[LearningNarrator] LLM pass failed (%s) — template fallback", e)
+
+            if not stories:
+                for i, ev in enumerate(evidence[:4]):
+                    if not ev["edges"]:
+                        continue
+                    e0 = ev["edges"][0]
+                    delta = float(e0.get("delta") or 0)
+                    verb = "strengthened" if delta >= 0 else "weakened"
+                    claim = (
+                        f"The route {e0['edge']} {verb} by {delta:+.3f} across "
+                        f"{ev['metrics'].get('n_updates', ev['metrics'].get('n_events', '?'))} events this session."
+                    )
+                    stories.append(_mk(claim, ev["subsystem"], [i], "template"))
+
+            if not stories:
+                return
+            self._persist_stories(stories)
+            for s in stories:
+                decisions.log(
+                    "learning_story",
+                    turn_id="",
+                    cluster="sleep",
+                    session_id=session_id,
+                    story_id=s["id"],
+                    claim=s["claim"][:300],
+                    subsystem=s["subsystem"],
+                    generator=s["generator"],
+                    persona=s["persona"],
+                )
+            logger.info(
+                "[LearningNarrator] %d stories (%s) for session %s",
+                len(stories),
+                stories[0]["generator"],
+                session_id,
+            )
+        except Exception as e:
+            logger.warning("[LearningNarrator] pass failed: %s", e)
 
     # ── Hebbian pass ─────────────────────────────────────────────────────────

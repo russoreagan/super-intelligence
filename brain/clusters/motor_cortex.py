@@ -1629,12 +1629,22 @@ class MotorCortexCluster:
                             _room = max(0.0, _cap - _pred_reward_total)
                             _delta = min(_base * _w * _er, _room)
                             if _delta > 0:
-                                self._bus.neuromod.add("DA", _delta)
+                                self._bus.neuromod.add(
+                                    "DA",
+                                    _delta,
+                                    reward_source="correctness",
+                                    reason="story_criteria",
+                                )
                                 _pred_reward_total += _delta
                         else:
                             # Predicted its story would verify; reality refuted it — a loss, so the
                             # dip scales by loss aversion (λ). The reward branch above stays unweighted.
-                            self._bus.neuromod.add("DA", -0.5 * _base * _w * _er * _la_fn(_persona))
+                            self._bus.neuromod.add(
+                                "DA",
+                                -0.5 * _base * _w * _er * _la_fn(_persona),
+                                reward_source="correctness",
+                                reason="story_criteria_refuted",
+                            )
 
             # Stage 6(c): in-the-moment frustration. The job is dragging past the effort it was
             # braced for (complexity estimate) — accrue NE/GABA + a small DA/5HT dip as the slog
@@ -1647,7 +1657,9 @@ class MotorCortexCluster:
                     _g = float(_brain_settings.get("frustration_overshoot_gain"))
                     self._bus.neuromod.add("NE", _g)
                     self._bus.neuromod.add("GABA", _g * 0.5)
-                    self._bus.neuromod.add("DA", -_g * 0.5)
+                    self._bus.neuromod.add(
+                        "DA", -_g * 0.5, reward_source="mastery", reason="overshoot_frustration"
+                    )
 
             if clarification_question or awaiting_approval:
                 break

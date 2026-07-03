@@ -709,7 +709,12 @@ class FrontalCluster:
                 * float(settings.get("emotional_reactivity_scale"))
             )
             cap = float(settings.get("prediction_reward_turn_cap"))
-            self._bus.neuromod.add("DA", max(-cap, min(cap, delta)))
+            self._bus.neuromod.add(
+                "DA",
+                max(-cap, min(cap, delta)),
+                reward_source="correctness",
+                reason="shadow_prediction",
+            )
 
     async def _run_executive_llm(
         self,

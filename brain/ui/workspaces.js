@@ -15,11 +15,14 @@
   // so the #main plumbing and data-ws routing stay untouched.
   const WS_ICONS = {
     labs: '<circle cx="12" cy="12" r="9"/><path d="M7 12h2l1.5-3 2 6 1.5-3H17"/>',
+    // Learning: rising trend over gridline — the wiring-drift view. Routes to the
+    // MRI surface with the Learning page swapped in (ws key 'learning').
+    learning: '<path d="M4 19h16M4 19V5"/><path d="m6 15 4-4 3 3 5-6"/><circle cx="18" cy="8" r="1.2"/>',
     agents: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
     personas: '<path d="M12 3c3.6 0 6.5 2.4 6.5 6 0 5-3 9-6.5 9s-6.5-4-6.5-9c0-3.6 2.9-6 6.5-6z"/><circle cx="9.5" cy="10.5" r="1"/><circle cx="14.5" cy="10.5" r="1"/>',
     api: '<path d="m7 8-4 4 4 4M17 8l4 4-4 4M14 4l-4 16"/>',
   };
-  const WS_NAMES = { labs: 'MRI', agents: 'Agents', personas: 'Personas', api: 'API' };
+  const WS_NAMES = { labs: 'MRI', learning: 'Learning', agents: 'Agents', personas: 'Personas', api: 'API' };
   // The MRI dropdown glyph (scan ring + pulse), reused on every "Open in MRI" action.
   const MRI_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' + WS_ICONS.labs + '</svg>';
 
@@ -202,7 +205,9 @@
     const agents = document.getElementById('ws-agents');
     const personas = document.getElementById('ws-personas');
     const api = document.getElementById('ws-api');
-    const labs = ws === 'labs';
+    // 'learning' rides the MRI surface (same #main/#activity-ticker chrome) with
+    // the Learning page swapped in over the atlas.
+    const labs = ws === 'labs' || ws === 'learning';
     if (main) main.style.display = labs ? '' : 'none';
     if (ticker) ticker.style.display = labs ? '' : 'none';
     agents.classList.toggle('on', ws === 'agents');
@@ -211,6 +216,8 @@
     if (ws === 'agents') ensureAgents();
     if (ws === 'personas') ensurePersonas();
     if (ws === 'api') ensureApi();
+    // Learning shows its page; every other workspace resets the MRI surface.
+    if (typeof window.showLearning === 'function') window.showLearning(ws === 'learning');
   }
 
   function wireSwitcher() {
@@ -251,7 +258,7 @@
     // The cross-org "All orgs" view inside Agents stays platform-admin (isAdmin).
     // Personas: open to everyone (configuring your own persona is core to the app, like
     // Labs/MRI) — the cost columns inside reuse the same admin-gated usage feed as Agents.
-    const show = { labs: true, personas: true, agents: orgAdmin && mandatesEnabled, api: orgAdmin };
+    const show = { labs: true, learning: true, personas: true, agents: orgAdmin && mandatesEnabled, api: orgAdmin };
     $$('.ws-opt').forEach((t) => t.classList.toggle('locked', !show[t.dataset.ws]));
     // Land on Agents (the unified agents view) on the first gating resolution after boot
     // when it's available; otherwise Labs. Later re-gates only enforce the lock
@@ -352,6 +359,11 @@
   // which sub-view is active in Agents (the unified agents list is the landing view)
   let agView = 'agents';
   let agRoleSel = null; // persists selected role across reloads
+  // Jobs sub-view state: autonomous job outcomes (agent_jobs) surfaced for supervision.
+  let jobsList = null;      // cached rows from /tasks/jobs (null = not loaded)
+  let jobsFilter = '';      // state filter ('' = all)
+  let jobSel = null;        // open job_id
+  let jobDetail = null;     // cached full record for jobSel
   let connectorsDetails = null; // [{name, url, display_name}]
   let connectorsEnvManaged = false; // true → registry pinned via BRAIN_CMA_MCP_SERVERS
   let connectorsCloud = null;   // { available, model, actions_enabled } — the Claude cloud connector
@@ -367,6 +379,7 @@
 
           <div class="rail-sect">
             <button class="rail-item ag-nav ${agView==='agents'?'on':''}" data-view="agents"><span class="ri-name"><span class="dot-status ${activeCount?'live':''}" style="background:${activeCount?'var(--ok)':'var(--ink-4)'}"></span>Agents</span><span class="ri-meta">${ags.length} total · ${activeCount} active</span></button>
+            <button class="rail-item ag-nav ${agView==='jobs'||agView==='jobdetail'?'on':''}" data-view="jobs"><span class="ri-name">Jobs</span><span class="ri-meta">self-directed work · outcomes</span></button>
           </div>
 
           <div class="rail-div"></div>
@@ -394,6 +407,8 @@
     else if (agView === 'roles') renderRoles(main);
     else if (agView === 'limits') renderAccountLimits(main);
     else if (agView === 'connectors') renderConnectors(main);
+    else if (agView === 'jobdetail' && jobSel) renderJobDetail(main);
+    else if (agView === 'jobs') renderJobsView(main);
     else renderAgentsView(main);
   }
   function railAgent(a) {
@@ -404,6 +419,123 @@
       : (act && act.lastTs ? agoShort(Date.now() - act.lastTs) : st.state);
     const meta = `${personaName(a.persona)} · ${detail}`;
     return `<button class="rail-item rail-agent" data-agent="${esc(a.agent_id)}"><span class="ri-name"><span class="${st.cls}" style="background:${st.color}"></span>${esc(a.name || a.agent_id)}</span><span class="ri-meta">${esc(meta)}</span></button>`;
+  }
+
+  // ── Jobs sub-view: autonomous job outcomes (supervision surface) ──────────
+  const JOB_STATES = ['running', 'awaiting_approval', 'completed', 'failed', 'stopped_budget', 'deferred'];
+  function jobStateColor(s) {
+    if (s === 'completed') return 'var(--ok)';
+    if (s === 'failed' || s === 'stopped_budget') return 'var(--danger)';
+    if (s === 'awaiting_approval') return 'var(--warn)';
+    if (s === 'running') return 'var(--signal-deep)';
+    return 'var(--ink-4)'; // deferred / unknown
+  }
+  async function loadJobs() {
+    try {
+      const qs = '?limit=50' + (jobsFilter ? '&state=' + encodeURIComponent(jobsFilter) : '');
+      const r = await fetch('/tasks/jobs' + qs);
+      jobsList = r.ok ? (await r.json()).jobs || [] : [];
+    } catch (e) { jobsList = []; }
+  }
+  function renderJobsView(main) {
+    if (typeof window.clearAgentsBadge === 'function') window.clearAgentsBadge();
+    if (jobsList === null) {
+      main.innerHTML = '<div class="main-pad"><div class="empty"><h3>Loading jobs…</h3></div></div>';
+      loadJobs().then(paintAgents);
+      return;
+    }
+    const chips = ['', ...JOB_STATES].map(s =>
+      `<button class="btn btn-sm job-chip ${jobsFilter === s ? 'on' : ''}" data-state="${s}" style="${jobsFilter === s ? 'border-color:var(--signal-deep); color:var(--ink);' : ''}">${s || 'all'}</button>`).join(' ');
+    const GRID = '2.4fr 1.1fr 0.6fr 0.6fr 0.5fr 0.6fr 0.5fr';
+    const rows = jobsList.map(j => {
+      const goal = String(j.goal || '').slice(0, 140);
+      const stories = (j.stories_total || 0) > 0 ? `${j.stories_completed || 0}/${j.stories_total}` : '—';
+      const usd = j.cloud_usd != null ? '$' + Number(j.cloud_usd).toFixed(2) : '—';
+      const when = j.updated_at ? agoShort(Date.now() - Date.parse(j.updated_at)) : '—';
+      const needsOk = j.state === 'awaiting_approval'
+        ? ` <span class="n" style="color:var(--warn);">· approval</span>` : '';
+      return `<div class="ag-row job-row" data-job="${esc(j.job_id)}" style="grid-template-columns:${GRID};">
+        <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${esc(j.goal || '')}">${esc(goal)}</span>
+        <span class="ar-status" title="${esc(j.reason_human || '')}"><span class="dot-status" style="background:${jobStateColor(j.state)}"></span>${esc(j.state || '')}${needsOk}</span>
+        <span class="n">${esc(j.source || '')}</span>
+        <span class="n">${esc(stories)}</span>
+        <span class="n">${j.productive_steps != null ? j.productive_steps : '—'}</span>
+        <span class="n">${esc(usd)}</span>
+        <span class="n">${esc(when)}</span></div>`;
+    }).join('');
+    main.innerHTML = `<div class="main-pad">
+      <div class="row" style="justify-content:space-between; margin-bottom:14px;">
+        <h2 class="serif-h" style="font-size:20px;">Jobs</h2>
+        <button class="btn btn-sm" id="jobs-refresh">Refresh</button>
+      </div>
+      <div class="row" style="gap:6px; flex-wrap:wrap; margin-bottom:14px;">${chips}</div>
+      ${jobsList.length ? `<div class="ag-table" style="grid-template-columns:none;">
+        <div class="ag-table-head" style="grid-template-columns:${GRID};"><span>Goal</span><span>State</span><span>Source</span><span>Stories</span><span>Steps</span><span>Spend</span><span>When</span></div>
+        ${rows}</div>`
+      : '<div class="empty"><h3>No jobs yet</h3><p>Autonomous work the brain runs for you shows up here with its outcome, spend and steps.</p></div>'}
+    </div>`;
+    main.querySelectorAll('.job-chip').forEach(c => c.addEventListener('click', () => {
+      jobsFilter = c.dataset.state; jobsList = null; paintAgents();
+    }));
+    main.querySelector('#jobs-refresh').addEventListener('click', () => { jobsList = null; paintAgents(); });
+    main.querySelectorAll('.job-row').forEach(r => r.addEventListener('click', () => {
+      jobSel = r.dataset.job; jobDetail = null; agView = 'jobdetail'; paintAgents();
+    }));
+  }
+  function renderJobDetail(main) {
+    if (jobDetail === null) {
+      main.innerHTML = '<div class="main-pad"><div class="empty"><h3>Loading job…</h3></div></div>';
+      fetch('/tasks/jobs/' + encodeURIComponent(jobSel))
+        .then(r => r.ok ? r.json() : null)
+        .then(d => { jobDetail = d || { missing: true }; paintAgents(); })
+        .catch(() => { jobDetail = { missing: true }; paintAgents(); });
+      return;
+    }
+    const j = jobDetail;
+    const back = `<button class="link ag-back jobs-back" style="margin-bottom:18px;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg> Jobs</button>`;
+    if (j.missing) {
+      main.innerHTML = `<div class="main-pad">${back}<div class="empty"><h3>Job not found</h3></div></div>`;
+      main.querySelector('.jobs-back').addEventListener('click', () => { agView = 'jobs'; jobSel = null; paintAgents(); });
+      return;
+    }
+    const steps = Array.isArray(j.steps_json) ? j.steps_json : [];
+    const results = Array.isArray(j.results_json) ? j.results_json : [];
+    const fmtTs = (t) => t ? new Date(t).toLocaleString() : '—';
+    const timeline = steps.map((s, i) => {
+      const argsPrev = (() => { try { return JSON.stringify(s.args || {}, null, 2); } catch (e) { return ''; } })();
+      const out = results[i] != null ? String(results[i]) : '';
+      return `<details class="job-step" style="border-bottom:1px solid var(--line-faint); padding:6px 0;">
+        <summary style="cursor:pointer;"><span class="data" style="font-size:13px;">${i + 1}. ${esc(s.tool || '?')}</span>
+          <span class="n" style="color:var(--ink-3); margin-left:8px;">${esc(String(s.reason || '').slice(0, 120))}</span></summary>
+        ${argsPrev ? `<pre class="data" style="font-size:12px; white-space:pre-wrap; word-break:break-word; color:var(--ink-2); margin:6px 0 0 18px;">${esc(argsPrev.slice(0, 2000))}</pre>` : ''}
+        ${out ? `<pre class="data" style="font-size:12px; white-space:pre-wrap; word-break:break-word; margin:6px 0 0 18px; color:var(--ink);">→ ${esc(out.slice(0, 2000))}</pre>` : ''}
+      </details>`;
+    }).join('');
+    const links = Array.isArray(j.source_links) ? j.source_links : [];
+    const files = Array.isArray(j.written_files) ? j.written_files : [];
+    const storiesBar = (j.stories_total || 0) > 0
+      ? `<div class="n" style="margin-top:6px;">stories ${j.stories_completed || 0}/${j.stories_total}
+          <span style="display:inline-block; width:120px; height:5px; background:var(--line-faint); border-radius:3px; vertical-align:middle; margin-left:8px;">
+          <span style="display:block; width:${Math.min(100, Math.round(100 * (j.stories_completed || 0) / j.stories_total))}%; height:100%; background:var(--ok); border-radius:3px;"></span></span></div>`
+      : '';
+    main.innerHTML = `<div class="main-pad">${back}
+      <h2 class="serif-h" style="font-size:19px; margin-bottom:6px;">${esc(String(j.goal || '').slice(0, 300))}</h2>
+      <div class="row" style="gap:14px; flex-wrap:wrap; margin-bottom:4px;">
+        <span class="n" style="color:${jobStateColor(j.state)};">${esc(j.state || '')}</span>
+        ${j.reason_code ? `<span class="n data">${esc(j.reason_code)}</span>` : ''}
+        <span class="n">${esc(j.source || '')}</span>
+        ${j.agent_id ? `<span class="n data">${esc(j.agent_id)}</span>` : ''}
+        <span class="n">${j.cloud_usd != null ? '$' + Number(j.cloud_usd).toFixed(2) : ''}</span>
+      </div>
+      <div class="n" style="color:var(--ink-3); margin-bottom:10px;">created ${esc(fmtTs(j.created_at))} · updated ${esc(fmtTs(j.updated_at))}${j.completed_at ? ' · completed ' + esc(fmtTs(j.completed_at)) : ''}</div>
+      ${j.reason_human ? `<p style="font-size:13px; color:var(--ink-2); margin-bottom:8px;">${esc(j.reason_human)}</p>` : ''}
+      ${j.summary ? `<p style="font-size:14px; line-height:1.55; margin-bottom:8px;">${esc(j.summary)}</p>` : ''}
+      ${storiesBar}
+      ${steps.length ? `<h3 class="serif-h" style="font-size:15px; margin:18px 0 6px;">Steps · ${steps.length}</h3>${timeline}` : ''}
+      ${links.length ? `<h3 class="serif-h" style="font-size:15px; margin:18px 0 6px;">Sources</h3>${links.map(u => `<div><a href="${esc(u)}" target="_blank" rel="noopener" class="link" style="font-size:13px; word-break:break-all;">${esc(u)}</a></div>`).join('')}` : ''}
+      ${files.length ? `<h3 class="serif-h" style="font-size:15px; margin:18px 0 6px;">Written files</h3>${files.map(f => `<div class="data" style="font-size:12px;">${esc(f)}</div>`).join('')}` : ''}
+    </div>`;
+    main.querySelector('.jobs-back').addEventListener('click', () => { agView = 'jobs'; jobSel = null; jobDetail = null; paintAgents(); });
   }
 
   // Convert an ISO timestamp to a <input type="datetime-local"> value (local time).
@@ -1373,6 +1505,11 @@
     { grp: 'Jobs', m: 'get', p: '/v1/jobs', t: 'Recent autonomous job outcomes (state, reason, summary) — durable and pollable, so a client that was disconnected while a job ran still reads its result. Filters: ?limit= and ?state=.' },
     { grp: 'Jobs', m: 'get', p: '/v1/jobs/{job_id}', t: 'Full record for one job — steps, results, source links, summary. 404 for an unknown job id; 501 when job history isn\'t available on this server.' },
 
+    // ── Learning ──
+    { grp: 'Learning', m: 'get', p: '/v1/learning/stories', t: 'Plain-language stories of what the brain learned (per session, with structured evidence citations). Owner keys may pass ?persona=; partner keys read the org\'s home persona. ?limit= pages.' },
+    { grp: 'Learning', m: 'get', p: '/v1/learning/wiring', t: 'Top learned routing edges + this session\'s weight deltas. ?edge=src→tgt adds that edge\'s drift series across consolidation snapshots and its recent update records.' },
+    { grp: 'Learning', m: 'get', p: '/v1/learning/summary', t: 'Learning vitals: plasticity per session, reward-source mix (self-graded vs external %), switch efficacy within safety bands, motor chunks, thought-sequence predictor stats.' },
+
     // ── Audio ──
     { grp: 'Audio', m: 'post', p: '/v1/tts', t: 'Text-to-speech with the affect→voice mapping: pass affect to drive mood-aware prosody. Stateless; 503 when no provider key is configured.',
       body: { text: 'Markets are calm today.', affect: { valence: 0.4, arousal: 0.2 }, voice_id: '…' } },
@@ -1770,6 +1907,18 @@
     if (!document.getElementById('ws-switch')) return;
     window.setWorkspace = setWorkspace;       // let other code drive it
     window.getWorkspace = () => workspace;    // so closeSettings can restore context
+    // Deep-link into the Jobs supervision view (toasts / approval bubbles land here).
+    window.openAgentJobs = (jobId) => {
+      setWorkspace('agents');
+      if (jobId) { jobSel = jobId; jobDetail = null; agView = 'jobdetail'; }
+      else { agView = 'jobs'; jobsList = null; }
+      if (agentsData) paintAgents(); // no data yet → ensureAgents (from setWorkspace) paints
+    };
+    // Live-refresh an open jobs view when a task_outcome event lands.
+    window.refreshAgentJobs = () => {
+      if (workspace !== 'agents' || (agView !== 'jobs' && agView !== 'jobdetail')) return;
+      jobsList = null; jobDetail = null; paintAgents();
+    };
     wireSwitcher();
     loadGating();
   }

@@ -163,6 +163,13 @@ class _SetupMixin:
         else:
             logger.info("Wiring: %d edges loaded", self.wiring.edge_count())
         decisions_log.configure(eval_logger=self._eval_logger)
+        # Stamp ledger records with this session (persona comes from the contextvar).
+        try:
+            from brain.observability import learning_ledger
+
+            learning_ledger.set_session(self.session_id)
+        except Exception:
+            pass
 
     async def _setup_clusters(self) -> None:
         from brain.clusters.frontal import FrontalCluster
@@ -243,6 +250,9 @@ class _SetupMixin:
             on_task_approve=self.approve_action,
             on_task_skip=self.skip_action,
             approvals_fn=self.list_approvals,
+            jobs_list_fn=self.api_list_jobs,
+            job_get_fn=self.api_get_job,
+            on_feedback=self.api_grade_turn,
             connectors_fn=lambda: (
                 self.motor.list_connectors() if getattr(self, "motor", None) else []
             ),
@@ -359,6 +369,7 @@ class _SetupMixin:
             approval_resolve_runner=self.api_resolve_approval,
             jobs_list_runner=self.api_list_jobs,
             job_get_runner=self.api_get_job,
+            learning_runner=self.api_learning,
             purge_runner=self.api_purge_end_user,
             extract_runner=self.api_extract,
             skill_screener=skill_screener,

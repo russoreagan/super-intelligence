@@ -2369,7 +2369,12 @@ class DefaultModeNetwork:
                 * float(settings.get("emotional_reactivity_scale"))
             )
             cap = float(settings.get("prediction_reward_turn_cap"))
-            self._bus.neuromod.add("DA", max(-cap, min(cap, delta)))
+            self._bus.neuromod.add(
+                "DA",
+                max(-cap, min(cap, delta)),
+                reward_source="correctness",
+                reason="angle_prediction",
+            )
 
     def _reward_idle_thought_quality(
         self, thought: str, max_overlap: float, max_cos: float
@@ -2395,7 +2400,9 @@ class DefaultModeNetwork:
                 * reward_weight(persona, "novelty")
                 * float(settings.get("emotional_reactivity_scale"))
             )
-            self._bus.neuromod.add("DA", delta)
+            self._bus.neuromod.add(
+                "DA", delta, reward_source="novelty", reason="idle_thought_quality"
+            )
 
     def _effective_idle_seconds(self) -> float:
         """Seconds since the user last ENGAGED THE AGENT (their last turn) — deliberately
@@ -3395,7 +3402,12 @@ class DefaultModeNetwork:
                 )
                 _w = reward_weight(self._reward_persona(), "mastery")
                 _er = float(settings.get("emotional_reactivity_scale"))
-                _nm.add("DA", float(settings.get("accomplishment_base")) * _diff * _mod * _w * _er)
+                _nm.add(
+                    "DA",
+                    float(settings.get("accomplishment_base")) * _diff * _mod * _w * _er,
+                    reward_source="mastery",
+                    reason="thread_concluded",
+                )
         logger.info("[DMN] Concluded thread %s → memory: %r", thread_id, conclusion_text[:80])
         return {"action": "concluded", "thread_id": thread_id, "thread_title": t.summary[:80]}
 
@@ -3981,7 +3993,12 @@ class DefaultModeNetwork:
                 _best = max((s["valence"] for s in self.anticipations), default=0.0)
                 _worst = min((s["valence"] for s in self.anticipations), default=0.0)
                 if _best > 0:
-                    self._bus.neuromod.add("DA", _scale * _best * _w)
+                    self._bus.neuromod.add(
+                        "DA",
+                        _scale * _best * _w,
+                        reward_source="correctness",
+                        reason="anticipation",
+                    )
                 if _worst < 0:
                     self._bus.hormonal.add("CORT", _scale * (-_worst) * _la)
                 # Uncertainty aversion: even with no outright loss, a wide spread between the

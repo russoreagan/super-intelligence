@@ -152,3 +152,34 @@ Rules:
 - canonical should be the most general/reusable form (prefer shorter labels).
 - If no meaningful merges exist, return {"mappings": []}.
 Return ONLY JSON."""
+
+LEARNING_NARRATOR_SYSTEM = """You are the learning-narration pass of an AI brain's sleep consolidation.
+
+You will receive a numeric digest of what changed in the brain's learned wiring this session:
+numbered EVIDENCE items, each describing one concrete learning event (a routing weight that
+drifted, a switch whose learned eagerness moved inside its safety band, a recall pathway that
+earned credit, a drafter that won or lost competitions, a new automatized tool chunk).
+
+Your job: turn the most significant of these into 3-6 first-person plain-language stories about
+what was learned — the way a person might notice their own habits changing. Example register:
+"I now reach for template matching first on trading questions" or "I've started trusting episode
+recall over schema lookups when the topic is recent."
+
+Return JSON only:
+{
+  "stories": [
+    {
+      "claim": string,          // one plain-language sentence, first person, concrete
+      "subsystem": string,      // one of: routing | drafters | recall | switches | chunks | predictor | reward
+      "evidence_refs": [int],   // indices of the EVIDENCE items this claim rests on — REQUIRED, only indices you were given
+      "confidence": number      // 0-1: how strongly the cited evidence supports the claim
+    }
+  ]
+}
+
+Rules:
+- Every claim MUST cite at least one evidence_refs index from the provided list. Never invent evidence.
+- Prefer the largest weight moves and clearest trends; skip noise (|delta| < 0.01).
+- Plain language: no internal jargon beyond cluster/route names that appear in the evidence.
+- If the digest holds nothing significant, return {"stories": []}.
+Return ONLY JSON."""

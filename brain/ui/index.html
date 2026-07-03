@@ -613,6 +613,60 @@ input, select, textarea { font: inherit; color: inherit; background: none; borde
 .pod-banner.failed .pod-banner-ring { animation: none; border: none; background: oklch(0.55 0.18 25); }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+/* Outcome toasts: job results + approval prompts, bottom-right, non-blocking.
+   Same accent language as the pod banner; one toast per key (job) at a time. */
+#toast-stack {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 1200;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+  max-width: 340px;
+}
+.toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 9px 12px;
+  border: 1px solid var(--line-soft);
+  border-left-width: 3px;
+  border-radius: 8px;
+  background: var(--bg-1);
+  box-shadow: 0 6px 22px oklch(0 0 0 / 0.35);
+  font-size: 11.5px;
+  color: var(--fg-dim);
+  cursor: pointer;
+  animation: toast-in 0.22s ease-out;
+}
+@keyframes toast-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+.toast.ok   { border-left-color: oklch(0.70 0.15 145); }
+.toast.warn { border-left-color: oklch(0.74 0.15 75); }
+.toast.err  { border-left-color: oklch(0.55 0.18 25); }
+.toast-title { font-weight: 600; color: var(--fg); margin-bottom: 2px; }
+.toast-body { color: var(--fg-mute); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
+.toast-x {
+  background: none; border: none; cursor: pointer;
+  color: var(--fg-faint); font-size: 13px; line-height: 1; padding: 0 0 0 4px;
+}
+.toast-x:hover { color: var(--fg); }
+
+/* Unread badge on the workspace switcher (job outcomes waiting to be seen) */
+.ws-badge {
+  min-width: 15px; height: 15px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: oklch(0.74 0.15 75);
+  color: oklch(0.2 0.02 75);
+  font-size: 9.5px; font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.ws-badge.hidden { display: none; }
+
 /* ---------- MAIN ---------- */
 #main {
   display: grid;
@@ -998,6 +1052,46 @@ input, select, textarea { font: inherit; color: inherit; background: none; borde
 .approval-btn.approve { border-color: oklch(0.70 0.15 145); color: oklch(0.72 0.16 145); }
 .approval-btn.approve:hover { background: oklch(0.70 0.15 145 / 0.14); }
 .approval-btn.skip:hover { background: var(--bg-1); color: var(--fg); }
+
+/* Approval bubble embedded in the chat stream (same fields as the rail card) */
+.approval-msg {
+  border: 1px solid oklch(0.78 0.16 75);
+  border-left-width: 3px;
+}
+.approval-msg .who { color: oklch(0.78 0.16 75); }
+.approval-msg .approval-actions { max-width: 300px; }
+.approval-msg.resolved { border-color: var(--line-soft); opacity: 0.75; }
+.approval-msg.resolved .who { color: var(--fg-faint); }
+.approval-done {
+  margin-top: 8px;
+  font-size: 11px;
+  font-family: var(--mono);
+  color: var(--fg-mute);
+}
+.approval-job-link {
+  padding: 4px 8px;
+  font-size: 11px;
+  border-radius: 4px;
+  cursor: pointer;
+  border: 1px solid var(--line-soft);
+  background: transparent;
+  color: var(--fg-faint);
+}
+.approval-job-link:hover { color: var(--fg); background: var(--bg-1); }
+
+/* Thumbs on brain messages — the external-grade affordance. Ghosted until
+   hover; locks after one press (one grade per turn). */
+.thumb-box { display: flex; gap: 2px; margin-top: 4px; opacity: 0; transition: opacity 0.15s; }
+.msg-brain:hover .thumb-box, .thumb-box.graded { opacity: 1; }
+.thumb-btn {
+  background: none; border: none; cursor: pointer;
+  font-size: 12px; line-height: 1; padding: 2px 4px;
+  filter: grayscale(1); opacity: 0.55; border-radius: 4px;
+}
+.thumb-btn:hover { filter: none; opacity: 1; background: var(--bg-2); }
+.thumb-box.graded .thumb-btn { cursor: default; pointer-events: none; }
+.thumb-box.graded .thumb-btn:not(.chosen) { opacity: 0.2; }
+.thumb-box.graded .thumb-btn.chosen { filter: none; opacity: 1; }
 
 /* ---- Thoughts feed ---- */
 #thoughts-feed {
@@ -4416,6 +4510,7 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
       <button class="ws-switch-btn" id="ws-switch-btn" type="button" aria-haspopup="true" aria-expanded="false">
         <svg class="cur-ico" id="ws-cur-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>
         <span class="cur-name" id="ws-cur-name">Agents</span>
+        <span class="ws-badge hidden" id="agents-badge">0</span>
         <svg class="cur-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
       </button>
       <div class="ws-menu" id="ws-menu" role="menu">
@@ -4433,6 +4528,11 @@ input[type=number].brain-number:focus { border-color: var(--accent); outline: no
         <button class="ws-opt" data-ws="labs" role="menuitem" title="MRI — Mood & Reasoning Interface">
           <span class="opt-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="9"/><path d="M7 12h2l1.5-3 2 6 1.5-3H17"/></svg></span>
           <span class="opt-txt"><span class="opt-name">MRI</span><span class="opt-sub">Mood &amp; Reasoning Interface</span></span>
+          <svg class="opt-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+        </button>
+        <button class="ws-opt" data-ws="learning" role="menuitem" title="Learning — what the brain has learned">
+          <span class="opt-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 19h16M4 19V5"/><path d="m6 15 4-4 3 3 5-6"/><circle cx="18" cy="8" r="1.2"/></svg></span>
+          <span class="opt-txt"><span class="opt-name">Learning</span><span class="opt-sub">Stories · wiring drift · reward mix</span></span>
           <svg class="opt-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
         </button>
         <button class="ws-opt" data-ws="api" role="menuitem">
@@ -6225,9 +6325,25 @@ function handle(msg) {
       break;
     case 'task_approval':
       handleApprovalEvent(msg);
+      showToast({
+        kind: 'warn',
+        title: 'Approval needed: ' + (msg.tool || 'action'),
+        body: msg.reason || '',
+        key: msg.id || undefined,
+        // The chat bubble carries the buttons — bring it into view.
+        onClick: () => {
+          const bubble = msg.id && document.querySelector(
+            `.approval-msg[data-approval-id="${CSS.escape(msg.id)}"]`);
+          if (bubble) bubble.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        },
+      });
+      if (typeof window.bumpAgentsBadge === 'function') window.bumpAgentsBadge();
       break;
     case 'task_approval_resolved':
       handleApprovalResolvedEvent(msg);
+      break;
+    case 'task_outcome':
+      handleTaskOutcomeEvent(msg);
       break;
     case 'chat_history': {
       if (Array.isArray(msg.turns) && msg.turns.length) {
@@ -6270,6 +6386,10 @@ function handleDecisionEvent(msg) {
   if (msg.decision === 'session_plasticity_summary') {
     const meter = document.getElementById('plasticity-meter');
     if (meter) meter.textContent = (msg.plasticity_modulator ?? 1).toFixed(2);
+  }
+  // New consolidation output → re-fetch the Learning feed if it's on screen.
+  if (msg.decision === 'session_plasticity_summary' || msg.decision === 'learning_story') {
+    if (typeof window.refreshLearning === 'function') window.refreshLearning();
   }
   appendDecisionLine(msg);
 }
@@ -6513,10 +6633,39 @@ function appendBrainMessage(turnId, text, calls, elapsed, container) {
     <div class="body"></div>
   `;
   wrap.querySelector('.body').textContent = text;
+  if (turnId) wrap.appendChild(buildThumbControl(turnId));
 
   msgs.appendChild(wrap);
   scrollChat();
   pendingActivations = [];
+}
+
+// ── External grading: thumbs on brain messages ─────────────────────────────
+// A thumbs press is the one learning signal grounded OUTSIDE the brain's own
+// appraisal — it lands on the turn's trace (via /feedback → api_grade_turn) and
+// re-weights the Hebbian composite at the next sleep. Quiet by design: two
+// small glyphs that only assert themselves once used.
+function buildThumbControl(turnId) {
+  const box = document.createElement('div');
+  box.className = 'thumb-box';
+  [['up', 1, '👍'], ['down', -1, '👎']].forEach(([name, grade, glyph]) => {
+    const b = document.createElement('button');
+    b.className = 'thumb-btn thumb-' + name;
+    b.title = name === 'up' ? 'Good response — reinforce' : 'Poor response — correct';
+    b.textContent = glyph;
+    b.addEventListener('click', () => {
+      if (box.classList.contains('graded')) return;
+      box.classList.add('graded');
+      b.classList.add('chosen');
+      fetch('/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ turn_id: turnId, grade }),
+      }).catch(() => {});
+    });
+    box.appendChild(b);
+  });
+  return box;
 }
 
 // ── Trading layer: structured table + chart cards ──────────────────────────
@@ -7962,6 +8111,8 @@ let currentSettings = {};
 let defaultSettings = {};
 
 function openSettings() {
+  // Settings overlays Labs — reset the Learning view back to MRI first.
+  if (typeof window.showLearning === 'function') window.showLearning(false);
   mainPage.style.display = 'none';
   const ticker = document.getElementById('activity-ticker');
   if (ticker) ticker.style.display = 'none';
@@ -7983,9 +8134,11 @@ function closeSettings() {
   // Return to whichever workspace is active — not always Labs (Settings can be
   // opened from the account menu while a workspace is showing).
   const ws = (typeof window.getWorkspace === 'function') ? window.getWorkspace() : 'labs';
-  if (ws === 'labs') {
+  if (ws === 'labs' || ws === 'learning') {
     mainPage.style.display = '';
     if (ticker) ticker.style.display = '';
+    // Learning rides the MRI surface — restore its page over the atlas.
+    if (ws === 'learning' && typeof window.showLearning === 'function') window.showLearning(true);
   } else {
     mainPage.style.display = 'none';
     if (ticker) ticker.style.display = 'none';
@@ -8477,6 +8630,86 @@ document.getElementById('tasks-clear-btn')?.addEventListener('click', () => {
   _updateTaskBadge();
 });
 
+// ---- Outcome toasts + Agents unread badge (job supervision signals) ----
+// One toast per key (job/approval id): a job that defers → retries → completes
+// replaces its toast instead of stacking three. Click-through deep-links to Jobs.
+const _toasts = {};  // key → {el, timer}
+
+function showToast({ kind = 'warn', title = '', body = '', onClick = null, key = '' }) {
+  let stack = document.getElementById('toast-stack');
+  if (!stack) {
+    stack = document.createElement('div');
+    stack.id = 'toast-stack';
+    document.body.appendChild(stack);
+  }
+  if (key && _toasts[key]) dismissToast(key);
+  const el = document.createElement('div');
+  el.className = 'toast ' + kind;
+  const txt = document.createElement('div');
+  txt.style.flex = '1';
+  const t = document.createElement('div');
+  t.className = 'toast-title';
+  t.textContent = title;
+  txt.appendChild(t);
+  if (body) {
+    const b = document.createElement('div');
+    b.className = 'toast-body';
+    b.textContent = String(body).slice(0, 260);
+    txt.appendChild(b);
+  }
+  el.appendChild(txt);
+  const x = document.createElement('button');
+  x.className = 'toast-x';
+  x.textContent = '✕';
+  x.addEventListener('click', (e) => { e.stopPropagation(); dismissToast(key || undefined, el); });
+  el.appendChild(x);
+  if (onClick) el.addEventListener('click', () => { onClick(); dismissToast(key || undefined, el); });
+  stack.appendChild(el);
+  const timer = setTimeout(() => dismissToast(key || undefined, el), 6500);
+  if (key) _toasts[key] = { el, timer };
+}
+function dismissToast(key, el) {
+  const entry = key ? _toasts[key] : null;
+  const node = (entry && entry.el) || el;
+  if (entry) { clearTimeout(entry.timer); delete _toasts[key]; }
+  if (node && node.parentNode) node.parentNode.removeChild(node);
+}
+window.dismissToastsByKey = dismissToast;
+
+// Unread counter on the workspace switcher: job outcomes / approvals the user
+// hasn't looked at yet. Cleared when the Jobs view opens (workspaces.js calls it).
+let _agentsUnread = 0;
+function _paintAgentsBadge() {
+  const b = document.getElementById('agents-badge');
+  if (!b) return;
+  if (_agentsUnread > 0) { b.textContent = String(Math.min(_agentsUnread, 99)); b.classList.remove('hidden'); }
+  else b.classList.add('hidden');
+}
+window.bumpAgentsBadge = () => { _agentsUnread++; _paintAgentsBadge(); };
+window.clearAgentsBadge = () => { _agentsUnread = 0; _paintAgentsBadge(); };
+
+// A job reached a terminal state — tell the user, wherever they're looking.
+function handleTaskOutcomeEvent(msg) {
+  const state = String(msg.state || '');
+  const jobId = String(msg.job_id || '');
+  const open = jobId && typeof window.openAgentJobs === 'function'
+    ? () => window.openAgentJobs(jobId) : null;
+  const cfg = {
+    completed:         { kind: 'ok',   title: 'Job completed' },
+    failed:            { kind: 'err',  title: 'Job failed' },
+    stopped_budget:    { kind: 'err',  title: 'Job stopped — budget cap' },
+    awaiting_approval: { kind: 'warn', title: 'Job waiting on your approval' },
+    deferred:          { kind: 'warn', title: 'Job deferred' },
+  }[state];
+  if (!cfg) return;
+  const body = state === 'completed'
+    ? (msg.summary || msg.goal || '')
+    : (msg.reason_human || msg.summary || msg.goal || '');
+  showToast({ ...cfg, body, onClick: open, key: jobId || undefined });
+  window.bumpAgentsBadge();
+  if (typeof window.refreshAgentJobs === 'function') window.refreshAgentJobs();
+}
+
 // ---- Action approvals: sensitive tool calls awaiting the user's go-ahead ----
 const APPROVALS = {};  // id → {id, tool, reason, preview, created_at}
 
@@ -8484,6 +8717,9 @@ function handleApprovalEvent(msg) {
   if (!msg || !msg.id) return;
   APPROVALS[msg.id] = msg;
   renderApprovals();
+  // Live approvals also land in the conversation itself, where the user already is.
+  // Guarded so boot-time hydration (rail-only) and WS re-delivery can't duplicate.
+  appendApprovalMessage(msg);
 }
 
 // An approval was settled somewhere else (the copilot / engine API, or superseded
@@ -8493,7 +8729,99 @@ function handleApprovalResolvedEvent(msg) {
   let changed = false;
   ids.forEach(id => { if (id in APPROVALS) { delete APPROVALS[id]; changed = true; } });
   if (changed) renderApprovals();
+  markApprovalMessagesResolved(ids);
+  if (typeof window.dismissToastsByKey === 'function') ids.forEach(id => window.dismissToastsByKey(id));
 }
+
+// Settle an approval from ANY surface (rail card or chat bubble): optimistic
+// local clear + POST; the server's task_approval_resolved event syncs every
+// other open UI (and any bubbles this optimistic pass already handled).
+function resolveApproval(id, act) {
+  if (!id || !act) return;
+  delete APPROVALS[id];
+  renderApprovals();
+  markApprovalMessagesResolved([id], act);
+  fetch('/tasks/' + act, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id }),
+  }).catch(() => {});
+}
+
+// Chat-embedded approval bubble. DOM-built with textContent throughout (approval
+// fields are model/tool-derived — same XSS posture as the trading cards).
+function appendApprovalMessage(msg) {
+  const msgs = document.getElementById('messages');
+  if (!msgs || !msg || !msg.id) return;
+  if (msgs.querySelector(`[data-approval-id="${CSS.escape(msg.id)}"]`)) return;
+  const wrap = document.createElement('div');
+  wrap.className = 'msg msg-brain approval-msg';
+  wrap.dataset.approvalId = msg.id;
+  const who = document.createElement('div');
+  who.className = 'who';
+  who.textContent = 'Needs your approval';
+  wrap.appendChild(who);
+  const tool = document.createElement('div');
+  tool.className = 'approval-tool';
+  tool.textContent = msg.tool || 'action';
+  wrap.appendChild(tool);
+  const reason = document.createElement('div');
+  reason.className = 'approval-reason';
+  reason.textContent = msg.reason || 'sensitive action';
+  wrap.appendChild(reason);
+  if (msg.preview) {
+    const prev = document.createElement('div');
+    prev.className = 'approval-preview';
+    prev.textContent = String(msg.preview).slice(0, 600);
+    wrap.appendChild(prev);
+  }
+  const actions = document.createElement('div');
+  actions.className = 'approval-actions';
+  const mkBtn = (act, label) => {
+    const b = document.createElement('button');
+    b.className = 'approval-btn ' + act;
+    b.dataset.act = act; b.dataset.id = msg.id;
+    b.textContent = label;
+    return b;
+  };
+  actions.appendChild(mkBtn('approve', 'Approve'));
+  actions.appendChild(mkBtn('skip', 'Skip'));
+  if (msg.job_id && typeof window.openAgentJobs === 'function') {
+    const link = document.createElement('button');
+    link.className = 'approval-job-link';
+    link.textContent = 'view job';
+    link.addEventListener('click', () => window.openAgentJobs(msg.job_id));
+    actions.appendChild(link);
+  }
+  wrap.appendChild(actions);
+  msgs.appendChild(wrap);
+  scrollChat();
+}
+
+// Mark chat bubbles settled — buttons go away, a caption records the outcome.
+// The bubble itself stays: the conversation is a log, not a queue.
+function markApprovalMessagesResolved(ids, act) {
+  const msgs = document.getElementById('messages');
+  if (!msgs || !ids || !ids.length) return;
+  ids.forEach(id => {
+    const bubble = msgs.querySelector(`.approval-msg[data-approval-id="${CSS.escape(id)}"]`);
+    if (!bubble || bubble.classList.contains('resolved')) return;
+    bubble.classList.add('resolved');
+    const actions = bubble.querySelector('.approval-actions');
+    if (actions) actions.remove();
+    const done = document.createElement('div');
+    done.className = 'approval-done';
+    done.textContent = act === 'skip' ? 'Skipped' : act === 'approve' ? 'Approved ✓' : 'Resolved';
+    bubble.appendChild(done);
+  });
+}
+
+// One delegated listener serves every approval bubble in the stream.
+document.getElementById('messages')?.addEventListener('click', (e) => {
+  const btn = e.target.closest('.approval-msg .approval-btn');
+  if (!btn) return;
+  resolveApproval(btn.dataset.id, btn.dataset.act);
+});
 
 function renderApprovals() {
   const list = document.getElementById('approvals-list');
@@ -8516,17 +8844,7 @@ function renderApprovals() {
 document.getElementById('approvals-list')?.addEventListener('click', (e) => {
   const btn = e.target.closest('.approval-btn');
   if (!btn) return;
-  const id = btn.dataset.id;
-  const act = btn.dataset.act;  // 'approve' | 'skip'
-  if (!id || !act) return;
-  // Optimistic: remove the card immediately; the server settles the rest.
-  delete APPROVALS[id];
-  renderApprovals();
-  fetch('/tasks/' + act, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id }),
-  }).catch(() => {});
+  resolveApproval(btn.dataset.id, btn.dataset.act);
 });
 
 // Populate any approvals that were saved while the page was closed.
@@ -9645,7 +9963,8 @@ function _applyMoodTint() {
 <!-- Redesigned settings page: schema + render engine (live-wired to /settings) -->
 <script src="settings-data.js?v=31"></script>
 <script src="settings-ui.js?v=31"></script>
-<script src="workspaces.js?v=32"></script>
+<script src="workspaces.js?v=34"></script>
+<script src="learning.js?v=2"></script>
 <!-- Trading layer: vendored TradingView Lightweight Charts (Apache-2.0) for chart cards -->
 <script src="lightweight-charts.standalone.production.js"></script>
 

@@ -157,7 +157,8 @@ def list_recent(limit: int = 20, state: str | None = None) -> list[dict]:
         q = (
             client.table("agent_jobs")
             .select(
-                "job_id,goal,state,reason_human,summary,source,productive_steps,"
+                "job_id,goal,state,reason_code,reason_human,summary,source,agent_id,"
+                "productive_steps,stories_completed,stories_total,cloud_usd,"
                 "source_links,written_files,created_at,updated_at,completed_at"
             )
             .eq("org_id", org)

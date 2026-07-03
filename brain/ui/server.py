@@ -188,6 +188,9 @@ class UIServer:
         on_task_approve: Callable[[str], dict] | None = None,
         on_task_skip: Callable[[str], dict] | None = None,
         approvals_fn: Callable[[], list] | None = None,
+        jobs_list_fn: Callable[..., list] | None = None,
+        job_get_fn: Callable[[str], dict | None] | None = None,
+        on_feedback: Callable[..., dict] | None = None,
         connectors_fn: Callable[[], list] | None = None,
         connector_reload_fn: Callable[[], None] | None = None,
         cloud_status_fn: Callable[[], dict] | None = None,
@@ -215,6 +218,9 @@ class UIServer:
         self._on_task_approve = on_task_approve  # (approval_id) -> dict; approve + re-queue
         self._on_task_skip = on_task_skip  # (approval_id) -> dict; skip a pending approval
         self._approvals_fn = approvals_fn  # () -> list of pending approvals
+        self._jobs_list_fn = jobs_list_fn  # (limit, state) -> job outcome rows, newest first
+        self._job_get_fn = job_get_fn  # (job_id) -> full job record or None
+        self._on_feedback = on_feedback  # (turn_id, grade, source) -> dict; external grade
         self._connectors_fn = connectors_fn  # () -> configured cloud connector names
         self._connector_reload_fn = (
             connector_reload_fn  # () -> None; hot-reload after register/remove
@@ -959,6 +965,36 @@ class UIServer:
         async def tasks_skip(request: Request):
             return await _resolve_approval(request, self._on_task_skip, "skip")
 
+        @app.get("/tasks/jobs")
+        async def tasks_jobs(request: Request):
+            if self._jobs_list_fn is None:
+                return {"jobs": []}
+            try:
+                limit = int(request.query_params.get("limit", "50"))
+            except ValueError:
+                limit = 50
+            state = str(request.query_params.get("state", "")).strip() or None
+            try:
+                return {"jobs": self._jobs_list_fn(limit=limit, state=state) or []}
+            except Exception as _je:
+                logger.warning("[tasks] jobs list failed: %s", _je)
+                return {"jobs": []}
+
+        @app.get("/tasks/jobs/{job_id}")
+        async def tasks_job_detail(job_id: str):
+            from fastapi.responses import JSONResponse
+
+            if self._job_get_fn is None:
+                return JSONResponse({"error": "jobs not wired"}, status_code=404)
+            try:
+                rec = self._job_get_fn(job_id)
+            except Exception as _jd_err:
+                logger.warning("[tasks] job get failed: %s", _jd_err)
+                rec = None
+            if not rec:
+                return JSONResponse({"error": "job not found"}, status_code=404)
+            return rec
+
         @app.get("/self-model")
         async def get_self_model(request: Request):
             from fastapi.responses import JSONResponse
@@ -1541,6 +1577,77 @@ class UIServer:
                 "deltas": w.session_deltas(),
                 "edge_count": w.edge_count(),
             }
+
+        # ── Learning surface (MRI → Learning tab) ──────────────────────────
+        # Read-only views over what the learning subsystems already persist;
+        # the active persona reads live objects, others read their files.
+
+        @app.get("/learning/stories")
+        async def learning_stories(request: Request):
+            from brain.observability import learning_reader
+
+            try:
+                limit = int(request.query_params.get("limit", "50"))
+            except ValueError:
+                limit = 50
+            before = request.query_params.get("before_ts")
+            try:
+                return learning_reader.stories(
+                    persona=str(request.query_params.get("persona", "")),
+                    limit=limit,
+                    before_ts=float(before) if before else None,
+                    live_wiring=self._wiring,
+                )
+            except Exception as _ls_err:
+                logger.warning("[learning] stories failed: %s", _ls_err)
+                return {"stories": [], "generated_on_read": False, "personas": []}
+
+        @app.get("/learning/wiring")
+        async def learning_wiring(request: Request):
+            from brain.observability import learning_reader
+
+            try:
+                return learning_reader.wiring_view(
+                    persona=str(request.query_params.get("persona", "")),
+                    edge=str(request.query_params.get("edge", "")),
+                    live_wiring=self._wiring,
+                )
+            except Exception as _lw_err:
+                logger.warning("[learning] wiring failed: %s", _lw_err)
+                return {"top": [], "deltas": [], "edge_count": 0}
+
+        @app.post("/feedback")
+        async def turn_feedback(request: Request):
+            """Thumbs verdict on a brain message — the external-grade write path."""
+            if self._on_feedback is None:
+                return {"ok": False, "error": "feedback not wired"}
+            try:
+                body = await request.json()
+            except Exception:
+                body = {}
+            turn_id = str((body or {}).get("turn_id", "")).strip()
+            grade = (body or {}).get("grade")
+            if not turn_id or grade is None:
+                return {"ok": False, "error": "missing turn_id or grade"}
+            try:
+                return self._on_feedback(turn_id, grade, str(body.get("source", "user_thumbs")))
+            except Exception as _fb_err:
+                logger.warning("[learning] feedback failed: %s", _fb_err)
+                return {"ok": False, "error": str(_fb_err)}
+
+        @app.get("/learning/summary")
+        async def learning_summary(request: Request):
+            from brain.observability import learning_reader
+
+            try:
+                return learning_reader.summary(
+                    persona=str(request.query_params.get("persona", "")),
+                    live_wiring=self._wiring,
+                    live_bus=self._bus,
+                )
+            except Exception as _lsm_err:
+                logger.warning("[learning] summary failed: %s", _lsm_err)
+                return {"plasticity": [], "reward_mix": {}, "switches": [], "chunks": {}, "predictor": {}}
 
         @app.post("/restart")
         async def restart_brain():

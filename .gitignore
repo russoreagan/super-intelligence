@@ -24,6 +24,10 @@ second_brain/archive/
 # Per-session wiring snapshots are large + redundant with the current wiring.json
 second_brain/wiring_history/
 
+# Learning surface runtime data (per-persona rolling JSONL; regenerates from decisions)
+second_brain/**/learning_ledger.jsonl
+second_brain/**/learning_stories.jsonl
+
 # Claude Code local config
 .claude/
 

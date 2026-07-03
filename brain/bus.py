@@ -117,14 +117,66 @@ class Neuromodulators:
         # reward signal — and therefore Hebbian learning — is self-graded.
         self._da_tally: dict[str, float] = {"intrinsic": 0.0, "external": 0.0}
 
-    def add(self, channel: str, delta: float, source: str = "intrinsic") -> None:
+    # source → the audited provenance class of a reward write. "external" and
+    # "external_grader" are grounded outside the brain; "critic_model" is a model
+    # judging (better than pure self-grading, still not the world); everything
+    # else is self-administered.
+    _SIGNAL_TYPES = {
+        "external": "external_user",
+        "external_grader": "external_grader",
+        "critic_model": "critic_model",
+    }
+
+    def add(
+        self,
+        channel: str,
+        delta: float,
+        source: str = "intrinsic",
+        reward_source: str = "",
+        reason: str = "",
+    ) -> None:
         self._levels[channel] = max(0.0, min(1.0, self._levels[channel] + delta))
         if channel == "DA" and delta:
-            key = "external" if source == "external" else "intrinsic"
+            key = "external" if source in ("external", "external_grader") else "intrinsic"
             tally = getattr(self, "_da_tally", None)
             if tally is None:  # bare test instances constructed via __new__
                 tally = self._da_tally = {"intrinsic": 0.0, "external": 0.0}
             tally[key] += abs(float(delta))
+            self._log_reward_emission(delta, source, reward_source, reason)
+
+    def _log_reward_emission(
+        self, delta: float, source: str, reward_source: str, reason: str
+    ) -> None:
+        """Attribution record for every DA write — THE chokepoint all reward
+        emissions flow through. Makes the reward mix (self-graded vs external)
+        and the emissions-per-turn count first-class, queryable facts. Guarded:
+        observability must never be able to break chemistry."""
+        try:
+            from brain.observability.decisions import decisions
+            from brain.observability.firing_path import get_current_trace
+            from brain.persona_key import active_or_home_persona, persona_slug
+
+            trace = get_current_trace()
+            turn_id = getattr(trace, "turn_id", "") if trace is not None else ""
+            record = decisions.log(
+                "reward_emission",
+                turn_id=turn_id,
+                channel="DA",
+                delta=round(float(delta), 4),
+                source=source,
+                signal_type=self._SIGNAL_TYPES.get(source, "self_graded"),
+                reward_source=reward_source,
+                reason=reason,
+                persona=persona_slug(active_or_home_persona()),
+            )
+            if trace is not None:
+                emissions = getattr(trace, "reward_emissions", None)
+                if emissions is not None:
+                    emissions.append(
+                        {k: record[k] for k in ("delta", "signal_type", "reward_source", "reason")}
+                    )
+        except Exception:
+            pass
 
     def da_source_tally(self) -> dict[str, float]:
         """Cumulative |DA delta| by provenance since this instance was created."""
