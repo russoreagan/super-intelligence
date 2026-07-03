@@ -1,4 +1,4 @@
-# An agent that's better on day 30 than on day 1
+# Reading your notes isn't the same as knowing
 
 *Marketing copy — learning story. Public-safe: functional descriptions only.*
 
@@ -8,79 +8,88 @@ Every morning, a trading app asks its agent the same thing:
 
 > "Find new items for my watchlist."
 
-What happens next depends entirely on what's underneath.
+Today's standard answer to "make the agent remember" is a context file: the
+agent keeps notes, and every request re-reads them before responding. Memory
+files, instruction files, retrieved history — different names, same pattern.
+It genuinely helps. It also *feels* like learning.
 
-## With a traditional LLM
+It isn't. Here's the difference, thirty days in.
 
-Nothing accumulates. The model has no memory of yesterday — every request
-starts from zero. Same prompt, same reasoning from scratch, same cost, same
-latency, on day 1 and day 300. Stuffing history into the context window doesn't
-fix this: it makes every request *bigger and more expensive*, and the model
-still re-thinks everything, every time.
+## The context-file agent, day 30
 
-**Day 300 looks exactly like day 1 — except the bill is higher.**
+The notes have grown: watchlist preferences, past picks, corrections, special
+cases. Before doing anything, the model reads all of it — every request now
+carries a month of accumulated text.
 
-## With a multi-agent framework
+And then it does exactly what it did on day 1: reasons through the whole
+problem from scratch, with more to read first. The notes *inform* the
+reasoning; they don't change it. Three things quietly go wrong:
 
-Now there's an orchestrator, a planner agent, a research agent, a writer agent.
-The work gets done — by running the full committee, every single time. The
-orchestration itself is overhead that repetition never reduces, because none of
-the agents remember that they've solved this exact problem 29 times before.
+- **The cost curve points the wrong way.** More memory = more tokens = every
+  request slower and more expensive than the last. The agent's experience is
+  a tax it pays on every call, forever.
+- **Everything is equally loud.** A stale note from week one sits next to
+  yesterday's correction with equal weight. Nothing is consolidated, nothing
+  fades, and past a point, more notes make answers *worse*, not better.
+- **The notes are advice, not behavior.** Instructions in context are
+  suggestions the model usually follows. There is no mechanism that *makes*
+  day 30 different from day 1 — just hope that the model reads its own diary
+  carefully every single time.
 
-**More agents means more calls per task — and still nothing compounds.**
+**Day 30, the agent is better-informed. It is not one bit better at the job.**
 
-## With our engine
+## Our engine, day 30
 
-The engine treats experience as an asset:
+The engine doesn't re-read a month of notes — the month has already changed
+how it works:
 
-- **Day 1** — it plans the job from scratch: scan the watchlist, screen the
-  movers, rank the candidates, deliver. Full effort, and it remembers the
-  outcome — not the transcript, the *outcome*.
-- **Day 5** — it recognizes the request instantly, skips the exploratory
-  work, and builds on what the last runs already found instead of
-  rediscovering it.
-- **Day 30** — the whole routine has been consolidated into a single practiced
-  motion. What used to take a chain of model calls to plan now replays as one
-  proven sequence. The market data is fresh; the *thinking about how to do it*
-  is already done.
+- The routine parts of the job have been consolidated into a practiced
+  sequence that replays directly, instead of being re-reasoned through a
+  longer and longer prompt.
+- It builds on what previous runs actually *found* — outcomes, not
+  transcripts — so run 30 starts where run 29 finished.
+- It knows this request is routine, and spends its attention accordingly.
+  When something genuinely new shows up — an unfamiliar request, an odd
+  market day — it automatically gets the full effort a context file gives
+  everything indiscriminately.
 
-**Same request, fewer model calls, faster answers, results that build on each
-other. The agent got cheaper and sharper at the same time.**
+**Same request: fewer model calls than day 1, faster than day 1, and results
+that compound. Experience made it cheaper, not more expensive.**
 
-## How it works (in one paragraph)
+## The one-sentence difference
 
-The engine continuously scores how *novel* each moment is, and spends compute
-where the novelty is. Routine interactions take learned shortcuts; genuinely
-new situations get full attention automatically. Repeated successes are
-consolidated offline into reusable routines — and its self-improvement is
-guarded: the engine only credits itself for wins that were genuinely uncertain,
-so it can't game its own progress by repeating what's easy.
+> Context changes what the model reads. Learning changes how it decides.
+
+A context file is a notebook — useful, and worth exactly what re-reading it is
+worth. Learning is a skill: the knowing lives in the doing. You can't become a
+better trader by re-reading a longer diary every morning.
 
 ## What never gets lazy
 
-Familiarity makes the engine faster — never careless. Some things are exempt
-from every shortcut, permanently:
+Practiced doesn't mean careless. Some things are exempt from every learned
+shortcut, permanently:
 
 - **Requests to act** are always fully understood before anything executes.
-- **Emotionally charged moments** always get complete attention — a routine
-  response to a non-routine moment is the wrong response.
-- **Budgets and approvals** never relax with repetition. Run 100 is held to
-  the same spending limits and permission checks as run 1.
-- **Every shortcut audits itself.** Learned shortcuts are continuously
-  spot-checked against full reasoning; the moment one stops matching, it's
-  revoked until it re-earns trust.
+- **Emotionally charged moments** always get complete attention.
+- **Budgets and approvals** never relax with repetition — run 100 faces the
+  same limits and permission checks as run 1.
+- **Every shortcut audits itself** — learned routines are continuously
+  spot-checked against full reasoning, and revoked the moment they stop
+  matching. A context file has no equivalent: nobody is checking whether the
+  notes still work.
 
 ## Side by side
 
-| | Traditional LLM | Multi-agent framework | Our engine |
-|---|---|---|---|
-| Memory of past work | None (context window ≠ memory) | Logs, maybe — agents don't learn from them | Outcomes, remembered and reused |
-| 100th identical request | Same cost as the 1st | Same committee as the 1st | A practiced routine |
-| Cost over time | Flat or growing | Grows with agent count | Decreases with familiarity |
-| Novel situations | Same treatment as routine ones | Same pipeline as routine ones | Automatically get full attention |
-| Cross-task transfer | None | None | Solutions transfer to similar-shaped problems |
-| Safety under familiarity | N/A — nothing changes | N/A — nothing changes | Guarded: shortcuts self-audit, limits never relax |
+| | LLM + context file | Our engine |
+|---|---|---|
+| Where experience lives | In the prompt, re-read every call | In how the work gets done |
+| Cost as experience grows | Rises — every request carries the past | Falls — routine work gets compressed |
+| What accumulates | Text | Ability |
+| Routine vs. novel | Treated identically | Routine streamlined, novel gets full attention |
+| Curation | A human (or the model) prunes the file | Consolidation is automatic, offline |
+| Behavior change | Advisory — notes the model should follow | Structural — the decision path itself adapts |
+| When memory goes stale | Stale notes mislead until someone notices | Shortcuts self-audit and revoke |
 
 ---
 
-**Traditional models answer requests. Ours builds a practice.**
+**Context files make a model better-informed. Ours gets better at the job.**
