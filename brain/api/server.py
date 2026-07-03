@@ -297,6 +297,8 @@ def build_api_router(
 
     @router.post("/sessions")
     async def create_session(body: dict, authorization: str | None = Header(default=None)):
+        """Start a session for an end-user on an agent. Optionally pin app-provided
+        skills into every turn of the session."""
         ctx = _require(authorization)
         end_user_id = (body or {}).get("end_user_id")
         if not isinstance(end_user_id, str) or not end_user_id.strip():
@@ -378,6 +380,9 @@ def build_api_router(
     async def run_turn(
         session_id: str, body: dict, authorization: str | None = Header(default=None)
     ):
+        """Run one turn. Returns clean display text, the structured affect block +
+        mood, and a confirmation block when a cloud write is pending. Send message
+        OR audio_input for voice-in."""
         ctx = _require(authorization)
         s = registry.get(session_id)
         if s is None:
@@ -455,6 +460,9 @@ def build_api_router(
     async def run_turn_stream(
         session_id: str, body: dict, authorization: str | None = Header(default=None)
     ):
+        """Stream the turn over SSE — an open event, inner-thought + mood-delta
+        events, a final done event, then optional audio_chunk frames when
+        audio.enabled."""
         ctx = _require(authorization)
         s = registry.get(session_id)
         if s is None:
@@ -579,14 +587,13 @@ def build_api_router(
 
     @router.websocket("/sessions/{session_id}/stream")
     async def ws_turn_stream(session_id: str, websocket: WebSocket):
-        """Realtime WebSocket — persistent duplex connection for a session.
+        """Realtime duplex WebSocket for a session: stream PCM16 audio in (live
+        STT), receive inner-life events and TTS chunks back.
 
-        Supports streaming audio in (PCM16 → Deepgram live STT), inner-life
-        event forwarding, and TTS chunk streaming back. See brain/api/ws.py and
-        the message-protocol reference for the full frame vocabulary.
-
-        Auth is checked via the ``Authorization`` header of the upgrade request
+        Auth is checked on the Authorization header of the upgrade request
         BEFORE accept(); unknown or unauthorised connections are closed 1008."""
+        # Full frame vocabulary: brain/api/ws.py (docstring stays user-facing —
+        # it renders verbatim as this route's Reference-page description).
         authorization = websocket.headers.get("authorization")
         try:
             ctx = _require(authorization)
@@ -624,6 +631,7 @@ def build_api_router(
     async def confirm_action(
         session_id: str, body: dict | None = None, authorization: str | None = Header(default=None)
     ):
+        """Approve or discard the cloud-write action a turn parked for sign-off."""
         ctx = _require(authorization)
         if confirm_runner is None:
             raise HTTPException(
@@ -701,7 +709,9 @@ def build_api_router(
         state: str | None = None,
         authorization: str | None = Header(default=None),
     ):
-        """Recent autonomous job outcomes (state, reason, summary) for this deployment."""
+        """Recent autonomous job outcomes (state, reason, summary) — durable and
+        pollable, so a client that was disconnected while a job ran still reads
+        its result. Filters: ?limit= and ?state=."""
         _require(authorization)
         if jobs_list_runner is None:
             return {"jobs": []}
@@ -709,7 +719,9 @@ def build_api_router(
 
     @router.get("/jobs/{job_id}")
     async def get_job(job_id: str, authorization: str | None = Header(default=None)):
-        """Full record for one job (steps, results, source links, summary)."""
+        """Full record for one job — steps, results, source links, summary. 404
+        for an unknown job id; 501 when job history isn't available on this
+        server."""
         _require(authorization)
         if job_get_runner is None:
             raise HTTPException(status_code=501, detail="job history is not available on this server")
@@ -731,7 +743,9 @@ def build_api_router(
         limit: int = 50,
         authorization: str | None = Header(default=None),
     ):
-        """Plain-language learning stories with structured evidence citations."""
+        """Plain-language stories of what the brain learned (per session, with
+        structured evidence citations). Owner keys may pass ?persona=; partner
+        keys read the org's home persona. ?limit= pages."""
         ctx = _require(authorization)
         if learning_runner is None:
             raise HTTPException(status_code=501, detail="learning surface not available")
@@ -743,7 +757,9 @@ def build_api_router(
         edge: str = "",
         authorization: str | None = Header(default=None),
     ):
-        """Top learned edges + session deltas (+ drift series for a named edge)."""
+        """Top learned routing edges + this session's weight deltas. ?edge=src→tgt
+        adds that edge's drift series across consolidation snapshots and its
+        recent update records."""
         ctx = _require(authorization)
         if learning_runner is None:
             raise HTTPException(status_code=501, detail="learning surface not available")
@@ -754,7 +770,9 @@ def build_api_router(
         persona: str = "",
         authorization: str | None = Header(default=None),
     ):
-        """Learning vitals: plasticity, reward-source mix, switch bands, chunks, predictor."""
+        """Learning vitals: plasticity per session, reward-source mix (self-graded
+        vs external %), switch efficacy within safety bands, motor chunks,
+        thought-sequence predictor stats."""
         ctx = _require(authorization)
         if learning_runner is None:
             raise HTTPException(status_code=501, detail="learning surface not available")
@@ -767,6 +785,8 @@ def build_api_router(
     # wired and 503 (via AudioError) when the provider key isn't configured.
     @router.post("/tts")
     async def tts_route(body: dict, authorization: str | None = Header(default=None)):
+        """Text-to-speech with the affect→voice mapping: pass affect to drive
+        mood-aware prosody. Stateless; 503 when no provider key is configured."""
         ctx = _require(authorization)
         if tts_runner is None:
             raise HTTPException(
@@ -799,6 +819,8 @@ def build_api_router(
 
     @router.post("/stt")
     async def stt_route(body: dict, authorization: str | None = Header(default=None)):
+        """Speech-to-text (base64 audio in) — the commodity transcription path,
+        with optional diarisation. Stateless."""
         ctx = _require(authorization)
         if stt_runner is None:
             raise HTTPException(
@@ -860,6 +882,8 @@ def build_api_router(
     async def list_mandates_route(
         include_inactive: bool = False, authorization: str | None = Header(default=None)
     ):
+        """List the org role library. Pass ?include_inactive=true to include
+        deactivated roles."""
         _require(authorization)
         _guard()
         from brain import mandates
@@ -870,6 +894,8 @@ def build_api_router(
     async def upsert_mandate_route(
         mandate_id: str, body: dict, authorization: str | None = Header(default=None)
     ):
+        """Create or update a role (mandate). conduct_rules / reward_weights are
+        stored for partner sync."""
         _require(authorization)
         _guard()
         from brain import mandates
@@ -891,6 +917,8 @@ def build_api_router(
     async def deactivate_mandate_route(
         mandate_id: str, authorization: str | None = Header(default=None)
     ):
+        """Deactivate a role. Existing persona assignments stop resolving it; the
+        record is kept (soft-delete) so ?include_inactive=true can still list it."""
         _require(authorization)
         _guard()
         from brain import mandates
@@ -904,6 +932,7 @@ def build_api_router(
     async def list_assignments_route(
         persona: str, authorization: str | None = Header(default=None)
     ):
+        """List the roles assigned to a persona, in order."""
         _require(authorization)
         _guard()
         from brain import mandates
@@ -917,6 +946,7 @@ def build_api_router(
         body: dict | None = None,
         authorization: str | None = Header(default=None),
     ):
+        """Assign a role to a persona (idempotent). Optional sort_order."""
         _require(authorization)
         _guard()
         from brain import mandates
@@ -928,6 +958,7 @@ def build_api_router(
     async def unassign_route(
         persona: str, mandate_id: str, authorization: str | None = Header(default=None)
     ):
+        """Unassign a role from a persona."""
         _require(authorization)
         _guard()
         from brain import mandates
@@ -946,6 +977,7 @@ def build_api_router(
 
     @router.get("/agents")
     async def list_agents_route(authorization: str | None = Header(default=None)):
+        """List the org's agents and the account permission ceilings."""
         _require(authorization)
         _guard()
         from brain import agents as _ag
@@ -957,6 +989,7 @@ def build_api_router(
 
     @router.get("/agents/{agent_id}")
     async def get_agent_route(agent_id: str, authorization: str | None = Header(default=None)):
+        """Fetch one agent (persona×role) — its name, permissions, and model tier."""
         _require(authorization)
         _guard()
         from brain import agents as _ag
@@ -970,6 +1003,8 @@ def build_api_router(
     async def upsert_agent_route(
         agent_id: str, body: dict | None = None, authorization: str | None = Header(default=None)
     ):
+        """Create-or-update an agent: set its display name, per-agent permission
+        narrowing, and model tier."""
         _require(authorization)
         _guard()
         from brain import agents as _ag
@@ -992,6 +1027,8 @@ def build_api_router(
 
     @router.delete("/agents/{agent_id}")
     async def delete_agent_route(agent_id: str, authorization: str | None = Header(default=None)):
+        """Delete an agent by unassigning the persona×role pairing — the id stops
+        resolving for new sessions. The underlying role stays in the library."""
         _require(authorization)
         _guard()
         from brain import mandates
@@ -1040,6 +1077,8 @@ def build_api_router(
         status: str | None = None,
         authorization: str | None = Header(default=None),
     ):
+        """List app-provided skills. Filters: ?status= and ?include_inactive=.
+        A non-owner partner sees only its own submissions."""
         ctx = _require(authorization)
         _guard()
         from brain import skills_registry as sr
@@ -1052,6 +1091,9 @@ def build_api_router(
 
     @router.get("/skills/{skill_id}")
     async def get_skill_route(skill_id: str, authorization: str | None = Header(default=None)):
+        """Fetch one skill — the full row including body text, status (enabled /
+        flagged / rejected), and screener notes. Use it to poll whether a
+        submission cleared review."""
         ctx = _require(authorization)
         _guard()
         from brain import skills_registry as sr
@@ -1067,6 +1109,8 @@ def build_api_router(
     async def upsert_skill_route(
         skill_id: str, body: dict, authorization: str | None = Header(default=None)
     ):
+        """Submit or update an app-provided skill. Runs the admission screener:
+        obviously-safe → enabled, anything in question → flagged for review."""
         ctx = _require(authorization)
         _guard()
         from brain import skills_registry as sr
@@ -1123,6 +1167,8 @@ def build_api_router(
 
     @router.delete("/skills/{skill_id}")
     async def delete_skill_route(skill_id: str, authorization: str | None = Header(default=None)):
+        """Remove a skill — it leaves the live index on the next rewarm and stops
+        being injected into turns."""
         ctx = _require(authorization)
         _guard()
         from brain import skills_registry as sr
@@ -1139,6 +1185,7 @@ def build_api_router(
 
     @router.get("/admin/skills/flagged")
     async def list_flagged_skills_route(authorization: str | None = Header(default=None)):
+        """List skills the screener flagged, awaiting superadmin review."""
         _require_owner(authorization)
         _guard()
         from brain import skills_registry as sr
@@ -1147,6 +1194,7 @@ def build_api_router(
 
     @router.post("/admin/skills/{skill_id}/approve")
     async def approve_skill_route(skill_id: str, authorization: str | None = Header(default=None)):
+        """Approve a flagged skill — it goes live."""
         _require_owner(authorization)
         _guard()
         from brain import skills_registry as sr
@@ -1163,6 +1211,8 @@ def build_api_router(
     async def reject_skill_route(
         skill_id: str, body: dict | None = None, authorization: str | None = Header(default=None)
     ):
+        """Reject a flagged skill, with an optional reason recorded in its
+        screen notes. It never goes live."""
         _require_owner(authorization)
         _guard()
         from brain import skills_registry as sr
@@ -1182,6 +1232,8 @@ def build_api_router(
     # process's in-memory caches (ops / GDPR right-to-erasure).
     @router.delete("/end_users/{end_user_id}")
     async def purge_end_user(end_user_id: str, authorization: str | None = Header(default=None)):
+        """Erase one end-user's memory + state across every per-user table and
+        in-memory cache (GDPR right-to-erasure)."""
         ctx = _require(authorization)
         if not ctx.get("owner"):
             raise HTTPException(status_code=403, detail="owner key required")
@@ -1205,6 +1257,7 @@ def build_api_router(
 
     @router.get("/partner_keys")
     async def list_partner_keys_route(authorization: str | None = Header(default=None)):
+        """List the org's partner keys (metadata only — never the token)."""
         _require_owner(authorization)
         _guard()
         from brain.api import auth as _a
@@ -1213,6 +1266,7 @@ def build_api_router(
 
     @router.post("/partner_keys")
     async def mint_partner_key_route(body: dict, authorization: str | None = Header(default=None)):
+        """Mint a partner key — the token is returned once, at creation."""
         _require_owner(authorization)
         _guard()
         from brain.api import auth as _a
@@ -1229,6 +1283,8 @@ def build_api_router(
     async def revoke_partner_key_route(
         key_id: str, authorization: str | None = Header(default=None)
     ):
+        """Revoke a partner key — requests bearing it are rejected immediately;
+        the metadata row is kept for audit."""
         _require_owner(authorization)
         _guard()
         from brain.api import auth as _a
@@ -1253,6 +1309,9 @@ def build_api_router(
 
     @router.post("/mcp/tokens")
     async def store_mcp_token(body: dict, authorization: str | None = Header(default=None)):
+        """Store a per-end-user MCP access token (vault-encrypted at rest) after
+        the partner completes the OAuth flow, so managed agents can build
+        per-user Vaults."""
         _require(authorization)
         body = body or {}
         end_user_id = body.get("end_user_id")
@@ -1291,6 +1350,8 @@ def build_api_router(
 
     @router.get("/mcp/tokens/{end_user_id}")
     async def list_mcp_tokens(end_user_id: str, authorization: str | None = Header(default=None)):
+        """List an end-user's connected MCP servers (metadata only — never the
+        token)."""
         _require(authorization)
         try:
             resp = (
@@ -1308,6 +1369,9 @@ def build_api_router(
     async def delete_mcp_token(
         end_user_id: str, server_name: str, authorization: str | None = Header(default=None)
     ):
+        """Delete one stored MCP token connection — the disconnect path when an
+        end-user unlinks a service; agents lose access on their next Vault
+        build."""
         _require(authorization)
         try:
             resp = (

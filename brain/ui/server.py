@@ -1582,6 +1582,19 @@ class UIServer:
         # Read-only views over what the learning subsystems already persist;
         # the active persona reads live objects, others read their files.
 
+        @app.get("/api_reference")
+        async def api_reference():
+            """Machine-generated /v1 API reference for the API workspace — derived
+            from the live route table + docstrings (brain/api/reference.py), so
+            the page can't drift from the code."""
+            try:
+                from brain.api.reference import build_reference
+
+                return build_reference()
+            except Exception as _ref_err:
+                logger.warning("[api] reference build failed: %s", _ref_err)
+                return {"sections": [], "endpoints": []}
+
         @app.get("/learning/stories")
         async def learning_stories(request: Request):
             from brain.observability import learning_reader
