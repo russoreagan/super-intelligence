@@ -778,6 +778,37 @@ def build_api_router(
             raise HTTPException(status_code=501, detail="learning surface not available")
         return learning_runner("summary", persona=_learning_persona(ctx, persona))
 
+    # ── DMN (idle-thought) runtime switch — owner only ────────────────────────
+    # Durable kill-switch for the idle inner-life loop, settable while the brain
+    # runs: the loop checks settings['dmn_enabled'] each cycle, so a PUT takes
+    # effect on the next tick and re-enabling needs no restart. Distinct from the
+    # BRAIN_DMN env gate (which decides whether the loop exists at all) — this
+    # switch can only stop a running loop, never start one env has disabled.
+    # Persisted via settings.save() so it survives a process restart.
+    @router.get("/dmn")
+    async def get_dmn_route(authorization: str | None = Header(default=None)):
+        """Owner: read the DMN idle-thought switch."""
+        ctx = _require(authorization)
+        if not ctx.get("owner"):
+            raise HTTPException(status_code=403, detail="owner key required")
+        from brain.settings import settings as brain_settings
+
+        return {"enabled": bool(brain_settings.get("dmn_enabled", 1))}
+
+    @router.put("/dmn")
+    async def set_dmn_route(body: dict, authorization: str | None = Header(default=None)):
+        """Owner: flip the DMN idle-thought switch ({enabled: bool})."""
+        ctx = _require(authorization)
+        if not ctx.get("owner"):
+            raise HTTPException(status_code=403, detail="owner key required")
+        enabled = (body or {}).get("enabled")
+        if not isinstance(enabled, bool):
+            raise HTTPException(status_code=400, detail="enabled (boolean) is required")
+        from brain.settings import settings as brain_settings
+
+        brain_settings.save({"dmn_enabled": 1 if enabled else 0})
+        return {"enabled": enabled}
+
     # ── Audio (optional, partner-gated) ───────────────────────────────────────
     # Stateless: no session needed. TTS exposes the affect→voice mapping (the
     # differentiated half — a partner can't replicate mood-driven prosody client

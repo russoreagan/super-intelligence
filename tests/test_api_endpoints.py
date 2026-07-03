@@ -785,3 +785,29 @@ def test_apiserver_registers_budget_handler():
 
     s = ApiServer(_FakeRunner())
     assert CloudBudgetExceeded in s.app.exception_handlers
+
+
+def test_dmn_switch_owner_only(monkeypatch, tmp_path):
+    """GET/PUT /v1/dmn: owner flips the runtime idle-thought switch; partners 403;
+    the value round-trips through the settings store (persisted via save)."""
+    from brain import settings as settings_mod
+
+    # Keep save() writes off the real settings.json.
+    monkeypatch.setattr(settings_mod, "SETTINGS_PATH", tmp_path / "settings.json")
+    monkeypatch.setitem(settings_mod.settings._data, "dmn_enabled", 1)
+
+    c = _scoped_client()
+    A = {"Authorization": "Bearer ka"}
+    OWNER = {"Authorization": "Bearer ko"}
+
+    assert c.get("/v1/dmn").status_code == 401
+    assert c.get("/v1/dmn", headers=A).status_code == 403
+    assert c.put("/v1/dmn", json={"enabled": False}, headers=A).status_code == 403
+
+    assert c.get("/v1/dmn", headers=OWNER).json() == {"enabled": True}
+    assert c.put("/v1/dmn", json={"enabled": "no"}, headers=OWNER).status_code == 400
+    assert c.put("/v1/dmn", json={"enabled": False}, headers=OWNER).json() == {"enabled": False}
+    assert c.get("/v1/dmn", headers=OWNER).json() == {"enabled": False}
+    assert settings_mod.settings.get("dmn_enabled") == 0
+    assert c.put("/v1/dmn", json={"enabled": True}, headers=OWNER).json() == {"enabled": True}
+    assert settings_mod.settings.get("dmn_enabled") == 1

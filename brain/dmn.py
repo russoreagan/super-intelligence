@@ -242,7 +242,11 @@ class DefaultModeNetwork:
     _recent_embeddings = _PerPersona(lambda: deque(maxlen=DMN_RECENT_THOUGHTS))
     _recent_frames = _PerPersona(lambda: deque(maxlen=DMN_RECENT_FRAMES))
     _consec_suppressed = _PerPersona(lambda: 0)
-    _seq_predictor = _PerPersona(SequencePredictor)
+    # Factory loads: a persona first bound at runtime resumes ITS OWN persisted
+    # thought-transition history (per-persona sequence_weights.json) instead of
+    # starting blank each boot. Home's instance is assigned in __init__ and
+    # loaded by the novelty-state restore, same as always.
+    _seq_predictor = _PerPersona(lambda: _loaded_seq_predictor())
     _memory_seed = _PerPersona(lambda: "")
     _event_seed = _PerPersona(lambda: "")
     _event_seed_depth = _PerPersona(lambda: 0)
@@ -812,11 +816,10 @@ class DefaultModeNetwork:
                 os.replace(tmp, NOVELTY_STATE_PATH)
             except Exception as e:
                 logger.warning("[DMN] Could not persist novelty state: %s", e)
-        # The seq-predictor weights file is likewise process-global; only home
-        # save/loads it so a rotated persona can't overwrite it (per-persona seq
-        # persistence is a follow-up — the in-memory predictor IS already per-persona).
-        if self._is_home_active():
-            self._seq_predictor.save()
+        # Seq-predictor persistence is per-persona (each instance captures its
+        # binding at construction and routes to its own sequence_weights.json),
+        # so every rotated persona saves its own file — no clobber risk.
+        self._seq_predictor.save()
 
     # ── Open-threads ledger (open_questions.md) ─────────────────────────────
 
@@ -949,9 +952,9 @@ class DefaultModeNetwork:
                 )
         except Exception as e:
             logger.warning("[DMN] Could not load novelty state: %s", e)
-        # Shared weights file → home loads it; rotated personas keep a fresh predictor.
-        if self._is_home_active():
-            self._seq_predictor.load()
+        # Per-persona weights files: load whichever persona's predictor is bound
+        # (rotated personas' instances are factory-loaded on first access).
+        self._seq_predictor.load()
 
     def health(self) -> dict:
         """Lightweight health snapshot so dark degradation becomes visible.
@@ -1920,6 +1923,11 @@ class DefaultModeNetwork:
                 # suppress forever. Running it here gives suppressed ticks a
                 # chance to recover.
                 self._idle_decay()
+                # Owner kill-switch (settings 'dmn_enabled', runtime-editable via
+                # PUT /v1/dmn): when off, the loop idles — no gating, no LLM work,
+                # no thoughts — but keeps cycling so re-enabling needs no restart.
+                if not settings.get("dmn_enabled", 1):
+                    continue
                 # Chemistry idle-gate: hard block when chemistry says the
                 # brain shouldn't be mind-wandering (alert/defensive states).
                 chem = self._chem_snapshot()

@@ -176,6 +176,7 @@ DEFAULTS: dict[str, float | int | str] = {
     "intent_bank_max": 200,
     "intent_dedup_threshold": 0.95,
     # ── Section 4: Default Mode Network ──────────────────────────────────────
+    "dmn_enabled": 1,  # owner kill-switch (runtime, PUT /v1/dmn) — distinct from the BRAIN_DMN env gate
     "dmn_interval": 8.0,  # active baseline — fires when any mouse/keyboard activity detected
     "dmn_idle_interval": 45.0,  # when fully away from computer (OS idle > 60s)
     "dmn_overlap_threshold": 0.35,
