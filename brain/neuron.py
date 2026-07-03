@@ -583,7 +583,11 @@ def prediction_reward(confidence: float, correct: bool, informativeness: float) 
     # A confident bet reality then refuted is a loss — weight it by this persona's loss aversion
     # (λ), so the same wrong call stings harder for risk-averse identities. Gains are never
     # λ-scaled (above); that one-sidedness is loss aversion. Unknown persona → λ=1.0 (unchanged).
-    return -magnitude * loss_aversion(str(_settings.get("persona_name", "")))
+    # The persona is the ACTIVE one (bound agent lane / rotated DMN tick), not the process
+    # home — reading settings.persona_name here handed every bound persona the home λ.
+    from brain.persona_key import active_or_home_persona
+
+    return -magnitude * loss_aversion(active_or_home_persona())
 
 
 def accomplishment_factor(measured_effort: float, expected_effort: float) -> tuple[float, float]:

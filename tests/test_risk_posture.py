@@ -113,6 +113,25 @@ def test_prediction_reward_folds_loss_aversion_into_misses_only():
     assert miss_poet == pytest.approx(miss_stoic * 2.4)
 
 
+def test_prediction_reward_uses_bound_persona_lambda_not_home():
+    """Agent-lane turns and rotated DMN ticks run under bind_persona(); the miss sting
+    must scale by the BOUND persona's λ, not the process home's (the residual site from
+    the 2026-07 chemistry audit — every other reward site already resolves the active
+    persona)."""
+    from brain.neuron import prediction_reward
+    from brain.second_brain.store import bind_persona
+
+    conf, info = 0.9, 0.9
+    settings._data["persona_name"] = "The Poet"  # home λ = 2.4
+    home_miss = prediction_reward(conf, False, info)
+    with bind_persona("The Visionary"):  # bound λ = 0.6
+        bound_miss = prediction_reward(conf, False, info)
+        bound_gain = prediction_reward(conf, True, info)
+    assert home_miss == pytest.approx(-conf * info * 2.4)
+    assert bound_miss == pytest.approx(home_miss / 2.4 * 0.6)  # agent-lane λ, not home
+    assert bound_gain == pytest.approx(conf * info)  # gains never λ-scaled
+
+
 # ── DMN: λ scales the verified-wrong sting, one-sidedly ──────────────────────────
 
 
@@ -120,7 +139,7 @@ class _RecordingNeuromod:
     def __init__(self):
         self.deltas: dict[str, float] = {}
 
-    def add(self, channel, delta, source="intrinsic"):
+    def add(self, channel, delta, source="intrinsic", **attribution):
         self.deltas[channel] = self.deltas.get(channel, 0.0) + delta
 
 
