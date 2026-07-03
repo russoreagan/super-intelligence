@@ -90,6 +90,10 @@ class Task:
     origin_session_id: str = ""
     origin_agent_id: str = ""
     origin_end_user_id: str = ""
+    # Job-scope approval grant (approvals.grant_for): set when this task is the
+    # re-queue of a user-approved action, so the whole re-run is pre-authorized —
+    # one approval clears the task instead of one approval per action.
+    approval_token: str = ""
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -189,7 +193,12 @@ class PersistentTaskQueue:
     # ── Queue operations ──────────────────────────────────────────────────────
 
     def enqueue(
-        self, goal: str, source: Source = "user", priority: int = 1, reflex_depth: int = 0
+        self,
+        goal: str,
+        source: Source = "user",
+        priority: int = 1,
+        reflex_depth: int = 0,
+        approval_token: str = "",
     ) -> Task | None:
         """
         Add a task. Returns the new Task, or None if it was deduplicated.
@@ -243,6 +252,7 @@ class PersistentTaskQueue:
             origin_session_id=octx.get("session_id", "") if _is_agent else "",
             origin_agent_id=octx.get("agent_id", "") if _is_agent else "",
             origin_end_user_id=octx.get("end_user_id", "") if _is_agent else "",
+            approval_token=approval_token,
         )
         self._tasks.append(task)
         # Trim oldest completed/failed if over limit

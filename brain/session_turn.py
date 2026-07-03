@@ -1832,6 +1832,10 @@ class _TurnMixin:
             self.router.enter_background_mode()
         if is_autonomous:
             self.motor.enter_self_mode()
+        # Job-scope approval grant: this task is the re-queue of a user-approved
+        # action, so every ask the job raises is pre-authorized (_gate_action).
+        # Held for exactly this job's run; revoked below so it dies with the job.
+        self._job_approval_token = str(getattr(task, "approval_token", "") or "")
         try:
             summary = await self.motor.execute_internal_job(
                 task.goal, job_turn_id, source=getattr(task, "source", "self")
@@ -1865,6 +1869,10 @@ class _TurnMixin:
                     )
             return
         finally:
+            _grant, self._job_approval_token = self._job_approval_token, ""
+            if _grant and getattr(self, "_approvals", None) is not None:
+                with contextlib.suppress(Exception):
+                    self._approvals.revoke_token(_grant)
             if is_autonomous:
                 self.motor.exit_self_mode()
             if is_self:

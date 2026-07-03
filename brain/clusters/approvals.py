@@ -48,6 +48,15 @@ PENDING_TTL_S = float(os.environ.get("BRAIN_APPROVAL_PENDING_TTL_S", 24 * 60 * 6
 # call with slightly different args, so within this short window a same-tool call
 # is also accepted (still one-time). Outside it, only an exact signature matches.
 RESUME_WINDOW_S = 10 * 60
+# Job-scope grant: approving ONE action from a job pre-authorizes the whole re-run
+# (the job re-plans, so per-action signatures can't survive the round-trip — one
+# approval used to unlock exactly one write and the job ping-ponged back to
+# awaiting_approval for each subsequent one). The grant is carried by the re-queued
+# task, honored non-consumingly while that job runs, revoked when it ends, and
+# TTL-bounded as a backstop in case the revoke never runs (crash mid-job).
+# Override via BRAIN_APPROVAL_GRANT_TTL_S.
+JOB_GRANT_TOOL = "__job_approval_grant__"
+GRANT_TTL_S = float(os.environ.get("BRAIN_APPROVAL_GRANT_TTL_S", 2 * 60 * 60))
 
 
 def action_signature(tool: str, tool_input) -> str:
@@ -219,6 +228,92 @@ class PendingApprovals:
                 self._save()
                 return True
         return False
+
+    # ── Job-scope grants ───────────────────────────────────────────────────────
+    def grant_for(self, turn_id: str = "") -> str:
+        """Mint a job-scope grant: a token the re-queued job carries so EVERY ask it
+        raises while running is allowed — one approval clears the whole task. Stored
+        as a resolved ledger item (tool=JOB_GRANT_TOOL) so it survives a restart and
+        rides the existing persistence; never listed as pending."""
+        token = uuid.uuid4().hex[:16]
+        self._items.append(
+            Approval(
+                id=str(uuid.uuid4())[:8],
+                tool=JOB_GRANT_TOOL,
+                signature=token,
+                reason="job-scope grant (one approval covers the whole task)",
+                turn_id=turn_id or "",
+                status="approved",
+                resolved_at=time.time(),
+            )
+        )
+        self._trim()
+        self._save()
+        return token
+
+    def token_valid(self, token: str) -> bool:
+        """Non-consuming check: is this job-scope grant still live? (The job holds
+        the token for its whole run; revoke_token() ends it when the job ends.)"""
+        if not token:
+            return False
+        now = time.time()
+        for a in self._items:
+            if (
+                a.tool == JOB_GRANT_TOOL
+                and a.signature == token
+                and a.status == "approved"
+                and a.resolved_at is not None
+                and now - a.resolved_at <= GRANT_TTL_S
+            ):
+                return True
+        return False
+
+    def revoke_token(self, token: str) -> None:
+        """Drop a job-scope grant (the granted job finished). TTL is the backstop
+        if the job crashes before this runs."""
+        if not token:
+            return
+        keep = [a for a in self._items if not (a.tool == JOB_GRANT_TOOL and a.signature == token)]
+        if len(keep) != len(self._items):
+            self._items = keep
+            self._save()
+
+    def consume_item(self, approval_id: str) -> None:
+        """Remove a resolved item outright. Used when a job-scope grant supersedes a
+        just-approved action: leaving the approved item in the ledger would hand out
+        one extra same-tool pass (the RESUME_WINDOW match) after the grant is gone."""
+        keep = [a for a in self._items if a.id != approval_id]
+        if len(keep) != len(self._items):
+            self._items = keep
+            self._save()
+
+    def resolve_siblings(self, turn_id: str, exclude_id: str = "") -> list[str]:
+        """Skip the OTHER pending items raised by the same job (turn_id): the job-scope
+        grant supersedes them — the re-run will redo those actions pre-authorized, so
+        leaving them pending would show dead cards the user keeps approving into
+        duplicate re-runs. Returns the resolved ids so UIs can clear their cards."""
+        if not turn_id:
+            return []
+        now = time.time()
+        out: list[str] = []
+        for a in self._items:
+            if (
+                a.status == "pending"
+                and a.turn_id == turn_id
+                and a.id != exclude_id
+                and a.tool != JOB_GRANT_TOOL
+            ):
+                a.status = "skipped"
+                a.resolved_at = now
+                out.append(a.id)
+        if out:
+            self._save()
+            logger.info(
+                "[Approvals] %d sibling approval(s) superseded by job grant (%s)",
+                len(out),
+                turn_id,
+            )
+        return out
 
     def expire_stale(self) -> int:
         """Auto-skip pending items older than PENDING_TTL_S. Without this, an

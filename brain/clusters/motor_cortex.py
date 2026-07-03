@@ -2615,13 +2615,33 @@ class MotorCortexCluster:
                 return result
 
             # Self-directed work has no user in the loop to answer a confirmation
-            # prompt mid-job, so route the write through the approval ledger — the
-            # same hook the per-tool gate uses. If this exact write was already
-            # approved, run it now (the resume path). Otherwise the hook records a
-            # pending approval the user can act on from the app, and we report the
-            # step as NOT done so the job can't claim success for a write it never
-            # performed (the old path returned CONFIRMATION_NEEDED, which the story
-            # loop miscounted as success and surfaced no approval at all).
+            # prompt mid-job. Under the external-only policy (default), a "write"
+            # task is NOT itself a reason to ask — internal writes (tenant tables,
+            # sandboxed files) run unattended, and the per-tool-call gate inside the
+            # cloud session (_classify_action → _resolve_pending) still asks for
+            # genuinely external side-effects and blocks money movement. Pre-gating
+            # the whole task here double-asked for internal work: every report-write
+            # job parked in awaiting_approval.
+            if self._in_internal_job and bool(
+                _brain_settings.get("autonomy_approve_external_only", True)
+            ):
+                logger.info(
+                    "[MotorCortex] Write task runs unattended (external-only policy; "
+                    "per-tool gate covers external actions): %s",
+                    description,
+                )
+                result = await self._cloud.execute_pending(turn_id)
+                await self._bus.publish_dict("motor.result", result, source=CLUSTER)
+                return result
+
+            # Legacy broad gate (autonomy_approve_external_only off): route the write
+            # through the approval ledger — the same hook the per-tool gate uses. If
+            # this exact write was already approved, run it now (the resume path).
+            # Otherwise the hook records a pending approval the user can act on from
+            # the app, and we report the step as NOT done so the job can't claim
+            # success for a write it never performed (the old path returned
+            # CONFIRMATION_NEEDED, which the story loop miscounted as success and
+            # surfaced no approval at all).
             approval_hook = getattr(self._cloud, "_approval_fn", None)
             if self._in_internal_job and approval_hook is not None:
                 verdict = "deny"

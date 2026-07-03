@@ -6226,6 +6226,9 @@ function handle(msg) {
     case 'task_approval':
       handleApprovalEvent(msg);
       break;
+    case 'task_approval_resolved':
+      handleApprovalResolvedEvent(msg);
+      break;
     case 'chat_history': {
       if (Array.isArray(msg.turns) && msg.turns.length) {
         const msgs = document.getElementById('messages');
@@ -8481,6 +8484,15 @@ function handleApprovalEvent(msg) {
   if (!msg || !msg.id) return;
   APPROVALS[msg.id] = msg;
   renderApprovals();
+}
+
+// An approval was settled somewhere else (the copilot / engine API, or superseded
+// by a job-scope grant) — clear its card here too instead of leaving it stale.
+function handleApprovalResolvedEvent(msg) {
+  const ids = Array.isArray(msg?.ids) ? msg.ids : (msg?.id ? [msg.id] : []);
+  let changed = false;
+  ids.forEach(id => { if (id in APPROVALS) { delete APPROVALS[id]; changed = true; } });
+  if (changed) renderApprovals();
 }
 
 function renderApprovals() {

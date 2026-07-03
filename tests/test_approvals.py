@@ -114,3 +114,113 @@ def test_approved_expires_after_ttl(approvals, monkeypatch):
         it.resolved_at = 1.0
     monkeypatch.setattr(mod.time, "time", lambda: 1.0 + mod.APPROVAL_TTL_S + 1)
     assert approvals.is_approved("send_dm", {"to": "bob"}) is False
+
+
+# ── Job-scope grants (one approval clears the whole task) ─────────────────────
+
+
+def test_grant_token_valid_nonconsuming_and_revocable(approvals):
+    tok = approvals.grant_for("task_ab12")
+    # Non-consuming: valid any number of times while the job runs.
+    assert approvals.token_valid(tok) is True
+    assert approvals.token_valid(tok) is True
+    # Never shows up as a pending card.
+    assert approvals.pending() == []
+    approvals.revoke_token(tok)
+    assert approvals.token_valid(tok) is False
+
+
+def test_grant_token_expires_after_ttl(approvals, monkeypatch):
+    import time as _time
+
+    import brain.clusters.approvals as mod
+
+    tok = approvals.grant_for("task_ab12")
+    real = _time.time()
+    monkeypatch.setattr(mod.time, "time", lambda: real + mod.GRANT_TTL_S + 1)
+    assert approvals.token_valid(tok) is False
+
+
+def test_unknown_or_empty_token_is_invalid(approvals):
+    assert approvals.token_valid("") is False
+    assert approvals.token_valid("nope") is False
+
+
+def test_resolve_siblings_settles_same_job_pending_only(approvals):
+    kept = approvals.record("cloud_write", {"task": "step 1"}, turn_id="task_j1")
+    sib = approvals.record("cloud_write", {"task": "step 2"}, turn_id="task_j1")
+    other_job = approvals.record("cloud_write", {"task": "elsewhere"}, turn_id="task_j2")
+    approvals.approve(kept.id)
+    resolved = approvals.resolve_siblings("task_j1", exclude_id=kept.id)
+    assert resolved == [sib.id]
+    # The other job's card is untouched; this job's siblings are gone.
+    pend_ids = [p["id"] for p in approvals.pending()]
+    assert pend_ids == [other_job.id]
+
+
+def test_grant_survives_restart(approvals, tmp_path, monkeypatch):
+    import brain.clusters.approvals as mod
+
+    tok = approvals.grant_for("task_j1")
+    monkeypatch.setattr(mod, "APPROVALS_PATH", tmp_path / "approvals.json")
+    fresh = mod.PendingApprovals()
+    assert fresh.token_valid(tok) is True
+
+
+# ── approve_action → job grant → _gate_action (session-level flow) ────────────
+
+
+class _FakeQueue:
+    def __init__(self):
+        self.enqueued = []
+
+    def enqueue(self, goal, source="user", priority=1, reflex_depth=0, approval_token=""):
+        self.enqueued.append({"goal": goal, "approval_token": approval_token})
+        return object()  # non-None = accepted
+
+
+def _make_loops_stub(approvals):
+    from brain.session_loops import _LoopsMixin
+
+    class _Stub(_LoopsMixin):
+        def __init__(self):
+            self._approvals = approvals
+            self._task_queue = _FakeQueue()
+            self._emitter = None
+            self._job_approval_token = ""
+
+    return _Stub()
+
+
+def test_one_approval_clears_the_whole_task(approvals):
+    """The full ping-pong fix: approving ONE action from a job re-queues the work
+    with a job-scope grant, settles the job's other pending cards, and the gate
+    then allows EVERY ask the re-run raises — no per-write round-trips."""
+    import asyncio
+
+    stub = _make_loops_stub(approvals)
+    # The job raised two writes before parking in awaiting_approval.
+    a1 = approvals.record("cloud_write", {"task": "write report part 1"}, turn_id="task_j9")
+    approvals.record("cloud_write", {"task": "write report part 2"}, turn_id="task_j9")
+
+    out = stub.approve_action(a1.id)
+    assert out["ok"] is True
+    # Sibling card settled too — nothing left pending anywhere.
+    assert approvals.pending() == []
+    # The re-queued task carries a live grant.
+    (queued,) = stub._task_queue.enqueued
+    token = queued["approval_token"]
+    assert approvals.token_valid(token) is True
+
+    # The re-run holds the token: every ask is allowed, however it's phrased,
+    # and the grant is NOT consumed between calls.
+    stub._job_approval_token = token
+    assert asyncio.run(stub._gate_action({"tool": "cloud_write", "input": {"task": "x"}})) == "allow"
+    assert asyncio.run(stub._gate_action({"tool": "cloud_write", "input": {"task": "y"}})) == "allow"
+
+    # Job ends → grant revoked → the next ask gates again.
+    approvals.revoke_token(token)
+    stub._job_approval_token = ""
+    verdict = asyncio.run(stub._gate_action({"tool": "cloud_write", "input": {"task": "z"}}))
+    assert verdict == "deny"
+    assert len(approvals.pending()) == 1

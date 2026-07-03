@@ -106,6 +106,7 @@ settings/Vault into `os.environ`). Write sites are noted inline where relevant.
 | `BRAIN_MOTOR_INLINE_STEP_CAP` | `1` | call | How many tools a reactive turn runs inline before deferring the rest to a background job. `brain/session_turn.py:2102` |
 | `BRAIN_MOTOR_INTERACTIVE_TIMEOUT_S` | `30` | call | Inline motor budget per reactive turn before answering anyway. `brain/session_turn.py:2098,2198` |
 | `BRAIN_APPROVAL_PENDING_TTL_S` | `86400` (24 h) | import ⚠ | TTL for pending approval items (expired ones auto-skip). `brain/clusters/approvals.py:46` |
+| `BRAIN_APPROVAL_GRANT_TTL_S` | `7200` (2 h) | import ⚠ | Backstop TTL for job-scope approval grants (normally revoked when the granted job ends). `brain/clusters/approvals.py:60` |
 | `BRAIN_JOB_STORE_MAX_JOBS` | settings:`job_store_max_jobs` (100) | call | Job-store retention cap (count). `brain/clusters/job_store.py:46` |
 | `BRAIN_JOB_STORE_MAX_MB` | settings:`job_store_max_mb` (100) | call | Job-store retention cap (size). `brain/clusters/job_store.py:58` |
 | `BRAIN_FETCH_CACHE_TTL_S` | `21600` (6 h) | call | fetch_url result-cache TTL. `brain/clusters/job_store.py:340` |

@@ -801,6 +801,18 @@ class _LoopsMixin:
         }
 
     # ── Action approvals ───────────────────────────────────────────────────────
+    def _emit_approvals_resolved(self, ids: list[str]) -> None:
+        """Tell every connected UI these approval cards are settled, so a resolve
+        from ANY surface (owner UI, engine API / tenant app) clears them everywhere —
+        the owner UI previously only removed a card on its own optimistic click."""
+        ids = [i for i in ids if i]
+        if not ids or not self._emitter:
+            return
+        with contextlib.suppress(Exception):
+            asyncio.get_running_loop().create_task(
+                self._emitter.emit_event({"type": "task_approval_resolved", "ids": ids})
+            )
+
     async def _gate_action(self, action: dict) -> str:
         """Cloud-executor approval hook. Returns 'allow' or 'deny'.
 
@@ -812,6 +824,13 @@ class _LoopsMixin:
             return "deny"
         tool = action.get("tool", "")
         tool_input = action.get("input")
+        # Job-scope grant: the running job is the re-queue of an action the user
+        # already approved — every ask it raises is covered, so one approval clears
+        # the whole task instead of ping-ponging back per action.
+        token = str(getattr(self, "_job_approval_token", "") or "")
+        if token and approvals.token_valid(token):
+            logger.info("[Approvals] allowed by job-scope grant: %s", tool)
+            return "allow"
         if approvals.is_approved(tool, tool_input):
             return "allow"
         item = approvals.record(
@@ -849,13 +868,30 @@ class _LoopsMixin:
                 with contextlib.suppress(Exception):
                     gate._budget.clear_soft_pause()
             logger.info("[Approvals] owner approved continue-spending — soft pause lifted")
+            self._emit_approvals_resolved([item.id])
             return {"ok": True, "tool": item.tool, "continued": True}
         goal = f"The user approved this action — carry it out now: {item.tool}"
         if item.preview:
             goal += f" ({item.preview})"
+        # One approval clears the whole task: mint a job-scope grant the re-run
+        # carries, and settle the job's OTHER pending asks — the pre-authorized
+        # re-run redoes them, so their cards are dead weight in every UI. The
+        # per-item approval is superseded by the grant, so consume it here rather
+        # than leave a stray one-time same-tool pass in the ledger.
+        token = approvals.grant_for(item.turn_id)
+        approvals.consume_item(item.id)
+        superseded = approvals.resolve_siblings(item.turn_id, exclude_id=item.id)
+        queued = None
         if self._task_queue:
-            self._task_queue.enqueue(goal, source="user", priority=1)
-        logger.info("[Approvals] approved + re-queued [%s] %s", item.id, item.tool)
+            queued = self._task_queue.enqueue(
+                goal, source="user", priority=1, approval_token=token
+            )
+        if queued is None:
+            # Deduplicated against an already-queued twin (or no queue) — that twin
+            # carries its own grant or re-asks; don't leave this one dangling live.
+            approvals.revoke_token(token)
+        self._emit_approvals_resolved([item.id, *superseded])
+        logger.info("[Approvals] approved + re-queued [%s] %s (job grant)", item.id, item.tool)
         return {"ok": True, "tool": item.tool}
 
     def skip_action(
@@ -864,7 +900,10 @@ class _LoopsMixin:
         approvals = getattr(self, "_approvals", None)
         if approvals is None:
             return {"ok": False, "error": "approvals unavailable"}
-        return {"ok": approvals.skip(approval_id, end_user_id=end_user_id, include_autonomous=include_autonomous)}
+        ok = approvals.skip(approval_id, end_user_id=end_user_id, include_autonomous=include_autonomous)
+        if ok:
+            self._emit_approvals_resolved([approval_id])
+        return {"ok": ok}
 
     def list_approvals(self, end_user_id: str | None = None, include_autonomous: bool = False) -> list[dict]:
         approvals = getattr(self, "_approvals", None)

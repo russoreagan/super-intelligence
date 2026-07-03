@@ -729,10 +729,47 @@ class TestMotorCloudDispatch:
         await m.execute({"raw_text": "search calendar"}, "t1")
         assert not cloud.has_pending
 
-    async def test_in_job_write_records_approval_and_awaits(self, tmp_path):
-        # Inside a job there's no conversational user, so a gated write routes to the
-        # approval ledger (the hook) and reports AWAITING_APPROVAL — NOT executed,
-        # NOT the in-conversation CONFIRMATION_NEEDED path.
+    async def test_in_job_write_runs_unattended_under_external_only(self, tmp_path):
+        # Default policy (autonomy_approve_external_only): an in-job "write" task is
+        # not itself a reason to ask — internal writes run unattended; external
+        # side-effects are gated per tool call INSIDE the cloud session instead. The
+        # coarse pre-gate used to park every report-write job in awaiting_approval.
+        cloud = self._make_cloud()
+
+        async def _fake_execute_pending(turn_id=""):
+            cloud._calls.append(("pending", turn_id))
+            return {"tool": "cloud_action", "output": "wrote it", "success": True}
+
+        cloud.execute_pending = _fake_execute_pending
+        hook_calls = []
+        cloud._approval_fn = lambda action: hook_calls.append(action) or "deny"
+        plan = {
+            "tool": "cloud_action",
+            "args": {
+                "task": "update watchlist",
+                "is_write": True,
+                "context_facts": [],
+                "description": "update the watchlist file",
+            },
+            "reason": "cloud write",
+        }
+        m, _ = _make_motor(tmp_path, tool_plan=plan, cloud=cloud)
+        m._in_internal_job = True  # simulate running inside an InternalJob
+        result = await m.execute({"raw_text": "update watchlist"}, "t1")
+        assert result["success"] is True
+        assert cloud._calls == [("pending", "t1")]  # executed, no coarse pre-gate
+        assert hook_calls == []  # the whole-task approval hook was never consulted
+
+    async def test_in_job_write_records_approval_and_awaits_legacy_gate(
+        self, tmp_path, monkeypatch
+    ):
+        # Legacy broad gate (autonomy_approve_external_only OFF): inside a job there's
+        # no conversational user, so a gated write routes to the approval ledger (the
+        # hook) and reports AWAITING_APPROVAL — NOT executed, NOT the in-conversation
+        # CONFIRMATION_NEEDED path.
+        from brain.settings import settings as _settings
+
+        monkeypatch.setitem(_settings._data, "autonomy_approve_external_only", 0)
         cloud = self._make_cloud()
         seen = {}
 
@@ -760,8 +797,12 @@ class TestMotorCloudDispatch:
         assert "watchlist" in seen["action"]["reason"]
         assert len(cloud._calls) == 0  # the write was NOT executed
 
-    async def test_in_job_write_executes_when_pre_approved(self, tmp_path):
-        # The user-approved re-run: the hook reports "allow", so the parked write runs.
+    async def test_in_job_write_executes_when_pre_approved(self, tmp_path, monkeypatch):
+        # The user-approved re-run under the legacy broad gate: the hook reports
+        # "allow", so the parked write runs.
+        from brain.settings import settings as _settings
+
+        monkeypatch.setitem(_settings._data, "autonomy_approve_external_only", 0)
         cloud = self._make_cloud()
 
         async def _fake_execute_pending(turn_id=""):
