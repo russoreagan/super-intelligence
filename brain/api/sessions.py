@@ -45,6 +45,10 @@ class ApiSession:
     # on top of relevance selection. Set at session create; only ids that warmed in as
     # enabled skills are honored at turn time.
     pinned_skills: list[str] = field(default_factory=list)
+    # Answer-only contract: every turn of this session is synchronous Q&A — no
+    # motor dispatch, no muscle-memory open-loop, no FollowThrough enqueue. Set at
+    # session create; a turn body may override per turn. See turn_ctx.bind_turn.
+    answer_only: bool = False
     created_ts: float = 0.0
 
 
@@ -61,6 +65,7 @@ class ApiSessionRegistry:
         mandate_id: str | None = None,
         partner_id: str | None = None,
         pinned_skills: list[str] | None = None,
+        answer_only: bool = False,
     ) -> ApiSession:
         sid = self._id_fn()
         s = ApiSession(
@@ -70,6 +75,7 @@ class ApiSessionRegistry:
             mandate_id=mandate_id,
             partner_id=partner_id,
             pinned_skills=list(pinned_skills or []),
+            answer_only=bool(answer_only),
             created_ts=self._now(),
         )
         self._sessions[sid] = s
@@ -114,6 +120,7 @@ class ApiSessionRegistry:
                     "partner_id": s.partner_id,
                     "pending": s.pending,
                     "pinned_skills": s.pinned_skills,
+                    "answer_only": s.answer_only,
                 },
                 on_conflict="org_id,session_id",
             ).execute()
@@ -130,7 +137,7 @@ class ApiSessionRegistry:
                 client.table("api_sessions")
                 .select(
                     "session_id, end_user_id, agent_id, mandate_id, partner_id, pending, "
-                    "pinned_skills, created_ts"
+                    "pinned_skills, answer_only, created_ts"
                 )
                 .eq("org_id", org)
                 .eq("session_id", session_id)
@@ -148,6 +155,7 @@ class ApiSessionRegistry:
                 partner_id=r.get("partner_id"),
                 pending=r.get("pending"),
                 pinned_skills=list(r.get("pinned_skills") or []),
+                answer_only=bool(r.get("answer_only")),
                 created_ts=0.0,
             )
         except Exception as e:

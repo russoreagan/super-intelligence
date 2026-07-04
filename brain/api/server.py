@@ -298,7 +298,10 @@ def build_api_router(
     @router.post("/sessions")
     async def create_session(body: dict, authorization: str | None = Header(default=None)):
         """Start a session for an end-user on an agent. Optionally pin app-provided
-        skills into every turn of the session."""
+        skills into every turn of the session. Pass answer_only=true to declare the
+        whole session synchronous Q&A: turns draft an answer and nothing else — no
+        tool/motor work and no background follow-up jobs (a turn body can override
+        per turn)."""
         ctx = _require(authorization)
         end_user_id = (body or {}).get("end_user_id")
         if not isinstance(end_user_id, str) or not end_user_id.strip():
@@ -320,6 +323,9 @@ def build_api_router(
             or any(not isinstance(x, str) for x in pinned_skills)
         ):
             raise HTTPException(status_code=400, detail="skills must be a list of strings")
+        answer_only = (body or {}).get("answer_only", False)
+        if not isinstance(answer_only, bool):
+            raise HTTPException(status_code=400, detail="answer_only must be a boolean")
         # An agent IS a (persona, role) pairing. Resolving agent_id picks the role
         # (mandate) for this process's persona — the single handle a partner passes
         # instead of juggling persona + mandate_id. Cross-persona agents live in a
@@ -342,6 +348,7 @@ def build_api_router(
             mandate_id,
             partner_id=ctx.get("partner_id"),
             pinned_skills=pinned_skills,
+            answer_only=answer_only,
         )
         return {
             "session_id": s.session_id,
@@ -349,6 +356,7 @@ def build_api_router(
             "agent_id": s.agent_id,
             "mandate_id": s.mandate_id,
             "skills": s.pinned_skills,
+            "answer_only": s.answer_only,
         }
 
     @router.post("/extract")
@@ -376,13 +384,26 @@ def build_api_router(
         data = await extract_runner(input_text, schema, instructions, name)
         return {"data": data if isinstance(data, dict) else {}}
 
+    def _resolve_answer_only(body: dict, s) -> bool:
+        """Effective answer-only flag for one turn: the body's boolean when given,
+        else the session's sticky value. (The agent-permission path is resolved
+        inside the turn itself — see session_turn — so it needs no plumbing here.)"""
+        v = (body or {}).get("answer_only")
+        if v is None:
+            return bool(getattr(s, "answer_only", False))
+        if not isinstance(v, bool):
+            raise HTTPException(status_code=400, detail="answer_only must be a boolean")
+        return v
+
     @router.post("/sessions/{session_id}/turns")
     async def run_turn(
         session_id: str, body: dict, authorization: str | None = Header(default=None)
     ):
         """Run one turn. Returns clean display text, the structured affect block +
         mood, and a confirmation block when a cloud write is pending. Send message
-        OR audio_input for voice-in."""
+        OR audio_input for voice-in. answer_only=true makes this turn pure Q&A —
+        no tool/motor work, no background follow-up jobs (defaults to the
+        session's answer_only setting)."""
         ctx = _require(authorization)
         s = registry.get(session_id)
         if s is None:
@@ -398,6 +419,7 @@ def build_api_router(
             agent_id=s.agent_id,
             end_user_id=s.end_user_id,
             pinned_skills=s.pinned_skills,
+            answer_only=_resolve_answer_only(body, s),
         ):
             text, affect = await turn_runner(
                 message, s.end_user_id, s.mandate_id, _session_persona(s)
@@ -462,7 +484,7 @@ def build_api_router(
     ):
         """Stream the turn over SSE — an open event, inner-thought + mood-delta
         events, a final done event, then optional audio_chunk frames when
-        audio.enabled."""
+        audio.enabled. answer_only behaves as on POST /turns."""
         ctx = _require(authorization)
         s = registry.get(session_id)
         if s is None:
@@ -473,6 +495,8 @@ def build_api_router(
         audio_opt = (body or {}).get("audio")
         if audio_opt is not None and not isinstance(audio_opt, dict):
             raise HTTPException(status_code=400, detail="audio must be an object")
+        # Validate before the stream opens — inside _gen a 400 can't surface.
+        answer_only_flag = _resolve_answer_only(body, s)
 
         source = event_source
         if source is None:
@@ -501,6 +525,7 @@ def build_api_router(
                 agent_id=s.agent_id,
                 end_user_id=s.end_user_id,
                 pinned_skills=s.pinned_skills,
+                answer_only=answer_only_flag,
             ):
                 turn_task = asyncio.create_task(
                     turn_runner(message, s.end_user_id, s.mandate_id, _session_persona(s))

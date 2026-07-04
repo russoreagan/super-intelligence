@@ -314,6 +314,7 @@ class WsSession:
                     session_id=s.session_id,
                     agent_id=s.agent_id,
                     end_user_id=s.end_user_id,
+                    answer_only=getattr(s, "answer_only", False),
                 ):
                     # This is the one engine transport that survives turn_end, so it
                     # keeps the non-blocking defer→proactive loop: a reactive tool's

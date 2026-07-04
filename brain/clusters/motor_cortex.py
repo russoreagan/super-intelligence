@@ -972,8 +972,10 @@ class MotorCortexCluster:
         override.
 
         `source` is the initiator: "user" marks a user-AWAITED job (the user asked and
-        is waiting) — it bypasses the autonomy rate caps (see _check_job_rate_limit),
-        which exist to bound self-directed spend, not work the user requested.
+        is waiting) — it bypasses the autonomy rate caps (see _check_job_rate_limit)
+        and the spend/risk gate, which exist to bound self-directed spend, not work
+        the user requested. Everything else ("commitment" extracted from the
+        assistant's own phrasing, DMN "self" work, boot "recovery") is capped+gated.
 
         Runs in background mode: cloud cells (strategic_planner, verifier) are
         subject to bg_cloud_token_rate + daily USD cap; falls back to local
@@ -1055,6 +1057,9 @@ class MotorCortexCluster:
             # as source="user" yet still runs here. Reset in the finally so live
             # interactive turns keep confirming in-conversation.
             self._in_internal_job = True
+            # Held for the job's duration so the record-stamping sites inside the
+            # body (which doesn't take source) persist the real initiator.
+            self._current_source = source
             # HARD wall-clock bound on the ENTIRE job. The internal _job_deadline
             # is only POLLED inside the story loop, so it can't interrupt a hung
             # await (e.g. a stalled strategic-plan call before the loop even
@@ -1091,6 +1096,7 @@ class MotorCortexCluster:
             self._router.exit_background_mode()
             self._active_job_count = max(0, self._active_job_count - 1)
             self._in_internal_job = False
+            self._current_source = ""
 
     async def _execute_internal_job_body(
         self, goal: str, turn_id: str, job_id: str, budget: int, emitter
@@ -1694,7 +1700,7 @@ class MotorCortexCluster:
                 unverified_stories=unverified_stories,
                 success_criteria=success_criteria,
                 complexity=complexity,
-                source="self" if getattr(self, "_current_source", "") == "self" else "user",
+                source=getattr(self, "_current_source", "") or "user",
                 ralph_mode=use_ralph,
                 total_attempts=total_attempts,
             )
@@ -1792,7 +1798,7 @@ class MotorCortexCluster:
             results_log,
             success,
             job_id=job_id,
-            source="self" if getattr(self, "_current_source", "") == "self" else "user",
+            source=getattr(self, "_current_source", "") or "user",
             ralph_mode=use_ralph,
             total_attempts=total_attempts,
             plan_steps=stories_planned,
@@ -2412,7 +2418,7 @@ class MotorCortexCluster:
                 stories_completed=outcome.stories_completed,
                 stories_total=outcome.stories_total or len(outcome.plan_steps or []),
                 cloud_usd=self._job_cloud_usd(outcome.job_id, terminal=done),
-                source=getattr(self, "_current_source", "self"),
+                source=getattr(self, "_current_source", "") or "self",
             )
             self._mirror_job_to_table(outcome.job_id)
 

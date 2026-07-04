@@ -57,6 +57,27 @@ _CANCEL_WORDS = frozenset(
 )
 
 
+def _effective_answer_only(features) -> bool:
+    """Is the CURRENT turn answer-only (pure Q&A — no motor dispatch, no
+    muscle-memory open-loop, no FollowThrough enqueue)? True when the bound turn
+    context declares it (API session/turn option → turn_ctx.bind_turn) OR the
+    turn's agent carries the answer_only permission. Fails open to False so a
+    store hiccup can never silence a normal agent's tools."""
+    from brain.turn_ctx import current_turn
+
+    if bool(current_turn().get("answer_only")):
+        return True
+    agent_id = features.get("agent_id") if isinstance(features, dict) else None
+    if not agent_id:
+        return False
+    try:
+        from brain import agents
+
+        return agents.answer_only(agent_id)
+    except Exception:
+        return False
+
+
 class _TurnMixin:
     # ── Turn processing ───────────────────────────────────────────────────────
 
@@ -639,6 +660,23 @@ class _TurnMixin:
                 features["agent_id"] = f"{_persona_key(_resolve_persona(''))}.{mandate_id}"
             except Exception:
                 pass
+
+        # ── Answer-only enforcement ────────────────────────────────────────────
+        # A turn declared answer_only (API session/turn option, carried on the
+        # turn context) or run by an agent whose permissions mark it answer_only
+        # is pure Q&A: draft an answer, do NOTHING else. Neutralizing
+        # requires_action HERE — before the frontal task subsystem and the motor
+        # branch read it — means no goal deposit, no "[task_queued]" ack the brain
+        # never honors, no motor planning, and no muscle-memory open-loop (its
+        # matching only runs inside motor execution). FollowThrough is gated
+        # separately below because it fires on every turn, action or not.
+        answer_only = _effective_answer_only(features)
+        if answer_only:
+            features = dict(features) if isinstance(features, dict) else {}
+            features["answer_only"] = True
+            if features.get("requires_action"):
+                features["requires_action"] = False
+                logger.info("[AnswerOnly] requires_action suppressed (answer-only turn)")
 
         # ── Default speaker for typed input ───────────────────────────────────
         # When ears are off (or no diarization arrived) there is no voice-based
@@ -1524,7 +1562,12 @@ class _TurnMixin:
         self.obs.record_turn(trace)
         self._session_traces_full.append(trace)
 
-        if self._follow_through:
+        if self._follow_through and answer_only:
+            # Answer-only turn: never mint background work off it — neither the
+            # task-mode deposit (requires_action was neutralized, so none exists)
+            # nor a commitment extracted from the drafted answer's phrasing.
+            logger.debug("[AnswerOnly] FollowThrough suppressed (answer-only turn)")
+        elif self._follow_through:
 
             async def _follow_through_check() -> None:
                 deferred_goal = self._pending_task.take() if self._pending_task else None
@@ -1561,7 +1604,13 @@ class _TurnMixin:
                         user_input, final, turn_id
                     )
                     if goal and not asking_user:
-                        self._task_queue.enqueue(goal, source="user", priority=1)
+                        # source="commitment", NOT "user": the executive did NOT
+                        # classify this turn as a task (no deposit above) — the
+                        # assistant volunteered the work in its own phrasing. Such
+                        # jobs must respect the autonomy rate caps + spend gate;
+                        # stamping them "user" let a chatty session mint uncapped
+                        # background jobs (the 2026-07-03 debate cascade).
+                        self._task_queue.enqueue(goal, source="commitment", priority=1)
                         logger.info("[FollowThrough] Task enqueued (reactive): %s", goal[:120])
                 except Exception as _e:
                     logger.warning("[FollowThrough] failed: %s", _e)

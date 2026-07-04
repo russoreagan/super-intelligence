@@ -9,9 +9,15 @@ The queue is a flat JSON file next to the schema markdown files. Writes are
 atomic (temp-file → rename) to prevent corruption on hard shutdown.
 
 Sources:
-  user      — extracted from a spoken commitment by FollowThrough
-  self      — self-initiated by the DMN based on memory / idle reasoning
-  recovery  — re-queued at boot from an interrupted previous session
+  user       — the user explicitly asked and is awaiting the result (task-mode
+               turns). Bypasses the autonomy rate caps and the spend gate.
+  commitment — extracted by FollowThrough from a commitment the assistant
+               volunteered in its OWN reply on a non-task turn ("I'll look into
+               that"). Self-directed in spirit: subject to the autonomy rate
+               caps, the spend/risk gate, and self-task dedup — the 2026-07-03
+               debate incident showed these enqueues cascading uncapped.
+  self       — self-initiated by the DMN based on memory / idle reasoning
+  recovery   — re-queued at boot from an interrupted previous session
 """
 
 from __future__ import annotations
@@ -31,7 +37,7 @@ logger = logging.getLogger(__name__)
 TASK_QUEUE_PATH = SECOND_BRAIN_ROOT / "task_queue.json"
 
 Status = Literal["pending", "running", "completed", "failed", "blocked", "deferred"]
-Source = Literal["user", "self", "recovery"]
+Source = Literal["user", "commitment", "self", "recovery"]
 
 # Cap total stored tasks (completed + failed entries are trimmed when over limit)
 MAX_TASKS = 40
@@ -218,7 +224,9 @@ class PersistentTaskQueue:
         # For self-initiated tasks: also deduplicate against recently completed/failed
         # tasks within the recency window. Prevents the DMN from re-running work it
         # just finished because it rephrased the goal slightly on the next tick.
-        if source == "self":
+        # Commitment tasks get the same treatment — a repetitive conversation (e.g.
+        # debate rounds) re-extracts near-identical goals turn after turn.
+        if source in ("self", "commitment"):
             cutoff = time.time() - SELF_DEDUP_RECENCY
             for t in self._tasks:
                 if (

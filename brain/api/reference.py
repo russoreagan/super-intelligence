@@ -111,8 +111,12 @@ BODY_EXAMPLES: dict[str, dict] = {
         "agent_id": "the_visionary.research_lead",
         "end_user_id": "u_8821",
         "skills": ["house_policy_v2"],
+        "answer_only": False,
     },
-    "POST /v1/sessions/{session_id}/turns": {"message": "What changed in the market today?"},
+    "POST /v1/sessions/{session_id}/turns": {
+        "message": "What changed in the market today?",
+        "answer_only": False,
+    },
     "POST /v1/sessions/{session_id}/turns/stream": {
         "message": "Summarise the thread",
         "audio": {"enabled": True},

@@ -27,13 +27,14 @@ import contextlib
 from contextvars import ContextVar
 
 # {"channel": "owner"|"agent", "session_id": str, "agent_id": str, "end_user_id": str,
-#  "pinned_skills": list[str]}
+#  "pinned_skills": list[str], "answer_only": bool}
 _OWNER: dict = {
     "channel": "owner",
     "session_id": "",
     "agent_id": "",
     "end_user_id": "",
     "pinned_skills": [],
+    "answer_only": False,
 }
 
 _current: ContextVar[dict] = ContextVar("brain_turn_ctx", default=_OWNER)
@@ -52,6 +53,7 @@ def bind_turn(
     agent_id: str | None = None,
     end_user_id: str = "",
     pinned_skills: list[str] | None = None,
+    answer_only: bool = False,
 ):
     """Bind the routing lane for the duration of a turn. ``channel`` is "agent"
     for engine-API turns (the partner-/agent-driven path) or "owner" for the
@@ -59,7 +61,13 @@ def bind_turn(
     must bind so its events are tagged and filtered out of the main feed.
 
     ``pinned_skills`` are app-provided skill ids the session forces into every turn's
-    bundle (read by frontal._apply_pinned_skills), on top of relevance selection."""
+    bundle (read by frontal._apply_pinned_skills), on top of relevance selection.
+
+    ``answer_only`` marks the turn as synchronous Q&A: the caller wants a spoken
+    answer and NOTHING else — no motor dispatch (and therefore no muscle-memory
+    open-loop execution) and no FollowThrough task enqueue. Declared by the API
+    caller per session/turn; the same enforcement also fires when the session's
+    agent carries the ``answer_only`` permission (see session_turn)."""
     token = _current.set(
         {
             "channel": channel or "owner",
@@ -67,6 +75,7 @@ def bind_turn(
             "agent_id": agent_id or "",
             "end_user_id": end_user_id or "",
             "pinned_skills": list(pinned_skills or []),
+            "answer_only": bool(answer_only),
         }
     )
     try:

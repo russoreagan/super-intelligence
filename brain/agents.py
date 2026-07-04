@@ -69,6 +69,13 @@ _FLAG_KEYS = (
 )
 # Cloud grant level full > ro > off → the more restrictive wins.
 _CLOUD_KEYS = ("motor_user_cloud", "motor_self_cloud")
+# Turn-level restrictions the agent can only ADD (OR-toward-restriction; there is
+# no org-level counterpart to inherit). answer_only marks the agent as a pure
+# commentator: its turns draft an answer and nothing else — no motor dispatch,
+# no muscle-memory open-loop, no FollowThrough enqueue. Enforced at turn start
+# (session_turn), BEFORE planning/enqueue — unlike the motor keys above, which
+# gate at tool dispatch and so can't stop the work from being scheduled at all.
+_RESTRICT_KEYS = ("answer_only",)
 # Filesystem roots → empty means NO access (fail closed); agent dirs must sit
 # inside an org root (path containment), so the agent can only sub-scope.
 _DIR_KEYS = ("motor_allowed_dirs", "motor_read_only_dirs")
@@ -79,7 +86,13 @@ _CONNECTOR_KEYS = ("motor_user_connectors", "motor_self_connectors")
 _COMMAND_KEY = "motor_allowed_commands"
 
 PERMISSION_KEYS = frozenset(
-    _CAP_KEYS + _FLAG_KEYS + _CLOUD_KEYS + _DIR_KEYS + _CONNECTOR_KEYS + (_COMMAND_KEY,)
+    _CAP_KEYS
+    + _FLAG_KEYS
+    + _CLOUD_KEYS
+    + _DIR_KEYS
+    + _CONNECTOR_KEYS
+    + _RESTRICT_KEYS
+    + (_COMMAND_KEY,)
 )
 
 _CLOUD_RANK = {"off": 0, "ro": 1, "full": 2}
@@ -164,6 +177,32 @@ def permissions(agent_id: str) -> dict:
     return p if isinstance(p, dict) else {}
 
 
+# answer_only sits on the TURN hot path (checked at every engine-turn start, not
+# once per motor execution like bind_agent's fetch), so it gets a short TTL cache
+# rather than a Supabase round-trip per turn. Invalidated on set_permissions.
+_ANSWER_ONLY_TTL_S = 60.0
+_answer_only_cache: dict[str, tuple[float, bool]] = {}
+
+
+def answer_only(agent_id: str) -> bool:
+    """True when the agent is marked answer-only (permissions.answer_only). Fails
+    open to False: an unknown agent or a store error must not silence a normal
+    agent's tools — the API flag remains the caller's guaranteed path."""
+    if not agent_id:
+        return False
+    import time
+
+    hit = _answer_only_cache.get(agent_id)
+    if hit is not None and time.time() - hit[0] < _ANSWER_ONLY_TTL_S:
+        return hit[1]
+    try:
+        val = _truthy(permissions(agent_id).get("answer_only"))
+    except Exception:
+        return False
+    _answer_only_cache[agent_id] = (time.time(), val)
+    return val
+
+
 def set_name(agent_id: str, name: str | None) -> dict:
     sb, org = _sb()
     persona_slug, mandate_id = _split(agent_id)
@@ -183,6 +222,7 @@ def set_permissions(agent_id: str, perms: dict) -> dict:
     sb.table("agents").update({"permissions": clean}).eq("org_id", org).eq(
         "persona", persona_slug
     ).eq("mandate_id", mandate_id).execute()
+    _answer_only_cache.pop(agent_id, None)
     return get(agent_id) or {}
 
 
