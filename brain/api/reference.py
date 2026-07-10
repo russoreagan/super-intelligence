@@ -58,7 +58,14 @@ SECTIONS: list[tuple[str, str, tuple[str, ...]]] = [
         "Mandates",
         "The org's role library. A mandate is a reusable role spec (charter, conduct rules, "
         "reward shaping) that can be assigned to any persona.",
-        ("/v1/mandates", "/v1/personas"),
+        ("/v1/mandates",),
+    ),
+    (
+        "Personas",
+        "Persona identities — the built-in roster plus custom personas authored at runtime "
+        "(display name, disposition text, emotional baseline) — and each persona's role "
+        "assignments.",
+        ("/v1/personas",),
     ),
     (
         "Agents",
@@ -144,6 +151,13 @@ BODY_EXAMPLES: dict[str, dict] = {
         "reward_weights": None,
     },
     "PUT /v1/personas/{persona}/mandates/{mandate_id}": {"sort_order": 0},
+    "PUT /v1/personas/{persona}": {
+        "display_name": "Captain Ahab",
+        "disposition": "Captain Ahab — consumed, magnetic, unbending. The whale took my "
+        "leg and I will have my reckoning…",
+        "speaking": "- Grand, biblical cadence; oaths and omens\n- Commands, never asks",
+        "baseline": {"DA": 0.45, "NE": 0.55, "CORT": 0.3, "GABA": 0.18, "5HT": 0.3},
+    },
     "PUT /v1/agents/{agent_id}": {
         "name": "Research Lead",
         "tier": "full",

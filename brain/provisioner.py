@@ -255,6 +255,34 @@ def _persona_slug(name: str) -> str:
     return persona_slug(name)
 
 
+def _materialize_persona_baseline(data: dict, user_id: str, persona: str) -> None:
+    """Stamp chem_baseline_*/chem_init_* for a DEDICATED persona instance's
+    settings.json. A custom persona's owner-API spec (persona.json under the
+    org-canonical state root) wins; a built-in falls back to the canonical
+    chemistry table (+ cognitive fingerprint); off-table with no spec leaves the
+    dict unchanged. Runs in the gateway process, so the spec is read via an
+    explicit path — never this process's SECOND_BRAIN_PATH."""
+    try:
+        from brain import persona_chem, personas
+
+        spec = personas.read_spec_under(tenant_state_root(user_id), persona)
+        baseline = (spec or {}).get("baseline") or {}
+        if baseline:
+            for ch in persona_chem.CHANNELS:
+                if ch in baseline:
+                    data[f"chem_baseline_{ch}"] = float(baseline[ch])
+                    data[f"chem_init_{ch}"] = float(baseline[ch])
+        else:
+            persona_chem.materialize_resting_into(data, persona)
+    except Exception as e:
+        logger.warning(
+            "[provisioner] persona baseline materialize failed for %s/%s: %s",
+            user_id[:8],
+            persona,
+            e,
+        )
+
+
 def _org_default_agent(user_id: str) -> tuple[str | None, set[str]]:
     """Resolve the org's boot persona from its agents table.
 
@@ -532,7 +560,8 @@ class Provisioner:
         # start with sane chemistry; thereafter it's theirs and never overwritten.
         # Copy via temp + atomic rename: the persona_name read just below (and a
         # racing concurrent spawn) must never see a partially-written file.
-        if not settings_path.exists() and _BUNDLED_SETTINGS.exists():
+        fresh_settings = not settings_path.exists()
+        if fresh_settings and _BUNDLED_SETTINGS.exists():
             tmp = settings_path.with_suffix(".json.tmp")
             shutil.copy(_BUNDLED_SETTINGS, tmp)
             os.replace(tmp, settings_path)
@@ -547,8 +576,18 @@ class Provisioner:
             persona_name = persona
             with contextlib.suppress(Exception):
                 data = json.loads(settings_path.read_text(encoding="utf-8"))
-                if data.get("persona_name") != persona:
+                changed = data.get("persona_name") != persona
+                if changed:
                     data["persona_name"] = persona
+                if changed or fresh_settings:
+                    # A dedicated instance's settings start as the BUNDLED defaults,
+                    # which carry the bundled persona's chemistry — not this
+                    # persona's. Stamp the right baseline in before first boot: a
+                    # custom (owner-API-authored) spec wins, else the built-in
+                    # table; an off-table persona with no spec keeps the seeded
+                    # values (previous behavior). Only on first seed / persona
+                    # change — an instance's evolved tuning is never overwritten.
+                    _materialize_persona_baseline(data, user_id, persona)
                     tmp = settings_path.with_suffix(".json.tmp")
                     tmp.write_text(json.dumps(data), encoding="utf-8")
                     os.replace(tmp, settings_path)

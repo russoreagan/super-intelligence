@@ -1098,6 +1098,81 @@ def build_api_router(
             raise HTTPException(status_code=404, detail="unknown agent")
         return {"ok": True, "agent_id": agent_id}
 
+    # ── Personas (authored identities: disposition text + emotional baseline) ──
+    # A persona is the durable-identity half of an agent. Built-ins ship with the
+    # engine; a partner (e.g. a story engine casting book characters) authors
+    # CUSTOM personas here at runtime, then pairs one with a role via
+    # PUT /v1/agents/{persona}.{mandate_id}. The gateway spawns any persona slug
+    # on demand (X-Brain-Persona header → dedicated process, 503 while booting),
+    # so a created persona is immediately resolvable — subject to the per-org
+    # dedicated-instance cap surfaced by GET /v1/personas. Same bearer auth as
+    # mandates: the caller already controls which persona a session runs as.
+
+    def _run_persona(fn):
+        from brain.personas import PersonaError
+
+        try:
+            return fn()
+        except PersonaError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+    @router.get("/personas")
+    async def list_personas_route(authorization: str | None = Header(default=None)):
+        """List every persona this org can run — the built-in roster plus custom
+        (runtime-authored) specs — with the capacity limits that govern how many
+        personas can run as dedicated brain processes at once (beyond
+        max_dedicated_instances, extra personas are refused, so plan concurrent
+        multi-persona scenes within the cap)."""
+        _require(authorization)
+        from brain import personas as _p
+
+        return {"personas": _p.list_all(), "limits": _p.capacity_limits()}
+
+    @router.get("/personas/{persona}")
+    async def get_persona_route(persona: str, authorization: str | None = Header(default=None)):
+        """Fetch one persona: a custom persona's stored spec (display name,
+        disposition, resting chemistry baseline) or a built-in's canonical
+        profile."""
+        _require(authorization)
+        from brain import personas as _p
+
+        row = _p.get(persona)
+        if row is None:
+            raise HTTPException(status_code=404, detail="unknown persona")
+        return row
+
+    @router.put("/personas/{persona}")
+    async def upsert_persona_route(
+        persona: str, body: dict | None = None, authorization: str | None = Header(default=None)
+    ):
+        """Create or update a CUSTOM persona (idempotent; built-in slugs are
+        refused). Body fields are all optional and merge over the stored spec:
+        display_name; disposition / personality / speaking (identity text,
+        written as the persona in first person — becomes its self-model);
+        baseline (chemistry channels DA/ACh/GABA/Glu/NE/5HT/CORT/OXT/AEA in
+        [0,1]; unset channels default to a neutral profile). The baseline is the
+        temperament the persona's brain boots with and relaxes toward."""
+        _require(authorization)
+        from brain import personas as _p
+
+        return _run_persona(lambda: _p.upsert(persona, body or {}))
+
+    @router.delete("/personas/{persona}")
+    async def delete_persona_route(
+        persona: str, authorization: str | None = Header(default=None)
+    ):
+        """Delete a custom persona's spec, chemistry and identity document
+        (built-ins can't be deleted). Its learned state stays keyed under the
+        slug and simply goes dormant; delete its agents separately via
+        DELETE /v1/agents/{agent_id}."""
+        _require(authorization)
+        from brain import personas as _p
+
+        ok = _run_persona(lambda: _p.delete(persona))
+        if not ok:
+            raise HTTPException(status_code=404, detail="unknown persona")
+        return {"ok": True, "persona": persona}
+
     # ── App-provided skills (the partner's skill library + admission review) ────
     # A skill is partner-supplied content injected into the agent's prompt, so every
     # submission is SCREENED before it can go live (brain/skills_screener.py): obviously
