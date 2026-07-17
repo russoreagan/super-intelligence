@@ -758,9 +758,10 @@ class Provisioner:
             # could mint inert (Supabase would 401 it). The tenant keeps the
             # service-role key; isolation rests on the storage layer's in-query
             # org scoping. See brain/gateway/org_token.py.
-            logger.info(
-                "[provisioner] tenant %s uses the service-role key "
-                "(no org JWT mintable under asymmetric signing / no secret).",
+            logger.warning(
+                "[provisioner] tenant %s boots on the SERVICE-ROLE key — no org JWT "
+                "minted (rejected token / no secret / BRAIN_DISABLE_ORG_JWT). RLS is "
+                "bypassed for this tenant; isolation rests on in-query org scoping.",
                 user_id[:8],
             )
         # Gateway-only secrets never belong in a tenant process: the service-role

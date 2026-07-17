@@ -202,14 +202,21 @@ def test_session_metrics_routing_and_chunk_surfaces():
 # ── Stage 1: org JWT + tenant env hygiene + mandates ──────────────────────────
 
 
+def _reset_probe(monkeypatch):
+    from brain.gateway import org_token
+
+    monkeypatch.setattr(org_token, "_mintable", None)  # reset the cached verdict
+    monkeypatch.delenv("BRAIN_DISABLE_ORG_JWT", raising=False)
+    return org_token
+
+
 def test_mint_org_token_claims(monkeypatch):
     import jwt as pyjwt
 
-    from brain.gateway import org_token
-
+    org_token = _reset_probe(monkeypatch)
     monkeypatch.setenv("SUPABASE_JWT_SECRET", "test-secret")
-    # Legacy HS256 project (symmetric secret still accepted): a token is minted.
-    monkeypatch.setattr(org_token, "_uses_asymmetric_signing", lambda: False)
+    # The project accepts a token we sign → a real org token is minted.
+    monkeypatch.setattr(org_token, "_token_accepted", lambda secret: True)
     org = "11111111-2222-3333-4444-555555555555"
     tok = org_token.mint_org_token(org)
     claims = pyjwt.decode(tok, "test-secret", algorithms=["HS256"], audience="authenticated")
@@ -219,32 +226,43 @@ def test_mint_org_token_claims(monkeypatch):
 
 
 def test_mint_org_token_empty_without_secret(monkeypatch):
-    from brain.gateway.org_token import mint_org_token
-
+    org_token = _reset_probe(monkeypatch)
     monkeypatch.delenv("SUPABASE_JWT_SECRET", raising=False)
-    assert mint_org_token("some-org") == ""
-
-
-def test_mint_org_token_empty_under_asymmetric_signing(monkeypatch):
-    """When the project signs JWTs asymmetrically the legacy HS256 secret is inert,
-    so no token is minted — the tenant falls back to the service-role key instead of
-    booting with a credential Supabase rejects (the gateway-wedge / stuck-load bug)."""
-    from brain.gateway import org_token
-
-    monkeypatch.setenv("SUPABASE_JWT_SECRET", "test-secret")
-    monkeypatch.setattr(org_token, "_uses_asymmetric_signing", lambda: True)
     assert org_token.mint_org_token("some-org") == ""
 
 
-def _mock_jwks(monkeypatch, keys):
+def test_mint_org_token_empty_when_token_rejected(monkeypatch):
+    """If a self-signed HS256 token is rejected (the project no longer accepts the
+    legacy secret), no token is minted — the tenant falls back to the service-role
+    key instead of booting with a credential Supabase 401s."""
+    org_token = _reset_probe(monkeypatch)
+    monkeypatch.setenv("SUPABASE_JWT_SECRET", "test-secret")
+    monkeypatch.setattr(org_token, "_token_accepted", lambda secret: False)
+    assert org_token.mint_org_token("some-org") == ""
+
+
+def test_mint_org_token_kill_switch(monkeypatch):
+    """BRAIN_DISABLE_ORG_JWT forces the service-key path even when minting works."""
+    org_token = _reset_probe(monkeypatch)
+    monkeypatch.setenv("SUPABASE_JWT_SECRET", "test-secret")
+    monkeypatch.setattr(org_token, "_token_accepted", lambda secret: True)
+    monkeypatch.setenv("BRAIN_DISABLE_ORG_JWT", "1")
+    assert org_token.mint_org_token("some-org") == ""
+
+
+def _mock_probe(monkeypatch, *, status=None, http_error_code=None, raise_exc=None):
+    """Wire org_token's acceptance probe to a scripted PostgREST response."""
+    import urllib.error
+
     from brain.gateway import org_token
 
     monkeypatch.setenv("SUPABASE_URL", "https://proj.supabase.co")
-    monkeypatch.setattr(org_token, "_asymmetric", None)  # reset cache
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "anon-key")
+    monkeypatch.setattr(org_token, "_mintable", None)
 
     class _Resp:
-        def read(self_inner):
-            return json.dumps({"keys": keys}).encode()
+        def __init__(self_inner):
+            self_inner.status = status
 
         def __enter__(self_inner):
             return self_inner
@@ -252,21 +270,45 @@ def _mock_jwks(monkeypatch, keys):
         def __exit__(self_inner, *a):
             return False
 
-    monkeypatch.setattr(org_token.urllib.request, "urlopen", lambda req, timeout=5: _Resp())
+    def _fake_urlopen(req, timeout=5):
+        if raise_exc is not None:
+            raise raise_exc
+        if http_error_code is not None:
+            raise urllib.error.HTTPError(req.full_url, http_error_code, "err", {}, None)
+        return _Resp()
+
+    monkeypatch.setattr(org_token.urllib.request, "urlopen", _fake_urlopen)
+    return org_token
 
 
-def test_uses_asymmetric_signing_true_for_ec_keys(monkeypatch):
+def test_token_accepted_true_on_2xx(monkeypatch):
+    org_token = _mock_probe(monkeypatch, status=200)
+    assert org_token._token_accepted("s") is True
+
+
+def test_token_accepted_true_on_non_401_http_error(monkeypatch):
+    # 404 for the deliberately-missing probe table = the JWT decoded fine → mintable.
+    org_token = _mock_probe(monkeypatch, http_error_code=404)
+    assert org_token._token_accepted("s") is True
+
+
+def test_token_accepted_false_on_401(monkeypatch):
+    # 401 = signature rejected → the legacy HS256 secret is inert → not mintable.
+    org_token = _mock_probe(monkeypatch, http_error_code=401)
+    assert org_token._token_accepted("s") is False
+
+
+def test_token_accepted_false_on_network_error(monkeypatch):
+    org_token = _mock_probe(monkeypatch, raise_exc=OSError("boom"))
+    assert org_token._token_accepted("s") is False
+
+
+def test_token_accepted_false_without_config(monkeypatch):
     from brain.gateway import org_token
 
-    _mock_jwks(monkeypatch, [{"kty": "EC", "alg": "ES256", "kid": "k1"}])
-    assert org_token._uses_asymmetric_signing() is True
-
-
-def test_uses_asymmetric_signing_false_when_no_asymmetric_keys(monkeypatch):
-    from brain.gateway import org_token
-
-    _mock_jwks(monkeypatch, [])  # legacy HS256 project publishes no JWKS keys
-    assert org_token._uses_asymmetric_signing() is False
+    monkeypatch.delenv("SUPABASE_URL", raising=False)
+    monkeypatch.delenv("SUPABASE_ANON_KEY", raising=False)
+    assert org_token._token_accepted("s") is False
 
 
 def test_mandate_catalog_empty_in_local_mode(monkeypatch):
