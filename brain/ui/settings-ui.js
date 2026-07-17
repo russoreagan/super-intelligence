@@ -459,6 +459,9 @@
       selectTab('persona');
       refreshDirty();
     }
+    // The catalogue now holds the org's custom personas (the built-in seed alone
+    // doesn't). Surfaces that painted before this landed are showing a short list.
+    notifyPersonaCatalogue({});
   }
 
   function realChangedPatch() {
@@ -1572,6 +1575,15 @@
 
   /* ---- create / rename / delete custom personas ---- */
   function markStore() { storeChanged = true; }
+  // This module owns the persona catalogue, but it's no longer the only thing that
+  // draws it — the Personas workspace rail does too. Announce every change that
+  // happens outside that rail's knowledge (server load, rename, delete) so it can
+  // refresh instead of going stale. `from`/`to` describe a rename; to === null means
+  // deleted; both absent means "the whole catalogue was rebuilt".
+  function notifyPersonaCatalogue(change) {
+    try { document.dispatchEvent(new CustomEvent('personas-changed', { detail: change || {} })); }
+    catch (e) { /* non-fatal: the rail refreshes on its next paint */ }
+  }
   function uniqueName(base) { let n = base, i = 2; while (PERSONAS.find(p => p.id === n) || personaStore[n]) { n = base + ' ' + i; i++; } return n; }
   function syncStoreFromCurrent() {
     if (!persona || view !== 'persona') return;
@@ -1583,7 +1595,10 @@
     if (persona in selfStore) e.selfMd = selfStore[persona];
     personaStore[persona] = e;
   }
-  function createPersona() {
+  // Clone the selected persona into a new custom one and return its id. Model only —
+  // no rail render, no selection — so either host can own the UI that follows: the
+  // Personas workspace mounts it in its own pane; the rail path below selects it here.
+  function createPersonaRecord() {
     const fromName = (PERSONAS.find(p => p.id === persona) || {}).name || persona;
     const name = uniqueName('New Persona');
     const chem = currentChem();
@@ -1599,9 +1614,21 @@
       .replace(/^> .*$/m, `> Cloned from ${fromName}. Edit freely — the brain revises it for itself at sleep consolidation.`);
     selfStore[name] = cloned; selfSaved[name] = cloned;
     personaStore[name].selfMd = cloned;
-    markStore(); renderPersonaRail(); selectPersona(name);
+    markStore();
+    return name;
+  }
+  // Put the caret in the persona-name field so a fresh persona can be renamed on the spot.
+  function focusPersonaName() {
     const nm = document.getElementById('st-name');
-    if (nm) { nm.focus(); const r = document.createRange(); r.selectNodeContents(nm); const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r); }
+    if (!nm) return;
+    nm.focus();
+    const r = document.createRange(); r.selectNodeContents(nm);
+    const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
+  }
+  function createPersona() {
+    const name = createPersonaRecord();
+    renderPersonaRail(); selectPersona(name);
+    focusPersonaName();
   }
   function renamePersona(newName) {
     newName = (newName || '').trim();
@@ -1616,6 +1643,7 @@
     if (manualState[old] != null) { manualState[newName] = manualState[old]; delete manualState[old]; }
     persona = newName; values.persona_name = newName;
     markStore(); renderPersonaRail(); syncPersonaHead(); refreshDirty();
+    notifyPersonaCatalogue({ from: old, to: newName });
   }
   function deletePersona(id) {
     if (isBuiltin(id)) return;
@@ -1626,6 +1654,7 @@
     markStore();
     if (persona === id) selectPersona(PERSONAS[0].id);
     renderPersonaRail(); refreshDirty();
+    notifyPersonaCatalogue({ from: id, to: null });
   }
   function selectSystem(which) {
     view = 'system'; systemPage = which; syncRailSel();
@@ -2036,6 +2065,14 @@
       openApiKeys: async () => { bindChrome('settings'); if (!Object.keys(values).length) await loadFromServer(); renderSlimRail(); selectSystem('apikeys'); syncRailSel(); },
       // Render persona `id`'s full config inline in the Personas workspace pane.
       mountPersona,
+      // The LIVE persona catalogue — built-ins plus the org's custom personas from
+      // persona_store. window.SETTINGS.personas is only the built-in seed (this module
+      // copies it at boot and never writes back), so any surface that lists personas
+      // must read this or custom ones stay invisible to it.
+      listPersonas: () => PERSONAS.map(p => ({ ...p })),
+      // Clone the selected persona; returns the new id. The caller mounts + focuses it.
+      createPersona: createPersonaRecord,
+      focusPersonaName,
       // Whether the currently-mounted persona has unsaved config edits — the workspace
       // uses this to warn before switching personas/views would silently drop them.
       hasUnsavedPersona: () => { try { return dirtyCount() > 0; } catch (e) { return false; } },
