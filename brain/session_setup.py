@@ -369,6 +369,7 @@ class _SetupMixin:
             approval_resolve_runner=self.api_resolve_approval,
             jobs_list_runner=self.api_list_jobs,
             job_get_runner=self.api_get_job,
+            grade_runner=self.api_grade_turn_engine,
             learning_runner=self.api_learning,
             purge_runner=self.api_purge_end_user,
             extract_runner=self.api_extract,

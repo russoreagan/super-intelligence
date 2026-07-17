@@ -1750,6 +1750,15 @@ class _TurnMixin:
         with contextlib.suppress(Exception):
             reset_current_trace(_ctx_token)
 
+        # Surface the turn id so a request/response transport can hand it back to the
+        # partner (POST /turns returns it as resp["turn_id"]). It's the handle a later
+        # external grade needs — POST /turns/{turn_id}/grade. Not sensitive: the same
+        # id already flows through the SSE events and the eval log. The curated
+        # affect/mood views (_affect.py) read only emotion/user_emotion, so this extra
+        # key never crosses the chemistry-not-exposed boundary.
+        if isinstance(affect, dict):
+            affect["turn_id"] = turn_id
+
         return raw_final, affect
 
     def _task_is_on_topic(self, task_goal: str) -> bool:

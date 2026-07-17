@@ -218,6 +218,74 @@ def test_external_grade_shifts_outcome_vs_ungraded():
     assert down < ungraded
 
 
+# ── Engine path: a partner grade lands on the END-USER's bound chemistry ──────
+def _engine_stub(persona="test"):
+    """A _LoopsMixin-bound stub wired like an engine brain: a real Bus and a real
+    per-customer ClientChemRegistry (in-memory store). api_grade_turn_engine must
+    bind the customer's pair so the DA nudge lands there, not on the resting/process
+    pair the reverted bus would resolve to out of band."""
+    import types
+
+    from brain.bus import Bus
+    from brain.client_chem import ClientChemRegistry, InMemoryChemStore
+    from brain.observability.timeline import TurnTrace
+    from brain.session_loops import _LoopsMixin
+
+    bus = Bus()
+    registry = ClientChemRegistry(bus, InMemoryChemStore(), persona=persona)
+    trace = TurnTrace(turn_id="t_eng_1", session_id="s", user_input="hi")
+    stub = SimpleNamespace(bus=bus, _session_traces_full=[trace], _eval_logger=None)
+    stub._client_chem_registry = lambda: registry
+    stub.api_grade_turn = types.MethodType(_LoopsMixin.api_grade_turn, stub)
+    return stub, registry, trace, bus
+
+
+def test_engine_grade_nudges_bound_customer_not_resting_bus(_nudge_at_default):
+    """The whole reason api_grade_turn_engine exists: an out-of-band grade must move
+    THE GRADED CUSTOMER's dopamine, never the reverted process/resting pair and never
+    another customer's mood."""
+    from brain.session_loops import _LoopsMixin
+
+    stub, registry, trace, bus = _engine_stub()
+    nudge = _nudge_at_default
+
+    pair_a = registry.get_or_create("cust-A")
+    pair_b = registry.get_or_create("cust-B")  # a second, uninvolved customer
+    resting = bus.resting_chem
+    a_before = pair_a.neuromod.get("DA")
+    b_before = pair_b.neuromod.get("DA")
+    r_before = resting.neuromod.get("DA")
+
+    result = _LoopsMixin.api_grade_turn_engine(stub, "t_eng_1", 1, end_user_id="cust-A")
+
+    assert result["ok"] is True
+    assert trace.external_grade == 1.0
+    # The grade moved cust-A's mood, by the calibrated nudge.
+    assert pair_a.neuromod.get("DA") - a_before == pytest.approx(nudge)
+    # ...and left the other customer and the resting/process pair untouched.
+    assert pair_b.neuromod.get("DA") == b_before
+    assert resting.neuromod.get("DA") == r_before
+    # Provenance is external, tallied on the customer's OWN bus (not the resting one).
+    assert pair_a.neuromod.da_source_tally()["external"] == pytest.approx(nudge)
+    assert resting.neuromod.da_source_tally()["external"] == 0.0
+
+
+def test_engine_grade_with_no_end_user_falls_back_to_resting(_nudge_at_default):
+    """Degenerate case (no end_user_id, e.g. an owner-scoped session): no client pair
+    to bind, so it nudges the resting pair — same as the owner path. Must not error."""
+    from brain.session_loops import _LoopsMixin
+
+    stub, _registry, trace, bus = _engine_stub()
+    resting = bus.resting_chem
+    r_before = resting.neuromod.get("DA")
+
+    result = _LoopsMixin.api_grade_turn_engine(stub, "t_eng_1", 1, end_user_id="")
+
+    assert result["ok"] is True
+    assert trace.external_grade == 1.0
+    assert resting.neuromod.get("DA") - r_before == pytest.approx(_nudge_at_default)
+
+
 def test_composite_weights_sum_to_one():
     """The graded mix is a convex blend — the four weights must sum to 1.0, or the
     outcome is no longer a normalized [-1, +1] signal."""
