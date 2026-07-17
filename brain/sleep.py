@@ -1018,7 +1018,7 @@ class SleepConsolidation:
         """
         import os
 
-        from brain.clusters.chunk_memory import mine_chunks
+        from brain.clusters.chunk_memory import fireable_chunk_count, mine_chunks
         from brain.clusters.job_store import JOBS_DIR
         from brain.persona_key import persona_slug, persona_state_root
 
@@ -1079,6 +1079,11 @@ class SleepConsolidation:
             data = mine_chunks(jobs)
             data["ts_epoch"] = now
             n_active = sum(1 for c in data["chunks"].values() if c.get("state") == "active")
+            # Active != fireable: a chunk primes the planner once promoted, but only
+            # fires ballistically if it has an invariant (fixed-arg) tail. Logging both
+            # keeps the promotion-vs-firing gap visible (most active chunks on this
+            # workload vary their args every run and are priming-only).
+            n_fireable = fireable_chunk_count(data["chunks"])
             try:
                 os.makedirs(os.path.dirname(chunks_path), exist_ok=True)
                 tmp = chunks_path + ".tmp"
@@ -1086,9 +1091,10 @@ class SleepConsolidation:
                     json.dump(data, f, indent=2)
                 os.replace(tmp, chunks_path)
                 logger.info(
-                    "[ChunkMining] Wrote %d chunks (%d active) from %d jobs for %s",
+                    "[ChunkMining] Wrote %d chunks (%d active, %d fireable) from %d jobs for %s",
                     len(data["chunks"]),
                     n_active,
+                    n_fireable,
                     len(jobs),
                     persona or "home",
                 )
