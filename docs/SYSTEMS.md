@@ -248,6 +248,8 @@ Ages by wall clock rather than by tick count, which is deliberate: if the idle m
 
 It is the newest of the prospective-memory surfaces and the successor to the older deferred-thoughts scratchpad, built because idle thoughts had no durable home. For most of the project's life its section never materialized: the shared section writer rejected the model's ordinary punctuation and the write raised into a swallowed warning (Appendix C). That is fixed at the writer, now under an end-to-end test that drives a real thought through a real store to disk. The section comes into existence the first time a persona opens a thread; as of the audit that had not yet happened in the live file.
 
+A thread does not only wait for idle time. When one bears on what is being discussed now, the router surfaces it into the live turn, and a thread that actually lands in a reply is retired as resolved-by-use. On the owner's own conversations that routing is ungated. In an engine deployment, where the same persona serves a partner's customers, it is gated to the active mandate's domain, so a thread opened while working that domain can surface but the persona's introspective off-time threads stay out of a customer's conversation (§7.9).
+
 ### 3.10 Conclusions · Live
 
 When idle thinking actually settles something, the split is the interesting part. **Confident** means commit it to memory as a real event. **Uncertain** means explicitly do not store it as known. The thread parks, and the question routes into the deferred queue so that next time you talk it asks: I have been thinking this through and tentatively concluded X, does that match how you see it?
