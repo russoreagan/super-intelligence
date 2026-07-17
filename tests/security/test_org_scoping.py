@@ -338,7 +338,7 @@ def test_on_conflict_rule_distinguishes_org_targets():
 def test_the_mcp_tokens_endpoint_is_scoped():
     """Belt and braces on the specific regression: the shipped source must scope it."""
     src = (BRAIN_DIR / "api" / "server.py").read_text()
-    assert '.eq("org_id", _sb_org())' in src
+    assert '.eq("org_id", supabase_client.get_org_id())' in src
     idx = src.index('.table("end_user_mcp_tokens")')
-    window = src[idx : idx + 400]
+    window = src[idx : idx + 700]
     assert '.eq("org_id"' in window, "end_user_mcp_tokens read lost its org filter"

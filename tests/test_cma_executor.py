@@ -821,3 +821,39 @@ class TestCMAUsageMetering:
         exe = _make_exec(client)  # _router defaults to None
         result = await exe.execute_read("task", [])
         assert result["success"] is True
+
+
+class TestFetchEndUserTokens:
+    """The per-end-user Anthropic Vault read path. In prod the pod holds the
+    service-role key (no auth.uid()), so it must thread its own org id as p_org_id
+    or get_end_user_mcp_tokens fails closed and no user tokens are ever loaded."""
+
+    async def test_threads_pod_org_id(self, monkeypatch):
+        from brain.second_brain import supabase_client
+
+        calls: list[tuple[str, dict]] = []
+
+        class _Client:
+            def rpc(self, name, params):
+                calls.append((name, params))
+                return SN(execute=lambda: SN(data=[{"server_name": "jira"}]))
+
+        monkeypatch.setattr(supabase_client, "is_enabled", lambda: True)
+        monkeypatch.setattr(supabase_client, "get_client", lambda: _Client())
+        monkeypatch.setattr(supabase_client, "get_org_id", lambda: "org-pod")
+
+        exe = _make_exec()
+        out = await exe._fetch_end_user_tokens("user-1")
+
+        assert out == [{"server_name": "jira"}]
+        assert len(calls) == 1
+        name, params = calls[0]
+        assert name == "get_end_user_mcp_tokens"
+        assert params == {"p_end_user_id": "user-1", "p_org_id": "org-pod"}
+
+    async def test_disabled_backend_returns_empty(self, monkeypatch):
+        from brain.second_brain import supabase_client
+
+        monkeypatch.setattr(supabase_client, "is_enabled", lambda: False)
+        exe = _make_exec()
+        assert await exe._fetch_end_user_tokens("user-1") == []

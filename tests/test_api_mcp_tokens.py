@@ -1,146 +1,196 @@
 """
-GET /v1/mcp/tokens/{end_user_id} — cross-tenant isolation.
+Engine API — per-end-user MCP token routes (POST/GET/DELETE /v1/mcp/tokens).
 
-Regression: the endpoint selected from end_user_mcp_tokens filtered ONLY on
-end_user_id. That column is partner-chosen free text and not globally unique (the
-PK is (org_id, end_user_id, server_name)), so a guessable id — an email, "user_1"
-— returned every org's rows: which third-party services their end-users had
-connected, the server URLs, and expiry.
+Regression guard for the "inert in production" bug: in prod the tenant pod holds
+the Supabase SERVICE-ROLE key (the project signs JWTs asymmetrically, so the
+gateway can't mint an org token). A service-role JWT has no `sub`, so the RPCs'
+`auth.uid()` is NULL and they used to fail closed. The fix threads the pod's own
+org id (supabase_client.get_org_id()) as an explicit p_org_id, and scopes the
+direct GET read by org_id in-query.
 
-RLS had been hiding the mistake. It no longer does: the live project signs JWTs
-asymmetrically, so the gateway can't mint an org token and the provisioner falls
-back to the service-role key, which bypasses RLS (brain/gateway/org_token.py,
-brain/provisioner.py). The fake below models exactly that mode — it applies the
-filters the code writes and nothing else — so these tests fail if the in-query org
-filter is ever dropped again.
+These tests use a fake Supabase client that RECORDS every rpc/table call, so they
+assert the wiring (org id is threaded, GET is org-filtered) without a database.
+The SQL-level behavior of the RPCs is covered by
+tests/security/test_mcp_token_rpc_scoping.py.
 """
 
 from __future__ import annotations
-
-from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from brain.api.server import build_api_router
-from brain.api.sessions import ApiSessionRegistry
 
-_THIS_ORG = "11111111-1111-4111-8111-111111111111"
-_OTHER_ORG = "22222222-2222-4222-8222-222222222222"
-
-# The same end_user_id in two orgs — legitimate under the composite PK, and the
-# whole reason the missing filter leaked.
-_SHARED_END_USER = "user_1"
-
-_ROWS = [
-    {
-        "org_id": _THIS_ORG,
-        "end_user_id": _SHARED_END_USER,
-        "server_name": "jira",
-        "server_url": "https://jira.ours.example",
-        "expires_at": None,
-        "secret_id": "aaaa-ours",
-    },
-    {
-        "org_id": _OTHER_ORG,
-        "end_user_id": _SHARED_END_USER,
-        "server_name": "salesforce",
-        "server_url": "https://sf.rival.example",
-        "expires_at": None,
-        "secret_id": "bbbb-theirs",
-    },
-    {
-        "org_id": _OTHER_ORG,
-        "end_user_id": _SHARED_END_USER,
-        "server_name": "gdrive",
-        "server_url": "https://drive.rival.example",
-        "expires_at": None,
-        "secret_id": "cccc-theirs",
-    },
-]
+POD_ORG = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 
 
-class _FakeQuery:
-    def __init__(self, rows: list[dict]):
-        self._rows = rows
-        self._filters: dict[str, object] = {}
-        self._cols: list[str] | None = None
+class _RecordingClient:
+    """Captures rpc() calls and table() query chains for assertions."""
 
-    def select(self, cols: str):
-        self._cols = [c.strip() for c in cols.split(",")]
-        return self
+    def __init__(self, *, rpc_data=None):
+        self.rpc_calls: list[tuple[str, dict]] = []
+        self.table_calls: list[dict] = []
+        self._rpc_data = True if rpc_data is None else rpc_data
 
-    def eq(self, col: str, val):
-        self._filters[col] = val
-        return self
+    # rpc(name, params).execute()
+    def rpc(self, name, params):
+        self.rpc_calls.append((name, params))
+        outer = self
 
-    def execute(self):
-        out = [r for r in self._rows if all(r.get(k) == v for k, v in self._filters.items())]
-        if self._cols is not None:
-            out = [{k: r.get(k) for k in self._cols} for r in out]
-        return SimpleNamespace(data=out)
+        class _Exec:
+            def execute(self_inner):
+                return type("R", (), {"data": outer._rpc_data})()
+
+        return _Exec()
+
+    # table(name).select(cols).eq(k, v).eq(k, v).execute()
+    def table(self, name):
+        rec = {"table": name, "select": None, "eq": []}
+        self.table_calls.append(rec)
+
+        class _Q:
+            def select(self_inner, cols):
+                rec["select"] = cols
+                return self_inner
+
+            def eq(self_inner, k, v):
+                rec["eq"].append((k, v))
+                return self_inner
+
+            def execute(self_inner):
+                return type("R", (), {"data": []})()
+
+        return _Q()
 
 
-class _FakeSupabase:
-    """PostgREST under the SERVICE-ROLE key: honours the query's own filters and
-    enforces no row-level security of its own. This is production today."""
-
-    def __init__(self, rows: list[dict]):
-        self._rows = rows
-
-    def table(self, name: str):
-        assert name == "end_user_mcp_tokens"
-        return _FakeQuery(self._rows)
-
-
-@pytest.fixture
+@pytest.fixture()
 def client(monkeypatch):
     from brain.second_brain import supabase_client
 
+    recorder = _RecordingClient()
     monkeypatch.setattr(supabase_client, "is_enabled", lambda: True)
-    monkeypatch.setattr(supabase_client, "get_client", lambda: _FakeSupabase(_ROWS))
-    monkeypatch.setattr(supabase_client, "get_org_id", lambda: _THIS_ORG)
-
-    async def _runner(message, end_user_id, mandate_id=None, persona=None):
-        return ("ok", {})
+    monkeypatch.setattr(supabase_client, "get_client", lambda: recorder)
+    monkeypatch.setattr(supabase_client, "get_org_id", lambda: POD_ORG)
 
     app = FastAPI()
     app.include_router(
-        build_api_router(_runner, ApiSessionRegistry(), auth=lambda h: bool(h)),
+        build_api_router(
+            _FakeRunner(),
+            auth=lambda h: bool(h),
+            resolver=lambda h: {"partner_id": None, "owner": True},
+        )
     )
-    return TestClient(app)
+    c = TestClient(app)
+    c._recorder = recorder  # type: ignore[attr-defined]
+    return c
 
 
-_AUTH = {"Authorization": "Bearer sk_test_123"}
+class _FakeRunner:
+    async def __call__(self, message, end_user_id, mandate_id=None, persona=None):
+        return ("echo", {})
 
 
-def test_returns_only_this_orgs_connections(client):
-    r = client.get(f"/v1/mcp/tokens/{_SHARED_END_USER}", headers=_AUTH)
-    assert r.status_code == 200
-    names = [c["server_name"] for c in r.json()["connections"]]
-    assert names == ["jira"]
+AUTH = {"Authorization": "Bearer k"}
 
 
-def test_never_leaks_another_orgs_metadata(client):
-    """The leak was metadata, not tokens — assert on the metadata itself."""
-    body = client.get(f"/v1/mcp/tokens/{_SHARED_END_USER}", headers=_AUTH).text
-    assert "rival.example" not in body, "another org's server URL leaked"
-    assert "salesforce" not in body
-    assert "gdrive" not in body
+# ── POST /v1/mcp/tokens ──────────────────────────────────────────────────────
 
 
-def test_never_returns_the_vault_secret_id(client):
-    body = client.get(f"/v1/mcp/tokens/{_SHARED_END_USER}", headers=_AUTH).text
-    assert "secret_id" not in body
-    assert "aaaa-ours" not in body
+def test_post_threads_pod_org_id(client):
+    r = client.post(
+        "/v1/mcp/tokens",
+        headers=AUTH,
+        json={
+            "end_user_id": "user-1",
+            "server_name": "jira",
+            "server_url": "https://mcp.atlassian.com",
+            "access_token": "tok-abc",
+        },
+    )
+    assert r.status_code == 200, r.text
+    assert len(client._recorder.rpc_calls) == 1
+    name, params = client._recorder.rpc_calls[0]
+    assert name == "set_end_user_mcp_token"
+    # The crux: the pod's own org is threaded so the RPC resolves under the
+    # service-key fallback where auth.uid() is NULL.
+    assert params["p_org_id"] == POD_ORG
+    assert params["p_end_user_id"] == "user-1"
+    assert params["p_server_name"] == "jira"
+    assert params["p_token"] == "tok-abc"
 
 
-def test_unknown_end_user_returns_empty_not_other_orgs(client):
-    r = client.get("/v1/mcp/tokens/nobody", headers=_AUTH)
-    assert r.status_code == 200
-    assert r.json()["connections"] == []
+def test_post_validates_before_touching_db(client):
+    r = client.post("/v1/mcp/tokens", headers=AUTH, json={"end_user_id": "  "})
+    assert r.status_code == 400
+    assert client._recorder.rpc_calls == []
 
 
-def test_requires_auth(client):
-    assert client.get(f"/v1/mcp/tokens/{_SHARED_END_USER}").status_code == 401
+def test_post_fails_closed_when_org_unset(client, monkeypatch):
+    from brain.second_brain import supabase_client
+
+    def _no_org():
+        raise RuntimeError("No org_id set.")
+
+    monkeypatch.setattr(supabase_client, "get_org_id", _no_org)
+    r = client.post(
+        "/v1/mcp/tokens",
+        headers=AUTH,
+        json={
+            "end_user_id": "user-1",
+            "server_name": "jira",
+            "server_url": "https://x",
+            "access_token": "tok",
+        },
+    )
+    # No org context → 500, never a silent org-less write.
+    assert r.status_code == 500
+
+
+# ── GET /v1/mcp/tokens/{end_user_id} ─────────────────────────────────────────
+
+
+def test_get_is_org_scoped_in_query(client):
+    r = client.get("/v1/mcp/tokens/user-1", headers=AUTH)
+    assert r.status_code == 200, r.text
+    assert len(client._recorder.table_calls) == 1
+    rec = client._recorder.table_calls[0]
+    assert rec["table"] == "end_user_mcp_tokens"
+    # Both an explicit org_id filter (isolation under service-key mode) and the
+    # end_user_id filter must be present.
+    assert ("org_id", POD_ORG) in rec["eq"]
+    assert ("end_user_id", "user-1") in rec["eq"]
+
+
+# ── DELETE /v1/mcp/tokens/{end_user_id}/{server_name} ────────────────────────
+
+
+def test_delete_threads_pod_org_id(client):
+    r = client.delete("/v1/mcp/tokens/user-1/jira", headers=AUTH)
+    assert r.status_code == 200, r.text
+    name, params = client._recorder.rpc_calls[0]
+    assert name == "delete_end_user_mcp_token"
+    assert params["p_org_id"] == POD_ORG
+    assert params["p_end_user_id"] == "user-1"
+    assert params["p_server_name"] == "jira"
+
+
+def test_delete_missing_returns_404(monkeypatch):
+    from brain.second_brain import supabase_client
+
+    recorder = _RecordingClient(rpc_data=[])  # RPC returned false → not found
+    monkeypatch.setattr(supabase_client, "is_enabled", lambda: True)
+    monkeypatch.setattr(supabase_client, "get_client", lambda: recorder)
+    monkeypatch.setattr(supabase_client, "get_org_id", lambda: POD_ORG)
+
+    app = FastAPI()
+    app.include_router(
+        build_api_router(
+            _FakeRunner(),
+            auth=lambda h: bool(h),
+            resolver=lambda h: {"partner_id": None, "owner": True},
+        )
+    )
+    c = TestClient(app)
+    r = c.delete("/v1/mcp/tokens/user-1/jira", headers=AUTH)
+    assert r.status_code == 404

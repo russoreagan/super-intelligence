@@ -1438,21 +1438,6 @@ def build_api_router(
             )
         return supabase_client.get_client()
 
-    def _sb_org() -> str:
-        """This process's org id — the tenant key every DIRECT PostgREST query here
-        must filter on.
-
-        RLS enforces the same thing (`auth.uid() = org_id`), but only while the
-        tenant holds a gateway-minted org JWT. Under asymmetric JWT signing the
-        gateway can't mint one, so the provisioner falls back to the service-role
-        key, which bypasses RLS outright — see brain/gateway/org_token.py and
-        brain/provisioner.py. In that mode an in-query org filter is the ONLY thing
-        separating orgs, so it is never redundant.
-        """
-        from brain.second_brain import supabase_client
-
-        return supabase_client.get_org_id()
-
     @router.post("/mcp/tokens")
     async def store_mcp_token(body: dict, authorization: str | None = Header(default=None)):
         """Store a per-end-user MCP access token (vault-encrypted at rest) after
@@ -1480,6 +1465,8 @@ def build_api_router(
             )
         expires_at = body.get("expires_at")
         try:
+            from brain.second_brain import supabase_client
+
             _sb_client().rpc(
                 "set_end_user_mcp_token",
                 {
@@ -1488,6 +1475,10 @@ def build_api_router(
                     "p_server_url": server_url.strip(),
                     "p_token": access_token.strip(),
                     "p_expires_at": expires_at,
+                    # Explicit org for the service-key fallback mode (asymmetric JWT
+                    # signing → no auth.uid()); ignored when a real org JWT is
+                    # attached, so it can't be used to name another org.
+                    "p_org_id": supabase_client.get_org_id(),
                 },
             ).execute()
         except Exception as e:
@@ -1510,11 +1501,17 @@ def build_api_router(
         # — which is NULL under the service-role key — and would fail closed in the
         # mode production actually runs in.
         try:
+            from brain.second_brain import supabase_client
+
             resp = (
                 _sb_client()
                 .table("end_user_mcp_tokens")
                 .select("server_name, server_url, expires_at")
-                .eq("org_id", _sb_org())
+                # Explicit org filter: this direct PostgREST read is not RLS-scoped
+                # under the service-key fallback (asymmetric JWT signing), so scope
+                # it in-query like every other tenant read. Redundant but harmless
+                # under a real org JWT (RLS would already scope it).
+                .eq("org_id", supabase_client.get_org_id())
                 .eq("end_user_id", end_user_id)
                 .execute()
             )
@@ -1531,11 +1528,18 @@ def build_api_router(
         build."""
         _require(authorization)
         try:
+            from brain.second_brain import supabase_client
+
             resp = (
                 _sb_client()
                 .rpc(
                     "delete_end_user_mcp_token",
-                    {"p_end_user_id": end_user_id, "p_server_name": server_name},
+                    {
+                        "p_end_user_id": end_user_id,
+                        "p_server_name": server_name,
+                        # See store_mcp_token: explicit org for the service-key mode.
+                        "p_org_id": supabase_client.get_org_id(),
+                    },
                 )
                 .execute()
             )
