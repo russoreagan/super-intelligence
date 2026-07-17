@@ -1114,7 +1114,24 @@ class _TurnMixin:
                         getattr(self.dmn, "_last_projects", ""),
                     )
                 )
-                _routed = self.dmn.route_threads_for_turn(_activity, budget=_budget)
+                # Engine lane (a partner customer turn) gates the agenda to the
+                # mandate's domain, so the persona's introspective off-time threads
+                # never surface into a customer's conversation; a thread opened
+                # while working the mandate's domain still can, when relevant. The
+                # companion owner lane (no end_user_id) stays ungated.
+                _domain_tags = None
+                if features.get("end_user_id"):
+                    _mid = features.get("mandate_id") or ""
+                    if _mid:
+                        from brain.mandates import catalog as _mandate_catalog
+                        from brain.persona_context import mandate_domain_tags
+
+                        _domain_tags = mandate_domain_tags(_mid, _mandate_catalog())
+                    else:
+                        _domain_tags = set()  # customer turn, no mandate → surface nothing
+                _routed = self.dmn.route_threads_for_turn(
+                    _activity, budget=_budget, domain_tags=_domain_tags
+                )
                 if _routed:
                     memory["open_threads"] = [
                         {"id": t.id, "summary": t.summary, "progress": t.progress[-1:]}

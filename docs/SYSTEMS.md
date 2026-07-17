@@ -578,7 +578,7 @@ A mandate is data, not prompt text. An organization authors a catalog of roles o
 
 The precedence rule is the prompt-injection defense: an assignment directs the job **within** the identity and principles, which take precedence and which it cannot override.
 
-Partially built: conduct rules render into the prompt, but per-mandate reward weights are stored and not consumed. The block that would put unfinished thoughts into working context is marked "wired later."
+Partially built: conduct rules render into the prompt, but per-mandate reward weights are stored and not consumed. The agenda block that surfaces unfinished thoughts into an engine turn is now wired, gated to the mandate's domain (§3.9): a thread opened while working the mandate's domain can surface, the persona's introspective off-time threads never do.
 
 ### 7.10 The Constitution (functionalism · dual-process · Global Workspace · Multiple Drafts · Extended Mind · predictive processing · narrative self · criticality) · A document, not code
 
@@ -1126,7 +1126,7 @@ Thirty-six ideas. For each: what it claims, what we built, and a verdict.
 | **Song recognition** | The fingerprint database is an empty stub. Cannot match. |
 | **Video** | Zero callers. |
 | **Per-mandate reward weights** | Stored, unconsumed. |
-| **Unfinished thoughts in engine-mode working context** | Companion turns surface open threads (the frontal lobe fences them); the B2B/customer-turn AGENDA block is still "wired later." |
+| **Unfinished thoughts in engine-mode working context** | Built, as a deliberate position: companion turns surface open threads ungated; engine/customer turns surface only threads whose `bears_on` overlaps the active mandate's domain, so a persona's introspective threads stay out of a customer's conversation. |
 | **The MCP token feature** | Broken in production, discovered during the audit. Its stored-procedure paths derive identity from a claim that is NULL under the current database credential, so every write and read through them raises and the error is swallowed into a warning. See the decisions below. |
 
 ## Deliberate positions: things people mistake for gaps
