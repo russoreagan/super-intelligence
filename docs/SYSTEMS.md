@@ -240,13 +240,13 @@ After a long enough gap, the agent replays the session. It updates the wiring fi
 
 This is where episodic becomes semantic, which is the transfer the Complementary Learning Systems account is about. It is also where cross-customer learning happens, behind the privacy gate in §9.11.
 
-### 3.9 Unfinished thoughts (prospective memory) · Dark, never materialized
+### 3.9 Unfinished thoughts (prospective memory) · Live · write path fixed
 
 The idle mind's ledger of ideas it has not finished. Open one, push it forward across several idle moments, eventually close it. Capped in age, in progress attempts, and in how many can be open at once, so nothing deepens forever.
 
 Ages by wall clock rather than by tick count, which is deliberate: if the idle mind goes quiet under load, tick-based aging would freeze and threads would live forever.
 
-**Wired and unflagged, and the section has never been created.** It appears on the first thought that opens one. That has not happened.
+It is the newest of the prospective-memory surfaces and the successor to the older deferred-thoughts scratchpad, built because idle thoughts had no durable home. For most of the project's life its section never materialized: the shared section writer rejected the model's ordinary punctuation and the write raised into a swallowed warning (Appendix C). That is fixed at the writer, now under an end-to-end test that drives a real thought through a real store to disk. The section comes into existence the first time a persona opens a thread; as of the audit that had not yet happened in the live file.
 
 ### 3.10 Conclusions · Live
 
@@ -1017,7 +1017,7 @@ Thirty-six ideas. For each: what it claims, what we built, and a verdict.
 ### Prospective memory → §3.9
 **The claim:** Remembering to do something later is a distinct capacity from remembering what happened.
 **What we built:** The unfinished-thoughts ledger: open, advance, conclude, with age-out.
-**Verdict: Solid design. Dark.** Never materialized.
+**Verdict: Solid, now working.** The write path that kept it dark is fixed (Appendix C), and covered end-to-end. It materializes on the first thread a persona opens.
 
 ### Competitive learning → §4.7
 **The claim:** Units compete, the winner is reinforced, the losers are suppressed, and representations differentiate as a result.
@@ -1126,7 +1126,7 @@ Thirty-six ideas. For each: what it claims, what we built, and a verdict.
 | **Song recognition** | The fingerprint database is an empty stub. Cannot match. |
 | **Video** | Zero callers. |
 | **Per-mandate reward weights** | Stored, unconsumed. |
-| **Unfinished thoughts in working context** | "Wired later." |
+| **Unfinished thoughts in engine-mode working context** | Companion turns surface open threads (the frontal lobe fences them); the B2B/customer-turn AGENDA block is still "wired later." |
 | **The MCP token feature** | Broken in production, discovered during the audit. Its stored-procedure paths derive identity from a claim that is NULL under the current database credential, so every write and read through them raises and the error is swallowed into a warning. See the decisions below. |
 
 ## Deliberate positions: things people mistake for gaps
