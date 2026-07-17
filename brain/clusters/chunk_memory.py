@@ -196,6 +196,32 @@ def mine_chunks(jobs: list[dict]) -> dict:
     return {"chunks": chunks, "ts": now}
 
 
+def fireable_chunk_count(chunks: dict) -> int:
+    """How many ACTIVE chunks suggest_chunk could actually fire ballistically.
+
+    Promotion (distinct_jobs + success_rate) makes a chunk ``active`` and eligible
+    for before_plan() priming, but Phase-2 firing needs an INVARIANT tail: a chunk
+    fires >=1 step only if some position after the first has identical concrete args
+    across every successful occurrence (suggest_chunk stops at the first variable
+    step). On this product's workload most active chunks are file-nav / search /
+    query sequences whose paths and queries vary every run, so they promote but are
+    inert for firing — real, but priming-only. Surfacing this count alongside the
+    active count keeps that promotion-vs-firing gap visible in the mining log instead
+    of a bare "N active" that reads as "N reflexes will fire".
+    """
+    n = 0
+    for c in chunks.values():
+        if c.get("state") != "active":
+            continue
+        seq = c.get("sequence", [])
+        if any(
+            seq[j].get("invariant") and seq[j].get("args") is not None
+            for j in range(1, len(seq))
+        ):
+            n += 1
+    return n
+
+
 class _ChunkState:
     """One persona's runtime chunk state: loaded chunks + session-local
     suppression/reinforcement."""
