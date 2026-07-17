@@ -60,6 +60,11 @@
   font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-3); transition: all 150ms; }
 .workspace .rail-add:hover { border-color: var(--ink-4); color: var(--ink); background: var(--paper-2); }
 .workspace .rail-add svg { width: 13px; height: 13px; }
+/* Compact add, sat in a rail-sect-lab header row — reachable without scrolling a long list. */
+.workspace .rail-lab-add { display: flex; align-items: center; justify-content: center; width: 20px; height: 20px;
+  border: 1px solid var(--line); border-radius: var(--r-1); background: none; color: var(--ink-3); transition: all 140ms; cursor: pointer; }
+.workspace .rail-lab-add:hover { border-color: var(--ink-4); color: var(--ink); background: var(--paper-2); }
+.workspace .rail-lab-add svg { width: 12px; height: 12px; }
 
 .workspace .ws-main { min-height: 0; overflow-y: auto; position: relative; }
 .workspace .main-pad { padding: 30px 40px 60px; max-width: 920px; }

@@ -392,9 +392,10 @@
 
           <div class="rail-div"></div>
 
-          <div class="rail-sect-lab" style="padding-left:22px; display:flex; justify-content:space-between; padding-right:18px;"><span>Agents</span><span class="n">${ags.length}</span></div>
+          <div class="rail-sect-lab" style="padding-left:22px; display:flex; justify-content:space-between; align-items:center; padding-right:14px;"><span>Agents</span>
+            <span style="display:flex; align-items:center; gap:8px;"><span class="n">${ags.length}</span>
+              <button class="rail-lab-add" id="ws-new-agent" title="New agent"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg></button></span></div>
           <div class="rail-sect">${ags.map(a => railAgent(a)).join('') || '<div class="ri-meta" style="padding:6px 14px; opacity:.6;">No agents yet</div>'}</div>
-          <button class="rail-add" id="ws-new-agent"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg> New agent</button>
         </div>
         <div class="ws-main" id="ag-main"></div>
       </div>
@@ -615,6 +616,7 @@
         <div class="row" style="gap:10px; margin-top:14px; flex-shrink:0; align-items:center;">
           ${allMode ? '' : `<span class="chip"><span class="dot live" style="background:var(--ok);"></span>${counts.active} active</span>`}
           <span class="data" id="pod-meter" style="font-size:10px; color:var(--ink-4);"></span>
+          ${allMode ? '' : `<button class="btn btn-primary" id="ag-new-btn">New agent</button>`}
         </div>
       </div>
       <div class="between" style="margin-top:20px; flex-wrap:wrap; gap:12px;">
@@ -648,6 +650,8 @@
     if (from) from.addEventListener('change', applyCustom);
     if (to) to.addEventListener('change', applyCustom);
     if (!allMode) main.querySelectorAll('.dash-card').forEach(c => c.addEventListener('click', () => openAgentInLabs(c.dataset.agent, c.dataset.name, c.dataset.persona)));
+    const newBtn = main.querySelector('#ag-new-btn');
+    if (newBtn) newBtn.addEventListener('click', openNewAgent);
     refreshPodMeter();
   }
   // Fill (and keep ticking) the shared GPU-pod uptime + accrued-cost meter in the
@@ -719,8 +723,18 @@
     if (typeof window.setObservedAgent === 'function') window.setObservedAgent(agentId, name, persona);
     setWorkspace('labs');
   }
+  // The live persona catalogue — built-ins + the org's custom personas. The settings
+  // engine owns it; window.SETTINGS.personas is only the built-in seed it copies at
+  // boot, so read the engine's list first or custom personas never show up here.
+  function personaCatalogue() {
+    const ui = window.__settingsUI;
+    if (ui && typeof ui.listPersonas === 'function') {
+      try { const l = ui.listPersonas(); if (l && l.length) return l; } catch (e) { /* seed below */ }
+    }
+    return (window.SETTINGS && window.SETTINGS.personas) || [];
+  }
   function personaName(slug) {
-    const p = (window.SETTINGS && window.SETTINGS.personas || []).find(x => personaSlug(x.id) === slug);
+    const p = personaCatalogue().find(x => personaSlug(x.id) === slug);
     return p ? p.name : slug;
   }
   function personaSlug(id) { return String(id || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'default'; }
@@ -754,7 +768,7 @@
   // with its agents and summed usage. Personas with no agents still show (zero metrics).
   function personaRollup() {
     const ags = (agentsData && agentsData.agents) || [];
-    const known = (window.SETTINGS && window.SETTINGS.personas) || [];
+    const known = personaCatalogue();
     const map = {};
     const ensure = (slug, name) => map[slug] || (map[slug] = {
       slug, name: name || personaName(slug), agents: [],
@@ -798,39 +812,94 @@
     return confirm(`You have unsaved changes to ${personaSel}. Discard them?`);
   }
 
-  function paintPersonas() {
-    const host = document.getElementById('ws-personas');
-    if (!host) return;
+  // The rail's markup, split out so it can be repainted on its own — the catalogue can
+  // change while the config pane is mounted, and rebuilding the pane under a live edit
+  // is not acceptable (see repaintPersonaRail).
+  function personaRailHtml() {
     const rows = personaRollup();
     const activeSlug = activePersonaSlug();
     const liveCount = rows.filter(p => personaStatus(p).state === 'active').length;
-    host.innerHTML = `
-      <div class="ws-grid" style="grid-template-columns:268px 1fr;">
-        <div class="ws-rail">
-          <div class="rail-head"><h2>Personas</h2><span class="n">${rows.length}</span></div>
-          <div class="rail-sect">
-            <button class="rail-item pe-nav ${perView==='overview'?'on':''}" data-view="overview"><span class="ri-name"><span class="dot-status ${liveCount?'live':''}" style="background:${liveCount?'var(--ok)':'var(--ink-4)'}"></span>Overview</span><span class="ri-meta">${rows.length} total · ${liveCount} active</span></button>
-          </div>
-          <div class="rail-div"></div>
-          <div class="rail-sect-lab" style="padding-left:22px; display:flex; justify-content:space-between; padding-right:18px;"><span>Personas</span><span class="n">${rows.length}</span></div>
-          <div class="rail-sect">${rows.map(p => railPersona(p, activeSlug)).join('') || '<div class="ri-meta" style="padding:6px 14px; opacity:.6;">No personas</div>'}</div>
-        </div>
-        <div class="ws-main" id="pers-main"></div>
-      </div>`;
-    host.querySelectorAll('.pe-nav').forEach(n => n.addEventListener('click', () => {
+    return `
+      <div class="rail-head"><h2>Personas</h2><span class="n">${rows.length}</span></div>
+      <div class="rail-sect">
+        <button class="rail-item pe-nav ${perView==='overview'?'on':''}" data-view="overview"><span class="ri-name"><span class="dot-status ${liveCount?'live':''}" style="background:${liveCount?'var(--ok)':'var(--ink-4)'}"></span>Overview</span><span class="ri-meta">${rows.length} total · ${liveCount} active</span></button>
+      </div>
+      <div class="rail-div"></div>
+      <div class="rail-sect-lab" style="padding-left:22px; display:flex; justify-content:space-between; align-items:center; padding-right:14px;"><span>Personas</span>
+        <span style="display:flex; align-items:center; gap:8px;"><span class="n">${rows.length}</span>
+          <button class="rail-lab-add" id="ws-new-persona" title="New persona"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg></button></span></div>
+      <div class="rail-sect">${rows.map(p => railPersona(p, activeSlug)).join('') || '<div class="ri-meta" style="padding:6px 14px; opacity:.6;">No personas</div>'}</div>`;
+  }
+  function wirePersonaRail(rail) {
+    if (!rail) return;
+    rail.querySelectorAll('.pe-nav').forEach(n => n.addEventListener('click', () => {
       if (!confirmLeavePersonaDetail()) return;
       perView = n.dataset.view; personaSel = null; paintPersonas();
     }));
     // Rail persona → configure it INLINE (the Agents rail→detail pattern): renders the
     // persona's full config — temperament dials, chemistry, self/voice — into the pane,
     // reusing the settings engine. The Overview cards are the "watch it live" path.
-    host.querySelectorAll('.rail-persona').forEach(n => n.addEventListener('click', () => {
+    rail.querySelectorAll('.rail-persona').forEach(n => n.addEventListener('click', () => {
       if (n.dataset.name !== personaSel && !confirmLeavePersonaDetail()) return;
       personaSel = n.dataset.name; perView = 'detail'; paintPersonas();
     }));
+    rail.querySelector('#ws-new-persona').addEventListener('click', openNewPersona);
+  }
+  // Refresh the rail alone, leaving the config pane mounted and untouched.
+  function repaintPersonaRail() {
+    const rail = document.getElementById('pers-rail');
+    if (!rail) return;
+    rail.innerHTML = personaRailHtml();
+    wirePersonaRail(rail);
+  }
+  function paintPersonas() {
+    const host = document.getElementById('ws-personas');
+    if (!host) return;
+    host.innerHTML = `
+      <div class="ws-grid" style="grid-template-columns:268px 1fr;">
+        <div class="ws-rail" id="pers-rail">${personaRailHtml()}</div>
+        <div class="ws-main" id="pers-main"></div>
+      </div>`;
+    wirePersonaRail(host.querySelector('#pers-rail'));
     const main = host.querySelector('#pers-main');
     if (perView === 'detail' && personaSel) renderPersonaDetail(main);
     else renderPersonasView(main);
+  }
+
+  // The settings engine owns the persona catalogue and can change it out from under
+  // this rail — the server load fills in custom personas, and the mounted config pane
+  // renames or deletes the persona in place. Follow those changes instead of going stale.
+  document.addEventListener('personas-changed', (e) => {
+    const d = (e && e.detail) || {};
+    if (personaSel && d.from === personaSel) {
+      if (d.to) personaSel = d.to;                          // renamed → follow it
+      else { personaSel = null; perView = 'overview'; }      // deleted → back to the list
+    }
+    if (workspace !== 'personas') return;                    // repaints on next open
+    // With the pane mounted, refresh ONLY the rail. A full repaint would tear down and
+    // rebuild the config scaffold mid-edit — rename fires on the name field's blur,
+    // before the click that caused the blur has landed.
+    if (perView === 'detail' && personaSel) repaintPersonaRail();
+    else paintPersonas();
+  });
+
+  // New persona = clone the selected one, then drop straight into its config with the
+  // name selected for renaming (the settings engine owns the model; this owns the UI).
+  // Unsaved — the pane's Save persists it, same as any other persona edit.
+  async function openNewPersona() {
+    const ui = window.__settingsUI;
+    if (!ui || typeof ui.createPersona !== 'function') {
+      window.alert('The persona engine is still loading — try again in a moment.');
+      return;
+    }
+    if (!confirmLeavePersonaDetail()) return;
+    let name;
+    try { name = ui.createPersona(); }
+    catch (e) { window.alert('Could not create persona: ' + e.message); return; }
+    personaSel = name; perView = 'detail';
+    paintPersonas();
+    // mountPersona builds the scaffold #st-name lives in, so focus only after it lands.
+    if (typeof ui.focusPersonaName === 'function') setTimeout(() => ui.focusPersonaName(), 0);
   }
 
   // Inline persona config: a save header + the scaffold container the settings engine
@@ -886,6 +955,7 @@
         <div class="row" style="gap:10px; margin-top:14px; flex-shrink:0; align-items:center;">
           <span class="chip"><span class="dot live" style="background:var(--ok);"></span>${counts.active} active</span>
           <span class="data" id="pers-pod-meter" style="font-size:10px; color:var(--ink-4);"></span>
+          <button class="btn btn-primary" id="pers-new-btn">New persona</button>
         </div>
       </div>
       <div class="between" style="margin-top:20px; flex-wrap:wrap; gap:12px;">
@@ -913,6 +983,8 @@
     if (from) from.addEventListener('change', applyCustom);
     if (to) to.addEventListener('change', applyCustom);
     main.querySelectorAll('.dash-card').forEach(c => c.addEventListener('click', () => openPersonaInMri(c.dataset.persona)));
+    const newBtn = main.querySelector('#pers-new-btn');
+    if (newBtn) newBtn.addEventListener('click', openNewPersona);
     const pm = main.querySelector('#pers-pod-meter');
     if (pm && podStatus && podStatus.running && podStatus.uptime_s != null) {
       const cost = podStatus.cost_accrued_usd != null ? ` · $${podStatus.cost_accrued_usd.toFixed(2)} accrued` : '';
