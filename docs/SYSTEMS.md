@@ -292,11 +292,11 @@ Four related weights that read like tunable dials are hardcoded constants for th
 
 **This is the highest-leverage fix in the system, and it is roughly one line.** The one reward channel grounded in reality is disconnected, in a system that is eighty percent self-graded.
 
-### 4.5 Intensity and learning (Yerkes-Dodson inverted U) · Gated off
+### 4.5 Intensity and learning (Yerkes-Dodson inverted U) · Live
 
-Emotionally intense turns should imprint harder, either way, because fear teaches as hard as joy. Extreme stress should imprint less. The implementation uses magnitude rather than sign, which is what the theory actually predicts.
+Emotionally intense turns imprint harder, either way, because fear teaches as hard as joy. Extreme stress imprints less. The implementation uses magnitude rather than sign, which is what the theory actually predicts.
 
-**The most biologically ambitious piece here is switched off in the default build.**
+On by default. It replaces a legacy binary skip (which simply dropped learning on a stressed single-draft turn) with the graded model: arousal and emotional intensity raise how much a turn imprints, and only extreme stress damps it back down.
 
 ### 4.6 Delayed credit (eligibility traces, Sutton) · Live
 
@@ -870,7 +870,7 @@ Thirty-six ideas. For each: what it claims, what we built, and a verdict.
 ### Yerkes-Dodson, the inverted U → §4.5
 **The claim:** Moderate arousal helps encoding. Extreme stress hurts it. Intense events of *either* valence imprint hard.
 **What we built:** Arousal and emotional intensity raise plasticity; extreme stress damps it. Magnitude, not sign, which is correct because fear teaches as hard as joy.
-**Verdict: Implemented, correct, and switched off.** The most biologically ambitious piece here is dark in the default build.
+**Verdict: Solid, and now on by default (2026-07-17).** Was dark for most of the project's life; the graded model now runs in place of the legacy binary skip.
 
 ### Complementary Learning Systems (McClelland, McNaughton & O'Reilly) → §3.4, §3.8, §4.7
 **The claim:** Two systems. A fast one for one-shot episodes, a slow one for interference-resistant structure. Sleep moves content between them.
@@ -1144,7 +1144,7 @@ Thirty-six ideas. For each: what it claims, what we built, and a verdict.
 |---|---|
 | **Database-level tenant isolation** | **Confirmed inert.** The project has migrated to asymmetric signing, so every tenant boots holding the master key and RLS is bypassed. Isolation currently rests entirely on application-level query scoping, which is now audited and guarded. **Check the dashboard: if the legacy secret is still current and the new key is only standby, RLS can be restored today.** |
 | **The external verdict channel** | Now reachable and settable, and still zero. Turning it up is a product decision: it is the only reward signal grounded outside the agent's own appraisal. |
-| **The inverted-U plasticity model** | Built, correct, switched off. Flipping it changes how the brain learns. |
+| **The inverted-U plasticity model** | Now on by default (2026-07-17). Emotionally intense turns imprint harder, extreme stress imprints less. Replaces the legacy binary defuse-path skip. |
 | **Perceptual differentiation per personality** | Built, switched off. Valuation is the live differentiator. |
 | **Music perception** | Fully built. One environment variable from live. Set nowhere. |
 | **The "Memory" temperament dial** | Partly alive now. Its decay setting genuinely tunes the workspace spotlight's persistence (see §2.8), so the dial is no longer a complete no-op. But not every setting it and the Focus/Curiosity dials write is load-bearing yet. A full dial-to-behavior audit is the remaining follow-up. |

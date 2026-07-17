@@ -733,7 +733,7 @@ DEFAULTS: dict[str, float | int | str] = {
     # intensity (not valence sign) multiplies the Hebbian delta, and the binary
     # skip becomes a graded high-stress dampener. Ships on its own flag,
     # independent of colony_features. Default 0 → flip to 1 after eval validates.
-    "graded_plasticity": 0,  # 1 = graded per-turn plasticity; 0 = legacy binary skip
+    "graded_plasticity": 1,  # 1 = graded per-turn plasticity (Yerkes-Dodson); 0 = legacy binary skip
     "plasticity_turn_min": 0.40,  # floor of the per-turn plasticity multiplier
     "plasticity_turn_max": 1.30,  # ceiling of the per-turn plasticity multiplier
     "plasticity_arousal_weight": 0.50,  # ACh+NE+surprise+|DA swing| → plasticity gain
