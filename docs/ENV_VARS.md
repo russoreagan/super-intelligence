@@ -93,7 +93,8 @@ settings/Vault into `os.environ`). Write sites are noted inline where relevant.
 | `SUPABASE_URL` | `""` | call | Supabase project URL. `brain/second_brain/supabase_client.py:34`, `brain/vault.py:50`, `brain/provisioner.py:148`, `brain/ui/auth.py:75,182`, `brain/ui/server.py:401,525,649`, `brain/gateway/server.py:222`, `brain/gateway/org_token.py:52` |
 | `SUPABASE_ANON_KEY` | `""` | call | Publishable anon key (auth, reset page, user-context clients). `brain/ui/auth.py:75,186`, `brain/ui/server.py:402,525,650`, `brain/vault.py:51`, `brain/second_brain/supabase_client.py:36`, `brain/gateway/server.py:223`, `brain/gateway/org_token.py:58` |
 | `SUPABASE_SERVICE_KEY` | `""` | call | Service-role key (gateway/provisioner + stores fallback). `brain/provisioner.py:149`, `brain/second_brain/supabase_client.py:37` |
-| `SUPABASE_JWT_SECRET` | `""` | call | HS256 secret to verify user JWTs / mint org tokens (inert if project signs asymmetrically). `brain/ui/auth.py:190`, `brain/gateway/org_token.py:73` |
+| `SUPABASE_JWT_SECRET` | `""` | call | HS256 secret to verify user JWTs / mint org tokens. The gateway probes at spawn whether a token it signs is accepted (missing table → 404 ok, 401 → rejected); if accepted it mints an org JWT (RLS enforced), else the tenant keeps the service key. `brain/ui/auth.py:190`, `brain/gateway/org_token.py` |
+| `BRAIN_DISABLE_ORG_JWT` | `""` | call | Kill-switch: `1`/`true` forces tenants onto the service-role key (skip org-JWT minting / RLS) even when a signed token would be accepted. Instant revert if restoring RLS misbehaves. `brain/gateway/org_token.py` |
 
 ## 3. Motor cortex & autonomy
 
