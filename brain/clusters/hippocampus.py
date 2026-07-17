@@ -27,6 +27,54 @@ logger = logging.getLogger(__name__)
 
 CLUSTER = "hippocampus"
 
+# ── Bond field access (one reader, one writer) ────────────────────────────────
+# `- Bond:` postdates the bond model, so a schema written before it shipped has
+# no such line. Every reader of that field used to guess its absence differently
+# (0.0 here, `max(0, affection)` there), and the 0.0 guess reported a 44-session
+# close relationship as "new". These two helpers are the single place the field
+# is parsed and written: absence means "predates the field", and is healed by
+# reconstructing the bond the file's own history implies.
+
+_BOND_RE = r"- Bond:\s*-?\d+(?:\.\d+)?"
+
+
+def _parse_bond(content: str) -> tuple[float, bool]:
+    """Read the bond for a speaker schema. Returns `(bond, seeded)`, where
+    `seeded` marks a pre-bond-model file whose bond was reconstructed from its
+    legacy signals and so MUST be persisted by the caller — leave it unwritten
+    and the reconstruction re-runs every turn, letting the interaction count
+    inflate the bond forever instead of the bond model governing it."""
+    import re
+
+    from brain.relationship import seed_bond_from_legacy
+
+    m = re.search(r"- Bond:\s*(-?\d+(?:\.\d+)?)", content)
+    if m:
+        return float(m.group(1)), False
+
+    m_aff = re.search(r"- Score:\s*(-?\d+)", content)
+    m_count = re.search(r"- Interactions:\s*(\d+)", content)
+    m_fam = re.search(r"- Familiarity:\s*(\w+)", content)
+    bond = seed_bond_from_legacy(
+        float(m_aff.group(1)) if m_aff else 0.0,
+        int(m_count.group(1)) if m_count else 0,
+        m_fam.group(1).lower() if m_fam else "",
+        close_bond=float(settings.get("familiarity_close_bond")),
+        acquainted_bond=float(settings.get("familiarity_acquainted_bond")),
+    )
+    return bond, True
+
+
+def _write_bond(content: str, bond: float) -> str:
+    """Replace or append the `- Bond:` line."""
+    import re
+
+    line = f"- Bond: {bond:.1f}"
+    if re.search(_BOND_RE, content):
+        return re.sub(_BOND_RE, line, content, count=1)
+    return content + f"\n{line}"
+
+
 RECALL_REFORMULATION_SYSTEM = """You are the hippocampus of an AI brain.
 Given a user query and conversation context, produce a search reformulation
 optimized for semantic similarity search over episodic memory.
@@ -263,6 +311,26 @@ class HippocampusCluster:
             else None
         )
 
+        # ── Global-workspace spotlight (locked contract) ─────────────────────
+        # The thalamus writes a "spotlight" verdict into features before recall
+        # runs. When a coalition has IGNITED, the workspace is sustainedly focused
+        # on one topic — so bias recall toward it: seed the cue with the focus's
+        # hot entities (sustained focus the terse current turn may not name) and,
+        # further down, widen the fan-out budget a notch. Absent key (older
+        # callers) or not-ignited → strict no-op: `entities` and the budget below
+        # stay byte-identical to the un-ignited path.
+        spotlight = (features or {}).get("spotlight") or {}
+        if spotlight.get("ignited"):
+            seen = {e.lower().strip() for e in entities if e}
+            hot_extra: list[str] = []
+            for e in spotlight.get("hot_entities", []) or []:
+                key = str(e).lower().strip()
+                if key and key not in seen:
+                    seen.add(key)
+                    hot_extra.append(e)
+            if hot_extra:
+                entities = [*entities, *hot_extra]
+
         # ── Coordinator gate: reuse recent recall if query is near-identical ──
         # The recall_cache_reuse switch encodes "trust the cache" as a fire.
         # High DA lowers its threshold (more reuse under reward); low DA raises
@@ -295,7 +363,8 @@ class HippocampusCluster:
         strategy_weights = self._recall_strategy_weights()
         # The fanout switch's effective threshold biases the total budget:
         # under high ACh+Glu (lower threshold), the brain casts a wider net.
-        total_budget = self._fanout_total_budget(chem)
+        # When the workspace spotlight is ignited, widen it a further notch.
+        total_budget = self._fanout_total_budget(chem, spotlight)
         schema_k, episode_k = self._allocate_recall_budget(strategy_weights, total_budget)
         self._recall_fanout.fire(
             min(1.0, total_budget / 8.0), "fanout_budget", {"total": total_budget}, snapshot=chem
@@ -559,7 +628,7 @@ class HippocampusCluster:
             hs = {}
         return {**nm, **hs}
 
-    def _fanout_total_budget(self, chem: dict[str, float]) -> int:
+    def _fanout_total_budget(self, chem: dict[str, float], spotlight: dict | None = None) -> int:
         """Total recall lookups, biased by the recall_fanout switch's modulation
         delta. Base is 8; bounded to [4, 12]. Under high ACh+Glu (lower
         effective threshold), the brain casts a wider net."""
@@ -573,6 +642,14 @@ class HippocampusCluster:
         # turn won recruitment budget), widen the net further — up to +4 lookups.
         if settings.get("colony_features", 0):
             shift += int(round(self._bus.recruitment_level("hippocampus") * 4))
+        # Global-workspace spotlight (locked contract): when a coalition has
+        # ignited, the workspace is concentrated on one focus — cast a slightly
+        # wider net. Small bounded nudge (0..+2, scaled by integrated
+        # concentration 0..10), folded into the SAME [4, 12] clamp. Not ignited /
+        # absent (falsy spotlight) → skipped, so the budget is unchanged.
+        if spotlight and spotlight.get("ignited"):
+            salience = float(spotlight.get("salience", 0.0) or 0.0)
+            shift += int(round(min(1.0, max(0.0, salience) / 10.0) * 2))
         return max(4, min(12, 8 + shift))
 
     def _entity_grep_depth(self, chem: dict[str, float], schema_k: int) -> int:
@@ -1115,8 +1192,7 @@ class HippocampusCluster:
             content = self._schema.read(schema_file)
             m = re.search(r"- Score:\s*(-?\d+)", content)
             current = int(m.group(1)) if m else 0
-            m_bond = re.search(r"- Bond:\s*(-?\d+(?:\.\d+)?)", content)
-            bond = float(m_bond.group(1)) if m_bond else float(max(0, current))
+            bond, _bond_seeded = _parse_bond(content)
 
             # ── Reunion recovery boost (bond model) ───────────────────────────
             # A positive delta from a former-close friend whose affection decayed
@@ -1146,11 +1222,7 @@ class HippocampusCluster:
                 content += f"\n- Score: {new_score}"
             # Persist bond (replace or append)
             if settings.get("enable_bond_model"):
-                bond_line = f"- Bond: {new_bond:.1f}"
-                if m_bond:
-                    content = re.sub(r"- Bond:\s*-?\d+(?:\.\d+)?", bond_line, content)
-                else:
-                    content += f"\n{bond_line}"
+                content = _write_bond(content, new_bond)
             hist_line = f"- History: {tier_label} (last tone: {tone}, delta: {delta:+d})"
             content = re.sub(r"- History:.*", hist_line, content)
             if "- History:" not in content:
@@ -1201,6 +1273,8 @@ class HippocampusCluster:
         and replaces it, instead of prepending a fresh suffix each session."""
         import re
 
+        from brain.relationship import TIER_ORDER
+
         async with self._schema._lock:
             content = self._schema.read(schema_file)
             # Read or initialise interaction count
@@ -1210,25 +1284,39 @@ class HippocampusCluster:
             if settings.get("enable_bond_model"):
                 from brain.relationship import familiarity_from_bond
 
-                m_bond = re.search(r"- Bond:\s*(-?\d+(?:\.\d+)?)", content)
-                bond = float(m_bond.group(1)) if m_bond else 0.0
+                # A pre-bond-model file has no `- Bond:` line; _parse_bond
+                # reconstructs it from the file's own history. Persist the
+                # reconstruction here so it happens exactly once — this runs on
+                # EVERY turn, whereas _update_affection_score returns early on a
+                # neutral tone (delta 0) and would leave the field absent.
+                bond, bond_seeded = _parse_bond(content)
+                if bond_seeded:
+                    content = _write_bond(content, bond)
                 new_tier = familiarity_from_bond(
                     bond,
                     float(settings.get("familiarity_close_bond")),
                     float(settings.get("familiarity_acquainted_bond")),
                 )
             else:
-                # Legacy count-based, monotonic (never downgrades)
+                # Legacy count-based tiers
                 new_tier = "new"
                 for threshold, label in self._FAMILIARITY_TIERS:
                     if count >= threshold:
                         new_tier = label
                         break
-                _tier_order = {"new": 0, "acquainted": 1, "close": 2}
-                m_fam0 = re.search(r"- Familiarity:\s*(\w+)", content)
-                current_tier = m_fam0.group(1).lower() if m_fam0 else "new"
-                if _tier_order.get(new_tier, 0) <= _tier_order.get(current_tier, 0):
-                    new_tier = current_tier
+
+            # ── Never downgrade on a turn the user is present for ─────────────
+            # Familiarity is history depth: talking to someone cannot make you
+            # know them LESS. Only measured absence may lower a tier, and that is
+            # applied exclusively by apply_relationship_decay_at_boot, which
+            # writes the tier itself and is deliberately NOT guarded — so this
+            # ratchet cannot block genuine decay, it only stops a turn from
+            # silently erasing a relationship (e.g. a bond that reads low because
+            # the field is missing or has not been seeded yet).
+            m_fam0 = re.search(r"- Familiarity:\s*(\w+)", content)
+            current_tier = m_fam0.group(1).lower() if m_fam0 else "new"
+            if TIER_ORDER.get(new_tier, 0) < TIER_ORDER.get(current_tier, 0):
+                new_tier = current_tier
 
             # Write interaction count (whole-line replace)
             count_line = f"- Interactions: {count}"
@@ -1286,8 +1374,23 @@ class HippocampusCluster:
                         continue
                     m_seen = re.search(r"- Last seen:\s*(\d+(?:\.\d+)?)", content)
                     if not m_seen:
-                        # First boot with the bond model: stamp now, nothing to decay yet.
+                        # First boot with the bond model: stamp now, nothing to
+                        # decay yet (no record of when we last spoke, so no gap
+                        # can be computed — the absence is forgiven, not guessed).
+                        # Seed Bond in the same pass: this branch `continue`d
+                        # before the Bond write below, so a pre-bond-model file
+                        # left boot still missing the field.
                         content += f"\n- Last seen: {now:.0f}"
+                        seed, seeded = _parse_bond(content)
+                        if seeded:
+                            content = _write_bond(content, seed)
+                            logger.info(
+                                "[Relationship] Migrated %s to the bond model: "
+                                "seeded bond %.1f from legacy history (familiarity=%s)",
+                                schema_file,
+                                seed,
+                                familiarity_from_bond(seed, close_bond, acq_bond),
+                            )
                         self._schema.write(
                             schema_file, content
                         )  # lock-free: caller already holds self._lock (awrite would deadlock)
@@ -1299,8 +1402,7 @@ class HippocampusCluster:
 
                     m_aff = re.search(r"- Score:\s*(-?\d+)", content)
                     affection = float(m_aff.group(1)) if m_aff else 0.0
-                    m_bond = re.search(r"- Bond:\s*(-?\d+(?:\.\d+)?)", content)
-                    bond = float(m_bond.group(1)) if m_bond else max(0.0, affection)
+                    bond, _seeded = _parse_bond(content)
 
                     new_aff, new_bond = apply_absence(
                         affection,
@@ -1315,15 +1417,7 @@ class HippocampusCluster:
                     content = re.sub(
                         r"- Score:\s*-?\d+", f"- Score: {round(new_aff)}", content, count=1
                     )
-                    if re.search(r"- Bond:\s*-?\d+(?:\.\d+)?", content):
-                        content = re.sub(
-                            r"- Bond:\s*-?\d+(?:\.\d+)?",
-                            f"- Bond: {new_bond:.1f}",
-                            content,
-                            count=1,
-                        )
-                    else:
-                        content += f"\n- Bond: {new_bond:.1f}"
+                    content = _write_bond(content, new_bond)
                     count_m = re.search(r"- Interactions:\s*(\d+)", content)
                     count = int(count_m.group(1)) if count_m else 0
                     fam_line = f"- Familiarity: {new_tier} (interactions: {count})"

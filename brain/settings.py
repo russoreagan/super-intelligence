@@ -87,6 +87,21 @@ DEFAULTS: dict[str, float | int | str] = {
     # ── Section 3: Plasticity & Learning ─────────────────────────────────────
     "hebbian_delta": 0.02,
     "hebbian_outcome_delta": 0.02,
+    # Composite outcome mix used when a turn carries an EXTERNAL grade (thumbs press,
+    # validator verdict) — hebbian._composite_outcome. Ungraded turns keep their own
+    # fixed self-appraisal blend; these dials apply only on the graded path, where the
+    # outside verdict earns a share of the signal. Defaults reproduce the previous
+    # inline fallbacks exactly.
+    "hebbian_w_da_ext": 0.4,  # DA swing — the brain's own reward signal
+    "hebbian_w_critic_ext": 0.2,  # internal critic score on the selected draft
+    "hebbian_w_user_ext": 0.2,  # inferred user emotion
+    "hebbian_w_external": 0.2,  # the external grade itself
+    # DA nudge on an external grade (session_loops.api_grade_turn), scaled by the grade.
+    # 0 = record and observe only, no chemistry — external grading ships observability
+    # first. Raising it opens the only reward channel sourced outside the brain's own
+    # appraisal. Keep this a float: an int default would coerce a fractional nudge to 0
+    # on load and silently re-break the dial.
+    "external_grade_da_nudge": 0.0,
     "decay_toward_rest_rate": 0.01,
     # Eligibility traces: a turn's outcome also credits the fired paths of the
     # previous N turns, decayed e^(-age/τ) — delayed conversational payoff
@@ -304,7 +319,15 @@ DEFAULTS: dict[str, float | int | str] = {
     "frontal_ach_weight": 0.20,
     "ach_threshold_frontal": 0.50,
     "salience_workspace_threshold": 0.60,
-    "topic_activation_decay": 0.70,
+    "topic_activation_decay": 0.70,  # cross-turn decay of the thalamus spotlight
+    # Global-workspace spotlight (GWT). Ships on with a conservative threshold.
+    # The thalamus reads the bus concentration layer, decides what is ignited, and
+    # broadcasts. 0 → neutral verdict, every consumer falls through to prior logic.
+    "thalamus_workspace_enabled": 1,
+    # Ignition level. Sits above the bus quorum threshold (1.5) so ignition marks
+    # sustained focus, not passing mention. Concentration caps at 10.
+    "workspace_ignition_threshold": 2.0,
+    "workspace_rising_slope": 0.20,  # slope (units/s) that counts as "rising"
     # ── Section 10: Speaker Recognition ──────────────────────────────────────
     "speaker_store_threshold": 0.70,
     "speaker_session_threshold": 0.62,
@@ -419,6 +442,10 @@ DEFAULTS: dict[str, float | int | str] = {
     # sleep, plus established-principle injection into the turn context. Off until
     # the chain has been observed end-to-end on a real consolidation.
     "cross_learning": 1,  # graduated from experimental 2026-06 — production default
+    # Learning stories — narrate what this session's Hebbian pass changed
+    # (sleep.learning_story_pass, runs after the Hebbian pass in the same persona
+    # binding). 1 = on, 0 = skip the narration; the weight updates land either way.
+    "learning_narrator": 1,
     # ── Section: Motor Cortex / Autonomous Tasks ─────────────────────────────
     # ralph_max_total_attempts: hard ceiling on total tool dispatches across ALL
     # stories + retries in a single internal job. Prevents runaway loops

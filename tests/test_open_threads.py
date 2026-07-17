@@ -1,4 +1,5 @@
-"""Unit tests for the open-threads ledger (B1) — pure markdown round-trip + lifecycle."""
+"""Unit tests for the open-threads ledger (B1) — pure markdown round-trip + lifecycle,
+plus the SchemaStore section write the DMN persists it through."""
 
 from __future__ import annotations
 
@@ -91,3 +92,68 @@ def test_mark_pending_and_remove():
     assert p.status == ot.STATUS_PENDING
     threads = ot.remove_thread(threads, t.id)
     assert ot.find(threads, t.id) is None
+
+
+# ── the SchemaStore write the DMN persists the ledger through ────────────────
+
+
+_NON_ASCII_SUMMARY = "batching — worth a look, per Russ’s note"
+
+# A hand-authored ledger with NO managed section yet — the state of the real
+# open_questions.md, and so the state of the DMN's very first save.
+_NO_SECTION = "# Open questions\n\n## Projects\n\n- hand authored\n"
+_WITH_SECTION = _NO_SECTION + "\n## Open threads\n\n```json\n[]\n```\n"
+
+
+def test_section_created_for_non_ascii_thought_when_absent():
+    """The DMN's FIRST save must create `## Open threads`, whatever the punctuation.
+
+    Regression: _replace_section_body passed the rendered body to re.subn as a
+    REPLACEMENT TEMPLATE, which parses backslash escapes. render_section_body uses
+    json.dumps(), whose ensure_ascii turns every non-ASCII char into \\uXXXX — so a
+    single curly apostrophe or em dash in a thought raised "re.error: bad escape \\u".
+    re compiles the template BEFORE scanning, so it raised even with the section
+    ABSENT, making the `n == 0` append branch unreachable. _save_threads swallows the
+    error as a warning, so the section was never created and the ledger stayed empty
+    forever — the DMN opening threads happily in memory the whole time.
+    """
+    from brain.second_brain.store import SchemaStore
+
+    threads, t = ot.open_thread([], _NON_ASCII_SUMMARY, now=1.0)
+    out = SchemaStore._replace_section_body(
+        _NO_SECTION, ot.SECTION, ot.render_section_body(threads)
+    )
+
+    assert f"## {ot.SECTION}" in out, "the managed section must be created on first save"
+    back = ot.parse_threads(ot.extract_section(out))
+    assert len(back) == 1
+    assert back[0].id == t.id
+    assert back[0].summary == _NON_ASCII_SUMMARY
+    assert "- hand authored" in out  # hand-authored sections untouched
+
+
+def test_section_rewrite_survives_non_ascii_thought():
+    """And every LATER save (advance/conclude) must rewrite it in place."""
+    from brain.second_brain.store import SchemaStore
+
+    threads, t = ot.open_thread([], _NON_ASCII_SUMMARY, now=1.0)
+    threads, _ = ot.advance_thread(threads, t.id, "made progress — step one", now=2.0)
+    out = SchemaStore._replace_section_body(
+        _WITH_SECTION, ot.SECTION, ot.render_section_body(threads)
+    )
+
+    back = ot.parse_threads(ot.extract_section(out))
+    assert len(back) == 1
+    assert back[0].summary == _NON_ASCII_SUMMARY
+    assert back[0].advances == 1
+    assert back[0].progress == ["made progress — step one"]
+    assert "- hand authored" in out
+
+
+def test_section_rewrite_preserves_literal_backslash_refs():
+    """A body containing \\1 must land verbatim, not splice in a capture group."""
+    from brain.second_brain.store import SchemaStore
+
+    existing = "# F\n\n## Style register\n\nold\n"
+    out = SchemaStore._replace_section_body(existing, "Style register", r"uses \1 and \g<0>")
+    assert r"uses \1 and \g<0>" in out

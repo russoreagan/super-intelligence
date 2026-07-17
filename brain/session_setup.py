@@ -738,6 +738,9 @@ class _SetupMixin:
         self.dmn = DefaultModeNetwork(
             self.bus, self.router, self.hippocampus, self.parietal, obs=self.obs
         )
+        # Wire the thalamus so the idle mind can consult the persistent workspace
+        # spotlight (its liveness gate) alongside the drained attention.focus broadcasts.
+        self.dmn.set_thalamus(self.thalamus)
         if getattr(self, "skill_selector", None) is not None:
             self.dmn.set_skill_selector(self.skill_selector)
 

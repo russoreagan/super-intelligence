@@ -1022,13 +1022,27 @@ class SleepConsolidation:
         from brain.clusters.job_store import JOBS_DIR
         from brain.persona_key import persona_slug, persona_state_root
 
-        # Load job records, grouped by originating persona.
+        # Load job records, grouped by originating persona — keyed by the persona's
+        # RESOLVED state root, not by the raw stamp. Unstamped legacy records ("")
+        # and records stamped with the home persona's OWN name are the same persona
+        # and share one chunks.json, but they carry different stamps. Grouping on the
+        # raw stamp splits that persona's history into two groups that collide on
+        # that file: the first writes and stamps ts_epoch=now, and the second is then
+        # dropped by the interval gate below ("last pass was 0.0 h ago") — so the
+        # persona mines only whichever half of its corpus comes first in glob order.
+        # Canonicalising the key merges them into the single group they always were.
+        home_root = str(persona_state_root(""))
+
+        def _group_key(stamp: str) -> str:
+            slug = persona_slug(stamp or "")
+            return "" if str(persona_state_root(slug)) == home_root else slug
+
         by_persona: dict[str, list[dict]] = {}
         try:
             for path in JOBS_DIR.glob("*.json"):
                 with contextlib.suppress(Exception), open(path) as f:
                     job = json.load(f)
-                    by_persona.setdefault(persona_slug(job.get("persona") or ""), []).append(job)
+                    by_persona.setdefault(_group_key(job.get("persona") or ""), []).append(job)
         except Exception as e:
             logger.warning("[ChunkMining] Could not read jobs dir: %s", e)
             return
@@ -1147,6 +1161,43 @@ class SleepConsolidation:
                         "decision_types": [kind],
                         "turn_ids": [r.get("turn_id", "") for r in rows if r.get("turn_id")][:8],
                         "metrics": {"n_events": len(rows)},
+                    }
+                )
+
+        # Delayed credit. Kept as its OWN entry rather than folded into by_edge
+        # above: those groups are "this edge moved because of THIS turn" and carry
+        # a mean outcome for exactly those turns — mixing in credit paid out by a
+        # LATER turn's outcome would blur both. The distinct decision kind means
+        # by_edge already excludes it; this adds it back explicitly, once.
+        elig = [r for r in recs if r.get("decision") == "hebbian_eligibility_applied"]
+        if elig:
+            rows = [e for r in elig for e in (r.get("edges") or []) if isinstance(e, dict)]
+            net = sum(float(e.get("delta") or 0) for e in rows)
+            if abs(net) >= 0.005:
+                per_edge: dict[str, float] = defaultdict(float)
+                for e in rows:
+                    per_edge[f"{e.get('src')}→{e.get('tgt')}"] += float(e.get("delta") or 0)
+                top = sorted(per_edge.items(), key=lambda kv: -abs(kv[1]))[:3]
+                n_edges = sum(int(r.get("edges_updated") or 0) for r in elig)
+                ages = sorted({int(r.get("age") or 0) for r in elig})
+                evidence.append(
+                    {
+                        "text": (
+                            f"delayed credit: {len(elig)} eligibility payouts to earlier turns "
+                            f"(ages {ages}), {n_edges} edge updates, net delta {net:+.3f} — "
+                            f"earlier turns credited for outcomes that landed later"
+                        ),
+                        "subsystem": "routing",
+                        "edges": [{"edge": k, "delta": round(v, 4)} for k, v in top],
+                        "decision_types": ["hebbian_eligibility_applied"],
+                        "turn_ids": [
+                            r.get("source_turn_id", "") for r in elig if r.get("source_turn_id")
+                        ][:8],
+                        "metrics": {
+                            "n_events": len(elig),
+                            "edges_updated": n_edges,
+                            "net_delta": round(net, 4),
+                        },
                     }
                 )
 

@@ -48,6 +48,23 @@ _MIN_SUCCESS_RATE = 0.9  # of observed occurrences, this fraction must have succ
 _MAX_PRIMING = 6
 
 
+# Planner placeholders, not motor acts. The motor cortex logs {"tool": "none"}
+# into the step record both when the planner deliberately stops and when it fails
+# outright ({"reason": "[planner failed]"}); either way no tool ran, and the empty
+# result it leaves behind reads as SUCCESS to _is_error. Mining them promotes a run
+# of planner failures into a perfect-success "skill" — and because their args are
+# always {} it is invariant, so suggest_chunk would fire "none" ballistically,
+# burning turn budget and appending yet more placeholders to the job record for the
+# next pass to count. A no-op also breaks genuine adjacency between real tools, so
+# a placeholder acts as a barrier: n-grams are mined only within the spans of real
+# tool calls between them.
+_NON_MOTOR_TOOLS = frozenset({"none", "", "?"})
+
+
+def _is_motor_step(step: dict) -> bool:
+    return str(step.get("tool") or "").strip().lower() not in _NON_MOTOR_TOOLS
+
+
 def _is_error(result: str) -> bool:
     return result.startswith("[error]") or result.startswith("[blocked]")
 
@@ -104,6 +121,10 @@ def mine_chunks(jobs: list[dict]) -> dict:
         for length in range(_MIN_LEN, _MAX_LEN + 1):
             for start in range(0, n - length + 1):
                 window = steps[start : start + length]
+                # Placeholders are a barrier — a window spanning one is not a
+                # motor sequence and never becomes a chunk.
+                if not all(_is_motor_step(s) for s in window):
+                    continue
                 key = _chunk_key(window)
                 if key in seen_in_job:
                     continue

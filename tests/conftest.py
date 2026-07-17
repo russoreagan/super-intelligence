@@ -117,18 +117,80 @@ def _isolate_second_brain_root(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_job_store_dir(tmp_path, monkeypatch):
+    """Keep job-record writes out of the real ``second_brain/jobs/``.
+
+    ``job_store.JOBS_DIR`` is a module-level constant computed at IMPORT time
+    (``SECOND_BRAIN_ROOT / "jobs"``, and SECOND_BRAIN_ROOT itself reads
+    SECOND_BRAIN_PATH at import). By the time _isolate_second_brain_root sets
+    the env var the constant is already frozen to the repo tree, so anything
+    that drives a real JobStore — a MotorCortexCluster job, execute_internal_job
+    — wrote genuine-looking records into the live tree (this bit: 83 fixture
+    jobs accumulated there, and one got git-committed). Point the constant at
+    tmp instead.
+
+    This matters beyond tidiness: second_brain/jobs/ is the input corpus for
+    sleep's chunk_mining_pass, so fixture jobs reached real chunk mining and
+    could influence what gets promoted to a ballistic reflex.
+
+    Patching the attribute (not just the env) is what makes this stick, and it
+    also covers ``sleep.py``'s function-local ``from ... import JOBS_DIR``,
+    which re-reads the module attribute on each call. Tests that need their own
+    jobs dir monkeypatch JOBS_DIR themselves; they run after this autouse
+    fixture and win.
+
+    The dir is namespaced under a private subdir rather than ``tmp_path`` root
+    or ``tmp_path/second_brain``: tmp_path belongs to the test, and a test is
+    free to mkdir its own layout there (one builds a bare second_brain/ with
+    exist_ok=False). Creating it here keeps a glob-before-any-write from seeing
+    a missing dir.
+    """
+    try:
+        import brain.clusters.job_store as _js
+    except Exception:
+        return
+    jobs_dir = tmp_path / "_job_store_isolation" / "jobs"
+    jobs_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(_js, "JOBS_DIR", jobs_dir, raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _isolate_dmn_novelty_state(tmp_path, monkeypatch):
     """Keep DMN tests from polluting the real ``second_brain/`` directory.
 
     The DMN persists its novelty/dedup state to disk on every accepted thought,
     so any test that drives ``_process_thought`` would otherwise write a real
     ``second_brain/dmn_novelty.json``. Redirect that path to a per-test temp file.
+
+    ROUTING_WEIGHTS_PATH is the same story one file over: it's frozen at import
+    from SECOND_BRAIN_ROOT, and the idle-routing save path rewrote the real
+    ``second_brain/dmn_routing_weights.json`` during the suite.
     """
     try:
         import brain.dmn as _dmn
     except Exception:
         return
     monkeypatch.setattr(_dmn, "NOVELTY_STATE_PATH", tmp_path / "dmn_novelty.json", raising=False)
+    monkeypatch.setattr(
+        _dmn, "ROUTING_WEIGHTS_PATH", tmp_path / "dmn_routing_weights.json", raising=False
+    )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_tool_log(tmp_path, monkeypatch):
+    """Keep the executor audit trail out of the real ``second_brain/schema/``.
+
+    ``_executor_common._TOOL_LOG_PATH`` is another import-time constant off
+    SECOND_BRAIN_ROOT. Every executor tool call appends one entry, so the suite
+    was appending fixture rows ("loop forever", "read passwd", …) straight into
+    the real schema/tool_log.md — the file is gitignored, so git status never
+    showed it. Tests that assert on log contents set exe._log_path themselves.
+    """
+    try:
+        import brain.clusters._executor_common as _ec
+    except Exception:
+        return
+    monkeypatch.setattr(_ec, "_TOOL_LOG_PATH", tmp_path / "tool_log.md", raising=False)
 
 
 @pytest.fixture

@@ -2,7 +2,7 @@
    BRAIN SETTINGS — data model
    Every control maps to the exact `key` the FastAPI /settings endpoint
    expects, so this config can drive the live app verbatim. Rows are
-   grouped into 6 navigable categories; `adv:true` rows are tucked behind
+   grouped into navigable categories; `adv:true` rows are tucked behind
    an "Advanced" disclosure so the essentials read first.
 
    Row types:
@@ -15,7 +15,8 @@
 
 window.SETTINGS = {
 
-  // ---- Persona presets (the five from the app's PERSONAS map) -------
+  // ---- Persona presets (the built-ins from the app's PERSONAS map; must stay
+  //      in sync with PERSONA_CHEMISTRY — see test_persona_surfaces_in_sync) ----
   personas: [
     { id: 'The Visionary', name: 'The Visionary', tag: 'Exploratory · optimistic · uninhibited', note: 'Chases big ideas with optimism and few brakes — bold, expansive, a little restless.' },
     { id: 'The Empath',    name: 'The Empath',    tag: 'Warm · patient · attuned',              note: 'Bonds easily and reads the room — warm, patient, and slow to stress.' },
@@ -46,7 +47,9 @@ window.SETTINGS = {
           id: 'sec-traits', num: '00', title: 'Temperament',
           desc: 'High-level trait dials. Each one nudges a bundle of underlying controls at once, on top of your chosen persona. Drop into Resting Chemistry (and the other categories) to hand-tune any single control.',
           rows: [
-            { type: 'master', virtual: true, key: 'trait-intelligence', label: 'Intelligence',  hint: 'rate of learning, attention & reasoning depth — not raw model capability', min: 0, max: 1, step: 0.01, def: 0.5 },
+            /* No 'trait-intelligence' row: learning rate is not a chemistry trait, so it
+               ships as the Learning Rate dial in Cognitive Style (settings-ui.js
+               COGNITIVE_DIALS) instead. These rows must stay in sync with TRAIT_DIALS. */
             { type: 'master', virtual: true, key: 'trait-empathy',      label: 'Empathy / Warmth', hint: 'bonding, contentment & warm delivery',                              min: 0, max: 1, step: 0.01, def: 0.5 },
             { type: 'master', virtual: true, key: 'trait-sensitivity',  label: 'Sensitivity',   hint: 'emotional reactivity & how vividly moments imprint',                  min: 0, max: 1, step: 0.01, def: 0.5 },
             { type: 'master', virtual: true, key: 'trait-composure',    label: 'Composure',     hint: 'calm & even-keeled — the counterweight to Sensitivity',              min: 0, max: 1, step: 0.01, def: 0.5 },

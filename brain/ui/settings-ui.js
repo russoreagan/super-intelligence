@@ -3,7 +3,7 @@
    Adapted from the Elyceum "Persona & Temperament" redesign to the LIVE app:
      • Personas are the top-level entity (left rail); each settings category
        is a TAB within the active persona. The Temperament tab holds the
-       nine radial trait dials (a macro layer over the chemistry); other tabs
+       radial trait dials (a macro layer over the chemistry); other tabs
        expose that persona's raw controls, read-only until Manual mode is on.
      • Real GET/POST /settings, POST /settings/reset; restart via the app's
        existing restart banner. Voice + mood + theme live in the app's rail
@@ -43,11 +43,12 @@
   ];
   const CHEM_MIN = 0, CHEM_MAX = 0.8, CHEM_STEP = 0.01;
 
-  /* ---- the eight temperament dials. Each map row: { key, dir, span }. Every
-     key is a real backend settings key, so every dial both moves a real control
-     and produces a valid /settings patch. (The Learning Rate dial is NOT here —
-     learning rate is not a chemistry trait, so it lives in the Cognitive Style
-     box below where it rests at neutral.) ---- */
+  /* ---- the temperament dials: a core temperament block, then Lingering, then the
+     Motivation and Risk-posture groups (each flagged by its own comment below).
+     Each map row: { key, dir, span }. Every key is a real backend settings key, so
+     every dial both moves a real control and produces a valid /settings patch. (The
+     Learning Rate dial is NOT here — learning rate is not a chemistry trait, so it
+     lives in the Cognitive Style box below where it rests at neutral.) ---- */
   const TRAIT_DIALS = [
     { id: 'empathy', label: 'Empathy', sub: 'warmth · bonding', glyph: 'bond',
       map: [ { key: 'chem_baseline_OXT', dir: +1, span: 0.15 }, { key: 'chem_baseline_5HT', dir: +1, span: 0.10 }, { key: 'oxt_positive_increment', dir: +1, span: 0.006 }, { key: 'voice_style_default', dir: +1, span: 0.10 }, { key: 'chem_baseline_CORT', dir: -1, span: 0.04 } ] },

@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 # eval-log-only (skip decisions, recruitment, etc. — diagnostics, not learning).
 LEDGER_TYPES = {
     "hebbian_update_applied",
+    "hebbian_eligibility_applied",
     "hebbian_update_skipped",
     "drafter_competition_applied",
     "switch_routing_credit_applied",
@@ -158,6 +159,12 @@ def read(
                 (r.get("src") == src and r.get("tgt") == tgt)
                 or r.get("edge") == edge
                 or r.get("switch") == tgt.replace("temporal.", "")
+                # Aggregate records (hebbian_eligibility_applied) carry their
+                # edges in a list rather than top-level src/tgt.
+                or any(
+                    isinstance(e, dict) and e.get("src") == src and e.get("tgt") == tgt
+                    for e in (r.get("edges") or [])
+                )
             ):
                 continue
             out.append(r)

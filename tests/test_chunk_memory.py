@@ -7,6 +7,7 @@ Coverage:
     - promotion gate: requires >= _MIN_DISTINCT_JOBS distinct jobs
     - promotion gate: requires >= _MIN_SUCCESS_RATE success rate
     - invariance: a step is invariant only if its args were identical everywhere
+    - planner placeholders (tool="none") are never mined, and act as a barrier
   ChunkMemorySubsystem (runtime consumer)
     - suggest_chunk: prefix match returns remaining invariant steps
     - suggest_chunk: stops at the first variable-arg step
@@ -72,6 +73,58 @@ def test_promotion_requires_success_rate():
     assert c["distinct_jobs"] == 4
     assert c["success_rate"] == 0.5
     assert c["state"] == "candidate"
+
+
+def test_planner_placeholders_are_never_mined():
+    """A run of planner failures must not become the corpus's most reliable skill.
+
+    Regression: the motor cortex logs {"tool": "none", "reason": "[planner failed]"}
+    with an EMPTY result when no tool ran. `_is_error("")` is False, so mining scored
+    those no-ops as 100%-successful, and since their args are always {} the chunk was
+    invariant — making `none→none` the single active chunk mined from the real
+    93-job corpus, eligible to fire ballistically.
+    """
+    placeholder = [
+        {"tool": "none", "args": {}, "reason": "[planner failed]"},
+        {"tool": "none", "args": {}, "reason": "[planner failed]"},
+    ]
+    jobs = [
+        {"job_id": f"j{i}", "steps": list(placeholder), "results": ["", ""]}
+        for i in range(_MIN_DISTINCT_JOBS + 2)
+    ]
+    data = mine_chunks(jobs)
+    assert data["chunks"] == {}, "planner placeholders must never be mined as a chunk"
+
+
+def test_placeholder_is_a_barrier_between_real_tools():
+    """A no-op breaks adjacency: tools either side of it were never run as a unit,
+    so no chunk may span the placeholder — but real neighbours still mine."""
+    jobs = [
+        {
+            "job_id": f"j{i}",
+            "steps": [
+                {"tool": "list_files", "args": {"path": "."}, "reason": ""},
+                {"tool": "read_file", "args": {"path": "a"}, "reason": ""},
+                {"tool": "none", "args": {}, "reason": "[planner failed]"},
+                {"tool": "write_file", "args": {"path": "b"}, "reason": ""},
+            ],
+            "results": ["ok", "ok", "", "ok"],
+        }
+        for i in range(_MIN_DISTINCT_JOBS)
+    ]
+    data = mine_chunks(jobs)
+    keys = list(data["chunks"])
+    assert all("none" not in k for k in keys), f"no chunk may contain a placeholder: {keys}"
+    # The genuine adjacent pair before the barrier still mines and promotes.
+    real = _chunk_key(
+        [{"tool": "list_files", "args": {"path": "."}}, {"tool": "read_file", "args": {"path": "a"}}]
+    )
+    assert data["chunks"][real]["state"] == "active"
+    # Nothing bridges across the barrier (read_file → write_file were not adjacent).
+    bridged = _chunk_key(
+        [{"tool": "read_file", "args": {"path": "a"}}, {"tool": "write_file", "args": {"path": "b"}}]
+    )
+    assert bridged not in data["chunks"]
 
 
 def test_invariance_detection():

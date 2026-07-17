@@ -571,6 +571,207 @@ def test_graded_plasticity_keeps_hard_skips(monkeypatch, tmp_path):
     assert skip2 is True and "dissociated" in reason2
 
 
+# ── Eligibility trace observability ──────────────────────────────────────────
+
+
+class _CaptureDecisions:
+    """Stands in for the decisions singleton; keeps every record."""
+
+    def __init__(self):
+        self.records = []
+
+    def log(self, decision, *, turn_id="", cluster="", **fields):
+        rec = {"decision": decision, "turn_id": turn_id, "cluster": cluster, **fields}
+        self.records.append(rec)
+        return rec
+
+    def of(self, decision):
+        return [r for r in self.records if r["decision"] == decision]
+
+
+def _elig_session(monkeypatch, tmp_path, lookback=2):
+    """Two good-outcome turns on DIFFERENT paths → turn 2 pays eligibility credit
+    back to turn 1's path. Returns (wiring, capture)."""
+    from brain.settings import settings
+    from brain.sleep import SleepConsolidation
+
+    monkeypatch.setitem(settings._data, "eligibility_lookback", lookback)
+    monkeypatch.setitem(settings._data, "eligibility_tau_turns", 2.0)
+
+    w = _isolated_wiring(monkeypatch, tmp_path)
+    w.add("frontal.executive", "frontal.drafter_A", weight=1.0)
+    w.add("frontal.executive", "frontal.drafter_B", weight=1.0)
+
+    cap = _CaptureDecisions()
+    monkeypatch.setattr("brain.hebbian.decisions", cap)
+
+    sc = SleepConsolidation(_StubRouter(), _StubSchema(), _StubEpisodic(), wiring=w)
+    t1 = _make_trace("turn_1", DA=0.9, prior_DA=0.5, critic_overall=0.95)
+    t1.fired_path = [
+        {"name": "frontal.executive", "cluster": "frontal", "kind": "integrator"},
+        {"name": "frontal.drafter_A", "cluster": "frontal", "kind": "integrator"},
+    ]
+    t2 = _make_trace("turn_2", DA=0.9, prior_DA=0.5, critic_overall=0.95)
+    t2.fired_path = [
+        {"name": "frontal.executive", "cluster": "frontal", "kind": "integrator"},
+        {"name": "frontal.drafter_B", "cluster": "frontal", "kind": "integrator"},
+    ]
+    sc._run_hebbian_pass("session_elig", [t1, t2])
+    return w, cap
+
+
+def test_eligibility_credit_is_logged(monkeypatch, tmp_path):
+    """The defect: eligibility updates moved weights but emitted no record at all."""
+    _, cap = _elig_session(monkeypatch, tmp_path)
+    elig = cap.of("hebbian_eligibility_applied")
+    assert elig, "eligibility credit must emit a decision record"
+
+
+def test_eligibility_record_is_distinguishable_from_direct_credit(monkeypatch, tmp_path):
+    """A ledger reader must be able to tell delayed credit from this-turn credit,
+    and see WHICH turn earned it, how old it was, and how much it was decayed."""
+    _, cap = _elig_session(monkeypatch, tmp_path)
+    rec = cap.of("hebbian_eligibility_applied")[0]
+    # Distinct kind — every aggregate that filters hebbian_update_applied excludes it.
+    assert rec["decision"] != "hebbian_update_applied"
+    assert rec["turn_id"] == "turn_2"  # the turn whose outcome paid out
+    assert rec["source_turn_id"] == "turn_1"  # the turn whose path earned it
+    assert rec["age"] == 1
+    assert rec["decay"] == pytest.approx(__import__("math").exp(-1 / 2.0), abs=1e-3)
+    # …and it names the edge it actually moved.
+    moved = {(e["src"], e["tgt"]) for e in rec["edges"]}
+    assert ("frontal.executive", "frontal.drafter_A") in moved
+
+
+def test_eligibility_edges_updated_reconciles_with_logged_records(monkeypatch, tmp_path):
+    """edges_updated used to count eligibility updates that no record explained.
+    The eligibility share is now broken out and equals the sum over the records."""
+    _, cap = _elig_session(monkeypatch, tmp_path)
+    summary = cap.of("session_plasticity_summary")[0]
+    logged = sum(int(r["edges_updated"]) for r in cap.of("hebbian_eligibility_applied"))
+    assert summary["eligibility_edges_updated"] == logged
+    assert logged > 0
+    # …and the eligibility share is part of, not on top of, the headline total.
+    assert summary["eligibility_edges_updated"] <= summary["edges_updated"]
+
+
+def test_eligibility_credit_reaches_top_gainers(monkeypatch, tmp_path):
+    """Weight moved by delayed credit must show up in the session summary's
+    gainers, not vanish from it."""
+    _, cap = _elig_session(monkeypatch, tmp_path)
+    summary = cap.of("session_plasticity_summary")[0]
+    gained = {g["edge"] for g in summary["top_gainers"]}
+    assert "frontal.executive→frontal.drafter_A" in gained
+
+
+def test_eligibility_lookback_zero_logs_nothing(monkeypatch, tmp_path):
+    """Lookback 0 disables the trace — and must stay silent, not log empties."""
+    _, cap = _elig_session(monkeypatch, tmp_path, lookback=0)
+    assert cap.of("hebbian_eligibility_applied") == []
+    assert cap.of("session_plasticity_summary")[0]["eligibility_edges_updated"] == 0
+
+
+def test_eligibility_records_route_to_ledger_and_edge_query(monkeypatch, tmp_path):
+    """The new kind is ledger-routed, and the ledger's edge filter matches on the
+    aggregate's `edges` list (it has no top-level src/tgt)."""
+    from brain.observability import learning_ledger
+
+    assert "hebbian_eligibility_applied" in learning_ledger.LEDGER_TYPES
+
+    path = tmp_path / "led.jsonl"
+    rec = {
+        "decision": "hebbian_eligibility_applied",
+        "session_id": "s1",
+        "edges": [{"src": "a", "tgt": "b", "delta": 0.02}],
+    }
+    path.write_text(__import__("json").dumps(rec) + "\n", encoding="utf-8")
+    hits = learning_ledger.read(edge="a→b", path=path)
+    assert len(hits) == 1
+    assert learning_ledger.read(edge="x→y", path=path) == []
+
+
+def test_wiring_view_edge_records_flatten_eligibility(monkeypatch, tmp_path):
+    """The edge-drift explanations must include delayed credit, flattened to the
+    same per-edge shape the UI renders, still tagged as eligibility."""
+    from brain.observability.learning_reader import _edge_records
+
+    recs = [
+        {"decision": "hebbian_update_applied", "src": "a", "tgt": "b", "delta": 0.05},
+        {
+            "decision": "hebbian_eligibility_applied",
+            "turn_id": "t2",
+            "source_turn_id": "t1",
+            "age": 2,
+            "decay": 0.37,
+            "outcome": 0.6,
+            "edges": [
+                {"src": "a", "tgt": "b", "from_weight": 1.0, "to_weight": 1.02, "delta": 0.02},
+                {"src": "c", "tgt": "d", "from_weight": 1.0, "to_weight": 1.02, "delta": 0.02},
+            ],
+        },
+    ]
+    out = _edge_records(recs, "a", "b")
+    assert len(out) == 2  # direct + the a→b half of the aggregate only
+    assert out[0]["decision"] == "hebbian_update_applied"
+    assert out[1]["decision"] == "hebbian_eligibility_applied"
+    assert out[1]["delta"] == 0.02
+    assert out[1]["age"] == 2 and out[1]["source_turn_id"] == "t1"
+    # c→d must not leak into a→b's explanations.
+    assert all(r.get("tgt") == "b" for r in out)
+
+
+def test_sleep_evidence_does_not_double_count_eligibility(monkeypatch, tmp_path):
+    """by_edge groups stay direct-credit-only (their mean outcome describes those
+    turns); eligibility gets its own entry instead of inflating theirs."""
+    import json as _json
+
+    from brain.sleep import SleepConsolidation
+
+    w = _isolated_wiring(monkeypatch, tmp_path)
+    sc = SleepConsolidation(_StubRouter(), _StubSchema(), _StubEpisodic(), wiring=w)
+
+    led = tmp_path / "ledger.jsonl"
+    rows = [
+        {
+            "decision": "hebbian_update_applied",
+            "session_id": "s9",
+            "src": "a",
+            "tgt": "b",
+            "from_weight": 1.0,
+            "to_weight": 1.05,
+            "delta": 0.05,
+            "outcome": 0.5,
+            "turn_id": "t1",
+        },
+        {
+            "decision": "hebbian_eligibility_applied",
+            "session_id": "s9",
+            "turn_id": "t2",
+            "source_turn_id": "t1",
+            "age": 1,
+            "decay": 0.61,
+            "outcome": 0.5,
+            "edges_updated": 1,
+            "edges": [{"src": "a", "tgt": "b", "delta": 0.03}],
+        },
+    ]
+    led.write_text("\n".join(_json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "brain.observability.learning_ledger.ledger_path", lambda persona="": led
+    )
+
+    ev = sc._learning_evidence("s9", "")
+    routing = [e for e in ev if "hebbian_update_applied" in e["decision_types"]]
+    assert len(routing) == 1
+    # The direct group reports ONLY its own 0.05 — not 0.08.
+    assert routing[0]["edges"][0]["delta"] == pytest.approx(0.05)
+    assert routing[0]["metrics"]["n_updates"] == 1
+    # …and the delayed credit is present, separately.
+    delayed = [e for e in ev if "hebbian_eligibility_applied" in e["decision_types"]]
+    assert len(delayed) == 1
+    assert delayed[0]["metrics"]["net_delta"] == pytest.approx(0.03)
+
+
 # ── Per-persona attribution (mixed-persona trace buffers) ───────────────────
 
 

@@ -11,7 +11,8 @@ Pluggable backend, fail-soft:
     OPTIONAL extra — if it isn't installed the detector quietly disables itself
     and detect_vocal_events() returns {}.
 
-Gated behind the `vocal_events` settings flag (default 0/off). Hooked into
+Gated behind the `vocal_events` settings flag (default 1/on — production default
+since 2026-06; set to 0 to disable). Hooked into
 auditory_cortex._process_raw on the same waveform as extract_prosody, in an
 executor (model inference is blocking). Event probabilities are merged into the
 auditory.prosody payload under "vocal_events"; hypothalamus consumes "laughter"

@@ -199,8 +199,9 @@ Decision flavours include:
 - `weighted_drafter_selection` (picked drafter, weights, ε-greedy roll, divergence flag)
 - `weighted_switch_order`, `weighted_recall_fanout`
 - `hebbian_update_applied` (per-edge with from/to weight + delta)
+- `hebbian_eligibility_applied` (delayed credit to an earlier turn's path — one record per crediting turn + age, carrying the age/decay and every edge it moved)
 - `hebbian_update_skipped` (with reason)
-- `session_plasticity_summary` (session totals, top gainers/losers)
+- `session_plasticity_summary` (session totals, top gainers/losers, `eligibility_edges_updated`)
 
 ### Tail the decisions stream
 

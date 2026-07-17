@@ -607,3 +607,361 @@ def test_performed_emotion_monitor_metric():
     m = compute_relationship_metrics(turns)
     assert m["performed_emotion_rate"] == 0.75
     assert m["performed_emotion_flavors"] == {"playful": 2, "cheer_up": 1}
+
+
+# ── F9 regression: the familiarity line must never accrete suffixes ───────────
+#
+# History: `_maybe_promote_familiarity` used to rewrite only the `- Familiarity:
+# <tier>` PREFIX, leaving any previous `(interactions: N)` suffix in place. Every
+# session therefore prepended one more parenthetical, and real user schemas grew
+# lines like:
+#   - Familiarity: close (interactions: 44) (interactions: 43) ... (interactions: 1)
+# The fix matches the ENTIRE line (`- Familiarity:[^\n]*`) and replaces it. These
+# tests pin that behaviour so the accretion cannot come back.
+
+
+class _StubSchema:
+    """Minimal in-memory stand-in for SchemaStore (read/write/_lock/list_files)."""
+
+    def __init__(self, content: str = "", filename: str = "user.md"):
+        import asyncio
+
+        self._lock = asyncio.Lock()
+        self._files = {filename: content}
+
+    def read(self, filename: str) -> str:
+        return self._files.get(filename, "")
+
+    def write(self, filename: str, content: str) -> None:
+        self._files[filename] = content
+
+    def list_files(self) -> list[str]:
+        return list(self._files)
+
+
+def _stub_hippo(content: str):
+    """Bind the real _maybe_promote_familiarity to a stub carrying only what it
+    touches — self._schema and the class-level tier table."""
+    from brain.clusters.hippocampus import HippocampusCluster
+
+    class _H:
+        _FAMILIARITY_TIERS = HippocampusCluster._FAMILIARITY_TIERS
+        _maybe_promote_familiarity = HippocampusCluster._maybe_promote_familiarity
+        apply_relationship_decay_at_boot = HippocampusCluster.apply_relationship_decay_at_boot
+
+        def __init__(self, content: str):
+            self._schema = _StubSchema(content)
+
+    return _H(content)
+
+
+_BASE_SCHEMA = (
+    "# User: Russ\n\n## Relationship\n- Familiarity: new (interactions: 1)\n\n"
+    "## Affection score\n- Score: 40\n- Bond: 40.0\n- Interactions: 1\n"
+)
+
+
+async def test_familiarity_line_does_not_accrete_across_sessions():
+    """Writing the familiarity line twice must leave ONE parenthetical, not two."""
+    h = _stub_hippo(_BASE_SCHEMA)
+    await h._maybe_promote_familiarity("user.md")
+    await h._maybe_promote_familiarity("user.md")
+    content = h._schema.read("user.md")
+
+    fam = [ln for ln in content.splitlines() if ln.startswith("- Familiarity:")]
+    assert len(fam) == 1, f"expected exactly one familiarity line, got {fam}"
+    assert fam[0].count("(interactions:") == 1, f"suffix accreted: {fam[0]}"
+    # The count advanced 1 → 3 (two promotions) and both lines agree.
+    assert "(interactions: 3)" in fam[0]
+    assert content.count("- Interactions: 3") == 1
+    assert len([ln for ln in content.splitlines() if ln.startswith("- Interactions:")]) == 1
+
+
+async def test_familiarity_line_stable_over_many_sessions():
+    """Fifty promotions must not grow the line — the real bug only showed at scale."""
+    h = _stub_hippo(_BASE_SCHEMA)
+    for _ in range(50):
+        await h._maybe_promote_familiarity("user.md")
+    fam = [ln for ln in h._schema.read("user.md").splitlines() if ln.startswith("- Familiarity:")]
+    assert len(fam) == 1
+    assert fam[0].count("(interactions:") == 1, f"suffix accreted over 50 runs: {fam[0]}"
+    assert "(interactions: 51)" in fam[0]
+
+
+async def test_familiarity_promotion_heals_already_accreted_line():
+    """A schema already corrupted by the old bug must be collapsed to one
+    parenthetical by the next write, not extended."""
+    corrupt = (
+        "# User: Russ\n\n## Relationship\n"
+        "- Familiarity: close (interactions: 44) (interactions: 43) (interactions: 42)\n\n"
+        "## Affection score\n- Score: 40\n- Bond: 40.0\n- Interactions: 44\n"
+    )
+    h = _stub_hippo(corrupt)
+    await h._maybe_promote_familiarity("user.md")
+    fam = [ln for ln in h._schema.read("user.md").splitlines() if ln.startswith("- Familiarity:")]
+    assert len(fam) == 1
+    assert fam[0].count("(interactions:") == 1, f"did not heal: {fam[0]}"
+    assert "(interactions: 45)" in fam[0]
+
+
+async def test_boot_decay_does_not_accrete_familiarity_suffix():
+    """The sibling writer in apply_relationship_decay_at_boot is a whole-line
+    replace too — repeated boots must not stack parentheticals."""
+    import time
+
+    long_ago = time.time() - (30 * 86400)
+    content = (
+        "# User: Russ\n\n## Relationship\n- Familiarity: close (interactions: 44)\n\n"
+        f"## Affection score\n- Score: 40\n- Bond: 40.0\n- Interactions: 44\n"
+        f"- Last seen: {long_ago:.0f}\n"
+    )
+    h = _stub_hippo(content)
+    await h.apply_relationship_decay_at_boot()
+    await h.apply_relationship_decay_at_boot()
+    fam = [ln for ln in h._schema.read("user.md").splitlines() if ln.startswith("- Familiarity:")]
+    assert len(fam) == 1
+    assert fam[0].count("(interactions:") == 1, f"boot decay accreted: {fam[0]}"
+
+
+# ── Pre-bond-model migration: a close relationship must not become "new" ──────
+#
+# History: `- Bond:` postdates the bond model, so schemas written before it
+# shipped have no such line. `_maybe_promote_familiarity` read that absent field
+# as 0.0 and `familiarity_from_bond(0.0)` returns "new" — so the very next turn
+# downgraded a 44-session close relationship straight to "new" and the agent
+# forgot it knew the user. Real files (second_brain/schema/user_russ.md, user.md)
+# were in exactly this state. The fix is a migration: absence of the field means
+# "predates the field", and the bond is reconstructed from the file's own legacy
+# signals (tier, interaction count, affection) on read, then persisted once.
+
+_PRE_BOND_SCHEMA = (
+    "# User: Russ\n\n## Relationship\n- Familiarity: close (interactions: 44)\n\n"
+    "## Affection score\n- Score: 11\n\n"
+    "- History: friendly — warm and engaged (last tone: testing, delta: -1)\n"
+    "- Interactions: 44\n"
+)
+
+
+def _fam_line(content: str) -> str:
+    return next(ln for ln in content.splitlines() if ln.startswith("- Familiarity:"))
+
+
+def _bond_value(content: str) -> float:
+    import re
+
+    m = re.search(r"- Bond:\s*(-?\d+(?:\.\d+)?)", content)
+    assert m, f"no bond line in:\n{content}"
+    return float(m.group(1))
+
+
+async def test_turn_never_downgrades_when_bond_reads_low():
+    """The seed handles a MISSING bond; this pins the other half of the fix. A
+    bond that is present but reads below the tier the file claims (e.g. written
+    by the old `max(0, affection)` fallback, or any future path that mis-reads
+    the field) must not let a turn erase the relationship either: familiarity is
+    history depth, and talking to someone cannot make you know them less. Only
+    measured absence may lower a tier, and that runs at boot, not here."""
+    content = (
+        "# User: Russ\n\n## Relationship\n- Familiarity: close (interactions: 44)\n\n"
+        "## Affection score\n- Score: 11\n- Bond: 11.0\n- Interactions: 44\n"
+    )
+    h = _stub_hippo(content)
+    await h._maybe_promote_familiarity("user.md")
+    assert "close" in _fam_line(h._schema.read("user.md"))
+
+
+async def test_pre_bond_close_user_does_not_downgrade_on_next_interaction():
+    """THE defect: a pre-bond-model file with `close` + 44 interactions must
+    survive the next turn as `close`, not be reset to `new`."""
+    h = _stub_hippo(_PRE_BOND_SCHEMA)
+    await h._maybe_promote_familiarity("user.md")
+    content = h._schema.read("user.md")
+    assert "close" in _fam_line(content), f"close relationship was downgraded: {_fam_line(content)}"
+    # The migration must persist the reconstructed bond, not just mask the symptom.
+    assert _bond_value(content) >= 35.0, "bond not seeded into the close band"
+
+
+async def test_pre_bond_close_user_survives_neutral_tone_turn():
+    """The real-world path: `neutral` is the DEFAULT tone and carries delta 0, so
+    _update_affection_score returns early without ever writing a bond. The heal
+    must therefore not depend on it — _maybe_promote_familiarity runs every turn."""
+    h = _stub_hippo(_PRE_BOND_SCHEMA)
+    for _ in range(5):
+        await h._maybe_promote_familiarity("user.md")
+    content = h._schema.read("user.md")
+    assert "close" in _fam_line(content)
+    assert len([ln for ln in content.splitlines() if ln.startswith("- Bond:")]) == 1
+
+
+async def test_pre_bond_migration_seeds_bond_exactly_once():
+    """The seed must be persisted and then left alone — if it re-derived every
+    turn, the growing interaction count would inflate the bond forever instead of
+    the bond model governing it."""
+    h = _stub_hippo(_PRE_BOND_SCHEMA)
+    await h._maybe_promote_familiarity("user.md")
+    seeded = _bond_value(h._schema.read("user.md"))
+    for _ in range(20):
+        await h._maybe_promote_familiarity("user.md")
+    assert _bond_value(h._schema.read("user.md")) == seeded, "bond drifted with interaction count"
+
+
+async def test_pre_bond_acquainted_user_keeps_tier():
+    """The migration is general, not a special case for one file."""
+    content = (
+        "# User: Sam\n\n## Relationship\n- Familiarity: acquainted (interactions: 12)\n\n"
+        "## Affection score\n- Score: 4\n- Interactions: 12\n"
+    )
+    h = _stub_hippo(content)
+    await h._maybe_promote_familiarity("user.md")
+    assert "acquainted" in _fam_line(h._schema.read("user.md"))
+
+
+async def test_pre_bond_file_without_familiarity_line_recovers_from_count():
+    """A file whose `- Familiarity:` line is missing still carries its history in
+    the interaction count — 44 sessions is a close relationship under the legacy
+    tiers and must not migrate to `new`."""
+    content = "# User: Sam\n\n## Affection score\n- Score: 5\n- Interactions: 44\n"
+    h = _stub_hippo(content)
+    await h._maybe_promote_familiarity("user.md")
+    assert "close" in _fam_line(h._schema.read("user.md"))
+
+
+async def test_fresh_user_still_starts_new():
+    """A genuinely new user carries none of the legacy signals and must seed 0 →
+    `new`. The migration must not manufacture a relationship that never existed."""
+    h = _stub_hippo("# User: Nobody\n\n## Affection score\n- Score: 0\n")
+    await h._maybe_promote_familiarity("user.md")
+    content = h._schema.read("user.md")
+    assert "new" in _fam_line(content)
+    assert _bond_value(content) < ACQ_BOND
+
+
+async def test_fresh_user_stays_new_over_early_turns():
+    """Warmth, not turn count, is what earns a tier under the bond model."""
+    h = _stub_hippo("# User: Nobody\n\n## Affection score\n- Score: 0\n")
+    for _ in range(6):
+        await h._maybe_promote_familiarity("user.md")
+    assert "new" in _fam_line(h._schema.read("user.md"))
+
+
+# ── The guard must not break decay ────────────────────────────────────────────
+#
+# The never-downgrade ratchet lives ONLY on the turn path. Absence decay is
+# applied by apply_relationship_decay_at_boot, which writes the tier itself and is
+# deliberately unguarded — talking to someone cannot make you know them less, but
+# a long silence still can. These tests pin that split.
+
+
+async def test_long_absence_still_decays_a_migrated_close_user():
+    """A migrated close relationship must STILL fall over a genuinely long
+    absence — the guard protects the turn path, never the boot path."""
+    import time
+
+    h = _stub_hippo(_PRE_BOND_SCHEMA)
+    await h._maybe_promote_familiarity("user.md")  # migrate → close, bond seeded
+    assert "close" in _fam_line(h._schema.read("user.md"))
+
+    # Five years of silence.
+    content = h._schema.read("user.md") + f"\n- Last seen: {time.time() - 1825 * 86400:.0f}\n"
+    h._schema.write("user.md", content)
+    await h.apply_relationship_decay_at_boot()
+    assert "new" in _fam_line(h._schema.read("user.md")), "decay did not reach new"
+
+
+async def test_moderate_absence_demotes_close_to_acquainted():
+    """Decay is graded, not a cliff: a long-but-not-eternal gap steps the tier
+    down one notch rather than erasing the relationship."""
+    import time
+
+    h = _stub_hippo(_PRE_BOND_SCHEMA)
+    await h._maybe_promote_familiarity("user.md")
+    content = h._schema.read("user.md") + f"\n- Last seen: {time.time() - 700 * 86400:.0f}\n"
+    h._schema.write("user.md", content)
+    await h.apply_relationship_decay_at_boot()
+    assert "acquainted" in _fam_line(h._schema.read("user.md"))
+
+
+async def test_turn_guard_does_not_resurrect_a_decayed_tier():
+    """After absence decay demotes a tier, the turn path must hold it there —
+    the ratchet must not re-promote from a stale higher tier."""
+    import time
+
+    h = _stub_hippo(_PRE_BOND_SCHEMA)
+    await h._maybe_promote_familiarity("user.md")
+    content = h._schema.read("user.md") + f"\n- Last seen: {time.time() - 1825 * 86400:.0f}\n"
+    h._schema.write("user.md", content)
+    await h.apply_relationship_decay_at_boot()
+    decayed = _fam_line(h._schema.read("user.md"))
+    await h._maybe_promote_familiarity("user.md")
+    assert "new" in _fam_line(h._schema.read("user.md")), f"tier bounced back from {decayed}"
+
+
+async def test_boot_seeds_bond_when_last_seen_is_missing():
+    """The boot path stamped `Last seen` and `continue`d before the Bond write, so
+    a pre-bond-model file left boot still missing the field. It must migrate."""
+    h = _stub_hippo(_PRE_BOND_SCHEMA)
+    await h.apply_relationship_decay_at_boot()
+    content = h._schema.read("user.md")
+    assert "- Last seen:" in content
+    assert _bond_value(content) >= 35.0, "boot did not seed bond for a pre-bond file"
+    # Nothing to decay on the migration boot: no record of the gap, so none is invented.
+    assert "close" in _fam_line(content)
+
+
+# ── Migration primitives ──────────────────────────────────────────────────────
+
+from brain.relationship import bond_from_history, seed_bond_from_legacy  # noqa: E402
+
+
+def _seed(affection, interactions, tier):
+    return seed_bond_from_legacy(
+        affection, interactions, tier, close_bond=CLOSE_BOND, acquainted_bond=ACQ_BOND
+    )
+
+
+def test_bond_from_history_maps_legacy_thresholds_onto_bond_tiers():
+    """The legacy tier boundaries (8 / 30 interactions) must land exactly on the
+    bond tier boundaries, so a migrated user sits at the same relative position."""
+    assert bond_from_history(8, CLOSE_BOND, ACQ_BOND) == ACQ_BOND
+    assert bond_from_history(30, CLOSE_BOND, ACQ_BOND) == CLOSE_BOND
+    assert bond_from_history(0, CLOSE_BOND, ACQ_BOND) == 0.0
+    # Monotone, and never promotes someone the legacy model would not have.
+    assert (
+        familiarity_from_bond(bond_from_history(7, CLOSE_BOND, ACQ_BOND), CLOSE_BOND, ACQ_BOND)
+        == "new"
+    )
+    assert bond_from_history(29, CLOSE_BOND, ACQ_BOND) < CLOSE_BOND
+    assert bond_from_history(100, CLOSE_BOND, ACQ_BOND) > CLOSE_BOND
+
+
+def test_bond_from_history_saturates():
+    """A deep history earns a stable bond, not an unbreakable one."""
+    cap = CLOSE_BOND + (CLOSE_BOND - ACQ_BOND)
+    assert bond_from_history(10_000, CLOSE_BOND, ACQ_BOND) == cap
+
+
+def test_seed_preserves_claimed_tier():
+    assert familiarity_from_bond(_seed(11, 44, "close"), CLOSE_BOND, ACQ_BOND) == "close"
+    assert familiarity_from_bond(_seed(4, 12, "acquainted"), CLOSE_BOND, ACQ_BOND) == "acquainted"
+    assert familiarity_from_bond(_seed(0, 0, "new"), CLOSE_BOND, ACQ_BOND) == "new"
+    assert familiarity_from_bond(_seed(0, 0, ""), CLOSE_BOND, ACQ_BOND) == "new"
+
+
+def test_seed_is_not_on_the_tier_knife_edge():
+    """Seeding at exactly close_bond would demote after a single day's absence —
+    and since bond only re-grows as a high-water mark of affection, permanently."""
+    seed = _seed(11, 44, "close")
+    _, bond_after_a_day = apply_absence(
+        11, seed, 1, aff_base=AFF_BASE, bond_base=BOND_BASE, scale=SCALE
+    )
+    assert familiarity_from_bond(bond_after_a_day, CLOSE_BOND, ACQ_BOND) == "close"
+
+
+def test_seed_never_below_affection():
+    """Bond is a high-water mark — it cannot sit below live affection."""
+    assert _seed(80, 0, "new") >= 80
+
+
+def test_seed_respects_bond_range():
+    assert 0.0 <= _seed(100, 10_000, "close") <= 100.0
+    assert _seed(-50, 0, "") == 0.0

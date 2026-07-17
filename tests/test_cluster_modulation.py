@@ -137,6 +137,36 @@ class TestHippocampusSwitchModulation:
             b = hippo._fanout_total_budget(chem)
             assert 4 <= b <= 12
 
+    def test_fanout_spotlight_ignited_widens_budget(self):
+        hippo, _ = _make_hippo()
+        # Ignited workspace spotlight casts a wider net than the same chemistry
+        # without ignition (locked contract: salience 0..10 scales a 0..+2 nudge).
+        base = hippo._fanout_total_budget({})
+        ignited = hippo._fanout_total_budget({}, {"ignited": True, "salience": 10.0})
+        assert ignited > base
+
+    def test_fanout_spotlight_not_ignited_is_noop(self):
+        """Byte-identical to the pre-spotlight single-arg budget: absent verdict,
+        `ignited=False`, and an empty dict all leave the budget untouched — so the
+        not-ignited path (and the flag-off path) equals the historical behaviour."""
+        hippo, _ = _make_hippo()
+        chem = {"ACh": 1.0, "Glu": 1.0}
+        # New optional arg defaulting / None → identical to the old single-arg call.
+        assert hippo._fanout_total_budget(chem, None) == hippo._fanout_total_budget(chem)
+        assert hippo._fanout_total_budget({}, {}) == hippo._fanout_total_budget({})
+        # A present-but-not-ignited verdict (even with salience) is a strict no-op.
+        assert hippo._fanout_total_budget(
+            {}, {"ignited": False, "salience": 10.0}
+        ) == hippo._fanout_total_budget({})
+
+    def test_fanout_spotlight_stays_bounded(self):
+        hippo, _ = _make_hippo()
+        # Ignited + extreme chemistry + max salience still respects the [4, 12] clamp.
+        b = hippo._fanout_total_budget(
+            {"ACh": 1.0, "Glu": 1.0}, {"ignited": True, "salience": 10.0}
+        )
+        assert 4 <= b <= 12
+
     def test_entity_grep_depth_widens_under_high_ACh(self):
         hippo, _ = _make_hippo()
         # Schema_k baseline 3 → base depth max(2,3)=3. Chemistry shifts ±1.

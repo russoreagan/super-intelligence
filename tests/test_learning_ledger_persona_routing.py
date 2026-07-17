@@ -198,6 +198,59 @@ def test_chunk_mining_groups_jobs_by_persona_stamp(home_root, monkeypatch):
     assert all(c["distinct_jobs"] == 8 for c in h.values())
 
 
+def test_chunk_mining_merges_home_stamped_and_unstamped_jobs(home_root, monkeypatch):
+    """Home-stamped and legacy-unstamped records are ONE persona: mine them together.
+
+    Regression (2026-07): job_store stamps every record with
+    persona_slug(active_or_home_persona()) — which for a home-persona job is the HOME
+    slug, not "". Pre-stamp legacy records carry "". Grouping on the RAW stamp split
+    one persona's history into two groups that resolve to the SAME chunks.json: the
+    first group wrote and stamped ts_epoch=now, then the second hit the 12h interval
+    gate in the very same pass ("last pass was 0.0 h ago") and was silently dropped.
+    The persona mined only whichever half of its corpus came first in glob order.
+    """
+    import asyncio
+
+    import brain.clusters.job_store as job_store_mod
+    from brain.sleep import SleepConsolidation
+
+    jobs_dir = home_root / "jobs"
+    jobs_dir.mkdir()
+    monkeypatch.setattr(job_store_mod, "JOBS_DIR", jobs_dir)
+
+    steps = [
+        {"tool": "fetch_url", "args": {"url": "https://x"}},
+        {"tool": "write_file", "args": {"path": "out.md", "content": "c"}},
+    ]
+
+    def _job(job_id, persona):
+        rec = {"job_id": job_id, "goal": "g", "steps": steps, "results": ["ok", "ok"]}
+        if persona:
+            rec["persona"] = persona
+        (jobs_dir / f"{job_id}.json").write_text(json.dumps(rec))
+
+    # Each half independently clears _CHUNK_MIN_JOBS, so the old split produced a
+    # file either way — it just silently contained half the history.
+    for i in range(8):
+        _job(f"legacy_{i}", "")  # pre-stamp record
+        _job(f"stamped_{i}", "the_companion")  # home persona's own name
+
+    sc = SleepConsolidation.__new__(SleepConsolidation)
+    asyncio.run(sc.chunk_mining_pass("s1"))
+
+    home_chunks = home_root / "chunks.json"
+    assert home_chunks.exists()
+    chunks = json.loads(home_chunks.read_text())["chunks"]
+    assert chunks
+    # All 16 jobs are the same persona's — every chunk must span the whole corpus,
+    # not the 8 that happened to be globbed first.
+    assert all(c["distinct_jobs"] == 16 for c in chunks.values()), {
+        k: c["distinct_jobs"] for k, c in chunks.items()
+    }
+    # The home persona must not fork a personas/<home-slug>/ subdir under its own root.
+    assert not (home_root / "personas").exists()
+
+
 def test_chunk_memory_reads_bound_personas_file(home_root):
     """The runtime chunk consumer resolves the bound persona's chunks.json —
     each persona is primed with its own routines."""

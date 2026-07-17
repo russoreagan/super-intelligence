@@ -76,6 +76,81 @@ def familiarity_from_bond(bond: float, close_bond: float, acquainted_bond: float
     return "new"
 
 
+# ── Legacy → bond migration ───────────────────────────────────────────────────
+# Schemas written before the bond model shipped carry `- Familiarity:`, `- Score:`
+# and `- Interactions:` but no `- Bond:`. Reading that absent field as 0.0 is a
+# category error: it conflates "this relationship has no depth" with "this file
+# predates the field", and reports a long-standing close relationship as "new".
+# The functions below reconstruct a defensible bond from the signals such a file
+# DOES carry, so the tier it already earned survives the model change.
+
+# Interaction counts the legacy count-based tiers used (hippocampus._FAMILIARITY_TIERS).
+LEGACY_CLOSE_INTERACTIONS = 30
+LEGACY_ACQUAINTED_INTERACTIONS = 8
+
+# A seeded tier is placed this far into the band above its own floor. Seeding at
+# exactly `close_bond` would put a migrated relationship on its own knife-edge —
+# the first day of absence would decay it a hair below the threshold and demote
+# it, permanently (bond only re-grows as a high-water mark of live affection).
+SEED_MARGIN_FRAC = 0.25
+
+
+def bond_from_history(interactions: float, close_bond: float, acquainted_bond: float) -> float:
+    """Bond implied by a legacy interaction count, for files predating `- Bond:`.
+
+    Piecewise-linear so the legacy model's tier boundaries land exactly on the
+    bond model's: 8 interactions (legacy "acquainted") → `acquainted_bond`, 30
+    (legacy "close") → `close_bond`. A migrated user therefore sits at the same
+    relative position on the new scale as on the old, and this can never promote
+    anyone the legacy model would not have. Deeper histories keep growing at the
+    same slope but saturate one band above the close floor — a long history earns
+    a stable bond, not an unbreakable one."""
+    n = max(0.0, float(interactions))
+    if n <= 0 or close_bond <= acquainted_bond:
+        return 0.0
+    if n <= LEGACY_ACQUAINTED_INTERACTIONS:
+        return acquainted_bond * (n / LEGACY_ACQUAINTED_INTERACTIONS)
+    span = LEGACY_CLOSE_INTERACTIONS - LEGACY_ACQUAINTED_INTERACTIONS
+    slope = (close_bond - acquainted_bond) / span
+    if n <= LEGACY_CLOSE_INTERACTIONS:
+        return acquainted_bond + slope * (n - LEGACY_ACQUAINTED_INTERACTIONS)
+    cap = close_bond + (close_bond - acquainted_bond)
+    return min(cap, close_bond + slope * (n - LEGACY_CLOSE_INTERACTIONS))
+
+
+def seed_bond_from_legacy(
+    affection: float,
+    interactions: float,
+    tier: str,
+    *,
+    close_bond: float,
+    acquainted_bond: float,
+) -> float:
+    """Reconstruct a bond for a schema that has relationship history but no
+    `- Bond:` line. Takes the strongest of three independent legacy signals:
+
+      - the tier the file already claims (plus a margin, so it is not seeded on
+        its own knife-edge) — the only explicit record of history depth;
+      - the depth implied by the interaction count — recovers files whose
+        `- Familiarity:` line is missing or mangled;
+      - live affection — bond is a high-water mark, so it can never sit below it.
+
+    A genuinely fresh file carries none of these (no tier, no interactions, no
+    score) and seeds 0.0 → "new", so this is safe to apply to every file: it is a
+    migration, not a special case."""
+    margin = max(0.0, (close_bond - acquainted_bond) * SEED_MARGIN_FRAC)
+    t = (tier or "").strip().lower()
+    if t == "close":
+        floor = close_bond + margin
+    elif t == "acquainted":
+        floor = acquainted_bond + margin
+    else:
+        floor = 0.0
+    hist = bond_from_history(interactions, close_bond, acquainted_bond)
+    seed = max(floor, hist, max(0.0, float(affection)))
+    return max(0.0, min(100.0, seed))
+
+
 def apply_absence(
     affection: float,
     bond: float,

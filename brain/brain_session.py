@@ -483,6 +483,15 @@ class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
         except Exception as _e:
             logger.debug("persona chemistry shutdown save error: %s", _e)
 
+        # Engine mode: force-flush every live customer's mood past the per-turn
+        # write throttle, so the last few seconds of each relationship survive a
+        # graceful exit. None in the companion product — nothing to flush.
+        try:
+            if self._client_chem is not None:
+                self._client_chem.flush()
+        except Exception as _e:
+            logger.debug("client chemistry shutdown flush error: %s", _e)
+
         self.brainstem.cancel_all_loops()
 
         if self._streaming_mic is not None:

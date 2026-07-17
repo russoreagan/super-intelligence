@@ -750,8 +750,17 @@ class SchemaStore:
             r"(^##[ \t]+" + re.escape(section) + r"[ \t]*\r?\n)(.*?)(?=^##[ \t]|\Z)",
             re.MULTILINE | re.DOTALL,
         )
-        replacement = r"\1" + new_body + "\n\n"
-        new_content, n = pattern.subn(replacement, content, count=1)
+        # Substitute via a FUNCTION, not a template string: re parses backslash
+        # escapes in a template, and new_body is arbitrary caller content. The DMN's
+        # open-threads ledger renders its body with json.dumps(), whose ensure_ascii
+        # escapes every non-ASCII char to \uXXXX — so one curly apostrophe or em dash
+        # in a thought (i.e. almost any LLM prose) raised "bad escape \u" here. re
+        # compiles the template BEFORE scanning for matches, so it raised even when
+        # the section was absent, making the `n == 0` append branch below unreachable:
+        # the `## Open threads` section was never created at all, and _save_threads
+        # swallowed the error as a warning. A literal \1 in a body would likewise
+        # splice in a capture group. A function's return value is used verbatim.
+        new_content, n = pattern.subn(lambda m: m.group(1) + new_body + "\n\n", content, count=1)
         if n == 0:
             # Section missing — append at end with proper spacing.
             tail = "" if content.endswith("\n") else "\n"

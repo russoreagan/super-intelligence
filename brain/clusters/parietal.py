@@ -17,6 +17,8 @@ logger = logging.getLogger(__name__)
 
 CLUSTER = "parietal"
 RING_SIZE = 6
+# How many ignited workspace foci to keep in the rolling record (advisory only).
+FOCUS_HISTORY_SIZE = 8
 
 
 @dataclass
@@ -164,6 +166,13 @@ class ParietalCluster:
         # Modality-independent — register is a property of how the person writes,
         # not which channel — so a single distribution rather than per-modality.
         self._register_profile: dict[str, float] = {}
+        # Global-workspace spotlight record (advisory arm of the thalamus → parietal
+        # fan-out). Parietal is a real subscriber to the spotlight: it *records* what
+        # coalition holds the workspace each turn but gates nothing on it. None when
+        # the workspace is not ignited (which includes the flag-off path); a compact
+        # dict when it is. A short rolling record keeps the recent ignited foci.
+        self._last_workspace_focus: dict | None = None
+        self._focus_history: deque[dict] = deque(maxlen=FOCUS_HISTORY_SIZE)
 
     def seed(self, episodes: list[dict]) -> None:
         """Pre-populate the ring from recent episodic history (called once at boot).
@@ -194,6 +203,63 @@ class ParietalCluster:
         # Track entities
         for entity in features.get("entities", []):
             self._entities[entity] = self._turn_count
+
+        # Record the current global-workspace spotlight (advisory; gates nothing).
+        self._record_workspace_focus(features)
+
+    def _record_workspace_focus(self, features: dict) -> None:
+        """Fold this turn's spotlight verdict into session state.
+
+        Reads the locked-contract spotlight the thalamus wrote onto ``features``
+        before parietal ran. This is the advisory arm of the thalamus → parietal
+        fan-out: parietal RECORDS what the workspace is focused on, it does not
+        gate anything on it.
+
+        No-op guarantee: when the workspace is not ignited — the spotlight key is
+        absent, malformed, or ``ignited`` is false (which includes the flag-off
+        path that yields a neutral verdict) — this records ``None`` and touches
+        nothing else, so every pre-existing output is byte-identical to before.
+        """
+        spotlight = features.get("spotlight")
+        if not isinstance(spotlight, dict) or not spotlight.get("ignited"):
+            self._last_workspace_focus = None
+            return
+        record = {
+            "turn": self._turn_count,
+            "focus": spotlight.get("focus"),
+            "coalition": spotlight.get("coalition"),
+            "sustained_turns": int(spotlight.get("sustained_turns", 0) or 0),
+            "salience": float(spotlight.get("salience", 0.0) or 0.0),
+        }
+        self._last_workspace_focus = record
+        self._focus_history.append(record)
+
+    def last_workspace_focus(self) -> dict | None:
+        """The coalition holding the workspace this turn, or None when not ignited."""
+        return self._last_workspace_focus
+
+    def recent_workspace_foci(self, n: int = 4) -> list[dict]:
+        """The last few ignited workspace foci (advisory record, oldest-first)."""
+        return list(self._focus_history)[-n:]
+
+    def workspace_focus_note(self) -> str:
+        """One-line 'current focus' note for a drafter prompt — only when ignited.
+
+        Returns '' whenever the workspace is not ignited, so a caller that always
+        appends this note contributes nothing on a neutral turn (the no-op path).
+        """
+        rec = self._last_workspace_focus
+        if not rec:
+            return ""
+        focus = rec.get("focus")
+        coalition = rec.get("coalition")
+        turns = int(rec.get("sustained_turns", 0) or 0)
+        held = f" (held {turns} turns)" if turns > 1 else ""
+        if coalition and focus:
+            return f"Workspace focus — the {coalition} coalition holds attention on {focus}{held}."
+        if focus:
+            return f"Workspace focus — attention is on {focus}{held}."
+        return ""
 
     def recent_turns(self, n: int = 4) -> list[dict]:
         return list(self._ring)[-n:]

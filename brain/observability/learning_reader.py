@@ -232,11 +232,51 @@ def wiring_view(persona: str = "", edge: str = "", live_wiring=None) -> dict:
     if edge:
         out["edge"] = edge
         out["edge_series"] = _edge_series(persona, edge)
-        recs = _decisions(persona, kinds={"hebbian_update_applied"})
+        recs = _decisions(
+            persona, kinds={"hebbian_update_applied", "hebbian_eligibility_applied"}
+        )
         src, _, tgt = edge.partition("→")
-        out["edge_records"] = [
-            r for r in recs if r.get("src") == src.strip() and r.get("tgt") == tgt.strip()
-        ][-50:]
+        out["edge_records"] = _edge_records(recs, src.strip(), tgt.strip())[-50:]
+    return out
+
+
+def _edge_records(recs: list[dict], src: str, tgt: str) -> list[dict]:
+    """Per-update explanations for one edge, oldest first.
+
+    Direct credit (`hebbian_update_applied`) is already one record per edge and
+    passes through. Eligibility credit is logged as ONE aggregate per (turn, age)
+    to keep ledger volume down, so it gets flattened to the same per-edge shape
+    here — same fields the UI renders, plus `age`/`decay`/`source_turn_id`, which
+    are what tell a reader "this edge moved because of a delayed payoff N turns
+    later" rather than "because of this turn". `decision` stays distinct, so the
+    two never read as the same thing.
+    """
+    out: list[dict] = []
+    for r in recs:
+        if r.get("decision") == "hebbian_eligibility_applied":
+            for e in r.get("edges") or []:
+                if not isinstance(e, dict) or e.get("src") != src or e.get("tgt") != tgt:
+                    continue
+                out.append(
+                    {
+                        "decision": "hebbian_eligibility_applied",
+                        "ts": r.get("ts"),
+                        "session_id": r.get("session_id"),
+                        "persona": r.get("persona"),
+                        "turn_id": r.get("turn_id"),
+                        "source_turn_id": r.get("source_turn_id"),
+                        "age": r.get("age"),
+                        "decay": r.get("decay"),
+                        "src": src,
+                        "tgt": tgt,
+                        "from_weight": e.get("from_weight"),
+                        "to_weight": e.get("to_weight"),
+                        "delta": e.get("delta"),
+                        "outcome": r.get("outcome"),
+                    }
+                )
+        elif r.get("src") == src and r.get("tgt") == tgt:
+            out.append(r)
     return out
 
 

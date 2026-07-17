@@ -43,6 +43,10 @@ def _scrub_tool_markup(text: str) -> tuple[str, bool]:
 
 logger = logging.getLogger("brain.run")
 
+# Per-customer chemistry write throttle, matching the persona chemistry's own
+# per-turn save cadence below (both write one small file, overwritten in place).
+_CLIENT_CHEM_PERSIST_INTERVAL_S = 5.0
+
 _CANCEL_WORDS = frozenset(
     [
         "never mind",
@@ -273,13 +277,27 @@ class _TurnMixin:
     def _client_chem_registry(self):
         """Lazily build the per-(persona, end_user) chemistry registry for this
         session. Only ever touched in engine mode (a turn carrying an end_user_id);
-        companion turns never call this. Defaults to in-memory storage; a durable
-        backend is injected by the engine layer when it lands."""
+        companion turns never call this — the registry is never even constructed,
+        so that path stays byte-for-byte the single-resting-chemistry brain.
+
+        Durably backed: ``default_store`` routes onto this tenant's volume under
+        THIS persona's state root, so the emotional relationship a persona has with
+        each customer survives a restart instead of resetting to the temperament
+        baseline on every deploy. Writes are throttled per customer (the turn path
+        persists every turn); the session force-flushes on graceful shutdown. An
+        unwritable volume degrades to in-memory — never into the turn."""
         reg = getattr(self, "_client_chem", None)
         if reg is None:
-            from brain.client_chem import ClientChemRegistry
+            from brain.client_chem import ClientChemRegistry, default_store
 
-            reg = ClientChemRegistry(self.bus, persona=self.persona_name)
+            # Same persona for the store root and the key: one is the path fence,
+            # the other the key fence, and they must agree.
+            reg = ClientChemRegistry(
+                self.bus,
+                default_store(self.persona_name),
+                persona=self.persona_name,
+                min_persist_interval_s=_CLIENT_CHEM_PERSIST_INTERVAL_S,
+            )
             self._client_chem = reg
         return reg
 
@@ -759,20 +777,31 @@ class _TurnMixin:
 
             features["transcript_laughter"] = extract_laughter(user_input)
 
-        # ── Hypothalamus + Thalamus: parallel ─────────────────────────────────
+        # ── Hypothalamus: affect ──────────────────────────────────────────────
         await self._emit("hypothalamus", 0.6, "updating affect", turn_id)
-        await self._emit("thalamus", 0.55, "routing attention", turn_id)
-        affect_task = asyncio.create_task(self.hypothalamus.process(features))
-        thalamus_task = asyncio.create_task(self.thalamus.route(features, {}))
-        results = await asyncio.gather(affect_task, thalamus_task, return_exceptions=True)
-        affect, routing = results
-        if isinstance(affect, BaseException):
-            logger.warning("Emotion analysis failed — using neutral defaults: %s", affect)
+        try:
+            affect = await self.hypothalamus.process(features)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Emotion analysis failed — using neutral defaults: %s", e)
             affect = {"emotion": "neutral", "user_emotion": "unknown"}
-        if isinstance(routing, BaseException):
-            logger.warning("Attention routing failed — using defaults: %s", routing)
-            routing = {}
         await self._emit_end("hypothalamus", turn_id)
+
+        # ── Thalamus: the global-workspace spotlight (GWT) ────────────────────
+        # Runs after affect, not in parallel with it: the spotlight ignites on
+        # affective coalitions (threat), so it must see the settled affect. Cost is
+        # a sub-microsecond read of the bus concentration layer. The verdict rides
+        # on affect/features for the same-turn consumers (recall gate, frontal) and
+        # is published on attention.focus for the DMN.
+        await self._emit("thalamus", 0.55, "routing attention", turn_id)
+        try:
+            spotlight = await self.thalamus.route(features, affect)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Workspace routing failed — spotlight inactive: %s", e)
+            from brain.clusters.thalamus import _neutral_verdict
+
+            spotlight = _neutral_verdict()
+        affect["spotlight"] = spotlight
+        features["spotlight"] = spotlight
         await self._emit_end("thalamus", turn_id)
 
         if self.ears is not None and isinstance(affect, dict):

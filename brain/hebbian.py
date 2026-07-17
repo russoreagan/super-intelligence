@@ -373,6 +373,81 @@ class HebbianUpdater:
                     updated += 1
         return updated
 
+    def _apply_eligibility_credit(
+        self,
+        trace,
+        source_turn_id: str,
+        past_path: list[str],
+        age: int,
+        decay: float,
+        elig_delta: float,
+        outcome: float,
+        gainers: list,
+        losers: list,
+    ) -> int:
+        """Apply — and LOG — one earlier turn's age-decayed share of this turn's outcome.
+
+        Logged under its OWN decision kind rather than `hebbian_update_applied`,
+        because the two answer different questions: "this edge moved because of
+        THIS turn" vs "…because of a payoff `age` turns later". The split is also
+        what keeps the aggregates honest — every existing consumer filters on the
+        main kind, so eligibility is excluded from them for free and nothing
+        double-counts. Readers that SHOULD see it opt in explicitly.
+
+        Volume: eligibility fires `eligibility_lookback` times per turn over paths
+        the main pass already logs edge-by-edge, so per-edge records here would
+        multiply ledger volume by ~(1 + lookback) and shrink the 5000-line
+        rotation window for the sparse, high-value records that share the file
+        (session_plasticity_summary, learning_story). So: ONE record per
+        (crediting turn, age), carrying every edge it moved and that edge's delta.
+        Same information, one line instead of N.
+
+        Returns the wiring's own updated-edge count, so the caller's
+        `edges_updated` total stays reconcilable against what was logged.
+        """
+        before = {
+            (past_path[i], past_path[i + 1]): self._wiring.get_edge_weight(
+                past_path[i], past_path[i + 1]
+            )
+            for i in range(len(past_path) - 1)
+            if self._wiring.has(past_path[i], past_path[i + 1])
+        }
+        updated = self._wiring.hebbian_update(past_path, elig_delta)
+        if not updated:
+            return 0
+
+        moved: list[dict] = []
+        for (src, tgt), prev in before.items():
+            now = self._wiring.get_edge_weight(src, tgt)
+            edge_delta = now - prev
+            if abs(edge_delta) <= 0.001:
+                continue
+            (gainers if edge_delta > 0 else losers).append((f"{src}→{tgt}", edge_delta))
+            moved.append(
+                {
+                    "src": src,
+                    "tgt": tgt,
+                    "from_weight": round(prev, 4),
+                    "to_weight": round(now, 4),
+                    "delta": round(edge_delta, 4),
+                }
+            )
+        # Emitted even when `moved` is empty (every edge landed under the 0.001
+        # reporting floor): `edges_updated` is what the session summary counts,
+        # so the record has to exist for the two to reconcile.
+        decisions.log(
+            "hebbian_eligibility_applied",
+            turn_id=trace.turn_id,  # the turn whose outcome paid out
+            source_turn_id=source_turn_id,  # the earlier turn whose path earned it
+            age=age,
+            decay=round(decay, 4),
+            delta=round(elig_delta, 5),
+            outcome=round(outcome, 3),
+            edges_updated=updated,
+            edges=moved,
+        )
+        return updated
+
     def run(self, session_id: str, full_traces: list) -> None:
         """Apply the Hebbian pass per originating persona.
 
@@ -409,6 +484,7 @@ class HebbianUpdater:
         losers: list[tuple[str, float]] = []
         turn_plasticities: list[float] = []
         total_updated = 0
+        elig_updated = 0
         skipped = 0
 
         # Eligibility trace: conversational payoff is often delayed — the turn
@@ -419,7 +495,7 @@ class HebbianUpdater:
 
         _elig_lookback = int(settings.get("eligibility_lookback", 2))
         _elig_tau = max(0.1, float(settings.get("eligibility_tau_turns", 2.0)))
-        _recent_paths: list[list[str]] = []  # most recent last
+        _recent_paths: list[tuple[str, list[str]]] = []  # (turn_id, path), most recent last
 
         for trace in full_traces:
             if not trace.fired_path:
@@ -476,13 +552,29 @@ class HebbianUpdater:
             # outcome (the turn that set up the payoff learns too, not only the
             # turn where DA finally moved). Decay e^(-age/τ) keeps it local.
             if _elig_lookback > 0:
-                for age, past_path in enumerate(reversed(_recent_paths[-_elig_lookback:]), 1):
+                for age, (past_turn, past_path) in enumerate(
+                    reversed(_recent_paths[-_elig_lookback:]), 1
+                ):
                     if not past_path or past_path == path_names:
                         continue
-                    elig_delta = delta * _math.exp(-age / _elig_tau)
-                    if abs(elig_delta) > 1e-5:
-                        total_updated += self._wiring.hebbian_update(past_path, elig_delta)
-            _recent_paths.append(path_names)
+                    decay = _math.exp(-age / _elig_tau)
+                    elig_delta = delta * decay
+                    if abs(elig_delta) <= 1e-5:
+                        continue
+                    n = self._apply_eligibility_credit(
+                        trace,
+                        past_turn,
+                        past_path,
+                        age,
+                        decay,
+                        elig_delta,
+                        outcome,
+                        gainers,
+                        losers,
+                    )
+                    total_updated += n
+                    elig_updated += n
+            _recent_paths.append((trace.turn_id, path_names))
 
             self._apply_drafter_competition(trace, outcome, plasticity, gainers, losers)
             total_updated += self._drafter_competition_edge_count(trace)
@@ -534,6 +626,10 @@ class HebbianUpdater:
                 else None
             ),
             edges_updated=total_updated,
+            # The eligibility share of edges_updated, broken out so the headline
+            # number decomposes: it equals the sum of `edges_updated` across this
+            # session's hebbian_eligibility_applied records, exactly.
+            eligibility_edges_updated=elig_updated,
             turns_skipped=skipped,
             signal_quality={
                 "turns_with_critic_score": turns_with_critic,

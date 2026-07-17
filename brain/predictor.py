@@ -1,5 +1,14 @@
 """
-PredictorSwitch + CompositePredictor — predict-and-surprise gating (Active Inference).
+PredictorSwitch + CompositePredictor — predict-and-surprise compute gating, inspired
+by predictive processing (Clark, Friston).
+
+The control flow is predictive-processing-shaped: predict, measure surprise, and
+spend compute in proportion to it. The mechanism itself is deliberately cheap —
+last-N frequency counting over a small ring buffer of (signature → outcome) pairs.
+There is no generative model, no free-energy objective, and no action selection;
+"surprise" here is a prediction-failure score, not an information-theoretic
+quantity. Treat the neuroscience as the design metaphor, not the implementation.
+
 Each cluster gets one predictor. On low surprise, integrators stay asleep.
 On high surprise, the integrator wakes with the failed prediction as context.
 
@@ -288,5 +297,14 @@ def should_bypass_gating(affect: dict | None, features: dict | None) -> tuple[bo
 
     if features.get("_enrollment_result") or features.get("_enrollment_results"):
         return True, "enrollment_active"
+
+    # Global-workspace ignition (GWT): a threat coalition that ignited from
+    # *accumulation* across turns — no single turn's GABA tripped the veto above,
+    # but the workspace has been dominated by threat long enough to ignite. This is
+    # the genuinely new signal the per-turn checks lack: they see only this turn,
+    # the spotlight integrates the slow burn. The thalamus writes it onto affect.
+    spotlight = affect.get("spotlight") or {}
+    if spotlight.get("ignited") and spotlight.get("coalition") == "threat":
+        return True, "workspace_ignition"
 
     return False, ""

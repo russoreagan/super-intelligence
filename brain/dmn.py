@@ -590,6 +590,25 @@ class DefaultModeNetwork:
         _SESSION_THOUGHT_LIMIT = 50  # keep last 50 thoughts; older are discarded
         self._session_thought_limit = _SESSION_THOUGHT_LIMIT
 
+        # ── Global-workspace subscription (GWT broadcast consumer) ───────────────
+        # The DMN is the cross-turn subscriber that makes the paper's claim literal:
+        # content the thalamus promotes to `attention.focus` is available
+        # system-wide BECAUSE this consumer reads it. The thalamus publishes on
+        # `attention.focus` only when the ignited focus CHANGES, so we keep the
+        # latest broadcast in `_last_focus` and let it persist across ticks (the
+        # spotlight is a cross-turn signal). The queue is bounded (256) and drops on
+        # overflow at the publisher, so a paused/idle loop never leaks it.
+        # `_last_focus` stays None — and `_current_focus()` returns None — until the
+        # workspace actually ignites, which is what keeps idle seeding byte-identical
+        # to the pre-workspace behaviour whenever nothing has ever ignited.
+        self._focus_inbox = bus.subscribe("attention.focus")
+        self._last_focus: dict | None = None
+        # Optional thalamus ref (wired by session_setup). When present its
+        # current_spotlight() is the authoritative liveness gate — the change-only
+        # broadcast never re-announces de-ignition, so a wired thalamus lets us stop
+        # biasing once the workspace has gone quiet.
+        self._thalamus = None
+
     async def start(self, session_id: str) -> None:
         self._session_id = session_id
         self._running = True
@@ -681,6 +700,78 @@ class DefaultModeNetwork:
         topic it just covered. fn() -> list[{goal, summary, urls:[...]}]. Optional;
         absent it simply skips the 'already researched' prompt block."""
         self._sources_fn = fn
+
+    def set_thalamus(self, thalamus) -> None:
+        """Wire the thalamus so the idle mind can consult the persistent workspace
+        spotlight (current_spotlight()) directly, in addition to the drained
+        `attention.focus` broadcasts. Optional — the DMN also works from the drained
+        bus messages alone. When wired, current_spotlight() is the authoritative
+        liveness gate: it reports not-ignited on de-ignition, which the change-only
+        broadcast never re-announces, so a stale last-broadcast can't keep biasing."""
+        self._thalamus = thalamus
+
+    def _drain_attention_focus(self) -> None:
+        """Drain the `attention.focus` subscription, keeping the LATEST broadcast in
+        `_last_focus`. This is the DMN's real subscription to the thalamus's global-
+        workspace promotion. The kept focus persists across ticks (the spotlight is a
+        cross-turn signal) until a newer broadcast supersedes it; an empty queue leaves
+        `_last_focus` untouched. Non-blocking and safe to call every loop iteration."""
+        q = getattr(self, "_focus_inbox", None)
+        if q is None:
+            return
+        latest = None
+        while True:
+            try:
+                latest = q.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+        if latest is not None:
+            # Payload shape (locked contract): {cluster, coalition, salience,
+            # hot_entities, sustained_turns}. Copy so later bus mutation can't alias it.
+            self._last_focus = dict(latest.payload)
+
+    def _current_focus(self) -> dict | None:
+        """The live global-workspace spotlight — what the entity is currently 'thinking
+        about', promoted to attention.focus — normalized to {"focus", "hot_entities"},
+        or None when nothing is ignited.
+
+        Primary source is the last `attention.focus` broadcast this DMN drained (the
+        real GWT message). When a thalamus ref is wired, its current_spotlight() acts
+        as the authoritative liveness gate (it goes not-ignited on de-ignition, which
+        the change-only broadcast never re-announces), so we only bias while the
+        workspace is still ignited. With no thalamus ref we rely on the drained
+        broadcast alone.
+
+        Returns None whenever the workspace has never ignited — including the entire
+        flag-off path, where no `attention.focus` message is ever published and
+        current_spotlight() is always not-ignited. That None is the no-op guarantee:
+        every caller's seeding stays byte-identical until a real ignition occurs."""
+        msg = getattr(self, "_last_focus", None)
+        if not msg or not msg.get("cluster"):
+            return None
+        thal = getattr(self, "_thalamus", None)
+        if thal is not None:
+            try:
+                sp = thal.current_spotlight()
+            except Exception as e:  # noqa: BLE001
+                logger.debug("[DMN] current_spotlight() unavailable: %s", e)
+                sp = None
+            if not (sp and sp.get("ignited")):
+                return None
+        return {
+            "focus": msg.get("cluster"),
+            "hot_entities": list(msg.get("hot_entities") or []),
+        }
+
+    def _spotlight_terms(self) -> str:
+        """Whitespace-joined focus topic + hot entities of the live spotlight, or ""
+        when nothing is ignited. The bias target the seed selectors fold in."""
+        focus = self._current_focus()
+        if not focus:
+            return ""
+        return " ".join(
+            [*(focus.get("hot_entities") or []), str(focus.get("focus") or "")]
+        ).strip()
 
     def _inherited_skill_names(self) -> list[str]:
         """Skill names from parietal.active_skill_context, if any."""
@@ -1937,6 +2028,11 @@ class DefaultModeNetwork:
                     self._skip_next_tick = False
                     logger.debug("[Background reflection] Tick skipped — turn in progress")
                     continue
+                # Drain the global-workspace broadcast FIRST, every loop iteration
+                # (even on ticks the gates go on to suppress), so `_last_focus` always
+                # reflects the newest `attention.focus` promotion and the bounded queue
+                # never backs up. This is the real GWT subscriber.
+                self._drain_attention_focus()
                 # Idle decay runs FIRST, every loop iteration. If it only ran
                 # inside _tick, a skipped tick would never decay — meaning once
                 # ACh climbs high enough to suppress, it would stay high and
@@ -2498,10 +2594,26 @@ class DefaultModeNetwork:
         preferable, and fixation is already bounded by the consecutive-rumination
         cap (deepens the same seed at most N times in a row) and the advance cap
         (auto-concludes at THREAD_MAX_ADVANCES) — so finish-out can't get stuck.
-        None if no threads are open."""
+        None if no threads are open.
+
+        Global-workspace bias: when the workspace is ignited, prefer the open thread
+        that matches what the mind is dwelling on (the spotlight's focus + hot
+        entities) over the most-advanced one — so idle rumination advances the
+        tracked idea most relevant to the live focus. Spotlight overlap wins, then
+        the usual finish-out order breaks ties. When nothing is ignited
+        `_spotlight_terms()` is "", the bias block is skipped, and selection is
+        byte-identical to finish-out (the no-op guarantee)."""
         open_threads = [t for t in getattr(self, "_open_threads", []) if t.status == ot.STATUS_OPEN]
         if not open_threads:
             return None
+        terms = self._spotlight_terms()
+        if terms:
+            matched = [
+                (t, _content_word_overlap(t.summary, terms)) for t in open_threads
+            ]
+            matched = [(t, s) for (t, s) in matched if s > 0]
+            if matched:
+                return max(matched, key=lambda ts: (ts[1], ts[0].advances, ts[0].last_ts))[0]
         return max(open_threads, key=lambda t: (t.advances, t.last_ts))
 
     def _current_seed(self) -> str:
@@ -2693,20 +2805,29 @@ class DefaultModeNetwork:
             return
 
         ctx = self._last_context or ""
+        # Bias toward the global-workspace spotlight. The persistent focus (what the
+        # workspace ignited on during conversation) is a better "what am I currently
+        # thinking about" than last-context-only, so fold its hot entities + focus topic
+        # into the overlap target — episodes touching the spotlight then outscore merely
+        # recent ones. When nothing is ignited `_spotlight_terms()` is "", `target` is
+        # `ctx` unchanged, and every line below is byte-identical to the pre-workspace
+        # path (the no-op guarantee).
+        spotlight_terms = self._spotlight_terms()
+        target = (ctx + " " + spotlight_terms).strip() if spotlight_terms else ctx
 
         def _ep_text(e: dict) -> tuple[str, str, list]:
             u = (e.get("user_input") or "").strip().replace("\n", " ")[:160]
             r = (e.get("entity_response") or "").strip().replace("\n", " ")[:160]
             return u, r, (e.get("topic_tags") or [])
 
-        if ctx.strip():
+        if target.strip():
             scored = []
             for e in episodes:
                 u, r, tg = _ep_text(e)
                 if not (u or r):
                     continue
                 blob = " ".join([u, r, " ".join(str(t) for t in tg)])
-                scored.append((_content_word_overlap(blob, ctx), e))
+                scored.append((_content_word_overlap(blob, target), e))
             if not scored:
                 return
             best_overlap, ep = max(scored, key=lambda x: x[0])
