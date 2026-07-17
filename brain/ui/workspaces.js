@@ -359,6 +359,14 @@
   // which sub-view is active in Agents (the unified agents list is the landing view)
   let agView = 'agents';
   let agRoleSel = null; // persists selected role across reloads
+  let agRoleMode = 'edit'; // role editor: 'edit' | 'preview'
+  // Render role/instruction markdown with the settings engine's ONE renderer; fall back
+  // to escaped plaintext if it isn't loaded yet (never inject raw HTML).
+  function mdRender(src) {
+    const ui = window.__settingsUI;
+    if (ui && typeof ui.mdToHtml === 'function') { try { return ui.mdToHtml(src); } catch (e) { /* fall through */ } }
+    return `<p>${esc(src || '').replace(/\n/g, '<br>')}</p>`;
+  }
   // Jobs sub-view state: autonomous job outcomes (agent_jobs) surfaced for supervision.
   let jobsList = null;      // cached rows from /tasks/jobs (null = not loaded)
   let jobsFilter = '';      // state filter ('' = all)
@@ -1115,11 +1123,9 @@
     })();
 
     main.querySelector('.ag-back').addEventListener('click', () => { agView = 'agents'; agentSel = null; paintAgents(); });
-    main.querySelector('#ag-view-persona').addEventListener('click', () => {
-      setWorkspace('labs');
-      // best-effort: open the persona in the settings studio
-      if (window.__settingsUI && window.__settingsUI.open) { try { document.getElementById('settings-btn')?.click(); } catch (e) {} }
-    });
+    // Observe THIS agent's live lane in MRI (chemistry + idle thoughts), same as the
+    // dashboard cards — not a blind jump to whatever persona is already selected.
+    main.querySelector('#ag-view-persona').addEventListener('click', () => openAgentInLabs(a.agent_id, a.name, a.persona));
     main.querySelector('#ag-save').addEventListener('click', () => saveAgent(a.agent_id, main.querySelector('#ag-name').value.trim(), perms));
     main.querySelector('#ag-remove').addEventListener('click', () => removeAgent(a.agent_id));
   }
@@ -1189,6 +1195,8 @@
   }
   function openNewRole(main) {
     const modal = document.getElementById('ws-new-agent-modal');
+    const roles = (agentsData && agentsData.roles) || [];
+    const existing = id => roles.find(r => r.id === id);
     const VALID_ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
     const slugify = s => s.toLowerCase().trim().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
     modal.innerHTML = `<div class="modal">
@@ -1212,14 +1220,29 @@
     let idEdited = false;
     const validate = () => {
       const id = idIn.value.trim();
-      if (!id) { errDiv.textContent = ''; createBtn.disabled = true; return; }
-      if (!VALID_ID.test(id)) { errDiv.textContent = 'Use lowercase letters, digits, _ or - (must start with a letter or digit)'; createBtn.disabled = true; }
-      else { errDiv.textContent = ''; createBtn.disabled = false; }
+      if (!id) { errDiv.textContent = ''; errDiv.style.color = '#c84'; createBtn.disabled = true; createBtn.textContent = 'Create role'; return; }
+      if (!VALID_ID.test(id)) { errDiv.textContent = 'Use lowercase letters, digits, _ or - (must start with a letter or digit)'; errDiv.style.color = '#c84'; createBtn.disabled = true; createBtn.textContent = 'Create role'; return; }
+      // A colliding id is NOT an error — it opens the existing role for editing. Say so,
+      // and relabel the button, so the user can't blank an existing role's instructions
+      // by accident (which is exactly what an unconditional openRole(id, '') would do).
+      const hit = existing(id);
+      if (hit) { errDiv.textContent = `“${id}” already exists — you'll edit it, not overwrite it.`; errDiv.style.color = 'var(--ink-4)'; createBtn.textContent = 'Open role'; }
+      else { errDiv.textContent = ''; errDiv.style.color = '#c84'; createBtn.textContent = 'Create role'; }
+      createBtn.disabled = false;
     };
     nameIn.addEventListener('input', () => { if (!idEdited) idIn.value = slugify(nameIn.value); validate(); });
     idIn.addEventListener('input', () => { idEdited = true; validate(); });
     const close = () => { modal.classList.remove('open'); modal.innerHTML = ''; };
-    const create = () => { const id = idIn.value.trim(); if (!id || !VALID_ID.test(id)) return; close(); openRole(main, id, ''); };
+    const create = () => {
+      const id = idIn.value.trim();
+      if (!id || !VALID_ID.test(id)) return;
+      close();
+      // Existing → open with its real text (forceText=null reads role.role_text); new →
+      // start blank. Never force '' onto an id that already carries instructions.
+      const hit = existing(id);
+      main.querySelectorAll('.role-pick').forEach(x => x.classList.toggle('on', x.dataset.id === id));
+      openRole(main, id, hit ? null : '');
+    };
     modal.querySelector('#nr-x').addEventListener('click', close);
     modal.querySelector('#nr-cancel').addEventListener('click', close);
     createBtn.addEventListener('click', create);
@@ -1243,11 +1266,15 @@
         <span class="self-modepill" id="role-dirty"><i></i>edited</span>
         <span class="spacer"></span>
         <span class="self-meta" id="role-count"></span>
+        <div class="self-seg" id="role-seg"><button type="button" data-m="edit">Edit</button><button type="button" data-m="preview">Preview</button></div>
         <button class="self-revert" id="role-save">${_check}<span>Save</span></button>
       </div>
       <textarea class="self-area" id="role-text" spellcheck="false" placeholder="Describe this role — the job, tone, and rules for it…">${esc(savedText)}</textarea>
-    </div>`;
+      <div class="self-preview" id="role-preview" hidden></div>
+    </div>
+    ${role ? `<div style="margin-top:12px; display:flex; justify-content:flex-end;"><button class="link" id="role-delete" style="color:var(--danger); font-size:11px;">Delete role</button></div>` : ''}`;
     const area = ed.querySelector('#role-text');
+    const preview = ed.querySelector('#role-preview');
     const countEl = ed.querySelector('#role-count');
     const dirtyPill = ed.querySelector('#role-dirty');
     const saveBtn = ed.querySelector('#role-save');
@@ -1258,8 +1285,15 @@
       dirtyPill.classList.toggle('on', dirty);
       saveBtn.disabled = !dirty && !!role; // allow save for new (unsaved) roles even if empty
     };
+    const applyMode = () => {
+      const pre = agRoleMode === 'preview';
+      area.hidden = pre; preview.hidden = !pre;
+      if (pre) preview.innerHTML = mdRender(area.value);
+      ed.querySelectorAll('#role-seg button').forEach(b => b.classList.toggle('on', b.dataset.m === agRoleMode));
+    };
+    ed.querySelectorAll('#role-seg button').forEach(b => b.addEventListener('click', () => { agRoleMode = b.dataset.m; applyMode(); }));
     area.addEventListener('input', updateMeta);
-    updateMeta();
+    updateMeta(); applyMode();
     saveBtn.addEventListener('click', async () => {
       const lbl = saveBtn.querySelector('span');
       lbl.textContent = 'Saving…'; saveBtn.disabled = true;
@@ -1269,6 +1303,20 @@
         await loadAgents(); // agRoleSel re-selects this role after re-render
       } catch (e) { lbl.textContent = 'Save'; saveBtn.disabled = false; window.alert('Could not save role: ' + e.message); }
     });
+    const delBtn = ed.querySelector('#role-delete');
+    if (delBtn) delBtn.addEventListener('click', () => deleteRole(main, id));
+  }
+  // Remove a role from the library. Soft-delete server-side (episodes/tasks still
+  // reference the id): it stops appearing in the Roles list and can't back new agents,
+  // but any agent already built on it keeps its mandate_id until that agent is removed.
+  async function deleteRole(main, id) {
+    if (!window.confirm(`Delete role "${id}"? It's removed from the library, so you can't build new agents on it. Agents already using it keep it until you remove them.`)) return;
+    try {
+      const r = await fetch('/mandates/' + encodeURIComponent(id), { method: 'DELETE' });
+      if (!r.ok && r.status !== 404) { const j = await r.json().catch(() => ({})); throw new Error(j.detail || ('HTTP ' + r.status)); }
+      if (agRoleSel === id) agRoleSel = null;
+      await loadAgents(); // re-renders the Agents surface; renderRoles re-selects a role
+    } catch (e) { window.alert('Could not delete role: ' + e.message); }
   }
 
   async function loadConnectorDetails() {
@@ -1481,7 +1529,9 @@
   }
 
   async function openNewAgent() {
-    const personas = (window.SETTINGS && window.SETTINGS.personas) || [];
+    // The live catalogue, not window.SETTINGS.personas (the built-in seed) — otherwise
+    // the org's custom personas never appear in the picker. Same rule as personaName/rollup.
+    const personas = personaCatalogue();
     const roles = (agentsData && agentsData.roles) || [];
     if (!roles.length) { window.alert('Create a role first (Roles).'); return; }
     const modal = document.getElementById('ws-new-agent-modal');
