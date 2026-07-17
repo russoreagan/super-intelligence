@@ -706,7 +706,15 @@ class CMAExecutor(ExecutorCommon):
                 return []
             resp = (
                 supabase_client.get_client()
-                .rpc("get_end_user_mcp_tokens", {"p_end_user_id": end_user_id})
+                .rpc(
+                    "get_end_user_mcp_tokens",
+                    {
+                        "p_end_user_id": end_user_id,
+                        # Explicit org for the service-key fallback mode (asymmetric
+                        # JWT signing → no auth.uid()); ignored under a real org JWT.
+                        "p_org_id": supabase_client.get_org_id(),
+                    },
+                )
                 .execute()
             )
             data = resp.data

@@ -1465,6 +1465,8 @@ def build_api_router(
             )
         expires_at = body.get("expires_at")
         try:
+            from brain.second_brain import supabase_client
+
             _sb_client().rpc(
                 "set_end_user_mcp_token",
                 {
@@ -1473,6 +1475,10 @@ def build_api_router(
                     "p_server_url": server_url.strip(),
                     "p_token": access_token.strip(),
                     "p_expires_at": expires_at,
+                    # Explicit org for the service-key fallback mode (asymmetric JWT
+                    # signing → no auth.uid()); ignored when a real org JWT is
+                    # attached, so it can't be used to name another org.
+                    "p_org_id": supabase_client.get_org_id(),
                 },
             ).execute()
         except Exception as e:
@@ -1485,10 +1491,17 @@ def build_api_router(
         token)."""
         _require(authorization)
         try:
+            from brain.second_brain import supabase_client
+
             resp = (
                 _sb_client()
                 .table("end_user_mcp_tokens")
                 .select("server_name, server_url, expires_at")
+                # Explicit org filter: this direct PostgREST read is not RLS-scoped
+                # under the service-key fallback (asymmetric JWT signing), so scope
+                # it in-query like every other tenant read. Redundant but harmless
+                # under a real org JWT (RLS would already scope it).
+                .eq("org_id", supabase_client.get_org_id())
                 .eq("end_user_id", end_user_id)
                 .execute()
             )
@@ -1505,11 +1518,18 @@ def build_api_router(
         build."""
         _require(authorization)
         try:
+            from brain.second_brain import supabase_client
+
             resp = (
                 _sb_client()
                 .rpc(
                     "delete_end_user_mcp_token",
-                    {"p_end_user_id": end_user_id, "p_server_name": server_name},
+                    {
+                        "p_end_user_id": end_user_id,
+                        "p_server_name": server_name,
+                        # See store_mcp_token: explicit org for the service-key mode.
+                        "p_org_id": supabase_client.get_org_id(),
+                    },
                 )
                 .execute()
             )
