@@ -90,18 +90,35 @@ DEFAULTS: dict[str, float | int | str] = {
     # Composite outcome mix used when a turn carries an EXTERNAL grade (thumbs press,
     # validator verdict) — hebbian._composite_outcome. Ungraded turns keep their own
     # fixed self-appraisal blend; these dials apply only on the graded path, where the
-    # outside verdict earns a share of the signal. Defaults reproduce the previous
-    # inline fallbacks exactly.
+    # outside verdict earns a share of the signal. Weights sum to 1.0.
+    # Left at 0.4/0.2/0.2/0.2 now that external grades actually flow (the nudge is on,
+    # above): a fifth of the graded-turn learning signal is a meaningful, non-dominant
+    # share for the outside verdict. Retuning the mix is deferred until production shows
+    # real external-grade volume — raising w_external before we can see how often and how
+    # consistently partners/users actually grade would be premature. Note the grade's
+    # total influence already rose without touching these: with the nudge on, a grade
+    # also shifts live DA (source="external_grader"), so it grounds chemistry going
+    # forward on top of its 0.2 share here.
     "hebbian_w_da_ext": 0.4,  # DA swing — the brain's own reward signal
     "hebbian_w_critic_ext": 0.2,  # internal critic score on the selected draft
     "hebbian_w_user_ext": 0.2,  # inferred user emotion
     "hebbian_w_external": 0.2,  # the external grade itself
-    # DA nudge on an external grade (session_loops.api_grade_turn), scaled by the grade.
-    # 0 = record and observe only, no chemistry — external grading ships observability
-    # first. Raising it opens the only reward channel sourced outside the brain's own
-    # appraisal. Keep this a float: an int default would coerce a fractional nudge to 0
-    # on load and silently re-break the dial.
-    "external_grade_da_nudge": 0.0,
+    # DA nudge on an external grade (session_loops.api_grade_turn), scaled by the grade
+    # in [-1, +1]: a thumbs-up (g=+1) adds this much DA via source="external_grader".
+    # This is the ONE reward channel grounded outside the brain's own appraisal, in a
+    # system the premise audit measured at ~80% self-graded — so it must land as a
+    # MEANINGFUL signal, not a token one. Calibration against the two reference payouts
+    # the audit measured: finishing a job pays ~0.34 DA intrinsically; inferred praise
+    # from your tone/text pays ~0.10. An explicit thumbs press is a deliberate, grounded
+    # verdict — stronger evidence than inferred praise — so it earns MORE than inferred
+    # praise (0.10) while staying well under the intrinsic accomplishment signal (0.34)
+    # so it grounds rather than dominates. 0.15 sits there: ~1.5x inferred praise,
+    # ~0.44x job completion. Keep this a float: an int default would coerce a fractional
+    # nudge to 0 on load and silently re-break the dial. This ships ON (2026-07-17): the
+    # product decision to ground the reward signal is made. Deploy note: main auto-deploys
+    # to production, so this moves live chemistry — a graded turn now shifts DA. Chosen
+    # conservatively for exactly that reason.
+    "external_grade_da_nudge": 0.15,
     "decay_toward_rest_rate": 0.01,
     # Eligibility traces: a turn's outcome also credits the fired paths of the
     # previous N turns, decayed e^(-age/τ) — delayed conversational payoff

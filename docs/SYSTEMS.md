@@ -276,21 +276,23 @@ Appraisal becomes dopamine. **The change in dopamine across a turn is what teach
 
 ### 4.3 Where the reward came from · Live
 
-Every dopamine release is stamped at a single chokepoint as either external, meaning grounded in something outside the brain like your sentiment or your tone of voice, or intrinsic, meaning the agent gave it to itself. The running tally is the honest measure of how self-graded the learning is.
+Every dopamine release is stamped at a single chokepoint as either external, meaning grounded in something outside the brain like your sentiment or your tone of voice or an explicit verdict, or intrinsic, meaning the agent gave it to itself. The running tally is the honest measure of how self-graded the learning is.
 
-**Be straight about this one.** It measures at roughly eighty percent self-graded. Finishing a job pays the agent about three times what genuine praise from you pays. The code knows, instruments it, caps the per-job payout, and says so plainly in its own comments: intrinsic far exceeding external means the brain is mostly rewarding itself. It does not solve it.
+**Be straight about this one.** It measures at roughly eighty percent self-graded. Finishing a job pays the agent about three times what genuine praise from you pays. The code knows, instruments it, caps the per-job payout, and says so plainly in its own comments: intrinsic far exceeding external means the brain is mostly rewarding itself. Turning on the external verdict channel (§4.4) does not erase that ratio, but it is the first thing that can move it: before, the external side of the tally could take a real grade only through inferred sentiment; now an explicit verdict writes to it directly, one grade at a time.
 
 **Anyone technical will ask about this. Answering before they ask is worth more than the feature it is a flaw in.**
 
-### 4.4 The external verdict · Dark, disconnected
+### 4.4 The external verdict · Live
 
-A verdict from outside, a thumbs up, a rating, an automated grader, normalized to one scale.
+A verdict from outside, a thumbs up, a rating, an automated grader, normalized to one scale in the range minus one to plus one.
 
-The path into learning works. But the piece that would let an external verdict move the agent's actual chemistry is **dead code**. The setting it depends on was never registered, so the value always reads zero and the branch is unreachable. Worse, it cannot even be turned on: the loader drops the key as unknown and the API refuses it. The comment says "off by default." It is off permanently.
+This is the one reward channel grounded outside the agent's own appraisal, and it is now **on** (2026-07-17). A grade lands in three places. On the turn's trace, where it re-weights the Hebbian learning outcome at the next consolidation, so the outside verdict earns a fifth of the graded-turn signal. In the eval log, so a grade that arrives after consolidation still leaves an auditable record. And as a real dopamine nudge stamped external_grader, so the grade moves the agent's actual chemistry. That last write is the point: it is the only reward the system administers from reality rather than self-appraisal.
 
-Four related weights that read like tunable dials are hardcoded constants for the same reason.
+The nudge magnitude is chosen deliberately, not turned to maximum. The audit measured two reference payouts: finishing a job pays about 0.34 of dopamine, inferred praise from your tone pays about 0.10. An explicit thumbs press is stronger evidence than inferred praise, so it lands above praise but well below the accomplishment signal, at 0.15. It grounds the reward without dominating it.
 
-**This is the highest-leverage fix in the system, and it is roughly one line.** The one reward channel grounded in reality is disconnected, in a system that is eighty percent self-graded.
+The four mix weights that decide how a graded turn splits its learning signal are now real, settable dials, left at 0.4, 0.2, 0.2, 0.2. Retuning them waits on production data about how often people actually grade.
+
+**Be straight about what this does and does not fix.** It does not make the system stop being eighty percent self-graded overnight. It opens the one channel that can shift that number as real verdicts arrive, where before the channel was dead code the loader would not even accept. Today the entry point is the owner interface: a thumbs control on each reply posts the grade. The partner-facing engine API does not yet expose a grading endpoint, and a grade arriving out of band there would need the customer's own chemistry rebound to land correctly, so bringing grading volume in through the engine is the next step, not a finished one.
 
 ### 4.5 Intensity and learning (Yerkes-Dodson inverted U) · Live
 
@@ -1143,7 +1145,7 @@ Thirty-six ideas. For each: what it claims, what we built, and a verdict.
 | Thing | The call to make |
 |---|---|
 | **Database-level tenant isolation** | **Confirmed inert.** The project has migrated to asymmetric signing, so every tenant boots holding the master key and RLS is bypassed. Isolation currently rests entirely on application-level query scoping, which is now audited and guarded. **Check the dashboard: if the legacy secret is still current and the new key is only standby, RLS can be restored today.** |
-| **The external verdict channel** | Now reachable and settable, and still zero. Turning it up is a product decision: it is the only reward signal grounded outside the agent's own appraisal. |
+| **The external verdict channel** | **Decided and now on (2026-07-17).** The DA nudge on an external grade was moved off zero to 0.15, calibrated to land above inferred praise (~0.10) and below the accomplishment signal (~0.34) so it grounds the reward without dominating it. A grade now moves real chemistry via the external_grader source, and the four mix weights are live dials left at 0.4/0.2/0.2/0.2. It is the only reward signal grounded outside the agent's own appraisal. Remaining: the owner UI has the entry point (thumbs → /feedback); the partner-facing engine API does not yet expose a grade endpoint (see §4.4). |
 | **The inverted-U plasticity model** | Now on by default (2026-07-17). Emotionally intense turns imprint harder, extreme stress imprints less. Replaces the legacy binary defuse-path skip. |
 | **Perceptual differentiation per personality** | Built, switched off. Valuation is the live differentiator. |
 | **Music perception** | Fully built. One environment variable from live. Set nowhere. |
@@ -1202,7 +1204,7 @@ Verbatim from the code. Useful because they are true, and because each one compr
 
 **Nine defects closed.** Suite went 2122 → 2184 passing; every fix landed with a test that fails without it.
 
-- **The external verdict channel is reachable.** Six settings keys were read at their call sites but never registered, so the loader silently dropped them and the API refused them. Registered at their exact current values, so nothing turned on and nothing changed behaviour. One trap avoided: registering the nudge as an integer would have made it reachable but still broken, silently truncating any fractional value to zero.
+- **The external verdict channel is reachable.** Six settings keys were read at their call sites but never registered, so the loader silently dropped them and the API refused them. Registered at their exact current values, so nothing turned on and nothing changed behaviour. One trap avoided: registering the nudge as an integer would have made it reachable but still broken, silently truncating any fractional value to zero. *Follow-on, same day:* with the keys reachable, the nudge was moved off zero to 0.15 and the channel turned on — a graded turn now moves real chemistry (§4.4). That is a behaviour change, gated behind a conservative, calibrated value.
 - **Delayed credit is visible.** Eligibility updates now log as a distinct record carrying which turn earned the credit and which turn paid it. Emitted as one aggregate per turn-and-age rather than per edge, so the ledger grew ~20% instead of ~200%. The session total now reconciles exactly with the logged records.
 - **Per-customer moods survive a restart.** The durable store is wired, routed through the tenant-canonical path, throttled to match the persona-chemistry pattern, and degrades to memory rather than breaking a turn.
 - **The open-threads ledger was silently failing on every write.** The real find of the audit. The section writer built a regex replacement template out of the content, and JSON-escaped non-ASCII produced `\uXXXX`, which the regex engine rejects as a bad escape. One curly apostrophe or em dash from the model, and the write raised. Because the template compiles before the scan, it raised even when the section was absent, so the create branch was unreachable and the section could never come into existence. The DMN swallowed it as a warning. **The tests missed it because they mocked the sink.** Fixed at the shared writer, which protects three other callers.
