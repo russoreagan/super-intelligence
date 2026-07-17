@@ -225,6 +225,37 @@ class _SetupMixin:
         # paths that don't go through session_turn's per-field pseudonymization).
         self.router.set_egress(self._egress)
 
+    async def _setup_node_registry(self) -> None:
+        """Populate the non-object node manifest and audit the wiring graph against the node
+        registry (brain/node_registry). Object-backed nodes (cells, switches) registered
+        themselves during cluster construction; this fills in the intentional non-object
+        classifications (channels / recall strategies / coarse subsystems) and logs ORPHAN NAMES
+        (graph nodes with no backing object or classification — the dead-edge danger) and UNWIRED
+        OBJECTS. Behavior-neutral: nothing routes through the registry. Wrapped so a registry bug
+        can never break boot (mirrors the learning_ledger / Autonomy guards elsewhere in setup)."""
+        try:
+            from brain.node_registry import (
+                audit_node_registry,
+                get_node_registry,
+                register_manifest,
+            )
+            from brain.observability.decisions import decisions as decisions_log
+
+            reg = get_node_registry()
+            register_manifest(reg)
+            report = audit_node_registry(self.wiring, reg, log=logger)
+            decisions_log.log(
+                "node_registry_audit",
+                cluster="wiring",
+                orphans=report["orphans"],
+                unwired=report["unwired"],
+                graph_nodes=report["graph_nodes"],
+                registered=report["registered"],
+                object_backed=report["object_backed"],
+            )
+        except Exception as e:
+            logger.warning("[node-registry] audit skipped (non-fatal): %s", e)
+
     async def _setup_ui(self) -> None:
         self._ui_enabled = self.args.ui or os.environ.get("BRAIN_UI", "false").lower() == "true"
         if not self._ui_enabled:

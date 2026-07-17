@@ -28,6 +28,7 @@ from brain.clusters.frontal_prompts import (
 from brain.clusters.frontal_subsystem import FrontalSubsystem
 from brain.model_router import ModelRouter
 from brain.neuron import SwitchNeuron
+from brain.node_registry import get_node_registry
 from brain.observability.decisions import decisions
 from brain.predictor import (
     CompositePredictor,
@@ -101,6 +102,9 @@ class FrontalCluster:
             max_tokens=512,
         )
         self._executive.set_router(router)
+        # Node registry: register object-backed graph nodes at their construction site so the
+        # boot audit can prove every wiring name maps to a live object (see brain/node_registry).
+        get_node_registry().register_object(self._executive, kind="cell")
 
         self._drafters = [
             IntegratorCell(
@@ -117,6 +121,7 @@ class FrontalCluster:
         ]
         for d in self._drafters:
             d.set_router(router)
+            get_node_registry().register_object(d, kind="cell")
 
         self._critic = IntegratorCell(
             name="critic",
@@ -129,6 +134,7 @@ class FrontalCluster:
             max_tokens=512,
         )
         self._critic.set_router(router)
+        get_node_registry().register_object(self._critic, kind="cell")
 
         # v0.2
         self._reframer = IntegratorCell(
@@ -142,6 +148,7 @@ class FrontalCluster:
             max_tokens=512,
         )
         self._reframer.set_router(router)
+        get_node_registry().register_object(self._reframer, kind="cell")
 
         self._empathy_critic = IntegratorCell(
             name="empathy_critic",
@@ -154,6 +161,7 @@ class FrontalCluster:
             max_tokens=256,
         )
         self._empathy_critic.set_router(router)
+        get_node_registry().register_object(self._empathy_critic, kind="cell")
 
         # Switches (~12 total; 3 inhibitory = 25%). All are now wired into
         # real firing sites below — see process() for the gating call sites.
