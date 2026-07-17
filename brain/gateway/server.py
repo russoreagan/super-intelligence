@@ -224,7 +224,9 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
     async def auth_forgot(request: Request):
         if ui_auth.is_configured():
             body = await request.json()
-            reset_url = str(request.base_url).rstrip("/") + "/auth/reset"
+            # external_base_url, not request.base_url: the latter is http:// behind
+            # Railway's edge, and GoTrue silently drops an unlisted redirect_to.
+            reset_url = ui_auth.external_base_url(request) + "/auth/reset"
             await ui_auth.request_password_reset(
                 str(body.get("email", "")).strip(), redirect_to=reset_url
             )

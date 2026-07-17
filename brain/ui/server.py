@@ -392,7 +392,10 @@ class UIServer:
                 body = await request.json()
                 # Land the email's link on our own reset page, derived from the
                 # request so it's correct on localhost and on Railway alike.
-                reset_url = str(request.base_url).rstrip("/") + "/auth/reset"
+                # Must read the forwarded scheme: request.base_url says http://
+                # behind the edge, and GoTrue silently drops an unlisted
+                # redirect_to (falling back to SITE_URL) rather than erroring.
+                reset_url = ui_auth.external_base_url(request) + "/auth/reset"
                 await ui_auth.request_password_reset(
                     str(body.get("email", "")).strip(), redirect_to=reset_url
                 )

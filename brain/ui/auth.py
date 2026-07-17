@@ -270,6 +270,41 @@ def safe_next(value: str | None) -> str:
     return value
 
 
+def external_base_url(conn: Any) -> str:
+    """The ``scheme://host`` this request reached us on from the public internet.
+
+    NOT the same as ``request.base_url``. Railway terminates TLS at the edge and
+    forwards to us over plain http; uvicorn only rewrites the scheme from
+    x-forwarded-proto when the peer is in ``forwarded_allow_ips`` (default
+    127.0.0.1), and the edge never is. So ``request.url.scheme`` — and therefore
+    ``request.base_url`` — is "http" in production. Any link handed to the OUTSIDE
+    world has to read the forwarded headers itself, exactly as the HTTPS/HSTS
+    middleware already does.
+
+    This matters because the failure is silent: GoTrue matches ``redirect_to``
+    against the project's redirect allowlist including scheme, and an unlisted URL
+    isn't an error — it quietly falls back to SITE_URL. An http:// reset link
+    therefore dumped the user on the app root (then /login) with the recovery
+    token stranded in the fragment, and the password was never changed.
+
+    Set BRAIN_PUBLIC_URL to pin the canonical origin (e.g. https://elyceum.app)
+    when the app answers on more than one domain and only one is allowlisted.
+    """
+    override = os.environ.get("BRAIN_PUBLIC_URL", "").strip()
+    if override:
+        return override.rstrip("/")
+    headers = getattr(conn, "headers", {}) or {}
+    proto = (headers.get("x-forwarded-proto") or "").split(",")[0].strip()
+    host = (headers.get("x-forwarded-host") or "").split(",")[0].strip() or (
+        headers.get("host") or ""
+    ).strip()
+    if not proto:
+        proto = conn.url.scheme
+    if not host:
+        host = conn.url.netloc
+    return f"{proto}://{host}"
+
+
 # ── credential login ────────────────────────────────────────────────────────
 
 
