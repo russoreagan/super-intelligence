@@ -190,6 +190,7 @@ class BrainSession(_SetupMixin, _LoopsMixin, _TurnMixin):
         await self._setup_runpod()
         await self._setup_wiring()
         await self._setup_clusters()
+        await self._setup_node_registry()
         await self._setup_ui()
         await self._setup_api()
         await self._setup_motor()

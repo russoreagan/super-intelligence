@@ -547,14 +547,17 @@ class RunPodManager:
         from brain.settings import settings
 
         host = self._pod_host(pod_id)
-        settings.update({"runpod_host": host})
+        settings.update({"runpod_host": host, "runpod_pod_ready": 1})
         logger.info("[RunPod] runpod_host → %s", host)
 
     def _clear_host(self) -> None:
         from brain.settings import settings
 
         local_host = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
-        settings.update({"runpod_host": local_host})
+        # Not a genuine RunPod pod — routing degrades to local Ollama, so the
+        # dedicated readiness signal stays 0 (frontal.py's downshift must not
+        # treat this fallback as "a local RunPod pod is up").
+        settings.update({"runpod_host": local_host, "runpod_pod_ready": 0})
         logger.info("[RunPod] runpod_host → local Ollama (%s)", local_host)
 
     async def _consumer_host_refresh(self) -> None:
@@ -583,7 +586,7 @@ class RunPodManager:
                     # Adopt a real pod host; never clobber with localhost.
                     if host and "localhost" not in host:
                         if str(settings.get("runpod_host") or "") != host:
-                            settings.update({"runpod_host": host})
+                            settings.update({"runpod_host": host, "runpod_pod_ready": 1})
                             logger.info(
                                 "[RunPod] consumer host refreshed → %s (gateway pod change)", host
                             )
@@ -593,7 +596,7 @@ class RunPodManager:
                         # calls fail fast instead of burning a full HTTP timeout per
                         # call against the dead pod's proxy host.
                         if str(settings.get("runpod_host") or "") not in ("", "off"):
-                            settings.update({"runpod_host": "off"})
+                            settings.update({"runpod_host": "off", "runpod_pod_ready": 0})
                             logger.info(
                                 "[RunPod] consumer host refreshed → off (pod terminated)"
                             )
@@ -1147,8 +1150,14 @@ class RunPodManager:
         consumers flip to the fail-fast 'off' sentinel instead of burning a full
         HTTP timeout per call against the dead host, and new spawns don't inherit
         it. Stop-mode pause never unpublishes: a stopped pod resumes with the same
-        id, so its host stays valid. Skipped when no host file was ever published
-        (single-brain/local mode — nothing polls it)."""
+        id, so its host stays valid. The host-file publish is skipped when no host
+        file was ever published (single-brain/local mode — nothing polls it), but
+        the in-process readiness flag is always cleared so THIS process's own
+        downshift liveness check reflects retirement immediately, not just
+        gateway-polled consumers."""
+        from brain.settings import settings
+
+        settings.update({"runpod_pod_ready": 0})
         try:
             from brain.provisioner import HOST_SYNC_FILE, publish_runpod_host
 

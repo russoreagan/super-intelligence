@@ -310,6 +310,21 @@ Write a response that takes an unexpected angle — a fresh framing, an analogy,
     + FENCE_SYSTEM_ADDENDUM,
 ]
 
+# Base identity for a RECRUITED reserve drafter (Tier 2 structural plasticity). A reserve slot
+# is dormant until learning recruits it for a persona; its specialization is supplied per-turn as
+# fenced operational expertise (its proven fragment attachments), NOT baked into this shared prompt
+# (the cell object is a process singleton, so its system prompt must stay persona-neutral). This
+# preamble just tells it to apply that expertise decisively.
+RESERVE_DRAFTER_SYSTEM = (
+    _DRAFTER_IDENTITY
+    + """
+You are a recruited specialist drafter. Operational expertise that has repeatedly worked well for
+this user is provided below as fenced guidance — apply it directly and decisively. Follow the
+drafting instruction. No preamble."""
+    + "\n\n"
+    + FENCE_SYSTEM_ADDENDUM
+)
+
 CRITIC_SYSTEM = (
     """You are a quality critic for an AI brain's frontal lobe.
 Score a draft response on three dimensions (0.0 to 1.0 each):

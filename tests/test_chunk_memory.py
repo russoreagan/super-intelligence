@@ -22,6 +22,7 @@ from brain.clusters.chunk_memory import (
     _MIN_DISTINCT_JOBS,
     ChunkMemorySubsystem,
     _chunk_key,
+    fireable_chunk_count,
     mine_chunks,
 )
 
@@ -141,6 +142,123 @@ def test_invariance_detection():
     assert s1["tool"] == "git_diff" and s1["invariant"] is False and s1["args"] is None
 
 
+# ── realistic-corpus characterization ─────────────────────────────────────────
+#
+# The unit tests above pin individual gates. These pin the *corpus-level* behaviour
+# the 2026-07-17 investigation turned on: the two promotion-blocking bugs (placeholder
+# scoring + persona-group collision) meant NO chunk had ever formed, and the prior
+# read of that ("the bar has legitimately never been met") came from mining only the
+# home/idle jobs dir — ~100% failed single-step exploration. Re-mining the real
+# persona corpora (the_visionary: 74 jobs / 69 success → 63 active; the_analyst: 33 →
+# 17 active) showed the bar IS readily met by successful multi-step work. The fixture
+# below reproduces that product shape so a regression that re-breaks promotion — or a
+# threshold change that stops real work from promoting — fails here.
+
+
+def _realistic_corpus() -> list[dict]:
+    """A product-shaped mix: successful multi-step jobs that share recurring tool
+    sub-sequences with per-run-varying args (paths/queries differ every job, like
+    real list_files/search_files/read_file), a repeated fixed-arg idle read
+    (query_langfuse recent_traces — args identical every run), plus the noise the
+    real corpus is mostly made of: failed single-step jobs and a planner-placeholder
+    job. Only the successful, recurring, multi-step spine should promote."""
+    jobs: list[dict] = []
+    # 4 successful research jobs sharing list_files → search_files → read_file
+    # (args vary per job) and a trailing fixed-arg query_langfuse → query_langfuse.
+    for i in range(4):
+        jobs.append(
+            _job(
+                f"research{i}",
+                [
+                    ("list_files", {"path": f"/proj/mod{i}"}),
+                    ("search_files", {"query": f"term{i}"}),
+                    ("read_file", {"path": f"/proj/mod{i}/main.py"}),
+                    ("query_langfuse", {"operation": "recent_traces", "limit": 50}),
+                    ("query_langfuse", {"operation": "recent_traces", "limit": 50}),
+                ],
+            )
+        )
+    # Noise that must NOT promote: single-step failures (below _MIN_LEN) …
+    for i in range(6):
+        jobs.append(
+            {
+                "job_id": f"probe{i}",
+                "steps": [{"tool": "list_files", "args": {"path": f"/x{i}"}, "reason": ""}],
+                "results": ["[error] not found"],
+            }
+        )
+    # … and a planner-placeholder job (all no-ops; a mining barrier).
+    jobs.append(
+        {
+            "job_id": "stalled",
+            "steps": [{"tool": "none", "args": {}, "reason": "[planner failed]"}] * 3,
+            "results": ["", "", ""],
+        }
+    )
+    return jobs
+
+
+def test_realistic_corpus_promotes_chunks():
+    """On a realistic mixed corpus, successful recurring multi-step work promotes —
+    the regression guard the earlier corpus-wide 'zero chunks' state would trip."""
+    data = mine_chunks(_realistic_corpus())
+    active = {k: c for k, c in data["chunks"].items() if c["state"] == "active"}
+    assert active, "a realistic successful-multi-step corpus must yield active chunks"
+
+    # The varying-arg research spine promotes (tool+arg-SHAPE recurs across 4 jobs).
+    spine = _chunk_key(
+        [
+            {"tool": "list_files", "args": {"path": "."}},
+            {"tool": "search_files", "args": {"query": "."}},
+            {"tool": "read_file", "args": {"path": "."}},
+        ]
+    )
+    assert data["chunks"][spine]["state"] == "active"
+    assert data["chunks"][spine]["distinct_jobs"] == 4
+    assert data["chunks"][spine]["success_rate"] == 1.0
+
+    # Noise contributes nothing: no active chunk contains a placeholder, and the
+    # single-step probe failures can't form a 2-gram at all.
+    assert all("none" not in k for k in active)
+
+
+def test_promotion_and_firing_are_different_gates():
+    """The investigation's core nuance: a chunk can be ACTIVE (primes the planner)
+    yet fire NOTHING, because ballistic firing needs an invariant (fixed-arg) tail.
+    On the realistic corpus, the varying-arg research spine is active-but-inert while
+    the fixed-arg query_langfuse tail is the only thing actually fireable."""
+    data = mine_chunks(_realistic_corpus())
+
+    # Varying-arg spine: active, but every step's args differ across runs → no
+    # invariant tail → inert for firing.
+    spine = _chunk_key(
+        [
+            {"tool": "list_files", "args": {"path": "."}},
+            {"tool": "search_files", "args": {"query": "."}},
+            {"tool": "read_file", "args": {"path": "."}},
+        ]
+    )
+    spine_seq = data["chunks"][spine]["sequence"]
+    assert all(s["invariant"] is False for s in spine_seq)
+
+    # Fixed-arg idle read: query_langfuse → query_langfuse with identical args every
+    # run → invariant → fireable.
+    ql = _chunk_key(
+        [
+            {"tool": "query_langfuse", "args": {"operation": "recent_traces", "limit": 50}},
+            {"tool": "query_langfuse", "args": {"operation": "recent_traces", "limit": 50}},
+        ]
+    )
+    assert data["chunks"][ql]["state"] == "active"
+    assert data["chunks"][ql]["sequence"][1]["invariant"] is True
+
+    # fireable_chunk_count counts only the genuinely-fireable ones — strictly fewer
+    # than the active count on this corpus (most active chunks are priming-only).
+    n_active = sum(1 for c in data["chunks"].values() if c["state"] == "active")
+    n_fireable = fireable_chunk_count(data["chunks"])
+    assert 0 < n_fireable < n_active
+
+
 # ── ChunkMemorySubsystem ──────────────────────────────────────────────────────
 
 
@@ -218,3 +336,22 @@ async def test_before_plan_lists_active_routines():
     sub, _ = _sub_with_chunk(seq)
     out = await sub.before_plan("anything", router=None)
     assert "git_status → git_diff" in out
+
+
+async def test_mined_fixed_arg_tail_fires_end_to_end():
+    """Full path: mine a corpus whose recurring tail has identical args every run,
+    load the mined chunks into the runtime subsystem, and confirm suggest_chunk
+    fires that invariant tail ballistically. Proves the two halves (offline mining →
+    runtime firing) connect for the case that SHOULD fire."""
+    seq = [("gather_context", {"scope": "session"}), ("publish_digest", {"channel": "ops"})]
+    data = mine_chunks([_job(f"j{i}", seq) for i in range(_MIN_DISTINCT_JOBS)])
+    active = {k: c for k, c in data["chunks"].items() if c["state"] == "active"}
+    assert active
+
+    sub = ChunkMemorySubsystem()
+    sub._chunks = active  # inject mined chunks (chunks.json absent → _load is a no-op)
+
+    fired = await sub.suggest_chunk(["gather_context"], {})
+    assert fired is not None
+    assert [s["tool"] for s in fired] == ["publish_digest"]
+    assert fired[0]["args"] == {"channel": "ops"}

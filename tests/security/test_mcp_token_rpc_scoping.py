@@ -32,9 +32,12 @@ pgserver = pytest.importorskip("pgserver")
 
 _MIGRATIONS = Path(__file__).resolve().parents[2] / "supabase" / "migrations"
 # Load 012 (the auth.uid()-only originals) THEN 024, so the test also exercises
-# 024's real production upgrade path: drop the old signatures, replace in place.
+# 024's real production upgrade path: drop the old signatures, replace in place;
+# THEN 026, which revokes the anon EXECUTE grant that 024's p_org_id fallback made
+# dangerous (anon has no auth.uid() -> p_org_id would be attacker-controlled).
 MIGRATION_012 = _MIGRATIONS / "012_end_user_mcp_tokens.sql"
 MIGRATION_024 = _MIGRATIONS / "024_end_user_mcp_tokens_org_param.sql"
+MIGRATION_026 = _MIGRATIONS / "026_end_user_mcp_tokens_revoke_anon.sql"
 
 ORG_A = "11111111-1111-1111-1111-111111111111"
 ORG_B = "22222222-2222-2222-2222-222222222222"
@@ -47,7 +50,14 @@ PRELUDE = """
 do $$ begin
   if not exists (select from pg_roles where rolname='authenticated') then create role authenticated; end if;
   if not exists (select from pg_roles where rolname='service_role')  then create role service_role;  end if;
+  if not exists (select from pg_roles where rolname='anon')          then create role anon;          end if;
 end $$;
+-- Reproduce Supabase's default privileges: newly created public functions get
+-- EXECUTE granted to anon automatically. This is WHY 024's functions ended up
+-- anon-executable despite only granting to authenticated/service_role, and it is
+-- what migration 026 has to revoke. Without this line the anon test would pass
+-- trivially (anon never had the grant) and prove nothing.
+alter default privileges in schema public grant execute on functions to anon;
 
 create schema if not exists auth;
 create or replace function auth.uid() returns uuid language sql stable as $fn$
@@ -119,7 +129,8 @@ def db(tmp_path_factory):
     try:
         pg.psql(PRELUDE)
         pg.psql(MIGRATION_012.read_text())  # originals present…
-        pg.psql(MIGRATION_024.read_text())  # …then 024 drops + replaces them
+        pg.psql(MIGRATION_024.read_text())  # …then 024 drops + replaces them…
+        pg.psql(MIGRATION_026.read_text())  # …then 026 revokes the anon grant
         pg.psql(WRAPPERS)
 
         def call(sql: str, claims: str | None = None) -> str:
@@ -181,3 +192,21 @@ def test_cross_org_delete_cannot_touch_another_org(db):
     # Org A deletes its own → gone.
     assert db(f"select public.t_del('u2','slack',{_sq(ORG_A)}::uuid);", SERVICE_ROLE) == "OK:true"
     assert db(f"select public.t_get('u2',{_sq(ORG_A)}::uuid);", SERVICE_ROLE) == "OK:[]"
+
+
+def test_anon_cannot_execute_the_rpcs(db):
+    # The whole reason 024's p_org_id fallback is safe rests on anon NOT being able
+    # to reach these SECURITY DEFINER functions: anon has no auth.uid(), so a p_org_id
+    # it supplied would be attacker-controlled. 026 must revoke that grant.
+    for fn, sig in (
+        ("set_end_user_mcp_token", "text, text, text, text, timestamptz, uuid"),
+        ("get_end_user_mcp_tokens", "text, uuid"),
+        ("delete_end_user_mcp_token", "text, text, uuid"),
+    ):
+        row = db(
+            f"select has_function_privilege('anon','public.{fn}({sig})','EXECUTE')::text || ':' "
+            f"|| has_function_privilege('authenticated','public.{fn}({sig})','EXECUTE')::text || ':' "
+            f"|| has_function_privilege('service_role','public.{fn}({sig})','EXECUTE')::text;"
+        )
+        # anon revoked; authenticated (org-JWT mode) + service_role (fallback) kept.
+        assert row == "false:true:true", f"{fn} grants = {row}"

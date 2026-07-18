@@ -359,6 +359,14 @@
   // which sub-view is active in Agents (the unified agents list is the landing view)
   let agView = 'agents';
   let agRoleSel = null; // persists selected role across reloads
+  let agRoleMode = 'edit'; // role editor: 'edit' | 'preview'
+  // Render role/instruction markdown with the settings engine's ONE renderer; fall back
+  // to escaped plaintext if it isn't loaded yet (never inject raw HTML).
+  function mdRender(src) {
+    const ui = window.__settingsUI;
+    if (ui && typeof ui.mdToHtml === 'function') { try { return ui.mdToHtml(src); } catch (e) { /* fall through */ } }
+    return `<p>${esc(src || '').replace(/\n/g, '<br>')}</p>`;
+  }
   // Jobs sub-view state: autonomous job outcomes (agent_jobs) surfaced for supervision.
   let jobsList = null;      // cached rows from /tasks/jobs (null = not loaded)
   let jobsFilter = '';      // state filter ('' = all)
@@ -386,6 +394,7 @@
 
           <div class="rail-sect">
             <button class="rail-item ag-nav ${agView==='roles'?'on':''}" data-view="roles"><span class="ri-name">Roles</span><span class="ri-meta">${roles.length} reusable spec${roles.length===1?'':'s'}</span></button>
+            <button class="rail-item ag-nav ${agView==='skills'?'on':''}" data-view="skills"><span class="ri-name">Skills</span><span class="ri-meta">reusable abilities · review</span></button>
             <button class="rail-item ag-nav ${agView==='limits'?'on':''}" data-view="limits"><span class="ri-name">Account limits</span><span class="ri-meta">org ceilings</span></button>
             <button class="rail-item ag-nav ${agView==='connectors'?'on':''}" data-view="connectors"><span class="ri-name">Connectors</span><span class="ri-meta">MCP servers · register</span></button>
           </div>
@@ -406,6 +415,7 @@
     const main = host.querySelector('#ag-main');
     if (agView === 'detail' && agentSel) renderAgentDetail(main);
     else if (agView === 'roles') renderRoles(main);
+    else if (agView === 'skills') { if (skillsData === null) loadSkills(); renderSkills(main); }
     else if (agView === 'limits') renderAccountLimits(main);
     else if (agView === 'connectors') renderConnectors(main);
     else if (agView === 'jobdetail' && jobSel) renderJobDetail(main);
@@ -1115,11 +1125,9 @@
     })();
 
     main.querySelector('.ag-back').addEventListener('click', () => { agView = 'agents'; agentSel = null; paintAgents(); });
-    main.querySelector('#ag-view-persona').addEventListener('click', () => {
-      setWorkspace('labs');
-      // best-effort: open the persona in the settings studio
-      if (window.__settingsUI && window.__settingsUI.open) { try { document.getElementById('settings-btn')?.click(); } catch (e) {} }
-    });
+    // Observe THIS agent's live lane in MRI (chemistry + idle thoughts), same as the
+    // dashboard cards — not a blind jump to whatever persona is already selected.
+    main.querySelector('#ag-view-persona').addEventListener('click', () => openAgentInLabs(a.agent_id, a.name, a.persona));
     main.querySelector('#ag-save').addEventListener('click', () => saveAgent(a.agent_id, main.querySelector('#ag-name').value.trim(), perms));
     main.querySelector('#ag-remove').addEventListener('click', () => removeAgent(a.agent_id));
   }
@@ -1189,6 +1197,8 @@
   }
   function openNewRole(main) {
     const modal = document.getElementById('ws-new-agent-modal');
+    const roles = (agentsData && agentsData.roles) || [];
+    const existing = id => roles.find(r => r.id === id);
     const VALID_ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
     const slugify = s => s.toLowerCase().trim().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
     modal.innerHTML = `<div class="modal">
@@ -1212,14 +1222,29 @@
     let idEdited = false;
     const validate = () => {
       const id = idIn.value.trim();
-      if (!id) { errDiv.textContent = ''; createBtn.disabled = true; return; }
-      if (!VALID_ID.test(id)) { errDiv.textContent = 'Use lowercase letters, digits, _ or - (must start with a letter or digit)'; createBtn.disabled = true; }
-      else { errDiv.textContent = ''; createBtn.disabled = false; }
+      if (!id) { errDiv.textContent = ''; errDiv.style.color = '#c84'; createBtn.disabled = true; createBtn.textContent = 'Create role'; return; }
+      if (!VALID_ID.test(id)) { errDiv.textContent = 'Use lowercase letters, digits, _ or - (must start with a letter or digit)'; errDiv.style.color = '#c84'; createBtn.disabled = true; createBtn.textContent = 'Create role'; return; }
+      // A colliding id is NOT an error — it opens the existing role for editing. Say so,
+      // and relabel the button, so the user can't blank an existing role's instructions
+      // by accident (which is exactly what an unconditional openRole(id, '') would do).
+      const hit = existing(id);
+      if (hit) { errDiv.textContent = `“${id}” already exists — you'll edit it, not overwrite it.`; errDiv.style.color = 'var(--ink-4)'; createBtn.textContent = 'Open role'; }
+      else { errDiv.textContent = ''; errDiv.style.color = '#c84'; createBtn.textContent = 'Create role'; }
+      createBtn.disabled = false;
     };
     nameIn.addEventListener('input', () => { if (!idEdited) idIn.value = slugify(nameIn.value); validate(); });
     idIn.addEventListener('input', () => { idEdited = true; validate(); });
     const close = () => { modal.classList.remove('open'); modal.innerHTML = ''; };
-    const create = () => { const id = idIn.value.trim(); if (!id || !VALID_ID.test(id)) return; close(); openRole(main, id, ''); };
+    const create = () => {
+      const id = idIn.value.trim();
+      if (!id || !VALID_ID.test(id)) return;
+      close();
+      // Existing → open with its real text (forceText=null reads role.role_text); new →
+      // start blank. Never force '' onto an id that already carries instructions.
+      const hit = existing(id);
+      main.querySelectorAll('.role-pick').forEach(x => x.classList.toggle('on', x.dataset.id === id));
+      openRole(main, id, hit ? null : '');
+    };
     modal.querySelector('#nr-x').addEventListener('click', close);
     modal.querySelector('#nr-cancel').addEventListener('click', close);
     createBtn.addEventListener('click', create);
@@ -1243,11 +1268,15 @@
         <span class="self-modepill" id="role-dirty"><i></i>edited</span>
         <span class="spacer"></span>
         <span class="self-meta" id="role-count"></span>
+        <div class="self-seg" id="role-seg"><button type="button" data-m="edit">Edit</button><button type="button" data-m="preview">Preview</button></div>
         <button class="self-revert" id="role-save">${_check}<span>Save</span></button>
       </div>
       <textarea class="self-area" id="role-text" spellcheck="false" placeholder="Describe this role — the job, tone, and rules for it…">${esc(savedText)}</textarea>
-    </div>`;
+      <div class="self-preview" id="role-preview" hidden></div>
+    </div>
+    ${role ? `<div style="margin-top:12px; display:flex; justify-content:flex-end;"><button class="link" id="role-delete" style="color:var(--danger); font-size:11px;">Delete role</button></div>` : ''}`;
     const area = ed.querySelector('#role-text');
+    const preview = ed.querySelector('#role-preview');
     const countEl = ed.querySelector('#role-count');
     const dirtyPill = ed.querySelector('#role-dirty');
     const saveBtn = ed.querySelector('#role-save');
@@ -1258,8 +1287,15 @@
       dirtyPill.classList.toggle('on', dirty);
       saveBtn.disabled = !dirty && !!role; // allow save for new (unsaved) roles even if empty
     };
+    const applyMode = () => {
+      const pre = agRoleMode === 'preview';
+      area.hidden = pre; preview.hidden = !pre;
+      if (pre) preview.innerHTML = mdRender(area.value);
+      ed.querySelectorAll('#role-seg button').forEach(b => b.classList.toggle('on', b.dataset.m === agRoleMode));
+    };
+    ed.querySelectorAll('#role-seg button').forEach(b => b.addEventListener('click', () => { agRoleMode = b.dataset.m; applyMode(); }));
     area.addEventListener('input', updateMeta);
-    updateMeta();
+    updateMeta(); applyMode();
     saveBtn.addEventListener('click', async () => {
       const lbl = saveBtn.querySelector('span');
       lbl.textContent = 'Saving…'; saveBtn.disabled = true;
@@ -1269,6 +1305,20 @@
         await loadAgents(); // agRoleSel re-selects this role after re-render
       } catch (e) { lbl.textContent = 'Save'; saveBtn.disabled = false; window.alert('Could not save role: ' + e.message); }
     });
+    const delBtn = ed.querySelector('#role-delete');
+    if (delBtn) delBtn.addEventListener('click', () => deleteRole(main, id));
+  }
+  // Remove a role from the library. Soft-delete server-side (episodes/tasks still
+  // reference the id): it stops appearing in the Roles list and can't back new agents,
+  // but any agent already built on it keeps its mandate_id until that agent is removed.
+  async function deleteRole(main, id) {
+    if (!window.confirm(`Delete role "${id}"? It's removed from the library, so you can't build new agents on it. Agents already using it keep it until you remove them.`)) return;
+    try {
+      const r = await fetch('/mandates/' + encodeURIComponent(id), { method: 'DELETE' });
+      if (!r.ok && r.status !== 404) { const j = await r.json().catch(() => ({})); throw new Error(j.detail || ('HTTP ' + r.status)); }
+      if (agRoleSel === id) agRoleSel = null;
+      await loadAgents(); // re-renders the Agents surface; renderRoles re-selects a role
+    } catch (e) { window.alert('Could not delete role: ' + e.message); }
   }
 
   async function loadConnectorDetails() {
@@ -1481,7 +1531,9 @@
   }
 
   async function openNewAgent() {
-    const personas = (window.SETTINGS && window.SETTINGS.personas) || [];
+    // The live catalogue, not window.SETTINGS.personas (the built-in seed) — otherwise
+    // the org's custom personas never appear in the picker. Same rule as personaName/rollup.
+    const personas = personaCatalogue();
     const roles = (agentsData && agentsData.roles) || [];
     if (!roles.length) { window.alert('Create a role first (Roles).'); return; }
     const modal = document.getElementById('ws-new-agent-modal');
@@ -1532,7 +1584,7 @@
   // ══════════════════════════════════════════════════════════ API ═════════
   let apiView = 'reference';
   let skillsData = null;       // { enabled, is_admin, skills:[], flagged:[] }
-  function ensureApi() { renderApi(); if (apiView === 'partner') loadPartnerKeys(); if (apiView === 'skills') loadSkills(); }
+  function ensureApi() { renderApi(); if (apiView === 'partner') loadPartnerKeys(); }
   function renderApi() {
     const host = document.getElementById('ws-api');
     host.innerHTML = `<div class="ws-grid" style="grid-template-columns:256px 1fr;">
@@ -1540,7 +1592,6 @@
         <div class="rail-head"><h2>API</h2><span class="n">integration</span></div>
         <div class="rail-sect">
           <button class="rail-item api-nav ${apiView==='reference'?'on':''}" data-view="reference"><span class="ri-name">API Reference</span><span class="ri-meta">engine endpoints</span></button>
-          <button class="rail-item api-nav ${apiView==='skills'?'on':''}" data-view="skills"><span class="ri-name">Skills</span><span class="ri-meta">app-provided · review</span></button>
           <button class="rail-item api-nav ${apiView==='partner'?'on':''}" data-view="partner"><span class="ri-name">Partner Keys</span><span class="ri-meta">customer-facing tokens</span></button>
         </div>
       </div>
@@ -1549,7 +1600,6 @@
     host.querySelectorAll('.api-nav').forEach(n => n.addEventListener('click', () => { apiView = n.dataset.view; ensureApi(); }));
     const main = host.querySelector('#api-main');
     if (apiView === 'partner') renderPartnerKeys(main);
-    else if (apiView === 'skills') renderSkills(main);
     else renderReference(main);
   }
   // The Reference data is GENERATED from the live route table + docstrings
@@ -1627,7 +1677,7 @@
   async function loadSkills() {
     try { const r = await fetch('/skills'); skillsData = r.ok ? await r.json() : { enabled: false, is_admin: false, skills: [], flagged: [] }; }
     catch (e) { skillsData = { enabled: false, is_admin: false, skills: [], flagged: [] }; }
-    if (apiView === 'skills') renderSkills(document.getElementById('api-main'));
+    if (workspace === 'agents' && agView === 'skills') renderSkills(document.getElementById('ag-main'));
   }
   function renderFlaggedCard(s) {
     const notes = s.screen_notes || {};
@@ -1654,8 +1704,8 @@
     const canAdd = d && d.enabled && d.is_admin;
     const addBtn = canAdd ? `<button class="btn btn-primary" id="sk-new" style="margin-top:8px; flex:0 0 auto;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg> Add skill</button>` : '';
     const head = `<div class="between"><div>
-        <div class="page-eyebrow">API · skills</div><div class="page-title">Skills</div>
-        <p class="page-lede" style="max-width:600px;">App-provided skills your apps register over the engine API — reusable instructions the agent selects per turn (or you pin per session). Submissions over the API are screened before they go live; anything the screener can't auto-clear waits in the review queue below. Add your own here, or review submissions.</p>
+        <div class="page-eyebrow">Agents · skills</div><div class="page-title">Skills</div>
+        <p class="page-lede" style="max-width:600px;">Reusable abilities the agent draws on, selected per turn or pinned per session. They come from three places now. Add your own here. Your apps can register them over the engine API. And the brain proposes its own as it learns what works for you. Everything is screened before it goes live. Anything the screener can't auto-clear waits in the review queue below.</p>
       </div>${addBtn}</div>`;
     if (!d) { main.innerHTML = `<div class="main-pad" style="max-width:820px;">${head}<p class="page-lede" style="opacity:.6;">Loading…</p></div>`; return; }
     if (!d.enabled) {
@@ -1673,18 +1723,27 @@
     const nameCell = s => d.is_admin
       ? `<button class="sk-open" data-id="${esc(s.id)}" style="background:none; border:none; padding:0; cursor:pointer; text-align:left; display:block;"><span class="serif-h" style="font-size:14px;">${esc(s.display_name || s.id)}</span><span class="data" style="font-size:9px; display:block; margin-top:2px;">${esc(s.id)}</span></button>`
       : `<span class="serif-h" style="font-size:14px;">${esc(s.display_name || s.id)}</span><span class="data" style="font-size:9px; display:block; margin-top:2px;">${esc(s.id)}</span>`;
-    const rows = skills.map(s => `<div class="ag-row" style="grid-template-columns:${GRID}; cursor:default;">
+    const skRow = s => `<div class="ag-row" style="grid-template-columns:${GRID}; cursor:default;">
       <span>${nameCell(s)}</span>
       <span class="ar-status"><span class="dot-status" style="background:${skStatColor(s.status)}"></span>${esc(s.status || 'pending')}</span>
       <span>${d.is_admin ? `<button class="link sk-scope" data-id="${esc(s.id)}">${esc(appliesLabel(s))}</button>` : `<span class="data" style="font-size:11px;">${esc(appliesLabel(s))}</span>`}</span>
       <span class="data" style="font-size:11px;">${esc(s.submitted_by || '—')}</span>
-      <span class="ar-chev">${d.is_admin ? `<button class="link sk-del" data-id="${esc(s.id)}" title="Remove skill">✕</button>` : ''}</span></div>`).join('') || '<div style="padding:22px; text-align:center;" class="data">No skills registered yet.</div>';
+      <span class="ar-chev">${d.is_admin ? `<button class="link sk-del" data-id="${esc(s.id)}" title="Remove skill">✕</button>` : ''}</span></div>`;
+    // Brain-authored skills carry the `self-` id prefix (node_authoring) and submitted_by "brain".
+    const isAuthored = s => String(s.id || '').startsWith('self-') || s.submitted_by === 'brain';
+    const authored = skills.filter(isAuthored);
+    const library = skills.filter(s => !isAuthored(s));
+    const tableHead = `<div class="ag-table-head" style="grid-template-columns:${GRID};"><span>Skill</span><span>Status</span><span>Applies to</span><span>Submitted by</span><span></span></div>`;
+    const section = (label, list, note) => list.length
+      ? `<div class="label" style="margin:28px 0 10px;">${label} · ${list.length}</div>${note || ''}<div class="ag-table" style="grid-template-columns:none;">${tableHead}${list.map(skRow).join('')}</div>`
+      : '';
+    const authoredNote = authored.length
+      ? `<p class="page-lede" style="max-width:600px; margin:0 0 12px; font-size:12px; opacity:.75;">The brain proposed these itself as it learned what works for you. Each was screened like any other skill before going live.</p>`
+      : '';
     main.innerHTML = `<div class="main-pad" style="max-width:820px;">${head}${queue}
-      <div class="label" style="margin:28px 0 10px;">Library · ${skills.length}</div>
-      <div class="ag-table" style="grid-template-columns:none;">
-        <div class="ag-table-head" style="grid-template-columns:${GRID};"><span>Skill</span><span>Status</span><span>Applies to</span><span>Submitted by</span><span></span></div>
-        ${rows}
-      </div>
+      ${section('Self-authored', authored, authoredNote)}
+      ${section('Library', library, '')}
+      ${skills.length === 0 ? '<div style="padding:22px; text-align:center; margin-top:18px;" class="data">No skills registered yet.</div>' : ''}
       ${!d.is_admin ? '<p class="data" style="margin-top:14px; font-size:11px; opacity:.6;">Reviewing and approving skills is an org-admin action.</p>' : ''}</div>`;
     main.querySelectorAll('.sk-approve').forEach(b => b.addEventListener('click', () => skillApprove(b.dataset.id)));
     main.querySelectorAll('.sk-reject').forEach(b => b.addEventListener('click', () => skillReject(b.dataset.id)));
@@ -1694,7 +1753,7 @@
     const newBtn = main.querySelector('#sk-new'); if (newBtn) newBtn.addEventListener('click', openNewSkill);
   }
   async function openSkillEditor(id) {
-    const modal = document.getElementById('ws-api-modal');
+    const modal = document.getElementById('ws-new-agent-modal');
     if (!modal) return;
     let sk = null;
     try { const r = await fetch('/skills/' + encodeURIComponent(id)); if (r.ok) sk = (await r.json()).skill; } catch (e) { sk = null; }
@@ -1748,7 +1807,7 @@
     nameIn.focus();
   }
   async function openSkillScope(skill) {
-    const modal = document.getElementById('ws-api-modal');
+    const modal = document.getElementById('ws-new-agent-modal');
     if (!modal) return;
     let agents = [];
     try { const r = await fetch('/agents'); if (r.ok) agents = (await r.json()).agents || []; } catch (e) { agents = []; }
@@ -1784,7 +1843,7 @@
     modal.addEventListener('click', e => { if (e.target === modal) close(); });
   }
   function openNewSkill() {
-    const modal = document.getElementById('ws-api-modal');
+    const modal = document.getElementById('ws-new-agent-modal');
     if (!modal) return;
     const VALID_ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
     const slugify = s => s.toLowerCase().trim().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');

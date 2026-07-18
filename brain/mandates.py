@@ -54,8 +54,8 @@ class MandateError(Exception):
 
 
 def catalog() -> dict[str, dict]:
-    """Return {mandate_id: {"text": role_text, "conduct": conduct_rules}} for the
-    active (org, persona), cached per persona (Path B)."""
+    """Return {mandate_id: {"text": role_text, "conduct": conduct_rules, "weights":
+    reward_weights}} for the active (org, persona), cached per persona (Path B)."""
     persona = _active_persona()
     cached = _catalog.get(persona)
     if cached is None:
@@ -90,7 +90,7 @@ def _load() -> dict[str, dict]:
             return {}
         lib = (
             sb.table("mandates")
-            .select("id, role_text, conduct_rules")
+            .select("id, role_text, conduct_rules, reward_weights")
             .eq("org_id", org)
             .in_("id", ids)
             .eq("active", True)
@@ -100,6 +100,7 @@ def _load() -> dict[str, dict]:
             str(r["id"]): {
                 "text": str(r.get("role_text") or ""),
                 "conduct": r.get("conduct_rules") or None,
+                "weights": r.get("reward_weights") or {},
             }
             for r in (lib.data or [])
         }
@@ -139,15 +140,16 @@ def upsert_mandate(
     reward_weights: dict | None = None,
 ) -> dict:
     """Create or update a library mandate. Bumps version on every edit and revives
-    a deactivated mandate (re-saving an id brings it back). conduct_rules /
-    reward_weights are stored but NOT consumed by the brain yet."""
+    a deactivated mandate (re-saving an id brings it back). reward_weights is a
+    per-dimension multiplier consumed by neuron.reward_weight() via the ambient
+    turn's mandate; conduct_rules is stored but not yet consumed."""
     sb, org = _sb()
     mid = _valid_id(mandate_id)
     text = str(role_text or "")
     if len(text) > MAX_ROLE_TEXT_CHARS:
         raise MandateError(f"role_text exceeds {MAX_ROLE_TEXT_CHARS} chars ({len(text)})")
     cr = _valid_json("conduct_rules", conduct_rules)
-    rw = _valid_json("reward_weights", reward_weights)
+    rw = _valid_reward_weights(reward_weights)
 
     # Read-then-write version bump. One process per org and a single editor in
     # practice, so the race window is acceptable.
@@ -333,3 +335,34 @@ def _valid_json(field: str, value: dict | None) -> dict:
     if len(json.dumps(value)) > _MAX_JSON_BYTES:
         raise MandateError(f"{field} exceeds {_MAX_JSON_BYTES} bytes")
     return value
+
+
+# The 7 reward dimensions a persona can be valued on — source of truth is the
+# comment at neuron.py:326-329; kept duplicated here (not imported) to avoid a
+# mandates<->neuron import cycle at module load.
+_REWARD_SOURCES = {
+    "correctness",
+    "connection",
+    "novelty",
+    "aesthetic",
+    "relief",
+    "mastery",
+    "levity",
+}
+_MANDATE_WEIGHT_MIN, _MANDATE_WEIGHT_MAX = 0.1, 3.0
+
+
+def _valid_reward_weights(value: dict | None) -> dict:
+    """Clip each dimension to [_MANDATE_WEIGHT_MIN, _MANDATE_WEIGHT_MAX]; silently
+    drop unknown dimension keys and non-numeric values rather than raising, since
+    this is a tunable dial, not a structural contract."""
+    raw = _valid_json("reward_weights", value)
+    out: dict[str, float] = {}
+    for k, v in raw.items():
+        if k not in _REWARD_SOURCES:
+            continue
+        try:
+            out[k] = max(_MANDATE_WEIGHT_MIN, min(_MANDATE_WEIGHT_MAX, float(v)))
+        except (TypeError, ValueError):
+            continue
+    return out

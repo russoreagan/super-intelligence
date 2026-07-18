@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import logging
+import os
 
 from brain.emotion_hierarchy import CORE_VALENCE, valence_of
 from brain.observability.decisions import decisions
 from brain.settings import settings
-from brain.wiring import Wiring
+from brain.wiring import WEIGHT_REST, Wiring
 
 logger = logging.getLogger(__name__)
 
@@ -235,6 +236,233 @@ class HebbianUpdater:
                     count += 1
         return count
 
+    def _apply_attachment_credit(self, trace, outcome: float) -> int:
+        """Tier 1 structural plasticity: learn WHICH curated fragment attaches to WHICH host.
+
+        Contrastive over the drafter competition — the fragment(s) the SELECTED drafter
+        carried on a positive-outcome turn are reinforced, creating/strengthening a
+        per-persona `fragment.<skill_id> → drafter` edge; fragments carried by LOSING
+        drafters are gently demoted (existing edges only, so a fresh losing exploration
+        simply never establishes). Non-drafter hosts (critic/reframer/empathy/executive)
+        get co-activation credit for an established attachment they carried on a good turn.
+
+        The step is `outcome * fragment_gain` — deliberately NOT the tiny per-path Hebbian
+        delta, so ONE good win lifts a new attachment (starting at rest) clear of the prune
+        floor; sustained wins then climb it toward the downshift threshold, while an
+        attachment that stops winning fades (decay_fragment_edges) and is pruned. Reads
+        trace.drafter_fragments (host → [skill_id], stamped per-drafter by frontal). Gated by
+        fragment_wiring; the top-level run() gates the whole pass on BRAIN_WIRING_FROZEN.
+        Returns edge updates."""
+        if not settings.get("fragment_wiring", 1):
+            return 0
+        frags = getattr(trace, "drafter_fragments", None) or {}
+        if not frags:
+            return 0
+        from brain.fragment_pool import EXPLORE_HOSTS, fragment_node_name, is_admissible
+
+        selected = next((d for d in (trace.draft_scores or []) if d.get("selected")), None)
+        winner_host = None
+        if selected is not None:
+            parts = str(selected.get("draft_id", "")).split("_")
+            if len(parts) >= 2 and parts[1].isdigit():
+                winner_host = f"frontal.drafter_{chr(65 + int(parts[1]))}"
+
+        att_delta = outcome * float(settings.get("fragment_gain", 0.2))
+        penalty = float(settings.get("fragment_explore_penalty", 0.02))
+        updated = 0
+        for host, sids in frags.items():
+            is_drafter = host in EXPLORE_HOSTS
+            for sid in sids or []:
+                if not is_admissible(sid, host):
+                    continue
+                fnode = fragment_node_name(sid)
+                has = self._wiring.has(fnode, host)
+                if is_drafter and host == winner_host:
+                    if att_delta > 0:
+                        # create/strengthen the winning attachment
+                        self._wiring.add(fnode, host, weight=WEIGHT_REST)
+                        n = self._wiring.hebbian_update([fnode, host], att_delta)
+                        verb = "reinforce"
+                    elif has:
+                        # selected but the turn went badly — weaken an existing attachment
+                        n = self._wiring.hebbian_update([fnode, host], att_delta)
+                        verb = "demote"
+                    else:
+                        continue
+                elif is_drafter:
+                    # carried by a losing drafter — gentle demotion of an EXISTING attachment
+                    if not has:
+                        continue
+                    n = self._wiring.hebbian_update([fnode, host], -penalty)
+                    verb = "loser_penalty"
+                else:
+                    # non-drafter host — co-activation credit for an EXISTING attachment
+                    if att_delta <= 0 or not has:
+                        continue
+                    n = self._wiring.hebbian_update([fnode, host], att_delta)
+                    verb = "coactivation"
+                if n:
+                    updated += n
+                    decisions.log(
+                        "attachment_learned",
+                        turn_id=trace.turn_id,
+                        fragment=sid,
+                        host=host,
+                        verb=verb,
+                        won=(host == winner_host),
+                        weight=round(self._wiring.get_edge_weight(fnode, host), 4),
+                        outcome=round(outcome, 4),
+                    )
+        return updated
+
+    # ── Tier 2 structural plasticity: recruit / demote reserve drafter nodes ──────
+
+    def _maybe_recruit_nodes(self, session_id: str) -> None:
+        """Recruit a dormant reserve drafter into the bound persona's active set when a fixed
+        host has a STABLE cluster of proven fragment attachments, and demote a recruited reserve
+        whose executive→ edge has decayed below the floor. The recruited node's identity = the
+        copied proven fragments (injected via the Tier-1 seam); it earns or loses its place
+        through the drafter competition. Runs per-persona (inside _run_for_persona, bound),
+        gated by node_recruitment + BRAIN_WIRING_FROZEN. At most one recruitment per pass.
+
+        ALTERNATIVE trigger (node_recruit_from_ignition): sustained Global-Workspace ignition
+        (a decayed per-persona tally, brain/ignition_tally.py) opens a relaxed path — an
+        ESTABLISHED cluster at ≥ the inject/promote midpoint may crystallize before it is
+        fully proven. Full-proven clusters always win first, and every existing gate (flags,
+        FROZEN, pool, admissibility, dedup, demotion) applies unchanged."""
+        if not settings.get("node_recruitment", 1):
+            return
+        if os.environ.get("BRAIN_WIRING_FROZEN", "false").lower() == "true":
+            return
+        from brain.fragment_pool import is_admissible
+
+        K = max(0, int(settings.get("node_reserve_pool", 3)))
+        if K <= 0:
+            return
+        promote = float(settings.get("node_promote_threshold", 2.2))
+        min_cluster = max(1, int(settings.get("node_promote_min_cluster", 2)))
+        inject_threshold = float(settings.get("fragment_inject_threshold", 1.3))
+        fixed = [f"frontal.drafter_{chr(65 + i)}" for i in range(5)]
+        reserves = [f"frontal.drafter_{chr(65 + 5 + j)}" for j in range(K)]
+
+        # DEMOTION: a recruited reserve that has LOST its specialization — no fragment
+        # attachment left above the inject threshold — is returned to the pool. Its copied
+        # fragments fade via fragment_forget if it stops winning (they are reinforced only
+        # when it wins), so this tracks reward: an empty specialist is retired.
+        for r in reserves:
+            if not self._wiring.has("frontal.executive", r):
+                continue
+            best_frag = max(
+                (w for (_sid, w) in self._wiring.attached_fragments(r)), default=0.0
+            )
+            if best_frag < inject_threshold:
+                removed = self._wiring.remove_node_edges(r)
+                decisions.log(
+                    "node_demoted",
+                    session_id=session_id,
+                    node=r,
+                    reason="no_specialization",
+                    edges_removed=removed,
+                )
+
+        free = [r for r in reserves if not self._wiring.has("frontal.executive", r)]
+        if not free:
+            return
+        recruited = [r for r in reserves if self._wiring.has("frontal.executive", r)]
+
+        def _already_covered(pids: set) -> bool:
+            for r in recruited:
+                r_ids = {sid for sid, _ in self._wiring.attached_fragments(r)}
+                if pids <= r_ids:
+                    return True
+            return False
+
+        # RECRUITMENT: crystallize the first fixed host with a stable proven cluster not already
+        # covered by an existing recruited reserve. One recruitment per pass.
+        for host in fixed:
+            proven = [
+                (sid, w)
+                for (sid, w) in self._wiring.attached_fragments(host)
+                if w >= promote and is_admissible(sid, host)
+            ]
+            if len(proven) < min_cluster:
+                continue
+            pids = {sid for sid, _ in proven}
+            if _already_covered(pids):
+                continue
+            self._recruit_reserve(free[0], proven)
+            decisions.log(
+                "node_recruited",
+                session_id=session_id,
+                node=free[0],
+                source=host,
+                fragments=sorted(pids),
+                trigger="proven_cluster",
+            )
+            return
+
+        # ── ALTERNATIVE trigger: sustained Global-Workspace ignition ─────────────
+        # Repeated ignition is a content-free "the mind is under sustained load" signal:
+        # it lowers the proof bar to the inject/promote midpoint (established, not yet
+        # proven — and safely above the demotion floor, so an ignition recruit cannot be
+        # insta-demoted next pass). consume() makes one accumulation window pay for at
+        # most one recruitment.
+        if not settings.get("node_recruit_from_ignition", 1):
+            return
+        try:
+            from brain import ignition_tally
+
+            score, coalition = ignition_tally.pressure()
+        except Exception:
+            return
+        if score < float(settings.get("ignition_recruit_min_score", 3.0)):
+            return
+        relaxed = max(inject_threshold, (inject_threshold + promote) / 2.0)
+        for host in fixed:
+            cluster = [
+                (sid, w)
+                for (sid, w) in self._wiring.attached_fragments(host)
+                if w >= relaxed and is_admissible(sid, host)
+            ]
+            if len(cluster) < min_cluster:
+                continue
+            pids = {sid for sid, _ in cluster}
+            if _already_covered(pids):
+                continue
+            self._recruit_reserve(free[0], cluster)
+            decisions.log(
+                "node_recruited",
+                session_id=session_id,
+                node=free[0],
+                source=host,
+                fragments=sorted(pids),
+                trigger="workspace_ignition",
+                coalition=coalition,
+                ignition_score=round(score, 3),
+                bar=round(relaxed, 3),
+            )
+            try:
+                ignition_tally.consume()
+            except Exception:
+                pass
+            return
+
+    def _recruit_reserve(self, reserve: str, proven: list) -> None:
+        """Wire a reserve drafter into the bound persona's active graph (mirrors the drafter
+        edges in wiring_bootstrap) and copy the proven fragments onto it — its baked specialist
+        identity, injected each turn via the existing Tier-1 consumer."""
+        from brain.fragment_pool import fragment_node_name
+
+        self._wiring.add("frontal.executive", reserve, weight=WEIGHT_REST)
+        self._wiring.add(reserve, "frontal.critic", weight=WEIGHT_REST)
+        self._wiring.add(reserve, "frontal.empathy_critic", weight=WEIGHT_REST)
+        self._wiring.add(reserve, "frontal.commitment_extractor", weight=WEIGHT_REST)
+        self._wiring.add(
+            "hypothalamus.threat_to_GABA", reserve, weight=WEIGHT_REST, polarity="inhibitory"
+        )
+        for sid, w in proven:
+            self._wiring.add(fragment_node_name(sid), reserve, weight=w)
+
     # Switch-ordering edges (sensory.text → temporal.<switch>) are never consecutive
     # pairs on fired_path (sensory.text is a bus channel, not a fired node), so the
     # main path credit can't reach them. Credit them explicitly here for the gated
@@ -459,8 +687,19 @@ class HebbianUpdater:
         traces by their persona stamp and bind each group's persona around its
         updates — attribution no longer depends on who pulled the trigger.
         Unstamped traces (older builds, no-persona deployments) run under the
-        ambient binding, exactly the old behavior."""
+        ambient binding, exactly the old behavior.
+
+        BRAIN_WIRING_FROZEN is a TRUE panic switch: it halts the ENTIRE pass here
+        — decay, weight learning, drafter/switch/recall credit, attachment credit,
+        node recruitment, prune, and save — so wiring.json is left byte-identical
+        and the brain falls back to its fixed map, unchanged (SYSTEMS.md §2.9)."""
         import contextlib
+
+        if os.environ.get("BRAIN_WIRING_FROZEN", "false").lower() == "true":
+            decisions.log(
+                "hebbian_pass_frozen", session_id=session_id, traces=len(full_traces)
+            )
+            return
 
         from brain.persona_key import persona_slug
         from brain.second_brain.store import bind_persona
@@ -478,6 +717,12 @@ class HebbianUpdater:
         """Decay + per-turn Hebbian updates along firing paths, for ONE persona's
         traces (the wiring resolves the bound persona's graph on every access)."""
         self._wiring.decay_toward_rest(rest=1.0, rate=0.01)
+        # Fragment attachments forget faster than topology homeostasis (use-it-or-lose-it):
+        # decay first, so the trace loop's reinforcement can lift the productive ones back
+        # above the prune floor while unused ones fade toward removal.
+        _frag_on = bool(settings.get("fragment_wiring", 1))
+        if _frag_on:
+            self._wiring.decay_fragment_edges(float(settings.get("fragment_forget", 0.05)))
 
         plasticity = self._plasticity_modulator(full_traces)
         gainers: list[tuple[str, float]] = []
@@ -584,6 +829,21 @@ class HebbianUpdater:
             total_updated += self._apply_recall_credit(
                 trace, outcome, plasticity, turn_plast, gainers, losers
             )
+            total_updated += self._apply_attachment_credit(trace, outcome)
+
+        # Prune faded fragment attachments after all reinforcement (topology never pruned).
+        if _frag_on:
+            pruned = self._wiring.prune_fragment_edges(
+                float(settings.get("fragment_prune_floor", 1.05))
+            )
+            if pruned:
+                decisions.log("attachment_pruned", session_id=session_id, count=pruned)
+
+        # Tier 2: recruit/demote reserve drafter nodes for this persona (gated, best-effort).
+        try:
+            self._maybe_recruit_nodes(session_id)
+        except Exception as e:
+            logger.warning("[Tier2] node recruitment skipped (non-fatal): %s", e)
 
         try:
             self._wiring.save()

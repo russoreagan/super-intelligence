@@ -126,6 +126,24 @@ class SleepConsolidation:
         )
         self._learning_narrator.set_router(router)
 
+        # Node architect — Tier 2 self-authoring. Drafts a candidate specialization skill from
+        # the persona's PROVEN fragment clusters; the draft is admitted through the skill
+        # screener (auto-live only if clean, else the owner review queue). Local model → zero
+        # cloud cost; reads screened skill descriptions only (no conversation content).
+        from brain.node_authoring import NODE_ARCHITECT_SYSTEM
+
+        self._node_architect = IntegratorCell(
+            name="node_architect",
+            cluster="sleep",
+            model="runpod-general",
+            system_prompt=NODE_ARCHITECT_SYSTEM,
+            topics=[],
+            max_calls_per_turn=1,
+            locality="local",
+            sensitivity="normal",
+        )
+        self._node_architect.set_router(router)
+
     async def consolidate(
         self,
         session_id: str,
@@ -275,6 +293,11 @@ class SleepConsolidation:
         # same persona binding (consolidate_now binds; a detached task would lose it).
         if settings.get("learning_narrator", 1):
             await self.learning_story_pass(session_id)
+
+        # 7. Self-authoring (Tier 2) — draft a candidate specialization skill from the bound
+        # persona's proven fragment clusters and admit it through the skill screener. Gated,
+        # rate-limited, local-model (zero cloud cost), fail-open.
+        await self.authoring_pass(session_id, trace_count=len(session_traces))
 
         elapsed = time.time() - start
         logger.info("[Memory consolidation] Done in %.2fs", elapsed)
@@ -1018,7 +1041,7 @@ class SleepConsolidation:
         """
         import os
 
-        from brain.clusters.chunk_memory import mine_chunks
+        from brain.clusters.chunk_memory import fireable_chunk_count, mine_chunks
         from brain.clusters.job_store import JOBS_DIR
         from brain.persona_key import persona_slug, persona_state_root
 
@@ -1079,6 +1102,11 @@ class SleepConsolidation:
             data = mine_chunks(jobs)
             data["ts_epoch"] = now
             n_active = sum(1 for c in data["chunks"].values() if c.get("state") == "active")
+            # Active != fireable: a chunk primes the planner once promoted, but only
+            # fires ballistically if it has an invariant (fixed-arg) tail. Logging both
+            # keeps the promotion-vs-firing gap visible (most active chunks on this
+            # workload vary their args every run and are priming-only).
+            n_fireable = fireable_chunk_count(data["chunks"])
             try:
                 os.makedirs(os.path.dirname(chunks_path), exist_ok=True)
                 tmp = chunks_path + ".tmp"
@@ -1086,9 +1114,10 @@ class SleepConsolidation:
                     json.dump(data, f, indent=2)
                 os.replace(tmp, chunks_path)
                 logger.info(
-                    "[ChunkMining] Wrote %d chunks (%d active) from %d jobs for %s",
+                    "[ChunkMining] Wrote %d chunks (%d active, %d fireable) from %d jobs for %s",
                     len(data["chunks"]),
                     n_active,
+                    n_fireable,
                     len(jobs),
                     persona or "home",
                 )
@@ -1259,6 +1288,31 @@ class SleepConsolidation:
             os.replace(path + ".tmp", path)
         except Exception as e:
             logger.warning("[LearningNarrator] could not persist stories: %s", e)
+
+    async def authoring_pass(self, session_id: str, trace_count: int = 0) -> None:
+        """Tier 2 self-authoring: draft a candidate specialization skill for the bound persona
+        and admit it through the skill screener. Fail-open; gated by node_self_authoring +
+        Supabase + cadence limits. Runs for the session's bound persona (its wiring resolves
+        through the active-persona contextvar)."""
+        if not settings.get("node_self_authoring", 1):
+            return
+        if self._hebbian is None or getattr(self._hebbian, "_wiring", None) is None:
+            return
+        try:
+            from brain import node_authoring
+            from brain.persona_key import active_or_home_persona
+            from brain.skills_screener import SkillScreener
+
+            await node_authoring.author_and_admit(
+                active_or_home_persona(),
+                session_id=session_id,
+                wiring=self._hebbian._wiring,
+                architect_cell=self._node_architect,
+                screener=SkillScreener(self._router),
+                trace_count=trace_count,
+            )
+        except Exception as e:
+            logger.warning("[NodeAuthoring] pass failed: %s", e)
 
     async def learning_story_pass(self, session_id: str) -> None:
         """Narrate this session's learning as first-person stories with citations.

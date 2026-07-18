@@ -18,6 +18,7 @@ from brain.cell import IntegratorCell
 from brain.clusters.parietal import classify_register
 from brain.model_router import ModelRouter
 from brain.neuron import SwitchNeuron
+from brain.node_registry import get_node_registry
 from brain.observability.decisions import decisions
 from brain.predictor import PredictorSwitch, input_signature, prediction_match_frac
 from brain.utils import safe_json_parse
@@ -366,6 +367,9 @@ class TemporalCluster:
             topics=["sensory.text"],
         )
         self._understanding.set_router(router)
+        # Node registry: register object-backed graph nodes at their construction site so the
+        # boot audit can prove every wiring name maps to a live object (see brain/node_registry).
+        get_node_registry().register_object(self._understanding, kind="cell")
 
         self._predictor = PredictorSwitch(name="temporal_predictor", cluster=CLUSTER)
 
@@ -431,6 +435,17 @@ class TemporalCluster:
             threshold=0.5,
             modulators={"ACh": +0.10},
         )
+        # Node registry: register the object-backed switch nodes (their names are the wiring
+        # graph endpoints). Excludes _predictor (temporal_predictor) — not a wiring node.
+        for _sw in (
+            self._template_switch,
+            self._length_switch,
+            self._salience_prefilter,
+            self._self_ref_switch,
+            self._epistemic_switch,
+            self._integrator_inhibitor,
+        ):
+            get_node_registry().register_object(_sw, kind="switch")
 
         self._inbox = bus.subscribe("sensory.text")
         # DMN's top-down prediction of the user's next message. Drained each

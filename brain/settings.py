@@ -101,7 +101,7 @@ DEFAULTS: dict[str, float | int | str] = {
     # first. Raising it opens the only reward channel sourced outside the brain's own
     # appraisal. Keep this a float: an int default would coerce a fractional nudge to 0
     # on load and silently re-break the dial.
-    "external_grade_da_nudge": 0.0,
+    "external_grade_da_nudge": 0.15,
     "decay_toward_rest_rate": 0.01,
     # Eligibility traces: a turn's outcome also credits the fired paths of the
     # previous N turns, decayed e^(-age/τ) — delayed conversational payoff
@@ -194,6 +194,7 @@ DEFAULTS: dict[str, float | int | str] = {
     "dmn_enabled": 1,  # owner kill-switch (runtime, PUT /v1/dmn) — distinct from the BRAIN_DMN env gate
     "dmn_interval": 8.0,  # active baseline — fires when any mouse/keyboard activity detected
     "dmn_idle_interval": 45.0,  # when fully away from computer (OS idle > 60s)
+    "dmn_min_tick_interval": 5.0,  # floor between DMN ticks regardless of computed interval (dmn.py)
     "dmn_overlap_threshold": 0.35,
     "ach_suppression_weight": 0.70,  # was 1.00 — was over-suppressing idle thought
     "glu_suppression_weight": 0.25,  # was 0.30
@@ -446,6 +447,7 @@ DEFAULTS: dict[str, float | int | str] = {
     # (sleep.learning_story_pass, runs after the Hebbian pass in the same persona
     # binding). 1 = on, 0 = skip the narration; the weight updates land either way.
     "learning_narrator": 1,
+    "resting_mood_consolidation_alpha": 0.3,  # blend rate of the day's aggregate mood into resting disposition at consolidation (session_loops.py)
     # ── Section: Motor Cortex / Autonomous Tasks ─────────────────────────────
     # ralph_max_total_attempts: hard ceiling on total tool dispatches across ALL
     # stories + retries in a single internal job. Prevents runaway loops
@@ -459,6 +461,8 @@ DEFAULTS: dict[str, float | int | str] = {
     "motor_max_jobs_per_window": 10,  # ≤ this many job starts per window
     "motor_job_window_s": 3600.0,  # rolling window = 1 hour
     "motor_max_jobs_per_session": 30,  # absolute ceiling per process lifetime
+    "job_store_max_jobs": 100,  # JobStore: max completed-job files retained (oldest trimmed first)
+    "job_store_max_mb": 100,  # JobStore: max total size in MB of retained job files
     # ── Engine API audio quotas (per-partner cost guard) ─────────────────────
     # STT/TTS hit paid third parties (Deepgram/ElevenLabs), so a partner key's
     # audio usage is metered the way those services bill: TTS by characters
@@ -592,6 +596,12 @@ DEFAULTS: dict[str, float | int | str] = {
     # needed. Empty string = fall back to env var.
     "runpod_host": "",
     "runpod_model": "",
+    # runpod_pod_ready: 1 iff a local RunPod GPU pod has been confirmed resident
+    # and its real host published this process. Distinct from runpod_host, which
+    # stays a plain routing override (empty = fall back to env var/Ollama) and
+    # can't by itself distinguish "no override" from "pod genuinely up" — this is
+    # the dedicated liveness signal for frontal._local_available()/downshift.
+    "runpod_pod_ready": 0,
     # max_runpod_hours: watchdog stops the pod if the brain hasn't been seen
     # alive for this many hours. Resets continuously while the brain is running.
     # Acts as a backstop against runaway costs after a crash/force-kill.
@@ -819,6 +829,49 @@ DEFAULTS: dict[str, float | int | str] = {
     "colony_trail_gain": 0.05,  # per-turn trail bump scale (× outcome)
     "colony_trail_clamp": 0.50,  # max |overlay| added to any edge's persisted weight
     "colony_trail_half_life_s": 120.0,  # trail overlay decay half-life within a session
+    # ── Fragment wiring — Tier 1 structural plasticity (learned-attached fragments) ──
+    # Curated, screened skills learned-attached onto host cells as per-persona wiring edges
+    # `fragment.<skill_id> → host`. Drafters EXPLORE varied fragments; the critic + outcome
+    # reward the winner (contrastive); proven attachments consolidate and can DOWNSHIFT a
+    # drafter to the free local RunPod model. Ships LIVE (master ON); BRAIN_WIRING_FROZEN
+    # disables everything. Safety = curated parts + fenced injection + non-safety hosts only.
+    "fragment_wiring": 1,  # master gate for attachment learning + injection (0 = off)
+    "fragment_explore_rate": 0.20,  # P(a given drafter explores a non-established fragment)
+    "fragment_explore_max_drafters": 2,  # cap exploring drafters/turn (keeps a cloud/baseline floor)
+    "fragment_inject_threshold": 1.30,  # attachment weight ≥ this → injected into its host
+    "fragment_max_per_host": 2,  # max fragments injected into any one host per turn
+    "fragment_prune_floor": 1.05,  # fragment edges ≤ this are pruned (rest=1.0)
+    "fragment_forget": 0.05,  # per-sleep decay of fragment edges toward rest (use-it-or-lose-it)
+    "fragment_gain": 0.20,  # reinforcement step = outcome × gain (one good win clears the floor)
+    "fragment_explore_penalty": 0.02,  # decrement to an existing attachment explored on a loser
+    "fragment_downshift": 1,  # 1 = route proven-attachment drafters to local RunPod (0 = off)
+    "fragment_downshift_threshold": 2.20,  # attachment weight ≥ this → eligible to downshift
+    "fragment_downshift_cloud_floor": 2,  # min drafters kept on cloud even if all are proven
+    "fragment_downshift_model": "runpod",  # local model key for a downshifted drafter
+    # ── Node creation — Tier 2 structural plasticity (recruit new nodes + self-authoring) ──
+    # Cap 1 (recruitment): a persona recruits a dormant reserve drafter into its active set when
+    # a host accumulates a stable cluster of PROVEN fragments; the new node's identity = those
+    # fragments, injected via the Tier-1 seam. Cap 2 (self-authoring): a gated sleep pass drafts a
+    # candidate specialization, admits it through the SAME screener as untrusted skills (auto-live
+    # only if screener-clean; else the owner review queue), feeding the fragment pool. Two gates:
+    # screener admits authored content; reward promotes any fragment into a node.
+    "node_recruitment": 1,  # master gate for reserve-node recruitment (0 = off)
+    "node_reserve_pool": 3,  # K dormant reserve drafter slots (F.. up to fragment_pool ceiling)
+    "node_promote_threshold": 2.20,  # fragment weight ≥ this counts as "proven" for recruitment
+    "node_promote_min_cluster": 2,  # min proven fragments on a host to crystallize into a node
+    # (a recruited reserve is DEMOTED when it has no fragment ≥ fragment_inject_threshold left —
+    #  it lost its specialization; that reuses the inject threshold, no separate flag.)
+    "node_self_authoring": 1,  # master gate for the self-authoring sleep pass (0 = off)
+    "node_author_min_traces": 20,  # min new traces in a session before authoring may run
+    "node_author_min_hours": 24.0,  # min hours since the last authored proposal for a persona
+    "node_author_max_per_persona": 5,  # cap on total self-authored skills per persona
+    # Alternative Tier-2 trigger (GWT): sustained Global-Workspace ignition marks a
+    # plasticity window — a persona whose mind keeps igniting may crystallize a specialist
+    # from a cluster that is ESTABLISHED (≥ the inject/promote midpoint) but not yet fully
+    # proven. The tally is content-free (coalition label + decayed count only).
+    "node_recruit_from_ignition": 1,  # kill switch for the ignition-pressure trigger (0 = off)
+    "ignition_recruit_min_score": 3.0,  # decayed total ignition tally ≥ this arms the relaxed path
+    "ignition_tally_half_life_h": 72.0,  # exponential half-life (hours) of the ignition tally
     # ── Section: Flock dynamics — criticality + chemistry trajectory ─────────
     # Murmuration-derived collective-dynamics layer (sibling to colony_features,
     # but kept on its OWN flag so criticality control can be run without the
@@ -905,6 +958,7 @@ DEFAULTS: dict[str, float | int | str] = {
     "cma_session_warm_reuse": 1,
     # cma_max_reconnects: bounded SSE reconnect-and-replay attempts on stream drop.
     "cma_max_reconnects": 3,
+    "cma_budget_check_interval_s": 30.0,  # how often the CMA executor re-checks cloud spend mid-task
     # ── Section: Motor cortex (tool use) ──────────────────────────────────────
     # motor_allowed_dirs: directories the motor cortex may read/write, one per
     #   line. Locally this is left empty and the allowlist is inherited from
@@ -931,6 +985,7 @@ DEFAULTS: dict[str, float | int | str] = {
     # Off by default (writes pause for a human/API confirm). Engine mode: an agent
     # may enable it WITHIN this org ceiling for trusted autonomous writes.
     "motor_auto_confirm_writes": 0,
+    "motor_write_approval_bytes": 5_000_000,  # cloud WRITE actions above this size need sign-off (cma_executor._write_approval_bytes)
     # motor_allowed_commands: shell command allowlist, one binary name per line.
     #   Empty = the built-in DEFAULT_COMMANDS set. BRAIN_MOTOR_COMMANDS env wins.
     "motor_allowed_commands": "",

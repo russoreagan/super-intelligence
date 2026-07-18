@@ -259,10 +259,11 @@ PERSONA_CHEMISTRY: dict[str, dict[str, float]] = {
 # the UI pose, which the server derives from that table. The Stoic is the flat
 # control — absent here = every cognitive dial rests at neutral.
 PERSONA_COG_POSITIONS: dict[str, dict[str, float]] = {
-    # dial ids: learning-rate · focus · curiosity · introspection · memory ·
-    #           emotionality · hindsight · lingering
+    # dial ids: learning-rate · plasticity · focus · curiosity · introspection ·
+    #           memory · emotionality · hindsight · lingering
     "The Visionary": {
         "learning-rate": 0.70,
+        "plasticity": 0.75,
         "focus": 0.30,
         "curiosity": 0.85,
         "introspection": 0.50,
@@ -273,6 +274,7 @@ PERSONA_COG_POSITIONS: dict[str, dict[str, float]] = {
     },
     "The Empath": {
         "learning-rate": 0.60,
+        "plasticity": 0.55,
         "focus": 0.50,
         "curiosity": 0.50,
         "introspection": 0.70,
@@ -283,6 +285,7 @@ PERSONA_COG_POSITIONS: dict[str, dict[str, float]] = {
     },
     "The Analyst": {
         "learning-rate": 0.60,
+        "plasticity": 0.45,
         "focus": 0.85,
         "curiosity": 0.55,
         "introspection": 0.60,
@@ -293,6 +296,7 @@ PERSONA_COG_POSITIONS: dict[str, dict[str, float]] = {
     },
     "The Poet": {
         "learning-rate": 0.65,
+        "plasticity": 0.65,
         "focus": 0.40,
         "curiosity": 0.70,
         "introspection": 0.88,
@@ -303,6 +307,7 @@ PERSONA_COG_POSITIONS: dict[str, dict[str, float]] = {
     },
     "The Sage": {
         "learning-rate": 0.45,
+        "plasticity": 0.40,
         "focus": 0.70,
         "curiosity": 0.60,
         "introspection": 0.85,
@@ -313,6 +318,7 @@ PERSONA_COG_POSITIONS: dict[str, dict[str, float]] = {
     },
     "The Companion": {
         "learning-rate": 0.60,
+        "plasticity": 0.55,
         "focus": 0.45,
         "curiosity": 0.60,
         "introspection": 0.50,
@@ -323,6 +329,7 @@ PERSONA_COG_POSITIONS: dict[str, dict[str, float]] = {
     },
     "The Adversary": {
         "learning-rate": 0.55,
+        "plasticity": 0.45,
         "focus": 0.80,
         "curiosity": 0.50,
         "introspection": 0.55,
@@ -333,6 +340,7 @@ PERSONA_COG_POSITIONS: dict[str, dict[str, float]] = {
     },
     "The Mentor": {
         "learning-rate": 0.70,
+        "plasticity": 0.70,
         "focus": 0.65,
         "curiosity": 0.80,
         "introspection": 0.70,
@@ -343,6 +351,7 @@ PERSONA_COG_POSITIONS: dict[str, dict[str, float]] = {
     },
     "The Concierge": {
         "learning-rate": 0.55,
+        "plasticity": 0.40,
         "focus": 0.82,
         "curiosity": 0.45,
         "introspection": 0.50,
@@ -353,6 +362,7 @@ PERSONA_COG_POSITIONS: dict[str, dict[str, float]] = {
     },
     "The Jester": {
         "learning-rate": 0.60,
+        "plasticity": 0.65,
         "focus": 0.30,
         "curiosity": 0.80,
         "introspection": 0.40,
@@ -363,6 +373,7 @@ PERSONA_COG_POSITIONS: dict[str, dict[str, float]] = {
     },
     "The Cynic": {
         "learning-rate": 0.50,
+        "plasticity": 0.35,
         "focus": 0.65,
         "curiosity": 0.40,
         "introspection": 0.72,
@@ -373,6 +384,7 @@ PERSONA_COG_POSITIONS: dict[str, dict[str, float]] = {
     },
     "The Admin": {
         "learning-rate": 0.55,
+        "plasticity": 0.40,
         "focus": 0.85,
         "curiosity": 0.55,
         "introspection": 0.55,
@@ -401,6 +413,14 @@ _NONCHEM_DIAL_MAP: dict[str, list[tuple[str, int, float, float, float]]] = {
         ("weight_max", +1, 1.50, 0.5, 6.0),
         ("sleep_min_turns", -1, 3, 2, 40),
         ("colony_trail_gain", +1, 0.10, 0.0, 0.5),
+    ],
+    # Structural-plasticity appetite: how eagerly this persona explores fragment
+    # attachments and how much proof it demands before crystallizing a new unit
+    # (both the proven-cluster bar and the ignition-pressure floor scale with it).
+    "plasticity": [
+        ("fragment_explore_rate", +1, 0.10, 0.0, 1.0),
+        ("node_promote_threshold", -1, 0.30, 1.5, 3.0),
+        ("ignition_recruit_min_score", -1, 1.0, 1.0, 10.0),
     ],
     "focus": [
         ("ne_scatter_threshold", +1, 0.10, 0.5, 1.0),

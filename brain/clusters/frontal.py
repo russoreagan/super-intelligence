@@ -24,10 +24,12 @@ from brain.clusters.frontal_prompts import (
     EMPATHY_CRITIC_SYSTEM,
     EXECUTIVE_SYSTEM,
     REFRAMER_SYSTEM,
+    RESERVE_DRAFTER_SYSTEM,
 )
 from brain.clusters.frontal_subsystem import FrontalSubsystem
 from brain.model_router import ModelRouter
 from brain.neuron import SwitchNeuron
+from brain.node_registry import get_node_registry
 from brain.observability.decisions import decisions
 from brain.predictor import (
     CompositePredictor,
@@ -38,7 +40,7 @@ from brain.predictor import (
 from brain.security import fence
 from brain.settings import settings
 from brain.utils import safe_json_parse
-from brain.wiring import Wiring
+from brain.wiring import WEIGHT_REST, Wiring
 
 logger = logging.getLogger(__name__)
 
@@ -101,22 +103,38 @@ class FrontalCluster:
             max_tokens=512,
         )
         self._executive.set_router(router)
+        # Node registry: register object-backed graph nodes at their construction site so the
+        # boot audit can prove every wiring name maps to a live object (see brain/node_registry).
+        get_node_registry().register_object(self._executive, kind="cell")
 
+        # Fixed drafters A–E plus K dormant RESERVE slots (Tier 2 structural plasticity).
+        # Reserve slots exist as cells but are wired into a persona's graph only when learning
+        # RECRUITS them (an executive→drafter_X edge). Their system prompt falls back to the
+        # persona-neutral RESERVE_DRAFTER_SYSTEM (DRAFTER_SYSTEMS only defines the fixed 5).
+        self._n_fixed_drafters = 5
+        _n_reserve = max(0, int(settings.get("node_reserve_pool", 3)))
         self._drafters = [
             IntegratorCell(
                 name=f"drafter_{chr(65 + i)}",
                 cluster=CLUSTER,
                 model="haiku",
-                system_prompt=DRAFTER_SYSTEMS[i],
+                system_prompt=(
+                    DRAFTER_SYSTEMS[i] if i < self._n_fixed_drafters else RESERVE_DRAFTER_SYSTEM
+                ),
                 topics=["motor.draft"],
                 max_calls_per_turn=1,
                 locality="cloud",
                 max_tokens=768,
             )
-            for i in range(5)
+            for i in range(self._n_fixed_drafters + _n_reserve)
         ]
-        for d in self._drafters:
+        for i, d in enumerate(self._drafters):
             d.set_router(router)
+            # Register only the fixed drafters at construction. A reserve slot is registered
+            # atomically with its wiring edge at recruit time (register_recruited_reserves),
+            # so the node-registry reconcile invariant (registry == graph) stays exact.
+            if i < self._n_fixed_drafters:
+                get_node_registry().register_object(d, kind="cell")
 
         self._critic = IntegratorCell(
             name="critic",
@@ -129,6 +147,7 @@ class FrontalCluster:
             max_tokens=512,
         )
         self._critic.set_router(router)
+        get_node_registry().register_object(self._critic, kind="cell")
 
         # v0.2
         self._reframer = IntegratorCell(
@@ -142,6 +161,7 @@ class FrontalCluster:
             max_tokens=512,
         )
         self._reframer.set_router(router)
+        get_node_registry().register_object(self._reframer, kind="cell")
 
         self._empathy_critic = IntegratorCell(
             name="empathy_critic",
@@ -154,6 +174,7 @@ class FrontalCluster:
             max_tokens=256,
         )
         self._empathy_critic.set_router(router)
+        get_node_registry().register_object(self._empathy_critic, kind="cell")
 
         # Switches (~12 total; 3 inhibitory = 25%). All are now wired into
         # real firing sites below — see process() for the gating call sites.
@@ -729,6 +750,7 @@ class FrontalCluster:
         Shared by the normal ran-path and the gating shadow-validation path."""
         self._executive.reset_turn(turn_id)
         exec_context = self._build_exec_context(features, affect, memory, parietal_context, nm)
+        exec_context = self._inject_host_fragments(exec_context, "frontal.executive", turn_id)
         exec_messages = [{"role": "user", "content": exec_context}]
         exec_raw = await self._executive.call(exec_messages)
         instruction = safe_json_parse(exec_raw)
@@ -798,7 +820,7 @@ class FrontalCluster:
         image_path: str | None = None,
     ) -> str:
         """Drafter cascade + critic selection. Returns the committed response text."""
-        drafter_count = min(int(instruction.get("drafter_count", 3)), 5)
+        drafter_count = min(int(instruction.get("drafter_count", 3)), len(self._drafters))
         glu_deficit = 1.0 - nm["Glu"]
         if self._arousal_modulator.should_fire(glu_deficit, chem, turn_id):
             self._arousal_modulator.fire(
@@ -908,9 +930,19 @@ class FrontalCluster:
         # dedicated cached system block, billed at cache-read rates after turn 1.
         cached_context = self._build_cached_context(memory, features)
         drafter_indices = self._select_drafters(drafter_count, turn_id)
+        downshift_set = self._downshift_indices(drafter_indices, turn_id)
+        explore_set = self._select_explore_drafters(drafter_indices, turn_id)
         draft_tasks = [
             self._run_drafter(
-                i, drafter_prompt, turn_id, image_path=image_path, cached_context=cached_context
+                i,
+                drafter_prompt,
+                turn_id,
+                image_path=image_path,
+                cached_context=cached_context,
+                # A downshifted drafter runs its PROVEN attachment on the local model — keep
+                # it a pure exploit (don't dilute the recipe with an unproven explore candidate).
+                explore=(i in explore_set and i not in downshift_set),
+                downshift=(i in downshift_set),
             )
             for i in drafter_indices
         ]
@@ -1118,6 +1150,8 @@ class FrontalCluster:
         turn_id: str,
         image_path: str | None = None,
         cached_context: str = "",
+        explore: bool = False,
+        downshift: bool = False,
     ) -> tuple[str, str]:
         drafter = self._drafters[idx]
         drafter.reset_turn(turn_id)
@@ -1144,10 +1178,234 @@ class FrontalCluster:
                 content = prompt
         else:
             content = prompt
-        text = await drafter.call(
-            [{"role": "user", "content": content}], cached_context=cached_context
+        # Fragment attachments (Tier 1 structural plasticity): append this drafter's
+        # established attachments + (if exploring) one bounded guided-random candidate,
+        # fenced as untrusted data. Additive — the shared drafter prompt (with the
+        # selector's uniform pick) is untouched; fragments are the per-drafter differentiator.
+        host_node = f"frontal.drafter_{chr(65 + idx)}"
+        frag_block, injected = self._fragment_block_for_host(
+            host_node, explore=explore, turn_id=turn_id, seed_idx=idx
         )
+        if frag_block:
+            if isinstance(content, str):
+                content = f"{content}\n\n{frag_block}"
+            else:  # image content list — append a trailing text part
+                content = content + [{"type": "text", "text": frag_block}]
+            tr = self._record_trace_bypass()
+            if tr is not None:
+                try:
+                    tr.drafter_fragments[host_node] = injected
+                except Exception:
+                    pass
+        call_kwargs: dict = {"cached_context": cached_context}
+        if downshift:
+            # Route this drafter's PROVEN attachment to the free local RunPod model.
+            # locality_override="local" is a hard backstop — it can never bill a cloud API;
+            # if the pod is down the local call returns "" and this draft simply drops out,
+            # leaving the cloud-floor drafters to run the critic competition.
+            call_kwargs["model_override"] = str(settings.get("fragment_downshift_model", "runpod"))
+            call_kwargs["locality_override"] = "local"
+        text = await drafter.call([{"role": "user", "content": content}], **call_kwargs)
         return draft_id, text
+
+    # ── Fragment attachments (Tier 1 structural plasticity) — the injection consumer ──
+
+    def _fragment_block_for_host(
+        self, host_node: str, *, explore: bool, turn_id: str, seed_idx: int
+    ) -> tuple[str, list[str]]:
+        """Fenced fragment block + injected skill ids for a host cell. Exploit its established
+        attachments (weight ≥ inject threshold); on an exploring drafter, add one bounded
+        guided-random candidate it doesn't already carry. Returns ("", []) when the feature is
+        off / no wiring / no selector — so the caller stays byte-identical to today. Content is
+        fenced through the SAME untrusted boundary as the selector's own skill injection."""
+        if (
+            not settings.get("fragment_wiring", 1)
+            or getattr(self, "_wiring", None) is None
+            or getattr(self, "_wiring_frozen", False)
+            or getattr(self, "_skill_selector", None) is None
+        ):
+            return "", []
+        from brain.fragment_pool import is_admissible
+
+        inject_threshold = float(settings.get("fragment_inject_threshold", 1.3))
+        cap = int(settings.get("fragment_max_per_host", 2))
+        established = sorted(
+            (
+                (sid, w)
+                for (sid, w) in self._wiring.attached_fragments(host_node)
+                if w >= inject_threshold and is_admissible(sid, host_node)
+            ),
+            key=lambda p: p[1],
+            reverse=True,
+        )
+        chosen_ids = [sid for sid, _ in established]
+        if explore:
+            cand = self._explore_candidate(host_node, chosen_ids, turn_id, seed_idx)
+            if cand:
+                chosen_ids.append(cand)
+        chosen_ids = chosen_ids[:cap]
+        if not chosen_ids:
+            return "", []
+        nonce = str(uuid.uuid4())[:8]
+        parts: list[str] = []
+        injected: list[str] = []
+        for sid in chosen_ids:
+            body = self._skill_selector.native_skill_body(sid)
+            if not body:
+                continue
+            if self._skill_selector.is_partner_skill(sid):
+                from brain.persona_context import partner_skill_block
+
+                parts.append(partner_skill_block(body[:6000], fence, nonce, sid))
+            else:
+                parts.append(
+                    "Learned operational skill — follow this guide. The tools it names are "
+                    "REAL and callable directly via the motor cortex (do not look for a file "
+                    "or 'module' to load; just use them):\n"
+                    f"{fence('active_skill', body[:6000], nonce)}"
+                )
+            injected.append(sid)
+        if not parts:
+            return "", []
+        return "\n\n".join(parts), injected
+
+    def _explore_candidate(
+        self, host_node: str, exclude: list[str], turn_id: str, seed_idx: int
+    ) -> str | None:
+        """One not-yet-established admissible partner fragment for an exploring drafter, or
+        None. Guided-random: prefer this host's promising sub-threshold attachments, else a
+        candidate from the curated partner pool. Excludes the turn's baseline pick (already
+        uniformly injected) so exploration tries something DIFFERENT. Deterministic per
+        (turn, drafter) so tests are reproducible."""
+        import hashlib
+
+        from brain.fragment_pool import is_admissible
+
+        baseline = set(exclude)
+        bundle = getattr(self, "_current_skill_bundle", None)
+        if bundle is not None:
+            baseline.update(getattr(bundle, "chosen", None) or [])
+        inject_threshold = float(settings.get("fragment_inject_threshold", 1.3))
+        promising = [
+            sid
+            for (sid, w) in self._wiring.attached_fragments(host_node)
+            if WEIGHT_REST < w < inject_threshold
+            and sid not in baseline
+            and is_admissible(sid, host_node)
+        ]
+        pool = promising
+        if not pool:
+            try:
+                allids = self._skill_selector.attachable_fragment_ids()
+            except Exception:
+                allids = []
+            pool = [
+                sid for sid in allids if sid not in baseline and is_admissible(sid, host_node)
+            ]
+        if not pool:
+            return None
+        seed = int.from_bytes(hashlib.sha1(f"{turn_id}:{seed_idx}".encode()).digest()[:8], "big")
+        return sorted(pool)[seed % len(pool)]
+
+    def _select_explore_drafters(self, firing_indices: list[int], turn_id: str) -> set[int]:
+        """Which firing drafters explore this turn (bounded). Keeps at least one non-exploring
+        drafter as a quality/baseline floor. Empty set when the feature is off. Deterministic
+        per turn so a bad exploration is reproducible in tests."""
+        if (
+            not settings.get("fragment_wiring", 1)
+            or getattr(self, "_wiring", None) is None
+            or getattr(self, "_wiring_frozen", False)
+            or getattr(self, "_skill_selector", None) is None
+            or len(firing_indices) < 2
+        ):
+            return set()
+        rate = float(settings.get("fragment_explore_rate", 0.2))
+        max_explore = int(settings.get("fragment_explore_max_drafters", 2))
+        cap = max(0, min(max_explore, len(firing_indices) - 1))
+        if cap <= 0 or rate <= 0:
+            return set()
+        import hashlib
+
+        rolled: list[int] = []
+        for i in firing_indices:
+            seed = int.from_bytes(
+                hashlib.sha1(f"{turn_id}:explore:{i}".encode()).digest()[:8], "big"
+            )
+            if (seed % 10_000) / 10_000.0 < rate:
+                rolled.append(i)
+        return set(rolled[:cap])
+
+    def _local_available(self) -> bool:
+        """True iff a local RunPod pod is actually confirmed resident and ready for
+        this brain. BOTH checks are mandatory: `router._local_disabled` (a lite-tier
+        brain silently reroutes a 'local' call → cloud haiku — the known lite-leak)
+        and `runpod_pod_ready`, a dedicated liveness flag published by RunPodManager
+        only once a real pod host is confirmed (and cleared on retirement/off/never-
+        confirmed). This is deliberately NOT `runpod_host != "off"`: runpod_host
+        stays a plain routing override where "" means "no override, fall back to
+        env var/Ollama" (see settings.py) — it cannot by itself distinguish that
+        from a pod genuinely being up, so a cold-start/never-confirmed brain used to
+        read as falsely available. If either check fails, downshift is a clean
+        no-op."""
+        router = getattr(self, "_router", None)
+        if router is None or getattr(router, "_local_disabled", False):
+            return False
+        return bool(settings.get("runpod_pod_ready", 0))
+
+    def _downshift_indices(self, firing_indices: list[int], turn_id: str) -> set[int]:
+        """Which firing drafters run on the local RunPod model this turn (cost lever). A
+        drafter is eligible only if it carries a PROVEN attachment (weight ≥ downshift
+        threshold, well above the inject threshold) AND local is available. A cloud floor is
+        always kept, so a weak/failed local draft simply loses the critic competition to a
+        strong cloud draft (local has no cloud fallback — it returns "" and drops out).
+        Empty set when the feature/downshift is off or local is unavailable — self-gating:
+        nothing downshifts until an attachment actually proves out and the pod is up."""
+        if (
+            not settings.get("fragment_wiring", 1)
+            or not settings.get("fragment_downshift", 1)
+            or getattr(self, "_wiring", None) is None
+            or getattr(self, "_wiring_frozen", False)
+            or not self._local_available()
+        ):
+            return set()
+        from brain.fragment_pool import is_admissible
+
+        threshold = float(settings.get("fragment_downshift_threshold", 2.2))
+        floor = int(settings.get("fragment_downshift_cloud_floor", 2))
+        eligible: list[int] = []
+        for i in firing_indices:
+            host = f"frontal.drafter_{chr(65 + i)}"
+            best = max(
+                (
+                    w
+                    for (sid, w) in self._wiring.attached_fragments(host)
+                    if is_admissible(sid, host)
+                ),
+                default=0.0,
+            )
+            if best >= threshold:
+                eligible.append(i)
+        max_downshift = max(0, len(firing_indices) - floor)
+        return set(eligible[:max_downshift])
+
+    def _inject_host_fragments(self, prompt: str, host_node: str, turn_id: str) -> str:
+        """Append a non-drafter host's ESTABLISHED fragment attachments to its prompt string
+        (explore=False) and stamp the trace. Neutral until the host has established attachments
+        — in v1 only drafters accumulate them, so this is a no-op for critic/reframer/empathy/
+        executive, but keeps the consumer live for every admissible host (ready when a later
+        tier attaches to them)."""
+        block, injected = self._fragment_block_for_host(
+            host_node, explore=False, turn_id=turn_id, seed_idx=0
+        )
+        if not block:
+            return prompt
+        tr = self._record_trace_bypass()
+        if tr is not None:
+            try:
+                tr.drafter_fragments[host_node] = injected
+            except Exception:
+                pass
+        return f"{prompt}\n\n{block}"
 
     def _record_trace_bypass(self):
         """Return the active TurnTrace, or None if no firing-path context is bound."""
@@ -1209,16 +1467,28 @@ class FrontalCluster:
         """Pick which drafter indices to fire from the learned executive→drafter weights.
         Default: probabilistic weighted sampling (a ranking shift changes the mix even at
         high count). Legacy ε-greedy top-N kept behind drafter_weighted_sampling=0."""
-        all_indices = list(range(len(self._drafters)))
-        count = max(1, min(count, len(self._drafters)))
-
+        # Eligible pool = the fixed drafters, plus any RECRUITED reserve (Tier 2): a reserve
+        # slot joins the pool only once its executive→drafter_X edge exists in the bound
+        # persona's graph, so unrecruited reserves never fire.
+        fixed = list(range(self._n_fixed_drafters))
         if self._wiring is None or self._wiring_frozen:
-            picked = all_indices[:count]
-            return picked
+            return fixed[: max(1, min(count, len(fixed)))]
+        all_indices = fixed + [
+            i
+            for i in range(self._n_fixed_drafters, len(self._drafters))
+            if self._wiring.has("frontal.executive", f"frontal.drafter_{chr(65 + i)}")
+        ]
+        count = max(1, min(count, len(all_indices)))
 
-        # Weight per drafter (executive → drafter_X edge weight)
-        names = [f"frontal.drafter_{chr(65 + i)}" for i in all_indices]
-        weights = [self._wiring.get_edge_weight("frontal.executive", n) for n in names]
+        # Weight per drafter (executive → drafter_X edge weight), indexed by drafter index so
+        # _weighted_sample's weights[i] stays correct even though all_indices is a subset.
+        eligible = set(all_indices)
+        weights = [
+            self._wiring.get_edge_weight("frontal.executive", f"frontal.drafter_{chr(65 + i)}")
+            if i in eligible
+            else 0.0
+            for i in range(len(self._drafters))
+        ]
 
         if settings.get("drafter_weighted_sampling", 1):
             picked = self._weighted_sample(all_indices, weights, count)
@@ -1251,8 +1521,29 @@ class FrontalCluster:
         )
         return picked
 
+    def register_recruited_reserves(self, registry=None) -> int:
+        """Register reserve drafter cells that are RECRUITED in the bound persona's graph
+        (Tier 2), so the boot node-registry audit sees no orphan for their edges. A reserve is
+        recruited iff its `executive→drafter_X` edge exists. Registration is atomic-with-the-edge
+        in spirit (edges are added at recruit time in the Hebbian pass; this catches up the
+        process-level registry at boot for the boot persona). Idempotent (guards on classify)."""
+        from brain.node_registry import get_node_registry
+
+        reg = registry if registry is not None else get_node_registry()
+        if self._wiring is None:
+            return 0
+        n = 0
+        for i in range(self._n_fixed_drafters, len(self._drafters)):
+            d = self._drafters[i]
+            name = f"{d.cluster}.{d.name}"
+            if reg.classify(name) is None and self._wiring.has("frontal.executive", name):
+                reg.register_object(d, kind="cell")
+                n += 1
+        return n
+
     async def _score_draft(self, draft: str, context: str, turn_id: str) -> dict:
         critic_prompt = f"Context:\n{context}\n\nDraft response:\n{draft}\n\nScore this draft."
+        critic_prompt = self._inject_host_fragments(critic_prompt, "frontal.critic", turn_id)
         raw = await self._critic.call([{"role": "user", "content": critic_prompt}])
         return safe_json_parse(raw) or {"overall": 0.5, "veto": False}
 
@@ -1264,6 +1555,7 @@ class FrontalCluster:
             f"Hostility detected: {features.get('hostility', 0):.2f}\n"
             "Propose a Stoic reframe."
         )
+        prompt = self._inject_host_fragments(prompt, "frontal.stoic_reframer", turn_id)
         raw = await self._reframer.call([{"role": "user", "content": prompt}])
         return safe_json_parse(raw)
 
@@ -1274,6 +1566,7 @@ class FrontalCluster:
             f"Draft response:\n{draft}\n\n"
             "Score empathic fit."
         )
+        prompt = self._inject_host_fragments(prompt, "frontal.empathy_critic", turn_id)
         raw = await self._empathy_critic.call([{"role": "user", "content": prompt}])
         return safe_json_parse(raw) or {"empathy_score": 0.7, "veto": False}
 

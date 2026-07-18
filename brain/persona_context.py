@@ -18,6 +18,7 @@ once (in the cached block); the per-turn selector just names the active assignme
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 
 FenceFn = Callable[[str, str, str], str]
@@ -87,6 +88,30 @@ def mandate_selector(mandate_id: str | None, catalog: dict | None) -> str:
         f"Your assignment for this conversation is [{mandate_id}] — follow that assignment from "
         "the Assignments block above (within your identity and principles, which take precedence)."
     )
+
+
+def mandate_domain_tags(mandate_id: str | None, catalog: dict | None) -> set[str]:
+    """The AGENDA gate: the lowercase domain tags an open thread's ``bears_on`` must
+    overlap to surface into a partner customer's turn.
+
+    A persona's introspective off-time threads (self-model, architecture, philosophy)
+    never carry a mandate's domain tags, so this keeps them out of customer-facing
+    conversations, while a thread opened WHILE working the mandate's domain — tagged
+    with it — can still surface when it's relevant to the turn.
+
+    Two sources, unioned: an explicit ``domain_tags`` list an operator may set in the
+    mandate's conduct rules (the declared, authoritative signal), plus the id's own
+    slug tokens as a sensible default so a mandate needs no extra config to work at
+    all. Empty set for a blank/unknown id — nothing surfaces, the safe default for a
+    customer turn."""
+    tags: set[str] = set()
+    entry = (catalog or {}).get(mandate_id or "") or {}
+    if isinstance(entry, dict):
+        conduct = entry.get("conduct")
+        if isinstance(conduct, dict) and isinstance(conduct.get("domain_tags"), list):
+            tags |= {str(t).strip().lower() for t in conduct["domain_tags"] if str(t).strip()}
+    tags |= {tok for tok in re.split(r"[^a-z0-9]+", str(mandate_id or "").lower()) if tok}
+    return tags
 
 
 def _render_conduct(conduct: dict) -> list[str]:

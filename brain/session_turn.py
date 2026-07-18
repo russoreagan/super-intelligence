@@ -804,6 +804,17 @@ class _TurnMixin:
         features["spotlight"] = spotlight
         await self._emit_end("thalamus", turn_id)
 
+        # Tier-2 alternative recruitment signal: persist a content-free tally of workspace
+        # ignitions for the sleep-time recruiter (hebbian._maybe_recruit_nodes). Flag-gated
+        # at the call site so the killed path does no work at all — not even an import.
+        if spotlight.get("ignited") and settings.get("node_recruit_from_ignition", 1):
+            try:
+                from brain.ignition_tally import record
+
+                record(str(spotlight.get("coalition") or ""))
+            except Exception:  # noqa: BLE001
+                pass
+
         if self.ears is not None and isinstance(affect, dict):
             pending = self.ears.enrollment_pending_speakers
             # Only prompt for voices we haven't already asked — the "who are you?"
@@ -1114,7 +1125,24 @@ class _TurnMixin:
                         getattr(self.dmn, "_last_projects", ""),
                     )
                 )
-                _routed = self.dmn.route_threads_for_turn(_activity, budget=_budget)
+                # Engine lane (a partner customer turn) gates the agenda to the
+                # mandate's domain, so the persona's introspective off-time threads
+                # never surface into a customer's conversation; a thread opened
+                # while working the mandate's domain still can, when relevant. The
+                # companion owner lane (no end_user_id) stays ungated.
+                _domain_tags = None
+                if features.get("end_user_id"):
+                    _mid = features.get("mandate_id") or ""
+                    if _mid:
+                        from brain.mandates import catalog as _mandate_catalog
+                        from brain.persona_context import mandate_domain_tags
+
+                        _domain_tags = mandate_domain_tags(_mid, _mandate_catalog())
+                    else:
+                        _domain_tags = set()  # customer turn, no mandate → surface nothing
+                _routed = self.dmn.route_threads_for_turn(
+                    _activity, budget=_budget, domain_tags=_domain_tags
+                )
                 if _routed:
                     memory["open_threads"] = [
                         {"id": t.id, "summary": t.summary, "progress": t.progress[-1:]}
@@ -1715,6 +1743,15 @@ class _TurnMixin:
             }
         )
 
+        # Crash-safety: durably journal this turn's trace so an ungraceful exit
+        # (OOM/SIGKILL) before the next consolidation can't drop its learning. A
+        # graceful exit consolidates the buffer; this covers the rest. Boot replay
+        # re-stages anything a crash left behind. Guarded — never breaks the turn.
+        with contextlib.suppress(Exception):
+            from brain.observability import trace_journal
+
+            trace_journal.append(trace, self._session_traces[-1])
+
         # Backstop on buffer growth: a very long unconsolidated session (or a
         # sleep loop that's wedged) would otherwise accumulate traces without
         # bound. Force a mini-consolidation; consolidate_now is single-flight,
@@ -1765,6 +1802,15 @@ class _TurnMixin:
 
         with contextlib.suppress(Exception):
             reset_current_trace(_ctx_token)
+
+        # Surface the turn id so a request/response transport can hand it back to the
+        # partner (POST /turns returns it as resp["turn_id"]). It's the handle a later
+        # external grade needs — POST /turns/{turn_id}/grade. Not sensitive: the same
+        # id already flows through the SSE events and the eval log. The curated
+        # affect/mood views (_affect.py) read only emotion/user_emotion, so this extra
+        # key never crosses the chemistry-not-exposed boundary.
+        if isinstance(affect, dict):
+            affect["turn_id"] = turn_id
 
         return raw_final, affect
 

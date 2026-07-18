@@ -50,6 +50,8 @@ class IntegratorCell:
         messages: list[dict],
         extra_context: dict | None = None,
         cached_context: str = "",
+        model_override: str | None = None,
+        locality_override: str | None = None,
     ) -> str:
         if not self._can_fire():
             logger.warning(
@@ -61,6 +63,12 @@ class IntegratorCell:
             return ""
         self._calls_this_turn += 1
         start = time.time()
+        # Per-call model/locality override (Tier 1 downshift: route a proven-attachment
+        # drafter to the local RunPod model). Default None → the cell's own model/locality,
+        # byte-identical to before. locality_override="local" is a hard backstop in the
+        # router — a "local" call can never bill a cloud API.
+        _model = model_override or self.model
+        _locality = locality_override or self.locality
         # Record on the current turn's firing path (no-op if no trace bound)
         try:
             from brain.observability.firing_path import record_integrator_call
@@ -72,20 +80,20 @@ class IntegratorCell:
             from brain.ui.emitter import emitter as _ui_emitter
 
             asyncio.create_task(
-                _ui_emitter.emit_cell(self.cluster, self.name, self.model, self._turn_id)
+                _ui_emitter.emit_cell(self.cluster, self.name, _model, self._turn_id)
             )
         except Exception:
             pass
         try:
             result = await asyncio.wait_for(
                 self._router.call(
-                    self.model,
+                    _model,
                     self.system_prompt,
                     messages,
                     cluster=self.cluster,
                     cell=self.name,
                     turn_id=self._turn_id,
-                    locality=self.locality,
+                    locality=_locality,
                     max_tokens=self.max_tokens,
                     skills=self.skills,
                     temperature=self.temperature,

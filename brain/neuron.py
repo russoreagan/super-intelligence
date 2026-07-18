@@ -501,6 +501,47 @@ _PERSONA_RISK_POSTURE: dict[str, dict[str, float]] = {
 }
 
 
+# The 7 reward dimensions a mandate may layer a multiplier onto — must match the
+# comment above _PERSONA_REWARD_WEIGHTS (neuron.py:326-329). Duplicated (not
+# imported) in brain/mandates.py to avoid a mandates<->neuron import cycle.
+_REWARD_SOURCES = {
+    "correctness",
+    "connection",
+    "novelty",
+    "aesthetic",
+    "relief",
+    "mastery",
+    "levity",
+}
+_MANDATE_WEIGHT_MIN, _MANDATE_WEIGHT_MAX = 0.1, 3.0
+
+
+def _mandate_reward_weight(source: str) -> float:
+    """Per-mandate multiplier layered on the persona base, resolved ambiently via
+    turn_ctx (agent_id = "persona.mandate_id") so callers never thread a mandate_id
+    through. 1.0 (identity) when no mandate is bound, the mandate sets no weight for
+    `source`, or lookup fails for any reason (companion mode, no Supabase, etc.)."""
+    if source not in _REWARD_SOURCES:
+        return 1.0
+    try:
+        from brain.turn_ctx import current_turn
+
+        agent_id = current_turn().get("agent_id", "") or ""
+        if "." not in agent_id:
+            return 1.0
+        mandate_id = agent_id.split(".", 1)[1]
+        if not mandate_id:
+            return 1.0
+        from brain.mandates import catalog
+
+        raw = (catalog().get(mandate_id, {}).get("weights") or {}).get(source)
+        if raw is None:
+            return 1.0
+        return max(_MANDATE_WEIGHT_MIN, min(_MANDATE_WEIGHT_MAX, float(raw)))
+    except Exception:
+        return 1.0
+
+
 def reward_weight(persona_seed: str, source: str) -> float:
     """Per-persona multiplier on a reward SOURCE (what this identity values, and so how much
     the matching failure hurts). >1.0 = this persona cares more about `source`; <1.0 = less.
@@ -508,8 +549,9 @@ def reward_weight(persona_seed: str, source: str) -> float:
 
     The table is the persona's innate leaning; a per-persona settings override
     (reward_weight_<source>, centred 1.0 — the Motivation dials) multiplies on
-    top, so motivation is tunable without editing this table. Mandates may later
-    layer their own reward_weights the same way."""
+    top, so motivation is tunable without editing this table. The active turn's
+    assigned mandate (if any) layers its own reward_weights the same way, resolved
+    ambiently via turn_ctx — see _mandate_reward_weight."""
     from brain.persona_key import persona_slug
 
     key = persona_slug(persona_seed)
@@ -520,7 +562,8 @@ def reward_weight(persona_seed: str, source: str) -> float:
         override = float(_settings.get(f"reward_weight_{source}", 1.0) or 1.0)
     except Exception:
         override = 1.0
-    return base * override
+    mandate_mult = _mandate_reward_weight(source)
+    return base * override * mandate_mult
 
 
 def loss_aversion(persona_seed: str) -> float:

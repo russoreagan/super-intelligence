@@ -225,6 +225,47 @@ class _SetupMixin:
         # paths that don't go through session_turn's per-field pseudonymization).
         self.router.set_egress(self._egress)
 
+    async def _setup_node_registry(self) -> None:
+        """Populate the non-object node manifest and audit the wiring graph against the node
+        registry (brain/node_registry). Object-backed nodes (cells, switches) registered
+        themselves during cluster construction; this fills in the intentional non-object
+        classifications (channels / recall strategies / coarse subsystems) and logs ORPHAN NAMES
+        (graph nodes with no backing object or classification — the dead-edge danger) and UNWIRED
+        OBJECTS. Behavior-neutral: nothing routes through the registry. Wrapped so a registry bug
+        can never break boot (mirrors the learning_ledger / Autonomy guards elsewhere in setup)."""
+        try:
+            from brain.node_registry import (
+                audit_node_registry,
+                get_node_registry,
+                register_fragment_nodes,
+                register_manifest,
+            )
+            from brain.observability.decisions import decisions as decisions_log
+
+            reg = get_node_registry()
+            register_manifest(reg)
+            # Classify any learned fragment attachments the boot persona already has, so
+            # `fragment.*` edge endpoints reconcile as kind="fragment" instead of ORPHAN.
+            register_fragment_nodes(self.wiring, reg)
+            # Register any RECRUITED reserve drafters (Tier 2) present in the boot persona's
+            # graph, so their edges reconcile instead of showing as orphan.
+            try:
+                self.frontal.register_recruited_reserves(reg)
+            except Exception:
+                pass
+            report = audit_node_registry(self.wiring, reg, log=logger)
+            decisions_log.log(
+                "node_registry_audit",
+                cluster="wiring",
+                orphans=report["orphans"],
+                unwired=report["unwired"],
+                graph_nodes=report["graph_nodes"],
+                registered=report["registered"],
+                object_backed=report["object_backed"],
+            )
+        except Exception as e:
+            logger.warning("[node-registry] audit skipped (non-fatal): %s", e)
+
     async def _setup_ui(self) -> None:
         self._ui_enabled = self.args.ui or os.environ.get("BRAIN_UI", "false").lower() == "true"
         if not self._ui_enabled:
@@ -369,6 +410,7 @@ class _SetupMixin:
             approval_resolve_runner=self.api_resolve_approval,
             jobs_list_runner=self.api_list_jobs,
             job_get_runner=self.api_get_job,
+            grade_runner=self.api_grade_turn_engine,
             learning_runner=self.api_learning,
             purge_runner=self.api_purge_end_user,
             extract_runner=self.api_extract,
@@ -911,3 +953,25 @@ class _SetupMixin:
 
             self._consolidation_lock = _asyncio.Lock()
             self.brainstem.register_loop("periodic_sleep", self._periodic_sleep_loop)
+
+        # Crash-safety replay: fold any turn traces a prior (ungracefully killed)
+        # run left un-consolidated back into the buffers, so their learning still
+        # lands on the next consolidation — periodic, trace-cap, or the SIGTERM
+        # end-of-session pass — with per-persona attribution intact (each trace
+        # carries its own persona_name). Runs regardless of the periodic-sleep
+        # toggle, since the shutdown pass commits the buffer even with it off, so
+        # replayed orphans are never stranded. Guarded — never breaks boot.
+        try:
+            from brain.observability import trace_journal
+
+            _orphan_full, _orphan_sum = trace_journal.load_orphans()
+            if _orphan_full or _orphan_sum:
+                self._session_traces_full.extend(_orphan_full)
+                self._session_traces.extend(_orphan_sum)
+                logger.info(
+                    "[trace_journal] Replayed %d orphaned turn trace(s) from a prior run "
+                    "— they will consolidate on the next pass",
+                    max(len(_orphan_full), len(_orphan_sum)),
+                )
+        except Exception as _tj_err:
+            logger.debug("[trace_journal] boot replay skipped: %s", _tj_err)

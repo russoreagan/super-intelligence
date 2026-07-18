@@ -3601,15 +3601,31 @@ class DefaultModeNetwork:
         score += _content_word_overlap(thread.summary, act)
         return score
 
-    def route_threads_for_turn(self, activity_text: str, budget: int = 2) -> list:
+    def route_threads_for_turn(
+        self, activity_text: str, budget: int = 2, *, domain_tags: set[str] | None = None
+    ) -> list:
         """Surface up to `budget` open threads relevant to the current activity,
         so a relevant unfinished idea shows up while the user is working on the
         thing it bears on. Ranked by relevance × learned routing weight (B9).
-        budget<=0 means the load gate decided to hold everything this turn."""
+        budget<=0 means the load gate decided to hold everything this turn.
+
+        ``domain_tags`` gates the ENGINE lane (the AGENDA contract): when a set is
+        passed — a partner customer turn — a thread may surface only if its
+        ``bears_on`` overlaps the active mandate's domain, so the persona's
+        introspective off-time threads never reach a customer's conversation. An
+        empty set surfaces nothing (a customer turn with no mandate domain).
+        ``None`` — the companion owner lane — is ungated and byte-identical to
+        before."""
         self._ensure_runtime_state()
         if budget <= 0:
             return []
         open_threads = [t for t in self._open_threads if t.status == ot.STATUS_OPEN]
+        if domain_tags is not None:
+            open_threads = [
+                t
+                for t in open_threads
+                if domain_tags & {str(b).strip().lower() for b in (t.bears_on or [])}
+            ]
         scored = []
         for t in open_threads:
             rel = self._thread_relevance(t, activity_text)

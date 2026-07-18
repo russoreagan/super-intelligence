@@ -268,12 +268,67 @@ class Wiring:
         return updated
 
     def decay_toward_rest(self, rest: float = WEIGHT_REST, rate: float | None = None) -> None:
-        """Gentle synaptic homeostasis — every edge drifts toward rest by `rate`.
-        Applied once per session before the Hebbian pass."""
+        """Gentle synaptic homeostasis — every topology edge drifts toward rest by `rate`.
+        Applied once per session before the Hebbian pass. Fragment attachments are SKIPPED:
+        they have their own steeper use-it-or-lose-it forgetting (decay_fragment_edges) so
+        unused attachments fade and prune rather than lingering near rest forever."""
         if rate is None:
             rate = _settings.get("decay_toward_rest_rate")
         for e in self._edges.values():
+            if e.source.startswith("fragment."):
+                continue
             e.weight = e.weight * (1.0 - rate) + rest * rate
+
+    def decay_fragment_edges(self, rate: float, rest: float = WEIGHT_REST) -> int:
+        """Use-it-or-lose-it forgetting for fragment attachments — `fragment.* → host` edges
+        drift toward rest by `rate` each sleep pass (steeper than topology homeostasis so an
+        attachment that stops earning reinforcement fades below the prune floor). Returns the
+        count decayed. Called only from the gated attachment-learning pass."""
+        n = 0
+        for e in self._edges.values():
+            if e.source.startswith("fragment."):
+                e.weight = e.weight * (1.0 - rate) + rest * rate
+                n += 1
+        return n
+
+    # ── Fragment attachments (Tier 1 structural plasticity) ───────────────────
+    # Learned attachments are ordinary per-persona edges `fragment.<skill_id> → host`
+    # (source prefix "fragment." — see brain/fragment_pool.fragment_node_name). They ride
+    # the same weight/persistence machinery as topology edges; only these two helpers know
+    # they exist, so the topology routing path is untouched.
+
+    def attached_fragments(self, host: str) -> list[tuple[str, float]]:
+        """Learned fragment attachments incident on `host`, as (skill_id, weight), unsigned.
+        Reverse scan of the edge set — the graph has no predecessor index (mirrors the
+        `_edges` scan in node_registry._graph_node_names)."""
+        out: list[tuple[str, float]] = []
+        for (src, tgt), e in self._edges.items():
+            if tgt == host and src.startswith("fragment."):
+                out.append((src[len("fragment.") :], e.weight))
+        return out
+
+    def prune_fragment_edges(self, floor: float) -> int:
+        """Remove faded fragment attachments — `fragment.* → host` edges at/below `floor`.
+        Topology edges are never pruned; this touches only `fragment.*` sources. Called solely
+        from the gated attachment-learning pass. Returns the count removed."""
+        doomed = [
+            k for k, e in self._edges.items() if k[0].startswith("fragment.") and e.weight <= floor
+        ]
+        edges = self._edges
+        for k in doomed:
+            del edges[k]
+        return len(doomed)
+
+    def remove_node_edges(self, node: str) -> int:
+        """Remove every edge incident on `node` (either endpoint). Used to DEMOTE a recruited
+        reserve drafter back to the dormant pool (Tier 2 structural plasticity) — the caller
+        (Hebbian recruitment) invokes it ONLY on reserve slots, never on bootstrap topology
+        nodes. Returns the count removed."""
+        edges = self._edges
+        doomed = [k for k in edges if node in k]
+        for k in doomed:
+            del edges[k]
+        return len(doomed)
 
     def snapshot_baseline(self) -> None:
         """Capture current weights as the session baseline."""

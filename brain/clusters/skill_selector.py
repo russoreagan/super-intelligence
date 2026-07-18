@@ -429,6 +429,21 @@ class SkillSelector:
         entry = self._index.get(name)
         return bool(entry) and self._partner_allowed(entry)
 
+    def attachable_fragment_ids(self) -> list[str]:
+        """The curated pool a fragment attachment (Tier 1 structural plasticity) may draw
+        from: app-provided (partner) skills currently warmed with an injectable body AND
+        allowed for the agent bound this turn. Native humanity frameworks are excluded —
+        Claude has them and their body is empty. Agent-scope gating here keeps a partner
+        org's fragments from leaking across tenants, same as skill selection."""
+        out: list[str] = []
+        for name, body in self._native_body_cache.items():
+            if not body:
+                continue
+            entry = self._index.get(name)
+            if entry and entry.get("_partner") and self._partner_allowed(entry):
+                out.append(name)
+        return out
+
     def capability_manifest(self) -> str:
         """Compact skill manifest for the executive context.
 

@@ -35,7 +35,7 @@ A word on Part II. Several verdicts are unflattering. That is deliberate. Anyone
 | # | System | Parts | Resting on | In one line |
 |---|---|---|---|---|
 | 1 | [Chemistry and Affect](#1-chemistry-and-affect) | 8 | Neuromodulation · Appraisal theory · Dimensional affect | The simulated bloodstream. Everything else reads it. |
-| 2 | [The Cognitive Core](#2-the-cognitive-core) | 8 | Dual-process · Multiple Drafts · Predictive processing · Higher-Order Thought · Global Workspace | How a single turn happens. |
+| 2 | [The Cognitive Core](#2-the-cognitive-core) | 10 | Dual-process · Multiple Drafts · Predictive processing · Higher-Order Thought · Global Workspace · Structural plasticity | How a single turn happens. |
 | 3 | [Memory](#3-memory) | 10 | Tulving · Complementary Learning Systems · Extended Mind · Structure mapping | What it keeps, and how it finds it again. |
 | 4 | [Learning](#4-learning) | 10 | Hebbian plasticity · Phasic dopamine · Prospect theory · Intrinsic motivation | How experience changes future behavior. |
 | 5 | [The Idle Mind](#5-the-idle-mind) | 9 | Default Mode Network · Stream of consciousness · Habituation | What it does when you are not talking to it. |
@@ -98,13 +98,13 @@ A caution for anyone reading the code: three different things are named "valence
 
 Forty-five emotions map to a perceptually uniform color space where hue is the emotional family, lightness is energy, and saturation is intensity. One table, one source of truth. The display strength is a user preference and changes only the rendering, never what the agent feels.
 
-### 1.8 A separate relationship per customer · Live, in memory only
+### 1.8 A separate relationship per customer · Live
 
 When one personality serves many customers, each customer gets their own affective relationship with it. A new customer starts at the personality's baseline. A returning one picks up where they left off, with time away relaxing the mood toward baseline in proportion to the gap.
 
 The isolation guarantee is expressed as a missing function. At rest, the day's aggregate mood blends into the personality's resting disposition. Nothing writes an aggregate back onto an individual customer. There is no such method, deliberately, so one customer's mood can never seed another's session.
 
-**Dark in one dimension.** The durable store for this is written and tested but never connected. Per-customer moods currently die when the process restarts.
+**Per-customer moods survive a restart.** The durable store is wired, routed through the tenant-canonical path, throttled to match the persona-chemistry pattern, and degrades to memory rather than breaking a turn.
 
 ---
 
@@ -162,7 +162,9 @@ The appraisal ladder from §1.5 runs unconditionally, flag or no flag.
 
 About sixty declared connections between named parts of the brain. Weights get nudged after every session and persist per personality.
 
-**One precision point that matters.** The connections themselves never change. Learning adjusts how strong an existing pathway is; it never grows a new one or prunes an old one. The map is hand-drawn and frozen. Weights move on it. Say it that way and you are accurate and still impressive. Say "it rewires itself" and the first neuroscientist in the room catches it.
+**One precision point that matters.** The connections between the brain's own cells are hand-drawn and fixed. Learning moves their weights, how strongly one pathway pulls the next, but not their existence: it grows no new cell-to-cell connection and prunes no old one. The core map is a fixed graph with learned weights on it. Say it that way and you are accurate; say "it rewires itself" and a neuroscientist will catch you, because the cell-to-cell topology does not.
+
+A node registry names every part the wiring can reach and audits at boot for names declared but wired to nothing, or wired but never declared, so the map is fully inspectable. And one bounded, fenced layer of genuine structural growth runs on top of the fixed core, wiring vetted skills onto cells as learned attachments (§2.9). The core stays fixed; that growth is its own layer.
 
 ### 2.8 The workspace spotlight (Global Workspace Theory, Baars & Dehaene) · Live
 
@@ -173,6 +175,36 @@ Underneath, a decaying salience field tracks how much each kind of signal — th
 When a coalition ignites, that verdict is broadcast, and it does real work. A threat that built slowly across several turns — where no single message was alarming enough to trip the per-turn check — wakes the deliberate path anyway; this is the workspace pulling in a specialist the local view would have skipped. It widens memory recall and points it at the workspace's focus. It seeds what the idle mind dwells on between turns, which is the honest version of "what it is currently thinking about." And the idle mind is a genuine subscriber to the broadcast, so global availability is literal, not a metaphor.
 
 Ignition is deliberately hard to reach — it marks sustained focus, not a passing mention — and a more focused personality sets a higher bar for what is allowed to grab the workspace. When nothing is ignited, every specialist falls through to exactly what it did before, so the quiet case is unchanged.
+
+---
+
+### 2.9 Path plasticity (structural plasticity, Tier 1 · synaptogenesis) · Live
+
+**Say it like this:** The brain can grow new connections, not only tune the strength of the ones it has. It does not invent new abilities from nothing. It keeps a library of vetted skills, and learning decides which of them to wire onto which part of the mind, and how firmly.
+
+A grown connection here is a learned attachment: a curated, already-screened skill wired onto one of the drafting cells as a per-personality edge, with a strength that learning moves like any other weight. The system never writes the skill. It only decides the wiring, which skill attaches where and whether the attachment earns its place or fades. So the growth is real but bounded. The parts are vetted in advance; only the arrangement is learned.
+
+It explores without risk because candidate attachments ride the drafters. When the brain drafts a reply five ways, some drafts carry an experimental attachment. The critic scores them before anything is spoken, so a bad experiment is just a losing draft the user never sees. A winning attachment is reinforced, a losing one is demoted, and an attachment that keeps proving out crosses a threshold and becomes an established part of that personality's wiring, injected on every relevant turn through the same fenced, untrusted-by-default boundary that governs any app-supplied skill.
+
+What stays off-limits is the point. Only a fixed allowlist of non-safety drafting cells can ever be a host, safety cells are denied twice over, and a host must be a real cell rather than a switch. Attachments are only ever excitatory, so learning can never wire in a new suppression the author did not sanction. And the whole thing sits under the existing global wiring freeze, so one switch turns it off and the brain falls back to its fixed map, unchanged.
+
+It carries a cost lever of a kind nothing else here has. Once an attachment has genuinely proven itself, the drafter that relies on it can be routed down to local hardware instead of the cloud, so a skill the personality has truly made its own gets cheaper to run rather than more expensive. Nothing downshifts until an attachment proves out and the local hardware is actually up.
+
+**Status.** Live, on by default behind its own flag, killable by the global wiring freeze. This is Tier 1: wire vetted parts onto the fixed map, learning the arrangement but never authoring the parts. Tier 2 (§2.10, live) goes further, recruiting genuinely new units and letting the brain author its own screened skills rather than only rearranging vetted ones.
+
+---
+
+### 2.10 Growing new units and self-authored skills (structural plasticity, Tier 2 · neurogenesis) · Live
+
+**Say it like this:** The brain can grow new parts of itself, and it can write new skills for itself. The earlier tier only wired skills a human had curated. This one lets the mind bring a genuinely new thinking unit online, and even compose the specialization that unit runs, under the same screening any outside skill has to pass.
+
+There are two capabilities, and they feed each other. The first grows a new unit. The brain keeps a few spare, unspecialized drafting cells in reserve. When a personality has leaned on the same cluster of skills often enough and well enough that it clearly wants a home of its own, learning brings a reserve cell online, copies the proven wiring onto it, and lets it compete in the drafting pool like any other cell. If it stops earning its place, it is demoted and its wiring removed. Nothing is conjured from nothing. The capacity is pre-allocated, and learning decides only when to specialize it.
+
+The second writes a skill. During rest, a local architect cell, running on the brain's own hardware at no cloud cost, looks at the skills a personality has genuinely made its own and composes a new one from them. It reads only the descriptions of proven skills, never raw conversation, so there is nothing private to leak. What it writes is not trusted because the brain wrote it. It passes through the exact screener any skill submitted by an outside app must pass, a safety judge plus static checks, and it goes live on its own only if it comes back clean. Anything the screener flags waits in the owner's review queue instead. A self-authored skill that clears the screen enters the pool, gets attached by the first tier, and can then be recruited into a unit of its own.
+
+The safety model is two independent gates. The screener decides whether authored content is even allowed into the pool. Reward decides whether any skill, authored or human, ever earns a standing unit, because a unit is only recruited after its skills have won enough critic-gated drafting competitions. So the brain writing its own cognition shortcuts neither the safety review nor the earning. New units can never become safety cells, new structure is excitatory and reversible until it proves out, and recruitment and authoring each sit under their own switch and under the global wiring freeze, so either can be paused on its own.
+
+**Status.** Live, on by default, in production. This is the most consequential capability in the system: a skill the brain writes for itself can activate on its own once it passes the screen, so the flagged-skills review queue is the thing to watch. The next tier, chains from one unit into another and unit types beyond drafters, is deferred.
 
 ---
 
@@ -224,7 +256,7 @@ Finished jobs are kept as reusable recipes, each step carrying a note of what it
 
 That expectation attached to each step is the forward model: predict the consequence of the action, then compare, so deviation is caught without waiting for the whole job to fail.
 
-### 3.7 Reflexes (chunking, Miller & Chase-Simon · basal ganglia motor chunking) · Dark, no data
+### 3.7 Reflexes (chunking, Miller & Chase-Simon · basal ganglia motor chunking) · Dark, diagnosed
 
 Below whole recipes sits a finer tier. Sub-sequences of tool use that keep recurring get compressed into single reflexes.
 
@@ -232,7 +264,7 @@ Two rules make it a skill rather than a memorized job. It must have worked acros
 
 Curiosity beats habit: when attention is running high, reflexes are suppressed in favor of thinking it through fresh.
 
-**Wired, unflagged, and it has never produced a single reflex.** Either nothing has cleared the bar or the mining pass has never landed.
+**Wired, unflagged, and it has still never produced a reflex — but the reason is now understood, not a mystery.** The two mining bugs that could have blocked it are fixed. What remains is the corpus itself: most completed jobs are a single step (too short to form a sub-sequence) or failed (below the success bar), so nothing yet recurs across three *successful* jobs. It is an unmet bar, not a broken pass. A fireable-count metric now surfaces how close anything is to clearing it, so the day real multi-step jobs start succeeding, this lights up on its own rather than staying silently empty.
 
 ### 3.8 Sleep (systems consolidation · Complementary Learning Systems) · Live
 
@@ -240,13 +272,15 @@ After a long enough gap, the agent replays the session. It updates the wiring fi
 
 This is where episodic becomes semantic, which is the transfer the Complementary Learning Systems account is about. It is also where cross-customer learning happens, behind the privacy gate in §9.11.
 
-### 3.9 Unfinished thoughts (prospective memory) · Dark, never materialized
+### 3.9 Unfinished thoughts (prospective memory) · Live · write path fixed
 
 The idle mind's ledger of ideas it has not finished. Open one, push it forward across several idle moments, eventually close it. Capped in age, in progress attempts, and in how many can be open at once, so nothing deepens forever.
 
 Ages by wall clock rather than by tick count, which is deliberate: if the idle mind goes quiet under load, tick-based aging would freeze and threads would live forever.
 
-**Wired and unflagged, and the section has never been created.** It appears on the first thought that opens one. That has not happened.
+It is the newest of the prospective-memory surfaces and the successor to the older deferred-thoughts scratchpad, built because idle thoughts had no durable home. For most of the project's life its section never materialized: the shared section writer rejected the model's ordinary punctuation and the write raised into a swallowed warning (Appendix C). That is fixed at the writer, now under an end-to-end test that drives a real thought through a real store to disk. The section comes into existence the first time a persona opens a thread; as of the audit that had not yet happened in the live file.
+
+A thread does not only wait for idle time. When one bears on what is being discussed now, the router surfaces it into the live turn, and a thread that actually lands in a reply is retired as resolved-by-use. On the owner's own conversations that routing is ungated. In an engine deployment, where the same persona serves a partner's customers, it is gated to the active mandate's domain, so a thread opened while working that domain can surface but the persona's introspective off-time threads stay out of a customer's conversation (§7.9).
 
 ### 3.10 Conclusions · Live
 
@@ -282,27 +316,29 @@ Every dopamine release is stamped at a single chokepoint as either external, mea
 
 **Anyone technical will ask about this. Answering before they ask is worth more than the feature it is a flaw in.**
 
-### 4.4 The external verdict · Dark, disconnected
+### 4.4 The external verdict · Live
 
 A verdict from outside, a thumbs up, a rating, an automated grader, normalized to one scale.
 
-The path into learning works. But the piece that would let an external verdict move the agent's actual chemistry is **dead code**. The setting it depends on was never registered, so the value always reads zero and the branch is unreachable. Worse, it cannot even be turned on: the loader drops the key as unknown and the API refuses it. The comment says "off by default." It is off permanently.
+The path into learning works, and the piece that lets an external verdict move the agent's actual chemistry is now connected. The dopamine nudge on a graded turn is on by default, small and bounded: the grade is clamped to its normal range and the swing it can cause is capped at the configured nudge, so a hostile or spammy grader cannot drive the mood past that per-grade ceiling, and the dopamine level itself saturates on top of that. It is stamped external at the same chokepoint the self-graded tally reads, so a real verdict visibly shifts the external share.
 
-Four related weights that read like tunable dials are hardcoded constants for the same reason.
+Five settings keys gate this: the four blend weights (hebbian_w_da_ext, hebbian_w_critic_ext, hebbian_w_user_ext, hebbian_w_external, left at 0.4, 0.2, 0.2, 0.2) and the nudge itself (external_grade_da_nudge). Retuning them waits on production data about how often people actually grade.
 
-**This is the highest-leverage fix in the system, and it is roughly one line.** The one reward channel grounded in reality is disconnected, in a system that is eighty percent self-graded.
+**Be straight about what this does and does not fix.** It does not make the system stop being eighty percent self-graded overnight. It opens the one channel that can shift that number as real verdicts arrive, where before the channel was dead code the loader would not even accept.
+
+Two entry points feed it. The owner interface has a thumbs control on each reply. And the partner-facing engine API exposes a grading endpoint: the turn response hands back a turn id, and a later `POST /sessions/{id}/turns/{turn_id}/grade` records the verdict. The subtle part is where the dopamine lands. An engine turn runs with that one customer's chemistry bound for the length of the turn, then reverts to the shared resting mood. A grade arrives out of band, after the turn, when nothing is bound, so a naive write would nudge the wrong mood. The endpoint re-binds the same customer pair the turn used before it writes, so the grade moves that customer's dopamine and no one else's, and persists it. This is the path built to carry real volume: a partner wiring its own thumbs, ratings, or an automated grader into the loop.
 
 ### 4.5 Intensity and learning (Yerkes-Dodson inverted U) · Live
 
 Emotionally intense turns imprint harder, either way, because fear teaches as hard as joy. Extreme stress imprints less. The implementation uses magnitude rather than sign, which is what the theory actually predicts.
 
-On by default. It replaces a legacy binary skip (which simply dropped learning on a stressed single-draft turn) with the graded model: arousal and emotional intensity raise how much a turn imprints, and only extreme stress damps it back down.
+On by default. Arousal and emotional intensity raise how much a turn imprints, and only extreme stress damps it back down, so a vivid moment leaves a deeper mark and a panicked one does not overwrite everything.
 
 ### 4.6 Delayed credit (eligibility traces, Sutton) · Live
 
 Conversational payoff is usually late. The turn where the reward finally lands is rarely the only turn that earned it, so credit reaches backward a couple of turns with decay.
 
-It works and it is **invisible**. These updates are applied but never recorded, so every learning report under-counts by construction.
+Each update logs as a distinct record naming which turn earned the credit and which turn paid it, so a learning report reconciles exactly with what was applied.
 
 ### 4.7 Other things that earn credit (competitive learning · Complementary Learning Systems) · Live
 
@@ -578,7 +614,7 @@ A mandate is data, not prompt text. An organization authors a catalog of roles o
 
 The precedence rule is the prompt-injection defense: an assignment directs the job **within** the identity and principles, which take precedence and which it cannot override.
 
-Partially built: conduct rules render into the prompt, but per-mandate reward weights are stored and not consumed. The block that would put unfinished thoughts into working context is marked "wired later."
+Partially built: conduct rules render into the prompt, but per-mandate reward weights are stored and not consumed. The agenda block that surfaces unfinished thoughts into an engine turn is now wired, gated to the mandate's domain (§3.9): a thread opened while working the mandate's domain can surface, the persona's introspective off-time threads never do.
 
 ### 7.10 The Constitution (functionalism · dual-process · Global Workspace · Multiple Drafts · Extended Mind · predictive processing · narrative self · criticality) · A document, not code
 
@@ -690,11 +726,11 @@ Three hardening choices at spawn, each stated as a rule. The child is stripped o
 
 The reaper is deliberately patient. A tenant brain is meant to stay awake and keep thinking while you are away. **That is the product, not a leak.**
 
-### 9.3 The database credential (least privilege) · Live, with a known gap
+### 9.3 The database credential (least privilege) · Live
 
 A tenant process never holds the master key. It gets a scoped credential whose identity *is* the organization, so the database itself enforces the boundary rather than trusting our query code to.
 
-**Raise this one.** That mechanism depends on a legacy signing mode, and the newer mode is now the platform default. In that case the code correctly falls back to the master key, and tenant isolation then rests entirely on our own query scoping. That is a real second line of defense, but it is application-level, not database-level, and the layer it was meant to pair with is inert. **Worth confirming which mode we are actually in.**
+The credential is minted by **having the database check whether it accepts the token**, rather than inferring from the shape of the database's public signing key, which is a guess that can be wrong. A tenant gets its scoped identity whenever the database honors it, and falls back to the master key only on a genuine rejection, with a kill-switch to force the fallback if ever needed. So tenant isolation is enforced in the database itself, with the in-query scoping standing as a second, independent layer rather than the only one.
 
 ### 9.4 Promoting a personality · Live, routing gated
 
@@ -798,7 +834,7 @@ Thirty-six ideas. For each: what it claims, what we built, and a verdict.
 ### Global Workspace Theory (Baars, Dehaene) → §2.8
 **The claim:** Consciousness is a broadcast. Specialists compete; the winner ignites and is made globally available to every other specialist at once.
 **What we built:** The thalamus reads the whole workspace each turn, decides what the mind is ignited on, and broadcasts that verdict. The workspace field itself is the bus concentration layer (decaying per-topic salience, an armed/quiet state machine, a ring of what was hot); the thalamus is the spotlight over it, the one reader that sees every topic at once and fuses them into a single ranked verdict. Ignition wakes a specialist the local gate would have skipped (a slow-accumulating threat), widens memory recall and seeds it with the workspace's hot entities, and seeds what the idle mind dwells on. The DMN subscribes to the `attention.focus` broadcast — a real subscriber — so "available system-wide" is literal.
-**Verdict: Solid, and recently made so.** For most of the project's life this was a stub: the spotlight published to zero subscribers and its verdict was discarded by the caller. That is fixed — the four GWT predicates (competition, ignition, broadcast, persistence) each map to code, and the broadcast is load-bearing at frontal, hippocampus, and the DMN, advisory at parietal, matching the architecture figure's fan-out. The honest caveat: it ships with a deliberately conservative ignition threshold, so it fires only on genuinely sustained focus. It earns the claim now; it did not before.
+**Verdict: Solid.** The four GWT predicates each map to code: competition among tracked topics, ignition on a sustained coalition, broadcast to a real subscriber, and persistence across turns. The broadcast is load-bearing at frontal, hippocampus, and the DMN, advisory at parietal, matching the architecture figure's fan-out. The one caveat is a deliberately conservative ignition threshold, so it fires only on genuinely sustained focus.
 
 ### Extended Mind / Active Externalism (Clark & Chalmers, 1998) → §3.1, §3.2
 **The claim:** Otto's notebook is part of Otto's mind. Cognition extends into reliably coupled external resources.
@@ -848,7 +884,7 @@ Thirty-six ideas. For each: what it claims, what we built, and a verdict.
 ### Hebbian plasticity, three-factor variant (Frémaux & Gerstner) → §2.7, §4.1
 **The claim:** Cells that fire together wire together. The three-factor version adds a gate: coincidence alone is not enough, a reward signal has to license the change.
 **What we built:** Co-activation along the fired path, gated by chemistry, with homeostatic decay first.
-**Verdict: Solid for weights. False for structure.** No new connection is ever grown and none is ever pruned. The map is hand-drawn and frozen for life. **Say "learned weights on a fixed map."**
+**Verdict: Solid for weights, with a bounded structural tier on top.** Weight learning is three-factor and neuromodulated: co-activation licensed by a reward signal, not coincidence alone. Structure is fixed at the core cell-to-cell level and plastic in one fenced layer: vetted skills are grown and pruned as attachments onto drafting cells (§2.9), under the same three-factor license and walled off from every safety node. Recruiting reserve cells into new units, and the brain authoring its own screened skills, are live too (§2.10). **Say "learned weights on a fixed map, plus a bounded, screened tier that grows structure and even writes its own skills."**
 
 ### Spike-timing-dependent plasticity → nowhere
 **What we built:** Nothing. No timing, no order dependence.
@@ -870,7 +906,7 @@ Thirty-six ideas. For each: what it claims, what we built, and a verdict.
 ### Yerkes-Dodson, the inverted U → §4.5
 **The claim:** Moderate arousal helps encoding. Extreme stress hurts it. Intense events of *either* valence imprint hard.
 **What we built:** Arousal and emotional intensity raise plasticity; extreme stress damps it. Magnitude, not sign, which is correct because fear teaches as hard as joy.
-**Verdict: Solid, and now on by default (2026-07-17).** Was dark for most of the project's life; the graded model now runs in place of the legacy binary skip.
+**Verdict: Solid, on by default.** Arousal and emotional intensity raise how much a turn imprints, and only extreme stress damps it back down, using magnitude rather than sign, which is what the theory predicts.
 
 ### Complementary Learning Systems (McClelland, McNaughton & O'Reilly) → §3.4, §3.8, §4.7
 **The claim:** Two systems. A fast one for one-shot episodes, a slow one for interference-resistant structure. Sleep moves content between them.
@@ -1017,7 +1053,7 @@ Thirty-six ideas. For each: what it claims, what we built, and a verdict.
 ### Prospective memory → §3.9
 **The claim:** Remembering to do something later is a distinct capacity from remembering what happened.
 **What we built:** The unfinished-thoughts ledger: open, advance, conclude, with age-out.
-**Verdict: Solid design. Dark.** Never materialized.
+**Verdict: Solid, now working.** The write path that kept it dark is fixed (Appendix C), and covered end-to-end. It materializes on the first thread a persona opens.
 
 ### Competitive learning → §4.7
 **The claim:** Units compete, the winner is reinforced, the losers are suppressed, and representations differentiate as a result.
@@ -1117,7 +1153,7 @@ Thirty-six ideas. For each: what it claims, what we built, and a verdict.
 | Thing | Reality |
 |---|---|
 | **Spiking neurons** | Not implemented. Stateless comparators. Never claim it. |
-| **Rewiring itself** | No. Weights learn. The map is hand-drawn and frozen. |
+| **Rewiring itself** | The core cell-to-cell map is fixed; learning moves weights on it, not its structure. Around it, a bounded, fenced, screened structural layer is live: vetted skills wired onto cells (§2.9), reserve cells recruited into new units, and the brain authoring its own skills, each one passing the untrusted-skill screener and earning its place through competition (§2.10). The core map itself does not rewire, and nothing self-modifies without those gates. |
 | **Reward prediction error / TD learning** | Not implemented. The dopamine delta is a proxy for it. |
 | **Replay** | Not implemented. Consolidation is batch post-processing. |
 | **Embodied cognition** | One chemistry-gated perception switch. Real, but keep the claim that size. |
@@ -1126,8 +1162,7 @@ Thirty-six ideas. For each: what it claims, what we built, and a verdict.
 | **Song recognition** | The fingerprint database is an empty stub. Cannot match. |
 | **Video** | Zero callers. |
 | **Per-mandate reward weights** | Stored, unconsumed. |
-| **Unfinished thoughts in working context** | "Wired later." |
-| **The MCP token feature** | Broken in production, discovered during the audit. Its stored-procedure paths derive identity from a claim that is NULL under the current database credential, so every write and read through them raises and the error is swallowed into a warning. See the decisions below. |
+| **Unfinished thoughts in engine-mode working context** | Built, as a deliberate position: companion turns surface open threads ungated; engine/customer turns surface only threads whose `bears_on` overlaps the active mandate's domain, so a persona's introspective threads stay out of a customer's conversation. |
 
 ## Deliberate positions: things people mistake for gaps
 
@@ -1142,8 +1177,8 @@ Thirty-six ideas. For each: what it claims, what we built, and a verdict.
 
 | Thing | The call to make |
 |---|---|
-| **Database-level tenant isolation** | **Confirmed inert.** The project has migrated to asymmetric signing, so every tenant boots holding the master key and RLS is bypassed. Isolation currently rests entirely on application-level query scoping, which is now audited and guarded. **Check the dashboard: if the legacy secret is still current and the new key is only standby, RLS can be restored today.** |
-| **The external verdict channel** | Now reachable and settable, and still zero. Turning it up is a product decision: it is the only reward signal grounded outside the agent's own appraisal. |
+| **Database-level tenant isolation** | **Resolved (2026-07-17).** Was inert for a stretch — the credential fell back to the master key on a bad key-shape heuristic, bypassing database-level enforcement. Now minted by probing whether the database accepts it, so database-level isolation is enforced again (§9.3), with in-query scoping as the second layer and a kill-switch to force the old fallback. This also un-broke the MCP token stored procedures, which had been failing because the master-key path left their identity claim null. |
+| **The external verdict channel** | **Decided and now on (2026-07-17).** The DA nudge on an external grade was moved off zero to 0.15, calibrated to land above inferred praise (~0.10) and below the accomplishment signal (~0.34) so it grounds the reward without dominating it, and bounded per grade so a hostile or spammy grader cannot drive chemistry past that ceiling. A grade now moves real chemistry via the external_grader source, and the four mix weights are live dials left at 0.4/0.2/0.2/0.2. It is the only reward signal grounded outside the agent's own appraisal. Both entry points are wired: the owner UI thumbs (→ /feedback) and the partner engine API (POST /sessions/{id}/turns/{turn_id}/grade, which re-binds the customer's own chemistry before the write — see §4.4). |
 | **The inverted-U plasticity model** | Now on by default (2026-07-17). Emotionally intense turns imprint harder, extreme stress imprints less. Replaces the legacy binary defuse-path skip. |
 | **Perceptual differentiation per personality** | Built, switched off. Valuation is the live differentiator. |
 | **Music perception** | Fully built. One environment variable from live. Set nowhere. |
@@ -1202,7 +1237,7 @@ Verbatim from the code. Useful because they are true, and because each one compr
 
 **Nine defects closed.** Suite went 2122 → 2184 passing; every fix landed with a test that fails without it.
 
-- **The external verdict channel is reachable.** Six settings keys were read at their call sites but never registered, so the loader silently dropped them and the API refused them. Registered at their exact current values, so nothing turned on and nothing changed behaviour. One trap avoided: registering the nudge as an integer would have made it reachable but still broken, silently truncating any fractional value to zero.
+- **The external verdict channel is reachable.** Five settings keys were read at their call sites but never registered, so the loader silently dropped them and the API refused them. Registered at their exact current values, so nothing turned on and nothing changed behaviour. One trap avoided: registering the nudge as an integer would have made it reachable but still broken, silently truncating any fractional value to zero.
 - **Delayed credit is visible.** Eligibility updates now log as a distinct record carrying which turn earned the credit and which turn paid it. Emitted as one aggregate per turn-and-age rather than per edge, so the ledger grew ~20% instead of ~200%. The session total now reconciles exactly with the logged records.
 - **Per-customer moods survive a restart.** The durable store is wired, routed through the tenant-canonical path, throttled to match the persona-chemistry pattern, and degrades to memory rather than breaking a turn.
 - **The open-threads ledger was silently failing on every write.** The real find of the audit. The section writer built a regex replacement template out of the content, and JSON-escaped non-ASCII produced `\uXXXX`, which the regex engine rejects as a bad escape. One curly apostrophe or em dash from the model, and the write raised. Because the template compiles before the scan, it raised even when the section was absent, so the create branch was unreachable and the section could never come into existence. The DMN swallowed it as a warning. **The tests missed it because they mocked the sink.** Fixed at the shared writer, which protects three other callers.

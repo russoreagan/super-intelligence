@@ -557,6 +557,25 @@ def test_da_source_tally_splits_intrinsic_and_external():
     assert t["external"] == pytest.approx(0.07)
 
 
+def test_external_grade_opens_external_da_lane():
+    # The only reality-grounded reward channel: an external grade must move DA,
+    # and it must land in the EXTERNAL bucket (not self-graded/intrinsic), bounded
+    # to the configured nudge. Fails when external_grade_da_nudge defaults to 0.0.
+    from brain.bus import Bus
+    from brain.session_loops import _LoopsMixin
+
+    s = _LoopsMixin.__new__(_LoopsMixin)
+    s.bus = Bus()
+    before = s.bus.da_source_tally()
+    res = s.api_grade_turn("turn-1", 1, source="user_thumbs")  # thumbs up → g=1.0
+    after = s.bus.da_source_tally()
+
+    assert res["ok"]
+    # lane is open AND bounded: external bucket moved by the nudge, intrinsic did not
+    assert after["external"] - before["external"] == pytest.approx(0.15)
+    assert after["intrinsic"] == pytest.approx(before["intrinsic"])
+
+
 def test_bus_da_tally_aggregates_resting_and_client_pairs():
     from brain.bus import Bus
 
