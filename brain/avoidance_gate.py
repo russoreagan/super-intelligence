@@ -62,6 +62,7 @@ from __future__ import annotations
 import json
 import time
 
+from brain.bounded_ledger import aged_out, decay
 from brain.evidence_gate import EvidenceGate, consume_turn_resolution_budget
 from brain.persona_key import active_or_home_persona, persona_slug, persona_state_root
 from brain.settings import settings
@@ -285,12 +286,7 @@ class AvoidanceTracker:
     def _decayed_level(self, v: dict, now: float) -> float:
         """The slice's accumulator level leaked to `now` (read-only math; the stored
         snapshot is not touched)."""
-        lvl = float(v.get("level", 0.0))
-        lt = v.get("last_ts")
-        hl = self._scalar.half_life_s
-        if hl > 0 and lt is not None:
-            lvl *= 0.5 ** (max(0.0, now - float(lt)) / hl)
-        return lvl
+        return decay(float(v.get("level", 0.0)), v.get("last_ts"), now, self._scalar.half_life_s)
 
     def _sweep(self, store: dict, now: float, turn_count: int) -> None:
         """Per-turn lifecycle pass over this client's slices. Because accumulation now
@@ -308,13 +304,13 @@ class AvoidanceTracker:
                 continue
             lvl = self._decayed_level(v, now)
             if v.get("armed"):
-                age = now - float(v.get("armed_at", now))
-                if age > max_armed:
+                armed_at = float(v.get("armed_at", now))
+                if aged_out(armed_at, now, max_armed):
                     # clear the slate: a belief held this long without fresh refutation
                     # or confirmation expires and must be re-earned from fresh dodges.
                     store.pop(key, None)
                     store.pop(f"avoidmeta:{ent}", None)
-                    self._log("avoidance_expired", entity=ent, age_s=round(age, 1))
+                    self._log("avoidance_expired", entity=ent, age_s=round(now - armed_at, 1))
                     continue
                 if lvl <= release:  # the leak won: stand down (hysteresis release)
                     v["armed"] = False
@@ -427,8 +423,8 @@ class AvoidanceTracker:
     def _slice_armed(self, v, now: float) -> bool:
         if not (isinstance(v, dict) and v.get("armed")):
             return False
-        if (now - float(v.get("armed_at", now))) > float(
-            settings.get("avoidance_max_armed_s", 86400.0)
+        if aged_out(
+            float(v.get("armed_at", now)), now, float(settings.get("avoidance_max_armed_s", 86400.0))
         ):
             return False
         release = self._scalar.arm_threshold * self._scalar.release_ratio

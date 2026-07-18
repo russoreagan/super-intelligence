@@ -10,6 +10,7 @@ import re
 from collections import deque
 from dataclasses import dataclass, field
 
+from brain.bounded_ledger import cap_evict
 from brain.bus import Bus
 from brain.clusters.skill_selector import ActiveSkillContext
 
@@ -208,11 +209,10 @@ class ParietalCluster:
         # Track entities (bounded: evict the least recently seen past the cap)
         for entity in features.get("entities", []):
             self._entities[entity] = self._turn_count
-        if len(self._entities) > MAX_TRACKED_ENTITIES:
-            for ent, _ in sorted(self._entities.items(), key=lambda kv: kv[1])[
-                : len(self._entities) - MAX_TRACKED_ENTITIES
-            ]:
-                del self._entities[ent]
+        for ent, _ in cap_evict(
+            self._entities.items(), MAX_TRACKED_ENTITIES, staleness=lambda kv: kv[1]
+        ):
+            del self._entities[ent]
 
         # Record the current global-workspace spotlight (advisory; gates nothing).
         self._record_workspace_focus(features)
