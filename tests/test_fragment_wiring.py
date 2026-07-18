@@ -9,10 +9,21 @@ downshift, safety-by-construction, per-persona isolation, and the kill-switch.
 from __future__ import annotations
 
 import importlib
+import time
 
 import pytest
 
 # ── helpers ──────────────────────────────────────────────────────────────────
+
+
+def _pod_ready(monkeypatch, ready: int = 1, age_s: float = 0.0):
+    """Publish the downshift liveness flag the way RunPodManager does: the flag
+    plus its freshness stamp (frontal._local_available treats an un-stamped or
+    stale flag as unavailable)."""
+    from brain.settings import settings
+
+    monkeypatch.setitem(settings._data, "runpod_pod_ready", ready)
+    monkeypatch.setitem(settings._data, "runpod_pod_ready_at", time.time() - age_s)
 
 
 def _isolated_wiring(monkeypatch, tmp_path):
@@ -387,7 +398,7 @@ def test_exploration_creates_cross_drafter_variance(monkeypatch, tmp_path):
 def test_downshift_gates_on_proven_attachment_and_availability(monkeypatch, tmp_path):
     from brain.settings import settings
 
-    monkeypatch.setitem(settings._data, "runpod_pod_ready", 1)  # confirmed pod → available
+    _pod_ready(monkeypatch)  # confirmed pod → available
     w = _isolated_wiring(monkeypatch, tmp_path)
     w.add("fragment.alpha", "frontal.drafter_A", weight=2.5)  # proven (≥ 2.2)
     w.add("fragment.beta", "frontal.drafter_B", weight=2.3)  # proven
@@ -404,11 +415,11 @@ def test_downshift_noop_on_lite_tier_and_pod_off(monkeypatch, tmp_path):
     w = _isolated_wiring(monkeypatch, tmp_path)
     w.add("fragment.alpha", "frontal.drafter_A", weight=2.5)
     # lite tier silently reroutes local→cloud haiku — must be a no-op (no leak)
-    monkeypatch.setitem(settings._data, "runpod_pod_ready", 1)
+    _pod_ready(monkeypatch)
     f_lite = _frontal(w, selector=object(), router=_FakeRouter(lite=True))
     assert f_lite._downshift_indices([0, 1, 2, 3, 4], "t") == set()
     # pod-down: readiness flag cleared
-    monkeypatch.setitem(settings._data, "runpod_pod_ready", 0)
+    _pod_ready(monkeypatch, ready=0)
     f_off = _frontal(w, selector=object(), router=_FakeRouter(lite=False))
     assert f_off._downshift_indices([0, 1, 2, 3, 4], "t") == set()
 
@@ -424,10 +435,28 @@ def test_downshift_noop_on_cold_start_never_confirmed(monkeypatch, tmp_path):
     assert f._downshift_indices([0, 1, 2, 3, 4], "t") == set()
 
 
+def test_downshift_liveness_flag_expires(monkeypatch, tmp_path):
+    """runpod_pod_ready carries a TTL: a pod that dies between the manager's
+    refreshes leaves the flag set, and without the TTL downshift would keep
+    routing drafts at the dead host. A stale stamp → not available; a fresh
+    re-stamp → available again."""
+    from brain.settings import settings
+
+    w = _isolated_wiring(monkeypatch, tmp_path)
+    w.add("fragment.alpha", "frontal.drafter_A", weight=2.5)
+    f = _frontal(w, selector=object(), router=_FakeRouter(lite=False))
+    ttl = float(settings.get("runpod_pod_ready_ttl_s", 300.0))
+
+    _pod_ready(monkeypatch, age_s=ttl + 1.0)  # flag set but stamp expired
+    assert not f._local_available()
+    _pod_ready(monkeypatch)  # manager refresh re-stamps → available again
+    assert f._local_available()
+
+
 def test_downshift_respects_cloud_floor(monkeypatch, tmp_path):
     from brain.settings import settings
 
-    monkeypatch.setitem(settings._data, "runpod_pod_ready", 1)
+    _pod_ready(monkeypatch)
     w = _isolated_wiring(monkeypatch, tmp_path)
     w.add("fragment.alpha", "frontal.drafter_A", weight=2.5)
     w.add("fragment.beta", "frontal.drafter_B", weight=2.5)
@@ -464,7 +493,7 @@ async def test_end_to_end_learn_then_inject_then_downshift(monkeypatch, tmp_path
     assert injected == ["alpha"] and "<data" in block
 
     # and the proven drafter is now eligible to run on the local model
-    monkeypatch.setitem(settings._data, "runpod_pod_ready", 1)
+    _pod_ready(monkeypatch)
     assert 2 in f._downshift_indices([0, 1, 2, 3, 4], "t")
 
 

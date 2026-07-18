@@ -22,6 +22,10 @@ Three tags recur:
 - **Gated.** Built and wired, sitting behind a flag.
 - **Dark.** Built but unreachable, or reachable but never fires. Named because a reference that hides these is a brochure.
 
+**What "Gated" means going forward.** Nothing ships off by default. A new capability goes live with its flag on, and the flag is a kill switch rather than an enable switch. The reason is practical: a feature parked behind an off flag gets lost. It stops being read, it stops being tested against real traffic, and six months later nobody remembers whether it works. Turning it on is how it earns its verdict. So a flag set to on is the norm here, not a deviation, and a system marked Gated is almost always gated *on* with a switch that can stop it.
+
+Two kinds of switch sit outside that rule, and neither is a feature waiting to be turned on. **Safety approval gates** stay closed by default, because the whole point of an approval is that it is withheld until a human grants it. **Keyed integrations billed per call** stay off until someone supplies a key, because with no key they are a no-op anyway and turning them on would spend money nobody asked to spend. Both are deliberate positions. Neither is a dark feature.
+
 A word on Part II. Several verdicts are unflattering. That is deliberate. Anyone technical who reads a list of thirty-six theories with no failures assumes the whole thing is marketing and discounts all of it. The failures are what make the rest credible.
 
 **Scope.** This is internal. It names source theories directly, which our published surfaces deliberately never do. Do not lift sections into marketing without rewriting them by function rather than by citation.
@@ -35,7 +39,7 @@ A word on Part II. Several verdicts are unflattering. That is deliberate. Anyone
 | # | System | Parts | Resting on | In one line |
 |---|---|---|---|---|
 | 1 | [Chemistry and Affect](#1-chemistry-and-affect) | 8 | Neuromodulation · Appraisal theory · Dimensional affect | The simulated bloodstream. Everything else reads it. |
-| 2 | [The Cognitive Core](#2-the-cognitive-core) | 10 | Dual-process · Multiple Drafts · Predictive processing · Higher-Order Thought · Global Workspace · Structural plasticity | How a single turn happens. |
+| 2 | [The Cognitive Core](#2-the-cognitive-core) | 11 | Dual-process · Multiple Drafts · Predictive processing · Higher-Order Thought · Global Workspace · Structural plasticity · Bounded evidence accumulation | How a single turn happens. |
 | 3 | [Memory](#3-memory) | 10 | Tulving · Complementary Learning Systems · Extended Mind · Structure mapping | What it keeps, and how it finds it again. |
 | 4 | [Learning](#4-learning) | 10 | Hebbian plasticity · Phasic dopamine · Prospect theory · Intrinsic motivation | How experience changes future behavior. |
 | 5 | [The Idle Mind](#5-the-idle-mind) | 9 | Default Mode Network · Stream of consciousness · Habituation | What it does when you are not talking to it. |
@@ -190,6 +194,8 @@ What stays off-limits is the point. Only a fixed allowlist of non-safety draftin
 
 It carries a cost lever of a kind nothing else here has. Once an attachment has genuinely proven itself, the drafter that relies on it can be routed down to local hardware instead of the cloud, so a skill the personality has truly made its own gets cheaper to run rather than more expensive. Nothing downshifts until an attachment proves out and the local hardware is actually up.
 
+**What the freeze actually freezes.** It is a wiring freeze, not a freeze on the whole mind. When it is on, the entire learning pass halts: no routing, no injection, no recruitment, and no weight learning, so the wiring file comes out of a session byte-identical to how it went in. Everything that is not wiring keeps running. The brain still writes its journals, still updates its self-description, still records episodes. Say "it stops the wiring from changing," not "it stops the brain from learning anything," because the second one is not true and someone will check.
+
 **Status.** Live, on by default behind its own flag, killable by the global wiring freeze. This is Tier 1: wire vetted parts onto the fixed map, learning the arrangement but never authoring the parts. Tier 2 (§2.10, live) goes further, recruiting genuinely new units and letting the brain author its own screened skills rather than only rearranging vetted ones.
 
 ---
@@ -204,7 +210,33 @@ The second writes a skill. During rest, a local architect cell, running on the b
 
 The safety model is two independent gates. The screener decides whether authored content is even allowed into the pool. Reward decides whether any skill, authored or human, ever earns a standing unit, because a unit is only recruited after its skills have won enough critic-gated drafting competitions. So the brain writing its own cognition shortcuts neither the safety review nor the earning. New units can never become safety cells, new structure is excitatory and reversible until it proves out, and recruitment and authoring each sit under their own switch and under the global wiring freeze, so either can be paused on its own.
 
+**A second way to earn a unit: sustained workspace pressure.** Proven-cluster evidence is not the only trigger. The workspace spotlight (§2.8) already knows which coalitions keep igniting, and a subject the mind keeps igniting on is exactly the signal that it wants a specialist of its own. So each ignited turn adds one to a per-personality tally that decays with a three-day half-life, and enough sustained pressure lowers the proof bar for recruitment.
+
+Three things keep that from becoming a shortcut. The relaxed bar is a midpoint, not a floor: it sits above the level at which an attachment is merely established and safely above the demotion line, so an ignition recruit cannot be demoted on the very next pass. It still requires a real cluster of established attachments, so pressure alone can never conjure an empty unit with nothing in it. And the tally is consumed when it pays out, so one accumulation window buys at most one recruitment and repeated ignition cannot thrash the pool. Every fence from the main path still applies, and it has its own kill switch on top of the global wiring freeze.
+
+The tally is content-free by construction. It records the coalition label and nothing else, never the focus, the entities, or any text, and an unrecognized label is clamped to a generic bucket so the file cannot carry content even if the verdict shape drifts.
+
 **Status.** Live, on by default, in production. This is the most consequential capability in the system: a skill the brain writes for itself can activate on its own once it passes the screen, so the flagged-skills review queue is the thing to watch. The next tier, chains from one unit into another and unit types beyond drafters, is deferred.
+
+---
+
+### 2.11 Deciding across turns (bounded evidence accumulation, Ratcliff · Gold & Shadlen) · Live
+
+**Say it like this:** Some things cannot be decided from one message. The mind accumulates evidence for them across a conversation, commits when the evidence crosses a bar, and lets the belief fade if nothing keeps feeding it.
+
+Every switch elsewhere in the system is a stateless comparator: it looks at this turn and fires or does not. That structurally cannot represent "this has been building." An evidence gate can. Evidence for one named proposition accumulates as observations arrive, leaks with a half-life when unfed, and commits when the total crosses a bound. The commit bar has a band around it, high to arm and lower to release, so a belief on a noisy boundary does not chatter on and off. Chemistry shifts the bar exactly as it shifts any other threshold.
+
+**Be precise about what this is.** It is the sequential-sampling family, the same idea as a drift-diffusion model of decision-making. It is **not** a spiking neuron. There is no membrane potential, no spike train, no timing-dependent plasticity. The rest of the switch layer stays stateless comparators under chemical gain control. This is a narrower claim about a handful of named decisions, and it earns its own verdict rather than borrowing the one integrate-and-fire never earned.
+
+A committed inference is a checkable prediction, which is what makes it a learning surface rather than a heuristic. When the world later confirms or refutes it, the outcome runs through the same anti-farming path the other self-verified rewards use, and the weights on the individual cues that drove the commitment move toward whichever ones predicted a confirmed belief. Plasticity is weighted toward outside confirmation, deliberately, so a gate cannot learn to fire on cues its own appraiser happens to like.
+
+**The first learning gate: reading avoidance.** It infers that the user is steering away from a subject. What counts as evidence is deliberately narrow: the agent raised the subject and the user did not pick it up, the user cut away from a live thread abruptly, or discomfort rode one of those dodges. A subject simply going stale contributes nothing, because a user moving on is not a user avoiding. That distinction is the whole difference between reading avoidance and flagging ordinary topic rotation. When it commits, it biases the idle mind's speak-or-drop judge (§5.6) toward letting that subject go. Two things grade it. If the user spontaneously brings the subject back up, the belief was a false alarm and the cues behind it weaken. If the agent's own reply surfaced the subject and the user still stepped around it, the belief was right and those cues strengthen. That second one is what keeps a refutation-only detector from drifting toward permanent silence, and it needs no probing of the user to get its answer.
+
+The cue weights are durable and per-personality, so one personality's read of avoidance never bleeds into another's. The accumulated evidence itself is transient and per-customer, riding the same binding and isolation the mood does.
+
+A belief cannot pin itself in place, which matters more than it sounds. The steering a committed belief causes suppresses the very re-surfacing that would refute it, so without a way out it would be self-confirming. Three things prevent that: an unfed belief leaks away on its own, one held past a wall-clock limit expires outright, and decayed evidence is evicted rather than left to accumulate.
+
+**Status.** Live, both flags on. This is the newest system in the document and it is not settled. One known problem is open as this is written: its self-generated inferences are stamped with the same source label as genuinely external verdicts, so the self-grading measure in §4.3 reads healthier than it is. Being fixed with a distinct label. What has been fixed since it shipped is the evidence model itself, which originally armed on mere staleness and flagged normal conversation as avoidance, and the lifecycle, which originally had no age-out. Claim the mechanism and the fences. Do not claim the thresholds are validated on real traffic yet.
 
 ---
 
@@ -326,7 +358,9 @@ Five settings keys gate this: the four blend weights (hebbian_w_da_ext, hebbian_
 
 **Be straight about what this does and does not fix.** It does not make the system stop being eighty percent self-graded overnight. It opens the one channel that can shift that number as real verdicts arrive, where before the channel was dead code the loader would not even accept.
 
-Two entry points feed it. The owner interface has a thumbs control on each reply. And the partner-facing engine API exposes a grading endpoint: the turn response hands back a turn id, and a later `POST /sessions/{id}/turns/{turn_id}/grade` records the verdict. The subtle part is where the dopamine lands. An engine turn runs with that one customer's chemistry bound for the length of the turn, then reverts to the shared resting mood. A grade arrives out of band, after the turn, when nothing is bound, so a naive write would nudge the wrong mood. The endpoint re-binds the same customer pair the turn used before it writes, so the grade moves that customer's dopamine and no one else's, and persists it. This is the path built to carry real volume: a partner wiring its own thumbs, ratings, or an automated grader into the loop.
+Two entry points feed it, and both are live. The owner interface has a thumbs control on each reply. And the partner-facing engine API exposes a grading endpoint: the turn response hands back a turn id, and a later `POST /sessions/{id}/turns/{turn_id}/grade` records the verdict. The subtle part is where the dopamine lands. An engine turn runs with that one customer's chemistry bound for the length of the turn, then reverts to the shared resting mood. A grade arrives out of band, after the turn, when nothing is bound, so a naive write would nudge the wrong mood. The endpoint re-binds the same customer pair the turn used before it writes, so the grade moves that customer's dopamine and no one else's, and persists it. This is the path built to carry real volume: a partner wiring its own thumbs, ratings, or an automated grader into the loop.
+
+**Three things had to be true before this endpoint could face partner traffic, and now are.** It is the one place an outside party writes into the reward system, so it was reviewed adversarially rather than trusted. A turn is resolved only inside the caller's own session, and a turn belonging to someone else is refused the same way a nonexistent one is, so a partner cannot reach another partner's learning and cannot probe for whose turns exist. The chemistry binding is taken from the turn's own record of which personality and customer ran it, never from what the caller claims. Grading is idempotent per turn: the first grade pays, a re-grade pays only the difference from the previous one, so repeated posts telescope instead of accumulating and no sequence can pump dopamine past a single nudge. And a grade naming a turn that is no longer live records to the audit log but moves no chemistry at all, with the response saying so, which is also how an asynchronous grader learns it missed the window.
 
 ### 4.5 Intensity and learning (Yerkes-Dodson inverted U) · Live
 
@@ -879,7 +913,12 @@ Thirty-six ideas. For each: what it claims, what we built, and a verdict.
 ### Integrate-and-fire neurons → nowhere
 **The claim:** Neurons accumulate input, fire at threshold, reset, and go briefly deaf.
 **What we built:** Essentially nothing. The switches are stateless comparators. No membrane potential, no summation over time, no refractory period.
-**Verdict: Not implemented.** The naming throughout implies otherwise. **Never claim spiking neurons.** Gain control above is the real claim and it is strong enough to carry the point.
+**Verdict: Not implemented.** The naming throughout implies otherwise. **Never claim spiking neurons.** Gain control above is the real claim and it is strong enough to carry the point. Accumulation over time does now exist in one narrow place, but it is sequential sampling rather than spiking, and it gets its own entry below precisely so the two do not get conflated.
+
+### Bounded evidence accumulation / drift-diffusion (Ratcliff; Gold & Shadlen) → §2.11
+**The claim:** A decision is not a single comparison. Evidence for a proposition accumulates from noisy samples over time, and the decision commits when the accumulated evidence crosses a bound.
+**What we built:** Per-decision accumulators with a leak, a commit bound that chemistry modulates, and a hysteresis band so a commitment does not chatter. A committed inference is treated as a checkable prediction, and the weights on its individual evidence cues learn from whether the world confirmed it.
+**Verdict: Solid in mechanism, unproven in calibration.** The accumulate-leak-commit structure is genuinely the sequential-sampling shape, and it is the only place in the system where "this has been building across turns" is representable at all. What is not established is that the thresholds are right: the first gate to use it arms far too readily and has no age-out, and its self-generated conclusions are currently mislabeled as external in the reward tally. **Claim the mechanism, not the tuning.** There is no drift rate estimated from data and no fitted response-time distribution, so do not call it a drift-diffusion *model* to anyone who fits them for a living.
 
 ### Hebbian plasticity, three-factor variant (Frémaux & Gerstner) → §2.7, §4.1
 **The claim:** Cells that fire together wire together. The three-factor version adds a gate: coincidence alone is not enough, a reward signal has to license the change.
@@ -1146,7 +1185,9 @@ Thirty-six ideas. For each: what it claims, what we built, and a verdict.
 
 **The most useful section in this document.** Read it before any technical conversation. Being the person who names their own gaps first is worth more than any feature you could name instead.
 
-*Last audited 2026-07-17. The defects this table used to list were fixed in that pass; what remains is either a real limit, a deliberate position, or a decision waiting on you. Appendix C records what changed.*
+*Last audited 2026-07-18. The defects this table used to list were fixed in that pass; what remains is either a real limit, a deliberate position, or a decision waiting on you. Appendix C records what changed.*
+
+**Before reading this as a list of things switched off: nothing ships off by default.** New capabilities go live with their flag on, and the flag is a kill switch. See "How to read this" for why. A flag set to 1 in the code is the standing policy, not a gap and not an oversight. The only switches that sit off on purpose are safety approval gates and keyed integrations that bill per call, and each of those is listed below as a deliberate position rather than a limit.
 
 ## Real limits: things the system does not do
 
@@ -1157,7 +1198,8 @@ Thirty-six ideas. For each: what it claims, what we built, and a verdict.
 | **Reward prediction error / TD learning** | Not implemented. The dopamine delta is a proxy for it. |
 | **Replay** | Not implemented. Consolidation is batch post-processing. |
 | **Embodied cognition** | One chemistry-gated perception switch. Real, but keep the claim that size. |
-| **Self-grading** | ~80% of the reward signal is self-administered. Instrumented and capped, not solved. The external channel is now reachable, which makes it fixable rather than fixed. |
+| **Self-grading** | ~80% of the reward signal is self-administered. Instrumented and capped, not solved. The external channel is now reachable, which makes it fixable rather than fixed. **And the measure itself is currently overstating its own health:** the new evidence gates (§2.11) stamp their self-generated inferences with the external source label, so some of what the tally counts as grounded is the brain grading itself. Being fixed with a distinct label for a self-inference. Read the external share as an upper bound until it is. |
+| **Avoidance reading** | Live, and now requires an active dodge rather than mere staleness, with a leak, a hard expiry, and eviction so a belief cannot pin itself. Still unvalidated on real traffic: the thresholds are reasoned, not measured. |
 | **Reflexes / motor chunking** | Has never produced a reflex, and now we know why: the job corpus is dominated by *failed* exploratory work. The most common sub-sequence runs at 67% success against a 90% bar. Not miscalibrated. Waiting on jobs that succeed. |
 | **Song recognition** | The fingerprint database is an empty stub. Cannot match. |
 | **Video** | Zero callers. |
@@ -1169,6 +1211,7 @@ Thirty-six ideas. For each: what it claims, what we built, and a verdict.
 | Thing | Why it is this way |
 |---|---|
 | **The Constitution** | Never read by code, by design. A design document and a developer norm. The runtime rules live in the self-description. |
+| **The wiring freeze** | A wiring freeze, not a consolidation freeze. It halts the whole learning pass, so the wiring file survives a session byte-identical, but journals, self-description updates, and episodic writes all continue. That is the intended scope, not a leak. |
 | **Promoted personalities** | Off in production. Characters ride the shared instance: identity works, authored chemistry needs the flag. |
 | **Big Five** | Not used. Factors describe personality; chemistry produces it. |
 | **Lite-tier privacy** | Memory runs in the **cloud** for lite agents, because a lite agent has no GPU. Defensible, but it varies by tier and is **still not in the partner-facing docs.** |
@@ -1178,7 +1221,7 @@ Thirty-six ideas. For each: what it claims, what we built, and a verdict.
 | Thing | The call to make |
 |---|---|
 | **Database-level tenant isolation** | **Resolved (2026-07-17).** Was inert for a stretch — the credential fell back to the master key on a bad key-shape heuristic, bypassing database-level enforcement. Now minted by probing whether the database accepts it, so database-level isolation is enforced again (§9.3), with in-query scoping as the second layer and a kill-switch to force the old fallback. This also un-broke the MCP token stored procedures, which had been failing because the master-key path left their identity claim null. |
-| **The external verdict channel** | **Decided and now on (2026-07-17).** The DA nudge on an external grade was moved off zero to 0.15, calibrated to land above inferred praise (~0.10) and below the accomplishment signal (~0.34) so it grounds the reward without dominating it, and bounded per grade so a hostile or spammy grader cannot drive chemistry past that ceiling. A grade now moves real chemistry via the external_grader source, and the four mix weights are live dials left at 0.4/0.2/0.2/0.2. It is the only reward signal grounded outside the agent's own appraisal. Both entry points are wired: the owner UI thumbs (→ /feedback) and the partner engine API (POST /sessions/{id}/turns/{turn_id}/grade, which re-binds the customer's own chemistry before the write — see §4.4). |
+| **The external verdict channel** | **Decided and now on (2026-07-17).** The DA nudge on an external grade was moved off zero to 0.15, calibrated to land above inferred praise (~0.10) and below the accomplishment signal (~0.34) so it grounds the reward without dominating it, and bounded per grade so a hostile or spammy grader cannot drive chemistry past that ceiling. A grade now moves real chemistry via the external_grader source, and the four mix weights are live dials left at 0.4/0.2/0.2/0.2. It is the only reward signal grounded outside the agent's own appraisal. Both entry points are wired and live: the owner UI thumbs (→ /feedback) and the partner engine API (POST /sessions/{id}/turns/{turn_id}/grade, which re-binds the customer's own chemistry before the write — see §4.4). The partner endpoint has since been hardened against the three holes an adversarial review found: cross-session turn access, unbounded repeat grades, and a nudge on a turn that is not live. **The remaining call is purely how far to open it**, and on what volume of real grades to retune the four mix weights. |
 | **The inverted-U plasticity model** | Now on by default (2026-07-17). Emotionally intense turns imprint harder, extreme stress imprints less. Replaces the legacy binary defuse-path skip. |
 | **Perceptual differentiation per personality** | Built, switched off. Valuation is the live differentiator. |
 | **Music perception** | Fully built. One environment variable from live. Set nowhere. |

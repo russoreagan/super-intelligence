@@ -25,11 +25,14 @@ class _FakeRunner:
 class _FakeGrader:
     """Records the args the route forwards and returns a scripted result."""
 
-    def __init__(self):
+    def __init__(self, result=None):
         self.calls = []
+        self.result = result
 
-    def __call__(self, turn_id, grade, end_user_id, persona, source):
-        self.calls.append((turn_id, grade, end_user_id, persona, source))
+    def __call__(self, turn_id, grade, end_user_id, persona, source, api_session_id):
+        self.calls.append((turn_id, grade, end_user_id, persona, source, api_session_id))
+        if self.result is not None:
+            return self.result
         return {"ok": True, "grade": 1.0 if grade and grade > 0 else -1.0, "applied_live": True}
 
 
@@ -92,9 +95,10 @@ def test_grade_forwards_to_runner_with_session_context():
     )
     assert r.status_code == 200
     assert r.json()["ok"] is True
-    # The route resolves end_user_id (and persona) from the session and forwards them,
-    # so the brain can bind the right customer's chemistry.
-    assert grader.calls == [("turn_xyz", 1, "cust-42", "", "partner_thumbs")]
+    # The route resolves end_user_id (and persona) from the session and forwards them
+    # PLUS the session id itself, so the brain can bind the right customer's chemistry
+    # and refuse a turn_id that belongs to another session.
+    assert grader.calls == [("turn_xyz", 1, "cust-42", "", "partner_thumbs", sid)]
 
 
 def test_grade_forwards_persona_from_agent_id():
@@ -162,3 +166,51 @@ def test_grade_other_partners_session_403():
     )
     assert r.status_code == 403
     assert grader.calls == []  # never reached the brain
+
+
+def test_grade_turn_from_another_session_maps_denied_to_404():
+    """A1 cross-tenant hole: owning the URL session is NOT enough — the brain also
+    verifies the turn_id belongs to that session, and its denial must surface as
+    404 (same as a turn that never existed, so no cross-partner turn-id oracle)."""
+    grader = _FakeGrader(
+        result={"ok": False, "denied": True, "applied_live": False, "error": "unknown turn_id"}
+    )
+    c = _client(_FakeRunner(), grader)
+    sid = _open_session(c)
+    r = c.post(f"/v1/sessions/{sid}/turns/turn_of_partner_B/grade", json={"grade": 1}, headers=_AUTH)
+    assert r.status_code == 404
+    # The runner WAS consulted (it holds the trace buffer) but the denial never
+    # leaks as a 200.
+    assert grader.calls[0][0] == "turn_of_partner_B"
+
+
+def test_grade_source_is_clamped_before_reaching_the_brain():
+    """A6: the partner-supplied source string is log-bound provenance — control
+    characters are stripped and length is capped before it crosses into the brain."""
+    grader = _FakeGrader()
+    c = _client(_FakeRunner(), grader)
+    sid = _open_session(c)
+    hostile = "evil\x1b[2Jsource\n\r" + "x" * 500
+    r = c.post(
+        f"/v1/sessions/{sid}/turns/t1/grade",
+        json={"grade": 1, "source": hostile},
+        headers=_AUTH,
+    )
+    assert r.status_code == 200
+    forwarded = grader.calls[0][4]
+    assert len(forwarded) <= 64
+    assert forwarded.isprintable()
+    assert "\x1b" not in forwarded and "\n" not in forwarded
+
+
+def test_grade_blank_source_falls_back_to_api():
+    grader = _FakeGrader()
+    c = _client(_FakeRunner(), grader)
+    sid = _open_session(c)
+    r = c.post(
+        f"/v1/sessions/{sid}/turns/t1/grade",
+        json={"grade": 1, "source": "\x00\x01  "},
+        headers=_AUTH,
+    )
+    assert r.status_code == 200
+    assert grader.calls[0][4] == "api"

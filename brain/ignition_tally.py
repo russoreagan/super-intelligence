@@ -7,6 +7,13 @@ persona_state_root(persona)/"ignition_tally.json", shape
 {"<coalition>": {"score": float, "last_ts": float}}. Killable via
 node_recruit_from_ignition (record() checks the flag itself). Best-effort throughout —
 a lost increment or reset only slows recruitment, never breaks a turn.
+
+record() is ZERO-DISK-I/O: increments accumulate in an in-process pending list (turn
+path stays off the filesystem, and there is no read-modify-write race between the turn
+coroutine and the DMN). flush() merges them into the durable file with the same decay
+math, using each increment's record-time timestamp — pressure() flushes first, so the
+sleep/Hebbian recruiter keeps exact read-your-writes semantics. A process death loses
+only the unflushed increments (slower recruitment, nothing broken).
 """
 
 from __future__ import annotations
@@ -22,6 +29,11 @@ from brain.settings import settings
 # persisted file can never carry content even if the verdict shape drifts.
 _COALITIONS = frozenset({"threat", "salience", "memory", "vision"})
 _FILENAME = "ignition_tally.json"
+
+# In-memory pending increments: persona → [(coalition, record-time ts), ...].
+# Appended by record() on the turn path; drained by flush() (via pressure()) during
+# the sleep/Hebbian pass. Single event loop + GIL make append/pop race-free.
+_pending: dict[str, list[tuple[str, float]]] = {}
 
 
 def _now() -> float:  # seam: tests patch brain.ignition_tally._now
@@ -67,29 +79,49 @@ def _decayed(score: float, last_ts: float, now: float) -> float:
 
 
 def record(coalition: str, persona: str = "") -> None:
-    """+1 ignition for the bound persona. No-op (no file touch) when the kill switch is off.
-    Coalition is clamped to the fixed vocabulary so the file stays content-free."""
+    """+1 ignition for the bound persona — in-memory only (no disk I/O on the turn
+    path; flush() persists later). No-op when the kill switch is off. Coalition is
+    clamped to the fixed vocabulary so the tally stays content-free."""
     if not settings.get("node_recruit_from_ignition", 1):
         return
     try:
         who = _resolve(persona)
         c = coalition if coalition in _COALITIONS else "other"
-        now = _now()
+        _pending.setdefault(who, []).append((c, _now()))
+    except Exception:
+        pass
+
+
+def flush(persona: str = "") -> None:
+    """Merge the pending in-memory increments into the durable file. Replays each
+    increment at its record-time timestamp through the same decay math record()
+    used when it wrote inline, so the file is byte-for-byte-semantics identical
+    (existing tallies carry over unchanged). Never raises."""
+    try:
+        who = _resolve(persona)
+        items = _pending.pop(who, [])
+        if not items:
+            return
         data = _load(who)
-        entry = data.get(c) or {}
-        score = _decayed(
-            float(entry.get("score", 0.0)), float(entry.get("last_ts", now)), now
-        )
-        data[c] = {"score": score + 1.0, "last_ts": now}
+        for c, ts in items:
+            entry = data.get(c) or {}
+            score = _decayed(
+                float(entry.get("score", 0.0)), float(entry.get("last_ts", ts)), ts
+            )
+            data[c] = {"score": score + 1.0, "last_ts": ts}
         _save(who, data)
     except Exception:
         pass
 
 
 def pressure(persona: str = "") -> tuple[float, str]:
-    """(total decayed score across coalitions, dominant coalition or ""). Never raises."""
+    """(total decayed score across coalitions, dominant coalition or ""). Flushes
+    pending increments first — the recruiter reads exactly what was recorded
+    (read-your-writes), and the sleep pass is where the tally goes durable.
+    Never raises."""
     try:
         who = _resolve(persona)
+        flush(who)
         now = _now()
         total = 0.0
         dominant, best = "", 0.0
@@ -106,9 +138,11 @@ def pressure(persona: str = "") -> tuple[float, str]:
 
 
 def consume(persona: str = "") -> None:
-    """Reset the whole tally — one accumulation window pays for at most one recruitment."""
+    """Reset the whole tally (pending AND durable) — one accumulation window pays
+    for at most one recruitment."""
     try:
         who = _resolve(persona)
+        _pending.pop(who, None)
         if _path(who).exists():
             _save(who, {})
     except Exception:

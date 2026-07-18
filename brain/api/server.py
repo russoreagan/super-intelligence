@@ -81,10 +81,12 @@ ConfirmRunner = Callable[[dict, str, "str | None", bool], Awaitable[tuple[str, d
 ExtractRunner = Callable[[str, dict, str, str], Awaitable[dict]]
 # (end_user_id) -> deletion summary
 PurgeRunner = Callable[[str], Awaitable[dict]]
-# (turn_id, grade, end_user_id, persona, source) -> {ok, grade, applied_live}. External
-# grade write path: binds the end-user's chemistry so the DA nudge lands on that
-# customer's mood (see session_loops.api_grade_turn_engine). Sync — no model call.
-GradeRunner = Callable[[str, object, str, str, str], dict]
+# (turn_id, grade, end_user_id, persona, source, api_session_id) ->
+# {ok, grade, applied_live}. External grade write path: resolves the turn ONLY within
+# api_session_id (a turn from any other session is refused — {denied: true}, which the
+# route maps to 404) and binds the graded end-user's chemistry so the DA nudge lands on
+# that customer's mood (see session_loops.api_grade_turn_engine). Sync — no model call.
+GradeRunner = Callable[[str, object, str, str, str, str], dict]
 # (text, **opts) -> audio result dict ; (audio_bytes, **opts) -> transcript dict
 TtsRunner = Callable[..., Awaitable[dict]]
 SttRunner = Callable[..., Awaitable[dict]]
@@ -478,7 +480,15 @@ def build_api_router(
 
         The grade re-weights this turn's learning at the next consolidation and, with the
         DA nudge enabled, moves the end-user's own chemistry (bound for this write, so a
-        partner's grade lands on that customer's mood, never the process resting pair)."""
+        partner's grade lands on that customer's mood, never the process resting pair).
+
+        Contract: turn_id must belong to THIS session — grading a turn from any other
+        session is 404, indistinguishable from a turn that never existed. Chemistry
+        moves at most once per turn_id (a re-grade applies only the bounded difference
+        from the previous grade). A grade that arrives after the turn left the live
+        buffer (consolidation/restart) returns ok with applied_live=false and
+        reason="turn_not_live": it is recorded for audit but no longer reaches learning
+        or chemistry, so an async grader can detect it missed the window."""
         ctx = _require(authorization)
         s = registry.get(session_id)
         if s is None:
@@ -490,8 +500,16 @@ def build_api_router(
         grade = (body or {}).get("grade")
         if grade is None:
             raise HTTPException(status_code=400, detail="missing grade")
+        # Partner-supplied provenance string ends up in the eval log / decision
+        # stream verbatim — clamp to something log-safe (printable, bounded).
         source = str((body or {}).get("source", "api"))
-        return grade_runner(turn_id, grade, s.end_user_id, _session_persona(s) or "", source)
+        source = "".join(ch for ch in source if ch.isprintable())[:64].strip() or "api"
+        result = grade_runner(
+            turn_id, grade, s.end_user_id, _session_persona(s) or "", source, session_id
+        )
+        if isinstance(result, dict) and result.get("denied"):
+            raise HTTPException(status_code=404, detail="unknown turn_id for this session")
+        return result
 
     @router.post("/sessions/{session_id}/consolidate")
     async def consolidate_session(

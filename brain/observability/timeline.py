@@ -170,6 +170,17 @@ class TurnTrace:
     external_grade: float | None = None
     external_grade_source: str = ""  # "user_thumbs" | "validator" | "api"
 
+    # ── Engine-API binding stamps (empty for owner/companion turns) ───────────
+    # The partner API session that ran this turn plus the chemistry binding it
+    # used ((api_persona, end_user_id) keys the same pair process_turn bound).
+    # The grade path relies on these: a grade may only resolve a trace stamped
+    # with the caller's own session (partner isolation), and the DA nudge
+    # re-binds from these stamps — the turn's actual binding, not the URL's
+    # claim at grade time.
+    api_session_id: str = ""
+    api_persona: str = ""
+    end_user_id: str = ""
+
     # ── Input modality ────────────────────────────────────────────────────────
     # "voice" when prosody data arrived (Deepgram STT pipeline active);
     # "text" for typed input. Derived after hypothalamus.process() returns.
