@@ -608,6 +608,17 @@ DEFAULTS: dict[str, float | int | str] = {
     # can't by itself distinguish "no override" from "pod genuinely up" — this is
     # the dedicated liveness signal for frontal._local_available()/downshift.
     "runpod_pod_ready": 0,
+    # runpod_pod_ready_at: wall-clock stamp of the last time the pod's residency
+    # was confirmed (set with runpod_pod_ready=1 and re-stamped by the manager's
+    # periodic refresh loops). frontal._local_available() treats the ready flag
+    # as STALE — i.e. false — when this stamp is older than runpod_pod_ready_ttl_s,
+    # so a pod that dies between refreshes stops receiving downshifted drafts
+    # instead of timing out against a dead host until the next refresh notices.
+    "runpod_pod_ready_at": 0.0,
+    # TTL for the stamp above. Comfortably above both refresh cadences that
+    # re-stamp it (consumer host-file poll ~30s, owner liveness watcher 120s):
+    # ≈2.5× the slower one. 0 disables the staleness check (flag-only behavior).
+    "runpod_pod_ready_ttl_s": 300.0,
     # max_runpod_hours: watchdog stops the pod if the brain hasn't been seen
     # alive for this many hours. Resets continuously while the brain is running.
     # Acts as a backstop against runaway costs after a crash/force-kill.
