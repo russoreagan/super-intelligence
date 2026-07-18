@@ -103,6 +103,21 @@ async def _author(monkeypatch, tmp_path, *, screener_status, out=_GOOD, trace_co
     return result, cap
 
 
+def test_proven_cluster_evidence_includes_recruited_reserve(monkeypatch, tmp_path):
+    """Tier 2 authoring must build on Tier 2 output: a fragment proven on a
+    RECRUITED reserve drafter (not one of the 5 fixed drafters) must still surface
+    as evidence, or a self-authored/recruited unit could never seed the next
+    authored skill."""
+    import brain.node_authoring as na
+
+    w = _isolated_wiring(monkeypatch, tmp_path)
+    bootstrap(w)
+    w.add("frontal.executive", "frontal.drafter_F", weight=1.0)  # recruit reserve F
+    w.add("fragment.recruited_evidence", "frontal.drafter_F", weight=2.5)  # proven (>= 2.2)
+    lines = na._proven_cluster_evidence(w, {"recruited_evidence": "learned from a reserve"})
+    assert any("recruited_evidence" in line for line in lines)
+
+
 async def test_clean_verdict_auto_enables_and_scopes(monkeypatch, tmp_path):
     rec = _fake_registry(monkeypatch)
     result, cap = await _author(monkeypatch, tmp_path, screener_status="enabled")

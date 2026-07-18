@@ -1336,14 +1336,21 @@ class FrontalCluster:
         return set(rolled[:cap])
 
     def _local_available(self) -> bool:
-        """True iff a local RunPod pod is actually up for this brain. BOTH checks are
-        mandatory: `router._local_disabled` (a lite-tier brain silently reroutes a 'local'
-        call → cloud haiku — the known lite-leak) and the `runpod_host=='off'` fail-fast
-        sentinel (pod declared down). If either fails, downshift is a clean no-op."""
+        """True iff a local RunPod pod is actually confirmed resident and ready for
+        this brain. BOTH checks are mandatory: `router._local_disabled` (a lite-tier
+        brain silently reroutes a 'local' call → cloud haiku — the known lite-leak)
+        and `runpod_pod_ready`, a dedicated liveness flag published by RunPodManager
+        only once a real pod host is confirmed (and cleared on retirement/off/never-
+        confirmed). This is deliberately NOT `runpod_host != "off"`: runpod_host
+        stays a plain routing override where "" means "no override, fall back to
+        env var/Ollama" (see settings.py) — it cannot by itself distinguish that
+        from a pod genuinely being up, so a cold-start/never-confirmed brain used to
+        read as falsely available. If either check fails, downshift is a clean
+        no-op."""
         router = getattr(self, "_router", None)
         if router is None or getattr(router, "_local_disabled", False):
             return False
-        return str(settings.get("runpod_host") or "") != "off"
+        return bool(settings.get("runpod_pod_ready", 0))
 
     def _downshift_indices(self, firing_indices: list[int], turn_id: str) -> set[int]:
         """Which firing drafters run on the local RunPod model this turn (cost lever). A

@@ -194,6 +194,7 @@ DEFAULTS: dict[str, float | int | str] = {
     "dmn_enabled": 1,  # owner kill-switch (runtime, PUT /v1/dmn) — distinct from the BRAIN_DMN env gate
     "dmn_interval": 8.0,  # active baseline — fires when any mouse/keyboard activity detected
     "dmn_idle_interval": 45.0,  # when fully away from computer (OS idle > 60s)
+    "dmn_min_tick_interval": 5.0,  # floor between DMN ticks regardless of computed interval (dmn.py)
     "dmn_overlap_threshold": 0.35,
     "ach_suppression_weight": 0.70,  # was 1.00 — was over-suppressing idle thought
     "glu_suppression_weight": 0.25,  # was 0.30
@@ -446,6 +447,7 @@ DEFAULTS: dict[str, float | int | str] = {
     # (sleep.learning_story_pass, runs after the Hebbian pass in the same persona
     # binding). 1 = on, 0 = skip the narration; the weight updates land either way.
     "learning_narrator": 1,
+    "resting_mood_consolidation_alpha": 0.3,  # blend rate of the day's aggregate mood into resting disposition at consolidation (session_loops.py)
     # ── Section: Motor Cortex / Autonomous Tasks ─────────────────────────────
     # ralph_max_total_attempts: hard ceiling on total tool dispatches across ALL
     # stories + retries in a single internal job. Prevents runaway loops
@@ -459,6 +461,8 @@ DEFAULTS: dict[str, float | int | str] = {
     "motor_max_jobs_per_window": 10,  # ≤ this many job starts per window
     "motor_job_window_s": 3600.0,  # rolling window = 1 hour
     "motor_max_jobs_per_session": 30,  # absolute ceiling per process lifetime
+    "job_store_max_jobs": 100,  # JobStore: max completed-job files retained (oldest trimmed first)
+    "job_store_max_mb": 100,  # JobStore: max total size in MB of retained job files
     # ── Engine API audio quotas (per-partner cost guard) ─────────────────────
     # STT/TTS hit paid third parties (Deepgram/ElevenLabs), so a partner key's
     # audio usage is metered the way those services bill: TTS by characters
@@ -592,6 +596,12 @@ DEFAULTS: dict[str, float | int | str] = {
     # needed. Empty string = fall back to env var.
     "runpod_host": "",
     "runpod_model": "",
+    # runpod_pod_ready: 1 iff a local RunPod GPU pod has been confirmed resident
+    # and its real host published this process. Distinct from runpod_host, which
+    # stays a plain routing override (empty = fall back to env var/Ollama) and
+    # can't by itself distinguish "no override" from "pod genuinely up" — this is
+    # the dedicated liveness signal for frontal._local_available()/downshift.
+    "runpod_pod_ready": 0,
     # max_runpod_hours: watchdog stops the pod if the brain hasn't been seen
     # alive for this many hours. Resets continuously while the brain is running.
     # Acts as a backstop against runaway costs after a crash/force-kill.
@@ -917,6 +927,7 @@ DEFAULTS: dict[str, float | int | str] = {
     "cma_session_warm_reuse": 1,
     # cma_max_reconnects: bounded SSE reconnect-and-replay attempts on stream drop.
     "cma_max_reconnects": 3,
+    "cma_budget_check_interval_s": 30.0,  # how often the CMA executor re-checks cloud spend mid-task
     # ── Section: Motor cortex (tool use) ──────────────────────────────────────
     # motor_allowed_dirs: directories the motor cortex may read/write, one per
     #   line. Locally this is left empty and the allowlist is inherited from
@@ -943,6 +954,7 @@ DEFAULTS: dict[str, float | int | str] = {
     # Off by default (writes pause for a human/API confirm). Engine mode: an agent
     # may enable it WITHIN this org ceiling for trusted autonomous writes.
     "motor_auto_confirm_writes": 0,
+    "motor_write_approval_bytes": 5_000_000,  # cloud WRITE actions above this size need sign-off (cma_executor._write_approval_bytes)
     # motor_allowed_commands: shell command allowlist, one binary name per line.
     #   Empty = the built-in DEFAULT_COMMANDS set. BRAIN_MOTOR_COMMANDS env wins.
     "motor_allowed_commands": "",
