@@ -1716,6 +1716,15 @@ class _TurnMixin:
             }
         )
 
+        # Crash-safety: durably journal this turn's trace so an ungraceful exit
+        # (OOM/SIGKILL) before the next consolidation can't drop its learning. A
+        # graceful exit consolidates the buffer; this covers the rest. Boot replay
+        # re-stages anything a crash left behind. Guarded — never breaks the turn.
+        with contextlib.suppress(Exception):
+            from brain.observability import trace_journal
+
+            trace_journal.append(trace, self._session_traces[-1])
+
         # Backstop on buffer growth: a very long unconsolidated session (or a
         # sleep loop that's wedged) would otherwise accumulate traces without
         # bound. Force a mini-consolidation; consolidate_now is single-flight,
