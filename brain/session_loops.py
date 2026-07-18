@@ -987,9 +987,9 @@ class _LoopsMixin:
         Writes three places: the live TurnTrace when the turn hasn't consolidated
         yet (so the grade re-weights the Hebbian composite at the next sleep), the
         eval log via patch_turn (auditable even post-consolidation), and the
-        decision stream (ledger + live UI). Optionally nudges DA as a genuinely
-        external signal — off by default (external_grade_da_nudge=0) so this ships
-        observability-first."""
+        decision stream (ledger + live UI). Also nudges DA as a genuinely external
+        signal: external_grade_da_nudge ships ON (0.15), bounded per write, and 0
+        is the kill switch."""
         from eval.external_grading import normalize_grade
 
         g = normalize_grade(grade)
