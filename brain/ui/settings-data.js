@@ -379,6 +379,7 @@ window.SETTINGS = {
           rows: [
             { type: 'toggle', key: 'fragment_wiring', label: 'Fragment Wiring', hint: 'learn which curated skill-fragments attach to which cells, and inject the proven ones. Off = no attachment learning or injection.', def: 1 },
             { type: 'toggle', key: 'node_recruitment', label: 'Node Recruitment', hint: 'recruit a dormant reserve cell into a new specialist drafter when a host accumulates a stable, proven fragment cluster.', def: 1 },
+            { type: 'toggle', key: 'node_recruit_from_ignition', label: 'Ignition Recruitment', hint: 'let sustained global-workspace ignition recruit a specialist from an established (not yet fully proven) fragment cluster. Off = only fully proven clusters recruit.', def: 1 },
             { type: 'toggle', key: 'node_self_authoring', label: 'Self-Authoring', hint: 'the brain drafts its own specialization skills. Each is screened before going live; anything the screener cannot auto-clear waits for your review in the Skills page.', def: 1 },
             { type: 'toggle', key: 'fragment_downshift', label: 'Local Downshift', hint: 'run a drafter whose attachment is well proven on the local model instead of cloud, keeping a cloud floor.', def: 1 },
           ],
@@ -390,6 +391,8 @@ window.SETTINGS = {
             { type: 'group', label: 'Node recruitment' },
             { type: 'range', key: 'node_promote_threshold', label: 'Promotion Threshold', hint: 'fragment weight that counts as proven for recruiting a node', min: 1.5, max: 3.0, step: 0.05, def: 2.20 },
             { type: 'range', key: 'node_promote_min_cluster', label: 'Min Cluster Size', hint: 'proven fragments a host needs before it crystallizes into a node', min: 1, max: 6, step: 1, def: 2 },
+            { type: 'range', key: 'ignition_recruit_min_score', label: 'Ignition Pressure Floor', hint: 'decayed count of workspace ignitions needed before the relaxed recruitment path arms', min: 1, max: 10, step: 0.5, def: 3.0 },
+            { type: 'range', key: 'ignition_tally_half_life_h', label: 'Ignition Memory Half-Life', hint: 'hours for accumulated ignition pressure to decay by half', min: 6, max: 336, step: 6, def: 72 },
             { type: 'group', label: 'Self-authoring' },
             { type: 'range', key: 'node_author_min_hours', label: 'Authoring Cooldown', hint: 'hours between authored proposals for a persona', min: 1, max: 168, step: 1, def: 24 },
             { type: 'range', key: 'node_author_max_per_persona', label: 'Max Authored Skills', hint: 'cap on total self-authored skills per persona', min: 0, max: 50, step: 1, def: 5 },

@@ -87,6 +87,10 @@
       map: [ { key: 'reward_weight_novelty', dir: +1, span: 0.5 } ] },
     { id: 'mastery-seeking', label: 'Mastery-seeking', sub: 'rewarded by being right', glyph: 'arrow',
       map: [ { key: 'reward_weight_correctness', dir: +1, span: 0.4 }, { key: 'reward_weight_mastery', dir: +1, span: 0.4 } ] },
+    { id: 'beauty-seeking', label: 'Beauty-seeking', sub: 'rewarded by elegance', glyph: 'star',
+      map: [ { key: 'reward_weight_aesthetic', dir: +1, span: 0.5 } ] },
+    { id: 'relief-seeking', label: 'Relief-seeking', sub: 'rewarded by resolving tension', glyph: 'level',
+      map: [ { key: 'reward_weight_relief', dir: +1, span: 0.5 } ] },
     /* ---- Risk posture: the AVOIDANCE-side mirror of Motivation — what the persona
        is wired to fear, independent of how much reward it feels. Loss-sensitivity is
        the asymmetric twin of reward sensitivity (a loss bites harder than an equal
@@ -124,6 +128,14 @@
         { key: 'colony_features', at: 0.80, mode: 'enableHigh' },   // top end: live within-session learning…
         { key: 'colony_trail_apply', at: 0.80, mode: 'enableHigh' },// …reinforce paths that pay off immediately
       ] },
+    // Structural-plasticity appetite: how eagerly this persona grows NEW structure
+    // (fragment attachments, recruited specialist units) vs keeping its wiring fixed.
+    // High = explores more attachments and demands less proof before crystallizing a
+    // node — both the proven-cluster bar and the workspace-ignition pressure floor.
+    { id: 'plasticity', label: 'Plasticity', sub: 'fixed wiring ↔ grows new structure', glyph: 'cycle',
+      map: [ { key: 'fragment_explore_rate', dir: +1, span: 0.10 },
+             { key: 'node_promote_threshold', dir: -1, span: 0.30 },
+             { key: 'ignition_recruit_min_score', dir: -1, span: 1.0 } ] },
     { id: 'focus', label: 'Focus', sub: 'scattered ↔ single-minded', glyph: 'target',
       // salience_workspace_threshold is a minimum BAR for workspace entry, so
       // single-minded = HIGHER bar (fewer topics promoted), dir +1.
@@ -219,6 +231,8 @@
     reward_weight_correctness: { min: 0.2, max: 2.0, def: 1.0 },
     reward_weight_mastery: { min: 0.2, max: 2.0, def: 1.0 },
     reward_weight_levity: { min: 0.2, max: 2.0, def: 1.0 },
+    reward_weight_aesthetic: { min: 0.2, max: 2.0, def: 1.0 },
+    reward_weight_relief: { min: 0.2, max: 2.0, def: 1.0 },
     loss_aversion_scale: { min: 0.4, max: 2.0, def: 1.0 },
     uncertainty_aversion_scale: { min: 0.3, max: 2.5, def: 1.0 },
     eligibility_lookback: { min: 0, max: 5, def: 2 },

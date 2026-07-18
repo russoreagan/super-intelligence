@@ -109,9 +109,9 @@ def _jail_motor_dirs(body: dict) -> None:
 def _persona_dial_positions() -> dict:
     """Per-persona non-chemistry dial positions for the settings UI.
     Cognitive + lingering: the authored fingerprint (persona_chem). Motivation
-    (warmth/curiosity/mastery-seeking): derived from the reward table so the
-    needle matches the per-persona reward profile the brain actually runs on —
-    map a reward weight in ~[0.5,1.6] to a 0..1 needle position."""
+    (warmth/curiosity/mastery/beauty/relief-seeking): derived from the reward
+    table so the needle matches the per-persona reward profile the brain actually
+    runs on — map a reward weight in ~[0.5,1.6] to a 0..1 needle position."""
     try:
         from brain.neuron import _PERSONA_REWARD_WEIGHTS, _PERSONA_RISK_POSTURE
         from brain.persona_chem import PERSONA_COG_POSITIONS
@@ -143,6 +143,8 @@ def _persona_dial_positions() -> dict:
                 out[name]["mastery-seeking"] = _pos(
                     (rw.get("correctness", 1.0) + rw.get("mastery", 1.0)) / 2.0
                 )
+                out[name]["beauty-seeking"] = _pos(rw.get("aesthetic", 1.0))
+                out[name]["relief-seeking"] = _pos(rw.get("relief", 1.0))
             # Risk posture is the avoidance-side mirror of motivation (what the persona is
             # wired to FEAR). Defaults λ=1.0 / κ=0.0 (symmetric, risk-neutral) for the unlisted.
             rp = _PERSONA_RISK_POSTURE.get(_slug(name), {})

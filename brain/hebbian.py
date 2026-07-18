@@ -323,7 +323,13 @@ class HebbianUpdater:
         whose executive→ edge has decayed below the floor. The recruited node's identity = the
         copied proven fragments (injected via the Tier-1 seam); it earns or loses its place
         through the drafter competition. Runs per-persona (inside _run_for_persona, bound),
-        gated by node_recruitment + BRAIN_WIRING_FROZEN. At most one recruitment per pass."""
+        gated by node_recruitment + BRAIN_WIRING_FROZEN. At most one recruitment per pass.
+
+        ALTERNATIVE trigger (node_recruit_from_ignition): sustained Global-Workspace ignition
+        (a decayed per-persona tally, brain/ignition_tally.py) opens a relaxed path — an
+        ESTABLISHED cluster at ≥ the inject/promote midpoint may crystallize before it is
+        fully proven. Full-proven clusters always win first, and every existing gate (flags,
+        FROZEN, pool, admissibility, dedup, demotion) applies unchanged."""
         if not settings.get("node_recruitment", 1):
             return
         if os.environ.get("BRAIN_WIRING_FROZEN", "false").lower() == "true":
@@ -391,7 +397,54 @@ class HebbianUpdater:
                 node=free[0],
                 source=host,
                 fragments=sorted(pids),
+                trigger="proven_cluster",
             )
+            return
+
+        # ── ALTERNATIVE trigger: sustained Global-Workspace ignition ─────────────
+        # Repeated ignition is a content-free "the mind is under sustained load" signal:
+        # it lowers the proof bar to the inject/promote midpoint (established, not yet
+        # proven — and safely above the demotion floor, so an ignition recruit cannot be
+        # insta-demoted next pass). consume() makes one accumulation window pay for at
+        # most one recruitment.
+        if not settings.get("node_recruit_from_ignition", 1):
+            return
+        try:
+            from brain import ignition_tally
+
+            score, coalition = ignition_tally.pressure()
+        except Exception:
+            return
+        if score < float(settings.get("ignition_recruit_min_score", 3.0)):
+            return
+        relaxed = max(inject_threshold, (inject_threshold + promote) / 2.0)
+        for host in fixed:
+            cluster = [
+                (sid, w)
+                for (sid, w) in self._wiring.attached_fragments(host)
+                if w >= relaxed and is_admissible(sid, host)
+            ]
+            if len(cluster) < min_cluster:
+                continue
+            pids = {sid for sid, _ in cluster}
+            if _already_covered(pids):
+                continue
+            self._recruit_reserve(free[0], cluster)
+            decisions.log(
+                "node_recruited",
+                session_id=session_id,
+                node=free[0],
+                source=host,
+                fragments=sorted(pids),
+                trigger="workspace_ignition",
+                coalition=coalition,
+                ignition_score=round(score, 3),
+                bar=round(relaxed, 3),
+            )
+            try:
+                ignition_tally.consume()
+            except Exception:
+                pass
             return
 
     def _recruit_reserve(self, reserve: str, proven: list) -> None:

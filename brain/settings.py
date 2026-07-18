@@ -824,6 +824,13 @@ DEFAULTS: dict[str, float | int | str] = {
     "node_author_min_traces": 20,  # min new traces in a session before authoring may run
     "node_author_min_hours": 24.0,  # min hours since the last authored proposal for a persona
     "node_author_max_per_persona": 5,  # cap on total self-authored skills per persona
+    # Alternative Tier-2 trigger (GWT): sustained Global-Workspace ignition marks a
+    # plasticity window — a persona whose mind keeps igniting may crystallize a specialist
+    # from a cluster that is ESTABLISHED (≥ the inject/promote midpoint) but not yet fully
+    # proven. The tally is content-free (coalition label + decayed count only).
+    "node_recruit_from_ignition": 1,  # kill switch for the ignition-pressure trigger (0 = off)
+    "ignition_recruit_min_score": 3.0,  # decayed total ignition tally ≥ this arms the relaxed path
+    "ignition_tally_half_life_h": 72.0,  # exponential half-life (hours) of the ignition tally
     # ── Section: Flock dynamics — criticality + chemistry trajectory ─────────
     # Murmuration-derived collective-dynamics layer (sibling to colony_features,
     # but kept on its OWN flag so criticality control can be run without the
