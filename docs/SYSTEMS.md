@@ -236,7 +236,11 @@ The cue weights are durable and per-personality, so one personality's read of av
 
 A belief cannot pin itself in place, which matters more than it sounds. The steering a committed belief causes suppresses the very re-surfacing that would refute it, so without a way out it would be self-confirming. Three things prevent that: an unfed belief leaks away on its own, one held past a wall-clock limit expires outright, and decayed evidence is evicted rather than left to accumulate.
 
-**Status.** Live, both flags on. This is the newest system in the document and it is not settled. One known problem is open as this is written: its self-generated inferences are stamped with the same source label as genuinely external verdicts, so the self-grading measure in §4.3 reads healthier than it is. Being fixed with a distinct label. What has been fixed since it shipped is the evidence model itself, which originally armed on mere staleness and flagged normal conversation as avoidance, and the lifecycle, which originally had no age-out. Claim the mechanism and the fences. Do not claim the thresholds are validated on real traffic yet.
+**Status.** Live, both flags on. This is the newest system in the document, and everything an adversarial review found in its first days has since been closed.
+
+Three of those are worth naming, because each was the kind of flaw that hides. The evidence model originally armed on mere staleness, so ordinary topic rotation read as avoidance. The lifecycle had no age-out, so a committed belief could pin itself in place forever. And the reward path had two holes: its self-generated inferences were stamped with the same source label as a genuine external verdict, which quietly inflated the self-grading measure in §4.3, and the cap meant to bound the payout was applied per resolved entity rather than per turn, so one turn resolving several beliefs paid several times the intended ceiling. All three are fixed. Inferences now carry their own provenance label that tallies as intrinsic, the informativeness gate is measured from an observed base rate rather than assumed as a constant, and the cap is a shared per-turn budget.
+
+Claim the mechanism and the fences. Do not claim the thresholds are validated on real traffic yet: they are reasoned, not measured, and that is the honest remaining limit.
 
 ---
 
@@ -346,7 +350,9 @@ Every dopamine release is stamped at a single chokepoint as either external, mea
 
 **Be straight about this one.** It measures at roughly eighty percent self-graded. Finishing a job pays the agent about three times what genuine praise from you pays. The code knows, instruments it, caps the per-job payout, and says so plainly in its own comments: intrinsic far exceeding external means the brain is mostly rewarding itself. It does not solve it.
 
-**Anyone technical will ask about this. Answering before they ask is worth more than the feature it is a flaw in.**
+**The measure briefly flattered itself, and the fix is worth knowing.** When the evidence gates (§2.11) shipped, they resolved their own inferences and stamped the resulting reward with the same external label a real verdict from you carries. The argument for that label was not empty, since what confirms one of those inferences is something you did rather than something the agent thought. But the subject of the inference, the cues behind it, and the judgement that it was confirmed are all the agent's own, and putting that in the same bucket as an explicit thumbs press is exactly what the bucket exists to prevent. Those resolutions now carry their own provenance label, visible in the emission log and tallied as intrinsic, so they can never inflate the external share.
+
+**Anyone technical will ask about this. Answering before they ask is worth more than the feature it is a flaw in.** That includes the paragraph above. A measure that caught itself drifting and says so is worth more than a clean number nobody has reason to trust.
 
 ### 4.4 The external verdict · Live
 
@@ -399,6 +405,8 @@ Separately and deliberately orthogonally: how much each fears loss, and how much
 The orthogonality is not a design preference, it is the De Martino finding: amygdala damage removes loss aversion while leaving sensitivity to gains intact, so the two must be separate axes.
 
 **The Stoic is pinned flat across every source. It is the experimental control.** Any divergence measured against it is attributable to valuation and nothing else.
+
+That claim used to be true only of the persona table. Everything layered on top of it, a settings override or an assigned mandate's own weights, multiplied through onto any persona including the control, so a mandate given to the Stoic moved the very thing everything else is measured against. The reward path now short-circuits the Stoic to flat before any of those layers apply. The composite of the remaining layers is also clamped at both ends, so no combination of a persona's leaning, an override, and a mandate can drive a source close enough to zero to silence it or high enough to swamp the others.
 
 This is never allowed behind a flag, and the comment explains why: reward differentiation must never silently vanish. If it could be flagged off, the entire claim that personality is real would be one config change from being false.
 
@@ -600,7 +608,7 @@ Five use-case anchors, extremes for coverage, and the internal operator.
 | Cynic | A negative pole that is not melancholy. Warmth is real but must be earned. The thesis in one personality |
 | Admin | The default operator |
 
-The Stoic's control status is enforced everywhere it could leak: absent from the cognitive dials, absent from the perceptual leans, pinned flat across reward, absent from risk posture.
+The Stoic's control status is enforced everywhere it could leak: absent from the cognitive dials, absent from the perceptual leans, pinned flat across reward, absent from risk posture. That last one is now enforced rather than merely arranged. The reward path short-circuits the Stoic to flat before any override or assigned mandate can layer onto it, which closes the one route by which the control could have been moved without anyone noticing (§4.9).
 
 **If you get one sentence about scientific rigor, use this one: we shipped a control personality.**
 
@@ -1198,7 +1206,7 @@ Thirty-six ideas. For each: what it claims, what we built, and a verdict.
 | **Reward prediction error / TD learning** | Not implemented. The dopamine delta is a proxy for it. |
 | **Replay** | Not implemented. Consolidation is batch post-processing. |
 | **Embodied cognition** | One chemistry-gated perception switch. Real, but keep the claim that size. |
-| **Self-grading** | ~80% of the reward signal is self-administered. Instrumented and capped, not solved. The external channel is now reachable, which makes it fixable rather than fixed. **And the measure itself is currently overstating its own health:** the new evidence gates (§2.11) stamp their self-generated inferences with the external source label, so some of what the tally counts as grounded is the brain grading itself. Being fixed with a distinct label for a self-inference. Read the external share as an upper bound until it is. |
+| **Self-grading** | ~80% of the reward signal is self-administered. Instrumented and capped, not solved. The external channel is now reachable and on, which makes it fixable rather than fixed. The measure itself briefly overstated its own health, because the evidence gates (§2.11) stamped self-generated inferences with the external label; those now carry their own provenance label and tally as intrinsic, so the external share is a reading again rather than an upper bound. Aesthetic reward (§4.9) went from a dead weight to a live intrinsic source in the same pass, which pushes the ratio the other way by a small amount. |
 | **Avoidance reading** | Live, and now requires an active dodge rather than mere staleness, with a leak, a hard expiry, and eviction so a belief cannot pin itself. Still unvalidated on real traffic: the thresholds are reasoned, not measured. |
 | **Reflexes / motor chunking** | Has never produced a reflex, and now we know why: the job corpus is dominated by *failed* exploratory work. The most common sub-sequence runs at 67% success against a 90% bar. Not miscalibrated. Waiting on jobs that succeed. |
 | **Song recognition** | The fingerprint database is an empty stub. Cannot match. |
