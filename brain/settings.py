@@ -101,7 +101,7 @@ DEFAULTS: dict[str, float | int | str] = {
     # first. Raising it opens the only reward channel sourced outside the brain's own
     # appraisal. Keep this a float: an int default would coerce a fractional nudge to 0
     # on load and silently re-break the dial.
-    "external_grade_da_nudge": 0.0,
+    "external_grade_da_nudge": 0.15,
     "decay_toward_rest_rate": 0.01,
     # Eligibility traces: a turn's outcome also credits the fired paths of the
     # previous N turns, decayed e^(-age/τ) — delayed conversational payoff
