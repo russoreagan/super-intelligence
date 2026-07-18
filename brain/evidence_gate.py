@@ -30,9 +30,13 @@ or refutes it, `resolve()` routes the outcome through neuron.prediction_reward (
 same anti-farming path the shadow-prediction reward uses: confidence floor +
 informativeness gate + per-turn cap) and nudges the per-cue drift weights toward
 whichever cues predicted a *confirmed* inference. Plasticity is weighted toward
-EXTERNAL / independent confirmation (the external_grader channel) so the gate cannot
-learn to fire on cues its own appraiser happens to like — that self-grading loop is
-the exact premise-audit risk we must not deepen. Every reward emission flows through
+behaviourally-grounded confirmation (external=True) so the gate cannot learn to
+fire on cues its own appraiser happens to like — that self-grading loop is the
+exact premise-audit risk we must not deepen. But grounded plasticity is NOT
+grounded provenance: a resolution is still a self-generated inference, so its DA
+is stamped `self_inference` (audited intrinsic) — the external bucket is reserved
+for genuine partner/owner grades. The per-turn cap is a shared ledger across all
+gates (consume_turn_resolution_budget), and every emission flows through
 bus.neuromod.add so it is audited in the intrinsic/external DA tally.
 
 STATE HAS TWO LIFECYCLES.
@@ -55,6 +59,52 @@ from brain.neuron import SwitchNeuron
 # The two commit modes a gate can declare.
 MODE_LATCH = "latch"  # a held belief: arm high, hold until it decays below release
 MODE_FIRE_RESET = "fire_reset"  # a one-shot event: emit on arm, then reset to zero
+
+# Outside a traced turn (no firing-path turn_id: tests, idle paths) the shared
+# per-turn resolution budget falls back to a wall-clock window so it still resets
+# and can never starve resolution DA forever.
+_UNTRACED_RESET_S = 60.0
+
+
+def consume_turn_resolution_budget(
+    neuromod, delta: float, cap: float, now: float | None = None
+) -> float:
+    """Clamp `delta` to the REMAINING per-turn resolution-DA budget and record the
+    spend. `prediction_reward_turn_cap` is a ceiling on the SUM of |DA| across ALL
+    evidence-gate resolutions in a turn (every EvidenceGate + the avoidance
+    tracker share one ledger), not a per-resolution clamp — N entities resolving
+    in one turn must not pay N caps (precedent: the job_intrinsic_da_cap
+    accumulator in session_turn.py). The ledger rides the neuromod object (so it
+    is per-client, like the chemistry it guards) and is scoped by the firing-path
+    turn_id; outside a traced turn it resets on a short wall-clock window.
+    Best-effort: on any failure returns the already-cap-clamped delta unchanged."""
+    try:
+        import time as _time
+
+        now = _time.time() if now is None else now
+        try:
+            from brain.observability.firing_path import get_current_trace
+
+            trace = get_current_trace()
+            turn_key = str(getattr(trace, "turn_id", "") or "") if trace is not None else ""
+        except Exception:
+            turn_key = ""
+        state = getattr(neuromod, "_resolution_da_turn", None)
+        stale = (
+            not isinstance(state, dict)
+            or state.get("turn") != turn_key
+            or (not turn_key and now - float(state.get("ts", 0.0)) >= _UNTRACED_RESET_S)
+        )
+        if stale:
+            state = {"turn": turn_key, "ts": now, "spent": 0.0}
+            neuromod._resolution_da_turn = state
+        room = max(0.0, float(cap) - float(state["spent"]))
+        if abs(delta) > room:
+            delta = room if delta > 0 else -room
+        state["spent"] += abs(delta)
+        return delta
+    except Exception:
+        return delta
 
 
 @dataclass
@@ -291,15 +341,24 @@ class EvidenceGate:
             )
             delta = pr * base * reward_weight(persona, reward_source) * ext_w
             delta = max(-cap, min(cap, delta))
-            source = "external_grader" if external else "intrinsic"
+            # Provenance: a gate resolution is a SELF-generated inference even when
+            # graded by observed behaviour — external=True buys plasticity weight,
+            # not provenance. Only genuine partner/owner grades (api_grade_turn)
+            # stamp external_grader; claiming it here would inflate the §4.3
+            # honesty ratio (self-graded vs grounded) in the flattering direction.
+            source = "self_inference" if external else "intrinsic"
             if emit_da:
-                bus.neuromod.add(
-                    "DA",
-                    delta,
-                    source=source,
-                    reward_source=reward_source,
-                    reason=f"evidence_gate_resolve:{self.name}",
-                )
+                # The turn cap bounds the SUM of all resolution DA this turn, not
+                # each resolution — N gates resolving at once must not pay N caps.
+                delta = consume_turn_resolution_budget(bus.neuromod, delta, cap)
+                if delta:
+                    bus.neuromod.add(
+                        "DA",
+                        delta,
+                        source=source,
+                        reward_source=reward_source,
+                        reason=f"evidence_gate_resolve:{self.name}",
+                    )
             self._learn_cues(pr * ext_w)
             self._save(store)
             return delta

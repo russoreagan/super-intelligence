@@ -17,8 +17,12 @@ persisted to `persona_state_root(persona)/avoidance_cues.json` — so learning i
 restart and never bleeds between personas.
 
 LEARNING — an armed belief is a checkable prediction graded by the user's own behaviour,
-run through neuron.prediction_reward (confidence floor + informativeness gate + λ) with DA
-emitted through the audited chokepoint, external-weighted so it cannot self-grade:
+run through neuron.prediction_reward (confidence floor + a MEASURED informativeness gate:
+the persona's observed re-engagement base rate, persisted with the cue weights + λ) with
+DA emitted through the audited chokepoint. Behavioural grading buys plasticity weight,
+not provenance — the belief is self-generated, so its DA is stamped `self_inference`
+(audited intrinsic, never external), and all resolutions in a turn share one
+prediction_reward_turn_cap budget:
   • REFUTE (false alarm): the user spontaneously re-engages a flagged entity → correct=False
     → weaken the guilty cues.
   • CONFIRM (natural occurrence, no probe): the agent's own reply surfaced a flagged entity
@@ -34,11 +38,16 @@ from __future__ import annotations
 
 import json
 
-from brain.evidence_gate import EvidenceGate
+from brain.evidence_gate import EvidenceGate, consume_turn_resolution_budget
 from brain.persona_key import active_or_home_persona, persona_slug, persona_state_root
 from brain.settings import settings
 
 CUES = ("not_reengaged", "topic_shifted", "discomfort")
+
+# Cap on the resolution-outcome counters (exponential forgetting past this total):
+# the measured re-engagement base rate must be able to drift with the user, not
+# fossilize on ancient history.
+_STATS_MAX = 200.0
 
 # User emotions that count as social-discomfort evidence (in the spirit of the DMN's
 # _DEFLECTION_OVERRIDES; a local copy keeps this a leaf module).
@@ -63,6 +72,10 @@ class AvoidanceTracker:
         )
         # Durable learned cue weights, per persona slug (lazy-loaded from disk).
         self._cue_w: dict[str, dict[str, float]] = {}
+        # Durable per-persona resolution-outcome counters ({"reengaged", "dodged"}):
+        # the observed base rate that makes informativeness a MEASURED quantity
+        # (persisted in the same avoidance_cues.json, under "_stats").
+        self._stats: dict[str, dict[str, float]] = {}
 
     # ── durable per-persona cue weights ───────────────────────────────────────
 
@@ -75,10 +88,16 @@ class AvoidanceTracker:
         return w
 
     def _load_weights(self, key: str) -> dict[str, float]:
+        self._stats.setdefault(key, {"reengaged": 0.0, "dodged": 0.0})
         try:
             path = persona_state_root(key) / "avoidance_cues.json"
             if path.exists():
                 data = json.loads(path.read_text(encoding="utf-8"))
+                st = data.get("_stats") or {}
+                self._stats[key] = {
+                    "reengaged": max(0.0, float(st.get("reengaged", 0.0))),
+                    "dodged": max(0.0, float(st.get("dodged", 0.0))),
+                }
                 return {c: float(data.get(c, 1.0)) for c in CUES}
         except Exception:
             pass
@@ -88,11 +107,41 @@ class AvoidanceTracker:
         try:
             root = persona_state_root(key)
             root.mkdir(parents=True, exist_ok=True)
+            payload: dict = dict(self._cue_w.get(key, {}))
+            if self._stats.get(key):
+                payload["_stats"] = self._stats[key]
             (root / "avoidance_cues.json").write_text(
-                json.dumps(self._cue_w.get(key, {}), indent=2), encoding="utf-8"
+                json.dumps(payload, indent=2), encoding="utf-8"
             )
         except Exception:
             pass
+
+    # ── measured informativeness (the §4.8 anti-farm gate, not a constant) ─────
+
+    def _informativeness(self, persona: str) -> float:
+        """1 − dominant-outcome frequency of this persona's resolved avoidance
+        beliefs — being right about the near-inevitable earns nothing, and that
+        base rate is MEASURED from the confirm/refute events the tracker itself
+        observes, not assumed. Laplace-smoothed, so a fresh persona starts at
+        maximum uncertainty (0.5) and converges as outcomes accumulate."""
+        self._weights(persona)  # primes the per-persona load from disk
+        st = self._stats.get(persona_slug(persona)) or {}
+        re_ = float(st.get("reengaged", 0.0))
+        do = float(st.get("dodged", 0.0))
+        p = (re_ + 1.0) / (re_ + do + 2.0)  # observed re-engagement base rate
+        return min(p, 1.0 - p)
+
+    def _record_resolution(self, persona: str, *, reengaged: bool) -> None:
+        """Fold one resolved belief's outcome into the persisted base-rate stats
+        (refute = the stale entity WAS re-engaged; confirm = it stayed dodged)."""
+        self._weights(persona)
+        key = persona_slug(persona)
+        st = self._stats.setdefault(key, {"reengaged": 0.0, "dodged": 0.0})
+        st["reengaged" if reengaged else "dodged"] += 1.0
+        if st["reengaged"] + st["dodged"] > _STATS_MAX:  # exponential forgetting
+            st["reengaged"] *= 0.5
+            st["dodged"] *= 0.5
+        self._save_weights(key)
 
     def cue_weights(self, persona: str | None = None) -> dict[str, float]:
         return dict(self._weights(persona if persona is not None else active_or_home_persona()))
@@ -190,8 +239,14 @@ class AvoidanceTracker:
         store.pop(f"avoid:{entity}", None)
         store.pop(f"avoidmeta:{entity}", None)
         if not cues:
+            self._record_resolution(persona, reengaged=not correct)
             return 0.0
         da = self._reward_and_learn(correct, conf, cues, bus, persona, weights, external=external)
+        # Record AFTER grading so informativeness reflects the base rate as it stood
+        # BEFORE this outcome (the prior uncertainty of the prediction). The outcome
+        # feeds the measured rate regardless of reward gating (refuted = the user
+        # DID re-engage the entity).
+        self._record_resolution(persona, reengaged=not correct)
         self._log(
             "avoidance_confirmed" if correct else "avoidance_refuted",
             entity=entity, correct=correct, da=round(da, 4),
@@ -213,10 +268,14 @@ class AvoidanceTracker:
         weights: dict, *, external: bool,
     ) -> float:
         """Reuse neuron.prediction_reward for the anti-farm-gated reward, emit the audited
-        DA (only when avoidance_gate steers), and nudge this persona's cue weights."""
+        DA (only when avoidance_gate steers), and nudge this persona's cue weights.
+        Informativeness is MEASURED from this persona's observed re-engagement base
+        rate, and the DA is stamped `self_inference` — the belief is self-generated
+        even when the user's behaviour grades it, so it must never count as external
+        in the honesty tally (that bucket is for genuine partner/owner grades)."""
         from brain.neuron import prediction_reward, reward_weight
 
-        pr = prediction_reward(confidence, correct, float(settings.get("avoidance_informativeness", 0.6)))
+        pr = prediction_reward(confidence, correct, self._informativeness(persona))
         if not pr:
             return 0.0
         ext_w = (
@@ -228,11 +287,15 @@ class AvoidanceTracker:
             base = float(settings.get("prediction_reward_base"))
             cap = float(settings.get("prediction_reward_turn_cap"))
             delta = max(-cap, min(cap, pr * base * reward_weight(persona, "correctness") * ext_w))
-            bus.neuromod.add(
-                "DA", delta,
-                source="external_grader" if external else "intrinsic",
-                reward_source="correctness", reason="avoidance_resolve",
-            )
+            # cap = the turn's TOTAL resolution budget (shared with every
+            # EvidenceGate), not a per-entity clamp — N resolutions ≠ N caps.
+            delta = consume_turn_resolution_budget(bus.neuromod, delta, cap)
+            if delta:
+                bus.neuromod.add(
+                    "DA", delta,
+                    source="self_inference" if external else "intrinsic",
+                    reward_source="correctness", reason="avoidance_resolve",
+                )
         # learn this persona's cue weights (bounded); persist so it survives restart
         lr = float(settings.get("evidence_cue_lr", 0.05))
         w_min = float(settings.get("evidence_cue_w_min", 0.1))

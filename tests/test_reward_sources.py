@@ -98,6 +98,41 @@ def test_reward_weight_no_mandate_bound_unaffected():
     assert reward_weight("The Analyst", "correctness") > 1.0
 
 
+def test_reward_weight_composite_product_is_clamped(monkeypatch):
+    """C2: base × dial × mandate is clamped to [0.1, 3.0] — stacked layers must not
+    compose to ~0.01× (silently killing a reward source) or ~9× (dominating it)."""
+    from brain.turn_ctx import bind_turn
+
+    monkeypatch.setattr(
+        "brain.mandates.catalog",
+        lambda: {"m": {"weights": {"correctness": 0.1, "levity": 3.0}}},
+    )
+    monkeypatch.setitem(settings._data, "reward_weight_correctness", 0.2)
+    monkeypatch.setitem(settings._data, "reward_weight_levity", 3.0)
+    with bind_turn("agent", agent_id="the_empath.m"):
+        # The Empath: 0.7 base × 0.2 dial × 0.1 mandate = 0.014 → floored at 0.1
+        assert reward_weight("The Empath", "correctness") == pytest.approx(0.1)
+        # 1.1 base × 3.0 dial × 3.0 mandate = 9.9 → capped at 3.0
+        assert reward_weight("The Empath", "levity") == pytest.approx(3.0)
+
+
+def test_the_stoic_is_flat_one_under_dials_and_mandates(monkeypatch):
+    """C2: the experimental control stays flat 1.0 on every source — dials and
+    mandates must not re-weight it, or divergence measured against the Stoic stops
+    being attributable to valuation."""
+    from brain.turn_ctx import bind_turn
+
+    monkeypatch.setattr(
+        "brain.mandates.catalog",
+        lambda: {"m": {"weights": {"correctness": 0.1, "levity": 3.0}}},
+    )
+    monkeypatch.setitem(settings._data, "reward_weight_correctness", 2.5)
+    assert reward_weight("The Stoic", "correctness") == 1.0  # dial alone
+    with bind_turn("agent", agent_id="the_stoic.m"):  # mandate bound too
+        assert reward_weight("The Stoic", "correctness") == 1.0
+        assert reward_weight("the_stoic", "levity") == 1.0
+
+
 def test_reward_magnitude_settings_exist():
     from brain.settings import settings
 

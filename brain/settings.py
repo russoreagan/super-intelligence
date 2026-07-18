@@ -780,7 +780,8 @@ DEFAULTS: dict[str, float | int | str] = {
     "avoidance_half_life_s": 900.0,  # ~15 min leak: an unfed suspicion fades
     "avoidance_cap": 5.0,  # max accumulated avoidance evidence per entity
     "avoidance_stale_turns": 2,  # an entity unseen this many turns becomes a candidate
-    "avoidance_informativeness": 0.6,  # informativeness passed to prediction_reward on resolve
+    # (no informativeness constant: it is MEASURED per persona from the observed
+    # re-engagement base rate — AvoidanceTracker._informativeness)
     # ── Section: Colony / non-brain (superorganism) capabilities ─────────────
     # Single master toggle for the bio-inspired colony layer (Phases 2–8 of the
     # colony-features plan). 0 = every colony behaviour is a strict no-op and the

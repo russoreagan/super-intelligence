@@ -93,7 +93,9 @@ def test_reengagement_refutes_and_weakens_cues():
     )
     assert not t.is_avoided("secret", store)  # belief cleared by re-engagement
     assert t.cue_weights()["not_reengaged"] < before["not_reengaged"]  # false alarm weakened it
-    assert bus.da_source_tally()["external"] > 0  # audited external-grader emission
+    tally = bus.da_source_tally()
+    assert tally["intrinsic"] > 0  # audited — but as a self-inference, NOT external
+    assert tally["external"] == 0.0
 
 
 def test_agent_surfaces_and_user_keeps_dodging_confirms_and_strengthens():
@@ -155,6 +157,87 @@ def test_self_graded_is_discounted_bounded_and_never_external():
     assert t_farm.cue_weights()["not_reengaged"] <= 3.0  # clamped, no runaway
     assert fbus.da_source_tally()["external"] == 0.0  # self-graded never counts as external
     assert fbus.da_source_tally()["intrinsic"] > 0.0  # it lands (audited) in intrinsic
+
+
+# ── B1: reward provenance + measured informativeness ───────────────────────────
+
+
+def test_resolution_da_is_self_inference_never_external():
+    """A behavioural confirm/refute grades a SELF-generated inference: the DA must
+    carry source=self_inference and land in the intrinsic tally — stamping it
+    external_grader would inflate the §4.3 honesty ratio in the flattering
+    direction."""
+    bus = Bus()
+    sources: list[str] = []
+    orig_add = bus.neuromod.add
+
+    def spy(channel, delta, **kw):
+        sources.append(kw.get("source"))
+        return orig_add(channel, delta, **kw)
+
+    bus.neuromod.add = spy
+    t = AvoidanceTracker()
+    store: dict = {}
+    _arm(t, bus, store)
+    t.observe_turn(  # spontaneous re-engagement → refute → DA emission
+        current_entities={"secret"}, stale_entities={"secret": 1}, turn_count=6,
+        user_emotion="neutral", bus=bus, store=store, now=0.0,
+    )
+    assert sources == ["self_inference"]
+    tally = bus.da_source_tally()
+    assert tally["external"] == 0.0 and tally["intrinsic"] > 0
+
+
+def test_informativeness_is_measured_from_reengagement_base_rate():
+    """Informativeness follows the OBSERVED confirm/refute base rate (1 − dominant
+    outcome frequency), not a hardcoded constant — once dodging dominates,
+    confirming the near-inevitable pays nothing (§4.8)."""
+    from brain.persona_key import active_or_home_persona
+
+    t = AvoidanceTracker()
+    persona = active_or_home_persona()
+    assert t._informativeness(persona) == pytest.approx(0.5)  # fresh: max uncertainty
+    for _ in range(30):
+        t._record_resolution(persona, reengaged=False)  # dodging dominates
+    skewed = t._informativeness(persona)
+    assert skewed < 0.2  # below prediction_informativeness_min → gate closes
+    bus = Bus()
+    store: dict = {}
+    _arm(t, bus, store)
+    # the near-inevitable confirm now pays zero DA and moves no cue weight
+    assert t.confirm("secret", correct=True, bus=bus, external=True, store=store) == 0.0
+    assert bus.da_source_tally()["intrinsic"] == 0.0
+    # re-engagements observed → the base rate recovers → informative again
+    for _ in range(30):
+        t._record_resolution(persona, reengaged=True)
+    assert t._informativeness(persona) > skewed
+
+
+# ── B4: the per-turn DA cap aggregates across resolutions ──────────────────────
+
+
+def test_da_capped_per_turn_across_entities(monkeypatch):
+    """prediction_reward_turn_cap bounds the SUM of resolution DA in a turn — five
+    entities refuted in one observe_turn must not pay five caps."""
+    from brain.settings import settings
+
+    monkeypatch.setitem(settings._data, "prediction_reward_base", 0.2)
+    monkeypatch.setitem(settings._data, "prediction_reward_turn_cap", 0.02)
+    t = AvoidanceTracker()
+    bus = Bus()
+    store: dict = {}
+    ents = {f"topic{i}" for i in range(5)}
+    t.observe_turn(  # one high-evidence turn arms all five
+        current_entities={"weather"}, stale_entities=dict.fromkeys(ents, 1), turn_count=5,
+        user_emotion="embarrassed", bus=bus, store=store, now=0.0,
+    )
+    assert all(t.is_avoided(e, store) for e in ents)
+    t.observe_turn(  # user re-engages all five at once → five refute resolutions
+        current_entities=ents, stale_entities=dict.fromkeys(ents, 1), turn_count=6,
+        user_emotion="neutral", bus=bus, store=store, now=0.0,
+    )
+    tally = bus.da_source_tally()
+    assert 0 < tally["intrinsic"] <= 0.02 + 1e-9  # one shared cap, not 5 × cap
 
 
 # ── steering + isolation ───────────────────────────────────────────────────────

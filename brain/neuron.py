@@ -515,6 +515,12 @@ _REWARD_SOURCES = {
 }
 _MANDATE_WEIGHT_MIN, _MANDATE_WEIGHT_MAX = 0.1, 3.0
 
+# Band for the FINAL reward_weight composite (base × dial × mandate). Each factor
+# is individually bounded, but the product spans ~0.01–9× — wide enough for one
+# stacked layer to effectively kill or dominate a reward source. The composite is
+# clamped to the same band a single mandate weight may occupy.
+_REWARD_WEIGHT_MIN, _REWARD_WEIGHT_MAX = 0.1, 3.0
+
 
 def _mandate_reward_weight(source: str) -> float:
     """Per-mandate multiplier layered on the persona base, resolved ambiently via
@@ -551,10 +557,18 @@ def reward_weight(persona_seed: str, source: str) -> float:
     (reward_weight_<source>, centred 1.0 — the Motivation dials) multiplies on
     top, so motivation is tunable without editing this table. The active turn's
     assigned mandate (if any) layers its own reward_weights the same way, resolved
-    ambiently via turn_ctx — see _mandate_reward_weight."""
+    ambiently via turn_ctx — see _mandate_reward_weight. The composite is clamped
+    to [_REWARD_WEIGHT_MIN, _REWARD_WEIGHT_MAX].
+
+    the_stoic short-circuits to flat 1.0 on every source: it is the experimental
+    control, and dials/mandates must not re-weight it (mirroring its exclusion
+    from the sensory leans and risk-posture tables) or behavioural divergence
+    measured against it stops being attributable to valuation."""
     from brain.persona_key import persona_slug
 
     key = persona_slug(persona_seed)
+    if key == "the_stoic":
+        return 1.0
     base = float(_PERSONA_REWARD_WEIGHTS.get(key, {}).get(source, 1.0))
     try:
         from brain.settings import settings as _settings
@@ -563,7 +577,7 @@ def reward_weight(persona_seed: str, source: str) -> float:
     except Exception:
         override = 1.0
     mandate_mult = _mandate_reward_weight(source)
-    return base * override * mandate_mult
+    return max(_REWARD_WEIGHT_MIN, min(_REWARD_WEIGHT_MAX, base * override * mandate_mult))
 
 
 def loss_aversion(persona_seed: str) -> float:

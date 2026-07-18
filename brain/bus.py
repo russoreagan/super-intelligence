@@ -119,12 +119,16 @@ class Neuromodulators:
 
     # source → the audited provenance class of a reward write. "external" and
     # "external_grader" are grounded outside the brain; "critic_model" is a model
-    # judging (better than pure self-grading, still not the world); everything
-    # else is self-administered.
+    # judging (better than pure self-grading, still not the world);
+    # "self_inference" is a SELF-generated inference graded by observed behaviour
+    # (evidence/avoidance gate resolutions) — distinct in the emission log but
+    # tallied INTRINSIC, never external, so it cannot inflate the honesty ratio;
+    # everything else is self-administered.
     _SIGNAL_TYPES = {
         "external": "external_user",
         "external_grader": "external_grader",
         "critic_model": "critic_model",
+        "self_inference": "self_inference",
     }
 
     def add(

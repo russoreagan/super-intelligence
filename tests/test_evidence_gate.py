@@ -211,17 +211,42 @@ def test_external_confirmation_gets_more_plasticity_than_self():
 
 
 def test_da_tally_audits_provenance():
+    # B1: a gate resolution is a SELF-generated inference. external=True buys full
+    # plasticity, but the DA lands in the INTRINSIC tally (source=self_inference) —
+    # the external bucket is reserved for genuine partner/owner grades.
     bus = Bus()
     g = _cue_gate()
     g.observe({"deflect": 0.8, "topic_change": 0.8}, now=0.0)
     g.resolve(correct=True, informativeness=1.0, bus=bus, external=True)
     tally = bus.da_source_tally()
-    assert tally["external"] > 0
-    # a self-graded resolve lands in the intrinsic bucket, not external
+    assert tally["external"] == 0.0
+    assert tally["intrinsic"] > 0
+    # a self/critic-graded resolve is also intrinsic
+    before = bus.da_source_tally()["intrinsic"]
     g2 = _cue_gate()
     g2.observe({"deflect": 0.8, "topic_change": 0.8}, now=0.0)
     g2.resolve(correct=True, informativeness=1.0, bus=bus, external=False)
-    assert bus.da_source_tally()["intrinsic"] > 0
+    assert bus.da_source_tally()["intrinsic"] > before
+    assert bus.da_source_tally()["external"] == 0.0
+
+
+def test_resolution_da_capped_per_turn_not_per_gate():
+    """B4: prediction_reward_turn_cap bounds the SUM of resolution DA across ALL
+    gates in a turn — five gates resolving at once must not pay five caps."""
+    from brain.settings import settings
+
+    bus = Bus()
+    cap = float(settings.get("prediction_reward_turn_cap"))
+    for i in range(5):
+        g = EvidenceGate(
+            name=f"gate{i}", cluster="test", arm_threshold=1.0,
+            half_life_s=1e9, cue_names=("c",),
+        )
+        g.observe({"c": 1.2}, now=0.0)
+        assert g.armed
+        g.resolve(correct=True, informativeness=1.0, bus=bus, external=True)
+    tally = bus.da_source_tally()
+    assert 0 < tally["intrinsic"] <= cap + 1e-9
 
 
 # ── per-client isolation + serialization ──────────────────────────────────────
