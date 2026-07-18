@@ -162,9 +162,9 @@ The appraisal ladder from §1.5 runs unconditionally, flag or no flag.
 
 About sixty declared connections between named parts of the brain. Weights get nudged after every session and persist per personality.
 
-**One precision point that matters, now with one bounded exception.** The core map is hand-drawn: the connections between the brain's own cells never change, and learning only adjusts how strong an existing pathway is. For most of the project that was the whole story, and "learned weights on a fixed map" was the exact honest line. There is now a first, carefully bounded form of growth (§2.9): the brain can grow a new class of connection that attaches a vetted skill onto a cell. So the accurate line today is that the core cell-to-cell wiring is still fixed, and a first tier of structural growth wires vetted parts onto it. Still not "it rewires itself" in the open-ended sense a neuroscientist would hear, and worth stating precisely.
+**One precision point that matters.** The connections between the brain's own cells are hand-drawn and fixed. Learning moves their weights, how strongly one pathway pulls the next, but not their existence: it grows no new cell-to-cell connection and prunes no old one. The core map is a fixed graph with learned weights on it. Say it that way and you are accurate; say "it rewires itself" and a neuroscientist will catch you, because the cell-to-cell topology does not.
 
-The map is also now made explicit: a node registry names every part the wiring can reach and audits at boot for names that are declared but wired to nothing, or wired but never declared. Inspection, not growth, and the groundwork the structural tier builds on.
+A node registry names every part the wiring can reach and audits at boot for names declared but wired to nothing, or wired but never declared, so the map is fully inspectable. And one bounded, fenced layer of genuine structural growth runs on top of the fixed core, wiring vetted skills onto cells as learned attachments (§2.9). The core stays fixed; that growth is its own layer.
 
 ### 2.8 The workspace spotlight (Global Workspace Theory, Baars & Dehaene) · Live
 
@@ -180,9 +180,9 @@ Ignition is deliberately hard to reach — it marks sustained focus, not a passi
 
 ### 2.9 Path plasticity (structural plasticity, Tier 1 · synaptogenesis) · Live
 
-**Say it like this:** For the first time the brain can grow a new connection, not just tune the strength of the ones it was born with. It does not invent new abilities from nothing. It has a library of vetted skills, and learning decides which of them to wire onto which part of the mind, and how firmly.
+**Say it like this:** The brain can grow new connections, not only tune the strength of the ones it has. It does not invent new abilities from nothing. It keeps a library of vetted skills, and learning decides which of them to wire onto which part of the mind, and how firmly.
 
-This is the first thing that qualifies the "frozen map" claim in §2.7, and it does so carefully. A grown connection here is a learned attachment: a curated, already-screened skill wired onto one of the drafting cells as a per-personality edge, with a strength that learning moves like any other weight. The system never writes the skill. It only decides the wiring, which skill attaches where and whether the attachment earns its place or fades. So the growth is real but bounded. The parts are vetted in advance; only the arrangement is learned.
+A grown connection here is a learned attachment: a curated, already-screened skill wired onto one of the drafting cells as a per-personality edge, with a strength that learning moves like any other weight. The system never writes the skill. It only decides the wiring, which skill attaches where and whether the attachment earns its place or fades. So the growth is real but bounded. The parts are vetted in advance; only the arrangement is learned.
 
 It explores without risk because candidate attachments ride the drafters. When the brain drafts a reply five ways, some drafts carry an experimental attachment. The critic scores them before anything is spoken, so a bad experiment is just a losing draft the user never sees. A winning attachment is reinforced, a losing one is demoted, and an attachment that keeps proving out crosses a threshold and becomes an established part of that personality's wiring, injected on every relevant turn through the same fenced, untrusted-by-default boundary that governs any app-supplied skill.
 
@@ -330,7 +330,7 @@ Four related weights that read like tunable dials are hardcoded constants for th
 
 Emotionally intense turns imprint harder, either way, because fear teaches as hard as joy. Extreme stress imprints less. The implementation uses magnitude rather than sign, which is what the theory actually predicts.
 
-On by default. It replaces a legacy binary skip (which simply dropped learning on a stressed single-draft turn) with the graded model: arousal and emotional intensity raise how much a turn imprints, and only extreme stress damps it back down.
+On by default. Arousal and emotional intensity raise how much a turn imprints, and only extreme stress damps it back down, so a vivid moment leaves a deeper mark and a panicked one does not overwrite everything.
 
 ### 4.6 Delayed credit (eligibility traces, Sutton) · Live
 
@@ -728,7 +728,7 @@ The reaper is deliberately patient. A tenant brain is meant to stay awake and ke
 
 A tenant process never holds the master key. It gets a scoped credential whose identity *is* the organization, so the database itself enforces the boundary rather than trusting our query code to.
 
-For a stretch this was inert in production, and it is worth knowing why because the fix is the interesting part. The code used to decide whether it could still mint a scoped credential by inspecting the shape of the database's public signing key — and that heuristic was wrong, so it gave up and fell back to the master key, which bypasses the database's own tenant enforcement. The fix stops guessing from key shape and instead **mints the credential and checks whether the database actually accepts it.** A tenant gets its scoped identity back whenever the database still honors it, and falls back only on a genuine rejection. A kill-switch can force the fallback if ever needed. So tenant isolation is enforced in the database again, with the in-query scoping standing as a second, independent layer rather than the only one.
+The credential is minted by **having the database check whether it accepts the token**, rather than inferring from the shape of the database's public signing key, which is a guess that can be wrong. A tenant gets its scoped identity whenever the database honors it, and falls back to the master key only on a genuine rejection, with a kill-switch to force the fallback if ever needed. So tenant isolation is enforced in the database itself, with the in-query scoping standing as a second, independent layer rather than the only one.
 
 ### 9.4 Promoting a personality · Live, routing gated
 
@@ -832,7 +832,7 @@ Thirty-six ideas. For each: what it claims, what we built, and a verdict.
 ### Global Workspace Theory (Baars, Dehaene) → §2.8
 **The claim:** Consciousness is a broadcast. Specialists compete; the winner ignites and is made globally available to every other specialist at once.
 **What we built:** The thalamus reads the whole workspace each turn, decides what the mind is ignited on, and broadcasts that verdict. The workspace field itself is the bus concentration layer (decaying per-topic salience, an armed/quiet state machine, a ring of what was hot); the thalamus is the spotlight over it, the one reader that sees every topic at once and fuses them into a single ranked verdict. Ignition wakes a specialist the local gate would have skipped (a slow-accumulating threat), widens memory recall and seeds it with the workspace's hot entities, and seeds what the idle mind dwells on. The DMN subscribes to the `attention.focus` broadcast — a real subscriber — so "available system-wide" is literal.
-**Verdict: Solid, and recently made so.** For most of the project's life this was a stub: the spotlight published to zero subscribers and its verdict was discarded by the caller. That is fixed — the four GWT predicates (competition, ignition, broadcast, persistence) each map to code, and the broadcast is load-bearing at frontal, hippocampus, and the DMN, advisory at parietal, matching the architecture figure's fan-out. The honest caveat: it ships with a deliberately conservative ignition threshold, so it fires only on genuinely sustained focus. It earns the claim now; it did not before.
+**Verdict: Solid.** The four GWT predicates each map to code: competition among tracked topics, ignition on a sustained coalition, broadcast to a real subscriber, and persistence across turns. The broadcast is load-bearing at frontal, hippocampus, and the DMN, advisory at parietal, matching the architecture figure's fan-out. The one caveat is a deliberately conservative ignition threshold, so it fires only on genuinely sustained focus.
 
 ### Extended Mind / Active Externalism (Clark & Chalmers, 1998) → §3.1, §3.2
 **The claim:** Otto's notebook is part of Otto's mind. Cognition extends into reliably coupled external resources.
@@ -882,7 +882,7 @@ Thirty-six ideas. For each: what it claims, what we built, and a verdict.
 ### Hebbian plasticity, three-factor variant (Frémaux & Gerstner) → §2.7, §4.1
 **The claim:** Cells that fire together wire together. The three-factor version adds a gate: coincidence alone is not enough, a reward signal has to license the change.
 **What we built:** Co-activation along the fired path, gated by chemistry, with homeostatic decay first.
-**Verdict: Solid for weights. Was false for structure; a first bounded tier now grows it, a second is in progress.** For most of the project no connection was ever grown or pruned. A first structural tier (§2.9, live) now grows and prunes one vetted class of connection: skill attachments onto drafting cells, licensed by the same three-factor reward gate as weights and fenced off from every safety node. A second tier (§2.10, building now) extends this to bringing reserve cells online as genuinely new units. The core cell-to-cell map is still hand-drawn and fixed. **Say "learned weights on a fixed map, plus a growing tier that wires vetted skills onto it."**
+**Verdict: Solid for weights, with a bounded structural tier on top.** Weight learning is three-factor and neuromodulated: co-activation licensed by a reward signal, not coincidence alone. Structure is fixed at the core cell-to-cell level and plastic in one fenced layer: vetted skills are grown and pruned as attachments onto drafting cells (§2.9), under the same three-factor license and walled off from every safety node. Bringing reserve cells online as genuinely new units (§2.10) is in progress. **Say "learned weights on a fixed map, plus a bounded tier that wires vetted skills onto it."**
 
 ### Spike-timing-dependent plasticity → nowhere
 **What we built:** Nothing. No timing, no order dependence.
@@ -904,7 +904,7 @@ Thirty-six ideas. For each: what it claims, what we built, and a verdict.
 ### Yerkes-Dodson, the inverted U → §4.5
 **The claim:** Moderate arousal helps encoding. Extreme stress hurts it. Intense events of *either* valence imprint hard.
 **What we built:** Arousal and emotional intensity raise plasticity; extreme stress damps it. Magnitude, not sign, which is correct because fear teaches as hard as joy.
-**Verdict: Solid, and now on by default (2026-07-17).** Was dark for most of the project's life; the graded model now runs in place of the legacy binary skip.
+**Verdict: Solid, on by default.** Arousal and emotional intensity raise how much a turn imprints, and only extreme stress damps it back down, using magnitude rather than sign, which is what the theory predicts.
 
 ### Complementary Learning Systems (McClelland, McNaughton & O'Reilly) → §3.4, §3.8, §4.7
 **The claim:** Two systems. A fast one for one-shot episodes, a slow one for interference-resistant structure. Sleep moves content between them.
@@ -1151,7 +1151,7 @@ Thirty-six ideas. For each: what it claims, what we built, and a verdict.
 | Thing | Reality |
 |---|---|
 | **Spiking neurons** | Not implemented. Stateless comparators. Never claim it. |
-| **Rewiring itself** | The core cell-to-cell map is still fixed, but no longer the whole story. A first tier of structural growth (§2.9, live) grows and prunes one vetted class of connection: skill attachments onto drafting cells, learned as wiring. Weights learn on the fixed map; structure now grows only in that one bounded, vetted, safety-fenced way. Tier 2 (§2.10, building now) extends this to bringing reserve cells online as genuinely new units, and is not yet merged. |
+| **Rewiring itself** | The core cell-to-cell map is fixed; learning moves weights on it, not its structure. Structural growth is real but bounded to one fenced layer: vetted skills wired onto drafting cells as learned attachments (§2.9, live). Bringing reserve cells online as genuinely new units (§2.10) is building now, not yet merged. |
 | **Reward prediction error / TD learning** | Not implemented. The dopamine delta is a proxy for it. |
 | **Replay** | Not implemented. Consolidation is batch post-processing. |
 | **Embodied cognition** | One chemistry-gated perception switch. Real, but keep the claim that size. |
