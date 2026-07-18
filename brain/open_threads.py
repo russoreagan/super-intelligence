@@ -33,6 +33,8 @@ import time
 import uuid
 from dataclasses import asdict, dataclass, field
 
+from brain.bounded_ledger import aged_out, cap_evict
+
 SECTION = "Open threads"
 LEDGER_FILE = "open_questions.md"
 
@@ -149,12 +151,14 @@ def open_thread(
     )
     threads = list(threads)
     threads.append(t)
-    if len(threads) > MAX_OPEN_THREADS:
-        # Evict the oldest-least-advanced open thread (never a pending one).
-        evictable = [x for x in threads if x.status == STATUS_OPEN and x.id != t.id]
-        if evictable:
-            victim = min(evictable, key=lambda x: (x.advances, x.opened_ts))
-            threads = [x for x in threads if x.id != victim.id]
+    # Evict the oldest-least-advanced open threads (never a pending one, never the new one).
+    for victim in cap_evict(
+        threads,
+        MAX_OPEN_THREADS,
+        staleness=lambda x: (x.advances, x.opened_ts),
+        evictable=lambda x: x.status == STATUS_OPEN and x.id != t.id,
+    ):
+        threads = [x for x in threads if x.id != victim.id]
     return threads, t
 
 
@@ -206,7 +210,7 @@ def reap_aged(
     retired: list[Thread] = []
     for t in threads:
         opened = t.opened_ts or t.last_ts or now
-        if (now - opened) >= max_age_s:
+        if aged_out(opened, now, max_age_s):
             retired.append(t)
         else:
             kept.append(t)

@@ -10,6 +10,7 @@ import re
 from collections import deque
 from dataclasses import dataclass, field
 
+from brain.bounded_ledger import cap_evict
 from brain.bus import Bus
 from brain.clusters.skill_selector import ActiveSkillContext
 
@@ -19,6 +20,11 @@ CLUSTER = "parietal"
 RING_SIZE = 6
 # How many ignited workspace foci to keep in the rolling record (advisory only).
 FOCUS_HISTORY_SIZE = 8
+# Bound on the entity tracker: keep only the most recently seen. Its consumers are
+# recency-shaped (avoidance staleness, session summary), so an entity unmentioned
+# for hundreds of turns carries no signal — without a cap the map grows for the
+# life of the session and bloats everything that snapshots it.
+MAX_TRACKED_ENTITIES = 128
 
 
 @dataclass
@@ -200,9 +206,13 @@ class ParietalCluster:
         }
         self._ring.append(entry)
 
-        # Track entities
+        # Track entities (bounded: evict the least recently seen past the cap)
         for entity in features.get("entities", []):
             self._entities[entity] = self._turn_count
+        for ent, _ in cap_evict(
+            self._entities.items(), MAX_TRACKED_ENTITIES, staleness=lambda kv: kv[1]
+        ):
+            del self._entities[ent]
 
         # Record the current global-workspace spotlight (advisory; gates nothing).
         self._record_workspace_focus(features)

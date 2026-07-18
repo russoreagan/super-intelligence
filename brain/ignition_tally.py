@@ -15,6 +15,7 @@ import json
 import time
 from pathlib import Path
 
+from brain.bounded_ledger import decay
 from brain.settings import settings
 
 # The exact thalamus._COALITION vocabulary — anything else is clamped to "other" so the
@@ -62,7 +63,7 @@ def _save(persona: str, data: dict) -> None:
 
 def _decayed(score: float, last_ts: float, now: float) -> float:
     hl_s = max(0.1, float(settings.get("ignition_tally_half_life_h", 72.0))) * 3600.0
-    return score * (0.5 ** (max(0.0, now - last_ts) / hl_s))
+    return decay(score, last_ts, now, hl_s)
 
 
 def record(coalition: str, persona: str = "") -> None:
