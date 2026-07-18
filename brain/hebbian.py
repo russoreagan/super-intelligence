@@ -244,7 +244,11 @@ class HebbianUpdater:
         per-persona `fragment.<skill_id> → drafter` edge; fragments carried by LOSING
         drafters are gently demoted (existing edges only, so a fresh losing exploration
         simply never establishes). Non-drafter hosts (critic/reframer/empathy/executive)
-        get co-activation credit for an established attachment they carried on a good turn.
+        get co-activation credit for an established attachment they carried on a good turn —
+        MAINTENANCE only. This pass still creates nothing on a non-drafter, deliberately: a
+        judge's first attachment comes from brain/judge_attachment.py, which earns it on
+        cross-turn PAIRED accuracy and gates it behind judge-specific runtime clamps. A whole
+        turn's outcome is far too coarse a signal to hand a judge new content on.
 
         The step is `outcome * fragment_gain` — deliberately NOT the tiny per-path Hebbian
         delta, so ONE good win lifts a new attachment (starting at rest) clear of the prune

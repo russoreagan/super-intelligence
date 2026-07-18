@@ -83,6 +83,26 @@ def _effective_answer_only(features) -> bool:
 
 
 class _TurnMixin:
+    def _judge_grade_lookup(self, turn_id: str) -> float | None:
+        """The EXTERNAL grade recorded for `turn_id`, or None.
+
+        Handed to the judge-attachment grader so a genuine partner/owner verdict
+        (§4.4) can ground a judge's self-read — the grade lands on the trace after
+        the turn ends, so it is only ever readable one turn later, which is exactly
+        when this is called. Reads the live in-session traces; a consolidated turn is
+        simply ungraded (None), never guessed.
+        """
+        if not turn_id:
+            return None
+        try:
+            for t in getattr(self, "_session_traces_full", []) or []:
+                if getattr(t, "turn_id", None) == turn_id:
+                    g = getattr(t, "external_grade", None)
+                    return None if g is None else float(g)
+        except Exception:
+            pass
+        return None
+
     # ── Turn processing ───────────────────────────────────────────────────────
 
     async def api_turn(
@@ -1357,6 +1377,24 @@ class _TurnMixin:
                 )
             except Exception:
                 pass
+        # Judge-host attachments (brain/judge_attachment.py): grade the PREVIOUS turn's
+        # judge claims against what actually happened this turn — the cross-turn signal
+        # that replaces the within-turn drafting competition a judge does not have — and
+        # establish any shadow candidate whose evidence gate has committed. Runs here,
+        # after parietal's update, so the observed affect is this turn's. No-op when the
+        # feature is off or BRAIN_WIRING_FROZEN; never breaks the turn.
+        try:
+            self.frontal._judge_attach.observe_turn(
+                getattr(self.bus, "evidence", None),
+                self.bus,
+                user_emotion=(features.get("user_emotion") or features.get("emotion") or ""),
+                sentiment=float(features.get("sentiment", 0.0) or 0.0),
+                grade_lookup=self._judge_grade_lookup,
+                turn_count=self.parietal.turn_count,
+                wiring=self.frontal._wiring,
+            )
+        except Exception:
+            pass
         # Update per-modality user style tracking (style synchrony feature)
         if settings.get("enable_style_synchrony") and isinstance(features, dict):
             _style_modality = features.get("input_modality", "text")

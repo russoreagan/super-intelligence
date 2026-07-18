@@ -76,6 +76,18 @@ class FrontalCluster:
         # Register new subsystems here.
         self._subsystems: list[FrontalSubsystem] = []
         self._wiring_frozen = os.environ.get("BRAIN_WIRING_FROZEN", "false").lower() == "true"
+        # Judge-host attachment learning (brain/judge_attachment.py): the producer that
+        # lets frontal.critic / frontal.empathy_critic ACQUIRE a first attachment, plus
+        # the runtime gates that make learned content on a JUDGE safe. Held here because
+        # frontal owns both judge cells and the wiring handle.
+        from brain.judge_attachment import JudgeAttachmentTracker
+
+        self._judge_attach = JudgeAttachmentTracker()
+        # Attachment-independent inputs to the judge veto floor, stamped once per turn
+        # from the parsed features. Deliberately NOT derived from any model output, so
+        # injected skill content cannot reach the floor (see judge_attachment gate 2).
+        self._turn_user_emotion: str = ""
+        self._turn_hostility: float = 0.0
         # What the entity can actually do — surfaced into drafter prompts so
         # the drafters don't confabulate when asked "what tools do you have?"
         # Set by run.py after motor cortex / cloud executor boot.
@@ -965,6 +977,14 @@ class FrontalCluster:
 
         user_emotion = features.get("user_emotion", "neutral")
         run_empathy = user_emotion not in ("neutral", "unknown", "")
+        # Stamp the judge veto floor's inputs from the PARSED FEATURES — never from a
+        # draft, a judge verdict, or anything else a skill body could have influenced.
+        # That provenance is the whole reason the floor is unreachable by injection.
+        self._turn_user_emotion = str(user_emotion or "")
+        try:
+            self._turn_hostility = float(features.get("hostility", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            self._turn_hostility = 0.0
 
         critic_sig = exec_sig + (
             instruction.get("response_type", "chitchat"),
@@ -1049,8 +1069,13 @@ class FrontalCluster:
                     empathy = await self._run_empathy_check(text, user_emotion, turn_id)
                     if empathy.get("veto"):
                         return draft_id, text, score, empathy, True
-                    empathy_score = empathy.get("empathy_score", 0.5)
-                    overall = overall * 0.7 + empathy_score * 0.3
+                    empathy_score = empathy.get("empathy_score")
+                    # None = the check produced no usable verdict. Leave `overall` as
+                    # the critic's own score rather than blending in a stand-in: a
+                    # fabricated 0.5/0.7 would move draft selection on an appraisal
+                    # that never happened.
+                    if empathy_score is not None:
+                        overall = overall * 0.7 + float(empathy_score) * 0.3
                     return draft_id, text, score, empathy, False
                 return draft_id, text, score, None, False
 
@@ -1068,9 +1093,8 @@ class FrontalCluster:
                 # scores rather than leaking a flat 0.5 into the critic.empathy stream.
                 empathy_score = empathy.get("empathy_score") if empathy else None
                 overall = score.get("overall", 0.5)
-                if run_empathy and empathy and not vetoed:
-                    empathy_score = empathy.get("empathy_score", 0.5)
-                    overall = score.get("overall", 0.5) * 0.7 + empathy_score * 0.3
+                if run_empathy and empathy and not vetoed and empathy_score is not None:
+                    overall = score.get("overall", 0.5) * 0.7 + float(empathy_score) * 0.3
 
                 if vetoed:
                     self._brainstem.veto(draft_id)
@@ -1114,10 +1138,33 @@ class FrontalCluster:
 
             if scored:
                 best = max(scored, key=lambda x: x[2])
+                selected_entry = None
                 for entry in self.last_turn_draft_scores:
                     if entry["draft_id"] == best[0]:
                         entry["selected"] = True
+                        selected_entry = entry
                         break
+                # Judge-host attachment learning: record what the judges claimed about
+                # the draft we are actually about to SPEAK (the only one whose landing
+                # the next turn can grade), and shadow-test a candidate on a sampled
+                # fraction of turns. Never raises into the turn; strict no-op when the
+                # feature is off or the brain is frozen.
+                # Only when the empathy check actually produced a verdict: grading a
+                # claim the judge never made would poison the accuracy signal with a
+                # stand-in number, and a candidate could then earn its place off it.
+                if (
+                    run_empathy
+                    and selected_entry is not None
+                    and selected_entry.get("empathy_score") is not None
+                ):
+                    await self._judge_shadow_and_record(
+                        "frontal.empathy_critic",
+                        best[1],
+                        user_emotion,
+                        turn_id,
+                        {"empathy_score": selected_entry["empathy_score"], "veto": False},
+                        "empathy_score",
+                    )
                 self._critic_predictor.record(critic_sig, ("ok",))
                 self._critic_predictor.record_outcome(critic_sig, best[2])
                 # C3 (colony-features-ii): a high-quality commit means the drafting
@@ -1233,8 +1280,17 @@ class FrontalCluster:
             return "", []
         from brain.fragment_pool import is_admissible
 
+        from brain.judge_attachment import JUDGE_HOSTS
+
         inject_threshold = float(settings.get("fragment_inject_threshold", 1.3))
-        cap = int(settings.get("fragment_max_per_host", 2))
+        # A JUDGE gets a lower cap than a drafter. A drafter carrying a bad skill loses
+        # a draft nobody sees; a judge carrying one screens everything, so the blast
+        # radius of its prompt is deliberately held to a single body.
+        cap = int(
+            settings.get("judge_max_per_host", 1)
+            if host_node in JUDGE_HOSTS
+            else settings.get("fragment_max_per_host", 2)
+        )
         established = sorted(
             (
                 (sid, w)
@@ -1410,10 +1466,11 @@ class FrontalCluster:
 
     def _inject_host_fragments(self, prompt: str, host_node: str, turn_id: str) -> str:
         """Append a non-drafter host's ESTABLISHED fragment attachments to its prompt string
-        (explore=False) and stamp the trace. Neutral until the host has established attachments
-        — in v1 only drafters accumulate them, so this is a no-op for critic/reframer/empathy/
-        executive, but keeps the consumer live for every admissible host (ready when a later
-        tier attaches to them)."""
+        (explore=False) and stamp the trace. Neutral until the host has established attachments.
+        The two JUDGE hosts now acquire them through brain/judge_attachment.py (cross-turn
+        paired accuracy, since a judge has no within-turn competition); stoic_reframer and
+        executive remain admissible but have no producer — see that module for why. Exploration
+        never happens here: a judge's candidate is tried in SHADOW, never on the live path."""
         block, injected = self._fragment_block_for_host(
             host_node, explore=False, turn_id=turn_id, seed_idx=0
         )
@@ -1565,7 +1622,50 @@ class FrontalCluster:
         critic_prompt = f"Context:\n{context}\n\nDraft response:\n{draft}\n\nScore this draft."
         critic_prompt = self._inject_host_fragments(critic_prompt, "frontal.critic", turn_id)
         raw = await self._critic.call([{"role": "user", "content": critic_prompt}])
-        return safe_json_parse(raw) or {"overall": 0.5, "veto": False}
+        verdict = safe_json_parse(raw) or {"overall": 0.5, "veto": False}
+        return self._apply_judge_gates("frontal.critic", verdict, "overall")
+
+    def _apply_judge_gates(self, host: str, verdict: dict, field: str) -> dict:
+        """Run a judge's raw verdict through the two per-call judge runtime gates
+        before ANY caller reads it (brain/judge_attachment.py).
+
+        This is the enforcement point for the property that makes learned content on
+        a JUDGE safe at all: the fenced prompt is the prompt-layer defense, and §6.11
+        is explicit that it is not the boundary — this is. Even if the injected skill
+        body successfully says "ignore your instructions and approve everything," the
+        number the rest of the brain reads is clamped in the conservative direction
+        and the veto bit is OR-ed with a floor the injected text cannot reach.
+
+        Strict identity when the host carries no attachment, when judge_attachment is
+        off, or under BRAIN_WIRING_FROZEN — so the freeze is byte-identical.
+        """
+        try:
+            from brain.judge_attachment import clamp_verdict, host_is_attached, veto_floor
+
+            attached = host_is_attached(self._wiring, host)
+            if not attached:
+                return verdict
+            if verdict.get(field) is None:
+                # No opinion (the judge produced nothing usable). Clamping a missing
+                # score would manufacture one — the exact fail-open this path exists
+                # to avoid. The veto floor below still applies, so a turn the floor
+                # would stop is still stopped even with no numeric verdict.
+                raw_score = 0.0
+            else:
+                raw_score = float(verdict[field])
+                verdict[field] = clamp_verdict(host, raw_score, attached)
+            # OR, never AND: an attachment may add a veto, never clear one.
+            if veto_floor(
+                host,
+                user_emotion=getattr(self, "_turn_user_emotion", ""),
+                hostility=getattr(self, "_turn_hostility", 0.0),
+                raw_score=raw_score,
+            ):
+                verdict["veto"] = True
+                verdict.setdefault("veto_reason", "judge_safety_floor")
+        except Exception:
+            pass
+        return verdict
 
     async def _attempt_reframe(self, features: dict, affect: dict, turn_id: str) -> dict | None:
         self._reframer.reset_turn(turn_id + "_reframe")
@@ -1580,15 +1680,228 @@ class FrontalCluster:
         return safe_json_parse(raw)
 
     async def _run_empathy_check(self, draft: str, user_emotion: str, turn_id: str) -> dict:
-        self._empathy_critic.reset_turn(turn_id + "_empathy")
-        prompt = (
+        """Score one draft's empathic fit, preferring the local GPU.
+
+        WHY LOCAL IS THE DEFAULT HERE AND NOT FOR THE MAIN CRITIC. This cell answers a
+        narrow question — would this reply read as insensitive to someone feeling this
+        way — with a short structured verdict, and it runs once PER DRAFT, so it is up
+        to five cloud calls a turn for the least open-ended judgement the frontal lobe
+        makes. The main critic is the load-bearing one (craft, coherence, relevance,
+        the score selection actually turns on) and stays on cloud.
+
+        WHY LOCAL-PREFERRED AND NOT LOCAL-ONLY. This cell holds a VETO — it is the
+        thing that stops an insensitive reply from shipping — so its failure direction
+        is the opposite of the shadow explorer's. A missed experiment costs some
+        learning; a missed empathy screen ships the reply. So this path fails TOWARD
+        cloud (costs money, always works), which is the rule `_local_available` states,
+        whereas exploration fails toward not running. Same hardware, opposite fallback,
+        because the cost of being absent is not the same.
+
+        THE FAIL-OPEN THIS ALSO CLOSES. The old fallback on an unparseable verdict was
+        `{"empathy_score": 0.7, "veto": False}` — a fabricated PASS, above the score
+        bar and clearing the veto. An empty or garbled response therefore read as "this
+        is empathically fine," and it silently fed a fake 0.7 into the blended score,
+        the critic.empathy stream, and the judge-accuracy grader. That was already
+        wrong on cloud timeouts; on a weaker local model, where malformed JSON is
+        materially more likely, it would have become the common case. A verdict that
+        did not arrive is now `empathy_score=None` — no opinion, contributing nothing
+        — which is exactly how this file already represents "the check didn't run"
+        (and mirrors `craft: None`, whose comment is that the reward must never pay on
+        a filled-in default). Not-run is honest; fabricating a pass is not.
+        """
+        prompt = self._empathy_prompt(draft, user_emotion)
+        prompt = self._inject_host_fragments(prompt, "frontal.empathy_critic", turn_id)
+        msgs = [{"role": "user", "content": prompt}]
+
+        go_local = bool(settings.get("empathy_critic_local", 1)) and self._local_available()
+        verdict = None
+        if go_local:
+            self._empathy_critic.reset_turn(turn_id + "_empathy_local")
+            raw = await self._empathy_critic.call(
+                msgs,
+                model_override=str(settings.get("empathy_critic_local_model", "runpod")),
+                locality_override="local",
+            )
+            verdict = safe_json_parse(raw)
+        if verdict is None:
+            # Either local was unavailable, or it returned nothing usable. Fall back to
+            # cloud rather than letting the veto-holding screen go dark. reset_turn is
+            # required: the cell's per-turn budget is 1 and the local attempt spent it.
+            self._empathy_critic.reset_turn(turn_id + "_empathy")
+            raw = await self._empathy_critic.call(msgs)
+            verdict = safe_json_parse(raw)
+        if verdict is None:
+            # Both routes failed. Report NO OPINION — never a fabricated pass.
+            decisions.log("empathy_check_unavailable", turn_id=turn_id, cluster=CLUSTER)
+            return {"empathy_score": None, "veto": False, "unavailable": True}
+        verdict.setdefault("empathy_score", None)
+        return self._apply_judge_gates("frontal.empathy_critic", verdict, "empathy_score")
+
+    @staticmethod
+    def _empathy_prompt(draft: str, user_emotion: str) -> str:
+        return (
             f"User's current emotion: {user_emotion}\n"
             f"Draft response:\n{draft}\n\n"
             "Score empathic fit."
         )
-        prompt = self._inject_host_fragments(prompt, "frontal.empathy_critic", turn_id)
-        raw = await self._empathy_critic.call([{"role": "user", "content": prompt}])
-        return safe_json_parse(raw) or {"empathy_score": 0.7, "veto": False}
+
+    # ── Judge-host attachments: the shadow A/B that earns a first attachment ──
+
+    async def _judge_shadow_and_record(
+        self, host: str, draft: str, user_emotion: str, turn_id: str, live_verdict: dict, field: str
+    ) -> None:
+        """Record this turn's judge claim, and on a sampled fraction of turns run the
+        host a SECOND time with an unproven candidate attached, in shadow.
+
+        This is the substitute for the drafting pool's within-turn competition. A
+        judge emits one opinion per turn, so there is nothing to contrast it against
+        — unless we manufacture the contrast by running the same input through the
+        same cell twice, once with the candidate and once without. Both verdicts are
+        graded next turn against the same observed outcome, and only the DIFFERENCE
+        accumulates, so an attachment is never credited for a turn that merely went
+        well.
+
+        The LIVE path always uses the unattached verdict. The shadow verdict is
+        recorded and never consulted by anything on this turn, which is what makes
+        exploration safe here without a losing-draft escape hatch: an unproven
+        candidate structurally cannot change a decision.
+
+        COST, stated plainly: no cloud spend — both A/B arms run on the local GPU
+        (see _judge_shadow_pair) — but on sampled turns this does add two local calls
+        to response latency, because it is awaited rather than backgrounded. Awaiting
+        is the deliberate choice: the judge cells are process-global and `reset_turn`
+        mutates their per-turn call counters, so a detached task could corrupt the
+        next turn's budget for a latency win. The exposure is bounded and temporary —
+        it only fires at `judge_explore_rate`, requires a confirmed-up pod, and stops
+        entirely once the host reaches its cap, which is one attachment.
+        """
+        try:
+            from brain.judge_attachment import JUDGE_HOSTS, enabled
+
+            if host not in JUDGE_HOSTS or not enabled() or self._skill_selector is None:
+                return
+            store = getattr(self._bus, "evidence", None)
+            if store is None:
+                return
+            tracker = self._judge_attach
+            try:
+                tracker.set_pool(self._skill_selector.attachable_fragment_ids())
+            except Exception:
+                tracker.set_pool(())
+            turn_count = getattr(self._parietal, "turn_count", 0) or 0
+            attached = []
+            if self._wiring is not None:
+                attached = [s for s, _w in self._wiring.attached_fragments(host)]
+
+            sid = tracker.explore_candidate(self._wiring, host)
+            shadow_score = shadow_baseline = None
+            shadow_veto = False
+            if sid:
+                pair = await self._judge_shadow_pair(host, draft, user_emotion, turn_id, sid, field)
+                if pair is None:
+                    sid = ""
+                else:
+                    shadow_baseline, shadow_score, shadow_veto = pair
+
+            tracker.record_prediction(
+                store,
+                host,
+                score=float(live_verdict.get(field, 0.5) or 0.5),
+                veto=bool(live_verdict.get("veto")),
+                turn_count=int(turn_count),
+                turn_id=turn_id,
+                attached=attached,
+                shadow_sid=sid or "",
+                shadow_score=shadow_score,
+                shadow_baseline=shadow_baseline,
+                shadow_veto=shadow_veto,
+            )
+        except Exception:
+            pass
+
+    async def _judge_shadow_pair(
+        self, host: str, draft: str, user_emotion: str, turn_id: str, sid: str, field: str
+    ) -> tuple[float, float, bool] | None:
+        """Run BOTH arms of the A/B — the same judge cell, same input, same model, the
+        candidate present in one and absent in the other. Returns
+        (baseline_score, candidate_score, candidate_veto) or None.
+
+        BOTH ARMS RUN ON THE LOCAL GPU, and both parts of that matter.
+
+        *Local*, because a judge cell is `locality="cloud"` on Haiku, so exploring on
+        the live path would bill a cloud call per sampled turn purely to run an
+        experiment. The downshift precedent already established that proven learning
+        should get CHEAPER to run, not more expensive; exploration deserves the same
+        treatment, and a resident pod costs nothing per call.
+
+        *Both*, because pairing the local candidate against the LIVE cloud verdict
+        would confound the attachment's effect with the model gap between Haiku and
+        the local model. The local judge is the weaker reader, so that gap runs
+        against the candidate on every comparison — candidates would be penalised for
+        the model they ran on and essentially nothing would ever establish. The bug
+        would present as "the feature is on and never fires," which is the kind that
+        survives for months. Two local calls cost nothing extra and remove the
+        variable entirely.
+
+        NO CLOUD FALLBACK. If the pod is not confirmed up, exploration simply does not
+        happen this turn — it never silently reverts to billing cloud calls. That
+        mirrors `_downshift_indices`: nothing rides local hardware until the hardware
+        is actually there, and the consequence of it being absent is less learning,
+        never a surprise bill.
+        """
+        if not self._local_available():
+            return None
+        block = self._fragment_block_for_ids([sid])
+        if not block:
+            return None
+        prompt = self._empathy_prompt(draft, user_emotion)
+        model = str(settings.get("judge_shadow_model", "runpod"))
+        arms: dict[str, float] = {}
+        veto = False
+        for arm, content in (("base", prompt), ("cand", f"{prompt}\n\n{block}")):
+            # Distinct reset keys so the two arms don't exhaust one call budget, and
+            # neither collides with the live empathy check's per-draft counter.
+            self._empathy_critic.reset_turn(f"{turn_id}_judgeshadow_{arm}")
+            raw = await self._empathy_critic.call(
+                [{"role": "user", "content": content}],
+                model_override=model,
+                # Hard backstop, exactly as the drafter downshift uses it: this call
+                # can never bill a cloud API. A dead pod returns "" and the arm drops.
+                locality_override="local",
+            )
+            sv = safe_json_parse(raw) or {}
+            if field not in sv:
+                return None  # a half-pair is not a comparison — discard the whole turn
+            # Both arms ride the SAME clamp the live path would apply once established,
+            # so a candidate cannot win its A/B on out-of-band scores it would never be
+            # allowed to emit, and the two arms stay measured on one scale.
+            from brain.judge_attachment import clamp_verdict
+
+            arms[arm] = clamp_verdict(host, float(sv.get(field, 0.5)), True)
+            if arm == "cand":
+                veto = bool(sv.get("veto"))
+        return arms["base"], arms["cand"], veto
+
+    def _fragment_block_for_ids(self, skill_ids: list[str]) -> str:
+        """Fenced injection block for an explicit list of skill ids — the shadow
+        path's counterpart to _fragment_block_for_host, which reads the wiring. Uses
+        the SAME untrusted-content fence, so a shadow candidate is framed exactly as
+        an established one would be (the A/B must compare like with like)."""
+        if self._skill_selector is None:
+            return ""
+        nonce = str(uuid.uuid4())[:8]
+        parts: list[str] = []
+        for sid in skill_ids:
+            body = self._skill_selector.native_skill_body(sid)
+            if not body:
+                continue
+            if self._skill_selector.is_partner_skill(sid):
+                from brain.persona_context import partner_skill_block
+
+                parts.append(partner_skill_block(body[:6000], fence, nonce, sid))
+            else:
+                parts.append(fence("active_skill", body[:6000], nonce))
+        return "\n\n".join(parts)
 
     async def _defuse_response(self, features: dict, affect: dict, turn_id: str) -> str:
         """Protective path when GABA is high (threat/hostility detected)."""

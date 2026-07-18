@@ -39,7 +39,11 @@ FRAGMENT_PREFIX = "fragment."
 # pool ceiling): a recruited reserve is a drafter and may carry/explore fragments. Listing the
 # reserve slots here is harmless while they are dormant — they never fire until recruited (an
 # executive→drafter_X edge). The other four frontal cells are admissible hosts too (they carry
-# ESTABLISHED attachments) but do NOT explore — no within-turn competition to differentiate one.
+# ESTABLISHED attachments) but do NOT explore HERE — there is no within-turn competition to
+# differentiate a candidate on a cell that emits one opinion per turn. The two JUDGE hosts
+# (critic, empathy_critic) instead explore in SHADOW off the live path, on cross-turn paired
+# accuracy — see brain/judge_attachment.py, which also argues why executive/stoic_reframer
+# are excluded from that producer.
 _MAX_DRAFTER_SLOTS = 16  # A..P — a generous ceiling above node_reserve_pool
 _ALL_DRAFTERS: frozenset[str] = frozenset(
     f"frontal.drafter_{chr(65 + i)}" for i in range(_MAX_DRAFTER_SLOTS)

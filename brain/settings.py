@@ -895,6 +895,72 @@ DEFAULTS: dict[str, float | int | str] = {
     "node_recruit_from_ignition": 1,  # kill switch for the ignition-pressure trigger (0 = off)
     "ignition_recruit_min_score": 3.0,  # decayed total ignition tally ≥ this arms the relaxed path
     "ignition_tally_half_life_h": 72.0,  # exponential half-life (hours) of the ignition tally
+    # ── Judge attachments — structural plasticity for NON-DRAFTER judge hosts ──
+    # Closes the deferred seam: frontal.critic + frontal.empathy_critic can now ACQUIRE a
+    # first attachment, not only carry one. A judge has no within-turn competition, so the
+    # signal is CROSS-TURN PREDICTIVE ACCURACY, measured as a PAIRED shadow A/B (the host
+    # runs twice on the same input — live without the candidate, shadow with it — and only
+    # the difference accumulates, into an EvidenceGate). See brain/judge_attachment.py for
+    # the four runtime gates; the short version: attaching learned content to a JUDGE means
+    # modifying the thing that screens everything else, so the prompt fence is explicitly
+    # not the boundary. The read-time clamp is. Ships LIVE (master ON); subordinate to
+    # fragment_wiring and to BRAIN_WIRING_FROZEN, under which every path is a strict no-op.
+    "judge_attachment": 1,  # master gate for judge-host attachment learning (0 = off)
+    "judge_max_per_host": 1,  # LOWER than fragment_max_per_host — a judge's blast radius is wider
+    "judge_explore_rate": 0.15,  # P(a turn shadow-tests a candidate on a judge)
+    # Exploration runs BOTH A/B arms on the LOCAL GPU. Local because a judge cell is
+    # locality="cloud" (haiku), so exploring on the live path would bill a cloud call per
+    # sampled turn just to run an experiment — the downshift precedent says learning that
+    # proves out should get cheaper, and exploration deserves the same. BOTH arms because
+    # pairing a local candidate against the live CLOUD verdict would confound the
+    # attachment's effect with the Haiku-vs-local model gap, and since local is the weaker
+    # judge that gap runs against the candidate every time — nothing would ever establish,
+    # silently. No cloud fallback: pod down = no exploration this turn, never a surprise bill.
+    "judge_shadow_model": "runpod",
+    # The empathy critic runs on the LOCAL GPU by default. It answers a narrow question
+    # (would this read as insensitive) with a short structured verdict, and it fires once
+    # PER DRAFT — up to five cloud calls a turn for the least open-ended judgement frontal
+    # makes. The MAIN critic is the load-bearing one (craft/coherence/relevance, what draft
+    # selection turns on) and deliberately stays on cloud.
+    # LOCAL-PREFERRED, NOT LOCAL-ONLY: this cell holds a VETO, so its failure direction is
+    # the opposite of the shadow explorer's. A missed experiment costs learning; a missed
+    # empathy screen ships the reply. Pod down or an unparseable verdict → fall back to
+    # cloud (costs money, always works). If BOTH fail the verdict is `empathy_score=None`
+    # — no opinion, contributing nothing — never the old fabricated 0.7 pass.
+    "empathy_critic_local": 1,  # 0 = keep the empathy critic on cloud (rollback)
+    "empathy_critic_local_model": "runpod",
+    # The evidence gate: a materially HIGHER proof bar than a drafter's one winning draft,
+    # with a week-long half-life so evidence has to be sustained rather than lucky.
+    "judge_arm_threshold": 4.0,
+    "judge_release_ratio": 0.5,
+    "judge_half_life_s": 604800.0,
+    "judge_evidence_cap": 8.0,
+    # GATE 1 — the read-time band, applied only while a host actually carries an attachment.
+    # Direction is fixed in code (JUDGE_HOSTS), not here: critic is one-way "down" (an attached
+    # critic can never emit above its ceiling, so its bar only ever gets HARDER to clear);
+    # empathy_critic is two-sided because a misread runs both ways, which makes its clamp the
+    # WEAKER gate by construction — it is carried by the veto floor and drift monitor instead.
+    # Re-read on EVERY verdict, so a stale or tampered stored weight cannot widen it.
+    "judge_score_ceiling": {"frontal.critic": 0.95, "frontal.empathy_critic": 0.95},
+    "judge_score_floor": {"frontal.critic": 0.0, "frontal.empathy_critic": 0.10},
+    # GATE 2 — the deterministic veto floor. Computed in Python from the turn's own signals
+    # and OR-ed with the judge's own veto, so an attachment can only ever ADD a veto and can
+    # never clear one. Engages only while a host actually carries an attachment.
+    "judge_veto_floor_hostility": 0.70,
+    "judge_veto_floor_score": 0.25,
+    # GATE 3 — the drift monitor. If the ATTACHED mean verdict drifts above the frozen
+    # pre-attachment reference by more than the band over this many calls, the attachment is
+    # force-demoted (edge pruned, re-earn from zero). A per-call proof against an LLM is not
+    # obtainable; this population bound is, and it is what gives "more conservative only" teeth.
+    "judge_drift_band": 0.05,
+    "judge_drift_min_samples": 20,
+    "judge_baseline_max_hosts": 8,  # bounded-ledger cap on the per-persona baseline book
+    # Grading: the bar at which a judge's numeric verdict counts as predicting "this landed",
+    # the sentiment floor below which the next turn reads as "it did not", and the confidence
+    # handed to prediction_reward (informativeness stays MEASURED, never hardcoded).
+    "judge_score_ok": 0.60,
+    "judge_landed_sentiment_min": -0.20,
+    "judge_resolve_confidence": 0.70,
     # ── Section: Flock dynamics — criticality + chemistry trajectory ─────────
     # Murmuration-derived collective-dynamics layer (sibling to colony_features,
     # but kept on its OWN flag so criticality control can be run without the
