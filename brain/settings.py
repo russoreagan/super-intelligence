@@ -917,18 +917,13 @@ DEFAULTS: dict[str, float | int | str] = {
     # judge that gap runs against the candidate every time — nothing would ever establish,
     # silently. No cloud fallback: pod down = no exploration this turn, never a surprise bill.
     "judge_shadow_model": "runpod",
-    # The empathy critic runs on the LOCAL GPU by default. It answers a narrow question
-    # (would this read as insensitive) with a short structured verdict, and it fires once
-    # PER DRAFT — up to five cloud calls a turn for the least open-ended judgement frontal
-    # makes. The MAIN critic is the load-bearing one (craft/coherence/relevance, what draft
-    # selection turns on) and deliberately stays on cloud.
-    # LOCAL-PREFERRED, NOT LOCAL-ONLY: this cell holds a VETO, so its failure direction is
-    # the opposite of the shadow explorer's. A missed experiment costs learning; a missed
-    # empathy screen ships the reply. Pod down or an unparseable verdict → fall back to
-    # cloud (costs money, always works). If BOTH fail the verdict is `empathy_score=None`
-    # — no opinion, contributing nothing — never the old fabricated 0.7 pass.
-    "empathy_critic_local": 1,  # 0 = keep the empathy critic on cloud (rollback)
-    "empathy_critic_local_model": "runpod",
+    # NOTE: the LIVE empathy critic deliberately stays on CLOUD and has no local setting.
+    # It was briefly routed local (narrow task, fires per draft) and reverted: it fans out
+    # to ~5 concurrent calls against ONE pod, and it sits on the user's critical path, so
+    # local contention can serialize a parallel stage and blow the 20s cell timeout —
+    # slower AND still paying cloud on the fallback. The criterion for downshifting is not
+    # "is the task easy" but "is it off the critical path with bounded fan-out." Only the
+    # shadow explorer (judge_shadow_model, above) qualifies. See frontal._run_empathy_check.
     # The evidence gate: a materially HIGHER proof bar than a drafter's one winning draft,
     # with a week-long half-life so evidence has to be sustained rather than lucky.
     "judge_arm_threshold": 4.0,

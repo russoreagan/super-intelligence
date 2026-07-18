@@ -1680,58 +1680,45 @@ class FrontalCluster:
         return safe_json_parse(raw)
 
     async def _run_empathy_check(self, draft: str, user_emotion: str, turn_id: str) -> dict:
-        """Score one draft's empathic fit, preferring the local GPU.
+        """Score one draft's empathic fit. Runs on CLOUD, deliberately.
 
-        WHY LOCAL IS THE DEFAULT HERE AND NOT FOR THE MAIN CRITIC. This cell answers a
-        narrow question — would this reply read as insensitive to someone feeling this
-        way — with a short structured verdict, and it runs once PER DRAFT, so it is up
-        to five cloud calls a turn for the least open-ended judgement the frontal lobe
-        makes. The main critic is the load-bearing one (craft, coherence, relevance,
-        the score selection actually turns on) and stays on cloud.
+        WHY NOT LOCAL, EVEN THOUGH THE TASK IS SIMPLE. The task genuinely is narrow —
+        would this read as insensitive to someone feeling this way — and on task
+        complexity alone this is the most obvious cell in the cluster to downshift.
+        Two structural facts outrank that, and both were learned the hard way:
 
-        WHY LOCAL-PREFERRED AND NOT LOCAL-ONLY. This cell holds a VETO — it is the
-        thing that stops an insensitive reply from shipping — so its failure direction
-        is the opposite of the shadow explorer's. A missed experiment costs some
-        learning; a missed empathy screen ships the reply. So this path fails TOWARD
-        cloud (costs money, always works), which is the rule `_local_available` states,
-        whereas exploration fails toward not running. Same hardware, opposite fallback,
-        because the cost of being absent is not the same.
+          • IT FANS OUT PER DRAFT. `_score_one` runs once per draft under
+            asyncio.gather, so a 5-draft turn issues 5 concurrent empathy checks.
+            Against cloud those are genuinely parallel; against ONE local pod
+            (RunPod Ollama, qwen2.5:14b) they contend and can serialize, turning a
+            parallel stage into a serial one. Worse, IntegratorCell.timeout_seconds
+            is 20s: contended local calls can blow it, return "", and fall through
+            to cloud — strictly slower AND the same cloud cost.
+          • IT IS ON THE USER'S CRITICAL PATH. Draft selection blocks on it, so any
+            added latency here is felt directly as time-to-reply.
 
-        THE FAIL-OPEN THIS ALSO CLOSES. The old fallback on an unparseable verdict was
-        `{"empathy_score": 0.7, "veto": False}` — a fabricated PASS, above the score
-        bar and clearing the veto. An empty or garbled response therefore read as "this
-        is empathically fine," and it silently fed a fake 0.7 into the blended score,
-        the critic.empathy stream, and the judge-accuracy grader. That was already
-        wrong on cloud timeouts; on a weaker local model, where malformed JSON is
-        materially more likely, it would have become the common case. A verdict that
-        did not arrive is now `empathy_score=None` — no opinion, contributing nothing
-        — which is exactly how this file already represents "the check didn't run"
-        (and mirrors `craft: None`, whose comment is that the reward must never pay on
-        a filled-in default). Not-run is honest; fabricating a pass is not.
+        The right criterion for downshifting is not "is the task easy" but "is it
+        off the critical path and is the fan-out bounded." The shadow explorer
+        (_judge_shadow_pair) passes both and runs local; this passes neither.
+
+        THE FAIL-OPEN THIS CLOSES, which is independent of routing. The old fallback
+        on an unparseable verdict was `{"empathy_score": 0.7, "veto": False}` — a
+        fabricated PASS, above the score bar and clearing the veto. An empty or
+        garbled response therefore read as "this is empathically fine," and fed a
+        fake 0.7 into the blended score, the critic.empathy stream, and the
+        judge-accuracy grader. A verdict that did not arrive is now
+        `empathy_score=None` — no opinion, contributing nothing — which is exactly
+        how this file already represents "the check didn't run" (and mirrors
+        `craft: None`, whose comment is that the reward must never pay on a
+        filled-in default). Not-run is honest; fabricating a pass is not.
         """
+        self._empathy_critic.reset_turn(turn_id + "_empathy")
         prompt = self._empathy_prompt(draft, user_emotion)
         prompt = self._inject_host_fragments(prompt, "frontal.empathy_critic", turn_id)
-        msgs = [{"role": "user", "content": prompt}]
-
-        go_local = bool(settings.get("empathy_critic_local", 1)) and self._local_available()
-        verdict = None
-        if go_local:
-            self._empathy_critic.reset_turn(turn_id + "_empathy_local")
-            raw = await self._empathy_critic.call(
-                msgs,
-                model_override=str(settings.get("empathy_critic_local_model", "runpod")),
-                locality_override="local",
-            )
-            verdict = safe_json_parse(raw)
+        raw = await self._empathy_critic.call([{"role": "user", "content": prompt}])
+        verdict = safe_json_parse(raw)
         if verdict is None:
-            # Either local was unavailable, or it returned nothing usable. Fall back to
-            # cloud rather than letting the veto-holding screen go dark. reset_turn is
-            # required: the cell's per-turn budget is 1 and the local attempt spent it.
-            self._empathy_critic.reset_turn(turn_id + "_empathy")
-            raw = await self._empathy_critic.call(msgs)
-            verdict = safe_json_parse(raw)
-        if verdict is None:
-            # Both routes failed. Report NO OPINION — never a fabricated pass.
+            # No usable verdict. Report NO OPINION — never a fabricated pass.
             decisions.log("empathy_check_unavailable", turn_id=turn_id, cluster=CLUSTER)
             return {"empathy_score": None, "veto": False, "unavailable": True}
         verdict.setdefault("empathy_score", None)

@@ -751,6 +751,18 @@ class JudgeAttachmentTracker:
         prompt influence is systematically permissive while every individual call
         still sits inside the ceiling. Demotion prunes the edge outright — the
         attachment must re-earn from zero, it is not merely weakened.
+
+        INVARIANT, AND IT IS LOAD-BEARING: every sample folded in here must come from
+        the SAME model. This compares an attached mean against a frozen unattached
+        reference, so if the host's live routing can vary — say local normally and
+        cloud on fallback — then the two means are different model mixes and the
+        monitor measures the MODEL GAP rather than the attachment. A routing change
+        alone would then move the attached mean with zero change to the attachment,
+        force-demoting a good one or masking a bad one. This is the same confound the
+        shadow A/B avoids by running both arms on one model (see _accumulate), and it
+        was briefly live here when the empathy critic was routed local — which is one
+        of the reasons that was reverted. Both judge hosts are cloud-only on the live
+        path; if that ever changes, this must key its means by source first.
         """
         self._durable(persona)
         key = persona_slug(persona)

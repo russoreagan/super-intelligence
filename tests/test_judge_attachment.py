@@ -656,34 +656,26 @@ def _run_empathy(fake):
     return asyncio.run(FrontalCluster._run_empathy_check(fake, "a draft", "sad", "t1"))
 
 
-def test_empathy_check_prefers_local_when_the_pod_is_up():
+def test_live_empathy_check_stays_on_cloud():
+    """The LIVE empathy check must not ride the local pod, however simple its task.
+    It fans out to one call PER DRAFT under asyncio.gather and sits on the user's
+    critical path, so local contention can serialize a parallel stage and blow the
+    20s cell timeout — slower AND still paying cloud on the fallback. Only the
+    shadow explorer, which is off the critical path with bounded fan-out, goes
+    local. Also protects the drift monitor's one-model invariant: a host whose live
+    routing can vary makes gate 3 measure the model gap instead of the attachment."""
     fake = _EmpathyFrontal(True, ['{"empathy_score": 0.4, "veto": false}'])
     out = _run_empathy(fake)
     assert out["empathy_score"] == pytest.approx(0.4)
     assert len(fake._empathy_critic.calls) == 1
-    assert fake._empathy_critic.calls[0]["locality_override"] == "local"
+    assert fake._empathy_critic.calls[0] == {}, "live empathy check must carry no local override"
 
 
-def test_empathy_check_falls_back_to_cloud_when_the_pod_is_down():
-    """Opposite failure direction from the shadow explorer, and deliberately so: a
-    missed experiment costs learning, a missed empathy screen ships the reply. This
-    path fails TOWARD cloud."""
-    fake = _EmpathyFrontal(False, ['{"empathy_score": 0.4, "veto": false}'])
-    out = _run_empathy(fake)
-    assert out["empathy_score"] == pytest.approx(0.4)
+def test_live_empathy_check_is_one_call_even_with_a_pod_up():
+    """No opportunistic local attempt, so no wasted round-trip before the cloud call."""
+    fake = _EmpathyFrontal(True, ["not json at all"])
+    _run_empathy(fake)
     assert len(fake._empathy_critic.calls) == 1
-    assert fake._empathy_critic.calls[0] == {}, "cloud call carries no locality override"
-
-
-def test_unparseable_local_verdict_retries_on_cloud():
-    """A weaker local model producing malformed JSON must not take the veto-holding
-    screen dark — it retries on cloud rather than giving up."""
-    fake = _EmpathyFrontal(True, ["not json at all", '{"empathy_score": 0.2, "veto": true}'])
-    out = _run_empathy(fake)
-    assert out["veto"] is True and out["empathy_score"] == pytest.approx(0.2)
-    assert len(fake._empathy_critic.calls) == 2
-    assert fake._empathy_critic.calls[0]["locality_override"] == "local"
-    assert "locality_override" not in fake._empathy_critic.calls[1]
 
 
 def test_a_failed_empathy_check_reports_no_opinion_never_a_fabricated_pass():
@@ -691,7 +683,7 @@ def test_a_failed_empathy_check_reports_no_opinion_never_a_fabricated_pass():
     manufactured PASS, above the score bar and clearing the veto, injected into the
     blended score, the critic.empathy stream and the judge-accuracy grader. An
     appraisal that did not happen must read as absent, not as approval."""
-    fake = _EmpathyFrontal(True, ["garbage", "also garbage"])
+    fake = _EmpathyFrontal(True, ["garbage"])
     out = _run_empathy(fake)
     assert out["empathy_score"] is None, "a missing verdict must not become a passing one"
     assert out["unavailable"] is True
