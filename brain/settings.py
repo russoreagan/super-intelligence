@@ -740,6 +740,37 @@ DEFAULTS: dict[str, float | int | str] = {
     "plasticity_intensity_weight": 0.40,  # |valence| (either sign) → plasticity gain
     "plasticity_stress_knee": 0.70,  # CORT/GABA above this = inverted-U descending limb
     "plasticity_stress_damp": 0.60,  # max multiplicative dampening at extreme stress
+    # ── Evidence gates (bounded evidence accumulation; drift-diffusion) ───────
+    # Per-decision accumulators for inferences no single turn can make (e.g.
+    # habituation, "the user is avoiding X"). NOT spiking neurons — sequential-
+    # sampling decision-making, own verdict (evidence_gate.py; docs/SYSTEMS.md).
+    # 0 = every gate is a strict no-op and callers fall through to prior behaviour.
+    "evidence_gates": 1,  # master flag (graduated 2026-07-17 after neutral-when-off proof)
+    # Learning (drift-cue weights): plasticity is weighted toward EXTERNAL/grounded
+    # confirmation so a gate cannot farm its own appraiser (premise-audit fix).
+    "evidence_cue_lr": 0.05,  # cue-weight learning rate on a resolved prediction
+    "evidence_cue_w_min": 0.10,  # floor of a learned drift-cue weight
+    "evidence_cue_w_max": 3.00,  # ceiling of a learned drift-cue weight
+    "evidence_external_weight": 1.00,  # plasticity scale for an external (grounded) confirmation
+    "evidence_self_weight": 0.35,  # plasticity scale for a self/critic-graded confirmation (discounted)
+    # Satiation as the first live EvidenceGate (hypothalamus habituation). Long
+    # half-life: near-identical to the StatefulSwitch during active back-and-forth,
+    # but idle time now RELAXES satiation (the fix for the dead-tick() gap the RFC
+    # names) instead of it only relaxing when a salient turn arrives. Only in effect
+    # when evidence_gates=1; flag off keeps the exact StatefulSwitch path.
+    "satiation_half_life_s": 1800.0,  # ~30 min: idle-time relaxation of habituation
+    # User-avoidance gate (first LEARNING EvidenceGate; avoidance_gate.py). Accumulates
+    # per-entity avoidance evidence and learns its cue weights from external (behavioural)
+    # confirmation. Runs (accumulates + learns) whenever evidence_gates=1; STEERING the
+    # DMN speak/deflect judge is separately gated by avoidance_gate below, default 0 =
+    # SHADOW (learn on real data, do not influence behaviour) until validated in a tenant.
+    "avoidance_gate": 1,  # 1 = armed avoidance biases the DMN deflect judge + moves chemistry
+    "avoidance_arm_threshold": 1.5,  # accumulated evidence needed to believe "avoiding X"
+    "avoidance_release_ratio": 0.5,  # hysteresis: release below arm * this
+    "avoidance_half_life_s": 900.0,  # ~15 min leak: an unfed suspicion fades
+    "avoidance_cap": 5.0,  # max accumulated avoidance evidence per entity
+    "avoidance_stale_turns": 2,  # an entity unseen this many turns becomes a candidate
+    "avoidance_informativeness": 0.6,  # informativeness passed to prediction_reward on resolve
     # ── Section: Colony / non-brain (superorganism) capabilities ─────────────
     # Single master toggle for the bio-inspired colony layer (Phases 2–8 of the
     # colony-features plan). 0 = every colony behaviour is a strict no-op and the

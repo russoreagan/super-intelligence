@@ -18,6 +18,7 @@ from brain.emotion_vocabulary import (
     name_emotion,
     prosody_prefix,
 )
+from brain.evidence_gate import EvidenceGate
 from brain.neuron import StatefulSwitch
 from brain.settings import settings
 
@@ -36,25 +37,33 @@ class HypothalamusCluster:
         # next turn (prior-turn read avoids within-turn runaway).
         self._prev_aggregate: dict[str, float] | None = None
 
-        # Stateful switches with decay
-        self._valence_switch = StatefulSwitch(
-            "valence_to_DA", CLUSTER, decay=settings.get("valence_to_DA_decay")
-        )
-        self._threat_switch = StatefulSwitch(
-            "threat_to_GABA", CLUSTER, decay=settings.get("threat_to_GABA_decay")
-        )
-        self._novelty_switch = StatefulSwitch(
-            "novelty_to_ACh", CLUSTER, decay=settings.get("novelty_to_ACh_decay")
-        )
-        self._arousal_switch = StatefulSwitch(
-            "arousal_homeostat", CLUSTER, decay=settings.get("arousal_homeostat_decay")
-        )
-        # Inhibitory: receptor desensitization — suppresses novelty on repeated topics
+        # (Removed 2026-07-17: four StatefulSwitch instances — valence_to_DA,
+        # threat_to_GABA, novelty_to_ACh, arousal_homeostat — were constructed here and
+        # never referenced again anywhere (their decay/accumulator was dead). The real
+        # valence/threat/novelty/arousal work is done inline against the neuromod
+        # channels below. Deleting them removes the main artifact that made the switch
+        # layer look like it had integrate-and-fire state. See docs/RFC_integrate_and_fire.md.)
+        # Inhibitory: receptor desensitization — suppresses novelty on repeated topics.
+        # Flag-off path: the StatefulSwitch below (process-global; its tick() decay was
+        # never called, so satiation only ever relaxed when a salient turn decremented
+        # it — the RFC's "dead leak" gap).
         self._satiation_inhibitor = StatefulSwitch(
             "satiation_inhibitor",
             CLUSTER,
             decay=settings.get("satiation_inhibitor_decay"),
             polarity="inhibitory",
+        )
+        # Flag-on path (evidence_gates=1): the same habituation level as a scalar
+        # EvidenceGate. Same +/- updates, but with a real wall-clock half-life leak
+        # (idle time relaxes it) and per-(persona, end_user) state via the bound
+        # ChemPair store. arm_threshold > cap so it never "commits" — satiation is
+        # read as a level, it does not fire. Routed through _satiation_read/_update.
+        self._satiation_gate = EvidenceGate(
+            name="satiation_inhibitor",
+            cluster=CLUSTER,
+            arm_threshold=2.0,  # > cap → pure leaky accumulator, never arms/fires
+            cap=1.0,  # habituation lives in [0, 1] like the old .state
+            half_life_s=settings.get("satiation_half_life_s"),
         )
 
         # Auditory prosody input (published by auditory cortex when --ears active)
@@ -65,6 +74,25 @@ class HypothalamusCluster:
         # emotion label for context-driven emotions (apologetic, grateful,
         # embarrassed, flirty, etc.) that pure neuromods can't produce.
         self._meta_override_inbox = bus.subscribe("meta.emotion_override")
+
+    # ── Satiation (habituation) — StatefulSwitch or EvidenceGate per flag ──────
+
+    def _satiation_read(self) -> float:
+        """Current habituation level. Flag-on: the EvidenceGate's leaked, per-client
+        level (idle time relaxes it). Flag-off: the StatefulSwitch's process-global
+        state — byte-identical to prior behaviour."""
+        if settings.get("evidence_gates", 0):
+            return self._satiation_gate.peek(store=self._bus.evidence)
+        return self._satiation_inhibitor.state
+
+    def _satiation_update(self, delta: float) -> None:
+        """Nudge habituation up (routine) or down (salient). Flag-on: accumulate into
+        the EvidenceGate (which also leaks over wall-clock). Flag-off: the legacy
+        StatefulSwitch update."""
+        if settings.get("evidence_gates", 0):
+            self._satiation_gate.observe(delta, store=self._bus.evidence)
+        else:
+            self._satiation_inhibitor.update(delta)
 
     # ── Channel calibration ───────────────────────────────────────────────────
 
@@ -245,10 +273,9 @@ class HypothalamusCluster:
             * _novelty_gain
             * _novelty_value
         )
-        if self._satiation_inhibitor.state > 0.5:
-            novelty_delta *= 1.0 - self._satiation_inhibitor.state * settings.get(
-                "satiation_inhibition_factor"
-            )
+        _satiation = self._satiation_read()
+        if _satiation > 0.5:
+            novelty_delta *= 1.0 - _satiation * settings.get("satiation_inhibition_factor")
         nm.add("ACh", novelty_delta * turns)
 
         # Glu: general arousal
@@ -278,13 +305,13 @@ class HypothalamusCluster:
 
         # Satiation: if salience is low (routine), desensitize
         if salience < settings.get("salience_satiation_threshold"):
-            self._satiation_inhibitor.update(settings.get("salience_satiation_increase"))
+            self._satiation_update(settings.get("salience_satiation_increase"))
         else:
-            self._satiation_inhibitor.update(settings.get("salience_satiation_decrease"))
+            self._satiation_update(settings.get("salience_satiation_decrease"))
 
         # Habituation: sustained familiarity (high satiation) raises GABA slightly —
         # represents the inhibitory signal of "I know this territory" settling in.
-        if self._satiation_inhibitor.state > settings.get("satiation_gaba_threshold"):
+        if self._satiation_read() > settings.get("satiation_gaba_threshold"):
             nm.add("GABA", settings.get("satiation_gaba_increment") * turns)
 
         # ── Prosody modulation (from auditory cortex, if active) ──────────────

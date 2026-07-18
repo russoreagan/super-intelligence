@@ -14,7 +14,7 @@ import uuid
 from brain.bus import Bus
 from brain.cell import IntegratorCell
 from brain.model_router import ModelRouter
-from brain.neuron import StatefulSwitch, SwitchNeuron
+from brain.neuron import SwitchNeuron
 from brain.observability.decisions import decisions
 from brain.predictor import should_bypass_gating
 from brain.second_brain.store import Episode, EpisodicStore, SchemaStore
@@ -208,10 +208,12 @@ class HippocampusCluster:
             threshold=0.5,
             modulators={"DA": -0.10},
         )
-        self._recall_fanout = StatefulSwitch(
+        # Plain comparator: only SwitchNeuron methods (.fire/.should_fire/
+        # .modulation_delta) are ever used here — the StatefulSwitch accumulator/decay
+        # was never touched, so the `decay=` was dead. Collapsed to SwitchNeuron.
+        self._recall_fanout = SwitchNeuron(
             "recall_fanout",
             CLUSTER,
-            decay=0.95,
             polarity="excitatory",
             threshold=0.5,
             modulators={"ACh": -0.10, "Glu": -0.05},
@@ -227,10 +229,9 @@ class HippocampusCluster:
         # surprise / weak topic match / emotion-aware bypass. ACh (curiosity) and
         # surprise lower its threshold so a genuinely new situation casts the net
         # wider for analogous past problem-shapes.
-        self._structural_recall = StatefulSwitch(
+        self._structural_recall = SwitchNeuron(
             "structural_recall",
             CLUSTER,
-            decay=0.95,
             polarity="excitatory",
             threshold=0.5,
             modulators={"ACh": -0.10, "NE": -0.05},

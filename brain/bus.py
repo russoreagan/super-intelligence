@@ -390,6 +390,13 @@ class ChemPair:
 
     neuromod: Neuromodulators
     hormonal: HormonalState
+    # Transient per-(persona, end_user) evidence-accumulator state (evidence_gate.py):
+    # {gate_name: {level, armed, last_ts, ...}}. Rides this pair so per-client
+    # isolation, binding, snapshot/restore and the one-way valve are all inherited —
+    # a gate is just another slow state variable of the live relationship, like mood.
+    # Empty by default; only EvidenceGate call sites that pass `store=chem.evidence`
+    # populate it. Old snapshots without the key restore to empty (backward compatible).
+    evidence: dict[str, dict] = field(default_factory=dict)
 
     @classmethod
     def fresh(cls) -> ChemPair:
@@ -398,11 +405,17 @@ class ChemPair:
         return cls(Neuromodulators(), HormonalState())
 
     def snapshot(self) -> dict[str, dict[str, float]]:
-        return {"neuromod": self.neuromod.snapshot(), "hormonal": self.hormonal.snapshot()}
+        snap: dict = {"neuromod": self.neuromod.snapshot(), "hormonal": self.hormonal.snapshot()}
+        if self.evidence:
+            snap["evidence"] = {k: dict(v) for k, v in self.evidence.items()}
+        return snap
 
     def restore(self, snap: dict[str, dict[str, float]]) -> None:
         self.neuromod.restore(snap.get("neuromod") or {})
         self.hormonal.restore(snap.get("hormonal") or {})
+        ev = snap.get("evidence")
+        if ev:
+            self.evidence = {k: dict(v) for k, v in ev.items()}
 
     def apply_profile(
         self, baseline: dict[str, float] | None, levels: dict[str, float] | None
@@ -475,6 +488,15 @@ class Bus:
     def hormonal(self) -> HormonalState:
         pair = _active_chem.get()
         return (pair or self._resting).hormonal
+
+    @property
+    def evidence(self) -> dict[str, dict]:
+        """The bound pair's transient evidence-accumulator store (evidence_gate.py),
+        resolved per async-context exactly like neuromod/hormonal. EvidenceGate call
+        sites pass this as `store=` so each (persona, end_user) accumulates its own
+        evidence with no cross-bleed, through the identical access path."""
+        pair = _active_chem.get()
+        return (pair or self._resting).evidence
 
     @property
     def resting_chem(self) -> ChemPair:

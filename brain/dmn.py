@@ -1334,6 +1334,22 @@ class DefaultModeNetwork:
         valence = valence_of(self._last_emotion)
         is_social_discomfort = self._last_emotion in _DEFLECTION_OVERRIDES
 
+        # Avoidance gate: if the mind believes the user is steering away from a topic,
+        # lean toward letting it drop — and if THIS candidate would push an avoided
+        # topic, flag it loudly so the judge does not force it. Best-effort; no-op when
+        # the tracker is absent or avoidance_gate is off (deflection_bias returns []).
+        avoided: list[str] = []
+        pushes_avoided = False
+        try:
+            _trk = getattr(self, "_avoidance", None)
+            if _trk is not None and _trk.deflection_bias(self._bus.evidence):
+                avoided = _trk.avoided_entities(self._bus.evidence)
+                low = spoken.lower()
+                pushes_avoided = any(e.lower() in low for e in avoided)
+                is_social_discomfort = True  # an active avoidance is itself social discomfort
+        except Exception:
+            avoided = []
+
         angle = (candidate.get("angle") or "").strip()
         is_propose = bool(candidate.get("propose"))
         prompt_lines = [
@@ -1353,7 +1369,11 @@ class DefaultModeNetwork:
             f"- attempts_so_far: {int(candidate.get('attempts', 0))}",
             f"- angle: {angle or '(unset)'}",
             f"- is_action_proposal: {is_propose}",
+            f"- user_appears_to_avoid: {', '.join(avoided) if avoided else '(none)'}",
+            f"- candidate_pushes_avoided_topic: {pushes_avoided}",
             "",
+            "If candidate_pushes_avoided_topic is true, strongly prefer 'wait' or 'drop': "
+            "do not push a subject the user is steering away from.",
             'Return JSON: {"verdict": "yes"|"wait"|"drop", "reason": "..."}',
         ]
 

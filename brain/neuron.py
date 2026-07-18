@@ -203,9 +203,17 @@ class SwitchNeuron:
 
 
 class StatefulSwitch(SwitchNeuron):
-    """
-    A SwitchNeuron that holds persistent scalar state with exponential decay.
-    Used for neuromod updates, ring buffers, running counters.
+    """A bounded scalar accumulator bolted onto a SwitchNeuron. NOT integrate-and-fire.
+
+    Honesty note (see docs/RFC_integrate_and_fire.md): the accumulator (`update`/
+    `state`) is entirely decoupled from the neuron's firing — nothing compares
+    `state` to a threshold to fire. And `tick()` (the exponential "leak") is NOT
+    called anywhere in production; the only live user, the hypothalamus satiation
+    inhibitor, reads `state` but never leaks it, so its relaxation is faked by a
+    manual decrement. The genuinely leaky, per-client, learning-capable successor is
+    `brain/evidence_gate.py::EvidenceGate` (drift-diffusion), which the satiation
+    path switches to under the `evidence_gates` flag. This class is kept only for the
+    flag-off satiation path and back-compat; do not read spiking/LIF into it.
     """
 
     def __init__(self, name: str, cluster: str, decay: float = 0.9, **kwargs):

@@ -291,6 +291,11 @@ class ParietalCluster:
     def turn_count(self) -> int:
         return self._turn_count
 
+    def entity_last_seen(self) -> dict[str, int]:
+        """entity → turn index it was last mentioned. Read-only copy; used by the
+        avoidance gate to find stale (unre-engaged) entities."""
+        return dict(self._entities)
+
     def set_active_skill_context(self, ctx: ActiveSkillContext | None) -> None:
         """Selector writes back the updated context after each turn."""
         self.active_skill_context = ctx

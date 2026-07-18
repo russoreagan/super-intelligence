@@ -826,6 +826,9 @@ class _SetupMixin:
 
         self.meta = MetacognitionCell(self.bus, self.router, self.hippocampus._schema)
         await self.meta.start()
+        # Let the DMN speak/deflect judge consume the avoidance belief (both now exist).
+        if getattr(self, "dmn", None) is not None:
+            self.dmn._avoidance = self.meta._avoidance
 
     async def _setup_auditory(self) -> None:
         self._enrollment_complete_inbox = self.bus.subscribe("auditory.enrollment_complete")

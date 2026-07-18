@@ -1302,6 +1302,22 @@ class _TurnMixin:
 
         await self._emit("parietal", 0.3, "updating context", turn_id)
         self.parietal.update(features, user_input, final)
+        # Avoidance gate (shadow unless avoidance_gate=1): accumulate per-entity
+        # avoidance evidence off parietal's freshly-updated entity map, and learn from
+        # any re-engagement. No-op when evidence_gates is off; never breaks the turn.
+        if settings.get("evidence_gates", 0) and self.meta is not None:
+            try:
+                self.meta._avoidance.observe_turn(
+                    current_entities=set(features.get("entities", []) or []),
+                    stale_entities=self.parietal.entity_last_seen(),
+                    turn_count=self.parietal.turn_count,
+                    user_emotion=(features.get("user_emotion") or features.get("emotion") or ""),
+                    bus=self.bus,
+                    agent_text=final,  # so a flagged topic the reply surfaces can be confirmed
+                    store=self.bus.evidence,
+                )
+            except Exception:
+                pass
         # Update per-modality user style tracking (style synchrony feature)
         if settings.get("enable_style_synchrony") and isinstance(features, dict):
             _style_modality = features.get("input_modality", "text")

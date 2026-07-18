@@ -212,6 +212,14 @@ class MetacognitionCell:
         self._override_cooldowns: dict[str, int] = {}
         self._cooldown_turns = int(settings.get("meta_cooldown_turns"))
 
+        # First learning EvidenceGate: accumulates per-entity "the user is avoiding X"
+        # and learns its cue weights from behavioural confirmation. Driven per turn from
+        # session_turn (needs parietal's entity-staleness map); shadow unless
+        # avoidance_gate=1. No-op when evidence_gates is off. See brain/avoidance_gate.py.
+        from brain.avoidance_gate import AvoidanceTracker
+
+        self._avoidance = AvoidanceTracker()
+
         self._reflector = IntegratorCell(
             name="self_reflector",
             cluster="metacognition",
