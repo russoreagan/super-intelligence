@@ -35,7 +35,7 @@ A word on Part II. Several verdicts are unflattering. That is deliberate. Anyone
 | # | System | Parts | Resting on | In one line |
 |---|---|---|---|---|
 | 1 | [Chemistry and Affect](#1-chemistry-and-affect) | 8 | Neuromodulation · Appraisal theory · Dimensional affect | The simulated bloodstream. Everything else reads it. |
-| 2 | [The Cognitive Core](#2-the-cognitive-core) | 8 | Dual-process · Multiple Drafts · Predictive processing · Higher-Order Thought · Global Workspace | How a single turn happens. |
+| 2 | [The Cognitive Core](#2-the-cognitive-core) | 9 | Dual-process · Multiple Drafts · Predictive processing · Higher-Order Thought · Global Workspace · Structural plasticity | How a single turn happens. |
 | 3 | [Memory](#3-memory) | 10 | Tulving · Complementary Learning Systems · Extended Mind · Structure mapping | What it keeps, and how it finds it again. |
 | 4 | [Learning](#4-learning) | 10 | Hebbian plasticity · Phasic dopamine · Prospect theory · Intrinsic motivation | How experience changes future behavior. |
 | 5 | [The Idle Mind](#5-the-idle-mind) | 9 | Default Mode Network · Stream of consciousness · Habituation | What it does when you are not talking to it. |
@@ -162,9 +162,9 @@ The appraisal ladder from §1.5 runs unconditionally, flag or no flag.
 
 About sixty declared connections between named parts of the brain. Weights get nudged after every session and persist per personality.
 
-**One precision point that matters.** The connections themselves never change. Learning adjusts how strong an existing pathway is; it never grows a new one or prunes an old one. The map is hand-drawn and frozen. Weights move on it. Say it that way and you are accurate and still impressive. Say "it rewires itself" and the first neuroscientist in the room catches it.
+**One precision point that matters, now with one bounded exception.** The core map is hand-drawn: the connections between the brain's own cells never change, and learning only adjusts how strong an existing pathway is. For most of the project that was the whole story, and "learned weights on a fixed map" was the exact honest line. There is now a first, carefully bounded form of growth (§2.9): the brain can grow a new class of connection that attaches a vetted skill onto a cell. So the accurate line today is that the core cell-to-cell wiring is still fixed, and a first tier of structural growth wires vetted parts onto it. Still not "it rewires itself" in the open-ended sense a neuroscientist would hear, and worth stating precisely.
 
-The map is now at least made explicit: a node registry names every part the wiring can reach and audits at boot for names that are declared but wired to nothing, or wired but never declared. That is inspection, not growth — the topology is still fixed — but it is the groundwork any future move toward a graph that can grow or prune connections would build on.
+The map is also now made explicit: a node registry names every part the wiring can reach and audits at boot for names that are declared but wired to nothing, or wired but never declared. Inspection, not growth, and the groundwork the structural tier builds on.
 
 ### 2.8 The workspace spotlight (Global Workspace Theory, Baars & Dehaene) · Live
 
@@ -175,6 +175,22 @@ Underneath, a decaying salience field tracks how much each kind of signal — th
 When a coalition ignites, that verdict is broadcast, and it does real work. A threat that built slowly across several turns — where no single message was alarming enough to trip the per-turn check — wakes the deliberate path anyway; this is the workspace pulling in a specialist the local view would have skipped. It widens memory recall and points it at the workspace's focus. It seeds what the idle mind dwells on between turns, which is the honest version of "what it is currently thinking about." And the idle mind is a genuine subscriber to the broadcast, so global availability is literal, not a metaphor.
 
 Ignition is deliberately hard to reach — it marks sustained focus, not a passing mention — and a more focused personality sets a higher bar for what is allowed to grab the workspace. When nothing is ignited, every specialist falls through to exactly what it did before, so the quiet case is unchanged.
+
+---
+
+### 2.9 Path plasticity (structural plasticity, Tier 1 · synaptogenesis) · Live
+
+**Say it like this:** For the first time the brain can grow a new connection, not just tune the strength of the ones it was born with. It does not invent new abilities from nothing. It has a library of vetted skills, and learning decides which of them to wire onto which part of the mind, and how firmly.
+
+This is the first thing that qualifies the "frozen map" claim in §2.7, and it does so carefully. A grown connection here is a learned attachment: a curated, already-screened skill wired onto one of the drafting cells as a per-personality edge, with a strength that learning moves like any other weight. The system never writes the skill. It only decides the wiring, which skill attaches where and whether the attachment earns its place or fades. So the growth is real but bounded. The parts are vetted in advance; only the arrangement is learned.
+
+It explores without risk because candidate attachments ride the drafters. When the brain drafts a reply five ways, some drafts carry an experimental attachment. The critic scores them before anything is spoken, so a bad experiment is just a losing draft the user never sees. A winning attachment is reinforced, a losing one is demoted, and an attachment that keeps proving out crosses a threshold and becomes an established part of that personality's wiring, injected on every relevant turn through the same fenced, untrusted-by-default boundary that governs any app-supplied skill.
+
+What stays off-limits is the point. Only a fixed allowlist of non-safety drafting cells can ever be a host, safety cells are denied twice over, and a host must be a real cell rather than a switch. Attachments are only ever excitatory, so learning can never wire in a new suppression the author did not sanction. And the whole thing sits under the existing global wiring freeze, so one switch turns it off and the brain falls back to its fixed map, unchanged.
+
+It carries a cost lever of a kind nothing else here has. Once an attachment has genuinely proven itself, the drafter that relies on it can be routed down to local hardware instead of the cloud, so a skill the personality has truly made its own gets cheaper to run rather than more expensive. Nothing downshifts until an attachment proves out and the local hardware is actually up.
+
+**Status.** Live, on by default behind its own flag, killable by the global wiring freeze. This is Tier 1: wire vetted parts onto the fixed map, learning the arrangement but never authoring the parts. The intended next stage, Tier 2, is harder and deferred: reserve cells the brain can bring online as genuinely new units, chains from one attachment into another, and promoting a proven cluster of attachments into a standalone node of its own. That is the move from arranging vetted parts toward growing new ones, and it is where "new nodes are code, not data" stops being a hard limit.
 
 ---
 
@@ -852,7 +868,7 @@ Thirty-six ideas. For each: what it claims, what we built, and a verdict.
 ### Hebbian plasticity, three-factor variant (Frémaux & Gerstner) → §2.7, §4.1
 **The claim:** Cells that fire together wire together. The three-factor version adds a gate: coincidence alone is not enough, a reward signal has to license the change.
 **What we built:** Co-activation along the fired path, gated by chemistry, with homeostatic decay first.
-**Verdict: Solid for weights. False for structure.** No new connection is ever grown and none is ever pruned. The map is hand-drawn and frozen for life. **Say "learned weights on a fixed map."**
+**Verdict: Solid for weights. Was false for structure; a first bounded tier now grows it.** For most of the project no connection was ever grown or pruned. A first structural tier (§2.9, live) now grows and prunes one vetted class of connection: skill attachments onto drafting cells, licensed by the same three-factor reward gate as weights and fenced off from every safety node. The core cell-to-cell map is still hand-drawn and fixed. **Say "learned weights on a fixed map, plus a first tier that wires vetted skills onto it."**
 
 ### Spike-timing-dependent plasticity → nowhere
 **What we built:** Nothing. No timing, no order dependence.
@@ -1121,7 +1137,7 @@ Thirty-six ideas. For each: what it claims, what we built, and a verdict.
 | Thing | Reality |
 |---|---|
 | **Spiking neurons** | Not implemented. Stateless comparators. Never claim it. |
-| **Rewiring itself** | No. Weights learn. The map is hand-drawn and frozen. |
+| **Rewiring itself** | The core cell-to-cell map is still fixed, but no longer the whole story. A first tier of structural growth (§2.9, live) grows and prunes one vetted class of connection: skill attachments onto drafting cells, learned as wiring. Weights learn on the fixed map; structure now grows only in that one bounded, vetted, safety-fenced way. Tier 2 (reserve cells as genuinely new units) is deferred. |
 | **Reward prediction error / TD learning** | Not implemented. The dopamine delta is a proxy for it. |
 | **Replay** | Not implemented. Consolidation is batch post-processing. |
 | **Embodied cognition** | One chemistry-gated perception switch. Real, but keep the claim that size. |
