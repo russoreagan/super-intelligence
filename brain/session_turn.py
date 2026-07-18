@@ -527,12 +527,23 @@ class _TurnMixin:
         # not the boot home persona — the Hebbian pass groups traces by this stamp
         # to credit each persona's own wiring, and eval rows tag by it.
         from brain.persona_key import active_or_home_persona
+        from brain.turn_ctx import current_turn
 
+        # Engine turns also stamp their API session + chemistry binding, so an
+        # out-of-band grade can prove the turn belongs to the grading session and
+        # re-bind exactly the pair this turn ran under. api_persona mirrors
+        # _session_persona: the persona half of the session's agent_id ("" = the
+        # process persona / per-customer registry path). Owner turns stamp "".
+        _tctx = current_turn()
+        _aid = _tctx.get("agent_id") or ""
         trace = TurnTrace(
             turn_id=turn_id,
             session_id=self.session_id,
             persona_name=active_or_home_persona() or self.persona_name,
             user_input=user_input,
+            api_session_id=_tctx.get("session_id") or "",
+            api_persona=_aid.split(".", 1)[0] if "." in _aid else "",
+            end_user_id=(end_user_id or "") or (_tctx.get("end_user_id") or ""),
         )
         trace.prior_neuromod = self.bus.neuromod.snapshot()
         _ctx_token = set_current_trace(trace)

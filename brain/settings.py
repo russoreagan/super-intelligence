@@ -781,10 +781,13 @@ DEFAULTS: dict[str, float | int | str] = {
     # when evidence_gates=1; flag off keeps the exact StatefulSwitch path.
     "satiation_half_life_s": 1800.0,  # ~30 min: idle-time relaxation of habituation
     # User-avoidance gate (first LEARNING EvidenceGate; avoidance_gate.py). Accumulates
-    # per-entity avoidance evidence and learns its cue weights from external (behavioural)
-    # confirmation. Runs (accumulates + learns) whenever evidence_gates=1; STEERING the
-    # DMN speak/deflect judge is separately gated by avoidance_gate below, default 0 =
-    # SHADOW (learn on real data, do not influence behaviour) until validated in a tenant.
+    # per-entity avoidance evidence from ACTIVE dodge signals only — a topic the agent
+    # surfaced that the user didn't pick up, an abrupt subject change off a live thread,
+    # discomfort riding a dodge; mere staleness (the user simply moved on) contributes
+    # nothing. Learns its cue weights from external (behavioural) confirmation. LIVE BY
+    # DEFAULT (ships-on policy: flags are kill switches, not enable switches): runs
+    # whenever evidence_gates=1, and avoidance_gate below is the kill switch for the
+    # steering + chemistry side (0 = shadow: keep learning on real data, no influence).
     "avoidance_gate": 1,  # 1 = armed avoidance biases the DMN deflect judge + moves chemistry
     "avoidance_arm_threshold": 1.5,  # accumulated evidence needed to believe "avoiding X"
     "avoidance_release_ratio": 0.5,  # hysteresis: release below arm * this
@@ -792,6 +795,8 @@ DEFAULTS: dict[str, float | int | str] = {
     "avoidance_cap": 5.0,  # max accumulated avoidance evidence per entity
     "avoidance_stale_turns": 2,  # an entity unseen this many turns becomes a candidate
     "avoidance_informativeness": 0.6,  # informativeness passed to prediction_reward on resolve
+    "avoidance_max_armed_s": 86400.0,  # escape hatch: a belief armed this long expires (clear the slate)
+    "avoidance_evict_floor": 0.05,  # decayed accumulator slices below this are deleted from the store
     # ── Section: Colony / non-brain (superorganism) capabilities ─────────────
     # Single master toggle for the bio-inspired colony layer (Phases 2–8 of the
     # colony-features plan). 0 = every colony behaviour is a strict no-op and the

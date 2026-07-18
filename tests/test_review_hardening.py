@@ -558,19 +558,26 @@ def test_da_source_tally_splits_intrinsic_and_external():
 
 
 def test_external_grade_opens_external_da_lane():
-    # The only reality-grounded reward channel: an external grade must move DA,
-    # and it must land in the EXTERNAL bucket (not self-graded/intrinsic), bounded
-    # to the configured nudge. Fails when external_grade_da_nudge defaults to 0.0.
+    # The only reality-grounded reward channel: an external grade on a LIVE turn
+    # must move DA, and it must land in the EXTERNAL bucket (not self-graded/
+    # intrinsic), bounded to the configured nudge. Fails when
+    # external_grade_da_nudge defaults to 0.0. The turn must be live in the trace
+    # buffer — a grade on an unknown/consolidated turn moves nothing (round-2
+    # hardening A3; see test_external_grade_channel for that guard).
     from brain.bus import Bus
+    from brain.observability.timeline import TurnTrace
     from brain.session_loops import _LoopsMixin
 
     s = _LoopsMixin.__new__(_LoopsMixin)
     s.bus = Bus()
+    s._session_traces_full = [TurnTrace(turn_id="turn-1", session_id="s", user_input="hi")]
+    s._eval_logger = None
     before = s.bus.da_source_tally()
     res = s.api_grade_turn("turn-1", 1, source="user_thumbs")  # thumbs up → g=1.0
     after = s.bus.da_source_tally()
 
     assert res["ok"]
+    assert res["applied_live"] is True
     # lane is open AND bounded: external bucket moved by the nudge, intrinsic did not
     assert after["external"] - before["external"] == pytest.approx(0.15)
     assert after["intrinsic"] == pytest.approx(before["intrinsic"])

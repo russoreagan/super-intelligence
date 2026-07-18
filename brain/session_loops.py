@@ -987,17 +987,28 @@ class _LoopsMixin:
         Writes three places: the live TurnTrace when the turn hasn't consolidated
         yet (so the grade re-weights the Hebbian composite at the next sleep), the
         eval log via patch_turn (auditable even post-consolidation), and the
-        decision stream (ledger + live UI). Optionally nudges DA as a genuinely
-        external signal — off by default (external_grade_da_nudge=0) so this ships
-        observability-first."""
+        decision stream (ledger + live UI). Nudges DA as a genuinely external
+        signal — ON by default (external_grade_da_nudge=0.15); a tenant opts out
+        by setting it to 0.
+
+        Chemistry moves AT MOST once per turn_id: the first grade pays
+        nudge*grade; a re-grade pays only the bounded difference from the
+        previous grade (identical repeat = zero), so repeated posts can never
+        saturate DA. And it moves only for a turn that is actually LIVE in the
+        trace buffer — a fabricated or already-consolidated turn_id records to
+        the eval log but touches no chemistry, and the response says so
+        (applied_live=false, reason="turn_not_live") so an async grader can
+        detect it missed the window."""
         from eval.external_grading import normalize_grade
 
         g = normalize_grade(grade)
         if not turn_id or g is None:
             return {"ok": False, "error": "missing turn_id or unusable grade"}
         applied_live = False
+        prev_grade = None
         for trace in getattr(self, "_session_traces_full", []) or []:
             if getattr(trace, "turn_id", "") == turn_id:
+                prev_grade = getattr(trace, "external_grade", None)
                 trace.external_grade = g
                 trace.external_grade_source = source
                 applied_live = True
@@ -1011,27 +1022,46 @@ class _LoopsMixin:
             decisions.log(
                 "external_grade_recorded", turn_id=turn_id, grade=g, source=source
             )
-        with contextlib.suppress(Exception):
-            nudge = float(_brain_settings.get("external_grade_da_nudge", 0) or 0)
-            if nudge > 0:
-                # Bound the felt-state move: clamp the grade to [-1, 1] (defends a
-                # future scale/caller that bypasses normalize_grade) and clamp the
-                # resulting delta to +/-nudge so a hostile or spammy grader cannot
-                # push more than the configured nudge per write. Level saturation
-                # in Neuromodulators.add ([0, 1]) is the spam ceiling on top.
-                g_clamped = max(-1.0, min(1.0, float(g)))
-                delta = max(-nudge, min(nudge, nudge * g_clamped))
-                self.bus.neuromod.add(
-                    "DA",
-                    delta,
-                    source="external_grader",
-                    reward_source="user_emotion",
-                    reason="thumbs",
-                )
-        return {"ok": True, "grade": g, "applied_live": applied_live}
+        if applied_live:
+            with contextlib.suppress(Exception):
+                nudge = float(_brain_settings.get("external_grade_da_nudge", 0) or 0)
+                if nudge > 0:
+                    # Bound the felt-state move: clamp the grade to [-1, 1] (defends a
+                    # future scale/caller that bypasses normalize_grade) and clamp the
+                    # resulting delta to +/-nudge so a hostile or spammy grader cannot
+                    # push more than the configured nudge per write. Level saturation
+                    # in Neuromodulators.add ([0, 1]) is the spam ceiling on top.
+                    # Idempotency: a re-grade of the same turn pays only the difference
+                    # from the previous grade — the writes for one turn telescope to
+                    # nudge*(last - first) instead of accumulating, so no sequence of
+                    # posts can pump DA beyond one nudge from where it started.
+                    g_clamped = max(-1.0, min(1.0, float(g)))
+                    if prev_grade is not None:
+                        g_clamped -= max(-1.0, min(1.0, float(prev_grade)))
+                    delta = max(-nudge, min(nudge, nudge * g_clamped))
+                    if delta:
+                        self.bus.neuromod.add(
+                            "DA",
+                            delta,
+                            source="external_grader",
+                            reward_source="user_emotion",
+                            reason="thumbs",
+                        )
+        out = {"ok": True, "grade": g, "applied_live": applied_live}
+        if not applied_live:
+            # The turn exists only in the eval log now (or never existed): the
+            # learning half of the grade is gone. Say so instead of a silent ok.
+            out["reason"] = "turn_not_live"
+        return out
 
     def api_grade_turn_engine(
-        self, turn_id: str, grade, end_user_id: str = "", persona: str = "", source: str = "api"
+        self,
+        turn_id: str,
+        grade,
+        end_user_id: str = "",
+        persona: str = "",
+        source: str = "api",
+        api_session_id: str = "",
     ) -> dict:
         """Engine-mode external grade (partner API: POST /sessions/{id}/turns/{tid}/grade).
 
@@ -1044,11 +1074,44 @@ class _LoopsMixin:
         the persona chem pair under multi-persona Path B) so the grade moves THAT
         customer's dopamine, then persist it through the client-chem registry so it
         survives. Mirrors process_turn's binding exactly. The trace write + eval/decision
-        log inside api_grade_turn happen regardless of binding — they key on turn_id."""
+        log inside api_grade_turn happen regardless of binding — they key on turn_id.
+
+        Isolation: ``api_session_id`` is the session the CALLER owns (the URL path the
+        route already authorized). The trace buffer is process-wide across every
+        partner, so a turn_id is resolved ONLY when its trace was stamped with this
+        same session — a turn belonging to another partner's (or the owner's) session
+        is refused outright: no trace write, no eval patch, no DA. When the trace is
+        live, the chemistry binding comes from the TRACE's own stamps (the binding the
+        turn actually ran under), not the caller-supplied persona/end_user — so the
+        grade can't be steered onto a different pair than the turn used."""
         from brain.second_brain.store import bind_persona
 
         persona = (persona or "").strip()
         euid = (end_user_id or "").strip()
+        api_session_id = (api_session_id or "").strip()
+        trace = None
+        for t in getattr(self, "_session_traces_full", []) or []:
+            if getattr(t, "turn_id", "") == turn_id:
+                trace = t
+                break
+        if api_session_id and trace is not None:
+            if getattr(trace, "api_session_id", "") != api_session_id:
+                # Another session's turn (another partner, another session of the
+                # same partner, or an owner turn). Deny before ANY write. The route
+                # maps this to 404 so it's indistinguishable from a turn that never
+                # existed — no cross-partner turn-id oracle.
+                return {
+                    "ok": False,
+                    "denied": True,
+                    "applied_live": False,
+                    "error": "unknown turn_id for this session",
+                }
+        if trace is not None:
+            # Bind what the turn bound. Stamps are authoritative; the caller's
+            # session-derived values only fill in for pre-stamp traces (journal
+            # replays from an older build).
+            persona = (getattr(trace, "api_persona", "") or "").strip() or persona
+            euid = (getattr(trace, "end_user_id", "") or "").strip() or euid
         registry = None
         if persona and euid:
             bind_cm = self.bus.bind(self._persona_chem_pair(persona, euid))
