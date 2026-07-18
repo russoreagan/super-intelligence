@@ -1,5 +1,7 @@
 # Reading your notes isn't the same as knowing
 
+> **Great models make agents smart. Context makes them informed. Elyceum lets them learn.**
+
 *Marketing copy — learning story. Public-safe: functional descriptions only.*
 
 ---
@@ -128,8 +130,3 @@ shortcut, permanently:
 | Routine vs. novel | Treated identically | Treated identically | Routine streamlined, novel gets full attention |
 | Behavior change | None | Advisory — notes it should follow | Structural — the decision path itself adapts |
 | When memory goes stale | N/A | Stale notes mislead until someone notices | Shortcuts self-audit and revoke |
-
----
-
-**Great models made agents smart. Context made them informed. This layer makes
-them experienced.**

@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Elyceum — Pricing (marketing-site handoff mockup)</title>
+<!--
+  ============================================================================
+  HANDOFF SPEC + MOCKUP for the marketing-site build session.
+  Source of truth: ~/.claude/plans/i-need-to-think-recursive-glade.md
+
+  This file is BOTH a visual reference and a copy/structure spec. All prices,
+  taglines, feature groupings and comparison-grid rows are lifted verbatim from
+  the approved pricing plan. Lift the copy directly.
+
+  Important guidance for the build:
+    • Prices ($29 / $89 / $249) are ANCHORS to validate against real COGS —
+      treat as placeholders that will be finalized, not committed numbers.
+    • Every tier is anchored on ONE hero claim: "gets cheaper the more you use
+      it." Keep that the top-line message sitewide.
+    • Put the "you bring your keys" rows HIGH — the key-bundling axis is how a
+      buyer self-selects into a tier.
+    • Russ's call: keep ENTERPRISE PRICING UNADVERTISED. The low-key "Contact
+      us" enterprise band below is fine (no price shown); the Enterprise column
+      in the grid shows "Custom" only. If you'd rather drop the enterprise
+      column entirely from the public page, that's consistent with the intent.
+    • Self-contained on purpose (system fonts, inline CSS, no external calls) so
+      it opens anywhere. Rebuild in the real site's stack/design system.
+  ============================================================================
+-->
+<style>
+  :root{
+    --ink:#17161c; --muted:#605d6c; --faint:#8b8896;
+    --bg:#ffffff; --tint:#faf9fc; --line:#e8e6ee; --line-strong:#d8d5e2;
+    --accent:#5b47e0; --accent-ink:#4a37c9; --accent-tint:#f1eefc;
+    --warm:#d9782f; --ok:#3f9d58;
+    --radius:16px; --shadow:0 1px 2px rgba(20,18,30,.04),0 12px 34px rgba(20,18,30,.07);
+    --maxw:1180px;
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Inter","Segoe UI",Roboto,system-ui,sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;color:var(--ink);background:var(--bg);line-height:1.6;-webkit-font-smoothing:antialiased;}
+  .wrap{max-width:var(--maxw);margin:0 auto;padding:0 24px;}
+  a{color:inherit;text-decoration:none;}
+  h1,h2,h3{margin:0;letter-spacing:-.02em;line-height:1.1;font-weight:700;}
+  .eyebrow{font-size:.8rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--accent-ink);}
+  .muted{color:var(--muted);}
+
+  /* ---------- Hero ---------- */
+  .hero{padding:72px 0 40px;text-align:center;}
+  .hero h1{font-size:clamp(2.3rem,5vw,3.6rem);max-width:14ch;margin:14px auto 0;}
+  .hero .sub{font-size:clamp(1.05rem,2vw,1.25rem);color:var(--muted);max-width:52ch;margin:18px auto 0;}
+  .trend{display:inline-flex;align-items:center;gap:8px;margin-top:22px;padding:7px 14px;border:1px solid var(--line-strong);
+         border-radius:999px;font-size:.9rem;color:var(--warm);font-weight:600;background:#fff;}
+  .trend svg{display:block;}
+
+  /* ---------- Tier cards ---------- */
+  .tiers{display:grid;grid-template-columns:repeat(4,1fr);gap:18px;margin-top:44px;align-items:stretch;}
+  .card{position:relative;display:flex;flex-direction:column;background:#fff;border:1px solid var(--line);
+        border-radius:var(--radius);padding:26px 22px;}
+  .card.feat{border-color:var(--accent);box-shadow:var(--shadow);}
+  .badge{position:absolute;top:-11px;left:50%;transform:translateX(-50%);background:var(--accent);color:#fff;
+         font-size:.72rem;font-weight:700;letter-spacing:.05em;text-transform:uppercase;padding:5px 12px;border-radius:999px;white-space:nowrap;}
+  .card h3{font-size:1.3rem;}
+  .card .who{margin-top:6px;font-size:.86rem;color:var(--faint);min-height:2.4em;}
+  .price{margin-top:16px;display:flex;align-items:baseline;gap:6px;flex-wrap:wrap;}
+  .price .amt{font-size:2.3rem;font-weight:700;letter-spacing:-.03em;}
+  .price .per{font-size:.9rem;color:var(--muted);}
+  .price .suffix{flex-basis:100%;font-size:.82rem;color:var(--faint);margin-top:2px;}
+  .pitch{margin-top:14px;font-size:.92rem;color:var(--muted);min-height:3.2em;}
+  .keys{display:flex;gap:6px;flex-wrap:wrap;margin-top:16px;}
+  .pill{font-size:.72rem;font-weight:600;padding:4px 9px;border-radius:7px;border:1px solid var(--line-strong);color:var(--muted);}
+  .pill.inc{background:var(--accent-tint);border-color:transparent;color:var(--accent-ink);}
+  ul.inc{list-style:none;padding:0;margin:18px 0 0;display:flex;flex-direction:column;gap:9px;}
+  ul.inc li{position:relative;padding-left:24px;font-size:.9rem;}
+  ul.inc li::before{content:"";position:absolute;left:0;top:.5em;width:14px;height:14px;border-radius:50%;
+    background:var(--accent-tint);}
+  ul.inc li::after{content:"";position:absolute;left:4px;top:.62em;width:6px;height:3px;border-left:2px solid var(--accent-ink);
+    border-bottom:2px solid var(--accent-ink);transform:rotate(-45deg);}
+  .cta{margin-top:auto;padding-top:22px;}
+  .btn{display:block;text-align:center;padding:11px 16px;border-radius:10px;font-weight:600;font-size:.94rem;
+       border:1px solid var(--line-strong);color:var(--ink);background:#fff;transition:.15s;}
+  .btn:hover{border-color:var(--ink);}
+  .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff;}
+  .btn.primary:hover{background:var(--accent-ink);border-color:var(--accent-ink);}
+
+  /* ---------- Enterprise band ---------- */
+  .ent{margin-top:22px;display:flex;align-items:center;justify-content:space-between;gap:18px;flex-wrap:wrap;
+       background:var(--ink);color:#fff;border-radius:var(--radius);padding:24px 28px;}
+  .ent h3{font-size:1.25rem;color:#fff;}
+  .ent p{margin:6px 0 0;color:#c7c4d4;font-size:.92rem;max-width:56ch;}
+  .ent .btn{background:transparent;color:#fff;border-color:rgba(255,255,255,.35);}
+  .ent .btn:hover{border-color:#fff;}
+
+  /* ---------- Section ---------- */
+  section.block{padding:64px 0;}
+  .block .head{max-width:60ch;margin-bottom:34px;}
+  .block h2{font-size:clamp(1.6rem,3vw,2.1rem);margin-top:10px;}
+  .block .head p{color:var(--muted);margin:12px 0 0;font-size:1.05rem;}
+
+  /* ---------- Comparison grid ---------- */
+  .tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:var(--radius);}
+  table{border-collapse:collapse;width:100%;min-width:820px;font-size:.9rem;}
+  thead th{position:sticky;top:0;background:var(--tint);text-align:center;padding:16px 14px;font-weight:700;
+           border-bottom:1px solid var(--line-strong);vertical-align:bottom;}
+  thead th:first-child{text-align:left;}
+  thead th .tprice{display:block;font-size:.8rem;font-weight:600;color:var(--muted);margin-top:3px;}
+  thead th.hl{background:var(--accent-tint);color:var(--accent-ink);}
+  tbody th{text-align:left;font-weight:500;padding:13px 14px;color:var(--ink);border-bottom:1px solid var(--line);}
+  tbody td{text-align:center;padding:13px 14px;border-bottom:1px solid var(--line);color:var(--muted);
+           font-variant-numeric:tabular-nums;}
+  tbody td.hl{background:#faf8ff;}
+  tr.group th{background:#fff;font-size:.74rem;font-weight:700;letter-spacing:.07em;text-transform:uppercase;
+    color:var(--faint);padding-top:22px;padding-bottom:8px;border-bottom:none;}
+  tr.group td{border-bottom:none;background:#fff;}
+  .yes{color:var(--ok);font-weight:700;}
+  .no{color:var(--faint);}
+  .val{color:var(--ink);font-weight:600;}
+
+  /* ---------- Feature clusters ---------- */
+  .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;}
+  .fcard{background:var(--tint);border:1px solid var(--line);border-radius:var(--radius);padding:26px 24px;}
+  .fcard h3{font-size:1.12rem;}
+  .fcard ul{list-style:none;padding:0;margin:16px 0 0;display:flex;flex-direction:column;gap:14px;}
+  .fcard li b{display:block;font-weight:600;font-size:.95rem;}
+  .fcard li span{color:var(--muted);font-size:.9rem;}
+
+  /* ---------- Notes ---------- */
+  .notes{background:#fffaf3;border:1px solid #f0e2cf;border-radius:var(--radius);padding:24px 26px;margin-top:40px;}
+  .notes h3{font-size:1rem;color:var(--warm);}
+  .notes ul{margin:12px 0 0;padding-left:18px;color:var(--muted);font-size:.9rem;}
+  .notes li{margin:7px 0;}
+  footer{padding:48px 0;color:var(--faint);font-size:.85rem;text-align:center;}
+
+  @media(max-width:900px){
+    .tiers{grid-template-columns:repeat(2,1fr);}
+    .grid3{grid-template-columns:1fr;}
+  }
+  @media(max-width:560px){
+    .tiers{grid-template-columns:1fr;}
+  }
+</style>
+</head>
+<body>
+
+<!-- ============================ HERO ============================ -->
+<header class="hero">
+  <div class="wrap">
+    <div class="eyebrow">Elyceum — the learning engine</div>
+    <h1>Gets cheaper the more you use it.</h1>
+    <p class="sub">An agent with a persistent personality that learns from experience — so routine work replays faster and costs less every time, and every interaction gets more personal.</p>
+    <div class="trend">
+      <svg width="20" height="14" viewBox="0 0 20 14" fill="none" aria-hidden="true">
+        <path d="M1 1 L7 7 L11 4 L19 12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M19 12 L19 7 M19 12 L14 12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      Your cost per outcome falls with every repeat
+    </div>
+  </div>
+</header>
+
+<!-- ============================ TIER CARDS ============================ -->
+<div class="wrap">
+  <div class="tiers">
+
+    <!-- Design Partner -->
+    <div class="card">
+      <h3>Design Partner</h3>
+      <div class="who">Free · in-app only · you bring all your own keys</div>
+      <div class="price"><span class="amt">$0</span><span class="per">capped</span>
+        <span class="suffix">1 seat · limited daily use</span></div>
+      <p class="pitch">Evaluate the full experience in the app — upgrade for API access to build on it.</p>
+      <div class="keys"><span class="pill">LLM key: you</span><span class="pill">Voice keys: you</span></div>
+      <ul class="inc">
+        <li>1 persona · 1 agent</li>
+        <li>Unlimited* interactions (daily cap)</li>
+        <li>Learning layer + savings view</li>
+        <li>1 connector</li>
+      </ul>
+      <div class="cta"><a class="btn" href="#">Start free</a></div>
+    </div>
+
+    <!-- Bring Your Own -->
+    <div class="card">
+      <h3>Bring Your Own</h3>
+      <div class="who">You bring all your own keys — the cheapest way to run it</div>
+      <div class="price"><span class="amt">$29</span><span class="per">/ seat / mo</span>
+        <span class="suffix">you pay your own inference &amp; voice</span></div>
+      <p class="pitch">Your agent, unlimited use, highest control. It gets more personal fast and cheaper over time.</p>
+      <div class="keys"><span class="pill">LLM key: you</span><span class="pill">Voice keys: you</span></div>
+      <ul class="inc">
+        <li>Unlimited interactions</li>
+        <li>Up to 5 personas</li>
+        <li>2 agents · 1 always-on</li>
+        <li>Autonomous jobs (capped budget)</li>
+        <li>1 connector</li>
+      </ul>
+      <div class="cta"><a class="btn" href="#">Choose plan</a></div>
+    </div>
+
+    <!-- Voice Included (featured) -->
+    <div class="card feat">
+      <span class="badge">Most popular</span>
+      <h3>Voice Included</h3>
+      <div class="who">Bring your LLM key — we handle the affective voice stack</div>
+      <div class="price"><span class="amt">$89</span><span class="per">/ seat / mo</span>
+        <span class="suffix">+ voice usage over your allotment</span></div>
+      <p class="pitch">Natural voice in and out, with emotion that matches the moment — zero voice setup.</p>
+      <div class="keys"><span class="pill">LLM key: you</span><span class="pill inc">Voice: included</span></div>
+      <ul class="inc">
+        <li>Everything in Bring Your Own</li>
+        <li>Affective voice (TTS + STT) included</li>
+        <li>Up to 10 personas · 5 agents</li>
+        <li>Bigger autonomous budget</li>
+        <li>Team roles &amp; multi-seat · 3 connectors</li>
+      </ul>
+      <div class="cta"><a class="btn primary" href="#">Choose plan</a></div>
+    </div>
+
+    <!-- Fully Managed -->
+    <div class="card">
+      <h3>Fully Managed</h3>
+      <div class="who">We bring everything — no keys, no setup</div>
+      <div class="price"><span class="amt">$249</span><span class="per">/ seat / mo</span>
+        <span class="suffix">incl. usage credits, then metered</span></div>
+      <p class="pitch">The whole stack, managed. Just use it — and it gets cheaper to run behind the scenes.</p>
+      <div class="keys"><span class="pill inc">LLM: included</span><span class="pill inc">Voice: included</span></div>
+      <ul class="inc">
+        <li>Everything in Voice Included</li>
+        <li>Managed LLM inference + voice</li>
+        <li>Usage credits included, then metered</li>
+        <li>Unlimited personas · 10 agents (2 always-on)</li>
+        <li>Engine API · unlimited connectors</li>
+      </ul>
+      <div class="cta"><a class="btn" href="#">Choose plan</a></div>
+    </div>
+
+  </div>
+
+  <!-- Enterprise band (no price advertised — see handoff notes) -->
+  <div class="ent">
+    <div>
+      <h3>Enterprise</h3>
+      <p>Dedicated capacity, custom connectors, higher spend caps, SSO, security review and an SLA. Custom pricing, worked out with you.</p>
+    </div>
+    <a class="btn" href="#">Contact us</a>
+  </div>
+</div>
+
+<!-- ============================ COMPARISON GRID ============================ -->
+<section class="block">
+  <div class="wrap">
+    <div class="head">
+      <div class="eyebrow">Compare plans</div>
+      <h2>Same brain. Choose how much we manage.</h2>
+      <p>Tiers differ mainly by <b>who brings the API keys</b>. The learning layer, persistent character and safety gates are in every plan.</p>
+    </div>
+
+    <div class="tablewrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Feature</th>
+            <th>Design Partner<span class="tprice">Free</span></th>
+            <th>Bring Your Own<span class="tprice">~$29/seat/mo</span></th>
+            <th class="hl">Voice Included<span class="tprice">~$89/seat/mo</span></th>
+            <th>Fully Managed<span class="tprice">~$249 + usage</span></th>
+            <th>Enterprise<span class="tprice">Custom</span></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="group"><th colspan="6">Keys &amp; billing</th></tr>
+          <tr><th>You bring your LLM key</th><td class="val">Yes</td><td class="val">Yes</td><td class="hl val">Yes</td><td>Included</td><td>Negotiable</td></tr>
+          <tr><th>You bring your voice keys</th><td class="val">Yes</td><td class="val">Yes</td><td class="hl">Included</td><td>Included</td><td>Negotiable</td></tr>
+          <tr><th>Price</th><td>Free (capped)</td><td class="val">~$29/seat/mo</td><td class="hl val">~$89/seat/mo</td><td class="val">~$249 + usage</td><td>Custom</td></tr>
+          <tr><th>Access</th><td>App (Elyceum UI) only</td><td class="val">App + API</td><td class="hl val">App + API</td><td class="val">App + API</td><td class="val">App + API</td></tr>
+
+          <tr class="group"><th colspan="6">The learning layer — in every plan</th></tr>
+          <tr><th>Learns &amp; gets cheaper over time</th><td class="yes">✓</td><td class="yes">✓</td><td class="hl yes">✓</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+          <tr><th>Cost-savings dashboard</th><td class="yes">✓</td><td class="yes">✓</td><td class="hl yes">✓</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+          <tr><th>Persistent personality / character</th><td class="yes">✓</td><td class="yes">✓</td><td class="hl yes">✓</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+          <tr><th>Emotional intelligence (reads tone)</th><td class="yes">✓</td><td class="yes">✓</td><td class="hl yes">✓</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+          <tr><th>Perfect, editable memory</th><td class="yes">✓</td><td class="yes">✓</td><td class="hl yes">✓</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+          <tr><th>Approvals &amp; safety gates</th><td class="yes">✓</td><td class="yes">✓</td><td class="hl yes">✓</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+          <tr><th>Skills library</th><td class="yes">✓</td><td class="yes">✓</td><td class="hl yes">✓</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+
+          <tr class="group"><th colspan="6">Capacity &amp; limits</th></tr>
+          <tr><th>Interactions (chat)</th><td>Daily cap</td><td class="val">Unlimited</td><td class="hl val">Unlimited</td><td class="val">Unlimited</td><td class="val">Unlimited</td></tr>
+          <tr><th>Personas <span style="color:var(--faint);font-weight:400">— personalities you talk to</span></th><td>1</td><td class="val">Up to 5</td><td class="hl val">Up to 10</td><td class="val">Unlimited</td><td class="val">Unlimited</td></tr>
+          <tr><th>Agents <span style="color:var(--faint);font-weight:400">— a persona put to work</span></th><td>1</td><td>2</td><td class="hl val">5</td><td class="val">10</td><td class="val">Custom</td></tr>
+          <tr><th>Always-on agents <span style="color:var(--faint);font-weight:400">— run autonomously</span></th><td class="no">—</td><td>1</td><td class="hl">1</td><td class="val">2</td><td class="val">Custom</td></tr>
+          <tr><th>Autonomous multi-step jobs</th><td>Limited</td><td>✓ capped budget</td><td class="hl yes">✓</td><td>✓ higher budget</td><td>Custom</td></tr>
+          <tr><th>Connectors / integrations</th><td>1</td><td>1</td><td class="hl val">3</td><td class="val">Unlimited</td><td class="val">Custom</td></tr>
+
+          <tr class="group"><th colspan="6">Included inputs</th></tr>
+          <tr><th>Affective voice (TTS / STT)</th><td>Your key</td><td>Your key</td><td class="hl val">Included allotment</td><td class="val">Larger allotment</td><td class="val">Custom</td></tr>
+          <tr><th>LLM inference</th><td>Your key</td><td>Your key</td><td class="hl">Your key</td><td class="val">Credits + metered</td><td class="val">Custom / BYO</td></tr>
+
+          <tr class="group"><th colspan="6">Teams, API &amp; enterprise</th></tr>
+          <tr><th>Team roles &amp; multi-seat admin</th><td class="no">—</td><td class="no">—</td><td class="hl yes">✓</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+          <tr><th>Engine API (embed in your product)</th><td class="no">—</td><td class="val">Included</td><td class="hl val">Included</td><td class="val">Higher limits</td><td class="val">Custom</td></tr>
+          <tr><th>SSO · security review · SLA</th><td class="no">—</td><td class="no">—</td><td class="hl no">—</td><td class="no">—</td><td class="yes">✓</td></tr>
+          <tr><th>Dedicated capacity</th><td class="no">—</td><td class="no">—</td><td class="hl no">—</td><td class="no">—</td><td class="yes">✓</td></tr>
+          <tr><th>Support</th><td>Community</td><td>Email</td><td class="hl val">Priority</td><td class="val">Priority</td><td class="val">Dedicated</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p style="margin:16px 2px 0;font-size:.88rem;color:var(--muted);max-width:78ch;">
+      <b style="color:var(--ink);">Personas vs. agents:</b> a <b>persona</b> is a personality you can talk to — create as many as you
+      like; they're cheap. An <b>agent</b> is a persona <i>put to work</i> with a role and permissions — agents run tasks
+      and do the autonomous work, so they're the unit that scales with your plan.
+    </p>
+  </div>
+</section>
+
+<!-- ============================ FEATURE CLUSTERS ============================ -->
+<section class="block" style="background:var(--tint);border-top:1px solid var(--line);border-bottom:1px solid var(--line);">
+  <div class="wrap">
+    <div class="head">
+      <div class="eyebrow">What you get</div>
+      <h2>Not a chatbot. An agent that learns your work.</h2>
+    </div>
+
+    <div class="grid3">
+      <div class="fcard">
+        <h3>It learns — and gets cheaper the more you use it</h3>
+        <ul>
+          <li><b>Improves with experience.</b><span>Routine work replays faster and costs less each time — the opposite of a memory file that gets slower and pricier as it grows.</span></li>
+          <li><b>Cost that falls over time.</b><span>A live view of your cost-per-outcome dropping as the agent practices.</span></li>
+          <li><b>Knows routine from novel.</b><span>Streamlines what it's seen before; spends full effort on what's genuinely new.</span></li>
+        </ul>
+      </div>
+
+      <div class="fcard">
+        <h3>A character all its own</h3>
+        <ul>
+          <li><b>Persistent character.</b><span>A stable identity that develops the more you work together, not a blank slate every session.</span></li>
+          <li><b>Becomes one of a kind.</b><span>The same starting point plus a different history produces a measurably different mind — yours grows into a distinct character of its own, never a copy of you.</span></li>
+          <li><b>Reads the room.</b><span>Understands tone and emotional context and responds with real emotional intelligence.</span></li>
+        </ul>
+      </div>
+
+      <div class="fcard">
+        <h3>Speaks and listens — with emotion</h3>
+        <ul>
+          <li><b>Natural voice in and out.</b><span>Talk to it; hear it back.</span></li>
+          <li><b>Emotion that matches the moment.</b><span>The voice carries the mood, not a flat monotone.</span></li>
+        </ul>
+      </div>
+
+      <div class="fcard">
+        <h3>Does the work, not just the talking</h3>
+        <ul>
+          <li><b>Delegate multi-step jobs.</b><span>It plans, executes, and reports back on its own while you're away.</span></li>
+          <li><b>You stay in control.</b><span>Sensitive actions wait for your approval; budgets and safety checks never relax with repetition.</span></li>
+          <li><b>Connect your tools.</b><span>Plug in your data sources and services.</span></li>
+        </ul>
+      </div>
+
+      <div class="fcard">
+        <h3>Never forgets (unless you tell it to)</h3>
+        <ul>
+          <li><b>Perfect recall.</b><span>Nothing important is lost.</span></li>
+          <li><b>Memory you can read and edit.</b><span>Open the notebook, correct it, own it.</span></li>
+        </ul>
+      </div>
+
+      <div class="fcard">
+        <h3>Built for teams and builders</h3>
+        <ul>
+          <li><b>As many personas as you like.</b><span>Distinct personalities you can talk to, each with its own character and memory — cheap to create.</span></li>
+          <li><b>Put a persona to work as an agent.</b><span>Give it a role and bounded permissions; agents run tasks and autonomous jobs — and are what you scale up as you grow.</span></li>
+          <li><b>Embed it anywhere.</b><span>An API to put the engine inside your own product — with emotional state returned alongside every response.</span></li>
+          <li><b>Enterprise-ready.</b><span>Dedicated capacity, SSO, security review, SLA.</span></li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- Handoff notes (remove before publishing) -->
+    <div class="notes">
+      <h3>Notes for the build team (remove before publishing)</h3>
+      <ul>
+        <li><b>Prices are anchors, not final.</b> $29 / $89 / $249 will be validated against real cost-to-serve. Keep them easy to change (config/CMS), not hardcoded in markup.</li>
+        <li><b>Keep the hero claim everywhere:</b> “gets cheaper the more you use it” is the one thing competitors can’t copy — lead with it on hero, cards, and the compare header.</li>
+        <li><b>Key-bundling rows go high.</b> The “you bring your keys” rows are how a buyer self-selects; they’re first in the grid on purpose.</li>
+        <li><b>Keep personas and agents separate.</b> Personas are cheap identities (generous limits); agents are the cost-accruing workers, and always-on agents cost most (tightest limits). Don’t recombine them into one row.</li>
+        <li><b>Free tier is app-only, and that’s the point.</b> The API is the commercial surface and the main cost/abuse vector; the UI is human-paced and cheap to give away. Free = evaluate in the app; paid = build on the API. That boundary is the free→paid story — keep “App only” vs “App + API” prominent.</li>
+        <li><b>Enterprise pricing stays unadvertised</b> (Russ’s call). The “Contact us” band is fine with no price; the grid shows only “Custom.” Dropping the enterprise column entirely is also acceptable.</li>
+        <li><b>“Most popular” = Voice Included</b> to anchor ARPU; revisit once real conversion data exists.</li>
+        <li><b>Public-safe copy only</b> — describe by function, never internal architecture terms.</li>
+      </ul>
+    </div>
+
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">Elyceum · pricing mockup for marketing-site handoff · prices are anchors pending COGS validation</div>
+</footer>
+
+</body>
+</html>
