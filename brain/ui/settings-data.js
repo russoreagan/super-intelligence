@@ -373,6 +373,28 @@ window.SETTINGS = {
             { type: 'time', unit: 'sec', key: 'colony_trail_half_life_s', label: 'Trail Persistence', hint: 'half-life of a reinforced trail within a session', min: 30, max: 600, step: 30, def: 120 },
           ],
         },
+        {
+          id: 'sec-21', num: '21', title: 'Structural Plasticity',
+          desc: 'The brain growing its own capability: learning which curated skill-fragments attach to which cells, recruiting a dormant reserve cell into a new specialist when a proven cluster is stable, and self-authoring its own skills (each screened before it can go live). Every toggle is independent. Setting BRAIN_WIRING_FROZEN halts all of it at once.',
+          rows: [
+            { type: 'toggle', key: 'fragment_wiring', label: 'Fragment Wiring', hint: 'learn which curated skill-fragments attach to which cells, and inject the proven ones. Off = no attachment learning or injection.', def: 1 },
+            { type: 'toggle', key: 'node_recruitment', label: 'Node Recruitment', hint: 'recruit a dormant reserve cell into a new specialist drafter when a host accumulates a stable, proven fragment cluster.', def: 1 },
+            { type: 'toggle', key: 'node_self_authoring', label: 'Self-Authoring', hint: 'the brain drafts its own specialization skills. Each is screened before going live; anything the screener cannot auto-clear waits for your review in the Skills page.', def: 1 },
+            { type: 'toggle', key: 'fragment_downshift', label: 'Local Downshift', hint: 'run a drafter whose attachment is well proven on the local model instead of cloud, keeping a cloud floor.', def: 1 },
+          ],
+          advanced: [
+            { type: 'group', label: 'Attachment learning' },
+            { type: 'range', key: 'fragment_explore_rate', label: 'Exploration Rate', hint: 'chance a drafter tries a not-yet-proven fragment', min: 0, max: 1.0, step: 0.05, def: 0.20 },
+            { type: 'range', key: 'fragment_inject_threshold', label: 'Inject Threshold', hint: 'attachment weight above which a fragment is injected into its host', min: 1.0, max: 3.0, step: 0.05, def: 1.30 },
+            { type: 'range', key: 'fragment_downshift_threshold', label: 'Downshift Threshold', hint: 'attachment weight above which a drafter may run on the local model', min: 1.5, max: 3.0, step: 0.05, def: 2.20 },
+            { type: 'group', label: 'Node recruitment' },
+            { type: 'range', key: 'node_promote_threshold', label: 'Promotion Threshold', hint: 'fragment weight that counts as proven for recruiting a node', min: 1.5, max: 3.0, step: 0.05, def: 2.20 },
+            { type: 'range', key: 'node_promote_min_cluster', label: 'Min Cluster Size', hint: 'proven fragments a host needs before it crystallizes into a node', min: 1, max: 6, step: 1, def: 2 },
+            { type: 'group', label: 'Self-authoring' },
+            { type: 'range', key: 'node_author_min_hours', label: 'Authoring Cooldown', hint: 'hours between authored proposals for a persona', min: 1, max: 168, step: 1, def: 24 },
+            { type: 'range', key: 'node_author_max_per_persona', label: 'Max Authored Skills', hint: 'cap on total self-authored skills per persona', min: 0, max: 50, step: 1, def: 5 },
+          ],
+        },
       ],
     },
 
