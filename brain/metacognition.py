@@ -1,8 +1,9 @@
 """
 Metacognition — the brain watching itself (v0.3).
 Higher-Order Theories of Consciousness (Rosenthal): a mental state is conscious
-only when there is a higher-order thought about that state. This cell makes the
-brain's states conscious in the technical HOT sense by representing them.
+only when there is a higher-order thought about that state. This cell represents
+the brain's own states, satisfying the formal HOT criterion — without asserting
+those states are thereby literally conscious.
 
 Watches: cost per turn, drafter win rates, neuromod variance, surprise trends.
 Posts to meta.* topic. Other clusters can subscribe.

@@ -251,7 +251,8 @@ class HebbianUpdater:
         floor; sustained wins then climb it toward the downshift threshold, while an
         attachment that stops winning fades (decay_fragment_edges) and is pruned. Reads
         trace.drafter_fragments (host → [skill_id], stamped per-drafter by frontal). Gated by
-        fragment_wiring; the caller also gates on BRAIN_WIRING_FROZEN. Returns edge updates."""
+        fragment_wiring; the top-level run() gates the whole pass on BRAIN_WIRING_FROZEN.
+        Returns edge updates."""
         if not settings.get("fragment_wiring", 1):
             return 0
         frags = getattr(trace, "drafter_fragments", None) or {}
@@ -633,8 +634,19 @@ class HebbianUpdater:
         traces by their persona stamp and bind each group's persona around its
         updates — attribution no longer depends on who pulled the trigger.
         Unstamped traces (older builds, no-persona deployments) run under the
-        ambient binding, exactly the old behavior."""
+        ambient binding, exactly the old behavior.
+
+        BRAIN_WIRING_FROZEN is a TRUE panic switch: it halts the ENTIRE pass here
+        — decay, weight learning, drafter/switch/recall credit, attachment credit,
+        node recruitment, prune, and save — so wiring.json is left byte-identical
+        and the brain falls back to its fixed map, unchanged (SYSTEMS.md §2.9)."""
         import contextlib
+
+        if os.environ.get("BRAIN_WIRING_FROZEN", "false").lower() == "true":
+            decisions.log(
+                "hebbian_pass_frozen", session_id=session_id, traces=len(full_traces)
+            )
+            return
 
         from brain.persona_key import persona_slug
         from brain.second_brain.store import bind_persona

@@ -1014,14 +1014,58 @@ class _LoopsMixin:
         with contextlib.suppress(Exception):
             nudge = float(_brain_settings.get("external_grade_da_nudge", 0) or 0)
             if nudge > 0:
+                # Bound the felt-state move: clamp the grade to [-1, 1] (defends a
+                # future scale/caller that bypasses normalize_grade) and clamp the
+                # resulting delta to +/-nudge so a hostile or spammy grader cannot
+                # push more than the configured nudge per write. Level saturation
+                # in Neuromodulators.add ([0, 1]) is the spam ceiling on top.
+                g_clamped = max(-1.0, min(1.0, float(g)))
+                delta = max(-nudge, min(nudge, nudge * g_clamped))
                 self.bus.neuromod.add(
                     "DA",
-                    nudge * g,
+                    delta,
                     source="external_grader",
                     reward_source="user_emotion",
                     reason="thumbs",
                 )
         return {"ok": True, "grade": g, "applied_live": applied_live}
+
+    def api_grade_turn_engine(
+        self, turn_id: str, grade, end_user_id: str = "", persona: str = "", source: str = "api"
+    ) -> dict:
+        """Engine-mode external grade (partner API: POST /sessions/{id}/turns/{tid}/grade).
+
+        The owner UI grades on the single resting chemistry, so api_grade_turn's DA
+        nudge lands on the right bus with no binding. The engine is different: a turn
+        runs with the end-user's (and persona's) chemistry BOUND for the scope of that
+        turn, then reverts to the resting pair. An external grade arrives out of band,
+        so unbound self.bus resolves to the resting pair — nudging the wrong mood. Here
+        we re-resolve and bind the SAME pair the turn used (per-customer registry, or
+        the persona chem pair under multi-persona Path B) so the grade moves THAT
+        customer's dopamine, then persist it through the client-chem registry so it
+        survives. Mirrors process_turn's binding exactly. The trace write + eval/decision
+        log inside api_grade_turn happen regardless of binding — they key on turn_id."""
+        from brain.second_brain.store import bind_persona
+
+        persona = (persona or "").strip()
+        euid = (end_user_id or "").strip()
+        registry = None
+        if persona and euid:
+            bind_cm = self.bus.bind(self._persona_chem_pair(persona, euid))
+        elif euid:
+            registry = self._client_chem_registry()
+            bind_cm = self.bus.bind(registry.get_or_create(euid))
+        else:
+            bind_cm = contextlib.nullcontext()
+        try:
+            with bind_persona(persona), bind_cm:
+                return self.api_grade_turn(turn_id, grade, source=source)
+        finally:
+            # Force-persist so the graded mood is durable now, not only at the next
+            # turn or consolidation (the grade may be the last thing this customer does).
+            if registry is not None and euid:
+                with contextlib.suppress(Exception):
+                    registry.persist(euid, force=True)
 
     def api_learning(self, view: str, persona: str = "", edge: str = "", limit: int = 50) -> dict:
         """Learning-surface views for the engine API (mirrors the owner UI's
