@@ -87,15 +87,19 @@ def _save_marker(persona: str, ts: float, count: int) -> None:
 
 
 def _proven_cluster_evidence(wiring, skills_by_id: dict) -> list[str]:
-    """Deterministic evidence: proven fragment skills across the fixed drafters (weight ≥ the
-    promote threshold), as 'id: description' lines. Descriptions come from already-screened
-    skills only — no conversation text — so authoring cannot leak raw user data."""
+    """Deterministic evidence: proven fragment skills across every drafter currently wired
+    to the executive — fixed AND recruited reserves alike (Tier 2 authoring builds on Tier 2
+    output) — weight >= the promote threshold, as 'id: description' lines. Descriptions come
+    from already-screened skills only — no conversation text — so authoring cannot leak raw
+    user data."""
     from brain.fragment_pool import is_admissible
 
     promote = float(settings.get("node_promote_threshold", 2.2))
+    hosts = sorted(
+        h for h in wiring.successors("frontal.executive") if h.startswith("frontal.drafter_")
+    )
     seen: dict[str, str] = {}
-    for i in range(5):
-        host = f"frontal.drafter_{chr(65 + i)}"
+    for host in hosts:
         for sid, w in wiring.attached_fragments(host):
             if w >= promote and is_admissible(sid, host) and sid not in seen:
                 seen[sid] = (skills_by_id.get(sid) or "").strip()

@@ -98,13 +98,13 @@ A caution for anyone reading the code: three different things are named "valence
 
 Forty-five emotions map to a perceptually uniform color space where hue is the emotional family, lightness is energy, and saturation is intensity. One table, one source of truth. The display strength is a user preference and changes only the rendering, never what the agent feels.
 
-### 1.8 A separate relationship per customer · Live, in memory only
+### 1.8 A separate relationship per customer · Live
 
 When one personality serves many customers, each customer gets their own affective relationship with it. A new customer starts at the personality's baseline. A returning one picks up where they left off, with time away relaxing the mood toward baseline in proportion to the gap.
 
 The isolation guarantee is expressed as a missing function. At rest, the day's aggregate mood blends into the personality's resting disposition. Nothing writes an aggregate back onto an individual customer. There is no such method, deliberately, so one customer's mood can never seed another's session.
 
-**Dark in one dimension.** The durable store for this is written and tested but never connected. Per-customer moods currently die when the process restarts.
+**Per-customer moods survive a restart.** The durable store is wired, routed through the tenant-canonical path, throttled to match the persona-chemistry pattern, and degrades to memory rather than breaking a turn.
 
 ---
 
@@ -316,15 +316,11 @@ Every dopamine release is stamped at a single chokepoint as either external, mea
 
 **Anyone technical will ask about this. Answering before they ask is worth more than the feature it is a flaw in.**
 
-### 4.4 The external verdict · Dark, disconnected
+### 4.4 The external verdict · Live
 
 A verdict from outside, a thumbs up, a rating, an automated grader, normalized to one scale.
 
-The path into learning works. But the piece that would let an external verdict move the agent's actual chemistry is **dead code**. The setting it depends on was never registered, so the value always reads zero and the branch is unreachable. Worse, it cannot even be turned on: the loader drops the key as unknown and the API refuses it. The comment says "off by default." It is off permanently.
-
-Four related weights that read like tunable dials are hardcoded constants for the same reason.
-
-**This is the highest-leverage fix in the system, and it is roughly one line.** The one reward channel grounded in reality is disconnected, in a system that is eighty percent self-graded.
+The path into learning is reachable. Five settings keys that gate it — the four blend weights (hebbian_w_da_ext, hebbian_w_critic_ext, hebbian_w_user_ext, hebbian_w_external) and the nudge itself (external_grade_da_nudge) — are registered at their exact current values, so the branch fires and the API accepts them. The nudge still defaults to zero: registered and tunable, but off until an operator turns it on.
 
 ### 4.5 Intensity and learning (Yerkes-Dodson inverted U) · Live
 
@@ -336,7 +332,7 @@ On by default. Arousal and emotional intensity raise how much a turn imprints, a
 
 Conversational payoff is usually late. The turn where the reward finally lands is rarely the only turn that earned it, so credit reaches backward a couple of turns with decay.
 
-It works and it is **invisible**. These updates are applied but never recorded, so every learning report under-counts by construction.
+Each update logs as a distinct record naming which turn earned the credit and which turn paid it, so a learning report reconciles exactly with what was applied.
 
 ### 4.7 Other things that earn credit (competitive learning · Complementary Learning Systems) · Live
 
@@ -1235,7 +1231,7 @@ Verbatim from the code. Useful because they are true, and because each one compr
 
 **Nine defects closed.** Suite went 2122 → 2184 passing; every fix landed with a test that fails without it.
 
-- **The external verdict channel is reachable.** Six settings keys were read at their call sites but never registered, so the loader silently dropped them and the API refused them. Registered at their exact current values, so nothing turned on and nothing changed behaviour. One trap avoided: registering the nudge as an integer would have made it reachable but still broken, silently truncating any fractional value to zero.
+- **The external verdict channel is reachable.** Five settings keys were read at their call sites but never registered, so the loader silently dropped them and the API refused them. Registered at their exact current values, so nothing turned on and nothing changed behaviour. One trap avoided: registering the nudge as an integer would have made it reachable but still broken, silently truncating any fractional value to zero.
 - **Delayed credit is visible.** Eligibility updates now log as a distinct record carrying which turn earned the credit and which turn paid it. Emitted as one aggregate per turn-and-age rather than per edge, so the ledger grew ~20% instead of ~200%. The session total now reconciles exactly with the logged records.
 - **Per-customer moods survive a restart.** The durable store is wired, routed through the tenant-canonical path, throttled to match the persona-chemistry pattern, and degrades to memory rather than breaking a turn.
 - **The open-threads ledger was silently failing on every write.** The real find of the audit. The section writer built a regex replacement template out of the content, and JSON-escaped non-ASCII produced `\uXXXX`, which the regex engine rejects as a bad escape. One curly apostrophe or em dash from the model, and the write raised. Because the template compiles before the scan, it raised even when the section was absent, so the create branch was unreachable and the section could never come into existence. The DMN swallowed it as a warning. **The tests missed it because they mocked the sink.** Fixed at the shared writer, which protects three other callers.

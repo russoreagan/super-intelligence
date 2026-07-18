@@ -387,7 +387,7 @@ def test_exploration_creates_cross_drafter_variance(monkeypatch, tmp_path):
 def test_downshift_gates_on_proven_attachment_and_availability(monkeypatch, tmp_path):
     from brain.settings import settings
 
-    monkeypatch.setitem(settings._data, "runpod_host", "")  # not "off" → available
+    monkeypatch.setitem(settings._data, "runpod_pod_ready", 1)  # confirmed pod → available
     w = _isolated_wiring(monkeypatch, tmp_path)
     w.add("fragment.alpha", "frontal.drafter_A", weight=2.5)  # proven (≥ 2.2)
     w.add("fragment.beta", "frontal.drafter_B", weight=2.3)  # proven
@@ -404,19 +404,30 @@ def test_downshift_noop_on_lite_tier_and_pod_off(monkeypatch, tmp_path):
     w = _isolated_wiring(monkeypatch, tmp_path)
     w.add("fragment.alpha", "frontal.drafter_A", weight=2.5)
     # lite tier silently reroutes local→cloud haiku — must be a no-op (no leak)
-    monkeypatch.setitem(settings._data, "runpod_host", "")
+    monkeypatch.setitem(settings._data, "runpod_pod_ready", 1)
     f_lite = _frontal(w, selector=object(), router=_FakeRouter(lite=True))
     assert f_lite._downshift_indices([0, 1, 2, 3, 4], "t") == set()
-    # pod-down sentinel
-    monkeypatch.setitem(settings._data, "runpod_host", "off")
+    # pod-down: readiness flag cleared
+    monkeypatch.setitem(settings._data, "runpod_pod_ready", 0)
     f_off = _frontal(w, selector=object(), router=_FakeRouter(lite=False))
     assert f_off._downshift_indices([0, 1, 2, 3, 4], "t") == set()
+
+
+def test_downshift_noop_on_cold_start_never_confirmed(monkeypatch, tmp_path):
+    """No pod has ever been confirmed ready this process (runpod_pod_ready still
+    at its registered default of 0) → downshift must be a clean no-op, not a
+    false 'available' (the bug: runpod_host's default "" used to read as
+    available since it only failed on the literal 'off' sentinel)."""
+    w = _isolated_wiring(monkeypatch, tmp_path)
+    w.add("fragment.alpha", "frontal.drafter_A", weight=2.5)
+    f = _frontal(w, selector=object(), router=_FakeRouter(lite=False))
+    assert f._downshift_indices([0, 1, 2, 3, 4], "t") == set()
 
 
 def test_downshift_respects_cloud_floor(monkeypatch, tmp_path):
     from brain.settings import settings
 
-    monkeypatch.setitem(settings._data, "runpod_host", "")
+    monkeypatch.setitem(settings._data, "runpod_pod_ready", 1)
     w = _isolated_wiring(monkeypatch, tmp_path)
     w.add("fragment.alpha", "frontal.drafter_A", weight=2.5)
     w.add("fragment.beta", "frontal.drafter_B", weight=2.5)
@@ -453,7 +464,7 @@ async def test_end_to_end_learn_then_inject_then_downshift(monkeypatch, tmp_path
     assert injected == ["alpha"] and "<data" in block
 
     # and the proven drafter is now eligible to run on the local model
-    monkeypatch.setitem(settings._data, "runpod_host", "")
+    monkeypatch.setitem(settings._data, "runpod_pod_ready", 1)
     assert 2 in f._downshift_indices([0, 1, 2, 3, 4], "t")
 
 

@@ -58,6 +58,46 @@ def test_reward_weight_identity_fallback():
     assert reward_weight("", "correctness") == 1.0
 
 
+def test_reward_weight_mandate_layer_shifts_output(monkeypatch):
+    """An assigned mandate with a distinct reward_weights map measurably shifts
+    reward_weight() vs. the no-mandate baseline — the principal-agent framing made
+    behavioral."""
+    from brain.turn_ctx import bind_turn
+
+    monkeypatch.setattr(
+        "brain.mandates.catalog",
+        lambda: {"coach": {"text": "", "conduct": None, "weights": {"levity": 3.0, "correctness": 0.1}}},
+    )
+    baseline_levity = reward_weight("The Analyst", "levity")
+    baseline_correctness = reward_weight("The Analyst", "correctness")
+    with bind_turn("agent", agent_id="the_analyst.coach"):
+        mandated_levity = reward_weight("The Analyst", "levity")
+        mandated_correctness = reward_weight("The Analyst", "correctness")
+    assert mandated_levity > baseline_levity
+    assert mandated_correctness < baseline_correctness
+
+
+def test_reward_weight_mandate_no_weights_falls_back(monkeypatch):
+    """A mandate that specifies no weight for a dimension leaves that dimension at
+    the persona's base valuation (mandate multiplier defaults to identity)."""
+    from brain.turn_ctx import bind_turn
+
+    monkeypatch.setattr(
+        "brain.mandates.catalog",
+        lambda: {"coach": {"text": "", "conduct": None, "weights": {}}},
+    )
+    baseline = reward_weight("The Analyst", "correctness")
+    with bind_turn("agent", agent_id="the_analyst.coach"):
+        mandated = reward_weight("The Analyst", "correctness")
+    assert mandated == baseline
+
+
+def test_reward_weight_no_mandate_bound_unaffected():
+    """Outside any bind_turn (the owner lane), reward_weight is unchanged —
+    regression guard against the mandate layer leaking into the default path."""
+    assert reward_weight("The Analyst", "correctness") > 1.0
+
+
 def test_reward_magnitude_settings_exist():
     from brain.settings import settings
 
