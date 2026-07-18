@@ -1211,7 +1211,7 @@ Thirty-six ideas. For each: what it claims, what we built, and a verdict.
 | **Reflexes / motor chunking** | Has never produced a reflex, and now we know why: the job corpus is dominated by *failed* exploratory work. The most common sub-sequence runs at 67% success against a 90% bar. Not miscalibrated. Waiting on jobs that succeed. |
 | **Song recognition** | The fingerprint database is an empty stub. Cannot match. |
 | **Video** | Zero callers. |
-| **Per-mandate reward weights** | Stored, unconsumed. |
+| **Per-mandate reward weights** | Now consumed. An assigned mandate layers its own weights onto what the persona values, resolved ambiently from the turn's agent binding, clamped at write and at read, and the composite is clamped again. The Stoic is exempt (§4.9). |
 | **Unfinished thoughts in engine-mode working context** | Built, as a deliberate position: companion turns surface open threads ungated; engine/customer turns surface only threads whose `bears_on` overlaps the active mandate's domain, so a persona's introspective threads stay out of a customer's conversation. |
 
 ## Deliberate positions: things people mistake for gaps
