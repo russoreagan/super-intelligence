@@ -9,8 +9,18 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from brain import ignition_tally
 from brain.settings import settings
+
+
+@pytest.fixture(autouse=True)
+def _isolated_pending():
+    """record() accumulates in a module-global pending list; keep tests hermetic."""
+    ignition_tally._pending.clear()
+    yield
+    ignition_tally._pending.clear()
 
 
 def _tally_path():
@@ -58,10 +68,24 @@ def test_consume_resets():
     assert ignition_tally.pressure() == (0.0, "")
 
 
+def test_record_is_memory_only_until_flush():
+    """The turn path does zero disk I/O: record() only accumulates in memory, and
+    flush() (called by pressure() in the sleep pass) makes it durable."""
+    ignition_tally.record("threat")
+    ignition_tally.record("threat")
+    assert not _tally_path().exists()  # nothing touched disk yet
+    ignition_tally.flush()
+    data = json.loads(_tally_path().read_text(encoding="utf-8"))
+    assert 1.9 < data["threat"]["score"] <= 2.0
+    total, dominant = ignition_tally.pressure()
+    assert 1.9 < total <= 2.0 and dominant == "threat"
+
+
 def test_file_is_content_free():
     ignition_tally.record("threat")
     ignition_tally.record("vision")
     ignition_tally.record("the user mentioned their divorce")  # would-be content
+    ignition_tally.flush()
     data = json.loads(_tally_path().read_text(encoding="utf-8"))
     assert set(data) <= {"threat", "salience", "memory", "vision", "other"}
     for entry in data.values():
@@ -72,6 +96,7 @@ def test_file_is_content_free():
 
 def test_unknown_coalition_clamped_to_other():
     ignition_tally.record("user said something")
+    ignition_tally.flush()
     data = json.loads(_tally_path().read_text(encoding="utf-8"))
     assert "other" in data
     assert "user said something" not in data

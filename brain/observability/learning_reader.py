@@ -128,7 +128,12 @@ def _stories_path(persona: str = "") -> Path:
 # Session-end records are sparse (one per consolidation) — a 2 MB tail can miss
 # them entirely while catching thousands of per-turn decisions. Sparse kinds get
 # a wider (still bounded) fallback window.
-_SPARSE_KINDS = {"session_plasticity_summary", "learning_story", "external_grade_recorded"}
+_SPARSE_KINDS = {
+    "session_plasticity_summary",
+    "learning_story",
+    "external_grade_recorded",
+    "node_recruited",
+}
 
 
 def _decisions(persona: str = "", kinds: set[str] | None = None) -> list[dict]:
@@ -411,6 +416,75 @@ def _reward_mix(persona: str = "", live_bus=None) -> dict:
     return out
 
 
+def _gates_view(persona: str = "") -> dict:
+    """Evidence gates (§2.11): commits per gate, and how the avoidance beliefs the
+    accumulator armed were graded by the user's own behaviour.
+
+    Entity strings are deliberately NOT surfaced. The records carry them (the eval
+    log needs them to be debuggable), but this surface is the one that renders in a
+    UI, and its whole contract is numbers and route names, never conversation
+    content. Counts answer "is it learning and is it right" without that.
+    """
+    commits = _decisions(persona, kinds={"evidence_commit"})
+    per_gate: dict[str, int] = {}
+    for r in commits:
+        g = str(r.get("gate") or "?")
+        per_gate[g] = per_gate.get(g, 0) + 1
+    armed = len(_decisions(persona, kinds={"avoidance_armed"}))
+    # One query so the records stay in log order — the last one is genuinely the
+    # most recent resolution, which is what `steering` reports on.
+    resolutions = _decisions(persona, kinds={"avoidance_confirmed", "avoidance_refuted"})
+    confirmed = [r for r in resolutions if r.get("decision") == "avoidance_confirmed"]
+    refuted = [r for r in resolutions if r.get("decision") == "avoidance_refuted"]
+    resolved = len(resolutions)
+    da = sum(abs(float(r.get("da") or 0.0)) for r in resolutions)
+    return {
+        "commits_by_gate": per_gate,
+        "commits_total": len(commits),
+        "avoidance": {
+            "armed": armed,
+            "confirmed": len(confirmed),
+            "refuted": len(refuted),
+            "resolved": resolved,
+            # The honest headline: of the beliefs that got graded, how many held up.
+            "precision_pct": (
+                round(100.0 * len(confirmed) / resolved, 1) if resolved else None
+            ),
+            # Whether the most recent resolution ran with steering on (flag state at
+            # the time), so a reader can tell learning-only from learning-and-acting.
+            "steering": bool(resolutions[-1].get("steer")) if resolved else False,
+            "da_moved": round(da, 4),
+        },
+    }
+
+
+def _structure_view(persona: str = "") -> dict:
+    """Tier-2 structural growth: which units were recruited, and on which trigger.
+    Fragment ids are route names, not content, so they pass the same bar as edges."""
+    recs = _decisions(persona, kinds={"node_recruited"})
+    by_trigger: dict[str, int] = {}
+    for r in recs:
+        t = str(r.get("trigger") or "unknown")
+        by_trigger[t] = by_trigger.get(t, 0) + 1
+    return {
+        "recruited_total": len(recs),
+        "by_trigger": by_trigger,
+        "recent": [
+            {
+                "node": r.get("node"),
+                "source": r.get("source"),
+                "trigger": r.get("trigger"),
+                "fragments": len(r.get("fragments") or []),
+                "coalition": r.get("coalition"),
+                "ignition_score": r.get("ignition_score"),
+                "ts": r.get("ts"),
+                "session_id": r.get("session_id"),
+            }
+            for r in recs[-6:]
+        ],
+    }
+
+
 def summary(persona: str = "", live_wiring=None, live_bus=None, live_predictor=None) -> dict:
     plasticity = _decisions(persona, kinds={"session_plasticity_summary"})[-12:]
     return {
@@ -420,6 +494,8 @@ def summary(persona: str = "", live_wiring=None, live_bus=None, live_predictor=N
         "switches": _switch_view(persona, live_wiring=live_wiring),
         "chunks": _chunks_view(persona),
         "predictor": _predictor_view(persona, live_predictor=live_predictor),
+        "gates": _gates_view(persona),
+        "structure": _structure_view(persona),
     }
 
 
@@ -480,6 +556,68 @@ def _template_stories(persona: str = "", live_wiring=None) -> list[dict]:
                     "generator": "template",
                 }
             )
+    # Structural growth reads as the most consequential thing that can happen to a
+    # persona's wiring, so it belongs in the narrative feed and not only in a panel.
+    for r in reversed(_decisions(persona, kinds={"node_recruited"})[-3:]):
+        node, src = r.get("node") or "", r.get("source") or ""
+        if not node:
+            continue
+        n_frags = len(r.get("fragments") or [])
+        if r.get("trigger") == "workspace_ignition":
+            why = (
+                f"the workspace kept igniting on {r.get('coalition') or 'one thing'} "
+                f"(pressure {float(r.get('ignition_score') or 0):.1f})"
+            )
+        else:
+            why = f"{n_frags} skills on {src} had proven themselves together"
+        stories.append(
+            {
+                "id": f"st_tpl_recruit_{r.get('session_id', '')}_{node}",
+                "session_id": r.get("session_id", ""),
+                "persona": slug,
+                "ts": r.get("ts") or time.time(),
+                "claim": (
+                    f"I brought a new thinking unit online ({node}) because {why}. "
+                    f"It carries {n_frags} skill{'' if n_frags == 1 else 's'} copied from {src} and now competes with the other drafters."
+                ),
+                "subsystem": "structure",
+                "evidence": {
+                    "edges": [{"edge": f"frontal.executive→{node}"}],
+                    "decision_types": ["node_recruited"],
+                    "metrics": {
+                        "trigger": r.get("trigger"),
+                        "fragments": n_frags,
+                        "ignition_score": r.get("ignition_score"),
+                    },
+                },
+                "generator": "template",
+            }
+        )
+
+    # Gate learning: what the avoidance beliefs cost or earned, without naming subjects.
+    _g = _gates_view(persona)["avoidance"]
+    if _g["resolved"]:
+        stories.append(
+            {
+                "id": "st_tpl_avoidance",
+                "session_id": "",
+                "persona": slug,
+                "ts": time.time(),
+                "claim": (
+                    f"I read the user as steering away from something {_g['armed']} time"
+                    f"{'' if _g['armed'] == 1 else 's'}, and {_g['confirmed']} of {_g['resolved']} graded reads held up "
+                    f"({_g['precision_pct']}%). The cues behind the wrong ones got weaker."
+                ),
+                "subsystem": "gates",
+                "evidence": {
+                    "edges": [],
+                    "decision_types": ["avoidance_armed", "avoidance_confirmed", "avoidance_refuted"],
+                    "metrics": _g,
+                },
+                "generator": "template",
+            }
+        )
+
     for sw in _switch_view(persona, live_wiring=live_wiring):
         w, (lo, hi) = sw["weight"], sw["band"]
         if abs(w - 1.0) < 0.02:

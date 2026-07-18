@@ -44,6 +44,12 @@ DEFAULTS: dict[str, float | int | str] = {
     "correctness_5ht_drain": 0.010,  # 5HT drain on wrong (the lingering-sadness component)
     "anticipation_reward_scale": 0.03,  # DMN anticipatory DA(hoped)/CORT(dreaded) per scenario
     "self_standard_gate": 0.85,  # self-score above which pride fires WITHOUT user praise
+    # ── Aesthetic reward (beauty/craft of its OWN output; metacognition.py) ──
+    # The consumer that makes the Beauty-seeking dial and the per-persona aesthetic
+    # weights behavioural. Intrinsic + self-graded, so kept small: below the
+    # correctness bases, and gated so competent-but-flat pays nothing.
+    "aesthetic_reward_base": 0.04,  # DA at perfect craft, before per-persona weighting
+    "aesthetic_self_gate": 0.75,  # critic craft score above which any aesthetic DA is paid
     # ── Self-verified correctness (Stage 5): prediction confirmed by reality ──
     "prediction_reward_base": 0.04,  # DA on a confident, NON-trivial prediction confirmed
     "prediction_confidence_min": 0.55,  # below this a "prediction" is a guess — no reward
@@ -602,6 +608,17 @@ DEFAULTS: dict[str, float | int | str] = {
     # can't by itself distinguish "no override" from "pod genuinely up" — this is
     # the dedicated liveness signal for frontal._local_available()/downshift.
     "runpod_pod_ready": 0,
+    # runpod_pod_ready_at: wall-clock stamp of the last time the pod's residency
+    # was confirmed (set with runpod_pod_ready=1 and re-stamped by the manager's
+    # periodic refresh loops). frontal._local_available() treats the ready flag
+    # as STALE — i.e. false — when this stamp is older than runpod_pod_ready_ttl_s,
+    # so a pod that dies between refreshes stops receiving downshifted drafts
+    # instead of timing out against a dead host until the next refresh notices.
+    "runpod_pod_ready_at": 0.0,
+    # TTL for the stamp above. Comfortably above both refresh cadences that
+    # re-stamp it (consumer host-file poll ~30s, owner liveness watcher 120s):
+    # ≈2.5× the slower one. 0 disables the staleness check (flag-only behavior).
+    "runpod_pod_ready_ttl_s": 300.0,
     # max_runpod_hours: watchdog stops the pod if the brain hasn't been seen
     # alive for this many hours. Resets continuously while the brain is running.
     # Acts as a backstop against runaway costs after a crash/force-kill.
@@ -770,10 +787,13 @@ DEFAULTS: dict[str, float | int | str] = {
     # when evidence_gates=1; flag off keeps the exact StatefulSwitch path.
     "satiation_half_life_s": 1800.0,  # ~30 min: idle-time relaxation of habituation
     # User-avoidance gate (first LEARNING EvidenceGate; avoidance_gate.py). Accumulates
-    # per-entity avoidance evidence and learns its cue weights from external (behavioural)
-    # confirmation. Runs (accumulates + learns) whenever evidence_gates=1; STEERING the
-    # DMN speak/deflect judge is separately gated by avoidance_gate below, default 0 =
-    # SHADOW (learn on real data, do not influence behaviour) until validated in a tenant.
+    # per-entity avoidance evidence from ACTIVE dodge signals only — a topic the agent
+    # surfaced that the user didn't pick up, an abrupt subject change off a live thread,
+    # discomfort riding a dodge; mere staleness (the user simply moved on) contributes
+    # nothing. Learns its cue weights from external (behavioural) confirmation. LIVE BY
+    # DEFAULT (ships-on policy: flags are kill switches, not enable switches): runs
+    # whenever evidence_gates=1, and avoidance_gate below is the kill switch for the
+    # steering + chemistry side (0 = shadow: keep learning on real data, no influence).
     "avoidance_gate": 1,  # 1 = armed avoidance biases the DMN deflect judge + moves chemistry
     "avoidance_arm_threshold": 1.5,  # accumulated evidence needed to believe "avoiding X"
     "avoidance_release_ratio": 0.5,  # hysteresis: release below arm * this
@@ -782,6 +802,8 @@ DEFAULTS: dict[str, float | int | str] = {
     "avoidance_stale_turns": 2,  # an entity unseen this many turns becomes a candidate
     # (no informativeness constant: it is MEASURED per persona from the observed
     # re-engagement base rate — AvoidanceTracker._informativeness)
+    "avoidance_max_armed_s": 86400.0,  # escape hatch: a belief armed this long expires (clear the slate)
+    "avoidance_evict_floor": 0.05,  # decayed accumulator slices below this are deleted from the store
     # ── Section: Colony / non-brain (superorganism) capabilities ─────────────
     # Single master toggle for the bio-inspired colony layer (Phases 2–8 of the
     # colony-features plan). 0 = every colony behaviour is a strict no-op and the
@@ -1035,12 +1057,47 @@ API_KEY_ENV = {
 }
 
 
+# ── Env-seeded keys ──────────────────────────────────────────────────────────
+# Settings whose value ALSO had an environment lever before the key was
+# registered here. Their call sites read `settings.get(k) or ENV_CONST`, which
+# stops consulting the env the moment get() returns a registered default — so
+# registering the key silently killed the env var (found 2026-07-18 on
+# BRAIN_DMN_MIN_TICK_INTERVAL). Seeding the default from the env keeps the lever
+# alive. Only add a key here when a documented env var genuinely predates it;
+# call sites that read the env FIRST (e.g. job_store) need no entry.
+ENV_SEEDED: dict[str, str] = {
+    "dmn_min_tick_interval": "BRAIN_DMN_MIN_TICK_INTERVAL",
+    "dmn_interval": "BRAIN_DMN_INTERVAL",
+}
+
+
 class Settings:
     """Singleton that holds the current runtime settings."""
 
     def __init__(self) -> None:
         self._data: dict[str, float | int | str] = dict(DEFAULTS)
+        self._seed_from_env()
         self._load()
+
+    def _seed_from_env(self) -> None:
+        """Apply env overrides for keys that had an env lever BEFORE they were
+        registered here.
+
+        Registering a key that a module also read from the environment silently
+        kills the env var: the module's `settings.get(k) or ENV_CONST` fallback
+        stops firing once get() always returns a registered default, so the env
+        var becomes dead config that looks live (found 2026-07-18). Seeding the
+        default from the env restores it, and the layering is the usual one:
+        built-in default, then env, then an explicit settings.json entry.
+        """
+        for key, env_name in ENV_SEEDED.items():
+            raw = os.environ.get(env_name, "").strip()
+            if not raw:
+                continue
+            try:
+                self._data[key] = type(DEFAULTS[key])(raw)
+            except Exception as e:
+                logger.warning("[Settings] Ignoring %s=%r from env: %s", env_name, raw, e)
 
     def _load(self) -> None:
         if not SETTINGS_PATH.exists():

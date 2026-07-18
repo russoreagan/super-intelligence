@@ -407,3 +407,109 @@ def test_angle_prediction_reward_sign_and_gating():
     dmn2._reward_angle_prediction("something-else")
     assert nm2.deltas.get("DA", 0.0) < 0.0
     settings._data.pop("persona_name", None)
+
+
+# ── Aesthetic reward: the Beauty-seeking dial's consumer (metacognition) ───────
+#
+# The dial wrote reward_weight_aesthetic and the personas carried aesthetic base
+# weights, but reward_weight(persona, "aesthetic") had no caller — a shipped UI
+# control advertising behaviour that did not exist (audit 2026-07-18, C1). These
+# pin the consumer that closed it.
+
+
+def _make_metacog_with_bus(persona: str):
+    from brain.metacognition import MetacognitionCell
+
+    settings._data["persona_name"] = persona
+    m = MetacognitionCell.__new__(MetacognitionCell)
+    nm = _RecordingNeuromod()
+    m._bus = MagicMock()
+    m._bus.neuromod = nm
+    return m, nm
+
+
+def _well_made(craft: float = 0.95) -> list[dict]:
+    return [{"selected": True, "vetoed": False, "critic_ran": True, "craft": craft}]
+
+
+def test_aesthetic_reward_scales_with_how_much_a_persona_values_beauty():
+    """The whole point of the dial: the Poet earns materially more than the Analyst
+    from the SAME well-made reply, and the Stoic — the flat experimental control —
+    sits between them at the unweighted amount."""
+    def _earns(persona: str) -> float:
+        # Bind, then reward — the persona resolves at emit time, so constructing all
+        # three first would score every one of them as whoever was set last.
+        cell, nm = _make_metacog_with_bus(persona)
+        cell._reward_aesthetic(_well_made())
+        return nm.deltas["DA"]
+
+    poet_da = _earns("The Poet")
+    analyst_da = _earns("The Analyst")
+    stoic_da = _earns("The Stoic")
+    assert poet_da > stoic_da > analyst_da > 0.0
+    # And the gap is the persona weights (1.5 vs 0.5), not noise.
+    assert poet_da == pytest.approx(3.0 * analyst_da, rel=1e-6)
+    settings._data.pop("persona_name", None)
+
+
+def test_stoic_stays_flat_across_reward_sources():
+    """The control condition: the Stoic's aesthetic payout equals what an unweighted
+    persona earns, so divergence measured against it is attributable to valuation."""
+    stoic, stoic_nm = _make_metacog_with_bus("The Stoic")
+    stoic._reward_aesthetic(_well_made())
+    unknown, unknown_nm = _make_metacog_with_bus("nobody_in_the_table")
+    unknown._reward_aesthetic(_well_made())
+    assert stoic_nm.deltas["DA"] == pytest.approx(unknown_nm.deltas["DA"], rel=1e-9)
+    settings._data.pop("persona_name", None)
+
+
+def test_competent_but_flat_craft_pays_nothing():
+    """Gated, so there is no baseline drip on every turn — the guard against the
+    system paying itself for merely showing up."""
+    m, nm = _make_metacog_with_bus("The Poet")
+    m._reward_aesthetic(_well_made(craft=float(settings.get("aesthetic_self_gate"))))
+    assert nm.deltas.get("DA", 0.0) == 0.0
+    settings._data.pop("persona_name", None)
+
+
+def test_no_craft_score_pays_nothing():
+    """A missing craft score (older critic output, failed parse, single-draft turn
+    with no critic) must not fall back to a default that quietly pays."""
+    m, nm = _make_metacog_with_bus("The Poet")
+    m._reward_aesthetic([{"selected": True, "vetoed": False, "critic_ran": True}])
+    m._reward_aesthetic([{"selected": True, "vetoed": False, "critic_ran": False, "craft": 0.99}])
+    assert nm.deltas.get("DA", 0.0) == 0.0
+    settings._data.pop("persona_name", None)
+
+
+def test_aesthetic_reward_reads_the_winning_draft_only():
+    """A gorgeous losing draft earns nothing — the reward is for what it actually said."""
+    m, nm = _make_metacog_with_bus("The Poet")
+    m._reward_aesthetic(
+        [
+            {"selected": False, "vetoed": False, "critic_ran": True, "craft": 0.99},
+            {"selected": True, "vetoed": False, "critic_ran": True, "craft": 0.80},
+        ]
+    )
+    only_winner = nm.deltas["DA"]
+    m2, nm2 = _make_metacog_with_bus("The Poet")
+    m2._reward_aesthetic(_well_made(craft=0.80))
+    assert only_winner == pytest.approx(nm2.deltas["DA"], rel=1e-9)
+    settings._data.pop("persona_name", None)
+
+
+def test_aesthetic_dial_override_multiplies_the_persona_weight():
+    """reward_weight_aesthetic is the user-facing Beauty dial — turning it up must
+    move real dopamine, which is what "the dial is wired" means."""
+    m, nm = _make_metacog_with_bus("The Analyst")
+    m._reward_aesthetic(_well_made())
+    base = nm.deltas["DA"]
+    prev = settings._data.get("reward_weight_aesthetic", 1.0)
+    try:
+        settings._data["reward_weight_aesthetic"] = 2.0
+        m2, nm2 = _make_metacog_with_bus("The Analyst")
+        m2._reward_aesthetic(_well_made())
+        assert nm2.deltas["DA"] == pytest.approx(2.0 * base, rel=1e-6)
+    finally:
+        settings._data["reward_weight_aesthetic"] = prev
+    settings._data.pop("persona_name", None)

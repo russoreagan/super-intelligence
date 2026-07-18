@@ -148,6 +148,21 @@ def test_scalar_mode_is_a_leaky_level_no_cues():
     assert g.cue_weights() == {}  # no learning surface in scalar mode
 
 
+def test_nonfinite_scalar_evidence_is_dropped():
+    """A NaN/inf observation must not poison the accumulator: NaN would ride
+    through max(0, min(cap, level+nan)) → NaN, persist in the snapshot, and
+    poison cue learning. Non-finite input is treated as 0.0 at the entry."""
+    import math
+
+    g = _gate(half_life_s=1e9)
+    g.observe(0.4, now=0.0)
+    g.observe(float("nan"), now=0.0)
+    assert g.level == pytest.approx(0.4, abs=1e-9)
+    g.observe(float("inf"), now=0.0)
+    assert g.level == pytest.approx(0.4, abs=1e-9)
+    assert math.isfinite(g.snapshot()["level"])
+
+
 # ── learning ──────────────────────────────────────────────────────────────────
 
 
@@ -185,6 +200,35 @@ def test_refuted_commit_weakens_its_cues():
     after = g.cue_weights()
     assert da < 0  # a confident wrong call is a loss
     assert after["deflect"] < before["deflect"]
+
+
+def test_nonfinite_cue_values_never_reach_cue_learning():
+    import math
+
+    bus = Bus()
+    g = _cue_gate()
+    # NaN cue values are dropped before capture; finite ones still accumulate.
+    g.observe({"deflect": float("nan"), "topic_change": 0.5}, now=0.0)
+    assert math.isfinite(g.level) and g.level == pytest.approx(0.5, abs=1e-9)
+    g.observe({"deflect": 0.6, "topic_change": float("nan")}, now=0.0)
+    assert g.armed  # 0.5 + 0.6 crossed the bound on finite cues alone
+    g.resolve(correct=True, informativeness=1.0, bus=bus, external=True)
+    assert all(math.isfinite(w) for w in g.cue_weights().values())
+
+
+def test_cue_lr_is_upper_clamped(monkeypatch):
+    """evidence_cue_lr only had a <=0 floor: an absurd lr must not slam a weight
+    across its whole range in a single resolve."""
+    from brain.settings import settings
+
+    monkeypatch.setitem(settings._data, "evidence_cue_lr", 1e6)
+    bus = Bus()
+    g = _cue_gate()
+    g.observe({"deflect": 0.6, "topic_change": 0.6}, now=0.0)
+    assert g.armed
+    g.resolve(correct=True, informativeness=1.0, bus=bus, external=True)
+    w_max = float(settings.get("evidence_cue_w_max", 3.0))
+    assert all(w < w_max for w in g.cue_weights().values())  # not slammed to ceiling
 
 
 def test_anti_farm_uninformative_resolve_moves_nothing():

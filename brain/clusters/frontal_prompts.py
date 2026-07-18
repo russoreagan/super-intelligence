@@ -327,15 +327,21 @@ drafting instruction. No preamble."""
 
 CRITIC_SYSTEM = (
     """You are a quality critic for an AI brain's frontal lobe.
-Score a draft response on three dimensions (0.0 to 1.0 each):
+Score a draft response on four dimensions (0.0 to 1.0 each):
 - coherence: does it make sense and follow logically?
 - relevance: does it address what was actually asked?
 - tone_fit: does the tone match the emotional context?
+- craft: is it well made? Economy, rhythm, a well-chosen word, an idea landed cleanly.
+  This is about the quality of the making, not whether the answer is correct.
+  Competent-but-flat is 0.5. Reserve above 0.8 for genuine craft.
+
+`overall` weighs the first three. Craft is scored separately and does NOT belong in it.
 
 Return JSON: {
   "coherence": float,
   "relevance": float,
   "tone_fit": float,
+  "craft": float,
   "overall": float,
   "veto": bool,          // true only if response is harmful, incoherent, or deeply wrong
   "veto_reason": string  // if veto, why

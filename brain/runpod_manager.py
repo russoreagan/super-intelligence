@@ -547,7 +547,9 @@ class RunPodManager:
         from brain.settings import settings
 
         host = self._pod_host(pod_id)
-        settings.update({"runpod_host": host, "runpod_pod_ready": 1})
+        settings.update(
+            {"runpod_host": host, "runpod_pod_ready": 1, "runpod_pod_ready_at": time.time()}
+        )
         logger.info("[RunPod] runpod_host → %s", host)
 
     def _clear_host(self) -> None:
@@ -586,10 +588,20 @@ class RunPodManager:
                     # Adopt a real pod host; never clobber with localhost.
                     if host and "localhost" not in host:
                         if str(settings.get("runpod_host") or "") != host:
-                            settings.update({"runpod_host": host, "runpod_pod_ready": 1})
                             logger.info(
                                 "[RunPod] consumer host refreshed → %s (gateway pod change)", host
                             )
+                        # Re-stamp liveness on EVERY successful poll, not just on a
+                        # host change: frontal._local_available() treats the ready
+                        # flag as stale past runpod_pod_ready_ttl_s, so an
+                        # un-refreshed stamp would silently disable downshift.
+                        settings.update(
+                            {
+                                "runpod_host": host,
+                                "runpod_pod_ready": 1,
+                                "runpod_pod_ready_at": time.time(),
+                            }
+                        )
                     elif not host:
                         # Empty file = the gateway declared the pod OFF (terminated,
                         # no replacement yet). Adopt the 'off' sentinel so runpod
@@ -1241,6 +1253,13 @@ class RunPodManager:
             try:
                 if await self._probe_alive(self._pod_id):
                     await self._sync_runtime()  # keep uptime + accrued cost fresh
+                    # Re-stamp the downshift liveness TTL: without a periodic
+                    # refresh, frontal._local_available() would treat the ready
+                    # flag as stale runpod_pod_ready_ttl_s after activation.
+                    from brain.settings import settings
+
+                    if settings.get("runpod_pod_ready", 0):
+                        settings.update({"runpod_pod_ready_at": time.time()})
                     continue
                 logger.warning(
                     "[RunPod] Held pod %s not responding — attempting recovery", self._pod_id

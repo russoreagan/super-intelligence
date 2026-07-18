@@ -23,7 +23,7 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 # Decision kinds worth keeping queryable per persona. Everything else stays
-# eval-log-only (skip decisions, recruitment, etc. — diagnostics, not learning).
+# eval-log-only (skip decisions, routing diagnostics).
 LEDGER_TYPES = {
     "hebbian_update_applied",
     "hebbian_eligibility_applied",
@@ -35,6 +35,17 @@ LEDGER_TYPES = {
     "reward_emission",
     "external_grade_recorded",
     "learning_story",
+    # Structural learning (Tier 2): recruiting a reserve cell into a new unit IS a
+    # learned change to the graph, so it belongs on the learning surface, not only
+    # in the diagnostics stream.
+    "node_recruited",
+    # Evidence gates (§2.11): a commit is a decision the accumulator learned to make,
+    # and each resolution moves real cue weights. Same blind spot eligibility credit
+    # had — applied but unreadable.
+    "evidence_commit",
+    "avoidance_armed",
+    "avoidance_confirmed",
+    "avoidance_refuted",
 }
 
 _MAX_LINES = 5000  # rotation threshold …
