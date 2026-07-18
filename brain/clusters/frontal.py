@@ -24,6 +24,7 @@ from brain.clusters.frontal_prompts import (
     EMPATHY_CRITIC_SYSTEM,
     EXECUTIVE_SYSTEM,
     REFRAMER_SYSTEM,
+    RESERVE_DRAFTER_SYSTEM,
 )
 from brain.clusters.frontal_subsystem import FrontalSubsystem
 from brain.model_router import ModelRouter
@@ -106,22 +107,34 @@ class FrontalCluster:
         # boot audit can prove every wiring name maps to a live object (see brain/node_registry).
         get_node_registry().register_object(self._executive, kind="cell")
 
+        # Fixed drafters A–E plus K dormant RESERVE slots (Tier 2 structural plasticity).
+        # Reserve slots exist as cells but are wired into a persona's graph only when learning
+        # RECRUITS them (an executive→drafter_X edge). Their system prompt falls back to the
+        # persona-neutral RESERVE_DRAFTER_SYSTEM (DRAFTER_SYSTEMS only defines the fixed 5).
+        self._n_fixed_drafters = 5
+        _n_reserve = max(0, int(settings.get("node_reserve_pool", 3)))
         self._drafters = [
             IntegratorCell(
                 name=f"drafter_{chr(65 + i)}",
                 cluster=CLUSTER,
                 model="haiku",
-                system_prompt=DRAFTER_SYSTEMS[i],
+                system_prompt=(
+                    DRAFTER_SYSTEMS[i] if i < self._n_fixed_drafters else RESERVE_DRAFTER_SYSTEM
+                ),
                 topics=["motor.draft"],
                 max_calls_per_turn=1,
                 locality="cloud",
                 max_tokens=768,
             )
-            for i in range(5)
+            for i in range(self._n_fixed_drafters + _n_reserve)
         ]
-        for d in self._drafters:
+        for i, d in enumerate(self._drafters):
             d.set_router(router)
-            get_node_registry().register_object(d, kind="cell")
+            # Register only the fixed drafters at construction. A reserve slot is registered
+            # atomically with its wiring edge at recruit time (register_recruited_reserves),
+            # so the node-registry reconcile invariant (registry == graph) stays exact.
+            if i < self._n_fixed_drafters:
+                get_node_registry().register_object(d, kind="cell")
 
         self._critic = IntegratorCell(
             name="critic",
@@ -807,7 +820,7 @@ class FrontalCluster:
         image_path: str | None = None,
     ) -> str:
         """Drafter cascade + critic selection. Returns the committed response text."""
-        drafter_count = min(int(instruction.get("drafter_count", 3)), 5)
+        drafter_count = min(int(instruction.get("drafter_count", 3)), len(self._drafters))
         glu_deficit = 1.0 - nm["Glu"]
         if self._arousal_modulator.should_fire(glu_deficit, chem, turn_id):
             self._arousal_modulator.fire(
@@ -1447,16 +1460,28 @@ class FrontalCluster:
         """Pick which drafter indices to fire from the learned executive→drafter weights.
         Default: probabilistic weighted sampling (a ranking shift changes the mix even at
         high count). Legacy ε-greedy top-N kept behind drafter_weighted_sampling=0."""
-        all_indices = list(range(len(self._drafters)))
-        count = max(1, min(count, len(self._drafters)))
-
+        # Eligible pool = the fixed drafters, plus any RECRUITED reserve (Tier 2): a reserve
+        # slot joins the pool only once its executive→drafter_X edge exists in the bound
+        # persona's graph, so unrecruited reserves never fire.
+        fixed = list(range(self._n_fixed_drafters))
         if self._wiring is None or self._wiring_frozen:
-            picked = all_indices[:count]
-            return picked
+            return fixed[: max(1, min(count, len(fixed)))]
+        all_indices = fixed + [
+            i
+            for i in range(self._n_fixed_drafters, len(self._drafters))
+            if self._wiring.has("frontal.executive", f"frontal.drafter_{chr(65 + i)}")
+        ]
+        count = max(1, min(count, len(all_indices)))
 
-        # Weight per drafter (executive → drafter_X edge weight)
-        names = [f"frontal.drafter_{chr(65 + i)}" for i in all_indices]
-        weights = [self._wiring.get_edge_weight("frontal.executive", n) for n in names]
+        # Weight per drafter (executive → drafter_X edge weight), indexed by drafter index so
+        # _weighted_sample's weights[i] stays correct even though all_indices is a subset.
+        eligible = set(all_indices)
+        weights = [
+            self._wiring.get_edge_weight("frontal.executive", f"frontal.drafter_{chr(65 + i)}")
+            if i in eligible
+            else 0.0
+            for i in range(len(self._drafters))
+        ]
 
         if settings.get("drafter_weighted_sampling", 1):
             picked = self._weighted_sample(all_indices, weights, count)
@@ -1488,6 +1513,26 @@ class FrontalCluster:
             diverged_from_uniform=diverged,
         )
         return picked
+
+    def register_recruited_reserves(self, registry=None) -> int:
+        """Register reserve drafter cells that are RECRUITED in the bound persona's graph
+        (Tier 2), so the boot node-registry audit sees no orphan for their edges. A reserve is
+        recruited iff its `executive→drafter_X` edge exists. Registration is atomic-with-the-edge
+        in spirit (edges are added at recruit time in the Hebbian pass; this catches up the
+        process-level registry at boot for the boot persona). Idempotent (guards on classify)."""
+        from brain.node_registry import get_node_registry
+
+        reg = registry if registry is not None else get_node_registry()
+        if self._wiring is None:
+            return 0
+        n = 0
+        for i in range(self._n_fixed_drafters, len(self._drafters)):
+            d = self._drafters[i]
+            name = f"{d.cluster}.{d.name}"
+            if reg.classify(name) is None and self._wiring.has("frontal.executive", name):
+                reg.register_object(d, kind="cell")
+                n += 1
+        return n
 
     async def _score_draft(self, draft: str, context: str, turn_id: str) -> dict:
         critic_prompt = f"Context:\n{context}\n\nDraft response:\n{draft}\n\nScore this draft."

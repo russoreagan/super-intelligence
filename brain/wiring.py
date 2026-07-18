@@ -309,13 +309,23 @@ class Wiring:
 
     def prune_fragment_edges(self, floor: float) -> int:
         """Remove faded fragment attachments — `fragment.* → host` edges at/below `floor`.
-        The ONLY edge removal in the graph: topology edges are never pruned, and this touches
-        only `fragment.*` sources. Called solely from the gated attachment-learning pass.
-        Returns the count removed."""
+        Topology edges are never pruned; this touches only `fragment.*` sources. Called solely
+        from the gated attachment-learning pass. Returns the count removed."""
         doomed = [
             k for k, e in self._edges.items() if k[0].startswith("fragment.") and e.weight <= floor
         ]
         edges = self._edges
+        for k in doomed:
+            del edges[k]
+        return len(doomed)
+
+    def remove_node_edges(self, node: str) -> int:
+        """Remove every edge incident on `node` (either endpoint). Used to DEMOTE a recruited
+        reserve drafter back to the dormant pool (Tier 2 structural plasticity) — the caller
+        (Hebbian recruitment) invokes it ONLY on reserve slots, never on bootstrap topology
+        nodes. Returns the count removed."""
+        edges = self._edges
+        doomed = [k for k in edges if node in k]
         for k in doomed:
             del edges[k]
         return len(doomed)

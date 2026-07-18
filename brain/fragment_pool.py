@@ -34,19 +34,23 @@ DRAFT_SLOT = "draft_slot"
 FRAGMENT_KIND = "fragment"
 FRAGMENT_PREFIX = "fragment."
 
-# The five drafters are the competitive substrate where EXPLORATION runs (parallel drafts,
-# critic-scored). The other four frontal cells are admissible hosts too (they carry
-# ESTABLISHED attachments) but do NOT explore — they have no within-turn competition to
-# reward-differentiate an experiment.
-EXPLORE_HOSTS: frozenset[str] = frozenset(
-    f"frontal.drafter_{c}" for c in ("A", "B", "C", "D", "E")
+# The drafters are the competitive substrate where EXPLORATION runs (parallel drafts,
+# critic-scored). This covers the fixed 5 (A–E) AND the Tier 2 reserve slots (F.. up to the
+# pool ceiling): a recruited reserve is a drafter and may carry/explore fragments. Listing the
+# reserve slots here is harmless while they are dormant — they never fire until recruited (an
+# executive→drafter_X edge). The other four frontal cells are admissible hosts too (they carry
+# ESTABLISHED attachments) but do NOT explore — no within-turn competition to differentiate one.
+_MAX_DRAFTER_SLOTS = 16  # A..P — a generous ceiling above node_reserve_pool
+_ALL_DRAFTERS: frozenset[str] = frozenset(
+    f"frontal.drafter_{chr(65 + i)}" for i in range(_MAX_DRAFTER_SLOTS)
 )
+EXPLORE_HOSTS: frozenset[str] = _ALL_DRAFTERS
 
 # The safety ALLOWLIST: only these non-safety frontal cells may ever be attachment hosts.
 # Every one is a kind="cell" integrator (see brain/clusters/frontal.py) — never a
 # switch/inhibitor/motor node.
 HOST_RECEPTORS: dict[str, frozenset[str]] = {
-    **{h: frozenset({DRAFT_SLOT}) for h in EXPLORE_HOSTS},
+    **{h: frozenset({DRAFT_SLOT}) for h in _ALL_DRAFTERS},
     "frontal.critic": frozenset({DRAFT_SLOT}),
     "frontal.stoic_reframer": frozenset({DRAFT_SLOT}),
     "frontal.empathy_critic": frozenset({DRAFT_SLOT}),

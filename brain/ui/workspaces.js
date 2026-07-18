@@ -394,6 +394,7 @@
 
           <div class="rail-sect">
             <button class="rail-item ag-nav ${agView==='roles'?'on':''}" data-view="roles"><span class="ri-name">Roles</span><span class="ri-meta">${roles.length} reusable spec${roles.length===1?'':'s'}</span></button>
+            <button class="rail-item ag-nav ${agView==='skills'?'on':''}" data-view="skills"><span class="ri-name">Skills</span><span class="ri-meta">reusable abilities · review</span></button>
             <button class="rail-item ag-nav ${agView==='limits'?'on':''}" data-view="limits"><span class="ri-name">Account limits</span><span class="ri-meta">org ceilings</span></button>
             <button class="rail-item ag-nav ${agView==='connectors'?'on':''}" data-view="connectors"><span class="ri-name">Connectors</span><span class="ri-meta">MCP servers · register</span></button>
           </div>
@@ -414,6 +415,7 @@
     const main = host.querySelector('#ag-main');
     if (agView === 'detail' && agentSel) renderAgentDetail(main);
     else if (agView === 'roles') renderRoles(main);
+    else if (agView === 'skills') { if (skillsData === null) loadSkills(); renderSkills(main); }
     else if (agView === 'limits') renderAccountLimits(main);
     else if (agView === 'connectors') renderConnectors(main);
     else if (agView === 'jobdetail' && jobSel) renderJobDetail(main);
@@ -1582,7 +1584,7 @@
   // ══════════════════════════════════════════════════════════ API ═════════
   let apiView = 'reference';
   let skillsData = null;       // { enabled, is_admin, skills:[], flagged:[] }
-  function ensureApi() { renderApi(); if (apiView === 'partner') loadPartnerKeys(); if (apiView === 'skills') loadSkills(); }
+  function ensureApi() { renderApi(); if (apiView === 'partner') loadPartnerKeys(); }
   function renderApi() {
     const host = document.getElementById('ws-api');
     host.innerHTML = `<div class="ws-grid" style="grid-template-columns:256px 1fr;">
@@ -1590,7 +1592,6 @@
         <div class="rail-head"><h2>API</h2><span class="n">integration</span></div>
         <div class="rail-sect">
           <button class="rail-item api-nav ${apiView==='reference'?'on':''}" data-view="reference"><span class="ri-name">API Reference</span><span class="ri-meta">engine endpoints</span></button>
-          <button class="rail-item api-nav ${apiView==='skills'?'on':''}" data-view="skills"><span class="ri-name">Skills</span><span class="ri-meta">app-provided · review</span></button>
           <button class="rail-item api-nav ${apiView==='partner'?'on':''}" data-view="partner"><span class="ri-name">Partner Keys</span><span class="ri-meta">customer-facing tokens</span></button>
         </div>
       </div>
@@ -1599,7 +1600,6 @@
     host.querySelectorAll('.api-nav').forEach(n => n.addEventListener('click', () => { apiView = n.dataset.view; ensureApi(); }));
     const main = host.querySelector('#api-main');
     if (apiView === 'partner') renderPartnerKeys(main);
-    else if (apiView === 'skills') renderSkills(main);
     else renderReference(main);
   }
   // The Reference data is GENERATED from the live route table + docstrings
@@ -1677,7 +1677,7 @@
   async function loadSkills() {
     try { const r = await fetch('/skills'); skillsData = r.ok ? await r.json() : { enabled: false, is_admin: false, skills: [], flagged: [] }; }
     catch (e) { skillsData = { enabled: false, is_admin: false, skills: [], flagged: [] }; }
-    if (apiView === 'skills') renderSkills(document.getElementById('api-main'));
+    if (workspace === 'agents' && agView === 'skills') renderSkills(document.getElementById('ag-main'));
   }
   function renderFlaggedCard(s) {
     const notes = s.screen_notes || {};
@@ -1704,8 +1704,8 @@
     const canAdd = d && d.enabled && d.is_admin;
     const addBtn = canAdd ? `<button class="btn btn-primary" id="sk-new" style="margin-top:8px; flex:0 0 auto;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg> Add skill</button>` : '';
     const head = `<div class="between"><div>
-        <div class="page-eyebrow">API · skills</div><div class="page-title">Skills</div>
-        <p class="page-lede" style="max-width:600px;">App-provided skills your apps register over the engine API — reusable instructions the agent selects per turn (or you pin per session). Submissions over the API are screened before they go live; anything the screener can't auto-clear waits in the review queue below. Add your own here, or review submissions.</p>
+        <div class="page-eyebrow">Agents · skills</div><div class="page-title">Skills</div>
+        <p class="page-lede" style="max-width:600px;">Reusable abilities the agent draws on, selected per turn or pinned per session. They come from three places now. Add your own here. Your apps can register them over the engine API. And the brain proposes its own as it learns what works for you. Everything is screened before it goes live. Anything the screener can't auto-clear waits in the review queue below.</p>
       </div>${addBtn}</div>`;
     if (!d) { main.innerHTML = `<div class="main-pad" style="max-width:820px;">${head}<p class="page-lede" style="opacity:.6;">Loading…</p></div>`; return; }
     if (!d.enabled) {
@@ -1723,18 +1723,27 @@
     const nameCell = s => d.is_admin
       ? `<button class="sk-open" data-id="${esc(s.id)}" style="background:none; border:none; padding:0; cursor:pointer; text-align:left; display:block;"><span class="serif-h" style="font-size:14px;">${esc(s.display_name || s.id)}</span><span class="data" style="font-size:9px; display:block; margin-top:2px;">${esc(s.id)}</span></button>`
       : `<span class="serif-h" style="font-size:14px;">${esc(s.display_name || s.id)}</span><span class="data" style="font-size:9px; display:block; margin-top:2px;">${esc(s.id)}</span>`;
-    const rows = skills.map(s => `<div class="ag-row" style="grid-template-columns:${GRID}; cursor:default;">
+    const skRow = s => `<div class="ag-row" style="grid-template-columns:${GRID}; cursor:default;">
       <span>${nameCell(s)}</span>
       <span class="ar-status"><span class="dot-status" style="background:${skStatColor(s.status)}"></span>${esc(s.status || 'pending')}</span>
       <span>${d.is_admin ? `<button class="link sk-scope" data-id="${esc(s.id)}">${esc(appliesLabel(s))}</button>` : `<span class="data" style="font-size:11px;">${esc(appliesLabel(s))}</span>`}</span>
       <span class="data" style="font-size:11px;">${esc(s.submitted_by || '—')}</span>
-      <span class="ar-chev">${d.is_admin ? `<button class="link sk-del" data-id="${esc(s.id)}" title="Remove skill">✕</button>` : ''}</span></div>`).join('') || '<div style="padding:22px; text-align:center;" class="data">No skills registered yet.</div>';
+      <span class="ar-chev">${d.is_admin ? `<button class="link sk-del" data-id="${esc(s.id)}" title="Remove skill">✕</button>` : ''}</span></div>`;
+    // Brain-authored skills carry the `self-` id prefix (node_authoring) and submitted_by "brain".
+    const isAuthored = s => String(s.id || '').startsWith('self-') || s.submitted_by === 'brain';
+    const authored = skills.filter(isAuthored);
+    const library = skills.filter(s => !isAuthored(s));
+    const tableHead = `<div class="ag-table-head" style="grid-template-columns:${GRID};"><span>Skill</span><span>Status</span><span>Applies to</span><span>Submitted by</span><span></span></div>`;
+    const section = (label, list, note) => list.length
+      ? `<div class="label" style="margin:28px 0 10px;">${label} · ${list.length}</div>${note || ''}<div class="ag-table" style="grid-template-columns:none;">${tableHead}${list.map(skRow).join('')}</div>`
+      : '';
+    const authoredNote = authored.length
+      ? `<p class="page-lede" style="max-width:600px; margin:0 0 12px; font-size:12px; opacity:.75;">The brain proposed these itself as it learned what works for you. Each was screened like any other skill before going live.</p>`
+      : '';
     main.innerHTML = `<div class="main-pad" style="max-width:820px;">${head}${queue}
-      <div class="label" style="margin:28px 0 10px;">Library · ${skills.length}</div>
-      <div class="ag-table" style="grid-template-columns:none;">
-        <div class="ag-table-head" style="grid-template-columns:${GRID};"><span>Skill</span><span>Status</span><span>Applies to</span><span>Submitted by</span><span></span></div>
-        ${rows}
-      </div>
+      ${section('Self-authored', authored, authoredNote)}
+      ${section('Library', library, '')}
+      ${skills.length === 0 ? '<div style="padding:22px; text-align:center; margin-top:18px;" class="data">No skills registered yet.</div>' : ''}
       ${!d.is_admin ? '<p class="data" style="margin-top:14px; font-size:11px; opacity:.6;">Reviewing and approving skills is an org-admin action.</p>' : ''}</div>`;
     main.querySelectorAll('.sk-approve').forEach(b => b.addEventListener('click', () => skillApprove(b.dataset.id)));
     main.querySelectorAll('.sk-reject').forEach(b => b.addEventListener('click', () => skillReject(b.dataset.id)));
@@ -1744,7 +1753,7 @@
     const newBtn = main.querySelector('#sk-new'); if (newBtn) newBtn.addEventListener('click', openNewSkill);
   }
   async function openSkillEditor(id) {
-    const modal = document.getElementById('ws-api-modal');
+    const modal = document.getElementById('ws-new-agent-modal');
     if (!modal) return;
     let sk = null;
     try { const r = await fetch('/skills/' + encodeURIComponent(id)); if (r.ok) sk = (await r.json()).skill; } catch (e) { sk = null; }
@@ -1798,7 +1807,7 @@
     nameIn.focus();
   }
   async function openSkillScope(skill) {
-    const modal = document.getElementById('ws-api-modal');
+    const modal = document.getElementById('ws-new-agent-modal');
     if (!modal) return;
     let agents = [];
     try { const r = await fetch('/agents'); if (r.ok) agents = (await r.json()).agents || []; } catch (e) { agents = []; }
@@ -1834,7 +1843,7 @@
     modal.addEventListener('click', e => { if (e.target === modal) close(); });
   }
   function openNewSkill() {
-    const modal = document.getElementById('ws-api-modal');
+    const modal = document.getElementById('ws-new-agent-modal');
     if (!modal) return;
     const VALID_ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
     const slugify = s => s.toLowerCase().trim().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');

@@ -247,6 +247,12 @@ class _SetupMixin:
             # Classify any learned fragment attachments the boot persona already has, so
             # `fragment.*` edge endpoints reconcile as kind="fragment" instead of ORPHAN.
             register_fragment_nodes(self.wiring, reg)
+            # Register any RECRUITED reserve drafters (Tier 2) present in the boot persona's
+            # graph, so their edges reconcile instead of showing as orphan.
+            try:
+                self.frontal.register_recruited_reserves(reg)
+            except Exception:
+                pass
             report = audit_node_registry(self.wiring, reg, log=logger)
             decisions_log.log(
                 "node_registry_audit",

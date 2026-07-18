@@ -807,6 +807,23 @@ DEFAULTS: dict[str, float | int | str] = {
     "fragment_downshift_threshold": 2.20,  # attachment weight ≥ this → eligible to downshift
     "fragment_downshift_cloud_floor": 2,  # min drafters kept on cloud even if all are proven
     "fragment_downshift_model": "runpod",  # local model key for a downshifted drafter
+    # ── Node creation — Tier 2 structural plasticity (recruit new nodes + self-authoring) ──
+    # Cap 1 (recruitment): a persona recruits a dormant reserve drafter into its active set when
+    # a host accumulates a stable cluster of PROVEN fragments; the new node's identity = those
+    # fragments, injected via the Tier-1 seam. Cap 2 (self-authoring): a gated sleep pass drafts a
+    # candidate specialization, admits it through the SAME screener as untrusted skills (auto-live
+    # only if screener-clean; else the owner review queue), feeding the fragment pool. Two gates:
+    # screener admits authored content; reward promotes any fragment into a node.
+    "node_recruitment": 1,  # master gate for reserve-node recruitment (0 = off)
+    "node_reserve_pool": 3,  # K dormant reserve drafter slots (F.. up to fragment_pool ceiling)
+    "node_promote_threshold": 2.20,  # fragment weight ≥ this counts as "proven" for recruitment
+    "node_promote_min_cluster": 2,  # min proven fragments on a host to crystallize into a node
+    # (a recruited reserve is DEMOTED when it has no fragment ≥ fragment_inject_threshold left —
+    #  it lost its specialization; that reuses the inject threshold, no separate flag.)
+    "node_self_authoring": 1,  # master gate for the self-authoring sleep pass (0 = off)
+    "node_author_min_traces": 20,  # min new traces in a session before authoring may run
+    "node_author_min_hours": 24.0,  # min hours since the last authored proposal for a persona
+    "node_author_max_per_persona": 5,  # cap on total self-authored skills per persona
     # ── Section: Flock dynamics — criticality + chemistry trajectory ─────────
     # Murmuration-derived collective-dynamics layer (sibling to colony_features,
     # but kept on its OWN flag so criticality control can be run without the
