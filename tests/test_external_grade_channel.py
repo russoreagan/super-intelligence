@@ -236,6 +236,12 @@ def _engine_stub(persona="test"):
     trace = TurnTrace(turn_id="t_eng_1", session_id="s", user_input="hi")
     stub = SimpleNamespace(bus=bus, _session_traces_full=[trace], _eval_logger=None)
     stub._client_chem_registry = lambda: registry
+    # Path B pair factory (persona, end_user) → dedicated pair, cached like the real one.
+    _persona_pairs: dict = {}
+    stub._persona_pairs = _persona_pairs
+    stub._persona_chem_pair = lambda p, e: _persona_pairs.setdefault(
+        f"{p}:{e}", bus.new_chem_for(None, None)
+    )
     stub.api_grade_turn = types.MethodType(_LoopsMixin.api_grade_turn, stub)
     return stub, registry, trace, bus
 
@@ -284,6 +290,198 @@ def test_engine_grade_with_no_end_user_falls_back_to_resting(_nudge_at_default):
     assert result["ok"] is True
     assert trace.external_grade == 1.0
     assert resting.neuromod.get("DA") - r_before == pytest.approx(_nudge_at_default)
+
+
+# ── Round-2 hardening: isolation, binding provenance, idempotency, no-ghost-DA ─
+def test_engine_grade_denies_turn_from_another_session(_nudge_at_default):
+    """A1: the trace buffer is process-wide across partners. A caller who owns
+    session A must NOT be able to grade a turn stamped with session B — the write
+    is refused outright: no trace mutation, no DA anywhere."""
+    from brain.session_loops import _LoopsMixin
+
+    stub, registry, trace, bus = _engine_stub()
+    trace.api_session_id = "sess_B"  # partner B's turn
+    trace.end_user_id = "cust-B"
+    pair_b = registry.get_or_create("cust-B")
+    pair_a = registry.get_or_create("cust-A")
+    resting = bus.resting_chem
+    befores = [p.neuromod.get("DA") for p in (pair_a, pair_b, resting)]
+
+    result = _LoopsMixin.api_grade_turn_engine(
+        stub, "t_eng_1", 1, end_user_id="cust-A", api_session_id="sess_A"
+    )
+
+    assert result["ok"] is False
+    assert result["denied"] is True
+    assert result["applied_live"] is False
+    assert trace.external_grade is None  # B's trace untouched — no learning re-weight
+    afters = [p.neuromod.get("DA") for p in (pair_a, pair_b, resting)]
+    assert afters == befores  # zero chemistry moved, on any pair
+
+
+def test_engine_grade_same_session_is_allowed(_nudge_at_default):
+    """The isolation check must not break the legitimate path: the session that
+    ran the turn grades it and the stamped customer's DA moves."""
+    from brain.session_loops import _LoopsMixin
+
+    stub, registry, trace, bus = _engine_stub()
+    trace.api_session_id = "sess_A"
+    trace.end_user_id = "cust-A"
+    pair_a = registry.get_or_create("cust-A")
+    a_before = pair_a.neuromod.get("DA")
+
+    result = _LoopsMixin.api_grade_turn_engine(
+        stub, "t_eng_1", 1, end_user_id="cust-A", api_session_id="sess_A"
+    )
+
+    assert result["ok"] is True and result["applied_live"] is True
+    assert trace.external_grade == 1.0
+    assert pair_a.neuromod.get("DA") - a_before == pytest.approx(_nudge_at_default)
+
+
+def test_engine_grade_binds_from_trace_stamps_not_caller_claim(_nudge_at_default):
+    """A1 persona/end-user misattribution: the DA binding derives from the TRACE's
+    own stamps (what the turn actually bound), so a stale or wrong caller-supplied
+    end_user cannot steer the nudge onto a different customer's mood."""
+    from brain.session_loops import _LoopsMixin
+
+    stub, registry, trace, bus = _engine_stub()
+    trace.api_session_id = "sess_A"
+    trace.end_user_id = "cust-REAL"
+    pair_real = registry.get_or_create("cust-REAL")
+    pair_claimed = registry.get_or_create("cust-CLAIMED")
+    real_before = pair_real.neuromod.get("DA")
+    claimed_before = pair_claimed.neuromod.get("DA")
+
+    result = _LoopsMixin.api_grade_turn_engine(
+        stub, "t_eng_1", 1, end_user_id="cust-CLAIMED", api_session_id="sess_A"
+    )
+
+    assert result["ok"] is True
+    assert pair_real.neuromod.get("DA") - real_before == pytest.approx(_nudge_at_default)
+    assert pair_claimed.neuromod.get("DA") == claimed_before
+
+
+def test_engine_grade_binds_trace_stamped_persona_pair(_nudge_at_default):
+    """Path B: a trace stamped with a persona binds THAT persona's (persona,
+    end_user) pair — the grade lands where the turn's mood lived."""
+    from brain.session_loops import _LoopsMixin
+
+    stub, registry, trace, bus = _engine_stub()
+    trace.api_session_id = "sess_A"
+    trace.api_persona = "the_visionary"
+    trace.end_user_id = "cust-A"
+    resting = bus.resting_chem
+    r_before = resting.neuromod.get("DA")
+
+    result = _LoopsMixin.api_grade_turn_engine(
+        stub, "t_eng_1", 1, end_user_id="cust-A", api_session_id="sess_A"
+    )
+
+    assert result["ok"] is True
+    pair = stub._persona_pairs["the_visionary:cust-A"]
+    assert pair.neuromod.da_source_tally()["external"] == pytest.approx(_nudge_at_default)
+    assert resting.neuromod.get("DA") == r_before
+
+
+def test_repeated_identical_grades_move_da_once(_nudge_at_default):
+    """A2: no dedup used to mean ~7 repeated grade:1 posts saturated DA at 1.0.
+    Now chemistry moves at most once per turn_id — a repeat of the same grade is
+    a recorded no-op for chemistry."""
+    from brain.session_loops import _LoopsMixin
+
+    stub, trace = _loops_stub()
+    da_start = stub.bus.neuromod.get("DA")
+
+    for _ in range(7):
+        result = _LoopsMixin.api_grade_turn(stub, "t_ext_1", 1)
+        assert result["ok"] is True
+
+    assert trace.external_grade == 1.0
+    # Exactly ONE nudge total, not seven.
+    assert stub.bus.neuromod.get("DA") - da_start == pytest.approx(_nudge_at_default)
+    assert stub.bus.neuromod.da_source_tally()["external"] == pytest.approx(_nudge_at_default)
+
+
+def test_regrade_applies_bounded_difference_not_fresh_nudge(_nudge_at_default):
+    """A2: changing a verdict (thumbs up → thumbs down) moves DA by the bounded
+    difference, so the record follows the newest grade while any sequence of
+    posts telescopes instead of accumulating."""
+    from brain.session_loops import _LoopsMixin
+
+    stub, trace = _loops_stub()
+    nudge = _nudge_at_default
+    da_start = stub.bus.neuromod.get("DA")
+
+    _LoopsMixin.api_grade_turn(stub, "t_ext_1", 1)  # +nudge
+    assert stub.bus.neuromod.get("DA") - da_start == pytest.approx(nudge)
+
+    _LoopsMixin.api_grade_turn(stub, "t_ext_1", -1)  # difference −2, clamped to −nudge
+    assert trace.external_grade == -1.0  # record follows the newest verdict
+    assert stub.bus.neuromod.get("DA") - da_start == pytest.approx(0.0)
+
+    # Flapping up/down forever stays bounded — never walks toward saturation.
+    for _ in range(5):
+        _LoopsMixin.api_grade_turn(stub, "t_ext_1", 1)
+        _LoopsMixin.api_grade_turn(stub, "t_ext_1", -1)
+    assert abs(stub.bus.neuromod.get("DA") - da_start) <= nudge + 1e-9
+
+
+def test_unknown_turn_id_moves_zero_chemistry(_nudge_at_default):
+    """A3: the nudge is gated on a successfully resolved live trace. A fabricated
+    turn_id must be a pure no-op for chemistry — no free dopamine pump."""
+    from brain.session_loops import _LoopsMixin
+
+    stub, _trace = _loops_stub()
+    da_before = stub.bus.neuromod.get("DA")
+
+    result = _LoopsMixin.api_grade_turn(stub, "t_fabricated_999", 1)
+
+    assert result["ok"] is True  # recorded for audit (eval log path)
+    assert result["applied_live"] is False
+    assert stub.bus.neuromod.get("DA") == da_before
+    assert stub.bus.neuromod.da_source_tally()["external"] == 0.0
+
+
+def test_late_grade_returns_turn_not_live_reason(_nudge_at_default):
+    """A4: a grade landing after the turn left the live buffer (consolidation or
+    restart) silently lost its learning half — now the response says so, so a
+    partner's async grader can detect it missed the window. A live grade carries
+    no such marker."""
+    from brain.session_loops import _LoopsMixin
+
+    stub, _trace = _loops_stub()
+
+    late = _LoopsMixin.api_grade_turn(stub, "t_gone_after_sleep", 1)
+    assert late["applied_live"] is False
+    assert late["reason"] == "turn_not_live"
+
+    live = _LoopsMixin.api_grade_turn(stub, "t_ext_1", 1)
+    assert live["applied_live"] is True
+    assert "reason" not in live
+
+
+def test_engine_grade_unknown_turn_reports_not_live_and_no_da(_nudge_at_default):
+    """A3+A4 through the engine path: unknown turn_id → not denied (it may simply
+    have consolidated), but applied_live=false with the reason, and zero DA on
+    every pair including resting."""
+    from brain.session_loops import _LoopsMixin
+
+    stub, registry, _trace, bus = _engine_stub()
+    pair_a = registry.get_or_create("cust-A")
+    resting = bus.resting_chem
+    a_before = pair_a.neuromod.get("DA")
+    r_before = resting.neuromod.get("DA")
+
+    result = _LoopsMixin.api_grade_turn_engine(
+        stub, "t_never_existed", 1, end_user_id="cust-A", api_session_id="sess_A"
+    )
+
+    assert result["ok"] is True
+    assert result["applied_live"] is False
+    assert result["reason"] == "turn_not_live"
+    assert pair_a.neuromod.get("DA") == a_before
+    assert resting.neuromod.get("DA") == r_before
 
 
 def test_composite_weights_sum_to_one():
