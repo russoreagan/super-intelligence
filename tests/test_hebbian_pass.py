@@ -267,6 +267,39 @@ def test_hebbian_pass_decreases_on_negative_outcome(monkeypatch, tmp_path):
     assert new_weight < 1.495
 
 
+def test_frozen_wiring_freezes_weight_learning(monkeypatch, tmp_path):
+    # BRAIN_WIRING_FROZEN is a true panic switch: a potent positive-outcome trace
+    # must NOT move weights (nor decay them) nor rewrite wiring.json. Fails today
+    # because the topology weight-learning pass runs regardless of FROZEN.
+    from pathlib import Path
+
+    from brain.sleep import SleepConsolidation
+
+    w = _isolated_wiring(monkeypatch, tmp_path)
+    w.add("frontal.executive", "frontal.drafter_A", weight=1.0)
+    w.save()
+    wiring_path = Path(tmp_path / "wiring.json")
+    before_bytes = wiring_path.read_bytes()
+
+    sc = SleepConsolidation(_StubRouter(), _StubSchema(), _StubEpisodic(), wiring=w)
+    trace = _make_trace(DA=0.9, prior_DA=0.5, critic_overall=0.95)
+    trace.fired_path = [
+        {"name": "frontal.executive", "cluster": "frontal", "kind": "integrator"},
+        {"name": "frontal.drafter_A", "cluster": "frontal", "kind": "integrator"},
+    ]
+
+    # FROZEN: weights untouched and the file is byte-identical.
+    monkeypatch.setenv("BRAIN_WIRING_FROZEN", "true")
+    sc._run_hebbian_pass("s_frozen", [trace])
+    assert w.get_edge_weight("frontal.executive", "frontal.drafter_A") == pytest.approx(1.0)
+    assert wiring_path.read_bytes() == before_bytes
+
+    # Control: same trace unfrozen DOES move the weight (proves the trace is potent).
+    monkeypatch.setenv("BRAIN_WIRING_FROZEN", "false")
+    sc._run_hebbian_pass("s_live", [trace])
+    assert w.get_edge_weight("frontal.executive", "frontal.drafter_A") > 1.0
+
+
 # ── New field coverage ───────────────────────────────────────────────────────
 
 

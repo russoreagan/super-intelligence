@@ -1014,9 +1014,16 @@ class _LoopsMixin:
         with contextlib.suppress(Exception):
             nudge = float(_brain_settings.get("external_grade_da_nudge", 0) or 0)
             if nudge > 0:
+                # Bound the felt-state move: clamp the grade to [-1, 1] (defends a
+                # future scale/caller that bypasses normalize_grade) and clamp the
+                # resulting delta to +/-nudge so a hostile or spammy grader cannot
+                # push more than the configured nudge per write. Level saturation
+                # in Neuromodulators.add ([0, 1]) is the spam ceiling on top.
+                g_clamped = max(-1.0, min(1.0, float(g)))
+                delta = max(-nudge, min(nudge, nudge * g_clamped))
                 self.bus.neuromod.add(
                     "DA",
-                    nudge * g,
+                    delta,
                     source="external_grader",
                     reward_source="user_emotion",
                     reason="thumbs",
