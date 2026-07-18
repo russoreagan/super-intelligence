@@ -115,6 +115,14 @@ class TurnTrace:
     # <strategy>). {"schema": int, "episode": int}; empty when no recall ran.
     recall_contrib: dict = field(default_factory=dict)
 
+    # Fragment attachments (Tier 1 structural plasticity): which curated fragments each
+    # host cell CARRIED this turn — {host_node: [skill_id, ...]} (e.g.
+    # {"frontal.drafter_A": ["trading-analyst"]}). Stamped per-drafter at draft time by
+    # frontal (via the current_turn_trace contextvar); read by the Hebbian sleep pass to
+    # credit the fragment on the SELECTED drafter (contrastive with explored losers).
+    # Empty unless fragment_wiring is on and a fragment was injected/explored.
+    drafter_fragments: dict = field(default_factory=dict)
+
     # Structural (cross-domain) recall instrumentation. Gate firing is logged
     # separately from match success so threshold calibration (too-much/too-little
     # novelty) is observable independently of whether a match was found.

@@ -237,12 +237,16 @@ class _SetupMixin:
             from brain.node_registry import (
                 audit_node_registry,
                 get_node_registry,
+                register_fragment_nodes,
                 register_manifest,
             )
             from brain.observability.decisions import decisions as decisions_log
 
             reg = get_node_registry()
             register_manifest(reg)
+            # Classify any learned fragment attachments the boot persona already has, so
+            # `fragment.*` edge endpoints reconcile as kind="fragment" instead of ORPHAN.
+            register_fragment_nodes(self.wiring, reg)
             report = audit_node_registry(self.wiring, reg, log=logger)
             decisions_log.log(
                 "node_registry_audit",

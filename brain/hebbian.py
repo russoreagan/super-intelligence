@@ -7,7 +7,7 @@ import logging
 from brain.emotion_hierarchy import CORE_VALENCE, valence_of
 from brain.observability.decisions import decisions
 from brain.settings import settings
-from brain.wiring import Wiring
+from brain.wiring import WEIGHT_REST, Wiring
 
 logger = logging.getLogger(__name__)
 
@@ -234,6 +234,84 @@ class HebbianUpdater:
                 if self._wiring.has("frontal.executive", drafter_name):
                     count += 1
         return count
+
+    def _apply_attachment_credit(self, trace, outcome: float) -> int:
+        """Tier 1 structural plasticity: learn WHICH curated fragment attaches to WHICH host.
+
+        Contrastive over the drafter competition — the fragment(s) the SELECTED drafter
+        carried on a positive-outcome turn are reinforced, creating/strengthening a
+        per-persona `fragment.<skill_id> → drafter` edge; fragments carried by LOSING
+        drafters are gently demoted (existing edges only, so a fresh losing exploration
+        simply never establishes). Non-drafter hosts (critic/reframer/empathy/executive)
+        get co-activation credit for an established attachment they carried on a good turn.
+
+        The step is `outcome * fragment_gain` — deliberately NOT the tiny per-path Hebbian
+        delta, so ONE good win lifts a new attachment (starting at rest) clear of the prune
+        floor; sustained wins then climb it toward the downshift threshold, while an
+        attachment that stops winning fades (decay_fragment_edges) and is pruned. Reads
+        trace.drafter_fragments (host → [skill_id], stamped per-drafter by frontal). Gated by
+        fragment_wiring; the caller also gates on BRAIN_WIRING_FROZEN. Returns edge updates."""
+        if not settings.get("fragment_wiring", 1):
+            return 0
+        frags = getattr(trace, "drafter_fragments", None) or {}
+        if not frags:
+            return 0
+        from brain.fragment_pool import EXPLORE_HOSTS, fragment_node_name, is_admissible
+
+        selected = next((d for d in (trace.draft_scores or []) if d.get("selected")), None)
+        winner_host = None
+        if selected is not None:
+            parts = str(selected.get("draft_id", "")).split("_")
+            if len(parts) >= 2 and parts[1].isdigit():
+                winner_host = f"frontal.drafter_{chr(65 + int(parts[1]))}"
+
+        att_delta = outcome * float(settings.get("fragment_gain", 0.2))
+        penalty = float(settings.get("fragment_explore_penalty", 0.02))
+        updated = 0
+        for host, sids in frags.items():
+            is_drafter = host in EXPLORE_HOSTS
+            for sid in sids or []:
+                if not is_admissible(sid, host):
+                    continue
+                fnode = fragment_node_name(sid)
+                has = self._wiring.has(fnode, host)
+                if is_drafter and host == winner_host:
+                    if att_delta > 0:
+                        # create/strengthen the winning attachment
+                        self._wiring.add(fnode, host, weight=WEIGHT_REST)
+                        n = self._wiring.hebbian_update([fnode, host], att_delta)
+                        verb = "reinforce"
+                    elif has:
+                        # selected but the turn went badly — weaken an existing attachment
+                        n = self._wiring.hebbian_update([fnode, host], att_delta)
+                        verb = "demote"
+                    else:
+                        continue
+                elif is_drafter:
+                    # carried by a losing drafter — gentle demotion of an EXISTING attachment
+                    if not has:
+                        continue
+                    n = self._wiring.hebbian_update([fnode, host], -penalty)
+                    verb = "loser_penalty"
+                else:
+                    # non-drafter host — co-activation credit for an EXISTING attachment
+                    if att_delta <= 0 or not has:
+                        continue
+                    n = self._wiring.hebbian_update([fnode, host], att_delta)
+                    verb = "coactivation"
+                if n:
+                    updated += n
+                    decisions.log(
+                        "attachment_learned",
+                        turn_id=trace.turn_id,
+                        fragment=sid,
+                        host=host,
+                        verb=verb,
+                        won=(host == winner_host),
+                        weight=round(self._wiring.get_edge_weight(fnode, host), 4),
+                        outcome=round(outcome, 4),
+                    )
+        return updated
 
     # Switch-ordering edges (sensory.text → temporal.<switch>) are never consecutive
     # pairs on fired_path (sensory.text is a bus channel, not a fired node), so the
@@ -478,6 +556,12 @@ class HebbianUpdater:
         """Decay + per-turn Hebbian updates along firing paths, for ONE persona's
         traces (the wiring resolves the bound persona's graph on every access)."""
         self._wiring.decay_toward_rest(rest=1.0, rate=0.01)
+        # Fragment attachments forget faster than topology homeostasis (use-it-or-lose-it):
+        # decay first, so the trace loop's reinforcement can lift the productive ones back
+        # above the prune floor while unused ones fade toward removal.
+        _frag_on = bool(settings.get("fragment_wiring", 1))
+        if _frag_on:
+            self._wiring.decay_fragment_edges(float(settings.get("fragment_forget", 0.05)))
 
         plasticity = self._plasticity_modulator(full_traces)
         gainers: list[tuple[str, float]] = []
@@ -584,6 +668,15 @@ class HebbianUpdater:
             total_updated += self._apply_recall_credit(
                 trace, outcome, plasticity, turn_plast, gainers, losers
             )
+            total_updated += self._apply_attachment_credit(trace, outcome)
+
+        # Prune faded fragment attachments after all reinforcement (topology never pruned).
+        if _frag_on:
+            pruned = self._wiring.prune_fragment_edges(
+                float(settings.get("fragment_prune_floor", 1.05))
+            )
+            if pruned:
+                decisions.log("attachment_pruned", session_id=session_id, count=pruned)
 
         try:
             self._wiring.save()

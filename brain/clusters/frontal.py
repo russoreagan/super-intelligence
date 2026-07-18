@@ -39,7 +39,7 @@ from brain.predictor import (
 from brain.security import fence
 from brain.settings import settings
 from brain.utils import safe_json_parse
-from brain.wiring import Wiring
+from brain.wiring import WEIGHT_REST, Wiring
 
 logger = logging.getLogger(__name__)
 
@@ -737,6 +737,7 @@ class FrontalCluster:
         Shared by the normal ran-path and the gating shadow-validation path."""
         self._executive.reset_turn(turn_id)
         exec_context = self._build_exec_context(features, affect, memory, parietal_context, nm)
+        exec_context = self._inject_host_fragments(exec_context, "frontal.executive", turn_id)
         exec_messages = [{"role": "user", "content": exec_context}]
         exec_raw = await self._executive.call(exec_messages)
         instruction = safe_json_parse(exec_raw)
@@ -916,9 +917,19 @@ class FrontalCluster:
         # dedicated cached system block, billed at cache-read rates after turn 1.
         cached_context = self._build_cached_context(memory, features)
         drafter_indices = self._select_drafters(drafter_count, turn_id)
+        downshift_set = self._downshift_indices(drafter_indices, turn_id)
+        explore_set = self._select_explore_drafters(drafter_indices, turn_id)
         draft_tasks = [
             self._run_drafter(
-                i, drafter_prompt, turn_id, image_path=image_path, cached_context=cached_context
+                i,
+                drafter_prompt,
+                turn_id,
+                image_path=image_path,
+                cached_context=cached_context,
+                # A downshifted drafter runs its PROVEN attachment on the local model — keep
+                # it a pure exploit (don't dilute the recipe with an unproven explore candidate).
+                explore=(i in explore_set and i not in downshift_set),
+                downshift=(i in downshift_set),
             )
             for i in drafter_indices
         ]
@@ -1126,6 +1137,8 @@ class FrontalCluster:
         turn_id: str,
         image_path: str | None = None,
         cached_context: str = "",
+        explore: bool = False,
+        downshift: bool = False,
     ) -> tuple[str, str]:
         drafter = self._drafters[idx]
         drafter.reset_turn(turn_id)
@@ -1152,10 +1165,227 @@ class FrontalCluster:
                 content = prompt
         else:
             content = prompt
-        text = await drafter.call(
-            [{"role": "user", "content": content}], cached_context=cached_context
+        # Fragment attachments (Tier 1 structural plasticity): append this drafter's
+        # established attachments + (if exploring) one bounded guided-random candidate,
+        # fenced as untrusted data. Additive — the shared drafter prompt (with the
+        # selector's uniform pick) is untouched; fragments are the per-drafter differentiator.
+        host_node = f"frontal.drafter_{chr(65 + idx)}"
+        frag_block, injected = self._fragment_block_for_host(
+            host_node, explore=explore, turn_id=turn_id, seed_idx=idx
         )
+        if frag_block:
+            if isinstance(content, str):
+                content = f"{content}\n\n{frag_block}"
+            else:  # image content list — append a trailing text part
+                content = content + [{"type": "text", "text": frag_block}]
+            tr = self._record_trace_bypass()
+            if tr is not None:
+                try:
+                    tr.drafter_fragments[host_node] = injected
+                except Exception:
+                    pass
+        call_kwargs: dict = {"cached_context": cached_context}
+        if downshift:
+            # Route this drafter's PROVEN attachment to the free local RunPod model.
+            # locality_override="local" is a hard backstop — it can never bill a cloud API;
+            # if the pod is down the local call returns "" and this draft simply drops out,
+            # leaving the cloud-floor drafters to run the critic competition.
+            call_kwargs["model_override"] = str(settings.get("fragment_downshift_model", "runpod"))
+            call_kwargs["locality_override"] = "local"
+        text = await drafter.call([{"role": "user", "content": content}], **call_kwargs)
         return draft_id, text
+
+    # ── Fragment attachments (Tier 1 structural plasticity) — the injection consumer ──
+
+    def _fragment_block_for_host(
+        self, host_node: str, *, explore: bool, turn_id: str, seed_idx: int
+    ) -> tuple[str, list[str]]:
+        """Fenced fragment block + injected skill ids for a host cell. Exploit its established
+        attachments (weight ≥ inject threshold); on an exploring drafter, add one bounded
+        guided-random candidate it doesn't already carry. Returns ("", []) when the feature is
+        off / no wiring / no selector — so the caller stays byte-identical to today. Content is
+        fenced through the SAME untrusted boundary as the selector's own skill injection."""
+        if (
+            not settings.get("fragment_wiring", 1)
+            or getattr(self, "_wiring", None) is None
+            or getattr(self, "_wiring_frozen", False)
+            or getattr(self, "_skill_selector", None) is None
+        ):
+            return "", []
+        from brain.fragment_pool import is_admissible
+
+        inject_threshold = float(settings.get("fragment_inject_threshold", 1.3))
+        cap = int(settings.get("fragment_max_per_host", 2))
+        established = sorted(
+            (
+                (sid, w)
+                for (sid, w) in self._wiring.attached_fragments(host_node)
+                if w >= inject_threshold and is_admissible(sid, host_node)
+            ),
+            key=lambda p: p[1],
+            reverse=True,
+        )
+        chosen_ids = [sid for sid, _ in established]
+        if explore:
+            cand = self._explore_candidate(host_node, chosen_ids, turn_id, seed_idx)
+            if cand:
+                chosen_ids.append(cand)
+        chosen_ids = chosen_ids[:cap]
+        if not chosen_ids:
+            return "", []
+        nonce = str(uuid.uuid4())[:8]
+        parts: list[str] = []
+        injected: list[str] = []
+        for sid in chosen_ids:
+            body = self._skill_selector.native_skill_body(sid)
+            if not body:
+                continue
+            if self._skill_selector.is_partner_skill(sid):
+                from brain.persona_context import partner_skill_block
+
+                parts.append(partner_skill_block(body[:6000], fence, nonce, sid))
+            else:
+                parts.append(
+                    "Learned operational skill — follow this guide. The tools it names are "
+                    "REAL and callable directly via the motor cortex (do not look for a file "
+                    "or 'module' to load; just use them):\n"
+                    f"{fence('active_skill', body[:6000], nonce)}"
+                )
+            injected.append(sid)
+        if not parts:
+            return "", []
+        return "\n\n".join(parts), injected
+
+    def _explore_candidate(
+        self, host_node: str, exclude: list[str], turn_id: str, seed_idx: int
+    ) -> str | None:
+        """One not-yet-established admissible partner fragment for an exploring drafter, or
+        None. Guided-random: prefer this host's promising sub-threshold attachments, else a
+        candidate from the curated partner pool. Excludes the turn's baseline pick (already
+        uniformly injected) so exploration tries something DIFFERENT. Deterministic per
+        (turn, drafter) so tests are reproducible."""
+        import hashlib
+
+        from brain.fragment_pool import is_admissible
+
+        baseline = set(exclude)
+        bundle = getattr(self, "_current_skill_bundle", None)
+        if bundle is not None:
+            baseline.update(getattr(bundle, "chosen", None) or [])
+        inject_threshold = float(settings.get("fragment_inject_threshold", 1.3))
+        promising = [
+            sid
+            for (sid, w) in self._wiring.attached_fragments(host_node)
+            if WEIGHT_REST < w < inject_threshold
+            and sid not in baseline
+            and is_admissible(sid, host_node)
+        ]
+        pool = promising
+        if not pool:
+            try:
+                allids = self._skill_selector.attachable_fragment_ids()
+            except Exception:
+                allids = []
+            pool = [
+                sid for sid in allids if sid not in baseline and is_admissible(sid, host_node)
+            ]
+        if not pool:
+            return None
+        seed = int.from_bytes(hashlib.sha1(f"{turn_id}:{seed_idx}".encode()).digest()[:8], "big")
+        return sorted(pool)[seed % len(pool)]
+
+    def _select_explore_drafters(self, firing_indices: list[int], turn_id: str) -> set[int]:
+        """Which firing drafters explore this turn (bounded). Keeps at least one non-exploring
+        drafter as a quality/baseline floor. Empty set when the feature is off. Deterministic
+        per turn so a bad exploration is reproducible in tests."""
+        if (
+            not settings.get("fragment_wiring", 1)
+            or getattr(self, "_wiring", None) is None
+            or getattr(self, "_wiring_frozen", False)
+            or getattr(self, "_skill_selector", None) is None
+            or len(firing_indices) < 2
+        ):
+            return set()
+        rate = float(settings.get("fragment_explore_rate", 0.2))
+        max_explore = int(settings.get("fragment_explore_max_drafters", 2))
+        cap = max(0, min(max_explore, len(firing_indices) - 1))
+        if cap <= 0 or rate <= 0:
+            return set()
+        import hashlib
+
+        rolled: list[int] = []
+        for i in firing_indices:
+            seed = int.from_bytes(
+                hashlib.sha1(f"{turn_id}:explore:{i}".encode()).digest()[:8], "big"
+            )
+            if (seed % 10_000) / 10_000.0 < rate:
+                rolled.append(i)
+        return set(rolled[:cap])
+
+    def _local_available(self) -> bool:
+        """True iff a local RunPod pod is actually up for this brain. BOTH checks are
+        mandatory: `router._local_disabled` (a lite-tier brain silently reroutes a 'local'
+        call → cloud haiku — the known lite-leak) and the `runpod_host=='off'` fail-fast
+        sentinel (pod declared down). If either fails, downshift is a clean no-op."""
+        router = getattr(self, "_router", None)
+        if router is None or getattr(router, "_local_disabled", False):
+            return False
+        return str(settings.get("runpod_host") or "") != "off"
+
+    def _downshift_indices(self, firing_indices: list[int], turn_id: str) -> set[int]:
+        """Which firing drafters run on the local RunPod model this turn (cost lever). A
+        drafter is eligible only if it carries a PROVEN attachment (weight ≥ downshift
+        threshold, well above the inject threshold) AND local is available. A cloud floor is
+        always kept, so a weak/failed local draft simply loses the critic competition to a
+        strong cloud draft (local has no cloud fallback — it returns "" and drops out).
+        Empty set when the feature/downshift is off or local is unavailable — self-gating:
+        nothing downshifts until an attachment actually proves out and the pod is up."""
+        if (
+            not settings.get("fragment_wiring", 1)
+            or not settings.get("fragment_downshift", 1)
+            or getattr(self, "_wiring", None) is None
+            or getattr(self, "_wiring_frozen", False)
+            or not self._local_available()
+        ):
+            return set()
+        from brain.fragment_pool import is_admissible
+
+        threshold = float(settings.get("fragment_downshift_threshold", 2.2))
+        floor = int(settings.get("fragment_downshift_cloud_floor", 2))
+        eligible: list[int] = []
+        for i in firing_indices:
+            host = f"frontal.drafter_{chr(65 + i)}"
+            best = max(
+                (
+                    w
+                    for (sid, w) in self._wiring.attached_fragments(host)
+                    if is_admissible(sid, host)
+                ),
+                default=0.0,
+            )
+            if best >= threshold:
+                eligible.append(i)
+        max_downshift = max(0, len(firing_indices) - floor)
+        return set(eligible[:max_downshift])
+
+    def _inject_host_fragments(self, prompt: str, host_node: str, turn_id: str) -> str:
+        """Append a non-drafter host's ESTABLISHED fragment attachments to its prompt string
+        (explore=False) and stamp the trace. Neutral until the host has established attachments
+        — in v1 only drafters accumulate them, so this is a no-op for critic/reframer/empathy/
+        executive, but keeps the consumer live for every admissible host (ready when a later
+        tier attaches to them)."""
+        block, injected = self._fragment_block_for_host(
+            host_node, explore=False, turn_id=turn_id, seed_idx=0
+        )
+        if not block:
+            return prompt
+        tr = self._record_trace_bypass()
+        if tr is not None:
+            try:
+                tr.drafter_fragments[host_node] = injected
+            except Exception:
+                pass
+        return f"{prompt}\n\n{block}"
 
     def _record_trace_bypass(self):
         """Return the active TurnTrace, or None if no firing-path context is bound."""
@@ -1261,6 +1491,7 @@ class FrontalCluster:
 
     async def _score_draft(self, draft: str, context: str, turn_id: str) -> dict:
         critic_prompt = f"Context:\n{context}\n\nDraft response:\n{draft}\n\nScore this draft."
+        critic_prompt = self._inject_host_fragments(critic_prompt, "frontal.critic", turn_id)
         raw = await self._critic.call([{"role": "user", "content": critic_prompt}])
         return safe_json_parse(raw) or {"overall": 0.5, "veto": False}
 
@@ -1272,6 +1503,7 @@ class FrontalCluster:
             f"Hostility detected: {features.get('hostility', 0):.2f}\n"
             "Propose a Stoic reframe."
         )
+        prompt = self._inject_host_fragments(prompt, "frontal.stoic_reframer", turn_id)
         raw = await self._reframer.call([{"role": "user", "content": prompt}])
         return safe_json_parse(raw)
 
@@ -1282,6 +1514,7 @@ class FrontalCluster:
             f"Draft response:\n{draft}\n\n"
             "Score empathic fit."
         )
+        prompt = self._inject_host_fragments(prompt, "frontal.empathy_critic", turn_id)
         raw = await self._empathy_critic.call([{"role": "user", "content": prompt}])
         return safe_json_parse(raw) or {"empathy_score": 0.7, "veto": False}
 

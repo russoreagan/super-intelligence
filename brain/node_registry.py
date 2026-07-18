@@ -44,12 +44,18 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# The five kinds a node may be classified as.
+# The kinds a node may be classified as.
 #   cell / switch  → object-backed (resolve() returns the live IntegratorCell / SwitchNeuron)
 #   channel        → a literal bus topic (bus.subscribe(topic)); not an object
 #   strategy       → a mode of a method (e.g. a hippocampus recall strategy); not an object
 #   subsystem      → a whole cluster / planner / virtual convergence node; not an object
-NODE_KINDS = frozenset({"cell", "switch", "channel", "strategy", "subsystem"})
+#   fragment       → a learned-attached curated capability fragment (Tier 1 structural
+#                    plasticity); NON-object-backed (content, not compute). A fragment node
+#                    exists in the graph only once it has a per-persona attachment edge
+#                    `fragment.<skill_id> → <host_cell>`; register_fragment_nodes() classifies
+#                    whichever ones the active persona currently has so the audit sees no
+#                    orphan. Not in _OBJECT_KINDS → resolve()→None → never counted UNWIRED.
+NODE_KINDS = frozenset({"cell", "switch", "channel", "strategy", "subsystem", "fragment"})
 _OBJECT_KINDS = frozenset({"cell", "switch"})
 
 
@@ -181,6 +187,23 @@ def _graph_node_names(wiring: Any) -> set[str]:
     """Every distinct node name in the active persona's wiring graph (both edge endpoints).
     The graph exposes nodes only implicitly as edge endpoints — there is no public nodes()."""
     return {n for (src, tgt) in wiring._edges for n in (src, tgt)}
+
+
+def register_fragment_nodes(wiring: Any, registry: NodeRegistry | None = None) -> int:
+    """Classify every learned-attachment fragment currently present in the active persona's
+    wiring graph, so the boot audit sees no ORPHAN for `fragment.*` edge endpoints.
+
+    A fragment node enters the graph only once it has an attachment edge (per persona), so
+    this registers exactly the fragments the active/boot persona has learned. Fragments are
+    NON-object-backed (obj=None) → they never count as UNWIRED. Idempotent (guarded on
+    classify). Returns the count newly registered."""
+    registry = registry if registry is not None else get_node_registry()
+    n = 0
+    for name in _graph_node_names(wiring):
+        if name.startswith("fragment.") and registry.classify(name) is None:
+            registry.register(name, None, kind="fragment", cluster="fragment")
+            n += 1
+    return n
 
 
 def audit_node_registry(

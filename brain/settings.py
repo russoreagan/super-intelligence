@@ -788,6 +788,25 @@ DEFAULTS: dict[str, float | int | str] = {
     "colony_trail_gain": 0.05,  # per-turn trail bump scale (× outcome)
     "colony_trail_clamp": 0.50,  # max |overlay| added to any edge's persisted weight
     "colony_trail_half_life_s": 120.0,  # trail overlay decay half-life within a session
+    # ── Fragment wiring — Tier 1 structural plasticity (learned-attached fragments) ──
+    # Curated, screened skills learned-attached onto host cells as per-persona wiring edges
+    # `fragment.<skill_id> → host`. Drafters EXPLORE varied fragments; the critic + outcome
+    # reward the winner (contrastive); proven attachments consolidate and can DOWNSHIFT a
+    # drafter to the free local RunPod model. Ships LIVE (master ON); BRAIN_WIRING_FROZEN
+    # disables everything. Safety = curated parts + fenced injection + non-safety hosts only.
+    "fragment_wiring": 1,  # master gate for attachment learning + injection (0 = off)
+    "fragment_explore_rate": 0.20,  # P(a given drafter explores a non-established fragment)
+    "fragment_explore_max_drafters": 2,  # cap exploring drafters/turn (keeps a cloud/baseline floor)
+    "fragment_inject_threshold": 1.30,  # attachment weight ≥ this → injected into its host
+    "fragment_max_per_host": 2,  # max fragments injected into any one host per turn
+    "fragment_prune_floor": 1.05,  # fragment edges ≤ this are pruned (rest=1.0)
+    "fragment_forget": 0.05,  # per-sleep decay of fragment edges toward rest (use-it-or-lose-it)
+    "fragment_gain": 0.20,  # reinforcement step = outcome × gain (one good win clears the floor)
+    "fragment_explore_penalty": 0.02,  # decrement to an existing attachment explored on a loser
+    "fragment_downshift": 1,  # 1 = route proven-attachment drafters to local RunPod (0 = off)
+    "fragment_downshift_threshold": 2.20,  # attachment weight ≥ this → eligible to downshift
+    "fragment_downshift_cloud_floor": 2,  # min drafters kept on cloud even if all are proven
+    "fragment_downshift_model": "runpod",  # local model key for a downshifted drafter
     # ── Section: Flock dynamics — criticality + chemistry trajectory ─────────
     # Murmuration-derived collective-dynamics layer (sibling to colony_features,
     # but kept on its OWN flag so criticality control can be run without the
