@@ -544,6 +544,13 @@ class _LoopsMixin:
         traces_full = list(self._session_traces_full)
         self._session_traces.clear()
         self._session_traces_full.clear()
+        # Move the durable trace journal aside in lockstep with the in-memory
+        # snapshot: a crash from here until the pass succeeds leaves this batch in
+        # the inflight file for boot replay instead of losing it.
+        with contextlib.suppress(Exception):
+            from brain.observability import trace_journal
+
+            trace_journal.rotate_inflight()
         dmn_thoughts = []
         if self.dmn:
             try:
@@ -565,6 +572,14 @@ class _LoopsMixin:
                 full_traces=traces_full,
                 session_thoughts=dmn_thoughts,
             )
+            # Committed — drop the crash-safety copy immediately so the window in
+            # which a crash could replay an already-consolidated batch stays
+            # near-zero. (Anything raised above skips this and keeps the inflight
+            # file, so the batch is retried on the next boot instead of lost.)
+            with contextlib.suppress(Exception):
+                from brain.observability import trace_journal
+
+                trace_journal.clear_inflight()
             # Persist the user's learned style register so the next session
             # resumes warm rather than cold-starting (F3).
             try:
