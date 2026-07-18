@@ -35,7 +35,7 @@ A word on Part II. Several verdicts are unflattering. That is deliberate. Anyone
 | # | System | Parts | Resting on | In one line |
 |---|---|---|---|---|
 | 1 | [Chemistry and Affect](#1-chemistry-and-affect) | 8 | Neuromodulation · Appraisal theory · Dimensional affect | The simulated bloodstream. Everything else reads it. |
-| 2 | [The Cognitive Core](#2-the-cognitive-core) | 9 | Dual-process · Multiple Drafts · Predictive processing · Higher-Order Thought · Global Workspace · Structural plasticity | How a single turn happens. |
+| 2 | [The Cognitive Core](#2-the-cognitive-core) | 10 | Dual-process · Multiple Drafts · Predictive processing · Higher-Order Thought · Global Workspace · Structural plasticity | How a single turn happens. |
 | 3 | [Memory](#3-memory) | 10 | Tulving · Complementary Learning Systems · Extended Mind · Structure mapping | What it keeps, and how it finds it again. |
 | 4 | [Learning](#4-learning) | 10 | Hebbian plasticity · Phasic dopamine · Prospect theory · Intrinsic motivation | How experience changes future behavior. |
 | 5 | [The Idle Mind](#5-the-idle-mind) | 9 | Default Mode Network · Stream of consciousness · Habituation | What it does when you are not talking to it. |
@@ -190,7 +190,21 @@ What stays off-limits is the point. Only a fixed allowlist of non-safety draftin
 
 It carries a cost lever of a kind nothing else here has. Once an attachment has genuinely proven itself, the drafter that relies on it can be routed down to local hardware instead of the cloud, so a skill the personality has truly made its own gets cheaper to run rather than more expensive. Nothing downshifts until an attachment proves out and the local hardware is actually up.
 
-**Status.** Live, on by default behind its own flag, killable by the global wiring freeze. This is Tier 1: wire vetted parts onto the fixed map, learning the arrangement but never authoring the parts. The intended next stage, Tier 2, is harder and deferred: reserve cells the brain can bring online as genuinely new units, chains from one attachment into another, and promoting a proven cluster of attachments into a standalone node of its own. That is the move from arranging vetted parts toward growing new ones, and it is where "new nodes are code, not data" stops being a hard limit.
+**Status.** Live, on by default behind its own flag, killable by the global wiring freeze. This is Tier 1: wire vetted parts onto the fixed map, learning the arrangement but never authoring the parts. The next stage, Tier 2 (§2.10), is being built now: bringing genuinely new units online rather than only rearranging vetted parts.
+
+---
+
+### 2.10 Growing new units (structural plasticity, Tier 2 · neurogenesis) · Building now
+
+**Say it like this:** Tier 1 let the brain wire vetted parts onto its fixed map. Tier 2 lets it grow new parts. Where the first tier only rearranged skills it already had, this one brings a genuinely new unit of the mind online and lets proven patterns harden into standing structure.
+
+It works within a real constraint rather than pretending it away. A thinking unit is a piece of code, not a row in a table, so the brain cannot conjure one from nothing at runtime. Instead it keeps a set of reserve cells: spare, unspecialized units held in waiting. When learning finds a recurring, proven pattern that wants a home of its own, it brings a reserve cell online, specializes it to that pattern, and wires it in. Nothing is minted from thin air. The capacity was pre-allocated, and learning decides only whether and how to use it.
+
+Three things become possible that Tier 1 could not do. Attachments can chain, so one learned capability feeds into another rather than every attachment hanging directly off a drafting cell. Fragments carry receptor types, so a skill wires only onto hosts that accept its kind rather than any host accepting anything, which makes the growth selective instead of uniform. And a cluster of attachments that keeps proving out together is promoted into a standalone node of its own, the way a set of habits that always fire together eventually reads as a single skill. That last move is the real threshold: a new node of the mind emerging from proven wiring rather than being placed by hand.
+
+The safety stance carries over and tightens. A reserve cell can only specialize within the same fenced, non-safety space Tier 1 established; a unit brought online can never become a safety cell; and the whole thing still sits under the one global switch that freezes all wiring. New structure is excitatory, earned, and reversible until it proves out, exactly as attachments are.
+
+**Status.** Building now. The design is the direct continuation of Tier 1: the same three-factor license, the same safety fences, the same neutral-when-frozen fallback, extended from wiring vetted parts to bringing reserve units online. This flips to live the moment it merges.
 
 ---
 
@@ -868,7 +882,7 @@ Thirty-six ideas. For each: what it claims, what we built, and a verdict.
 ### Hebbian plasticity, three-factor variant (Frémaux & Gerstner) → §2.7, §4.1
 **The claim:** Cells that fire together wire together. The three-factor version adds a gate: coincidence alone is not enough, a reward signal has to license the change.
 **What we built:** Co-activation along the fired path, gated by chemistry, with homeostatic decay first.
-**Verdict: Solid for weights. Was false for structure; a first bounded tier now grows it.** For most of the project no connection was ever grown or pruned. A first structural tier (§2.9, live) now grows and prunes one vetted class of connection: skill attachments onto drafting cells, licensed by the same three-factor reward gate as weights and fenced off from every safety node. The core cell-to-cell map is still hand-drawn and fixed. **Say "learned weights on a fixed map, plus a first tier that wires vetted skills onto it."**
+**Verdict: Solid for weights. Was false for structure; a first bounded tier now grows it, a second is in progress.** For most of the project no connection was ever grown or pruned. A first structural tier (§2.9, live) now grows and prunes one vetted class of connection: skill attachments onto drafting cells, licensed by the same three-factor reward gate as weights and fenced off from every safety node. A second tier (§2.10, building now) extends this to bringing reserve cells online as genuinely new units. The core cell-to-cell map is still hand-drawn and fixed. **Say "learned weights on a fixed map, plus a growing tier that wires vetted skills onto it."**
 
 ### Spike-timing-dependent plasticity → nowhere
 **What we built:** Nothing. No timing, no order dependence.
@@ -1137,7 +1151,7 @@ Thirty-six ideas. For each: what it claims, what we built, and a verdict.
 | Thing | Reality |
 |---|---|
 | **Spiking neurons** | Not implemented. Stateless comparators. Never claim it. |
-| **Rewiring itself** | The core cell-to-cell map is still fixed, but no longer the whole story. A first tier of structural growth (§2.9, live) grows and prunes one vetted class of connection: skill attachments onto drafting cells, learned as wiring. Weights learn on the fixed map; structure now grows only in that one bounded, vetted, safety-fenced way. Tier 2 (reserve cells as genuinely new units) is deferred. |
+| **Rewiring itself** | The core cell-to-cell map is still fixed, but no longer the whole story. A first tier of structural growth (§2.9, live) grows and prunes one vetted class of connection: skill attachments onto drafting cells, learned as wiring. Weights learn on the fixed map; structure now grows only in that one bounded, vetted, safety-fenced way. Tier 2 (§2.10, building now) extends this to bringing reserve cells online as genuinely new units, and is not yet merged. |
 | **Reward prediction error / TD learning** | Not implemented. The dopamine delta is a proxy for it. |
 | **Replay** | Not implemented. Consolidation is batch post-processing. |
 | **Embodied cognition** | One chemistry-gated perception switch. Real, but keep the claim that size. |
