@@ -8,8 +8,9 @@ with a fake. ``ApiServer`` wraps the router in its own FastAPI app on its own po
 
 Endpoints (all bearer-key authed, fail-closed):
   POST /v1/sessions                 {end_user_id, agent_id?} -> {session_id, ...}
-  POST /v1/sessions/{id}/turns      {message | audio_input} -> {response, affect, mood, transcript?}
+  POST /v1/sessions/{id}/turns      {message | audio_input} -> {response, affect, mood, turn_id, transcript?}
   POST /v1/sessions/{id}/turns/stream  {message | audio_input, audio?} -> SSE inner-life + done [+ audio]
+  POST /v1/sessions/{id}/turns/{turn_id}/grade  {grade, source?} -> {ok, grade, applied_live}
   POST /v1/tts                      {text, ...}      -> {format, data, segments, ...}
   POST /v1/stt                      {audio, ...}     -> {transcript, words, segments}
 
@@ -80,6 +81,10 @@ ConfirmRunner = Callable[[dict, str, "str | None", bool], Awaitable[tuple[str, d
 ExtractRunner = Callable[[str, dict, str, str], Awaitable[dict]]
 # (end_user_id) -> deletion summary
 PurgeRunner = Callable[[str], Awaitable[dict]]
+# (turn_id, grade, end_user_id, persona, source) -> {ok, grade, applied_live}. External
+# grade write path: binds the end-user's chemistry so the DA nudge lands on that
+# customer's mood (see session_loops.api_grade_turn_engine). Sync — no model call.
+GradeRunner = Callable[[str, object, str, str, str], dict]
 # (text, **opts) -> audio result dict ; (audio_bytes, **opts) -> transcript dict
 TtsRunner = Callable[..., Awaitable[dict]]
 SttRunner = Callable[..., Awaitable[dict]]
@@ -189,6 +194,7 @@ def build_api_router(
     approval_resolve_runner: Callable[[str, str, bool, bool], dict] | None = None,
     jobs_list_runner: Callable[[int, str | None], list] | None = None,
     job_get_runner: Callable[[str], dict | None] | None = None,
+    grade_runner: GradeRunner | None = None,
     learning_runner: Callable[..., dict] | None = None,
     purge_runner: PurgeRunner | None = None,
     extract_runner: ExtractRunner | None = None,
@@ -435,6 +441,12 @@ def build_api_router(
             "affect": affect_block,
             "mood": _mood_from_affect(affect),
         }
+        # The handle a partner needs to grade this turn later (POST
+        # /sessions/{id}/turns/{turn_id}/grade). Read from the raw affect, not the
+        # curated block. The SSE path already emits turn_id in its events.
+        _tid = affect.get("turn_id") if isinstance(affect, dict) else None
+        if _tid:
+            resp["turn_id"] = _tid
         if transcript is not None:
             resp["transcript"] = transcript  # echo what we heard (voice-in)
         _log_agent_turn(s, message, display)
@@ -450,6 +462,36 @@ def build_api_router(
                 "description": pending.get("description") or pending.get("task"),
             }
         return resp
+
+    @router.post("/sessions/{session_id}/turns/{turn_id}/grade")
+    async def grade_turn(
+        session_id: str,
+        turn_id: str,
+        body: dict,
+        authorization: str | None = Header(default=None),
+    ):
+        """Submit an EXTERNAL grade for a turn — the one reward signal grounded outside
+        the agent's own appraisal (a thumbs verdict, a rating, an automated grade). Body
+        is {grade, source?}: grade is +1/-1/bool (thumbs) or any number normalized to
+        [-1, +1]; source defaults to "api". turn_id comes from the turn response
+        (POST /turns returns it as turn_id) or the SSE done event.
+
+        The grade re-weights this turn's learning at the next consolidation and, with the
+        DA nudge enabled, moves the end-user's own chemistry (bound for this write, so a
+        partner's grade lands on that customer's mood, never the process resting pair)."""
+        ctx = _require(authorization)
+        s = registry.get(session_id)
+        if s is None:
+            raise HTTPException(status_code=404, detail="unknown session_id")
+        if not _owns(ctx, s):
+            raise HTTPException(status_code=403, detail="session belongs to another partner")
+        if grade_runner is None:
+            raise HTTPException(status_code=501, detail="grading is not available on this server")
+        grade = (body or {}).get("grade")
+        if grade is None:
+            raise HTTPException(status_code=400, detail="missing grade")
+        source = str((body or {}).get("source", "api"))
+        return grade_runner(turn_id, grade, s.end_user_id, _session_persona(s) or "", source)
 
     @router.post("/sessions/{session_id}/consolidate")
     async def consolidate_session(
@@ -1567,6 +1609,7 @@ class ApiServer:
         approval_resolve_runner: Callable[[str, str, bool, bool], dict] | None = None,
         jobs_list_runner: Callable[[int, str | None], list] | None = None,
         job_get_runner: Callable[[str], dict | None] | None = None,
+        grade_runner: GradeRunner | None = None,
         learning_runner: Callable[..., dict] | None = None,
         purge_runner: PurgeRunner | None = None,
         extract_runner: ExtractRunner | None = None,
@@ -1619,6 +1662,7 @@ class ApiServer:
                 approval_resolve_runner=approval_resolve_runner,
                 jobs_list_runner=jobs_list_runner,
                 job_get_runner=job_get_runner,
+                grade_runner=grade_runner,
                 learning_runner=learning_runner,
                 purge_runner=purge_runner,
                 extract_runner=extract_runner,

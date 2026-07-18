@@ -316,15 +316,17 @@ Every dopamine release is stamped at a single chokepoint as either external, mea
 
 **Anyone technical will ask about this. Answering before they ask is worth more than the feature it is a flaw in.**
 
-### 4.4 The external verdict · Dark, disconnected
+### 4.4 The external verdict · Live
 
 A verdict from outside, a thumbs up, a rating, an automated grader, normalized to one scale.
 
-The path into learning works. But the piece that would let an external verdict move the agent's actual chemistry is **dead code**. The setting it depends on was never registered, so the value always reads zero and the branch is unreachable. Worse, it cannot even be turned on: the loader drops the key as unknown and the API refuses it. The comment says "off by default." It is off permanently.
+The path into learning works, and the piece that lets an external verdict move the agent's actual chemistry is now connected. The dopamine nudge on a graded turn is on by default, small and bounded: the grade is clamped to its normal range and the swing it can cause is capped at the configured nudge, so a hostile or spammy grader cannot drive the mood past that per-grade ceiling, and the dopamine level itself saturates on top of that. It is stamped external at the same chokepoint the self-graded tally reads, so a real verdict visibly shifts the external share.
 
-Four related weights that read like tunable dials are hardcoded constants for the same reason.
+The four mix weights that decide how a graded turn splits its learning signal are real, settable dials, left at 0.4, 0.2, 0.2, 0.2. Retuning them waits on production data about how often people actually grade.
 
-**This is the highest-leverage fix in the system, and it is roughly one line.** The one reward channel grounded in reality is disconnected, in a system that is eighty percent self-graded.
+**Be straight about what this does and does not fix.** It does not make the system stop being eighty percent self-graded overnight. It opens the one channel that can shift that number as real verdicts arrive, where before the channel was dead code the loader would not even accept.
+
+Two entry points feed it. The owner interface has a thumbs control on each reply. And the partner-facing engine API exposes a grading endpoint: the turn response hands back a turn id, and a later `POST /sessions/{id}/turns/{turn_id}/grade` records the verdict. The subtle part is where the dopamine lands. An engine turn runs with that one customer's chemistry bound for the length of the turn, then reverts to the shared resting mood. A grade arrives out of band, after the turn, when nothing is bound, so a naive write would nudge the wrong mood. The endpoint re-binds the same customer pair the turn used before it writes, so the grade moves that customer's dopamine and no one else's, and persists it. This is the path built to carry real volume: a partner wiring its own thumbs, ratings, or an automated grader into the loop.
 
 ### 4.5 Intensity and learning (Yerkes-Dodson inverted U) · Live
 
@@ -1176,7 +1178,7 @@ Thirty-six ideas. For each: what it claims, what we built, and a verdict.
 | Thing | The call to make |
 |---|---|
 | **Database-level tenant isolation** | **Resolved (2026-07-17).** Was inert for a stretch — the credential fell back to the master key on a bad key-shape heuristic, bypassing database-level enforcement. Now minted by probing whether the database accepts it, so database-level isolation is enforced again (§9.3), with in-query scoping as the second layer and a kill-switch to force the old fallback. This also un-broke the MCP token stored procedures, which had been failing because the master-key path left their identity claim null. |
-| **The external verdict channel** | Decision made — a separate session is wiring it on. Until that lands the nudge is still zero, so an external grade already reaches learning's outcome mix but does not yet move chemistry. It is the only reward signal grounded outside the agent's own appraisal, in a system that is ~80% self-graded. |
+| **The external verdict channel** | **Decided and now on (2026-07-17).** The DA nudge on an external grade was moved off zero to 0.15, calibrated to land above inferred praise (~0.10) and below the accomplishment signal (~0.34) so it grounds the reward without dominating it, and bounded per grade so a hostile or spammy grader cannot drive chemistry past that ceiling. A grade now moves real chemistry via the external_grader source, and the four mix weights are live dials left at 0.4/0.2/0.2/0.2. It is the only reward signal grounded outside the agent's own appraisal. Both entry points are wired: the owner UI thumbs (→ /feedback) and the partner engine API (POST /sessions/{id}/turns/{turn_id}/grade, which re-binds the customer's own chemistry before the write — see §4.4). |
 | **The inverted-U plasticity model** | Now on by default (2026-07-17). Emotionally intense turns imprint harder, extreme stress imprints less. Replaces the legacy binary defuse-path skip. |
 | **Perceptual differentiation per personality** | Built, switched off. Valuation is the live differentiator. |
 | **Music perception** | Fully built. One environment variable from live. Set nowhere. |
