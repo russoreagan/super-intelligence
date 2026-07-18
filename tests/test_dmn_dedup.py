@@ -8,6 +8,7 @@ Tests for DMN thought-deduplication:
 from __future__ import annotations
 
 import asyncio
+import os
 from unittest.mock import AsyncMock, MagicMock
 
 from brain.sequence_predictor import SequencePredictor
@@ -253,22 +254,25 @@ def test_frame_repetition_gate_catches_template_collapse():
     """Template collapse — same opening frame, different topic noun — slips past
     the word-overlap and cosine gates but must be caught by the frame gate."""
     dmn = _make_dmn()
-    # Three thoughts that share the 'i should INQUIRE' frame with distinct nouns
-    # (so word-overlap stays low and the gates that catch wording don't fire).
+    # Four thoughts sharing the INQUIRE frame with distinct nouns (so word-overlap
+    # stays low and the gates that catch wording don't fire). Deliberately varied
+    # hedges/modals/inflections: before the frame normalization each of these
+    # produced a DIFFERENT signature and the gate never fired at all.
     templates = [
         "I should investigate recent papers on voice diarization quality.",
-        "I should explore recent studies on Hebbian plasticity dynamics.",
-        "I should consider recent research on episodic memory consolidation.",
+        "Maybe I could explore recent studies on Hebbian plasticity dynamics.",
+        "Perhaps examining recent research on episodic memory consolidation.",
+        "It might be worth surveying recent work on sparse autoencoder features.",
     ]
     for i, t in enumerate(templates):
         dmn._monologue_cell.call = AsyncMock(return_value=t)
         asyncio.run(dmn._tick())
-        if i < 2:
-            # First two share the frame but are under the repeat ceiling → pass
+        if i < 3:
+            # First three share the frame but are under the repeat ceiling → pass
             assert dmn._suppressed_count == 0, f"thought {i} wrongly suppressed"
-    # The third repetition of the same frame must be suppressed.
+    # The fourth occurrence of the same frame must be suppressed.
     assert dmn._suppressed_count == 1
-    assert templates[2] not in dmn._recent_thoughts
+    assert templates[3] not in dmn._recent_thoughts
 
     # A genuinely different frame still passes right after.
     dmn._monologue_cell.call = AsyncMock(
@@ -277,3 +281,94 @@ def test_frame_repetition_gate_catches_template_collapse():
     asyncio.run(dmn._tick())
     assert dmn._suppressed_count == 1  # unchanged — the new frame passed
     assert any("Karaoke" in t for t in dmn._recent_thoughts)
+
+
+def test_frame_signature_ignores_hedges_modals_and_inflection():
+    """The regression the gate was built to catch and silently didn't: a modal
+    swap, a leading hedge, or a gerund used to yield distinct signatures, so
+    template collapse walked straight through."""
+    from brain.dmn_dedup import _frame_signature
+
+    same_frame = [
+        "I should investigate the market data",
+        "I could investigate the market data",
+        "Maybe I should investigate the market data",
+        "Perhaps exploring the shipping backlog would help",
+        "It might be worth examining the retry logic",
+    ]
+    sigs = {_frame_signature(t) for t in same_frame}
+    assert sigs == {"INQUIRE"}, f"hedged/inflected openers did not collapse: {sigs}"
+
+    # Distinct rhetorical moves must still separate.
+    assert _frame_signature("I keep wondering about the retention curve") == "WONDER"
+    assert _frame_signature("Planning the migration seems premature") == "WANT"
+    assert _frame_signature("I remembered the earlier voice bug") == "RECALL"
+
+
+def _frame_escape_dmn(idle_phase):
+    """A DMN parked one suppression short of the dedup escape hatch, with a fully
+    grooved frame window."""
+    from collections import deque
+
+    from brain.dmn import DMN_FRAME_REPEAT_MAX
+
+    dmn = _make_dmn()
+    dmn._ensure_runtime_state()
+    dmn._recent_thoughts.append("An earlier thought worth keeping.")
+    dmn._recent_embeddings = deque([None], maxlen=5)
+    dmn._recent_frames = deque(["INQUIRE"] * DMN_FRAME_REPEAT_MAX, maxlen=6)
+    dmn._consec_suppressed = int(os.environ.get("BRAIN_DMN_SUPPRESS_ESCAPE", "5")) - 1
+    dmn._tick_idle_phase = idle_phase
+    dmn._open_threads = []
+    return dmn
+
+
+_ESCAPE_META = {
+    "angle": "",
+    "spoken_form": None,
+    "task_goal": None,
+    "is_propose": False,
+    "is_plan": False,
+    "defer_text": None,
+    "defer_urgency": "low",
+    "defer_tags": [],
+    "chem_delta": {},
+}
+
+
+def test_frame_collapse_escape_queues_rumination_instead_of_wiping_memory():
+    """The escape hatch's old answer to a groove was amnesia. When the groove is
+    frame collapse and the agent is idle, the answer should be to go deeper: queue
+    rumination and clear only the frame window, keeping the novelty memory."""
+    from brain.dmn import IdlePhase
+
+    dmn = _frame_escape_dmn(IdlePhase.WANDERING)
+    asyncio.run(dmn._process_thought("I should investigate the pricing tiers.", _ESCAPE_META, "t1"))
+
+    assert dmn._pending_frame_escape is True
+    assert list(dmn._recent_frames) == []  # block lifted
+    assert len(dmn._recent_thoughts) == 1  # novelty memory SURVIVES
+    assert dmn._consec_suppressed == 0
+
+
+def test_frame_collapse_escape_falls_back_to_clearing_when_not_idle():
+    """Rumination can't run mid-conversation, so the escape must still fall through
+    to the memory clear — otherwise suppression could become permanent silence."""
+    from brain.dmn import IdlePhase
+
+    dmn = _frame_escape_dmn(IdlePhase.ENGAGED)
+    asyncio.run(dmn._process_thought("I should investigate the pricing tiers.", _ESCAPE_META, "t1"))
+
+    assert dmn._pending_frame_escape is False
+    assert list(dmn._recent_thoughts) == []  # full amnesia, as before
+    assert dmn._consec_suppressed == 0
+
+
+def test_frame_signature_falls_back_to_literal_prefix_without_a_frame_verb():
+    """No recognized opening move → topic-specific literal prefix, which rarely
+    repeats. The gate is intentionally near-inert here; the angle and
+    cluster-saturation gates cover topic attractors."""
+    from brain.dmn_dedup import _frame_signature
+
+    assert _frame_signature("What caused the drop in signups") == "what caused drop"
+    assert _frame_signature("Russ went quiet about Karaoke") == "russ went quiet"

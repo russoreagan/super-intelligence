@@ -249,6 +249,7 @@ class DefaultModeNetwork:
     _active_event_depth = _PerPersona(lambda: None)
     _last_rumination_seed = _PerPersona(lambda: "")
     _consecutive_ruminations = _PerPersona(lambda: 0)
+    _pending_frame_escape = _PerPersona(lambda: False)
     _last_emotion = _PerPersona(lambda: "neutral")
     _last_speaker_name = _PerPersona(lambda: None)
     _last_affection_score = _PerPersona(lambda: 0)
@@ -399,6 +400,9 @@ class DefaultModeNetwork:
         self._last_rumination_seed: str = ""
         self._consecutive_ruminations = 0
         self._ruminations_in_progress = 0
+        # Set by the dedup escape hatch when frame collapse is detected; makes the
+        # next idle tick eligible to ruminate (see _rumination_decision).
+        self._pending_frame_escape = False
 
         self._monologue_cell = IntegratorCell(
             name="monologue",
@@ -2235,6 +2239,7 @@ class DefaultModeNetwork:
             ("_last_rumination_seed", ""),
             ("_consecutive_ruminations", 0),
             ("_ruminations_in_progress", 0),
+            ("_pending_frame_escape", False),
         ):
             if not hasattr(self, attr):
                 setattr(self, attr, default)
@@ -2467,6 +2472,13 @@ class DefaultModeNetwork:
         drive, flavor = self._rumination_drive(chem)
         if not settings.get("dmn_rumination_enabled"):
             return "normal", flavor, drive
+        # Queued frame-collapse escape: the dedup gate detected a groove and deferred
+        # to rumination rather than wiping memory. One-shot, and it forces ELIGIBILITY
+        # only — the idle precondition below and the depth cap still apply, so it
+        # cannot start an unbounded chain. Consumed here even if the checks below
+        # reject it: a groove detected while idle is moot once the user is back.
+        forced = bool(getattr(self, "_pending_frame_escape", False))
+        self._pending_frame_escape = False
         idle = self._tick_idle_s
         idle_threshold = float(settings.get("dmn_rumination_idle_threshold_s") or 60.0)
         if self._tick_idle_phase < IdlePhase.WANDERING:
@@ -2477,13 +2489,16 @@ class DefaultModeNetwork:
         # that GROWS while idle, persona-scaled by a chemistry-derived ruminative disposition.
         drive += self._tonic_idle_drive(chem, idle, idle_threshold)
         threshold = float(settings.get("dmn_rumination_drive_threshold") or 0.45)
-        if drive < threshold:
+        if not forced and drive < threshold:
             return "normal", flavor, drive
-        # Depth cap — don't deepen the same seed forever.
+        # Depth cap — don't deepen the same seed forever. Applies to the forced
+        # path too: a queued escape can't outrun the cap.
         if self._consecutive_ruminations >= int(
             settings.get("dmn_rumination_max_consecutive") or 2
         ):
             return "normal", flavor, drive
+        if forced:
+            return "ruminate", flavor, drive
         p = float(settings.get("dmn_rumination_prob_at_threshold") or 0.5)
         if random.random() < min(1.0, p * (drive / max(0.01, threshold))):
             return "ruminate", flavor, drive
@@ -2577,11 +2592,27 @@ class DefaultModeNetwork:
             return IdlePhase.COOLING
         return IdlePhase.ENGAGED
 
+    def _frame_collapse(self) -> float:
+        """How grooved the recent admitted thoughts are, 0..1 — the SKIMMING measure.
+
+        Derived from _recent_frames rather than a counter, deliberately: the deque
+        is already the gate's state, so this can't drift out of sync with what the
+        gate actually saw, and it needs no reset discipline. 0.0 when every recent
+        opener had a different shape; 1.0 when the window sits at the repeat
+        ceiling (the next same-shaped thought will be suppressed).
+        """
+        frames = [f for f in getattr(self, "_recent_frames", ()) if f]
+        if not frames:
+            return 0.0
+        peak = max(frames.count(f) for f in set(frames))
+        return min(1.0, max(0, peak - 1) / max(1, DMN_FRAME_REPEAT_MAX - 1))
+
     def _tonic_idle_drive(self, chem: dict, idle: float, idle_threshold: float) -> float:
-        """Mind-wandering + finish-out pull that grows during deep idle (Stage 7). Independent of
-        the phasic worry/interest drive (which decays to ~0 at rest). Two terms, persona-scaled by
-        a chemistry-derived ruminative disposition (high ACh + low 5HT + CORT → chews more; Poet
-        most, Sage least), so deep idle itself can carry the entity over the rumination threshold."""
+        """Mind-wandering + finish-out + skimming pull that grows during deep idle (Stage 7).
+        Independent of the phasic worry/interest drive (which decays to ~0 at rest). Three terms,
+        persona-scaled by a chemistry-derived ruminative disposition (high ACh + low 5HT + CORT →
+        chews more; Poet most, Sage least), so deep idle itself can carry the entity over the
+        rumination threshold."""
         boredom = min(
             1.0,
             max(0.0, idle - idle_threshold)
@@ -2597,6 +2628,13 @@ class DefaultModeNetwork:
             float(settings.get("rum_w_boredom") or 0.0) * boredom
             + float(settings.get("rum_w_unfinished") or 0.0) * unfinished
         )
+        # Skimming pull: repeated opening frames across different topics mean the
+        # mind is producing variety without depth. Depth is what rumination is for,
+        # so the evidence of shallowness raises the drive toward it. Boredom and
+        # unfinished business were already here; demonstrated shallowness — the most
+        # direct evidence that depth is what's needed — was the one missing input.
+        if settings.get("dmn_frame_collapse_drive", 0):
+            tonic += float(settings.get("rum_w_frame_collapse") or 0.0) * self._frame_collapse()
         # Ruminative disposition from chemistry: focus (ACh) + can't-disengage (low 5HT) + stress.
         # Floor at 0.8 so even the least-ruminative persona (high-5HT Sage) still crosses the
         # threshold under SUSTAINED idle — divergence is in how SOON/OFTEN it ruminates, not
@@ -2686,6 +2724,13 @@ class DefaultModeNetwork:
         else:
             self._consecutive_ruminations = 1
             self._last_rumination_seed = seed
+
+        # A completed episode IS the depth the frame gate was asking for, so the
+        # recorded groove is stale — retire it. Without this the pre-rumination
+        # frames sit in the window and the very next normal thought can re-suppress
+        # on a collapse that has already been answered. (Rumination output itself
+        # never enters _recent_frames: its signature is suppressed by exempt_seed.)
+        self._recent_frames.clear()
 
         self._log_rumination(turn_id, flavor, drive, chain)
 
@@ -3258,10 +3303,12 @@ class DefaultModeNetwork:
         # the word-overlap gate (different nouns) and the cosine gate (just under
         # threshold). Skipped for rumination output (intentionally deepens a seed).
         frame_sig = "" if exempt_seed is not None else _frame_signature(thought_clean)
+        frame_dup = False
         if not is_dup and not advancing_thread and frame_sig:
             repeats = sum(1 for f in self._recent_frames if f == frame_sig)
             if repeats >= DMN_FRAME_REPEAT_MAX:
                 is_dup, dup_reason = True, f"repeated frame '{frame_sig}'"
+                frame_dup = True
 
         if is_dup:
             self._suppressed_count += 1
@@ -3280,14 +3327,37 @@ class DefaultModeNetwork:
             # a hard block. Without this the model can suppress indefinitely.
             _escape = int(os.environ.get("BRAIN_DMN_SUPPRESS_ESCAPE", "5"))
             if self._consec_suppressed >= _escape:
-                logger.info(
-                    "[Background reflection] Dedup escape: clearing thought memory "
-                    "after %d consecutive suppressions (topic attractor detected)",
-                    self._consec_suppressed,
+                # Frame collapse is a DIAGNOSIS, not just a blockage: many topics,
+                # one template, no depth. Answering it by wiping thought memory
+                # treats the symptom by inducing amnesia. Prefer the treatment the
+                # system already has — go deeper — and clear only the frame window
+                # so the immediate block lifts while the real novelty memory
+                # survives. Falls through to the full clear when rumination can't
+                # run (disabled, or not idle), so this can never become permanent
+                # silence.
+                _can_ruminate = (
+                    frame_dup
+                    and settings.get("dmn_frame_collapse_drive", 0)
+                    and settings.get("dmn_rumination_enabled")
+                    and getattr(self, "_tick_idle_phase", IdlePhase.ENGAGED) >= IdlePhase.WANDERING
                 )
-                self._recent_thoughts.clear()
-                self._recent_embeddings.clear()
-                self._recent_frames.clear()
+                if _can_ruminate:
+                    logger.info(
+                        "[Background reflection] Frame collapse after %d consecutive "
+                        "suppressions — queueing rumination instead of clearing memory",
+                        self._consec_suppressed,
+                    )
+                    self._recent_frames.clear()
+                    self._pending_frame_escape = True
+                else:
+                    logger.info(
+                        "[Background reflection] Dedup escape: clearing thought memory "
+                        "after %d consecutive suppressions (topic attractor detected)",
+                        self._consec_suppressed,
+                    )
+                    self._recent_thoughts.clear()
+                    self._recent_embeddings.clear()
+                    self._recent_frames.clear()
                 self._consec_suppressed = 0
             return
 

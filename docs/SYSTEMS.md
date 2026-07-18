@@ -472,9 +472,13 @@ Idle is measured from your last turn **to this agent**, not from your keyboard. 
 
 ### 5.4 Refusing to repeat itself (habituation · novelty detection) · Live
 
-Five independent checks. Word overlap. Meaning similarity. A topic gate. Saturation, which catches an attractor pulling everything toward one subject. And **frame repetition**, which collapses opening verbs into classes, so "I should investigate X" and "I should explore Y" reduce to the same shape and the second is caught. That last one catches template collapse that the other four structurally cannot see, because the words genuinely differ.
+Five independent checks. Word overlap. Meaning similarity. A topic gate. Saturation, which catches an attractor pulling everything toward one subject. And **frame repetition**, which collapses opening verbs into classes, so "I should investigate X", "Maybe I could explore Y" and "Perhaps examining Z" all reduce to the same shape and the fourth in a window is caught. That last one catches template collapse that the other four structurally cannot see, because the words genuinely differ.
 
-After enough consecutive suppressions it clears the slate, because without an escape hatch the model can silence itself indefinitely.
+The frame check reads the *shape* of an opening, not its meaning, and it is normalized to survive paraphrase: hedges, modals and pronouns are skipped rather than matched, and verbs are matched across their inflections. Otherwise a single swapped modal or a gerund produces a different signature and the check quietly stops firing at exactly the moment it is needed.
+
+**It stays structural on purpose.** The semantic space is already covered twice, by meaning similarity and by the topic and saturation gates. Widening frames toward "similar kinds of question" would make this a third, fuzzier copy of the meaning check and cost the independence that is the whole reason it exists. There is also a substantive difference: asking the same kind of question about genuinely unrelated things is legitimate thinking, while reusing one template across them is not.
+
+When suppression persists, what happens next depends on **why**. A frame-collapse groove — many topics, one template, no depth — is a diagnosis rather than a blockage, so it queues rumination and clears only the frame window. Any other groove clears the slate, because without an escape hatch the model can silence itself indefinitely. Both paths remain, and the second is the fallback whenever rumination cannot run.
 
 ### 5.5 Rumination (Default Mode Network, Raichle) · Live
 
@@ -482,9 +486,13 @@ Two drives.
 
 The **immediate** one rises under worry, meaning stress and alertness high with affective baseline low, the can't-disengage signature, and *also* under interest, meaning wanting plus focus. Serotonin subtracts from both, because its job is enabling you to let go.
 
-The **background** one exists because the immediate drive decays toward nothing during long idle. On its own it would mean rumination never fires at rest, **which is precisely backwards for a system named after the network that is most active at rest.** So a second drive runs on boredom and unfinished business, floored so that even the least ruminative personality eventually crosses. The divergence is in how soon and how often a personality ruminates, not whether it ever does.
+The **background** one exists because the immediate drive decays toward nothing during long idle. On its own it would mean rumination never fires at rest, **which is precisely backwards for a system named after the network that is most active at rest.** So a second drive runs on boredom, unfinished business, and skimming, floored so that even the least ruminative personality eventually crosses. The divergence is in how soon and how often a personality ruminates, not whether it ever does.
+
+Skimming is the third of those and the least obvious. Repeated opening frames across different subjects (§5.4) mean the mind is producing variety without depth, and depth is exactly what rumination is for, so the evidence of shallowness pulls toward the cure. Boredom and unfinished business were always inputs; **demonstrated shallowness is the most direct evidence that depth is what is missing**, and it belongs in the same drive.
 
 Rumination never fires during live conversation. That is a hard precondition, not a weighting. And each step of chewing costs inhibition and satiates attention, so **anxious rumination is self-limiting by construction.**
+
+The two systems look like opposites and are not. **The repetition gates suppress repetition the mind did not choose; rumination is repetition it did choose**, and it says so by declaring its seed or its thread id. Everything that declares itself is exempt from the gates and carries its own depth cap in exchange: a seed may be deepened only so many times before it must resolve. So the exemption cannot become a loophole, and the pathway from skimming to rumination cannot become a loop, because the cap sits on the far side of it.
 
 ### 5.6 Deciding to speak · Live
 
@@ -1008,7 +1016,7 @@ Thirty-six ideas. For each: what it claims, what we built, and a verdict.
 ### Habituation and novelty detection → §5.4
 **The claim:** Repeated exposure to the same stimulus produces a diminishing response. Novelty is the signal worth spending on.
 **What we built:** Five independent repetition checks, including one that catches structural repetition the semantic ones cannot see, plus an escape hatch so suppression cannot become permanent.
-**Verdict: Solid.** The escape hatch is the part that shows the failure mode was actually thought through.
+**Verdict: Solid.** The escape hatch is the part that shows the failure mode was actually thought through — and it now discriminates on cause rather than only on count, routing a template-collapse groove into rumination instead of answering every groove with amnesia. Habituation earns its keep here only because the structural check is kept structural; had it been widened toward meaning it would have collapsed into the semantic check and the count of independent checks would have been four dressed as five.
 
 ### Basal ganglia go/no-go gating → §6.1
 **The claim:** Action selection is gated by competing go and no-go pathways.
