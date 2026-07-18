@@ -165,6 +165,142 @@ def test_recruitment_gated_by_flag_and_frozen(monkeypatch, tmp_path):
     assert not w.has("frontal.executive", "frontal.drafter_F")
 
 
+# ── ALTERNATIVE trigger: sustained Global-Workspace ignition ─────────────────
+
+
+def _arm_ignition(n=4):
+    """Record n ignited turns (4, not 3: continuous decay leaves 3×+1 fractionally
+    under the 3.0 floor by read time). Flag ships ON, so record() is live."""
+    from brain import ignition_tally
+
+    for _ in range(n):
+        ignition_tally.record("threat")
+
+
+def test_ignition_recruits_relaxed_cluster(monkeypatch, tmp_path):
+    from brain.hebbian import HebbianUpdater
+
+    w = _isolated_wiring(monkeypatch, tmp_path)
+    bootstrap(w)
+    # Established but NOT fully proven: 1.9 sits between the 1.75 midpoint and 2.2.
+    _proven(w, "frontal.drafter_A", ["alpha", "beta"], weight=1.9)
+    HebbianUpdater(w)._maybe_recruit_nodes("s0")
+    assert not w.has("frontal.executive", "frontal.drafter_F")  # no pressure → no recruit
+    _arm_ignition()
+    HebbianUpdater(w)._maybe_recruit_nodes("s1")
+    assert w.has("frontal.executive", "frontal.drafter_F")
+    assert set(dict(w.attached_fragments("frontal.drafter_F"))) == {"alpha", "beta"}
+
+
+def test_ignition_flag_off_no_recruit(monkeypatch, tmp_path):
+    from brain.hebbian import HebbianUpdater
+    from brain.settings import settings
+
+    w = _isolated_wiring(monkeypatch, tmp_path)
+    bootstrap(w)
+    _proven(w, "frontal.drafter_A", ["alpha", "beta"], weight=1.9)
+    _arm_ignition()  # pressure recorded while the switch was on…
+    monkeypatch.setitem(settings._data, "node_recruit_from_ignition", 0)
+    HebbianUpdater(w)._maybe_recruit_nodes("s")
+    assert not w.has("frontal.executive", "frontal.drafter_F")
+
+
+def test_ignition_respects_frozen(monkeypatch, tmp_path):
+    from brain.hebbian import HebbianUpdater
+
+    w = _isolated_wiring(monkeypatch, tmp_path)
+    bootstrap(w)
+    _proven(w, "frontal.drafter_A", ["alpha", "beta"], weight=1.9)
+    _arm_ignition()
+    monkeypatch.setenv("BRAIN_WIRING_FROZEN", "true")
+    HebbianUpdater(w)._maybe_recruit_nodes("s")
+    assert not w.has("frontal.executive", "frontal.drafter_F")
+
+
+def test_ignition_bar_above_inject_threshold(monkeypatch, tmp_path):
+    """Anti-churn invariant: the relaxed bar is the inject/promote MIDPOINT (1.75),
+    not the inject threshold itself — a 1.5 cluster stays unrecruited even under
+    full ignition pressure, so a fresh recruit can never sit at the demotion floor."""
+    from brain.hebbian import HebbianUpdater
+
+    w = _isolated_wiring(monkeypatch, tmp_path)
+    bootstrap(w)
+    _proven(w, "frontal.drafter_A", ["alpha", "beta"], weight=1.5)
+    _arm_ignition()
+    HebbianUpdater(w)._maybe_recruit_nodes("s")
+    assert not w.has("frontal.executive", "frontal.drafter_F")
+
+
+def test_full_cluster_wins_same_pass(monkeypatch, tmp_path):
+    from brain import ignition_tally
+    from brain.hebbian import HebbianUpdater
+
+    w = _isolated_wiring(monkeypatch, tmp_path)
+    bootstrap(w)
+    _proven(w, "frontal.drafter_A", ["alpha", "beta"], weight=2.5)  # fully proven
+    _proven(w, "frontal.drafter_C", ["gamma", "delta"], weight=1.9)  # only established
+    _arm_ignition()
+    HebbianUpdater(w)._maybe_recruit_nodes("s")
+    # Exactly one recruit per pass, and the proven-cluster path takes precedence.
+    assert set(dict(w.attached_fragments("frontal.drafter_F"))) == {"alpha", "beta"}
+    assert not w.has("frontal.executive", "frontal.drafter_G")
+    # The full path must NOT consume the ignition tally.
+    assert ignition_tally.pressure()[0] > 3.0
+
+
+def test_ignition_consume_prevents_repeat(monkeypatch, tmp_path):
+    from brain.hebbian import HebbianUpdater
+
+    w = _isolated_wiring(monkeypatch, tmp_path)
+    bootstrap(w)
+    h = HebbianUpdater(w)
+    _proven(w, "frontal.drafter_A", ["alpha", "beta"], weight=1.9)
+    _arm_ignition()
+    h._maybe_recruit_nodes("s1")
+    assert w.has("frontal.executive", "frontal.drafter_F")
+    # A second established cluster, but the recruit consumed the whole window —
+    # no fresh ignitions, no second recruit.
+    _proven(w, "frontal.drafter_C", ["gamma", "delta"], weight=1.9)
+    h._maybe_recruit_nodes("s2")
+    assert not w.has("frontal.executive", "frontal.drafter_G")
+    # Fresh sustained ignition re-arms the path.
+    _arm_ignition()
+    h._maybe_recruit_nodes("s3")
+    assert w.has("frontal.executive", "frontal.drafter_G")
+
+
+def test_stale_tally_no_recruit(monkeypatch, tmp_path):
+    from brain import ignition_tally
+    from brain.hebbian import HebbianUpdater
+    from brain.settings import settings
+
+    w = _isolated_wiring(monkeypatch, tmp_path)
+    bootstrap(w)
+    _proven(w, "frontal.drafter_A", ["alpha", "beta"], weight=1.9)
+    t0 = 1_000_000.0
+    monkeypatch.setattr(ignition_tally, "_now", lambda: t0)
+    _arm_ignition()
+    hl_s = float(settings.get("ignition_tally_half_life_h", 72.0)) * 3600.0
+    monkeypatch.setattr(ignition_tally, "_now", lambda: t0 + 3 * hl_s)  # 4 → 0.5
+    HebbianUpdater(w)._maybe_recruit_nodes("s")
+    assert not w.has("frontal.executive", "frontal.drafter_F")
+
+
+def test_ignition_respects_admissibility(monkeypatch, tmp_path):
+    from brain.hebbian import HebbianUpdater
+
+    w = _isolated_wiring(monkeypatch, tmp_path)
+    bootstrap(w)
+    _proven(w, "frontal.drafter_A", ["evil", "alpha"], weight=1.9)
+    _arm_ignition()
+    monkeypatch.setattr(
+        "brain.fragment_pool.is_admissible", lambda sid, host: sid != "evil"
+    )
+    # Admissible cluster shrinks to 1 < node_promote_min_cluster → no recruit.
+    HebbianUpdater(w)._maybe_recruit_nodes("s")
+    assert not w.has("frontal.executive", "frontal.drafter_F")
+
+
 # ── node-registry reconcile with a recruited reserve ─────────────────────────
 
 

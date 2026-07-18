@@ -804,6 +804,17 @@ class _TurnMixin:
         features["spotlight"] = spotlight
         await self._emit_end("thalamus", turn_id)
 
+        # Tier-2 alternative recruitment signal: persist a content-free tally of workspace
+        # ignitions for the sleep-time recruiter (hebbian._maybe_recruit_nodes). Flag-gated
+        # at the call site so the killed path does no work at all — not even an import.
+        if spotlight.get("ignited") and settings.get("node_recruit_from_ignition", 1):
+            try:
+                from brain.ignition_tally import record
+
+                record(str(spotlight.get("coalition") or ""))
+            except Exception:  # noqa: BLE001
+                pass
+
         if self.ears is not None and isinstance(affect, dict):
             pending = self.ears.enrollment_pending_speakers
             # Only prompt for voices we haven't already asked — the "who are you?"

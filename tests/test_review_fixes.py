@@ -521,6 +521,40 @@ def test_cognitive_dial_map_js_python_sync():
             assert abs(ps - jsp) < 1e-9, f"{dial_id}.{key} span drift: py={ps} js={jsp}"
 
 
+def test_plasticity_dial_materializes(tmp_path, monkeypatch):
+    """The Plasticity dial scales the Tier-1 explore rate and BOTH Tier-2
+    crystallization bars (proven-cluster threshold + ignition-pressure floor)."""
+    import brain.persona_chem as pc
+
+    monkeypatch.setattr(pc, "_PERSONAS_ROOT", tmp_path)
+    # The Visionary's plasticity 0.75: offset = span·(0.75−0.5)·2 = span·0.5.
+    sd = pc.materialize_into_settings("The Visionary", {})
+    assert sd["fragment_explore_rate"] == 0.25  # 0.20 + 0.10·0.5
+    assert sd["node_promote_threshold"] == 2.05  # 2.20 − 0.30·0.5
+    assert sd["ignition_recruit_min_score"] == 2.5  # 3.0 − 1.0·0.5
+    # The Cynic's 0.35 leans the other way: more proof demanded, less exploration.
+    sd2 = pc.materialize_into_settings("The Cynic", {})
+    assert sd2["fragment_explore_rate"] == 0.17
+    assert sd2["node_promote_threshold"] == 2.29
+    assert sd2["ignition_recruit_min_score"] == 3.3
+
+
+def test_persona_dial_positions_cover_new_dials():
+    """The /settings needle payload carries the new dials: plasticity (from the
+    cognitive fingerprint) and beauty/relief-seeking (from the reward table)."""
+    from brain.ui.server import _persona_dial_positions
+
+    pos = _persona_dial_positions()
+    assert pos, "persona dial positions unavailable"
+    vis = pos["The Visionary"]
+    assert vis["plasticity"] == 0.75
+    for name, dials in pos.items():
+        assert "beauty-seeking" in dials, f"{name} missing beauty-seeking needle"
+        assert "relief-seeking" in dials, f"{name} missing relief-seeking needle"
+        for did in ("beauty-seeking", "relief-seeking"):
+            assert 0.0 <= dials[did] <= 1.0
+
+
 def test_cog_positions_materialize_and_skip_stoic(tmp_path, monkeypatch):
     import brain.persona_chem as pc
 
