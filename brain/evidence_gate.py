@@ -191,6 +191,11 @@ class EvidenceGate:
                     evidence={"gate_level": round(self._level, 3), "turn_id": turn_id},
                     snapshot=snapshot,
                 )
+                # The firing-path tag above credits the edge, but it is not a decision
+                # record, so a commit was invisible to the Learning surface. Log it as
+                # one — content-free (gate name + numbers only; `key` can carry an
+                # entity, so it is deliberately NOT recorded here).
+                self._log_commit(turn_id, arm_bound)
                 if self.mode == MODE_FIRE_RESET:
                     self._level = 0.0
                     self._armed = False  # fire_reset re-arms immediately after refractory
@@ -199,6 +204,23 @@ class EvidenceGate:
                 self._armed = False
         self._save(store, key)
         return edge_payload
+
+    def _log_commit(self, turn_id: str, arm_bound: float) -> None:
+        """Record one commit edge for the Learning surface. Never raises into a turn."""
+        try:
+            from brain.observability.decisions import decisions
+
+            decisions.log(
+                "evidence_commit",
+                turn_id=turn_id,
+                cluster=self.cluster,
+                gate=self.name,
+                level=round(self._level, 3),
+                arm_bound=round(arm_bound, 3),
+                mode=self.mode,
+            )
+        except Exception:
+            pass
 
     @property
     def level(self) -> float:

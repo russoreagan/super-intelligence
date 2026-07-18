@@ -1081,6 +1081,7 @@ class FrontalCluster:
                             "coherence": score.get("coherence", 0.5),
                             "relevance": score.get("relevance", 0.5),
                             "tone_fit": score.get("tone_fit", 0.5),
+                            "craft": score.get("craft"),
                             "empathy_score": empathy_score,
                             "overall": score.get("overall", 0.0),
                             "selected": False,
@@ -1099,6 +1100,9 @@ class FrontalCluster:
                         "coherence": score.get("coherence", 0.5),
                         "relevance": score.get("relevance", 0.5),
                         "tone_fit": score.get("tone_fit", 0.5),
+                        # None (not 0.5) when the critic didn't score craft — the
+                        # aesthetic reward must never pay on a filled-in default.
+                        "craft": score.get("craft"),
                         "empathy_score": empathy_score,
                         "overall": overall,
                         "selected": False,
@@ -1134,6 +1138,7 @@ class FrontalCluster:
                 "coherence": 0.8,
                 "relevance": 0.8,
                 "tone_fit": 0.8,
+                "craft": None,  # no critic ran — nothing appraised its craft
                 "empathy_score": None,
                 "overall": 0.8,
                 "selected": True,

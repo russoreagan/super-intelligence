@@ -38,6 +38,9 @@
   .lrn-edge-row { display:flex; align-items:center; gap:10px; font-family:var(--mono); font-size:11px; color:var(--fg-dim); margin-bottom:4px; flex-wrap:wrap; }
   .lrn-spark { flex-shrink:0; }
   .lrn-recs { margin-top:6px; font-family:var(--mono); font-size:10px; color:var(--fg-faint); max-height:130px; overflow-y:auto; white-space:pre-wrap; word-break:break-all; }
+  /* Node/route names are read as identifiers, so they wrap at boundaries rather
+     than mid-token the way the raw record dumps above are allowed to. */
+  .lrn-recs.ident { word-break:normal; overflow-wrap:anywhere; line-height:1.5; }
   .lrn-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:12px; margin-top:26px; max-width:1100px; }
   .lrn-panel { border:1px solid var(--line-soft); border-radius:8px; background:var(--bg-1); padding:11px 13px; }
   .lrn-panel h4 { font-size:10px; letter-spacing:.07em; text-transform:uppercase; color:var(--fg-faint); margin-bottom:8px; font-family:var(--mono); }
@@ -306,6 +309,48 @@
           c.successes + '/' + c.occurrences)));
     } else pc.appendChild(el('div', 'lrn-empty', 'No promoted chunks yet — needs 3+ successful jobs on a repeated sequence.'));
     grid.appendChild(pc);
+
+    // evidence gates — commits, and whether the avoidance beliefs held up
+    const pg = el('div', 'lrn-panel');
+    pg.appendChild(el('h4', '', 'Evidence gates (committed across turns)'));
+    const gates = summary.gates || {};
+    const byGate = gates.commits_by_gate || {};
+    const av = gates.avoidance || {};
+    if (gates.commits_total || av.armed) {
+      const maxG = Math.max(...Object.values(byGate), 1);
+      Object.entries(byGate).sort((a, b) => b[1] - a[1]).forEach(([k, v]) =>
+        pg.appendChild(barRow(k.replace(/_/g, ' ') + ' commits', v / maxG, String(v))));
+      if (av.armed) {
+        pg.appendChild(el('h4', '', 'Avoidance beliefs'));
+        pg.appendChild(barRow('armed', 1, String(av.armed)));
+        if (av.resolved) {
+          pg.appendChild(barRow('held up', av.confirmed / av.resolved, String(av.confirmed)));
+          pg.appendChild(barRow('false alarms', av.refuted / av.resolved, String(av.refuted)));
+        }
+        const note = av.precision_pct != null
+          ? `${av.precision_pct}% of graded beliefs held up · ${av.steering ? 'steering the idle mind' : 'learning only, not steering'}`
+          : 'None graded yet — a belief is graded when the user returns to the subject or steps around it again.';
+        pg.appendChild(el('div', 'lrn-note', note));
+      }
+    } else pg.appendChild(el('div', 'lrn-empty', 'No gate has committed yet — evidence accumulates across turns before one does.'));
+    grid.appendChild(pg);
+
+    // structural growth — recruited units (Tier 2)
+    const pn = el('div', 'lrn-panel');
+    pn.appendChild(el('h4', '', 'New units recruited (structural)'));
+    const struct = summary.structure || {};
+    if (struct.recruited_total) {
+      const byTrig = struct.by_trigger || {};
+      const maxT2 = Math.max(...Object.values(byTrig), 1);
+      Object.entries(byTrig).sort((a, b) => b[1] - a[1]).forEach(([k, v]) =>
+        pn.appendChild(barRow(k.replace(/_/g, ' '), v / maxT2, String(v))));
+      (struct.recent || []).slice(-3).reverse().forEach(r => {
+        const bits = [r.node, 'from ' + (r.source || '?'), r.fragments + ' skills'];
+        if (r.ignition_score != null) bits.push('ignition ' + Number(r.ignition_score).toFixed(1));
+        pn.appendChild(el('div', 'lrn-recs ident', bits.join('  ·  ')));
+      });
+    } else pn.appendChild(el('div', 'lrn-empty', 'No unit recruited yet — needs a proven cluster of skills or sustained workspace ignition.'));
+    grid.appendChild(pn);
 
     // predictor
     const pq = el('div', 'lrn-panel');

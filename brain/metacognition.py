@@ -271,6 +271,11 @@ class MetacognitionCell:
         # Decrement all cooldowns by one turn
         self._override_cooldowns = {e: c - 1 for e, c in self._override_cooldowns.items() if c > 1}
 
+        # Beauty as a reward source. The Poet values craft; the Analyst barely does.
+        # Runs on its own, not inside the emotion appraisal, because the aesthetic
+        # payout should not depend on an emotion override happening to fire.
+        self._reward_aesthetic(draft_scores or [])
+
         # Appraise this turn for context-driven emotion override.
         # Fire-and-forget — must not block the run loop.
         with contextlib.suppress(RuntimeError):
@@ -280,6 +285,59 @@ class MetacognitionCell:
                     neuromod,
                     draft_scores or [],
                 )
+            )
+
+    def _reward_aesthetic(self, draft_scores: list[dict]) -> None:
+        """Pay the aesthetic reward source: satisfaction at having made something well.
+
+        The critic scores `craft` on the winning draft separately from `overall` (it
+        is deliberately NOT folded into selection — beauty decides how the agent
+        FEELS about what it said, never which draft gets said). Scaled by
+        reward_weight(persona, "aesthetic"), which is what makes the Beauty-seeking
+        dial and the per-persona aesthetic weights behavioural: the Poet earns
+        materially more from the same well-made reply than the Analyst does, and the
+        Stoic — pinned flat across every source as the experimental control — earns
+        the unweighted amount.
+
+        Intrinsic and self-graded, and honest about it: this is the agent judging its
+        own output, so it is stamped intrinsic at the same chokepoint the self-graded
+        tally reads (§4.3). Only pays above a bar, so competent-but-flat earns nothing
+        and there is no baseline drip. Never raises into the turn.
+        """
+        with contextlib.suppress(Exception):
+            selected = next(
+                (
+                    d
+                    for d in draft_scores
+                    if d.get("selected") and not d.get("vetoed") and d.get("critic_ran")
+                ),
+                None,
+            )
+            if not selected:
+                return
+            craft = selected.get("craft")
+            if craft is None:  # critic returned no craft score — pay nothing
+                return
+            gate = float(settings.get("aesthetic_self_gate"))
+            craft = max(0.0, min(1.0, float(craft)))
+            if craft <= gate:
+                return
+
+            from brain.neuron import reward_weight
+            from brain.persona_key import active_or_home_persona
+
+            # Linear in how far past the bar it landed, so a 0.95 pays materially
+            # more than a 0.8 rather than both flattening to "good".
+            margin = (craft - gate) / max(1e-6, 1.0 - gate)
+            persona = active_or_home_persona()
+            delta = (
+                float(settings.get("aesthetic_reward_base"))
+                * margin
+                * reward_weight(persona, "aesthetic")
+                * float(settings.get("emotional_reactivity_scale"))
+            )
+            self._bus.neuromod.add(
+                "DA", delta, reward_source="aesthetic", reason="craft_self_appraisal"
             )
 
     # ── Appraisal: detect context-driven emotions ─────────────────────────
