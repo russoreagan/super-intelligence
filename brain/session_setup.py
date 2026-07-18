@@ -943,3 +943,25 @@ class _SetupMixin:
 
             self._consolidation_lock = _asyncio.Lock()
             self.brainstem.register_loop("periodic_sleep", self._periodic_sleep_loop)
+
+        # Crash-safety replay: fold any turn traces a prior (ungracefully killed)
+        # run left un-consolidated back into the buffers, so their learning still
+        # lands on the next consolidation — periodic, trace-cap, or the SIGTERM
+        # end-of-session pass — with per-persona attribution intact (each trace
+        # carries its own persona_name). Runs regardless of the periodic-sleep
+        # toggle, since the shutdown pass commits the buffer even with it off, so
+        # replayed orphans are never stranded. Guarded — never breaks boot.
+        try:
+            from brain.observability import trace_journal
+
+            _orphan_full, _orphan_sum = trace_journal.load_orphans()
+            if _orphan_full or _orphan_sum:
+                self._session_traces_full.extend(_orphan_full)
+                self._session_traces.extend(_orphan_sum)
+                logger.info(
+                    "[trace_journal] Replayed %d orphaned turn trace(s) from a prior run "
+                    "— they will consolidate on the next pass",
+                    max(len(_orphan_full), len(_orphan_sum)),
+                )
+        except Exception as _tj_err:
+            logger.debug("[trace_journal] boot replay skipped: %s", _tj_err)

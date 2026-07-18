@@ -164,6 +164,8 @@ About sixty declared connections between named parts of the brain. Weights get n
 
 **One precision point that matters.** The connections themselves never change. Learning adjusts how strong an existing pathway is; it never grows a new one or prunes an old one. The map is hand-drawn and frozen. Weights move on it. Say it that way and you are accurate and still impressive. Say "it rewires itself" and the first neuroscientist in the room catches it.
 
+The map is now at least made explicit: a node registry names every part the wiring can reach and audits at boot for names that are declared but wired to nothing, or wired but never declared. That is inspection, not growth — the topology is still fixed — but it is the groundwork any future move toward a graph that can grow or prune connections would build on.
+
 ### 2.8 The workspace spotlight (Global Workspace Theory, Baars & Dehaene) · Live
 
 **Say it like this:** There is one place that sees the whole mind at once. Each turn it decides what the mind is focused on, and tells every specialist, so they can act on what the mind is attending to rather than only on what the current message said.
@@ -224,7 +226,7 @@ Finished jobs are kept as reusable recipes, each step carrying a note of what it
 
 That expectation attached to each step is the forward model: predict the consequence of the action, then compare, so deviation is caught without waiting for the whole job to fail.
 
-### 3.7 Reflexes (chunking, Miller & Chase-Simon · basal ganglia motor chunking) · Dark, no data
+### 3.7 Reflexes (chunking, Miller & Chase-Simon · basal ganglia motor chunking) · Dark, diagnosed
 
 Below whole recipes sits a finer tier. Sub-sequences of tool use that keep recurring get compressed into single reflexes.
 
@@ -232,7 +234,7 @@ Two rules make it a skill rather than a memorized job. It must have worked acros
 
 Curiosity beats habit: when attention is running high, reflexes are suppressed in favor of thinking it through fresh.
 
-**Wired, unflagged, and it has never produced a single reflex.** Either nothing has cleared the bar or the mining pass has never landed.
+**Wired, unflagged, and it has still never produced a reflex — but the reason is now understood, not a mystery.** The two mining bugs that could have blocked it are fixed. What remains is the corpus itself: most completed jobs are a single step (too short to form a sub-sequence) or failed (below the success bar), so nothing yet recurs across three *successful* jobs. It is an unmet bar, not a broken pass. A fireable-count metric now surfaces how close anything is to clearing it, so the day real multi-step jobs start succeeding, this lights up on its own rather than staying silently empty.
 
 ### 3.8 Sleep (systems consolidation · Complementary Learning Systems) · Live
 
@@ -692,11 +694,11 @@ Three hardening choices at spawn, each stated as a rule. The child is stripped o
 
 The reaper is deliberately patient. A tenant brain is meant to stay awake and keep thinking while you are away. **That is the product, not a leak.**
 
-### 9.3 The database credential (least privilege) · Live, with a known gap
+### 9.3 The database credential (least privilege) · Live
 
 A tenant process never holds the master key. It gets a scoped credential whose identity *is* the organization, so the database itself enforces the boundary rather than trusting our query code to.
 
-**Raise this one.** That mechanism depends on a legacy signing mode, and the newer mode is now the platform default. In that case the code correctly falls back to the master key, and tenant isolation then rests entirely on our own query scoping. That is a real second line of defense, but it is application-level, not database-level, and the layer it was meant to pair with is inert. **Worth confirming which mode we are actually in.**
+For a stretch this was inert in production, and it is worth knowing why because the fix is the interesting part. The code used to decide whether it could still mint a scoped credential by inspecting the shape of the database's public signing key — and that heuristic was wrong, so it gave up and fell back to the master key, which bypasses the database's own tenant enforcement. The fix stops guessing from key shape and instead **mints the credential and checks whether the database actually accepts it.** A tenant gets its scoped identity back whenever the database still honors it, and falls back only on a genuine rejection. A kill-switch can force the fallback if ever needed. So tenant isolation is enforced in the database again, with the in-query scoping standing as a second, independent layer rather than the only one.
 
 ### 9.4 Promoting a personality · Live, routing gated
 
@@ -1129,7 +1131,6 @@ Thirty-six ideas. For each: what it claims, what we built, and a verdict.
 | **Video** | Zero callers. |
 | **Per-mandate reward weights** | Stored, unconsumed. |
 | **Unfinished thoughts in engine-mode working context** | Built, as a deliberate position: companion turns surface open threads ungated; engine/customer turns surface only threads whose `bears_on` overlaps the active mandate's domain, so a persona's introspective threads stay out of a customer's conversation. |
-| **The MCP token feature** | Broken in production, discovered during the audit. Its stored-procedure paths derive identity from a claim that is NULL under the current database credential, so every write and read through them raises and the error is swallowed into a warning. See the decisions below. |
 
 ## Deliberate positions: things people mistake for gaps
 
@@ -1144,8 +1145,8 @@ Thirty-six ideas. For each: what it claims, what we built, and a verdict.
 
 | Thing | The call to make |
 |---|---|
-| **Database-level tenant isolation** | **Confirmed inert.** The project has migrated to asymmetric signing, so every tenant boots holding the master key and RLS is bypassed. Isolation currently rests entirely on application-level query scoping, which is now audited and guarded. **Check the dashboard: if the legacy secret is still current and the new key is only standby, RLS can be restored today.** |
-| **The external verdict channel** | Now reachable and settable, and still zero. Turning it up is a product decision: it is the only reward signal grounded outside the agent's own appraisal. |
+| **Database-level tenant isolation** | **Resolved (2026-07-17).** Was inert for a stretch — the credential fell back to the master key on a bad key-shape heuristic, bypassing database-level enforcement. Now minted by probing whether the database accepts it, so database-level isolation is enforced again (§9.3), with in-query scoping as the second layer and a kill-switch to force the old fallback. This also un-broke the MCP token stored procedures, which had been failing because the master-key path left their identity claim null. |
+| **The external verdict channel** | Decision made — a separate session is wiring it on. Until that lands the nudge is still zero, so an external grade already reaches learning's outcome mix but does not yet move chemistry. It is the only reward signal grounded outside the agent's own appraisal, in a system that is ~80% self-graded. |
 | **The inverted-U plasticity model** | Now on by default (2026-07-17). Emotionally intense turns imprint harder, extreme stress imprints less. Replaces the legacy binary defuse-path skip. |
 | **Perceptual differentiation per personality** | Built, switched off. Valuation is the live differentiator. |
 | **Music perception** | Fully built. One environment variable from live. Set nowhere. |
