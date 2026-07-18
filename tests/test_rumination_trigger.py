@@ -65,6 +65,75 @@ def test_does_not_fire_when_freshly_active():
     assert mode == "normal"
 
 
+def test_frame_collapse_raises_tonic_drive():
+    """Skimming (many topics, one opening template) is evidence that DEPTH is what's
+    missing, so it must pull toward rumination. Before this link the signal was
+    detected by the dedup gate and thrown away."""
+    dmn = _make_dmn("The Poet", idle_for_s=600, advances=0)
+    chem = dict(PERSONA_CHEMISTRY["The Poet"])
+
+    dmn._recent_frames = ["INQUIRE", "WONDER", "russ went quiet"]  # varied → no pull
+    varied = dmn._tonic_idle_drive(chem, idle=600, idle_threshold=60)
+    dmn._recent_frames = ["INQUIRE", "INQUIRE", "INQUIRE"]  # grooved → at the ceiling
+    grooved = dmn._tonic_idle_drive(chem, idle=600, idle_threshold=60)
+
+    assert dmn._frame_collapse() == 1.0
+    assert grooved > varied
+
+
+def test_frame_collapse_drive_kill_switch_restores_prior_behaviour():
+    """dmn_frame_collapse_drive=0 must make the term vanish entirely, not merely
+    shrink it — the switch is the rollback path."""
+    dmn = _make_dmn("The Poet", idle_for_s=600, advances=0)
+    chem = dict(PERSONA_CHEMISTRY["The Poet"])
+    dmn._recent_frames = ["INQUIRE", "INQUIRE", "INQUIRE"]
+    with_term = dmn._tonic_idle_drive(chem, idle=600, idle_threshold=60)
+    settings._data["dmn_frame_collapse_drive"] = 0
+    try:
+        without = dmn._tonic_idle_drive(chem, idle=600, idle_threshold=60)
+    finally:
+        settings._data.pop("dmn_frame_collapse_drive", None)
+    assert without < with_term
+    dmn._recent_frames = []  # no groove → the term was contributing nothing anyway
+    assert dmn._tonic_idle_drive(chem, idle=600, idle_threshold=60) == without
+
+
+def test_queued_frame_escape_forces_rumination_at_low_drive():
+    """The escape hatch defers to rumination by queueing a flag; that flag must make
+    the next idle tick eligible even when chemistry alone wouldn't clear threshold."""
+    dmn = _make_dmn("The Sage", idle_for_s=90, advances=0)  # calm persona, shallow idle
+    chem = dict(PERSONA_CHEMISTRY["The Sage"])
+    mode, _flavor, drive = dmn._rumination_decision(chem)
+    assert mode == "normal" and drive < settings.get("dmn_rumination_drive_threshold")
+
+    dmn._pending_frame_escape = True
+    mode, _flavor, _drive = dmn._rumination_decision(chem)
+    assert mode == "ruminate"
+    # One-shot: consumed, so it can't force a second episode.
+    assert dmn._pending_frame_escape is False
+    assert dmn._rumination_decision(chem)[0] == "normal"
+
+
+def test_queued_frame_escape_cannot_outrun_the_depth_cap():
+    """The loop bound. Frame collapse raises rumination, and rumination output is
+    frame-exempt — so the depth cap must still hold on the forced path, or the two
+    systems could drive each other."""
+    dmn = _make_dmn("The Poet", idle_for_s=600, advances=0)
+    dmn._consecutive_ruminations = int(settings.get("dmn_rumination_max_consecutive"))
+    dmn._pending_frame_escape = True
+    mode, _flavor, _drive = dmn._rumination_decision(dict(PERSONA_CHEMISTRY["The Poet"]))
+    assert mode == "normal"
+
+
+def test_queued_frame_escape_still_requires_idle():
+    """Rumination's hard precondition outranks the queued escape: a groove detected
+    while idle is moot the moment the user is back."""
+    dmn = _make_dmn("The Poet", idle_for_s=0.0, advances=0)
+    dmn._pending_frame_escape = True
+    mode, _flavor, _drive = dmn._rumination_decision(dict(PERSONA_CHEMISTRY["The Poet"]))
+    assert mode == "normal"
+
+
 def test_effective_idle_is_engagement_based():
     """Idle is seconds since the user last engaged the AGENT (not device HID), so working in
     another app still accrues idle and lets rumination fire."""

@@ -262,6 +262,15 @@ DEFAULTS: dict[str, float | int | str] = {
     "rum_idle_saturation_s": 300.0,  # boredom ramps 0→1 over this much idle past the threshold
     "rum_w_unfinished": 0.30,  # weight on open-thread finish-out pull
     "rum_unfinished_cap": 4.0,  # advances at which unfinished-business pull saturates
+    # FRAME-COLLAPSE pull: frame repetition (many topics, one template) is the
+    # signature of SKIMMING, and the built response to skimming is to go deeper —
+    # i.e. rumination. The detector and the treatment both existed; nothing
+    # connected them, so the only response to a detected groove was amnesia
+    # (the dedup escape hatch wiping thought memory). This term routes the
+    # evidence into the drive instead. Kill switch: dmn_frame_collapse_drive=0
+    # restores the previous behaviour exactly (no drive term, no queued escape).
+    "dmn_frame_collapse_drive": 1,
+    "rum_w_frame_collapse": 0.30,  # weight on the frame-collapse (skimming) term
     # Per-step costs that let anxious rumination self-limit (added each chain step)
     "rum_step_gaba_cost": 0.02,
     "rum_step_satiation_cost": 0.05,
