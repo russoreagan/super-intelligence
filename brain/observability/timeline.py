@@ -917,7 +917,7 @@ class ObservabilityLayer:
                 "predictor_accuracy_trend",  # strict exact-match (kept for continuity)
                 "predictor_match_frac_trend",  # graded prediction-error reduction — the primary signal
                 "gating_efficiency_trend",
-                "surprise_trend",  # avg surprise falling = active-inference learning
+                "surprise_trend",  # avg surprise falling = prediction-error reduction
                 "wiring_delta_magnitude",
                 "cross_session_drift",
             ):
