@@ -47,14 +47,33 @@ STATE HAS TWO LIFECYCLES.
 
 from __future__ import annotations
 
+import logging
+import math
 import time
 from dataclasses import dataclass, field
 
 from brain.neuron import SwitchNeuron
 
+logger = logging.getLogger(__name__)
+
 # The two commit modes a gate can declare.
 MODE_LATCH = "latch"  # a held belief: arm high, hold until it decays below release
 MODE_FIRE_RESET = "fire_reset"  # a one-shot event: emit on arm, then reset to zero
+
+# Log-once flag for non-finite evidence input. A NaN delta would propagate through
+# max(0, min(cap, level+nan)) → NaN, get persisted in the transient snapshot, and
+# poison the cue-weight learning — so non-finite input is dropped at the entry.
+_nonfinite_warned = False
+
+
+def _drop_nonfinite(gate: str) -> float:
+    global _nonfinite_warned
+    if not _nonfinite_warned:
+        _nonfinite_warned = True
+        logger.warning(
+            "[EvidenceGate] non-finite evidence ignored (gate=%s); treating as 0.0", gate
+        )
+    return 0.0
 
 
 @dataclass
@@ -96,6 +115,12 @@ class EvidenceGate:
     _cues_at_arm: dict[str, float] = field(default_factory=dict, init=False, repr=False)
 
     # ── durable learned params (per-persona; cue_weights()/load_cue_weights) ───
+    # RAIL: gate objects are process-global singletons, and _cue_w lives on the
+    # instance — it is NOT per-persona by itself. A cue-mode gate serving multiple
+    # personas must key its weights per persona externally (persist cue_weights()
+    # per persona and drive load_cue_weights() on bind), or it will bleed one
+    # persona's learning into another. AvoidanceTracker sidesteps this by running
+    # its shared gates in scalar mode (no cue learning on the shared object).
     _cue_w: dict[str, float] = field(default_factory=dict, init=False, repr=False)
     _switch: SwitchNeuron = field(default=None, init=False, repr=False)
 
@@ -135,10 +160,19 @@ class EvidenceGate:
         and the cue values are remembered so a later resolve() can credit them.
         """
         if not self.cue_names:
-            return float(evidence)
-        cues = dict(evidence or {})
+            v = float(evidence)
+            return v if math.isfinite(v) else _drop_nonfinite(self.name)
+        # Non-finite cue values are dropped BEFORE capture so they can never reach
+        # _cues_at_arm (persisted in the snapshot) or _learn_cues.
+        cues: dict[str, float] = {}
+        for c, v in dict(evidence or {}).items():
+            fv = float(v)
+            if math.isfinite(fv):
+                cues[c] = fv
+            else:
+                _drop_nonfinite(self.name)
         self._pending_cues = cues  # most-recent observation, for arm capture
-        return sum(self._cue_w.get(c, 1.0) * float(v) for c, v in cues.items())
+        return sum(self._cue_w.get(c, 1.0) * v for c, v in cues.items())
 
     def observe(
         self,
@@ -323,6 +357,9 @@ class EvidenceGate:
             w_max = float(_s.get("evidence_cue_w_max", 3.0))
         except Exception:
             lr, w_min, w_max = 0.05, 0.1, 3.0
+        # The setting only floors at <=0; clamp the top too so a fat-fingered lr
+        # can't slam a weight across its whole [w_min, w_max] range in one resolve.
+        lr = min(lr, 1.0)
         if lr <= 0:
             self._cues_at_arm = {}
             return

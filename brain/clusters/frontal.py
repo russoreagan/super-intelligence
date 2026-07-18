@@ -13,6 +13,7 @@ import logging
 import math
 import os
 import random as _random
+import time
 import uuid
 
 from brain.brainstem import Brainstem
@@ -1346,11 +1347,25 @@ class FrontalCluster:
         env var/Ollama" (see settings.py) — it cannot by itself distinguish that
         from a pod genuinely being up, so a cold-start/never-confirmed brain used to
         read as falsely available. If either check fails, downshift is a clean
-        no-op."""
+        no-op.
+
+        The flag additionally carries a TTL (runpod_pod_ready_at, re-stamped by the
+        manager's periodic refresh loops): a pod that dies BETWEEN refreshes leaves
+        the flag set, and without the TTL downshift would keep routing drafts at the
+        dead host until the next refresh clears it. A stamp older than
+        runpod_pod_ready_ttl_s reads as not-available (a never-stamped flag reads
+        stale too — fail toward cloud, which costs money but always works)."""
         router = getattr(self, "_router", None)
         if router is None or getattr(router, "_local_disabled", False):
             return False
-        return bool(settings.get("runpod_pod_ready", 0))
+        if not settings.get("runpod_pod_ready", 0):
+            return False
+        ttl = float(settings.get("runpod_pod_ready_ttl_s", 300.0))
+        if ttl > 0:
+            stamped = float(settings.get("runpod_pod_ready_at", 0.0) or 0.0)
+            if (time.time() - stamped) > ttl:
+                return False
+        return True
 
     def _downshift_indices(self, firing_indices: list[int], turn_id: str) -> set[int]:
         """Which firing drafters run on the local RunPod model this turn (cost lever). A
