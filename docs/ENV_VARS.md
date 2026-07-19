@@ -127,29 +127,29 @@ All of `brain/dmn.py`'s module-level knobs are import-time ⚠.
 
 | Var | Default | Read at | Purpose |
 |---|---|---|---|
-| `BRAIN_DMN` | `false` | both ⚠ | Enable the DMN idle-thought loop (`DMN_ENABLED` at `brain/dmn.py:303` ⚠; `brain/session_setup.py:714`) |
-| `BRAIN_DMN_INTERVAL` | `15` | import ⚠ | Seconds between idle thoughts. `brain/dmn.py:302` |
-| `BRAIN_DMN_MIN_TICK_INTERVAL` | `5` | import ⚠ | Floor on the adaptive per-persona tick (round-robin roster). `brain/dmn.py:311` |
-| `BRAIN_DMN_ROSTER_TTL_S` | `60` | import ⚠ | Cache TTL for the full-tier persona roster. `brain/dmn.py:314` |
-| `BRAIN_DMN_OVERLAP_THRESHOLD` | `0.35` | import ⚠ | Jaccard word-overlap threshold for dedup of thoughts. `brain/dmn.py:320` |
-| `BRAIN_DMN_RECENT_THOUGHTS` | `10` | import ⚠ | Recent thoughts/angles shown to the LLM as variety pressure. `brain/dmn.py:323` |
-| `BRAIN_DMN_PROMPT_PRIORS` | `3` | import ⚠ | Recent thoughts shown VERBATIM in the prompt. `brain/dmn.py:328` |
-| `BRAIN_DMN_DEDUP_WINDOW` | `4` | import ⚠ | Thoughts compared for hard dedup. `brain/dmn.py:333` |
-| `BRAIN_DMN_RECENT_ANGLES` | `8` | import ⚠ | Recent angles blocked. `brain/dmn.py:335` |
-| `BRAIN_DMN_RECENT_FRAMES` | `6` | import ⚠ | Frame-signatures tracked (template-collapse gate). `brain/dmn.py:340` |
-| `BRAIN_DMN_FRAME_REPEAT_MAX` | `2` | import ⚠ | Same-frame repeats before suppression. `brain/dmn.py:341` |
-| `BRAIN_DMN_MEMORY_SEED_EVERY` | `3` | import ⚠ | Surface a random long-term memory every N idle ticks (0 disables). `brain/dmn.py:345` |
-| `BRAIN_DMN_MEMORY_SEED_MIN_OVERLAP` | `0.04` | import ⚠ | Min content-word overlap for a seeded memory to be injected. `brain/dmn.py:378` |
-| `BRAIN_DMN_IDLE_COOLING_S` | `30` | import ⚠ | Idle depth: cooling (memory seeds, silence recall). `brain/dmn.py:354` |
-| `BRAIN_DMN_IDLE_DEEP_S` | `90` | import ⚠ | Idle depth: deep mind-wandering reframe. `brain/dmn.py:355` |
-| `BRAIN_DMN_CONCLUSION_FRESH_S` | `1800` | import ⚠ | How long a settled conclusion stays in the prompt as "already concluded". `brain/dmn.py:373` |
-| `BRAIN_DMN_MONOLOGUE_TEMP` | `0.85` | call | Monologue-cell temperature (divergent ideation). `brain/dmn.py:668` |
-| `BRAIN_DMN_CLUSTER_SATURATION` | `3` | call | Recent angles sharing a prefix before the topic cluster is blocked. `brain/dmn.py:3326` |
-| `BRAIN_DMN_SUPPRESS_ESCAPE` | `5` | call | Consecutive suppressions before dedup memory is cleared (anti-lock). `brain/dmn.py:3360` |
-| `BRAIN_DMN_THREAD_MAX_AGE_S` | `259200` (3 d) | import ⚠ | Open-thread wall-clock age-out. `brain/open_threads.py:41` |
-| `BRAIN_DMN_THREAD_MAX_ADVANCES` | `4` | import ⚠ | Advances before a thread retires. `brain/open_threads.py:42` |
-| `BRAIN_DMN_MAX_OPEN_THREADS` | `6` | import ⚠ | Max open threads in the ledger. `brain/open_threads.py:43` |
-| `BRAIN_REFLEX_MAX_DEPTH` | `3` | import ⚠ | Max result→reflect→act chaining depth for self-directed jobs (autonomous-runaway bound). `brain/dmn.py:360` |
+| `BRAIN_DMN` | `false` | both ⚠ | Enable the DMN idle-thought loop (`DMN_ENABLED` at `brain/dmn.py:77` ⚠; `brain/session_setup.py:767`) |
+| `BRAIN_DMN_INTERVAL` | `15` | import ⚠ | Seconds between idle thoughts. `brain/dmn.py:76` |
+| `BRAIN_DMN_MIN_TICK_INTERVAL` | `5` | import ⚠ | Floor on the adaptive per-persona tick (round-robin roster). `brain/dmn.py:85` |
+| `BRAIN_DMN_ROSTER_TTL_S` | `60` | import ⚠ | Cache TTL for the full-tier persona roster. `brain/dmn.py:88` |
+| `BRAIN_DMN_OVERLAP_THRESHOLD` | `0.35` | import ⚠ | Jaccard word-overlap threshold for dedup of thoughts. `brain/dmn_dedup.py:410` |
+| `BRAIN_DMN_RECENT_THOUGHTS` | `10` | import ⚠ | Recent thoughts/angles shown to the LLM as variety pressure. `brain/dmn_dedup.py:413` |
+| `BRAIN_DMN_PROMPT_PRIORS` | `3` | import ⚠ | Recent thoughts shown VERBATIM in the prompt. `brain/dmn_dedup.py:418` |
+| `BRAIN_DMN_DEDUP_WINDOW` | `4` | import ⚠ | Thoughts compared for hard dedup. `brain/dmn_dedup.py:423` |
+| `BRAIN_DMN_RECENT_ANGLES` | `8` | import ⚠ | Recent angles blocked. `brain/dmn_dedup.py:425` |
+| `BRAIN_DMN_RECENT_FRAMES` | `6` | import ⚠ | Frame-signatures tracked (template-collapse gate). `brain/dmn_dedup.py:437` |
+| `BRAIN_DMN_FRAME_REPEAT_MAX` | `3` | import ⚠ | Same-frame repeats in the window before suppression. Raised from 2 when `_frame_signature` began skipping hedges/modals and matching inflections, which made signatures collide far more readily. **Reasoned, not measured** — retune against the suppression log, which records signature and reason. `brain/dmn_dedup.py:438` |
+| `BRAIN_DMN_MEMORY_SEED_EVERY` | `3` | import ⚠ | Surface a random long-term memory every N idle ticks (0 disables). `brain/dmn.py:93` |
+| `BRAIN_DMN_MEMORY_SEED_MIN_OVERLAP` | `0.04` | import ⚠ | Min content-word overlap for a seeded memory to be injected. `brain/dmn.py:126` |
+| `BRAIN_DMN_IDLE_COOLING_S` | `30` | import ⚠ | Idle depth: cooling (memory seeds, silence recall). `brain/dmn.py:102` |
+| `BRAIN_DMN_IDLE_DEEP_S` | `90` | import ⚠ | Idle depth: deep mind-wandering reframe. `brain/dmn.py:103` |
+| `BRAIN_DMN_CONCLUSION_FRESH_S` | `1800` | import ⚠ | How long a settled conclusion stays in the prompt as "already concluded". `brain/dmn.py:121` |
+| `BRAIN_DMN_MONOLOGUE_TEMP` | `0.85` | call | Monologue-cell temperature (divergent ideation). `brain/dmn.py:417` |
+| `BRAIN_DMN_CLUSTER_SATURATION` | `3` | call | Recent angles sharing a prefix before the topic cluster is blocked. `brain/dmn.py:3292` |
+| `BRAIN_DMN_SUPPRESS_ESCAPE` | `5` | call | Consecutive suppressions before the dedup memory is broken out of (anti-lock). The response depends on cause: a frame-collapse groove clears only the frame window and queues rumination (see `dmn_frame_collapse_drive`); any other groove clears thoughts + embeddings + frames, which is also the fallback when rumination cannot run. `brain/dmn.py:3328` |
+| `BRAIN_DMN_THREAD_MAX_AGE_S` | `259200` (3 d) | import ⚠ | Open-thread wall-clock age-out. `brain/open_threads.py:43` |
+| `BRAIN_DMN_THREAD_MAX_ADVANCES` | `4` | import ⚠ | Advances before a thread retires. `brain/open_threads.py:44` |
+| `BRAIN_DMN_MAX_OPEN_THREADS` | `6` | import ⚠ | Max open threads in the ledger. `brain/open_threads.py:45` |
+| `BRAIN_REFLEX_MAX_DEPTH` | `3` | import ⚠ | Max result→reflect→act chaining depth for self-directed jobs (autonomous-runaway bound). `brain/dmn.py:108` |
 
 ## 5. Audio / voice
 
