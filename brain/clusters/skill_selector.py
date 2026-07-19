@@ -130,10 +130,15 @@ class _Index:
         return names
 
     def keyword_match(self, user_input: str) -> dict | None:
-        """Return a native skill if any of its name tokens or keywords appear in user_input."""
+        """Return a native skill if any of its name tokens or keywords appear in user_input.
+
+        Stances (kind == "stance") are excluded: they are drawn by the stance machinery,
+        never picked as the conversational active skill — without this gate a native
+        stance file would be keyword-matchable and its body would be injected under the
+        operational "tools are REAL" framing."""
         lowered = user_input.lower()
         for s in self.skills:
-            if s.get("_native"):
+            if s.get("_native") and s.get("kind") != "stance":
                 tokens = s["name"].replace("-", " ").split()
                 tokens += [str(k) for k in s.get("keywords", [])]
                 if any(tok in lowered for tok in tokens):
@@ -163,6 +168,10 @@ class _Index:
         """Cosine-rank skills. Returns (skill_entry, score) pairs sorted descending."""
         scored: list[tuple[dict, float]] = []
         for s in self.skills:
+            if s.get("kind") == "stance":
+                # Stances never enter conversational/autonomous skill selection —
+                # they are drawn by the stance machinery (info_pool/method_pool).
+                continue
             if not include_tier_1 and s["tier"] == 1:
                 continue
             if only_leaves and s["is_router"]:
@@ -334,6 +343,18 @@ class SkillSelector:
                 "embedding": vec,
                 "_native": True,
             }
+            # Stance files (kind: stance) carry their draw metadata in frontmatter —
+            # the affinity map and complexity ride with the stance, not a table in code.
+            # The kind field is also the containment discriminator: everything reading
+            # the index for CONVERSATIONAL selection (rank, keyword_match, manifest,
+            # native_skill_body) excludes kind == "stance".
+            if fm.get("kind"):
+                entry["kind"] = str(fm["kind"])
+            if fm.get("complexity") is not None:
+                with contextlib.suppress(TypeError, ValueError):
+                    entry["complexity"] = max(0.0, min(1.0, float(fm["complexity"])))
+            if isinstance(fm.get("affinity"), dict):
+                entry["affinity"] = {str(k): v for k, v in fm["affinity"].items()}
             self._index.inject_native(entry)
             logger.debug("warm_native_skills: injected %s", name)
 
@@ -444,6 +465,122 @@ class SkillSelector:
                 out.append(name)
         return out
 
+    # ----- stance library (approach-competition Phase B) ----------------
+    #
+    # Two per-turn stance axes ride the skills index without entering skill SELECTION:
+    #   info axis   — brain/skills/stance-*.md files (kind: stance): information posture.
+    #   method axis — humanity reasoning leaves in the strategy-shaped categories below:
+    #                 how to attack the problem.
+    # Selection containment lives in rank()/keyword_match()/capability_manifest()/
+    # native_skill_body(); these pools are the stance machinery's own entry points.
+
+    METHOD_CATEGORIES: frozenset = frozenset(
+        {
+            "investigation",
+            "constraint",
+            "analogy",
+            "creativity",
+            "decision",
+            "logic",
+            "probability",
+            "epistemology",
+            "play",
+            "systems",
+            "aesthetic",
+        }
+    )
+
+    def info_pool(self) -> list[dict]:
+        """The information-posture stances (kind == "stance") with a usable embedding."""
+        return [s for s in self._index.skills if s.get("kind") == "stance" and s.get("embedding")]
+
+    def method_pool(self) -> list[dict]:
+        """Humanity leaves usable as method stances: strategy-shaped categories only,
+        no routers, no tier-1 always-on checks, no stances, embedding present. Each
+        entry gets a derived `complexity` (cached) for the cognitive-economy term."""
+        out: list[dict] = []
+        for s in self._index.skills:
+            if (
+                s.get("kind") == "stance"
+                or s.get("is_router")
+                or s.get("tier") == 1
+                or s.get("category") not in self.METHOD_CATEGORIES
+                or not s.get("embedding")
+            ):
+                continue
+            if "complexity" not in s:
+                s["complexity"] = self._derived_complexity(s)
+            out.append(s)
+        return out
+
+    def _derived_complexity(self, entry: dict) -> float:
+        """Deterministic complexity in [0.1, 0.95] for a method skill — how heavy the
+        method is to actually run. Derived, never hand-listed (project rule): tier sets
+        the base (tier 3 = specialized depth), and the on-disk body's structure count
+        (headings, numbered steps, bullets) adds the rest. Stable across boots."""
+        base = 0.6 if entry.get("tier") == 3 else 0.45
+        body = self._read_disk_body(str(entry.get("name", "")))
+        steps = sum(
+            1
+            for line in body.splitlines()
+            if line.startswith(("#", "- ", "* ")) or line[:2].rstrip(".").isdigit()
+        )
+        return round(max(0.1, min(0.95, base + min(0.3, steps * 0.02))), 3)
+
+    def stance_kind(self, name: str) -> str | None:
+        """ "info" | "method" | None — which stance axis a skill id belongs to."""
+        entry = self._index.get(name)
+        if not entry:
+            return None
+        if entry.get("kind") == "stance":
+            return "info"
+        if (
+            not entry.get("is_router")
+            and entry.get("tier") != 1
+            and entry.get("category") in self.METHOD_CATEGORIES
+        ):
+            return "method"
+        return None
+
+    def stance_directive(self, name: str) -> str:
+        """Competition-tier form of a stance: `name — first sentence of description`.
+        ~15 tokens; enough to make candidates diverge without the body's weight."""
+        entry = self._index.get(name)
+        if not entry:
+            return ""
+        desc = str(entry.get("description", ""))
+        first = desc.split(". ")[0].strip().rstrip(".")
+        return f"{name} — {first}." if first else name
+
+    def stance_body(self, name: str) -> str:
+        """Winner-tier form: the full on-disk body, bypassing the humanity short-circuit
+        in native_skill_body (which stays correct for the selector's own uniform pick —
+        this method is the stance machinery's deliberate read)."""
+        if self.stance_kind(name) is None:
+            return ""
+        return self._read_disk_body(name)
+
+    def rank_fragments_by_relevance(
+        self, skill_ids: list[str], query_vec: list[float]
+    ) -> list[tuple[str, float]]:
+        """Cosine-rank the given skill ids against a query embedding, descending.
+
+        Used by relevance-ranked fragment exploration (frontal._explore_candidate):
+        instead of a blind roll over the whole pool, the exploring drafter draws
+        from the fragments most similar to the current input. Ids with no index
+        entry or no embedding are omitted. Input is name-sorted before the stable
+        score sort so equal-score ties break by name — keeps the per-turn roll
+        deterministic in tests."""
+        scored: list[tuple[str, float]] = []
+        for sid in sorted(skill_ids):
+            entry = self.get_skill(sid)
+            emb = (entry or {}).get("embedding") or []
+            if not emb:
+                continue
+            scored.append((sid, _Index.cosine(query_vec, emb)))
+        scored.sort(key=lambda p: p[1], reverse=True)
+        return scored
+
     def capability_manifest(self) -> str:
         """Compact skill manifest for the executive context.
 
@@ -453,7 +590,7 @@ class SkillSelector:
         """
         lines: list[str] = []
 
-        native = [s for s in self._index.skills if s.get("_native")]
+        native = [s for s in self._index.skills if s.get("_native") and s.get("kind") != "stance"]
         if native:
             lines.append("Operational capabilities:")
             for s in native:
@@ -488,13 +625,25 @@ class SkillSelector:
         entry = self._index.get(name)
         if not entry or not entry.get("_native"):
             return ""
+        # Containment: a stance can never reach the conversational injection path.
+        # Even if one were somehow chosen as the active skill, this returns "" so the
+        # "tools are REAL" operational framing can't wrap a thinking stance. Stance
+        # consumers use stance_body(), which reads the disk deliberately.
+        if entry.get("kind") == "stance":
+            return ""
         if name in self._native_body_cache:
             return self._native_body_cache[name]
         # Partner skills have no disk file — their body is always pre-cached at warm
         # time (an empty body here means it isn't live), so never fall through to disk.
         if entry.get("_partner"):
             return ""
-        body = ""
+        body = self._read_disk_body(name)
+        self._native_body_cache[name] = body
+        return body
+
+    @staticmethod
+    def _read_disk_body(name: str) -> str:
+        """Markdown body of brain/skills/<name>.md with frontmatter stripped, or ""."""
         try:
             path = INDEX_PATH.parent / f"{name}.md"
             if path.exists():
@@ -502,11 +651,10 @@ class SkillSelector:
                 if raw.startswith("---"):
                     with contextlib.suppress(ValueError):
                         raw = raw[raw.index("---", 3) + 3 :]
-                body = raw.strip()
+                return raw.strip()
         except Exception:
-            body = ""
-        self._native_body_cache[name] = body
-        return body
+            return ""
+        return ""
 
     def gate_conversational(
         self,
