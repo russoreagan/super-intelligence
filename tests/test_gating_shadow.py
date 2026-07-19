@@ -124,12 +124,15 @@ def _frontal_with_drafters(stub, trace):
             "veto": False,
         }
 
+    judge_calls: list[tuple] = []
+
     async def _judge_shadow_and_record(*a, **k):
-        pass
+        judge_calls.append((a, k))
 
     f._run_drafter = _run_drafter
     f._score_draft = _score_draft
     f._judge_shadow_and_record = _judge_shadow_and_record
+    f.judge_producer_calls = judge_calls
     return f
 
 
@@ -258,6 +261,86 @@ def test_exec_gate_quality_floor_is_a_kill_switch():
                 "exec_gate_quality_floor": 0.7,
             }
         )
+
+
+def test_scored_turn_feeds_the_critic_judge_producer():
+    """A scored turn must hand the judge-attachment producer the CRITIC's claim.
+
+    Regression guard: JUDGE_HOSTS lists frontal.critic, but the only producer call
+    site was empathy-gated (run_empathy + empathy_score is not None), so on the
+    critic's own scored path no prediction was ever recorded — the judge could
+    carry a clamp yet never accumulate the evidence needed to earn an attachment.
+    """
+    settings.update({"colony_features": 0, "gating_shadow_sample_rate": 0.0})
+    try:
+        trace = TurnTrace(turn_id="t6", session_id="s1", user_input="hi")
+        f = _frontal_with_drafters(_StubExecutive("{}"), trace)
+
+        _drive_drafters(f, "t6")
+
+        hosts = [c[0][0] for c in f.judge_producer_calls]
+        assert hosts == ["frontal.critic"]  # neutral turn: the empathy check never ran
+        args, kwargs = f.judge_producer_calls[0]
+        assert args[4] == {"overall": DRAFT_SCORE, "veto": False}
+        assert args[5] == "overall"
+        # The drafter prompt rides along so the critic's shadow arm can rebuild the
+        # exact scoring prompt the live critic saw.
+        assert kwargs["context"] == "prompt"
+    finally:
+        settings.update({"colony_features": 1, "gating_shadow_sample_rate": 0.30})
+
+
+def test_emotional_turn_feeds_both_judge_producers_with_their_own_claims():
+    """With the empathy check live, BOTH judges record — and each is handed its OWN
+    claim: the empathy critic its raw empathy_score (byte-identical to the old
+    behavior), the critic its pre-blend overall. Grading the 0.7/0.3 blend would
+    hold each judge accountable for the other judge's read."""
+    settings.update({"colony_features": 0, "gating_shadow_sample_rate": 0.0})
+    try:
+        trace = TurnTrace(turn_id="t7", session_id="s1", user_input="hi")
+        f = _frontal_with_drafters(_StubExecutive("{}"), trace)
+
+        async def _run_empathy_check(text, user_emotion, turn_id):
+            return {"empathy_score": 0.8, "veto": False}
+
+        f._run_empathy_check = _run_empathy_check
+        features = dict(_FEATURES, user_emotion="sad")
+        _run(
+            f._run_drafters_and_select(
+                _NM, _CHEM, _EXEC_SIG, _INSTRUCTION, features, _AFFECT, {}, "", "t7"
+            )
+        )
+
+        by_host = {c[0][0]: c for c in f.judge_producer_calls}
+        assert set(by_host) == {"frontal.empathy_critic", "frontal.critic"}
+        emp_args, _emp_kwargs = by_host["frontal.empathy_critic"]
+        assert emp_args[4] == {"empathy_score": 0.8, "veto": False}
+        assert emp_args[5] == "empathy_score"
+        crit_args, _crit_kwargs = by_host["frontal.critic"]
+        # The critic's own 0.9 — NOT the blended overall (0.9*0.7 + 0.8*0.3 = 0.87).
+        assert crit_args[4] == {"overall": DRAFT_SCORE, "veto": False}
+    finally:
+        settings.update({"colony_features": 1, "gating_shadow_sample_rate": 0.30})
+
+
+def test_single_draft_turn_records_no_judge_prediction():
+    """The single-draft path carries a hardcoded 0.8 and critic_ran=False — no
+    judge made a claim, so the producer must stay silent. A judge graded on a
+    score it never emitted would poison the accuracy signal."""
+    settings.update({"colony_features": 0, "gating_shadow_sample_rate": 0.0})
+    try:
+        trace = TurnTrace(turn_id="t8", session_id="s1", user_input="hi")
+        f = _frontal_with_drafters(_StubExecutive("{}"), trace)
+        instruction = dict(_INSTRUCTION, drafter_count=1)
+        _run(
+            f._run_drafters_and_select(
+                _NM, _CHEM, _EXEC_SIG, instruction, _FEATURES, _AFFECT, {}, "", "t8"
+            )
+        )
+        assert f.judge_producer_calls == []
+        assert f.last_turn_draft_scores[0]["critic_ran"] is False
+    finally:
+        settings.update({"colony_features": 1, "gating_shadow_sample_rate": 0.30})
 
 
 def test_gated_skip_with_shadow_validation():

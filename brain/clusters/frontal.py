@@ -1130,6 +1130,9 @@ class FrontalCluster:
                         "craft": score.get("craft"),
                         "empathy_score": empathy_score,
                         "overall": overall,
+                        # The critic's OWN post-gate verdict, before the empathy blend —
+                        # the claim the judge-attachment grader holds frontal.critic to.
+                        "critic_overall": score.get("overall", 0.5),
                         "selected": False,
                         "vetoed": False,
                         "critic_ran": True,
@@ -1164,6 +1167,22 @@ class FrontalCluster:
                         turn_id,
                         {"empathy_score": selected_entry["empathy_score"], "veto": False},
                         "empathy_score",
+                    )
+                # The draft critic's producer, same discipline. Its live claim is its
+                # OWN verdict (`critic_overall`), never the empathy-blended `overall` —
+                # grading the blend would hold this judge accountable for the other
+                # judge's read. Gated on critic_ran: the predictor-skip and single-draft
+                # paths carry predicted or hardcoded scores, and a judge must never be
+                # graded on a claim it did not make.
+                if selected_entry is not None and selected_entry.get("critic_ran"):
+                    await self._judge_shadow_and_record(
+                        "frontal.critic",
+                        best[1],
+                        user_emotion,
+                        turn_id,
+                        {"overall": selected_entry.get("critic_overall", best[2]), "veto": False},
+                        "overall",
+                        context=drafter_prompt,
                     )
                 self._critic_predictor.record(critic_sig, ("ok",))
                 self._critic_predictor.record_outcome(critic_sig, best[2])
@@ -1627,7 +1646,7 @@ class FrontalCluster:
         return n
 
     async def _score_draft(self, draft: str, context: str, turn_id: str) -> dict:
-        critic_prompt = f"Context:\n{context}\n\nDraft response:\n{draft}\n\nScore this draft."
+        critic_prompt = self._critic_prompt(draft, context)
         critic_prompt = self._inject_host_fragments(critic_prompt, "frontal.critic", turn_id)
         raw = await self._critic.call([{"role": "user", "content": critic_prompt}])
         verdict = safe_json_parse(raw) or {"overall": 0.5, "veto": False}
@@ -1740,10 +1759,21 @@ class FrontalCluster:
             "Score empathic fit."
         )
 
+    @staticmethod
+    def _critic_prompt(draft: str, context: str) -> str:
+        return f"Context:\n{context}\n\nDraft response:\n{draft}\n\nScore this draft."
+
     # ── Judge-host attachments: the shadow A/B that earns a first attachment ──
 
     async def _judge_shadow_and_record(
-        self, host: str, draft: str, user_emotion: str, turn_id: str, live_verdict: dict, field: str
+        self,
+        host: str,
+        draft: str,
+        user_emotion: str,
+        turn_id: str,
+        live_verdict: dict,
+        field: str,
+        context: str = "",
     ) -> None:
         """Record this turn's judge claim, and on a sampled fraction of turns run the
         host a SECOND time with an unproven candidate attached, in shadow.
@@ -1763,7 +1793,9 @@ class FrontalCluster:
 
         COST, stated plainly: no cloud spend — both A/B arms run on the local GPU
         (see _judge_shadow_pair) — but on sampled turns this does add two local calls
-        to response latency, because it is awaited rather than backgrounded. Awaiting
+        per sampled host to response latency (each judge host samples independently
+        at `judge_explore_rate`, so a doubly-sampled turn adds four), because it is
+        awaited rather than backgrounded. Awaiting
         is the deliberate choice: the judge cells are process-global and `reset_turn`
         mutates their per-turn call counters, so a detached task could corrupt the
         next turn's budget for a latency win. The exposure is bounded and temporary —
@@ -1792,7 +1824,9 @@ class FrontalCluster:
             shadow_score = shadow_baseline = None
             shadow_veto = False
             if sid:
-                pair = await self._judge_shadow_pair(host, draft, user_emotion, turn_id, sid, field)
+                pair = await self._judge_shadow_pair(
+                    host, draft, user_emotion, turn_id, sid, field, context=context
+                )
                 if pair is None:
                     sid = ""
                 else:
@@ -1815,11 +1849,24 @@ class FrontalCluster:
             pass
 
     async def _judge_shadow_pair(
-        self, host: str, draft: str, user_emotion: str, turn_id: str, sid: str, field: str
+        self,
+        host: str,
+        draft: str,
+        user_emotion: str,
+        turn_id: str,
+        sid: str,
+        field: str,
+        context: str = "",
     ) -> tuple[float, float, bool] | None:
         """Run BOTH arms of the A/B — the same judge cell, same input, same model, the
         candidate present in one and absent in the other. Returns
         (baseline_score, candidate_score, candidate_veto) or None.
+
+        PER-HOST ARMS: each host's shadow runs the same cell and prompt shape its
+        LIVE path runs — the draft critic's scoring prompt (`_critic_prompt`, with
+        `context` = the drafter prompt) for frontal.critic, the empathy prompt for
+        frontal.empathy_critic — so the A/B measures the candidate against exactly
+        the claim it would influence once established.
 
         BOTH ARMS RUN ON THE LOCAL GPU, and both parts of that matter.
 
@@ -1849,15 +1896,22 @@ class FrontalCluster:
         block = self._fragment_block_for_ids([sid])
         if not block:
             return None
-        prompt = self._empathy_prompt(draft, user_emotion)
+        if host == "frontal.critic":
+            cell = self._critic
+            prompt = self._critic_prompt(draft, context)
+        else:
+            cell = self._empathy_critic
+            prompt = self._empathy_prompt(draft, user_emotion)
         model = str(settings.get("judge_shadow_model", "runpod"))
         arms: dict[str, float] = {}
         veto = False
         for arm, content in (("base", prompt), ("cand", f"{prompt}\n\n{block}")):
             # Distinct reset keys so the two arms don't exhaust one call budget, and
-            # neither collides with the live empathy check's per-draft counter.
-            self._empathy_critic.reset_turn(f"{turn_id}_judgeshadow_{arm}")
-            raw = await self._empathy_critic.call(
+            # neither collides with the live judge's per-draft counters. Safe only
+            # because the producer runs AWAITED after live scoring has completed —
+            # see _judge_shadow_and_record on why this must never be backgrounded.
+            cell.reset_turn(f"{turn_id}_judgeshadow_{arm}")
+            raw = await cell.call(
                 [{"role": "user", "content": content}],
                 model_override=model,
                 # Hard backstop, exactly as the drafter downshift uses it: this call

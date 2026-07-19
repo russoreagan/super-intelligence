@@ -251,13 +251,15 @@ def test_subordinate_to_fragment_wiring(monkeypatch):
 # ── The learning signal: paired cross-turn accuracy ──────────────────────────
 
 
-def _shadow_turn(tracker, store, *, live: float, shadow: float, turn: int, sid="skill_a"):
+def _shadow_turn(
+    tracker, store, *, live: float, shadow: float, turn: int, sid="skill_a", host=HOST_EMPATHY
+):
     """One turn carrying a complete A/B pair. `live` is the UNATTACHED arm of the
     shadow pair (both arms run locally); the live cloud verdict is recorded
     separately and is deliberately never the comparison baseline."""
     tracker.record_prediction(
         store,
-        HOST_EMPATHY,
+        host,
         score=0.5,  # the live cloud verdict — for the drift monitor, not the A/B
         veto=False,
         turn_count=turn,
@@ -354,6 +356,124 @@ def test_sustained_evidence_eventually_establishes(clean_screener, monkeypatch):
             break
     assert established == ["skill_a"]
     assert wiring.has("fragment.skill_a", HOST_EMPATHY)
+
+
+def test_sustained_evidence_establishes_on_the_critic_host(clean_screener, monkeypatch):
+    """The critic host can go the whole way: paired-shadow evidence accumulates
+    under its own gate slice and establishes an attachment — the path that was
+    structurally dead while the producer was empathy-only."""
+    monkeypatch.setitem(ja.settings._data, "judge_arm_threshold", 1.0)
+    tracker = ja.JudgeAttachmentTracker()
+    tracker._gate.arm_threshold = 1.0
+    store: dict = {}
+    wiring = _FakeWiring()
+    established: list[str] = []
+    for turn in range(1, 20, 2):
+        _shadow_turn(tracker, store, live=0.9, shadow=0.2, turn=turn, host=HOST_CRITIC)
+        established += tracker.observe_turn(
+            store, _FakeBus(), user_emotion="hurt", turn_count=turn + 1, wiring=wiring
+        )
+        if established:
+            break
+    assert established == ["skill_a"]
+    assert wiring.has("fragment.skill_a", HOST_CRITIC)
+
+
+class _ProducerFrontal:
+    """Stand-in carrying what the REAL _judge_shadow_and_record touches. The critic
+    cell is scripted so the candidate arm reads the user right (0.2 = "will not
+    land") where the baseline arm reads them wrong (0.9)."""
+
+    def __init__(self, tracker, wiring):
+        from types import SimpleNamespace
+
+        self._judge_attach = tracker
+        self._wiring = wiring
+        self._bus = SimpleNamespace(evidence={})
+        self._skill_selector = SimpleNamespace(attachable_fragment_ids=lambda: ["skill_a"])
+        self._parietal = SimpleNamespace(turn_count=0)
+        self._critic = _RecordingJudgeCell((0.9, 0.2), field="overall")
+        self._empathy_critic = _RecordingJudgeCell((0.9, 0.2))
+
+    def _local_available(self):
+        return True
+
+    def _fragment_block_for_ids(self, ids):
+        return "<<fenced skill body>>"
+
+    @staticmethod
+    def _empathy_prompt(draft, user_emotion):
+        from brain.clusters.frontal import FrontalCluster
+
+        return FrontalCluster._empathy_prompt(draft, user_emotion)
+
+    @staticmethod
+    def _critic_prompt(draft, context):
+        from brain.clusters.frontal import FrontalCluster
+
+        return FrontalCluster._critic_prompt(draft, context)
+
+    async def _judge_shadow_pair(self, *a, **k):
+        from brain.clusters.frontal import FrontalCluster
+
+        return await FrontalCluster._judge_shadow_pair(self, *a, **k)
+
+    async def record(self, turn):
+        from brain.clusters.frontal import FrontalCluster
+
+        self._parietal.turn_count = turn
+        await FrontalCluster._judge_shadow_and_record(
+            self,
+            HOST_CRITIC,
+            "a draft",
+            "neutral",
+            f"t{turn}",
+            {"overall": 0.9, "veto": False},
+            "overall",
+            context="drafter ctx",
+        )
+
+
+def test_critic_producer_records_and_eventually_establishes(clean_screener, monkeypatch):
+    """End-to-end through the REAL producer: on a scored turn frontal.critic
+    RECORDS a prediction — the thing that never happened while the only call site
+    was empathy-gated — and sustained shadow wins establish its attachment.
+
+    judge_explore_rate is forced to 1.0 so every turn shadow-tests; random.random()
+    is strictly < 1.0, so the sampling gate passes deterministically."""
+    import asyncio
+
+    monkeypatch.setitem(ja.settings._data, "judge_explore_rate", 1.0)
+    monkeypatch.setitem(ja.settings._data, "judge_arm_threshold", 1.0)
+    tracker = ja.JudgeAttachmentTracker()
+    tracker._gate.arm_threshold = 1.0
+    wiring = _FakeWiring()
+    f = _ProducerFrontal(tracker, wiring)
+    store = f._bus.evidence
+
+    asyncio.run(f.record(1))
+    rec = store.get(ja._PRED_KEY)
+    assert rec is not None and HOST_CRITIC in rec["hosts"], (
+        "a scored turn must record a frontal.critic prediction"
+    )
+    entry = rec["hosts"][HOST_CRITIC]
+    assert entry["score"] == pytest.approx(0.9)  # the critic's live claim
+    assert entry["shadow"]["sid"] == "skill_a"  # ...and a complete A/B pair
+    assert entry["shadow"]["baseline"] == pytest.approx(0.9)
+    assert entry["shadow"]["score"] == pytest.approx(0.2)
+    assert len(f._critic.calls) == 2, "the critic's shadow must run the critic cell"
+    assert f._empathy_critic.calls == []
+
+    established: list[str] = []
+    for turn in range(2, 30):  # grade turn N-1's record, then record turn N
+        established += tracker.observe_turn(
+            store, _FakeBus(), user_emotion="hurt", turn_count=turn, wiring=wiring
+        )
+        if established:
+            break
+        asyncio.run(f.record(turn))
+    assert established == ["skill_a"]
+    assert wiring.has("fragment.skill_a", HOST_CRITIC)
 
 
 def test_established_attachment_respects_the_lower_judge_cap(clean_screener, monkeypatch):
@@ -523,8 +643,9 @@ def test_exploration_never_offers_a_flagged_candidate(monkeypatch):
 
 
 class _RecordingJudgeCell:
-    def __init__(self, scores):
+    def __init__(self, scores, field="empathy_score"):
         self._scores = list(scores)
+        self._field = field
         self.calls: list[dict] = []
 
     def reset_turn(self, key):
@@ -532,15 +653,18 @@ class _RecordingJudgeCell:
 
     async def call(self, messages, **kw):
         self.calls.append({"content": messages[0]["content"], **kw})
-        return '{"empathy_score": %s, "veto": false}' % self._scores[len(self.calls) - 1]
+        score = self._scores[(len(self.calls) - 1) % len(self._scores)]
+        return '{"%s": %s, "veto": false}' % (self._field, score)
 
 
 class _FakeFrontal:
-    """Stand-in carrying only what _judge_shadow_pair touches."""
+    """Stand-in carrying only what _judge_shadow_pair touches — BOTH judge cells,
+    so a per-host test can also assert the OTHER host's cell was never run."""
 
-    def __init__(self, local_up: bool, scores=(0.3, 0.8)):
+    def __init__(self, local_up: bool, scores=(0.3, 0.8), critic_scores=(0.3, 0.8)):
         self._local_up = local_up
         self._empathy_critic = _RecordingJudgeCell(scores)
+        self._critic = _RecordingJudgeCell(critic_scores, field="overall")
 
     def _local_available(self):
         return self._local_up
@@ -554,12 +678,18 @@ class _FakeFrontal:
 
         return FrontalCluster._empathy_prompt(draft, user_emotion)
 
+    @staticmethod
+    def _critic_prompt(draft, context):
+        from brain.clusters.frontal import FrontalCluster
 
-async def _run_pair(fake):
+        return FrontalCluster._critic_prompt(draft, context)
+
+
+async def _run_pair(fake, host=HOST_EMPATHY, field="empathy_score", context=""):
     from brain.clusters.frontal import FrontalCluster
 
     return await FrontalCluster._judge_shadow_pair(
-        fake, HOST_EMPATHY, "a draft", "sad", "t1", "skill_a", "empathy_score"
+        fake, host, "a draft", "sad", "t1", "skill_a", field, context=context
     )
 
 
@@ -603,6 +733,66 @@ def test_shadow_arms_are_clamped_on_the_same_scale():
     ceiling = ja.settings.get("judge_score_ceiling")[HOST_EMPATHY]
     fake = _FakeFrontal(local_up=True, scores=(1.0, 1.0))
     baseline, candidate, _ = asyncio.run(_run_pair(fake))
+    assert baseline == pytest.approx(ceiling)
+    assert candidate == pytest.approx(ceiling)
+
+
+# ── The shadow pair is per-host: the critic runs ITS cell and ITS prompt ─────
+
+
+def test_critic_shadow_pair_runs_the_critic_cell_with_the_scoring_prompt():
+    """REGRESSION. JUDGE_HOSTS listed frontal.critic from day one, but the shadow
+    pair hardcoded the empathy prompt and the empathy cell, so the critic host had
+    a consumer (its clamp) and no producer — it could never record a prediction,
+    accumulate paired evidence, or establish. The critic's shadow must run the
+    critic's OWN cell with the live scoring-prompt shape, arms differing only by
+    the candidate block."""
+    import asyncio
+
+    fake = _FakeFrontal(local_up=True, critic_scores=(0.3, 0.8))
+    baseline, candidate, _veto = asyncio.run(
+        _run_pair(fake, host=HOST_CRITIC, field="overall", context="drafter ctx")
+    )
+
+    assert fake._empathy_critic.calls == [], "the critic's shadow must not run the empathy cell"
+    assert len(fake._critic.calls) == 2
+    for c in fake._critic.calls:
+        assert c["locality_override"] == "local", "a shadow arm must never bill cloud"
+        assert c["model_override"] == ja.settings.get("judge_shadow_model")
+    base_call, cand_call = fake._critic.calls
+    assert base_call["content"] == (
+        "Context:\ndrafter ctx\n\nDraft response:\na draft\n\nScore this draft."
+    )
+    assert "<<fenced skill body>>" not in base_call["content"]
+    assert "<<fenced skill body>>" in cand_call["content"]
+    assert cand_call["content"].startswith(base_call["content"])
+    assert baseline == pytest.approx(0.3) and candidate == pytest.approx(0.8)
+
+
+def test_empathy_shadow_pair_is_unchanged_and_never_touches_the_critic_cell():
+    """CHARACTERIZATION. Generalizing the shadow path per-host must leave the
+    empathy host exactly as it was: same cell, same prompt, and the critic cell
+    untouched."""
+    import asyncio
+
+    fake = _FakeFrontal(local_up=True, scores=(0.3, 0.8))
+    baseline, candidate, _veto = asyncio.run(_run_pair(fake))
+
+    assert fake._critic.calls == [], "the empathy shadow must not run the critic cell"
+    assert len(fake._empathy_critic.calls) == 2
+    assert fake._empathy_critic.calls[0]["content"] == fake._empathy_prompt("a draft", "sad")
+    assert baseline == pytest.approx(0.3) and candidate == pytest.approx(0.8)
+
+
+def test_critic_shadow_arms_ride_the_critic_ceiling():
+    """The per-host clamp follows the host: critic shadow arms pass through the
+    one-way "down" clamp, so a candidate cannot win its A/B on scores the live
+    path would never let an attached critic emit."""
+    import asyncio
+
+    ceiling = ja.settings.get("judge_score_ceiling")[HOST_CRITIC]
+    fake = _FakeFrontal(local_up=True, critic_scores=(1.0, 1.0))
+    baseline, candidate, _ = asyncio.run(_run_pair(fake, host=HOST_CRITIC, field="overall"))
     assert baseline == pytest.approx(ceiling)
     assert candidate == pytest.approx(ceiling)
 

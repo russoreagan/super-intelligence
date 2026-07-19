@@ -624,7 +624,14 @@ class JudgeAttachmentTracker:
         """Did the reply land? An external grade is the GROUNDED answer and wins
         outright when present (§4.4); otherwise the next turn's observed affect is
         the behavioural answer — a self-generated read, which is exactly why the DA
-        this produces is stamped `self_inference` rather than external."""
+        this produces is stamped `self_inference` rather than external.
+
+        TODO(approach-stage outcome verifier): `user_emotion` conflates frustration
+        AT THE PROBLEM with frustration AT THE AI — a user upset about their
+        situation grades every judge claim down even when the reply landed well.
+        temporal's `user_tone_toward_ai` is the attributable channel; the planned
+        approach-stage outcome verifier moves this grading onto it. Deliberately
+        not changed here."""
         if external_grade is not None:
             return float(external_grade) >= 0.0
         if (user_emotion or "").strip().lower() in NEGATIVE_EMOTIONS:
