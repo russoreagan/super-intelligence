@@ -2,8 +2,13 @@
 Second brain store — episodic (LanceDB or Supabase pgvector) + schema (Markdown or Supabase).
 ONLY imported by brain/clusters/hippocampus.py. No other cluster touches this file.
 
-Design: encode every substantive turn. Storage is free; retrieval is the intelligence.
-The hippocampus indexes, not gatekeeps.
+Design: encode every substantive turn. Storage is cheap relative to the cost of deciding
+what to keep; retrieval is the intelligence. The hippocampus indexes, not gatekeeps.
+
+Storage is NOT free, and nothing here bounds it. There is no retention policy, no TTL, and
+no age-based eviction — the only deletion path is erasure on request (api_purge_end_user).
+Growth is linear in substantive turns per persona per tenant, forever. See docs/SYSTEMS.md
+Appendix A; a retention policy is an open product decision, not an oversight to patch here.
 
 Backend selection: BRAIN_STORAGE_BACKEND=local (default) | supabase
 When supabase, brain.second_brain.supabase_client must have user_id + persona set.
@@ -668,13 +673,17 @@ class SchemaStore:
         tmp.write_text(content)
         os.replace(tmp, path)
 
-    def _sb_write(self, filename: str, content: str) -> None:
+    def _sb_write(self, filename: str, content: str, persona: str | None = None) -> None:
+        """persona must be resolved IN the event-loop task when this runs on an
+        executor thread: workers don't inherit the bind_persona contextvar, so
+        resolving here would fall back to BRAIN_PERSONA_NAME (the process home
+        persona) and silently write a bound persona's file onto the home row."""
         try:
             sb, uid = self._sb()
             sb.table("brain_schemas").upsert(
                 {
                     "org_id": uid,
-                    "persona": self._sb_persona(),
+                    "persona": self._sb_persona() if persona is None else persona,
                     "end_user_id": "",  # companion mode; engine-mode callers will thread this
                     "filename": filename,
                     "content": content,
@@ -714,7 +723,7 @@ class SchemaStore:
         async with self._lock:
             if self._use_supabase:
                 await asyncio.get_running_loop().run_in_executor(
-                    None, self._sb_write, filename, content
+                    None, self._sb_write, filename, content, self._sb_persona()
                 )
             else:
                 self._atomic_write(SCHEMA_DIR / filename, content)
@@ -731,7 +740,7 @@ class SchemaStore:
                 new_content = existing + f"\n- {fact}"
                 if self._use_supabase:
                     await asyncio.get_running_loop().run_in_executor(
-                        None, self._sb_write, filename, new_content
+                        None, self._sb_write, filename, new_content, self._sb_persona()
                     )
                 else:
                     self._atomic_write(SCHEMA_DIR / filename, new_content)
@@ -793,7 +802,7 @@ class SchemaStore:
             if new_content != content:
                 if self._use_supabase:
                     await asyncio.get_running_loop().run_in_executor(
-                        None, self._sb_write, filename, new_content
+                        None, self._sb_write, filename, new_content, self._sb_persona()
                     )
                 else:
                     self._atomic_write(SCHEMA_DIR / filename, new_content)
@@ -815,6 +824,33 @@ class SchemaStore:
                 logger.error("[Schema DB] Supabase list_files failed: %s", e)
                 return []
         return [p.name for p in SCHEMA_DIR.glob("*.md")]
+
+    def read_all(self) -> dict[str, str]:
+        """filename → content for every schema file in this persona's scope.
+        One query on Supabase — use this over list_files()+read() when you need
+        the contents of several files (e.g. all per-speaker user models)."""
+        if self._use_supabase:
+            try:
+                sb, uid = self._sb()
+                res = (
+                    sb.table("brain_schemas")
+                    .select("filename,content")
+                    .eq("org_id", uid)
+                    .eq("persona", self._sb_persona())
+                    .eq("end_user_id", "")
+                    .execute()
+                )
+                return {r["filename"]: r.get("content") or "" for r in (res.data or [])}
+            except Exception as e:
+                logger.error("[Schema DB] Supabase read_all failed: %s", e)
+                return {}
+        out: dict[str, str] = {}
+        for p in SCHEMA_DIR.glob("*.md"):
+            try:
+                out[p.name] = p.read_text()
+            except OSError:
+                continue
+        return out
 
     def grep(self, keyword: str) -> list[tuple[str, str]]:
         """Return (filename, matching_line) pairs."""
@@ -951,7 +987,7 @@ class SchemaStore:
                 new_content = dst + "\n" + "\n".join(facts)
                 if self._use_supabase:
                     await asyncio.get_running_loop().run_in_executor(
-                        None, self._sb_write, target_filename, new_content
+                        None, self._sb_write, target_filename, new_content, self._sb_persona()
                     )
                     # Delete placeholder from Supabase
                     try:
