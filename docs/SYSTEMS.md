@@ -28,7 +28,7 @@ Three tags recur:
 
 Two kinds of switch sit outside that rule, and neither is a feature waiting to be turned on. **Safety approval gates** stay closed by default, because the whole point of an approval is that it is withheld until a human grants it. **Keyed integrations billed per call** stay off until someone supplies a key, because with no key they are a no-op anyway and turning them on would spend money nobody asked to spend. Both are deliberate positions. Neither is a dark feature.
 
-A word on Part II. Several verdicts are unflattering. That is deliberate. Anyone technical who reads a list of sixty-four theories with no failures assumes the whole thing is marketing and discounts all of it. The failures are what make the rest credible.
+A word on Part II. Several verdicts are unflattering. That is deliberate. Anyone technical who reads a list of sixty-five theories with no failures assumes the whole thing is marketing and discounts all of it. The failures are what make the rest credible.
 
 **Scope.** This is internal. It names source theories directly, which our published surfaces deliberately never do. Do not lift sections into marketing without rewriting them by function rather than by citation.
 
@@ -36,12 +36,12 @@ A word on Part II. Several verdicts are unflattering. That is deliberate. Anyone
 
 # PART I: THE SYSTEMS
 
-**The one paragraph version.** Nine simulated neurochemicals run underneath every interaction. They rise and fall from what happens, drift back toward a setpoint that differs per personality, and gate everything downstream: which thoughts earn expensive attention, how wide memory casts its net, how hard the wiring learns, how the voice sounds. A reply is drafted five ways at once and one is committed. Between turns the mind keeps running. At rest it consolidates the day into durable structure. What it learned changes what it does next.
+**The one paragraph version.** Nine simulated neurochemicals run underneath every interaction. They rise and fall from what happens, drift back toward a setpoint that differs per personality, and gate everything downstream: which thoughts earn expensive attention, how wide memory casts its net, how hard the wiring learns, how the voice sounds. Before any tool runs, candidate *approaches* to the turn compete and one commits — deciding whether the moment needs the outside world at all. Then a reply is drafted five ways at once and one is committed. Between turns the mind keeps running. At rest it consolidates the day into durable structure. What it learned changes what it does next.
 
 | # | System | Parts | Resting on | In one line |
 |---|---|---|---|---|
 | 1 | [Chemistry and Affect](#1-chemistry-and-affect) | 8 | Neuromodulation · Appraisal theory · Dimensional affect | The simulated bloodstream. Everything else reads it. |
-| 2 | [The Cognitive Core](#2-the-cognitive-core) | 9 | Dual-process · Multiple Drafts · Predictive processing · Higher-Order Thought · Global Workspace · Bounded evidence accumulation | How a single turn happens. |
+| 2 | [The Cognitive Core](#2-the-cognitive-core) | 10 | Dual-process · Multiple Drafts · Predictive processing · Higher-Order Thought · Global Workspace · Bounded evidence accumulation | How a single turn happens. |
 | 3 | [Memory](#3-memory) | 10 | Tulving · Complementary Learning Systems · Extended Mind · Structure mapping | What it keeps, and how it finds it again. |
 | 4 | [Learning](#4-learning) | 12 | Hebbian plasticity · Phasic dopamine · Prospect theory · Intrinsic motivation · Structural plasticity | How experience changes future behavior, at three scales. |
 | 5 | [The Idle Mind](#5-the-idle-mind) | 9 | Default Mode Network · Stream of consciousness · Habituation | What it does when you are not talking to it. |
@@ -50,7 +50,7 @@ A word on Part II. Several verdicts are unflattering. That is deliberate. Anyone
 | 8 | [Perception and Expression](#8-perception-and-expression) | 12 | Paralinguistics · Affective computing · Dimensional affect | Ears, eyes, and voice. |
 | 9 | [Platform and Safety](#9-platform-and-safety) | 12 | Least privilege · Pseudonymisation · k-anonymity · Defense in depth | Tenancy, privacy, money, and the boundary. |
 
-Ninety-four distinct systems resting on sixty-four named ideas.
+Ninety-five distinct systems resting on sixty-five named ideas.
 
 ---
 
@@ -122,7 +122,7 @@ Come back after a week and it has not reset. Time away relaxes the mood toward t
 
 ## 2. The Cognitive Core
 
-**Say it like this:** Most of the brain is cheap deterministic logic. The expensive language model fires at a handful of convergence points, and only when the brain cannot already predict what it is about to conclude. When it does think, it thinks five ways at once and commits to one.
+**Say it like this:** Most of the brain is cheap deterministic logic. The expensive language model fires at a handful of convergence points, and only when the brain cannot already predict what it is about to conclude. When it does think, it thinks in parallel and commits: first three ways about *what to do* — whether this moment needs the outside world at all — then five ways about *what to say*.
 
 ### 2.1 Switches and integrators (dual-process theory, Kahneman · neuromodulatory gain control) · Live
 
@@ -174,9 +174,15 @@ The detail worth noticing: **three of the clusters carrying real behavior have n
 
 ### 2.4 Multiple drafts (Multiple Drafts Model, Dennett) · Live
 
-Five drafters with different dispositions write in parallel. A critic scores them. An empathy critic can veto. Then the brainstem waits for quiet, meaning a moment passes with no new draft arriving, and commits the best surviving one.
+Deliberation happens at **two levels**, and they compete on different things.
+
+The first level runs before any tool fires: candidate *approaches* to the turn compete — rival positions on whether this moment needs the outside world and how the problem should be attacked (§2.10). That is the content-fixation level, the one Dennett's model is actually about. The second level is the one this section originally described: five drafters with different dispositions write the reply in parallel. A critic scores them. An empathy critic can veto. Then the brainstem waits for quiet, meaning a moment passes with no new draft arriving, and commits the best surviving one.
+
+For most of this system's life only the second level existed, and that was a real fidelity problem: the executive fixed *what* the reply would be and the drafters only competed on *wording* — a Cartesian theater with a style filter on the exit. The approach competition moved the contest upstream to where the content gets fixed. Commit points still exist (the approach commits, the instruction commits, the articulation gate commits), so this is Dennett punctuated by commitments rather than Dennett pure — but the drafts now genuinely disagree about what to do, not just how to say it.
 
 Which drafters get invited is **learned**. The connection strength from the executive to each drafter feeds a weighted random draw rather than a hard ranking, and that choice is deliberate: with a hard top-N, a learned preference shift would change nothing until it crossed a rank boundary. With a weighted draw, every shift in learned weight changes the mix. **Learning stays behaviorally expressible.** That closes the loop: the critic's scores move the weights, the weights move the odds, the odds move who drafts next time.
+
+Drafters also carry **stances** now — per-turn thinking postures drawn from the stance library (§2.10) on separate injection budgets from their learned skill attachments — so two drafters attack the same input differently, not just in different registers. The stance a drafter explores is chosen by relevance to the current input (cosine against the turn's embedding), by learned weight, and by chemistry.
 
 ### 2.5 Routing the models · Live
 
@@ -249,6 +255,24 @@ A belief cannot pin itself in place, which matters more than it sounds. The stee
 Three of those are worth naming, because each was the kind of flaw that hides. The evidence model originally armed on mere staleness, so ordinary topic rotation read as avoidance. The lifecycle had no age-out, so a committed belief could pin itself in place forever. And the reward path had two holes: its self-generated inferences were stamped with the same source label as a genuine external verdict, which quietly inflated the self-grading measure in §4.3, and the cap meant to bound the payout was applied per resolved entity rather than per turn, so one turn resolving several beliefs paid several times the intended ceiling. All three are fixed. Inferences now carry their own provenance label that tallies as intrinsic, the informativeness gate is measured from an observed base rate rather than assumed as a constant, and the cap is a shared per-turn budget.
 
 Claim the mechanism and the fences. Do not claim the thresholds are validated on real traffic yet: they are reasoned, not measured, and that is the honest remaining limit.
+
+### 2.10 Deliberating before acting (approach competition · stance library) · Live
+
+**Say it like this:** Before the mind reaches for any tool, it argues with itself about whether this moment needs the outside world at all — and about what angle of attack fits. Three candidate approaches compete, one commits, and the winner owns the decision to act.
+
+The single most consequential bit in a turn is whether it triggers action. That used to be one cheap classifier's verdict, never reconsidered. Now it is the outcome of a competition. Three interchangeable strategist cells each reason from a drawn **stance pair** — an *information posture* (answer from what is known, check memory first, verify the premise, check freshness, ask rather than guess, propose before acting, do and report, probe small and reversible, proportion the effort) and a *reasoning method* (drawn from the strategy-shaped half of the skills library: premise testing, assumption excavation, premortems, counter-hypotheses, and their kin). One comparative critic call adjudicates — grounded against what memory recall actually returned, with presentation order shuffled per turn so position bias averages out — and the winner commits.
+
+**The stance draw is where temperament becomes cognitive style.** Four terms pick each stance: relevance to this input, learned per-personality weight, chemical *affinity* (stress pulls toward propose-before-acting and small reversible probes, drive toward do-and-report, vigilance toward premise-verification, trust toward asking), and *cognitive economy* (a stressed mind draws shallow fast methods; a calm motivated one can afford a deep protocol). The draw is floored: chemistry biases which posture the mind reaches for, it can never make one unreachable — a stressed personality must stay *able* to notice it needs current data, because that posture controls tool use. A personality that chronically runs stressed therefore develops a stable cautious, shallow-method cognitive style — the central thesis expressed as one mechanism, with no configured personality field involved.
+
+**Timing is the trick that makes it affordable.** The strategists launch concurrently with memory recall — hypotheses form in parallel with retrieval, and only the adjudicating critic waits for the evidence. One embedding of the input serves the stance draw, the recall, and skill selection. On the common path the stage adds roughly nothing; its own wall-clock is stamped on every trace so the claim stays checkable.
+
+**Authority, clamped.** The winner may add or suppress action, subject to fences: a lone unscored candidate (the stress-collapsed case) is advisory only and never overrides; a low-confidence winner shapes framing but leaves the classifier's verdict alone; a parked confirmation awaiting the user's yes is a user decision and untouched; answer-only turns skip the stage entirely. Every flip is logged as its own decision event.
+
+**The boundary with action planning is structural, not polite.** The approach names *kinds* of information in plain English; it is structurally unable to name tools — its output schema has no field a tool name or step list can survive in, live tool names are scrubbed from its prose, and its decomposition must be questions. The motor planner *receives* the winning method as guidance (that is the payoff of winning) and still owns every tool and argument choice.
+
+**The learning loop is grounded, not self-graded.** A turn later, the committed approach is verified per-dimension against what actually happened: the tool failed or came back empty; the user's next message was tool-request-shaped right after action was suppressed; the user restated the same question (embedding similarity plus topic continuity); the user asked for clarification or more depth; the user's tone *toward the agent* — deliberately not their general emotion, because someone frustrated at their bug while the answer was excellent must not read as failure — went impatient. Stances that made verified-good calls gain durable per-personality weight on a single anchor node; verified-bad calls lose it, including on a winner, because an executed approach's refutation is real evidence. Losing candidates barely move — they never ran, and the only thing against them is the critic's opinion. The verifier writes no chemistry. Alongside, a per-personality ledger counts which stance *pairings* appear and win — counts, never rates, so a future pass can compute what a pairing adds beyond its parts (the effect-heredity discipline from statistics) or conclude it adds nothing and stay unbuilt.
+
+**Status.** Live, authority on, four independent kill switches (the stage, its authority, its credit, the pair ledger). Validated pre-ship by a controlled A/B: the same drafter under different stance directives produced judged-different *approaches* (not merely tone) on 54–58% of stance pairs, against a 50% gate. The clamps and thresholds are reasoned, not yet measured on traffic — same honest limit as §2.9. The pair ledger is in-memory per session and does not survive a restart; that is a known gap, in Appendix A.
 
 ---
 
@@ -400,9 +424,11 @@ Each update logs as a distinct record naming which turn earned the credit and wh
 
 ### 4.7 Other things that earn credit (competitive learning · Complementary Learning Systems) · Live
 
-Three pathways that the main pass structurally cannot reach.
+Four pathways that the main pass structurally cannot reach.
 
 **Drafters compete.** The winner gains in proportion to how far it beat the others. Losers lose at half rate. Winner-take-most, which is competitive learning in its plainest form.
+
+**Stances earn credit from verified outcomes.** The approach competition (§2.10) is the one competition graded against ground truth rather than a critic's taste: a turn later the committed approach is checked against what actually happened, and the winning stances gain or lose durable per-personality weight accordingly — including losing it when an executed approach was refuted, because that refutation is real evidence. The critic's own preference contributes only a small step, and losing candidates barely move at all: they never ran, so nothing grounded exists against them. This is the deliberate inversion of the drafter rule above — where phrasing credit is contrastive and self-graded, strategy credit is outcome-first.
 
 **Routing switches earn credit inside a safety band**, and the band has a direction. A shortcut may only learn to be *less* eager. A self-reflection trigger may only learn to be *more* eager. The clamp applies when the value is read, so drift outside the band does nothing. **This is what makes "no amount of repetition can teach a safety gate to open" true rather than aspirational.**
 
@@ -943,7 +969,7 @@ The ledger records deltas since the last flush, so the totals stay correct acros
 
 # PART II: THE THEORY INDEX
 
-Sixty-four ideas. For each: what it claims, what we built, and a verdict.
+Sixty-five ideas. For each: what it claims, what we built, and a verdict.
 
 **Verdicts.** **Solid** means the implementation supports the claim. **Partial** means real but narrower than the name suggests. **Overclaimed** means the label runs ahead of the code. **Stub** means named but not built. **Rejected** means considered and deliberately abandoned.
 
@@ -961,7 +987,7 @@ Sixty-four ideas. For each: what it claims, what we built, and a verdict.
 ### Multiple Drafts Model (Dennett) → §2.4
 **The claim:** There is no inner theater and no single moment where content becomes conscious. Parallel narratives compete, and what we call "the" thought is whichever draft gets probed.
 **What we built:** Five drafters racing, a critic probing, and commitment triggered by **quiet** rather than by a designated moment.
-**Verdict: Solid.** Parallel competing drafts, commitment by probing, no privileged observer. One of the more faithful implementations of Dennett anywhere, including the detail that there is no place where the decision "happens."
+**Verdict: Solid, and honestly bounded.** For most of this system's life the claim here was overstated: drafts competed only on phrasing while the executive fixed content upstream — a Cartesian theater with a style filter, exactly the architecture Dennett's model argues against. That is fixed: deliberation now runs at two levels (§2.10 approach competition on content-fixations before any tool fires; §2.4 drafters on phrasing after), which is substantially the more faithful shape. What remains deliberately un-Dennettian: commit points exist (the approach commits, the instruction commits, the articulation gate commits). Claim "multiple drafts at two levels, punctuated by commitments" — do not claim there is no place where a decision happens, because there are three, and they are named.
 
 ### Higher-Order Thought (Rosenthal) → §2.6
 **The claim:** A mental state is conscious only when there is a thought about that state.
@@ -1022,6 +1048,11 @@ Sixty-four ideas. For each: what it claims, what we built, and a verdict.
 **The claim:** A decision is not a single comparison. Evidence for a proposition accumulates from noisy samples over time, and the decision commits when the accumulated evidence crosses a bound.
 **What we built:** Per-decision accumulators with a leak, a commit bound that chemistry modulates, and a hysteresis band so a commitment does not chatter. A committed inference is treated as a checkable prediction, and the weights on its individual evidence cues learn from whether the world confirmed it.
 **Verdict: Solid in mechanism, unproven in calibration.** The accumulate-leak-commit structure is genuinely the sequential-sampling shape, and it is the only place in the system where "this has been building across turns" is representable at all. What is not established is that the thresholds are right: the first gate to use it arms far too readily and has no age-out, and its self-generated conclusions are currently mislabeled as external in the reward tally. **Claim the mechanism, not the tuning.** There is no drift rate estimated from data and no fitted response-time distribution, so do not call it a drift-diffusion *model* to anyone who fits them for a living.
+
+### Effect heredity (Hamada & Wu; Chipman; Bien, Taylor & Tibshirani) → §2.10
+**The claim:** From statistics, not cognitive science — sparse interaction modeling for designed experiments. An interaction between two factors is worth considering only when at least one of its parent main effects is active (*weak* heredity) or both are (*strong*). It is the standard discipline that keeps a combinatorial interaction space searchable, and it prevents a specific artifact: "discovering" interactions that merely restate what the main effects already explain.
+**What we built:** The stance-pairing ledger (§2.10) records how each (information posture, reasoning method) pairing plays and wins — as counts, never rates, so the pairing's *residual* above what the two stances' individual weights predict is computable at read time against whatever the marginals are then. Pair learning activates only over pairings that clear a minimum play count and weak heredity; if every residual is ~0, it stays unbuilt.
+**Verdict: Adopted as discipline, not yet exercised.** The ledger records from day one; nothing learns from it yet, by design. This is the only idea in the document borrowed wholesale from statistics rather than from cognitive science or biology, and it is here because the failure it prevents — self-congratulatory interaction discovery — is exactly the self-grading failure mode this system polices everywhere else. **Say "we count pairings now so a later decision can be made on evidence"; do not claim pair-level learning exists.**
 
 ### Hebbian plasticity, three-factor variant (Frémaux & Gerstner) → §2.7, §4.1
 **The claim:** Cells that fire together wire together. The three-factor version adds a gate: coincidence alone is not enough, a reward signal has to license the change.
@@ -1293,7 +1324,7 @@ Sixty-four ideas. For each: what it claims, what we built, and a verdict.
 
 **The most useful section in this document.** Read it before any technical conversation. Being the person who names their own gaps first is worth more than any feature you could name instead.
 
-*Last audited 2026-07-18. The defects this table used to list were fixed in that pass; what remains is either a real limit, a deliberate position, or a decision waiting on you. Appendix C records what changed.*
+*Last audited 2026-07-19, following the approach-competition ship (§2.10). The defects this table used to list were fixed in the 07-18 pass; what remains is either a real limit, a deliberate position, or a decision waiting on you. Appendix C records what changed.*
 
 **Before reading this as a list of things switched off: nothing ships off by default.** New capabilities go live with their flag on, and the flag is a kill switch. See "How to read this" for why. A flag set to 1 in the code is the standing policy, not a gap and not an oversight. The only switches that sit off on purpose are safety approval gates and keyed integrations that bill per call, and each of those is listed below as a deliberate position rather than a limit.
 
@@ -1302,6 +1333,9 @@ Sixty-four ideas. For each: what it claims, what we built, and a verdict.
 | Thing | Reality |
 |---|---|
 | **Spiking neurons** | Not implemented. Stateless comparators. Never claim it. |
+| **Stance-pair ledger persistence** | The (posture, method) pairing counts (§2.10) live in memory per session and do not survive a restart. Per-stance learned weights DO persist (they ride the wiring graph); only the pairing statistics reset. Known gap, accepted for now. |
+| **Approach-stage thresholds** | The authority confidence floor, the verifier's signal weights, and the draw weights (§2.10) are reasoned, not measured on real traffic. The stage stamps its own wall-clock and every override on every trace precisely so they can be measured; until then, claim the mechanism and the fences, not the numbers. |
+| **Pair learning, stance self-authoring, reflex** | Designed, deliberately unbuilt. Pair learning activates only if the ledger shows pairings adding something beyond their parts (residuals vs the marginals — weak effect heredity bounds the search); if residuals are ~0 it stays cancelled. Self-authored stances and reflexive (no-deliberation) stance application are later decisions with their own gates; a reflex will never ADD tool use unreviewed. |
 | **Rewiring itself** | The core cell-to-cell map is fixed; learning moves weights on it, not its structure. Around it, a bounded, fenced, screened structural layer is live: vetted skills wired onto cells (§4.11), reserve cells recruited into new units, and the brain authoring its own skills, each one passing the untrusted-skill screener and earning its place through competition (§4.12). The core map itself does not rewire, and nothing self-modifies without those gates. |
 | **Reward prediction error / TD learning** | Not implemented. The dopamine delta is a proxy for it. |
 | **Replay** | Not implemented. Consolidation is batch post-processing. |
@@ -1387,7 +1421,15 @@ Verbatim from the code. Useful because they are true, and because each one compr
 
 # Appendix C: What The Audit Fixed
 
-*2026-07-17. Recorded once, here, so the rest of the document can stay a description of the present. This section is the exception to the snapshot rule and should be deleted once it stops being useful.*
+*2026-07-17, amended 2026-07-19. Recorded once, here, so the rest of the document can stay a description of the present. This section is the exception to the snapshot rule and should be deleted once it stops being useful.*
+
+**2026-07-19 addendum — found while building §2.10.** Two consumer-live/producer-dead defects, the same species as the open-threads find below: machinery whose reading half worked and whose writing half was never called, invisible because nothing crashes.
+
+- **The executive's skip gate could never open.** The predictor that lets the brain skip its most expensive per-turn call required a quality history that no production code ever wrote — `record_outcome` had no caller. The executive fired on every non-bypassed turn since the gate was built, and an entire shadow-validation apparatus sat below it measuring a skip that never happened. Wired, with a quality floor and a kill switch.
+- **The draft critic's learning producer was never wired.** The judge-attachment system listed the critic as a learning host and enforced its clamp, but the recording half was hardcoded to the empathy critic only — the draft critic could never establish an attachment. Wired per-host.
+- **The drafter competition's accounting over-counted.** The edge-count helper tallied edges even on turns where the apply pass had bailed (no selected draft), quietly inflating the learning ledger's `edges_updated`. Fixed by making the apply pass return its own true count; the duplicate parser is deleted.
+
+The lesson, twice more confirmed: **a consumer without a producer fails silently, and only a test that drives the full loop catches it.** The §2.10 build wires both halves of every such contract it introduces, with tests that assert the producer side actually fires.
 
 **Nine defects closed.** Suite went 2122 → 2184 passing; every fix landed with a test that fails without it.
 
