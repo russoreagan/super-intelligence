@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 
@@ -153,88 +154,117 @@ class HebbianUpdater:
             return True, f"dissociated_emotion={emotion}"
         return False, ""
 
-    def _apply_drafter_competition(
-        self, trace, outcome: float, plasticity: float, gainers: list, losers: list
-    ) -> None:
-        """Extra reinforcement for multi-draft turns: winning drafter edges gain a bonus;
-        non-winning drafters get a small penalty. Applies only when critic_ran=True."""
-        draft_scores = trace.draft_scores or []
-        real_scored = [d for d in draft_scores if d.get("critic_ran")]
-        if len(real_scored) < 2:
-            return
+    # ── Within-turn competition credit ────────────────────────────────────────
+    #
+    # N candidates emit, a critic scores them, one is selected; the winner's
+    # source→cell edge gains in proportion to its margin over the mean loser and
+    # the losers decay in proportion to their shortfall. The DRAFTERS compete on
+    # phrasing (post-plan); the APPROACHES (planned pre-tool stage) will compete
+    # on strategy. Only the namespace, the entry→node mapping, and the log
+    # identity differ, so the reward math is single-sourced here: two copies of
+    # a scoring rule drift, and drift in a REWARD rule is silent.
 
+    def _apply_competition(
+        self,
+        trace,
+        entries: list,
+        *,
+        source: str,
+        resolve_node,
+        bonus_scale: float,
+        event: str,
+        role: str,
+        gainers: list,
+        losers: list,
+    ) -> int:
+        """Reinforce the selected entry's source→cell edge; decay the others.
+
+        Only entries with critic_ran=True count, and fewer than two of those
+        means there was no competition to learn from. The winner is found by
+        IDENTITY (the `selected` entry) — the core never touches an ID string;
+        `resolve_node` owns the entry→node mapping entirely and may return None
+        to skip an entry (non-competitor producers, malformed ids).
+
+        Returns the number of LIVE edges touched (folded into total_updated by
+        the caller). A turn with no `selected` entry returns 0 — the old
+        separate edge-count helper counted those edges even though the apply
+        pass had bailed, quietly inflating edges_updated."""
+        real_scored = [d for d in (entries or []) if d.get("critic_ran")]
+        if len(real_scored) < 2:
+            return 0
         selected = next((d for d in real_scored if d.get("selected")), None)
         if selected is None:
-            return
+            return 0
 
-        winner_id = selected.get("draft_id", "")
         winner_overall = float(selected.get("overall", 0.5))
+        loser_scores = [float(x.get("overall", 0.5)) for x in real_scored if x is not selected]
+        margin = winner_overall - (sum(loser_scores) / len(loser_scores) if loser_scores else 0.5)
 
-        bonus_scale = settings.get("hebbian_outcome_delta") * plasticity
+        updated = 0
         for d in real_scored:
-            did = d.get("draft_id", "")
-            parts = did.split("_")
-            if len(parts) < 2:
+            node = resolve_node(d)
+            if not node:
                 continue
-            try:
-                idx = int(parts[1])
-            except ValueError:
-                continue
-            drafter_name = f"frontal.drafter_{chr(65 + idx)}"
-            edge = ("frontal.executive", drafter_name)
+            edge = (source, node)
             if not self._wiring.has(*edge):
                 continue
+            updated += 1
 
             prev = self._wiring.get_edge_weight(*edge)
-            if did == winner_id:
-                loser_scores = [
-                    float(x.get("overall", 0.5))
-                    for x in real_scored
-                    if x.get("draft_id") != winner_id
-                ]
-                margin = winner_overall - (
-                    sum(loser_scores) / len(loser_scores) if loser_scores else 0.5
-                )
-                bonus = margin * bonus_scale * 0.5
-                self._wiring.hebbian_update([edge[0], edge[1]], bonus)
+            won = d is selected
+            if won:
+                self._wiring.hebbian_update([edge[0], edge[1]], margin * bonus_scale * 0.5)
             else:
-                loser_score = float(d.get("overall", 0.5))
-                penalty_mag = (winner_overall - loser_score) * bonus_scale * 0.25
-                self._wiring.hebbian_update([edge[0], edge[1]], -penalty_mag)
+                shortfall = winner_overall - float(d.get("overall", 0.5))
+                self._wiring.hebbian_update([edge[0], edge[1]], -(shortfall * bonus_scale * 0.25))
 
             now = self._wiring.get_edge_weight(*edge)
             edge_delta = now - prev
             if abs(edge_delta) > 0.001:
                 label = f"{edge[0]}→{edge[1]}"
-                if edge_delta > 0:
-                    gainers.append((label, edge_delta))
-                else:
-                    losers.append((label, edge_delta))
+                (gainers if edge_delta > 0 else losers).append((label, edge_delta))
                 decisions.log(
-                    "drafter_competition_applied",
+                    event,
                     turn_id=trace.turn_id,
-                    drafter=drafter_name,
-                    won=(did == winner_id),
+                    won=won,
                     from_weight=round(prev, 4),
                     to_weight=round(now, 4),
                     delta=round(edge_delta, 4),
                     winner_score=round(winner_overall, 3),
+                    **{role: node},
                 )
+        return updated
 
-    def _drafter_competition_edge_count(self, trace) -> int:
-        """Count drafter competition edge updates (for total_updated accounting)."""
-        draft_scores = trace.draft_scores or []
-        real_scored = [d for d in draft_scores if d.get("critic_ran")]
-        if len(real_scored) < 2:
-            return 0
-        count = 0
-        for d in real_scored:
-            parts = d.get("draft_id", "").split("_")
-            if len(parts) >= 2 and parts[1].isdigit():
-                drafter_name = f"frontal.drafter_{chr(65 + int(parts[1]))}"
-                if self._wiring.has("frontal.executive", drafter_name):
-                    count += 1
-        return count
+    @staticmethod
+    def _drafter_node(entry: dict) -> str | None:
+        """`draft_<idx>_<turn_id>` → `frontal.drafter_<LETTER>`. Non-drafter producers
+        that share the draft_scores list ("switch_draft", "subsystem_<name>_<turn>")
+        fail the int() and return None — existing behavior, deliberately preserved."""
+        parts = str(entry.get("draft_id", "")).split("_")
+        if len(parts) < 2:
+            return None
+        try:
+            idx = int(parts[1])
+        except ValueError:
+            return None
+        return f"frontal.drafter_{chr(65 + idx)}"
+
+    def _apply_drafter_competition(
+        self, trace, outcome: float, plasticity: float, gainers: list, losers: list
+    ) -> int:
+        """Competition on PHRASING. Signature unchanged (tests call it directly);
+        the math lives in _apply_competition."""
+        return self._apply_competition(
+            trace,
+            trace.draft_scores,
+            source="frontal.executive",
+            resolve_node=self._drafter_node,
+            bonus_scale=settings.get("hebbian_outcome_delta") * plasticity,
+            event="drafter_competition_applied",
+            role="drafter",
+            gainers=gainers,
+            losers=losers,
+        )
 
     def _apply_attachment_credit(self, trace, outcome: float) -> int:
         """Tier 1 structural plasticity: learn WHICH curated fragment attaches to WHICH host.
@@ -356,9 +386,7 @@ class HebbianUpdater:
         for r in reserves:
             if not self._wiring.has("frontal.executive", r):
                 continue
-            best_frag = max(
-                (w for (_sid, w) in self._wiring.attached_fragments(r)), default=0.0
-            )
+            best_frag = max((w for (_sid, w) in self._wiring.attached_fragments(r)), default=0.0)
             if best_frag < inject_threshold:
                 removed = self._wiring.remove_node_edges(r)
                 decisions.log(
@@ -445,10 +473,8 @@ class HebbianUpdater:
                 ignition_score=round(score, 3),
                 bar=round(relaxed, 3),
             )
-            try:
+            with contextlib.suppress(Exception):
                 ignition_tally.consume()
-            except Exception:
-                pass
             return
 
     def _recruit_reserve(self, reserve: str, proven: list) -> None:
@@ -700,9 +726,7 @@ class HebbianUpdater:
         import contextlib
 
         if os.environ.get("BRAIN_WIRING_FROZEN", "false").lower() == "true":
-            decisions.log(
-                "hebbian_pass_frozen", session_id=session_id, traces=len(full_traces)
-            )
+            decisions.log("hebbian_pass_frozen", session_id=session_id, traces=len(full_traces))
             return
 
         from brain.persona_key import persona_slug
@@ -825,8 +849,9 @@ class HebbianUpdater:
                     elig_updated += n
             _recent_paths.append((trace.turn_id, path_names))
 
-            self._apply_drafter_competition(trace, outcome, plasticity, gainers, losers)
-            total_updated += self._drafter_competition_edge_count(trace)
+            total_updated += self._apply_drafter_competition(
+                trace, outcome, plasticity, gainers, losers
+            )
             total_updated += self._apply_switch_routing_credit(
                 trace, outcome, plasticity, turn_plast, gainers, losers
             )
