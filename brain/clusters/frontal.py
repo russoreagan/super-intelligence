@@ -602,7 +602,7 @@ class FrontalCluster:
                 predicted
                 and self._exec_predictor.should_skip_integrator(predicted, confidence)
                 and exec_avg is not None
-                and exec_avg > 0.7
+                and exec_avg > float(settings.get("exec_gate_quality_floor", 0.7))
             ):
                 response_type, target_length, tone = predicted
                 instruction = {
@@ -1167,6 +1167,14 @@ class FrontalCluster:
                     )
                 self._critic_predictor.record(critic_sig, ("ok",))
                 self._critic_predictor.record_outcome(critic_sig, best[2])
+                # The executive's instruction is what these drafters executed against, so
+                # the winning draft's critic score is the quality signal for THIS exec_sig.
+                # Without this feeder the exec gate's avg_recent_outcome() stays None
+                # forever and the skip at _run_executive can never fire. Recorded only
+                # here — where a critic actually ran and produced a measured score — never
+                # from the critic-skip path (that score is derived from critic_avg itself)
+                # or the single-draft path (hardcoded 0.8, a fabricated number).
+                self._exec_predictor.record_outcome(exec_sig, best[2])
                 # C3 (colony-features-ii): a high-quality commit means the drafting
                 # need is met — actively release frontal recruitment (satisfaction
                 # threshold) rather than waiting for passive decay. Cuts thrashing.

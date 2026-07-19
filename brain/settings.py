@@ -285,11 +285,16 @@ DEFAULTS: dict[str, float | int | str] = {
     "surprise_threshold": 0.40,
     "confidence_skip_threshold": 0.70,
     "predictor_window": 8,
+    # Minimum recent draft quality (winning critic score) for a signature before the
+    # executive skip may fire — the exec analogue of the critic gate's 0.8 floor.
+    # Fed by _exec_predictor.record_outcome() in frontal._run_drafters_and_select.
+    # Set above 1.0 to disable the executive gate entirely (kill switch).
+    "exec_gate_quality_floor": 0.70,
     # Fraction of gated skips to shadow-validate: run the integrator anyway purely
     # for measurement (records actual vs. predicted + feeds the true label back into
     # predictor history for self-correction) WITHOUT changing the gated behavior.
-    # 0 = off. Gating is rare, so this adds ~1% to integrator-call volume at 0.15.
-    "gating_shadow_sample_rate": 0.15,
+    # 0 = off. This is the ONLY correctness feedback on skipped executive turns.
+    "gating_shadow_sample_rate": 0.30,
     # ── Section 7: Voice Expressiveness ──────────────────────────────────────
     "voice_stability_default": 0.45,
     "voice_style_default": 0.40,
