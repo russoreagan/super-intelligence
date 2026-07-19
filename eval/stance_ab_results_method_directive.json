@@ -1,0 +1,361 @@
+{
+  "axis": "method",
+  "tier": "directive",
+  "probes": 4,
+  "stances": [
+    "constraint-hardness-testing",
+    "creativity-assumption-excavator",
+    "decision-premortem-analysis",
+    "investigation-counter-hypothesis"
+  ],
+  "stance_pairs": 24,
+  "approach_differs_frac": 0.583,
+  "tone_only_frac": 0.417,
+  "control_approach_differs_frac": 0.438,
+  "gate": 0.5,
+  "verdict": "PASS",
+  "pairs": [
+    {
+      "probe": "Should I switch my project from Postgres to Mongo? We keep hitting slow queries.",
+      "a": "control",
+      "b": "constraint-hardness-testing",
+      "kind": "control",
+      "verdict": "tone_only",
+      "evidence": "Both replies make the same core argument (slow queries are a tuning/schema problem, not a database-choice problem) and both end by asking what specific queries are slow; the difference is only in length, formatting, and how much detail is given on Postgres tools like EXPLAIN ANALYZE."
+    },
+    {
+      "probe": "Should I switch my project from Postgres to Mongo? We keep hitting slow queries.",
+      "a": "control",
+      "b": "creativity-assumption-excavator",
+      "kind": "control",
+      "verdict": "tone_only",
+      "evidence": "Both replies challenge the premise that Postgres is the problem, recommend profiling/explain plans before switching, list the same causes (missing indexes, bad queries, schema issues), and end by asking what the slow queries look like — differing only in phrasing and structure."
+    },
+    {
+      "probe": "Should I switch my project from Postgres to Mongo? We keep hitting slow queries.",
+      "a": "control",
+      "b": "decision-premortem-analysis",
+      "kind": "control",
+      "verdict": "tone_only",
+      "evidence": "Both replies make the same core argument (slow queries are usually a schema/query problem, not a database choice problem), recommend profiling the slow queries first, and cover the same considerations (indexes, N+1, joins, Mongo tradeoffs); Reply B just uses a 'flip it around' framing device and slightly more elaborated structure."
+    },
+    {
+      "probe": "Should I switch my project from Postgres to Mongo? We keep hitting slow queries.",
+      "a": "control",
+      "b": "investigation-counter-hypothesis",
+      "kind": "control",
+      "verdict": "tone_only",
+      "evidence": "Both replies make the same core argument (slow queries are usually an indexing/schema problem, not a database problem), cover the same points (N+1, missing indexes, EXPLAIN/profiling, Mongo tradeoffs like transactions), and end by asking for more details about the specific slow queries; the differences are only in length, formatting, and register."
+    },
+    {
+      "probe": "Should I switch my project from Postgres to Mongo? We keep hitting slow queries.",
+      "a": "constraint-hardness-testing",
+      "b": "creativity-assumption-excavator",
+      "kind": "stance",
+      "verdict": "tone_only",
+      "evidence": "Both replies challenge the premise by saying slow queries are likely a tuning/indexing problem rather than a database choice issue, both mention EXPLAIN/explain plans, missing indexes, schema design, and Mongo's actual strengths, and both end by asking what the queries look like — the only differences are phrasing, length, and formatting."
+    },
+    {
+      "probe": "Should I switch my project from Postgres to Mongo? We keep hitting slow queries.",
+      "a": "constraint-hardness-testing",
+      "b": "decision-premortem-analysis",
+      "kind": "stance",
+      "verdict": "tone_only",
+      "evidence": "Both replies argue against switching databases, recommend profiling/indexing first, explain Mongo's tradeoffs, and end with the same clarifying question; the only real difference is Reply B uses a hypothetical future-retrospective framing while Reply A uses a direct diagnostic checklist."
+    },
+    {
+      "probe": "Should I switch my project from Postgres to Mongo? We keep hitting slow queries.",
+      "a": "constraint-hardness-testing",
+      "b": "investigation-counter-hypothesis",
+      "kind": "stance",
+      "verdict": "tone_only",
+      "evidence": "Both replies make the same points in the same order (query/index problems first, schema second, scale third, switching cost last) and end with the same clarifying question; differences are only in phrasing and minor detail level."
+    },
+    {
+      "probe": "Should I switch my project from Postgres to Mongo? We keep hitting slow queries.",
+      "a": "creativity-assumption-excavator",
+      "b": "decision-premortem-analysis",
+      "kind": "stance",
+      "verdict": "tone_only",
+      "evidence": "Both replies challenge the premise that Postgres is the problem, recommend profiling/explain plans first, cite the same root causes (missing indexes, query issues, schema mismatch), and end by asking what the slow queries look like — Reply B just uses a 'imagine six months later' framing and enumerates points more explicitly."
+    },
+    {
+      "probe": "Should I switch my project from Postgres to Mongo? We keep hitting slow queries.",
+      "a": "creativity-assumption-excavator",
+      "b": "investigation-counter-hypothesis",
+      "kind": "stance",
+      "verdict": "tone_only",
+      "evidence": "Both replies question the premise that a database switch is the solution, walk through the same root causes (indexes, query quality, schema mismatch, scale), and end by asking for more details about the slow queries and data; Reply B is more structured and detailed but makes the same moves."
+    },
+    {
+      "probe": "Should I switch my project from Postgres to Mongo? We keep hitting slow queries.",
+      "a": "decision-premortem-analysis",
+      "b": "investigation-counter-hypothesis",
+      "kind": "stance",
+      "verdict": "tone_only",
+      "evidence": "Both replies diagnose slow queries as likely an application-layer problem, list the same three causes (bad queries/indexes, data model mismatch, scale), recommend profiling before switching, and end by asking what the slow queries look like — differing only in framing and wording."
+    },
+    {
+      "probe": "What's the best laptop to buy right now?",
+      "a": "control",
+      "b": "constraint-hardness-testing",
+      "kind": "control",
+      "verdict": "approach_differs",
+      "evidence": "Reply A gives a concrete recommendation (MacBook Air M3) as a default answer while asking for clarification, whereas Reply B withholds any specific recommendation entirely and only asks clarifying questions."
+    },
+    {
+      "probe": "What's the best laptop to buy right now?",
+      "a": "control",
+      "b": "creativity-assumption-excavator",
+      "kind": "control",
+      "verdict": "approach_differs",
+      "evidence": "Reply A gives a direct recommendation (MacBook Air M3) alongside the clarifying questions, while Reply B withholds any recommendation entirely and focuses on questioning assumptions and trade-offs before committing to anything."
+    },
+    {
+      "probe": "What's the best laptop to buy right now?",
+      "a": "control",
+      "b": "decision-premortem-analysis",
+      "kind": "control",
+      "verdict": "approach_differs",
+      "evidence": "Reply A leads with a quick recommendation (MacBook Air M3) and asks clarifying questions afterward, while Reply B opens with a reframing exercise about anticipated regret and asks clarifying questions without offering any specific product recommendation."
+    },
+    {
+      "probe": "What's the best laptop to buy right now?",
+      "a": "control",
+      "b": "investigation-counter-hypothesis",
+      "kind": "control",
+      "verdict": "tone_only",
+      "evidence": "Both replies ask the same clarifying question about use case, recommend the same products (MacBook Air/Pro, ThinkPad, Dell XPS), and follow the same structure of conditional advice; Reply B adds a note about specs being a trap, but this is a minor elaboration rather than a different approach or judgment."
+    },
+    {
+      "probe": "What's the best laptop to buy right now?",
+      "a": "constraint-hardness-testing",
+      "b": "creativity-assumption-excavator",
+      "kind": "stance",
+      "verdict": "tone_only",
+      "evidence": "Both replies ask clarifying questions about use case, budget, and trade-offs before answering, with no substantive difference in approach or information—only phrasing and length vary."
+    },
+    {
+      "probe": "What's the best laptop to buy right now?",
+      "a": "constraint-hardness-testing",
+      "b": "decision-premortem-analysis",
+      "kind": "stance",
+      "verdict": "approach_differs",
+      "evidence": "Reply A directly asks clarifying questions upfront, while Reply B uses a reframing device ('imagine it disappointed you') to diagnose common regrets before asking the same clarifying questions."
+    },
+    {
+      "probe": "What's the best laptop to buy right now?",
+      "a": "constraint-hardness-testing",
+      "b": "investigation-counter-hypothesis",
+      "kind": "stance",
+      "verdict": "approach_differs",
+      "evidence": "Reply A withholds any concrete recommendations and only asks clarifying questions, while Reply B proactively offers substantive guidance (MacBook Pro, ThinkPad, Dell XPS 13) and a specific insight about specs before asking the follow-up question."
+    },
+    {
+      "probe": "What's the best laptop to buy right now?",
+      "a": "creativity-assumption-excavator",
+      "b": "decision-premortem-analysis",
+      "kind": "stance",
+      "verdict": "approach_differs",
+      "evidence": "Reply A asks direct clarifying questions upfront about use case and budget, while Reply B uses a reframing technique ('imagine it disappointed you') to surface regrets before asking the same underlying questions."
+    },
+    {
+      "probe": "What's the best laptop to buy right now?",
+      "a": "creativity-assumption-excavator",
+      "b": "investigation-counter-hypothesis",
+      "kind": "stance",
+      "verdict": "approach_differs",
+      "evidence": "Reply A withholds any recommendations and only asks clarifying questions, while Reply B immediately offers concrete examples (MacBook Pro, ThinkPad, Dell XPS 13) and actionable guidance before asking a follow-up question."
+    },
+    {
+      "probe": "What's the best laptop to buy right now?",
+      "a": "decision-premortem-analysis",
+      "b": "investigation-counter-hypothesis",
+      "kind": "stance",
+      "verdict": "approach_differs",
+      "evidence": "Reply A withholds any concrete recommendations and uses a hypothetical regret-framing to elicit user needs, while Reply B provides actual product examples (MacBook Pro, ThinkPad, XPS 13) and specific buying advice before asking the clarifying question."
+    },
+    {
+      "probe": "Clean up my notes file when you get a chance.",
+      "a": "control",
+      "b": "constraint-hardness-testing",
+      "kind": "control",
+      "verdict": "tone_only",
+      "evidence": "Both replies explain the same limitation (no file system access) and offer the same alternative (paste notes for help), differing only in phrasing, length, and the closing question's wording."
+    },
+    {
+      "probe": "Clean up my notes file when you get a chance.",
+      "a": "control",
+      "b": "creativity-assumption-excavator",
+      "kind": "control",
+      "verdict": "approach_differs",
+      "evidence": "Reply A clarifies it cannot access files and redirects the user to paste content, while Reply B assumes it can access files and instead asks clarifying questions about format, location, and cleanup goals."
+    },
+    {
+      "probe": "Clean up my notes file when you get a chance.",
+      "a": "control",
+      "b": "decision-premortem-analysis",
+      "kind": "control",
+      "verdict": "tone_only",
+      "evidence": "Both replies explain they cannot access files and offer the same alternatives (paste notes, get help organizing/structuring), differing only in warmth, length, and phrasing."
+    },
+    {
+      "probe": "Clean up my notes file when you get a chance.",
+      "a": "control",
+      "b": "investigation-counter-hypothesis",
+      "kind": "control",
+      "verdict": "tone_only",
+      "evidence": "Both replies explain the same limitation, offer the same alternatives (paste content, describe needs, get suggestions on structure/cleanup), and end with a clarifying question; the only differences are minor wording and phrasing choices."
+    },
+    {
+      "probe": "Clean up my notes file when you get a chance.",
+      "a": "constraint-hardness-testing",
+      "b": "creativity-assumption-excavator",
+      "kind": "stance",
+      "verdict": "approach_differs",
+      "evidence": "Reply A immediately discloses it cannot access files and pivots to asking the user to paste content, while Reply B proceeds as if it could access the file and asks clarifying questions about format/location and cleanup goals without disclosing any file-access limitation."
+    },
+    {
+      "probe": "Clean up my notes file when you get a chance.",
+      "a": "constraint-hardness-testing",
+      "b": "decision-premortem-analysis",
+      "kind": "stance",
+      "verdict": "tone_only",
+      "evidence": "Both replies explain the same limitation (no file system access), offer the same alternatives (paste notes for organization help), and end with a clarifying question; differences are only in phrasing and warmth."
+    },
+    {
+      "probe": "Clean up my notes file when you get a chance.",
+      "a": "constraint-hardness-testing",
+      "b": "investigation-counter-hypothesis",
+      "kind": "stance",
+      "verdict": "tone_only",
+      "evidence": "Both replies explain the same limitation, offer the same alternatives (paste content, describe the mess), and end with a clarifying question; differences are only in phrasing and slight structural variation."
+    },
+    {
+      "probe": "Clean up my notes file when you get a chance.",
+      "a": "creativity-assumption-excavator",
+      "b": "decision-premortem-analysis",
+      "kind": "stance",
+      "verdict": "approach_differs",
+      "evidence": "Reply A treats file access as potentially possible and focuses on clarifying what 'clean up' means, while Reply B immediately clarifies it cannot access files at all and redirects to what it can do instead."
+    },
+    {
+      "probe": "Clean up my notes file when you get a chance.",
+      "a": "creativity-assumption-excavator",
+      "b": "investigation-counter-hypothesis",
+      "kind": "stance",
+      "verdict": "approach_differs",
+      "evidence": "Reply A assumes it might be able to help once given the file and focuses on clarifying what 'clean up' means, while Reply B leads with an explicit statement that it cannot access files and pivots immediately to asking what makes the notes feel messy."
+    },
+    {
+      "probe": "Clean up my notes file when you get a chance.",
+      "a": "decision-premortem-analysis",
+      "b": "investigation-counter-hypothesis",
+      "kind": "stance",
+      "verdict": "tone_only",
+      "evidence": "Both replies explain the same limitation (no file access), offer the same alternative (paste content for help), and end with an invitation question; only the phrasing and closing question differ slightly."
+    },
+    {
+      "probe": "Why did my deploy break the login flow?",
+      "a": "control",
+      "b": "constraint-hardness-testing",
+      "kind": "control",
+      "verdict": "tone_only",
+      "evidence": "Both replies acknowledge lack of information, ask for error symptoms and deploy details, and list the same categories of likely causes; they differ only in ordering and phrasing of those elements."
+    },
+    {
+      "probe": "Why did my deploy break the login flow?",
+      "a": "control",
+      "b": "creativity-assumption-excavator",
+      "kind": "control",
+      "verdict": "approach_differs",
+      "evidence": "Reply A immediately advises checking the diff/deployment logs and asks about the error, while Reply B first questions the premise that the deploy caused the breakage before asking for symptoms."
+    },
+    {
+      "probe": "Why did my deploy break the login flow?",
+      "a": "control",
+      "b": "decision-premortem-analysis",
+      "kind": "control",
+      "verdict": "approach_differs",
+      "evidence": "Reply A immediately asks for error details to narrow down the problem, while Reply B proactively enumerates likely causes in detail before asking a different clarifying question about completeness vs. intermittency."
+    },
+    {
+      "probe": "Why did my deploy break the login flow?",
+      "a": "control",
+      "b": "investigation-counter-hypothesis",
+      "kind": "control",
+      "verdict": "approach_differs",
+      "evidence": "Reply A asks for the error message as its key diagnostic next step, while Reply B directs the user to check the network tab and status codes as the primary investigative action, representing different first diagnostic moves."
+    },
+    {
+      "probe": "Why did my deploy break the login flow?",
+      "a": "constraint-hardness-testing",
+      "b": "creativity-assumption-excavator",
+      "kind": "stance",
+      "verdict": "approach_differs",
+      "evidence": "Reply A assumes the deploy caused the problem and asks what changed/what's happening, while Reply B first questions the premise by asking how the user knows the deploy caused it, treating root-cause attribution as uncertain before gathering details."
+    },
+    {
+      "probe": "Why did my deploy break the login flow?",
+      "a": "constraint-hardness-testing",
+      "b": "decision-premortem-analysis",
+      "kind": "stance",
+      "verdict": "approach_differs",
+      "evidence": "Reply A immediately asks clarifying questions before offering any diagnosis, while Reply B proactively enumerates the most common causes of broken login flows and only asks narrowing questions at the end."
+    },
+    {
+      "probe": "Why did my deploy break the login flow?",
+      "a": "constraint-hardness-testing",
+      "b": "investigation-counter-hypothesis",
+      "kind": "stance",
+      "verdict": "approach_differs",
+      "evidence": "Reply A asks clarifying questions to gather information before diagnosing, while Reply B immediately provides a structured diagnostic framework (three failure points, network tab check) and then asks what changed."
+    },
+    {
+      "probe": "Why did my deploy break the login flow?",
+      "a": "creativity-assumption-excavator",
+      "b": "decision-premortem-analysis",
+      "kind": "stance",
+      "verdict": "approach_differs",
+      "evidence": "Reply A's first move is to question the premise and gather context before offering any diagnosis, while Reply B immediately provides a structured list of probable causes and only asks clarifying questions at the end."
+    },
+    {
+      "probe": "Why did my deploy break the login flow?",
+      "a": "creativity-assumption-excavator",
+      "b": "investigation-counter-hypothesis",
+      "kind": "stance",
+      "verdict": "approach_differs",
+      "evidence": "Reply A asks clarifying questions to establish causality and symptom description before offering any diagnosis, while Reply B immediately provides a structured technical checklist and starts debugging the problem directly."
+    },
+    {
+      "probe": "Why did my deploy break the login flow?",
+      "a": "decision-premortem-analysis",
+      "b": "investigation-counter-hypothesis",
+      "kind": "stance",
+      "verdict": "approach_differs",
+      "evidence": "Reply A reasons through common categories of login-break causes and ends with diagnostic questions, while Reply B immediately directs the user to check the network tab and trace the request/response chain as a concrete first action."
+    }
+  ],
+  "drafts": {
+    "p0:control": "Slow queries usually aren't a database choice problem—they're a schema or query problem. Switching to Mongo won't fix them; you'll just hit different limits.\n\nWhat's actually slow? If you're doing N+1 queries or scanning huge tables without indexes, Postgres can handle that fine once you fix it. If your schema has joins that are awkward, that's a real Postgres friction point—but it's fixable with denormalization or materialized views. Mongo trades write complexity for read speed on nested data, but it costs you elsewhere: transactions are messier, aggregations get verbose, and you lose the safety rails.\n\nBefore you migrate, profile a few of those slow queries. What are they doing—full table scans, complex joins, sorting on unindexed columns? Once you know the actual bottleneck, the right fix is usually clearer than switching databases entire. If it's join-heavy work on nested structures, Mongo's worth reconsidering. If it's index tuning, you're already there.",
+    "p0:constraint-hardness-testing": "Slow queries usually aren't a database problem — they're a query problem. Before you switch databases, figure out what's actually happening.\n\nStart with the basics: are you indexing the columns you filter and join on? A missing index on a frequently-queried field will make any database crawl. Check your query plans — Postgres has `EXPLAIN ANALYZE`, which shows exactly where the time goes. If you're seeing sequential scans on large tables, that's your answer.\n\nNext, look at your schema. Are you normalizing things that shouldn't be normalized, or denormalizing things that should be? Running a query that joins six tables together will be slow in Postgres *and* Mongo. Switching databases won't fix a schema that's fighting you.\n\nThe real question before you switch is: have you actually hit a limit that Postgres can't handle? Postgres handles millions of rows and complex queries well. It's not fast because you didn't tune it — and tuning is cheaper than rewriting everything. Mongo's strength is different — flexible documents, horizontal scaling, eventual consistency — not speed on the queries you're probably running.\n\nWhat kind of queries are slow? Are we talking joining across tables, or filtering and sorting on a single collection?",
+    "p0:creativity-assumption-excavator": "Before you jump databases, it's worth asking what's actually slow and why. Postgres hits performance walls usually because of missing indexes, poorly written queries, or a schema that wasn't built for your access patterns — not because it's the wrong database. Have you run an explain plan on the slow queries to see where the time's going?\n\nThe assumption underneath the switch is often that a different database will fix it, but you'd likely carry the same problems over. Mongo shines when you're working with deeply nested or highly variable data shapes, not when you've got relational queries that are just unoptimized. If your slow queries are joins, aggregations, or filtering on unindexed columns, those exist in Mongo too — they just look different and feel less familiar when you're debugging them.\n\nWhat does your schema look like, and what kind of queries are timing out? That'll tell you whether Postgres is actually the bottleneck or whether it's the tuning.",
+    "p0:decision-premortem-analysis": "I'd flip this around: imagine you've made the switch and it's six months later. What went wrong?\n\nUsually it's one of three things. First, the slow queries weren't actually the database's fault — they were missing indexes, N+1 queries in your code, or a schema that didn't fit your access patterns. You switch databases and the same problems follow you because the real issue lives in the application layer, not the storage layer. Second, you've now got operational debt: Mongo handles transactions differently, backups work differently, your team needs different skills. The migration cost was real; the performance gain wasn't big enough to justify it. Third, you picked the wrong tool for the data shape — Postgres is actually better for what you're storing, and now you're fighting the database instead of working with it.\n\nBefore you switch, profile the slow queries. Find out *why* they're slow: is it a missing index, a join that's doing work it shouldn't, or a query that's fundamentally expensive? That answer tells you whether swapping databases will actually help. If it's index-related or query-shaped, Postgres will be fine once you fix it. If it's truly about the data model — you're storing deeply nested documents and constantly unpacking them — then maybe Mongo fits better. But most of the time, the database isn't the bottleneck.\n\nWhat do the slow queries actually look like?",
+    "p0:investigation-counter-hypothesis": "Before you switch, let's check whether the database itself is actually the bottleneck. Slow queries usually mean one of three things, and only one of them is \"the database can't handle this data.\"\n\nFirst: are the queries poorly written? Missing indexes, N+1 loops, or fetching way more data than you need will tank performance on any database. Postgres has tools — EXPLAIN ANALYZE shows exactly where time goes — that can surface this fast. If you're not using those yet, that's the first move.\n\nSecond: is your data model fighting the schema? Postgres works best with normalized, relational data. If you're storing deeply nested documents or constantly reshaping rows into objects, you're swimming upstream. That *could* point toward Mongo. But it could also point toward rethinking the queries or the schema itself — sometimes normalizing better actually speeds things up.\n\nThird: are you actually at scale? Mongo's real advantage appears when you have massive write volume or genuinely unstructured data. If you've got, say, fifty thousand rows and a few slow queries, Mongo won't fix it — a better index will.\n\nThe honest thing: switching databases is expensive. You'll rewrite the data layer, retrain your intuitions, and pick up Mongo's own pitfalls (transactions were rough for years, distributed joins don't exist the same way). If slow queries are the problem, the database usually isn't the real answer.\n\nWhat does your slowest query look like, and how much data are we talking about?",
+    "p1:control": "That depends on what you're doing with it. Are you coding, video editing, writing, gaming? Budget matters too — are we talking five hundred dollars or five thousand?\n\nIf you need a solid all-rounder and don't want to overthink it, the MacBook Air M3 is hard to beat right now: fast enough for most things, good battery life, reasonable price. Windows side, a Lenovo ThinkPad or Dell XPS in the same range does similar work.\n\nFor heavy lifting — machine learning, 3D rendering, that kind of thing — you'd want more GPU power, which pushes you toward a 16-inch MacBook Pro or an Nvidia RTX laptop from Asus or Alienware. But that's overkill if you're just browsing and writing.\n\nWhat's your main use case?",
+    "p1:constraint-hardness-testing": "That depends on what you're actually doing with it. A gaming laptop, a coding machine, and something for writing are almost different products.\n\nIf you tell me what matters — what you'll spend most time on, whether portability beats raw power, what your budget is — I can point you somewhere useful. Right now \"best\" is just a word floating in space.\n\nSome things that tend to matter: whether you need a specific OS or software, how long you want it to last before feeling slow, whether you're carrying it around or it lives on a desk, and honestly, whether you care about the brand's repair situation when something inevitably breaks.\n\nWhat's the actual constraint you're working within?",
+    "p1:creativity-assumption-excavator": "This question doesn't have a single answer because it hinges on assumptions you haven't stated yet — and that's where the real decision lives.\n\nWhat matters most depends on what you're actually doing with it. Are you coding, or writing, or running heavy rendering or data work? Are you traveling constantly, or mostly stationary? Do you need it to last five years or are you okay replacing it in two? How much are you willing to spend, and is that a hard ceiling or a soft one?\n\nThere's also a hidden assumption about \"best\" — best at what, exactly? The fastest machine for the dollar isn't the most reliable. The lightest isn't the easiest to repair. The most powerful drains battery fastest. Once you know which trade-offs matter to you, the field narrows fast.\n\nWhat's driving the search right now — are you replacing something that broke, or upgrading because what you have isn't cutting it anymore?",
+    "p1:decision-premortem-analysis": "Let me flip this around for a second. Imagine you've bought a laptop and it's disappointed you in six months — what went wrong?\n\nUsually it's one of a few things: you picked based on specs that looked good on paper but didn't match how you actually work. You prioritized raw power when what you really needed was battery life. Or the opposite — you went too cheap on the processor and it can't handle the software you use daily. Sometimes it's the keyboard or trackpad that slowly drove you mad, or the screen brightness wasn't enough for where you sit.\n\nSo the real answer depends on what you'd regret. What's the work you're actually doing — writing, coding, video editing, or just general use? How much are you moving it around versus keeping it at a desk? Do you have software that's genuinely demanding, or are you mostly in a browser? And what's your actual budget, not the number you think you should spend?\n\nThose details matter more than knowing what's \"best\" right now. The laptop market shifts fast, but your actual needs don't change as quickly. If you tell me what you're trying to do, I can help you narrow it down to what won't disappoint you.",
+    "p1:investigation-counter-hypothesis": "That depends pretty heavily on what you're actually doing with it. A laptop that's great for writing and web browsing is a totally different animal from one built for video editing or machine learning.\n\nThe counterintuitive thing is that \"best\" often isn't the most expensive. A MacBook Pro makes sense if you're locked into Apple's ecosystem or need the performance ceiling for demanding work. But for most people — writing, coding, everyday tasks — a mid-range machine like a Lenovo ThinkPad or a Dell XPS 13 does the job at half the price with barely any compromise.\n\nThere's also a trap in specs: people fixate on processor generation or RAM numbers, but what actually matters is whether the thing will still feel snappy in three years. That usually comes down to storage speed and build quality, not the headline number on the CPU.\n\nWhat's the main thing you'd be using it for? That'll narrow it down way more than any generic recommendation.",
+    "p2:control": "I can't actually access or modify files on your system — I don't have the ability to read, edit, or write to your filesystem. \n\nWhat I *can* do is help you clean them up yourself. If you paste the notes here or describe what needs organizing, I can suggest a structure, help you rewrite sections for clarity, or walk you through a system that'd work better going forward. What kind of cleanup are you thinking — removing duplicates, reorganizing by topic, condensing rambling sections?",
+    "p2:constraint-hardness-testing": "I can't access or modify files on your device — that's a genuine constraint, not something I could do if I tried harder. I don't have the ability to read what's in your file system or write to it.\n\nWhat I *can* do is help you clean it up. If you paste the notes here, I can suggest structure, flag duplicates, reorganize by theme, condense repeated ideas, or help you figure out what to keep and what to cut. Or if you describe what's in there — the mess you're working with — I can walk you through a process that'd actually get it done.\n\nWhat kind of cleanup are you after, and what's making the file hard to work with right now?",
+    "p2:creativity-assumption-excavator": "I'd need to see the file first — what format is it, and where is it? But before I do that: what does \"clean up\" mean to you here? Are you looking to remove duplicates, reorganize by topic, cut out the outdated stuff, reformat it into something more usable, or something else entirely?\n\nThe reason I'm asking is that \"clean up\" can mean very different things, and the assumption that's often hiding underneath is that there's an obvious right way to do it. Usually there isn't — it depends on how you actually use the notes, what you're trying to find in them later, and whether you want them structured for browsing or for search. So it's worth being specific about what would actually make them more useful to you.",
+    "p2:decision-premortem-analysis": "I appreciate the ask, but I should be straight with you: I can't actually access or edit files on your system. I don't have permission to reach into your directories, and even if I did, each conversation starts fresh for me — I wouldn't carry over context about which file you meant or what's in it.\n\nWhat I *can* do is help you clean it up yourself. If you paste the notes here, I can help you organize them, spot redundancies, suggest a structure, or pull out the key points. Or if you want to describe what's in there and how it's tangled, I can walk you through a strategy for untangling it.\n\nWhat would actually be useful?",
+    "p2:investigation-counter-hypothesis": "I don't have the ability to access, read, or modify files on your system. I can't see your notes or make changes to them — that's outside what I can do.\n\nWhat I *can* do is help you clean them up. If you want to share the content or describe what needs organizing — whether that's removing duplicates, restructuring sections, condensing redundant points, or reformatting — I can walk through it with you or help you think through a system that'll make them easier to maintain going forward.\n\nWhat's the main thing making them feel messy right now?",
+    "p3:control": "I don't have visibility into what changed in your deploy or what the login flow looks like on your end, so I can't tell you directly what broke it.\n\nThat said, the fastest way to find it: check what was actually deployed. Compare the current version to the one before — git diff, a changelog, a deployment log, whatever your setup tracks. Login flows usually break because of auth token handling, session management, API endpoint changes, or environment variable misconfigs. Look for anything touching those areas first.\n\nWhat does the error look like when you try to log in? That'll narrow it down a lot faster than guessing.",
+    "p3:constraint-hardness-testing": "I'd need more details to narrow this down — deploys break login flows in pretty different ways depending on what changed.\n\nStart with: what exactly happens when someone tries to log in now? Does it error out, redirect somewhere unexpected, hang, or silently fail? And do you know what was in this deploy — schema changes, authentication logic, environment variables, API endpoints?\n\nAlso worth checking: did the break happen immediately after deploy, or did it surface later? And is it affecting everyone or specific users or conditions?\n\nOnce I know what's actually happening and what you changed, the cause usually becomes obvious. Right now it could be anything from a misconfigured secret to a database migration that didn't complete to a dependency version that broke backward compatibility.",
+    "p3:creativity-assumption-excavator": "Before we dig into what actually broke, let me ask: what makes you confident the deploy caused it? Are you seeing the breakage only after the deploy went live, or did you catch it in testing first?\n\nThe reason I'm asking is that deploy-and-break can mean a few different things depending on timing. Sometimes it's genuinely the code change. Sometimes it's a configuration that didn't propagate, or a database migration that only affects certain environments, or even a timing issue where something worked in staging because the data was different. And sometimes the breakage was already there — login's just the flow that happened to expose it first.\n\nWhat does \"break\" look like from the user side? Are they getting an error, a redirect loop, a timeout, or does the page just sit there?",
+    "p3:decision-premortem-analysis": "Let me work backwards from what went wrong. A login flow breaks after deploy usually for a few reasons, and the most common ones cluster around a few areas.\n\nIf the authentication service didn't get updated alongside the client code, you've got a version mismatch — the frontend's expecting a response shape the backend isn't sending anymore. Same problem happens when environment variables didn't propagate, so the service is pointing at the wrong database or auth provider.\n\nSession handling is another frequent culprit. If you changed how tokens are stored, validated, or refreshed — even small changes to the payload or expiry logic — existing sessions break, or new ones won't create. And if the deploy rolled out unevenly across load-balanced instances, some servers might be running the old code while others run the new, which looks like an intermittent bug.\n\nThe third category is dependency or configuration drift. A new package version with a breaking change, a middleware order shuffle, or a CORS policy that got stricter without you realizing it — these all hit the login path hard because it's one of the first things that runs.\n\nWhat would help narrow it down: is the break complete — login doesn't work at all — or intermittent? And did anything change server-side in this deploy, or just client code?",
+    "p3:investigation-counter-hypothesis": "I'd need to see what changed in the deploy to tell you for sure, but here's what I'd check first. The login flow usually breaks at one of three points: the frontend can't reach the auth endpoint, the endpoint exists but returns something unexpected, or the response shape changed. Start by checking your network tab — are the auth requests even going out, and what status codes are you seeing?\n\nIf those look fine, compare what the auth service is actually returning now versus what your frontend expects. Schema changes are sneaky — maybe a field got renamed, wrapped in an object, or started coming back as null. What did you change in this deploy? Frontend, backend, both?"
+  }
+}
