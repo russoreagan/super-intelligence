@@ -1,7 +1,7 @@
 # Theory Citations
 
 This file supplements the reference list in `PAPER.md` (§ References). `docs/SYSTEMS.md` Part II
-carries 64 theory entries; about half of them had no bibliographic entry anywhere in the project.
+carries 65 theory entries; about half of them had no bibliographic entry anywhere in the project.
 This file supplies the missing ones.
 
 **Every citation below was verified against an actual literature-search result** (scite
@@ -23,8 +23,11 @@ Sorted by `SYSTEMS.md` section number.
 | Appraisal theory (current review) | §1.5 | Scherer, K. R., & Moors, A. (2019). The emotion process: Event appraisal and component differentiation. *Annual Review of Psychology*, 70, 719–745. | [10.1146/annurev-psych-122216-011854](https://doi.org/10.1146/annurev-psych-122216-011854) | scite-verified |
 | Higher-Order Thought | §2.6 | Rosenthal, D. (1997). A theory of consciousness. In N. Block, O. Flanagan, & G. Güzeldere (Eds.), *The Nature of Consciousness*. MIT Press. | — (book chapter) | already in PAPER.md |
 | Hebbian learning | §2.7 | Hebb, D. O. (1949). *The Organization of Behavior: A Neuropsychological Theory*. Wiley. | [10.7551/mitpress/4943.003.0006](https://doi.org/10.7551/mitpress/4943.003.0006) (MIT Press reprint of Intro + Ch. 4) | scite-verified |
-| Drift-diffusion model | §2.11 | Ratcliff, R. (1978). A theory of memory retrieval. *Psychological Review*, 85(2), 59–108. | [10.1037/0033-295X.85.2.59](https://doi.org/10.1037/0033-295X.85.2.59) | scite-verified |
-| Evidence accumulation / decision making | §2.11 | Gold, J. I., & Shadlen, M. N. (2007). The neural basis of decision making. *Annual Review of Neuroscience*, 30, 535–574. | [10.1146/annurev.neuro.29.051605.113038](https://doi.org/10.1146/annurev.neuro.29.051605.113038) | scite-verified |
+| Drift-diffusion model | §2.9 | Ratcliff, R. (1978). A theory of memory retrieval. *Psychological Review*, 85(2), 59–108. | [10.1037/0033-295X.85.2.59](https://doi.org/10.1037/0033-295X.85.2.59) | scite-verified |
+| Evidence accumulation / decision making | §2.9 | Gold, J. I., & Shadlen, M. N. (2007). The neural basis of decision making. *Annual Review of Neuroscience*, 30, 535–574. | [10.1146/annurev.neuro.29.051605.113038](https://doi.org/10.1146/annurev.neuro.29.051605.113038) | scite-verified |
+| Effect heredity principle — origin | §2.10 | Hamada, M., & Wu, C. F. J. (1992). Analysis of designed experiments with complex aliasing. *Journal of Quality Technology*, 24(3), 130–137. | [10.1080/00224065.1992.11979383](https://doi.org/10.1080/00224065.1992.11979383) | scite: title+DOI verified; other fields unverified |
+| Strong vs. weak heredity — terminology | §2.10 | Chipman, H. (1996). Bayesian variable selection with related predictors. *Canadian Journal of Statistics*, 24(1), 17–36. | [10.2307/3315687](https://doi.org/10.2307/3315687) | scite: title+DOI verified; other fields unverified |
+| Hierarchical interactions — computation | §2.10 | Bien, J., Taylor, J., & Tibshirani, R. (2013). A lasso for hierarchical interactions. *Annals of Statistics*, 41(3), 1111–1141. | [10.1214/13-AOS1096](https://doi.org/10.1214/13-aos1096) | scite: title+DOI verified; other fields unverified |
 | Episodic vs. semantic memory | §3.1, §3.2 | Tulving, E. (1985). How many memory systems are there? *American Psychologist*, 40(4), 385–398. | [10.1037/0003-066X.40.4.385](https://doi.org/10.1037/0003-066X.40.4.385) | scite-verified |
 | Episodic memory (mature statement) | §3.1, §3.2 | Tulving, E. (2002). Episodic memory: From mind to brain. *Annual Review of Psychology*, 53, 1–25. | [10.1146/annurev.psych.53.100901.135114](https://doi.org/10.1146/annurev.psych.53.100901.135114) | scite-verified |
 | Distributional semantics | §3.3, §8.9 | Firth, J. R. (1957). A synopsis of linguistic theory, 1930–1955. In *Studies in Linguistic Analysis* (pp. 1–32). Blackwell. | — (no DOI; see note below) | **not indexed** — use secondary below |

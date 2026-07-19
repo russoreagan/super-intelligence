@@ -4,11 +4,11 @@ Instructions for restructuring the deck in Claude Design (`Elyceum Systems.dc.ht
 
 **Audience.** A potential co-founder: an engineer with his own platform that may merge with this one. He needs depth, and he needs the honest gaps — the status chips and the Appendix A caveats are what make the rest credible to a skeptical reader. An investor version will be derived from this later, so do not optimize for investors now.
 
-**Target length.** ~83 slides.
+**Target length.** ~84 slides.
 
 **Companion file.** `docs/DECK_GLOSSARY.md` is the definition of record for every recurring term, plus the disambiguation table for the words that carry more than one meaning. Read it before writing any detail slide.
 
-**The core problem to fix.** The deck currently opens straight into brain internals. A reader learns how the hippocampus indexes episodes before learning what the product is or who uses it. It also inherits `SYSTEMS.md`'s subsection boundaries wholesale, including boundaries that only exist because a doc needed a heading — 58 of 94 subsections are under 120 words, and one is 16 words. Those become slides with one sentence on them.
+**The core problem to fix.** The deck currently opens straight into brain internals. A reader learns how the hippocampus indexes episodes before learning what the product is or who uses it. It also inherits `SYSTEMS.md`'s subsection boundaries wholesale, including boundaries that only exist because a doc needed a heading — 58 of 95 subsections are under 120 words, and one is 16 words. Those become slides with one sentence on them.
 
 ---
 
@@ -81,7 +81,7 @@ So a slide is not finished when it is accurate. It is finished when someone who 
 
 | # | Slide | Instruction |
 |---|---|---|
-| 1 | Title | Keep. Correct the stat strip: **9 systems · 94 subsystems · 64 named theories · 11 brain clusters**. The current numbers are wrong (see Corrected facts). |
+| 1 | Title | Keep. Correct the stat strip: **9 systems · 95 subsystems · 65 named theories · 11 brain clusters**. The current numbers are wrong (see Corrected facts). |
 | 2 | **What Elyceum is, and why it is different** | **New.** Lead with the product positioning: "AI agents that learn and feel." / "It's not AGI. It's AEI: Artificial Emotional Intelligence." Then the differentiator: *"Most AI tries to copy human intelligence. We copied the biology that produced it."* Support with a 2×2, one line each: **instinct at the core** (it reacts before it reasons); **learns your domain** (a specialist, not a generalist); **cheaper with use** (cost per interaction trends down the more it runs); **no orchestrator, no central plan** (coordination emerges from shared chemistry). |
 | 3 | **Two ways to run it** | **New.** Left: embed the engine in your product over the API, which uniquely returns emotional state alongside every response. Right: run it from the Elyceum app. This is the integration surface, and it is the slide this particular reader cares most about. |
 | 4 | **Persona, mandate, agent** | **New, and load-bearing — nothing later parses without it.** A **persona** is a personality you can talk to; personas are cheap, make as many as you like. A **mandate** is a swappable job. A persona put to work under a mandate, with bounded permissions, is an **agent**. One diagram, three boxes, no prose beyond a caption. |
@@ -158,9 +158,9 @@ Chemistry first because it is the vocabulary every later system uses. Then the C
 | System | Parts in SYSTEMS.md | Slides | Merges and splits |
 |---|---|---|---|
 | **A · Chemistry and Affect** | 8 | 6 | `1.2 + 1.3` → "What moves them, and what pulls them back" — rise and relax belong on one slide. `1.6 + 1.7` → "The vocabulary and its colors" — 1.7 is a rendering of 1.6's table. |
-| **B · The Cognitive Core** | 9 | 11 | **Split §2.1 into three slides — see "The §2.1 exception" below. It is the foundation for a dozen later slides and currently gets one dense paragraph.** Otherwise no merges. Structural plasticity has moved out to Learning (see above). **Add §2.9 "Deciding across turns"** — the deck's §2 divider lists only 2.1 through 2.10 and this slide does not exist at all. That is the EvidenceGate / drift-diffusion work, and it is live. |
+| **B · The Cognitive Core** | 10 | 12 | **Split §2.1 into three slides — see "The §2.1 exception" below. It is the foundation for a dozen later slides and currently gets one dense paragraph.** Otherwise no merges. Structural plasticity has moved out to Learning (see above). **Add §2.9 "Deciding across turns"** — the EvidenceGate / drift-diffusion work, live, no slide exists. **Add §2.10 "Deliberating before acting"** — the newest system in the doc: before any tool runs, three candidate approaches (each an information posture × a reasoning method, drawn by relevance, learning, and chemistry) compete and the winner owns the decision to act. Carry its Appendix A caveats on the slide: thresholds reasoned not measured, pairing ledger does not survive a restart. This is also the slide that makes the two-level Multiple-Drafts story honest — deliberation on WHAT to do, then on what to say. |
 | **C · Memory** | 10 | 6 | `3.1 + 3.2 + 3.3` → "What it stores: episodes, notes, vectors" — all three are one-paragraph store descriptions and two share a citation pair. `3.6 + 3.7` → "Automatization: recipes and reflexes" — 3.7 literally opens "Below whole recipes sits a finer tier." `3.8 + 3.10` → "Sleep, and what it concludes." **Also: the "What it stores" slide must carry the retention caveat** (Appendix A, Memory retention). There is no retention window, TTL, or eviction; growth is unbounded and the only deletion path is erasure on request. This reader will ask, and the answer being "it's an open product decision, and here is why it is not trivial" is much stronger than being caught without one. |
-| **D · Learning** | 12 | 10 | **Open on the three scales** — weights, attachments, whole units — then walk them smallest to largest. `4.1 + 4.2` → "The update and the reward signal" — 4.2 is 31 words and cannot hold a slide. `4.5 + 4.6` → "Intensity and timing" — both are modifiers on the same weight update. Do **not** merge 4.8 and 4.10; they rhyme thematically but the mechanisms are unrelated. **Split §4.12** (2,091 words, 14% of all Part I prose) into two slides: reserve-cell recruitment, then self-authored specializations. §4.11 stays whole. |
+| **D · Learning** | 12 | 10 | **Open on the three scales** — weights, attachments, whole units — then walk them smallest to largest. Mention the fourth credited surface in §4.7: stances from the approach competition earn credit from VERIFIED outcomes (grounded, not critic-graded) — one line, it pays off the §2.10 slide. `4.1 + 4.2` → "The update and the reward signal" — 4.2 is 31 words and cannot hold a slide. `4.5 + 4.6` → "Intensity and timing" — both are modifiers on the same weight update. Do **not** merge 4.8 and 4.10; they rhyme thematically but the mechanisms are unrelated. **Split §4.12** (2,091 words, 14% of all Part I prose) into two slides: reserve-cell recruitment, then self-authored specializations. §4.11 stays whole. |
 | **E · Identity** | 10 | 7 | `7.1` folds into the section band (52 words duplicating the system intro). `7.4 + 7.5` → "The dials" — splitting them is exactly what creates the seven-versus-eight confusion the doc then has to correct in prose. |
 | **F · Agency and Action** | 12 | 7 | The biggest win: 11 of 12 subsections are thin, 963 words across 12 headings. `6.2 + 6.3 + 6.6` → "The permission ceiling" (one idea stated three ways). `6.4 + 6.5` → "Jobs and the queue." `6.7 + 6.9` → "Money and the hard no." `6.10 + 6.11` → "External surface: connectors and skills." Keep 6.1, 6.8 and 6.12 standalone. |
 | **G · The Idle Mind** | 9 | 6 | `5.1 + 5.3` → "The loop and its pacing." `5.6 + 5.7` → "Deciding to speak, and how it gets rewritten" — sequential, same pipeline. `5.9` is 24 words; append it to 5.5 Rumination. |
@@ -285,7 +285,7 @@ means the information is in the wrong order, or a summary is sitting ahead of th
 summarizes.** Fix the order. Pointers are a patch over a sequencing problem, and a reader feels
 the seam every time.
 
-**Total: 5 framing + 12 app + 1 operator loop + 6 brain overview + 3 confidence + 2 vocabulary + 54 detail = 83 slides.**
+**Total: 5 framing + 12 app + 1 operator loop + 6 brain overview + 3 confidence + 2 vocabulary + 55 detail = 84 slides.**
 
 If the deck needs to come down, move Perception and Platform detail into an appendix. Do not cut the Cognitive Core, and do not cut the two vocabulary slides — they are what make the other 79 readable.
 
@@ -297,13 +297,13 @@ These are wrong in the current deck. `SYSTEMS.md` has already been corrected to 
 
 | Claim in the deck | Correct value |
 |---|---|
-| "36 named theories" | **64** theory-index entries |
-| "~90 subsystems" | **94** |
+| "36 named theories" | **65** theory-index entries |
+| "~90 subsystems" | **95** |
 | §1.4 "~36 emotions" | **37 distinct emotion words** resolved from **81** chemical bucket combinations |
 | §1.6 "~45 emotions" | **57 labels** under **8 families** — a *different* table from §1.4, not the same number stated twice |
 | §1.7 mood colors | **41** colored emotions; 6 more resolve through the hierarchy; **10 fall through to neutral**, and 9 of those are reachable from the chemistry lookup. Say this plainly, it is a real and small gap |
 | §1 divider lists 8 subsystems | Only 6 slides after merging 1.2+1.3 and 1.6+1.7. Renumber the list; do not author two new slides |
-| §2 divider lists 2.1–2.10 | System 2 now has **9** parts (structural plasticity moved to Learning). §2.9 "Deciding across turns" has no slide and must be added |
+| §2 divider lists 2.1–2.10 | System 2 now has **10** parts (structural plasticity moved out to Learning; §2.10 approach competition moved in). Both §2.9 "Deciding across turns" and §2.10 "Deliberating before acting" have no slide and must be added |
 | §4 divider lists 4.1–4.10 | System 4 now has **12** parts — §4.11 path plasticity and §4.12 growing new units moved in from the Cognitive Core |
 | §7.9 "per-mandate reward weights stored and not consumed" | Now **consumed**, with the Stoic control exempt |
 | Slide 3 pager `09 / 10` in position 3 | Slide is deleted as a duplicate |

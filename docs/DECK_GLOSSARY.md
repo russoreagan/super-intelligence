@@ -24,25 +24,30 @@ Ordered by how often they appear in Part I. The high-frequency ones are the dang
 | **agent** | 52 | A persona put to work — paired with a mandate and given bounded permissions. Persona is who; mandate is what job; agent is the pairing that actually runs. |
 | **gate** | 48 | **Overloaded — see Disambiguation below. Never use bare "gate" on a slide.** |
 | **chemistry** | 36 | The nine simulated neuromodulator and hormone channels, taken together. Not a mood label the system picks; a state that exists whether or not anyone asks. |
-| **draft** | 34 | One candidate reply, written in full. Five are written in parallel each turn and one is sent; the rest are discarded. |
+| **draft** | 34 | One candidate reply, written in full. Several are written in parallel each turn (three by default, scaled by stakes and state, up to five) and one is sent; the rest are discarded. |
 | **cell** | 28 | The unit of thinking. Two kinds: switches and integrators. A cell is code, not a database row. |
 | **switch** | 18 | A cell with no model behind it — plain deterministic code. The large majority of cells. About one in five is inhibitory, so the system settles rather than only exciting itself. |
 | **integrator** | 2 | A model-powered cell. Fires only where many signals converge. The expensive ones; there are few. |
-| **attachment** | 24 | A vetted skill wired onto a drafting cell, with a strength that learns like any other weight. The mechanism behind structural growth (§2.9). |
+| **attachment** | 24 | A vetted skill wired onto a drafting cell, with a strength that learns like any other weight. The mechanism behind structural growth. Stances ride the same mechanism on separate budgets, so a drafter carries what it knows AND how it is inclined to attack. |
 | **weight** | 23 | The learned strength of one connection in the wiring graph. **Not** the same as a reward weight (see Disambiguation). |
 | **wiring** | 19 | The graph of roughly sixty declared connections between named cells. Weights are learned; the core map is fixed. |
 | **edge** | 2 | One connection in that graph. |
-| **critic** | 17 | The cell that scores the parallel drafts. A separate empathy critic can veto a draft outright. |
+| **critic** | 17 | The cell that scores the parallel drafts. A separate empathy critic can veto a draft outright, and a third — the approach critic — adjudicates the pre-tool approach competition. **Never use bare "critic" on a slide; name which one.** |
 | **commit** | 16 | Choosing one draft and sending it. The brainstem waits for a beat with no new draft, then commits the best survivor. |
 | **channel** | 13 | One of the nine chemicals. **Also overloaded** — see Disambiguation. |
 | **mandate** | 12 | A job description, stored as data rather than prompt text. Swappable; an organization authors a catalog once and assigns any of them to any persona. |
 | **cluster** | 9 | A named group of cells doing one job, mapped to a brain region. Eleven of them. Three carry real behavior with no model at all. |
-| **drafter** | 9 | One of five frontal cells that each write a full candidate reply, with different dispositions — warmer, terser, more analytical. |
+| **drafter** | 9 | One of five frontal cells that each write a full candidate reply, with different dispositions — warmer, terser, more analytical — plus a per-turn stance that shapes how it attacks the problem, not just how it sounds. |
 | **plasticity** | 9 | Change in the wiring. Weight plasticity moves strengths; structural plasticity adds attachments and, at the second tier, whole units. |
 | **workspace** | 9 | The global broadcast layer. The thalamus is the one reader that sees every topic at once and fuses them into a single verdict. |
 | **tenant** | 8 | An organization. The unit of isolation: data, keys, and compute are scoped to it. |
 | **reflex** | 8 | A recurring sub-sequence of tool use, compressed into a single unit that fires as a whole. |
 | **signature** | 7 | A content-free description of a moment: same chemistry, same structural problem, topic deliberately excluded. What lets the system match a database-debugging session to a conversation about a marriage. |
+| **approach** | new | A committed position on how to handle this turn: does it need the outside world, what does a good answer look like, what angle of attack fits. Decided by competition before any tool runs (§2.10). |
+| **approach competition** | new | Three strategist cells, each reasoning from a different stance pair, adjudicated by the approach critic in one comparative call grounded on what recall returned. The winner owns the decision to act. Runs concurrently with memory recall, so the common turn pays almost nothing for it. |
+| **stance** | new | A per-turn thinking posture, drawn from a library rather than configured. Two kinds: information postures (answer from known, verify the premise, ask rather than guess, do and report…) and reasoning methods (premise testing, premortems, counter-hypotheses…). Drawn by relevance, learned weight, and chemistry — stress reaches for caution and shallow fast methods, drive for action and depth. Chemistry biases the draw; it can never make a stance unreachable. |
+| **outcome verifier** | new | The grounded grader: a turn later, the committed approach is checked against what actually happened — the tool failed, the user re-asked, asked for clarification, or went impatient at the agent (tone toward the agent, deliberately not their general mood). Verified verdicts move stance weights; the critic's own taste barely does. |
+| **pair ledger** | new | Per-personality counts of which stance pairings appear and win. Counts, never rates, so a future pass can compute whether a pairing adds anything beyond its parts — and stay unbuilt if it does not. Does not survive a restart (Appendix A). |
 | **recall** | 7 | Retrieval from the long-term store. Has a fixed lookup budget split across four strategies, and the split is learned. |
 | **gain** | 6 | A multiplier, not a message. The slow chemical layer sets the gain on the fast one, which is why accumulated stress makes the same remark land harder. |
 | **bond** | 6 | The accumulated state of one relationship with one customer, carried across sessions. |
