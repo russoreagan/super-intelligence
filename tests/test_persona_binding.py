@@ -77,3 +77,138 @@ def test_catalog_caches_per_persona(monkeypatch):
         mandates.catalog()
     assert set(mandates._catalog.keys()) == {"the_visionary", "the_adversary"}
     mandates._catalog = {}  # don't leak into other tests
+
+
+# ── Async schema writes must key to the persona bound at CALL time ────────────
+# Regression for the cross-persona write leak: awrite/aappend_fact/upsert_section/
+# migrate_placeholder ran _sb_write on an executor thread, and worker threads don't
+# inherit the bind_persona contextvar — so the write re-resolved the persona to
+# BRAIN_PERSONA_NAME (the process home persona). In prod, the Trading-bear session
+# (bound the_adversary) sleep-consolidated on the shared brain (home the_visionary)
+# and wrote the Adversary's living self.md onto the_visionary's row. The fix
+# resolves the persona key in-task and passes it into _sb_write.
+
+
+class _FakeSupabase:
+    """Minimal brain_schemas double: serves reads from {persona_key: content} and
+    records every upserted row."""
+
+    def __init__(self, docs: dict[str, str]):
+        self.docs = docs
+        self.upserts: list[dict] = []
+
+    def table(self, _name):
+        return _FakeTable(self)
+
+
+class _FakeTable:
+    def __init__(self, db: _FakeSupabase):
+        self.db = db
+        self.filters: dict[str, str] = {}
+        self._row: dict | None = None
+
+    def select(self, *_a):
+        return self
+
+    def eq(self, col, val):
+        self.filters[col] = val
+        return self
+
+    def maybe_single(self):
+        return self
+
+    def upsert(self, row, **_kw):
+        self._row = row
+        return self
+
+    def execute(self):
+        import types
+
+        if self._row is not None:
+            self.db.upserts.append(self._row)
+            return types.SimpleNamespace(data=self._row)
+        content = self.db.docs.get(self.filters.get("persona", ""), "")
+        return types.SimpleNamespace(data={"content": content} if content else None)
+
+
+def _supabase_schema_store(monkeypatch, docs: dict[str, str]):
+    from brain.second_brain.store import SchemaStore
+
+    fake = _FakeSupabase(docs)
+    store = SchemaStore()
+    store._use_supabase = True
+    monkeypatch.setattr(store, "_sb", lambda: (fake, "org-test"))
+    return store, fake
+
+
+def test_awrite_keys_to_bound_persona_not_home(monkeypatch):
+    import asyncio
+
+    monkeypatch.delenv("BRAIN_MULTITENANT", raising=False)
+    monkeypatch.setenv("BRAIN_PERSONA_NAME", "The Visionary")
+    store, fake = _supabase_schema_store(monkeypatch, {})
+
+    async def run():
+        with bind_persona("The Adversary"):
+            await store.awrite("self.md", "# Self-Model — The Adversary")
+
+    asyncio.run(run())
+    assert [r["persona"] for r in fake.upserts] == ["the_adversary"]
+
+
+def test_upsert_section_reads_and_writes_the_same_bound_persona(monkeypatch):
+    # The metacognition mood-stamp path: read-modify-write of the BOUND persona's
+    # doc, written back to the BOUND persona's row (not merged onto the home row).
+    import asyncio
+
+    monkeypatch.delenv("BRAIN_MULTITENANT", raising=False)
+    monkeypatch.setenv("BRAIN_PERSONA_NAME", "The Visionary")
+    docs = {
+        "the_adversary": (
+            "# Self-Model — The Adversary\n\n## Current mood signature\nbaseline\n"
+        ),
+        "the_visionary": "# Self-Model — The Visionary\n",
+    }
+    store, fake = _supabase_schema_store(monkeypatch, docs)
+
+    async def run():
+        with bind_persona("The Adversary"):
+            await store.upsert_section("self.md", "Current mood signature", "DA=0.71")
+
+    asyncio.run(run())
+    assert len(fake.upserts) == 1
+    row = fake.upserts[0]
+    assert row["persona"] == "the_adversary"
+    assert "DA=0.71" in row["content"]
+    assert "The Adversary" in row["content"]
+
+
+def test_awrite_unbound_still_falls_back_to_home_persona(monkeypatch):
+    import asyncio
+
+    monkeypatch.delenv("BRAIN_MULTITENANT", raising=False)
+    monkeypatch.setenv("BRAIN_PERSONA_NAME", "The Visionary")
+    store, fake = _supabase_schema_store(monkeypatch, {})
+
+    async def run():
+        await store.awrite("self.md", "doc")
+
+    asyncio.run(run())
+    assert [r["persona"] for r in fake.upserts] == ["the_visionary"]
+
+
+def test_aappend_fact_keys_to_bound_persona(monkeypatch):
+    import asyncio
+
+    monkeypatch.delenv("BRAIN_MULTITENANT", raising=False)
+    monkeypatch.setenv("BRAIN_PERSONA_NAME", "The Visionary")
+    docs = {"the_adversary": "# notes"}
+    store, fake = _supabase_schema_store(monkeypatch, docs)
+
+    async def run():
+        with bind_persona("The Adversary"):
+            await store.aappend_fact("self.md", "prefers counterexamples")
+
+    asyncio.run(run())
+    assert [r["persona"] for r in fake.upserts] == ["the_adversary"]
+    assert "prefers counterexamples" in fake.upserts[0]["content"]

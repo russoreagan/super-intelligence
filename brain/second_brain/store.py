@@ -668,13 +668,17 @@ class SchemaStore:
         tmp.write_text(content)
         os.replace(tmp, path)
 
-    def _sb_write(self, filename: str, content: str) -> None:
+    def _sb_write(self, filename: str, content: str, persona: str | None = None) -> None:
+        """persona must be resolved IN the event-loop task when this runs on an
+        executor thread: workers don't inherit the bind_persona contextvar, so
+        resolving here would fall back to BRAIN_PERSONA_NAME (the process home
+        persona) and silently write a bound persona's file onto the home row."""
         try:
             sb, uid = self._sb()
             sb.table("brain_schemas").upsert(
                 {
                     "org_id": uid,
-                    "persona": self._sb_persona(),
+                    "persona": self._sb_persona() if persona is None else persona,
                     "end_user_id": "",  # companion mode; engine-mode callers will thread this
                     "filename": filename,
                     "content": content,
@@ -714,7 +718,7 @@ class SchemaStore:
         async with self._lock:
             if self._use_supabase:
                 await asyncio.get_running_loop().run_in_executor(
-                    None, self._sb_write, filename, content
+                    None, self._sb_write, filename, content, self._sb_persona()
                 )
             else:
                 self._atomic_write(SCHEMA_DIR / filename, content)
@@ -731,7 +735,7 @@ class SchemaStore:
                 new_content = existing + f"\n- {fact}"
                 if self._use_supabase:
                     await asyncio.get_running_loop().run_in_executor(
-                        None, self._sb_write, filename, new_content
+                        None, self._sb_write, filename, new_content, self._sb_persona()
                     )
                 else:
                     self._atomic_write(SCHEMA_DIR / filename, new_content)
@@ -793,7 +797,7 @@ class SchemaStore:
             if new_content != content:
                 if self._use_supabase:
                     await asyncio.get_running_loop().run_in_executor(
-                        None, self._sb_write, filename, new_content
+                        None, self._sb_write, filename, new_content, self._sb_persona()
                     )
                 else:
                     self._atomic_write(SCHEMA_DIR / filename, new_content)
@@ -951,7 +955,7 @@ class SchemaStore:
                 new_content = dst + "\n" + "\n".join(facts)
                 if self._use_supabase:
                     await asyncio.get_running_loop().run_in_executor(
-                        None, self._sb_write, target_filename, new_content
+                        None, self._sb_write, target_filename, new_content, self._sb_persona()
                     )
                     # Delete placeholder from Supabase
                     try:
