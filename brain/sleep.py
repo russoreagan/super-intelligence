@@ -1173,6 +1173,7 @@ class SleepConsolidation:
             ("switch_routing_credit_applied", "switches", "switch"),
             ("recall_routing_credit_applied", "recall", "strategy"),
             ("drafter_competition_applied", "drafters", "drafter"),
+            ("approach_stance_credit", "approaches", "stance"),
         ):
             by_key: dict[str, list[dict]] = defaultdict(list)
             for r in recs:

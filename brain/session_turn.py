@@ -463,7 +463,9 @@ class _TurnMixin:
                 reward_source="mastery",
                 reason="job_failure",
             )
-            self.bus.hormonal.add("5HT", -float(settings.get("correctness_5ht_drain")) * w * er * la)
+            self.bus.hormonal.add(
+                "5HT", -float(settings.get("correctness_5ht_drain")) * w * er * la
+            )
 
     async def _verify_world_prediction(self, pred: dict, actual_input: str) -> None:
         """Stage 5 Tier B: did our idle prediction of the user's next message hold? Embed-compare
@@ -896,16 +898,116 @@ class _TurnMixin:
         _bypass, _ = should_bypass_gating(affect, features)
         novelty = bool(_bypass) or float(features.get("surprise_score", 0.0) or 0.0) >= 0.6
         memory: dict = {}
-        if features.get("requires_memory") or features.get("epistemic_action") or novelty:
+
+        # ── Embed-first ──────────────────────────────────────────────────────
+        # One embed of the input serves three consumers: the approach stage's
+        # stance draw (which must see the CURRENT turn's vector — the frontal
+        # cache is only written later, inside skill selection), hippocampus
+        # recall (via query_vec), and later skill selection (via
+        # memory["_query_vec"]). Net embeds per turn go DOWN.
+        _query_vec: list | None = None
+        try:
+            _query_vec = await self.router.embed(user_input)
+        except Exception:
+            _query_vec = None
+
+        # ── Approach outcome verification (a turn late, grounded) ────────────
+        # Grade the PRIOR turn's committed approach against THIS turn's read:
+        # tool outcome, post-suppression tool-request, re-ask, confusion, tone.
+        # Patches the prior trace (external-grade pattern) and the pair ledger's
+        # `confirmed` column. Writes no chemistry, ever.
+        _pending_ap = getattr(self, "_pending_approach", None)
+        if _pending_ap is not None:
+            self._pending_approach = None
+            try:
+                from brain.approach_outcome import verify as _verify_approach
+                from brain.stance_pairs import record_verdict as _pair_verdict
+
+                _averdict = _verify_approach(_pending_ap, features, _query_vec)
+                if _averdict:
+                    for _t in getattr(self, "_session_traces_full", []) or []:
+                        if getattr(_t, "turn_id", "") == _pending_ap.turn_id:
+                            _t.approach_outcome = _averdict
+                            break
+                    if _averdict.get("confirmed"):
+                        _pair_verdict(
+                            getattr(self, "_stance_pairs", {}),
+                            _pending_ap.info_id,
+                            _pending_ap.method_id,
+                            column="confirmed",
+                        )
+                    from brain.observability.decisions import decisions as _decisions
+
+                    _decisions.log(
+                        "approach_outcome_verified",
+                        turn_id=_pending_ap.turn_id,
+                        cluster="frontal",
+                        info=round(_averdict["info"], 2),
+                        method=round(_averdict["method"], 2),
+                        confirmed=_averdict["confirmed"],
+                        signals=_averdict["signals"],
+                    )
+            except Exception as _ve:
+                logger.debug("[Approach] outcome verification skipped: %s", _ve)
+
+        _needs_recall = bool(
+            features.get("requires_memory") or features.get("epistemic_action") or novelty
+        )
+        if _needs_recall:
             await self._emit("hippocampus", 0.75, "recalling memory", turn_id)
-            memory = await self.hippocampus.recall(
-                query=user_input,
-                entities=features.get("entities", []),
-                turn_id=turn_id,
-                embedding_fn=self.router.embed,
-                novelty=novelty,
-                features=features,
+            recall_task = asyncio.create_task(
+                self.hippocampus.recall(
+                    query=user_input,
+                    entities=features.get("entities", []),
+                    turn_id=turn_id,
+                    embedding_fn=self.router.embed,
+                    novelty=novelty,
+                    features=features,
+                    query_vec=_query_vec,
+                )
             )
+        else:
+
+            async def _core_only() -> dict:
+                return {
+                    "core": self.hippocampus._active_core_context(),
+                    "schema": "",
+                    "episodes": "",
+                }
+
+            recall_task = asyncio.create_task(_core_only())
+
+        # ── Approach stage: LAUNCHED CONCURRENT WITH RECALL ─────────────────
+        # Generators fire now (they propose priors and don't need the evidence);
+        # only the critic, inside compete_approach, awaits recall_task —
+        # hypotheses form in parallel with retrieval, adjudication waits for
+        # evidence. Hard skips: trivial/switch-only turns, answer-only turns
+        # (nothing to decide — requires_action was already forced off), tiny
+        # inputs, and a turn already at its LLM-call budget.
+        approach_task: asyncio.Task | None = None
+        if (
+            self.frontal is not None
+            and settings.get("approach_competition", 1)
+            and not features.get("switch_only")
+            and not features.get("answer_only")
+            and features.get("intent") not in ("greeting",)
+            and features.get("msg_length") != "tiny"
+            and self.brainstem.check_budget()
+        ):
+            if _query_vec:
+                self.frontal._current_query_vec = _query_vec
+            approach_task = asyncio.create_task(
+                self.frontal.compete_approach(
+                    features,
+                    affect,
+                    recall_task,
+                    self.parietal.recent_turns_text(),
+                    turn_id,
+                )
+            )
+
+        if _needs_recall:
+            memory = await recall_task
             await self._emit_end("hippocampus", turn_id)
             # Record which recall pathway produced hits so the Hebbian sleep pass can
             # credit the productive schema-vs-episode split (recall fan-out surface).
@@ -939,7 +1041,9 @@ class _TurnMixin:
                 except Exception:
                     pass
         else:
-            memory = {"core": self.hippocampus._active_core_context(), "schema": "", "episodes": ""}
+            memory = await recall_task
+        if _query_vec:
+            memory["_query_vec"] = _query_vec
 
         if vision_features:
             memory["vision"] = (
@@ -955,8 +1059,11 @@ class _TurnMixin:
         # results); when it's empty (e.g. just after a restart) fall back to the durable
         # agent_jobs table so awareness of finished work survives the restart.
         _job_rows: list[dict] = [
-            {"goal": r.get("goal", ""), "summary": r.get("summary", ""),
-             "state": r.get("state") or ("completed" if r.get("success") else "failed")}
+            {
+                "goal": r.get("goal", ""),
+                "summary": r.get("summary", ""),
+                "state": r.get("state") or ("completed" if r.get("success") else "failed"),
+            }
             for r in getattr(self, "_recent_task_results", []) or []
         ]
         if not _job_rows:
@@ -973,6 +1080,89 @@ class _TurnMixin:
                 "them instead of re-running work.)"
             )
             memory["recent_task_results"] = "\n".join(lines)
+
+        # ── Approach commit: strategy decided BEFORE the motor gate ──────────
+        # The stage ran concurrently with recall; its verdict must land before
+        # the requires_action branch below reads the flag. Reuses the answer-only
+        # mechanism (copy features, mutate the flag, no new branch). Clamps:
+        # advisory candidates (n==1, unscored) never get authority; a parked
+        # cloud write awaiting user confirmation is a USER decision, untouched;
+        # low-confidence winners shape framing but leave temporal's verdict alone.
+        approach: dict | None = None
+        if approach_task is not None:
+            try:
+                approach = await approach_task
+            except Exception as _ae:
+                logger.warning("[Approach] stage failed — falling through: %s", _ae)
+                approach = None
+        if approach:
+            from brain.clusters.approach_schema import wants_action
+
+            features = dict(features) if isinstance(features, dict) else {}
+            features["_approach"] = approach
+            trace.approach_scores = list(approach.get("scores", []))
+            trace.selected_approach_id = str(approach.get("cell", ""))
+            trace.approach_stance = str(approach.get("stance", ""))
+            trace.approach_information_need = str(approach.get("information_need", ""))
+            trace.approach_permutation = list(approach.get("permutation", []))
+            trace.approach_wall_ms = int(approach.get("wall_ms", 0))
+            trace.approach_chem_effort = float(approach.get("chem_effort", 0.0))
+            if approach.get("advisory"):
+                trace.approach_override = "advisory"
+            elif settings.get("approach_authority", 1) and float(
+                approach.get("confidence", 0.0)
+            ) >= float(settings.get("approach_authority_confidence_floor", 0.55)):
+                _cloud_exec = getattr(self.motor, "_cloud", None) if self.motor else None
+                if not (_cloud_exec and _cloud_exec.has_pending):
+                    want = wants_action(approach)
+                    prior = bool(features.get("requires_action"))
+                    if want != prior:
+                        from brain.observability.decisions import decisions
+
+                        features["requires_action"] = want
+                        trace.approach_override = "added_action" if want else "suppressed_action"
+                        decisions.log(
+                            "approach_override_requires_action",
+                            turn_id=turn_id,
+                            cluster="frontal",
+                            from_value=prior,
+                            to_value=want,
+                            information_need=approach.get("information_need", ""),
+                            stance=str(approach.get("stance", ""))[:120],
+                            confidence=round(float(approach.get("confidence", 0.0)), 2),
+                        )
+                        logger.info(
+                            "[Approach] requires_action %s → %s (%s)",
+                            prior,
+                            want,
+                            approach.get("information_need"),
+                        )
+            # Stash for next-turn grounded verification + record every candidate
+            # pair (plays for all, wins for the selected — counts, never a rate).
+            with contextlib.suppress(Exception):
+                from brain.approach_outcome import PendingApproach
+                from brain.stance_pairs import record_candidate
+
+                if not hasattr(self, "_stance_pairs"):
+                    self._stance_pairs = {}
+                for _c in approach.get("scores", []) or []:
+                    record_candidate(
+                        self._stance_pairs,
+                        str(_c.get("info_id", "")),
+                        str(_c.get("method_id", "")),
+                        won=bool(_c.get("selected")),
+                    )
+                self._pending_approach = PendingApproach(
+                    turn_id=turn_id,
+                    information_need=str(approach.get("information_need", "")),
+                    info_id=str(approach.get("info_id", "")),
+                    method_id=str(approach.get("method_id", "")),
+                    override=trace.approach_override,
+                    query_vec=list(_query_vec or []),
+                    topic=str(features.get("topic_summary", "") or ""),
+                )
+        else:
+            trace.approach_bypassed = True
 
         # ── Motor Cortex: tool execution ──────────────────────────────────────
         if self.motor:
@@ -1365,7 +1555,7 @@ class _TurnMixin:
         # avoidance evidence off parietal's freshly-updated entity map, and learn from
         # any re-engagement. No-op when evidence_gates is off; never breaks the turn.
         if settings.get("evidence_gates", 0) and self.meta is not None:
-            try:
+            with contextlib.suppress(Exception):
                 self.meta._avoidance.observe_turn(
                     current_entities=set(features.get("entities", []) or []),
                     stale_entities=self.parietal.entity_last_seen(),
@@ -1375,15 +1565,13 @@ class _TurnMixin:
                     agent_text=final,  # so a flagged topic the reply surfaces can be confirmed
                     store=self.bus.evidence,
                 )
-            except Exception:
-                pass
         # Judge-host attachments (brain/judge_attachment.py): grade the PREVIOUS turn's
         # judge claims against what actually happened this turn — the cross-turn signal
         # that replaces the within-turn drafting competition a judge does not have — and
         # establish any shadow candidate whose evidence gate has committed. Runs here,
         # after parietal's update, so the observed affect is this turn's. No-op when the
         # feature is off or BRAIN_WIRING_FROZEN; never breaks the turn.
-        try:
+        with contextlib.suppress(Exception):
             self.frontal._judge_attach.observe_turn(
                 getattr(self.bus, "evidence", None),
                 self.bus,
@@ -1393,8 +1581,6 @@ class _TurnMixin:
                 turn_count=self.parietal.turn_count,
                 wiring=self.frontal._wiring,
             )
-        except Exception:
-            pass
         # Update per-modality user style tracking (style synchrony feature)
         if settings.get("enable_style_synchrony") and isinstance(features, dict):
             _style_modality = features.get("input_modality", "text")
@@ -1926,15 +2112,11 @@ class _TurnMixin:
         label crosses the boundary, so the chemical model stays un-reverse-engineerable.
         Falls back to neutral if the hypothalamus is unavailable."""
         emotion = "neutral"
-        try:
+        with contextlib.suppress(Exception):
             emotion = self.hypothalamus.refresh_emotion()[0] or "neutral"
-        except Exception:
-            pass
         return {"emotion": emotion}
 
-    async def _deliver_proactive(
-        self, text: str, mood: dict, *, partner_target: str = ""
-    ) -> None:
+    async def _deliver_proactive(self, text: str, mood: dict, *, partner_target: str = "") -> None:
         """Deliver an unprompted message (a finished job's result, a clarification, a
         failure) on the correct two channels — the single place the proactive lane
         gate lives, so callers can't drift back to a weaker check.
@@ -2150,14 +2332,18 @@ class _TurnMixin:
             if self.dmn is not None:
                 with contextlib.suppress(Exception):
                     self.dmn.note_job_result(
-                        task.goal, reason, False,
-                        depth=getattr(task, "reflex_depth", 0), already_reported=True,
+                        task.goal,
+                        reason,
+                        False,
+                        depth=getattr(task, "reflex_depth", 0),
+                        already_reported=True,
                     )
             # Surface stop/approval to the user (deferred is low-urgency: buffer only).
             if _state != "deferred" and should_report:
                 with contextlib.suppress(Exception):
                     await self._deliver_proactive(
-                        reason, self._genuine_mood(),
+                        reason,
+                        self._genuine_mood(),
                         partner_target=self._partner_proactive_target(),
                     )
             logger.info("[TaskWorker] Task [%s] → %s: %s", task.id, _state, reason[:80])
@@ -2360,6 +2546,14 @@ class _TurnMixin:
         output = tool_result.get("output", "")
         tool_name = tool_result.get("tool", "tool")
         success = tool_result.get("success")
+
+        # Stamp the tool outcome onto the pending approach so next turn's verifier
+        # can grade the `external` call with ground truth (tri-state `success` plus
+        # output length — empty-but-successful is a weak negative, not a win).
+        _pap = getattr(self, "_pending_approach", None)
+        if _pap is not None and success is not None:
+            _pap.tool_success = bool(success)
+            _pap.tool_output_len = len(str(output or ""))
 
         # Same intrinsic-correctness neuromod the deferred path applies on completion
         # (kept in sync with _run_motor_reactive): completing a task is a correctness

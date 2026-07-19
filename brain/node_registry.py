@@ -160,6 +160,9 @@ NON_OBJECT_NODES: dict[str, str] = {
     # backing object (hippocampus has only encoder/coordinator cells). Intentional topology sink.
     "hippocampus.recall_aggregator": "subsystem",
     "frontal.commitment_extractor": "subsystem",  # self-monitor code helper, not a cell/switch
+    "frontal.approach_stage": "subsystem",  # stance-credit ANCHOR for the pre-tool approach
+    # competition — fragment.<sid> edges land here (single logical host so credit never
+    # smears across the interchangeable approach cells). Bookkeeping node, never fires.
     "motor_cortex.tool_planner": "subsystem",  # motor planner subsystem
     # Parietal session-state holders — cluster-internal state, exposed as coarse handoff nodes.
     "parietal.recent_turns_ringbuffer": "subsystem",

@@ -106,9 +106,31 @@ _JOB_TIMEOUT_S: float = float(
 # nouns like "output"/"result" still count as content so we don't over-reject.
 _CRITERIA_STOPWORDS = frozenset(
     {
-        "the", "and", "for", "that", "with", "this", "are", "was", "were",
-        "from", "have", "has", "not", "its", "any", "all", "will", "should",
-        "must", "can", "each", "than", "then", "when", "into",
+        "the",
+        "and",
+        "for",
+        "that",
+        "with",
+        "this",
+        "are",
+        "was",
+        "were",
+        "from",
+        "have",
+        "has",
+        "not",
+        "its",
+        "any",
+        "all",
+        "will",
+        "should",
+        "must",
+        "can",
+        "each",
+        "than",
+        "then",
+        "when",
+        "into",
     }
 )
 
@@ -134,42 +156,45 @@ _WORLD_TOOLS = frozenset(
 # Single source of truth for every tool name the motor cortex can actually
 # dispatch (local _dispatch, cloud_action, lobe-bridge, ask_user, none). Used to
 # neutralize hallucinated/typo'd expected_tool values from the strategic planner.
-_DISPATCHABLE_TOOLS = frozenset(
-    {
-        "read_file",
-        "write_file",
-        "append_file",
-        "list_files",
-        "run_command",
-        "search_files",
-        "fetch_url",
-        "query_langfuse",
-        "set_mood",
-        "cloud_action",
-        "recall_memory",
-        "recall_jobs",
-        "analyze_image",
-        "ask_user",
-        "none",
-        # Advise-only day-trading tools (reachable only when the trading layer is
-        # wired in via set_trading_tools(); names here just keep them from being
-        # neutralized as hallucinations). NONE of these place an order.
-        "get_quote",
-        "get_history",
-        "get_indicators",
-        "get_option_chain",
-        "scan_watchlist",
-        "log_decision",
-        "resolve_decision",
-        "review_journal",
-        "check_contradictions",
-        "stress_test_thesis",
-        "find_mispricing",
-        "sync_account",
-        "start_watchlist_stream",
-        "stop_watchlist_stream",
-    }
-) | _WORLD_TOOLS
+_DISPATCHABLE_TOOLS = (
+    frozenset(
+        {
+            "read_file",
+            "write_file",
+            "append_file",
+            "list_files",
+            "run_command",
+            "search_files",
+            "fetch_url",
+            "query_langfuse",
+            "set_mood",
+            "cloud_action",
+            "recall_memory",
+            "recall_jobs",
+            "analyze_image",
+            "ask_user",
+            "none",
+            # Advise-only day-trading tools (reachable only when the trading layer is
+            # wired in via set_trading_tools(); names here just keep them from being
+            # neutralized as hallucinations). NONE of these place an order.
+            "get_quote",
+            "get_history",
+            "get_indicators",
+            "get_option_chain",
+            "scan_watchlist",
+            "log_decision",
+            "resolve_decision",
+            "review_journal",
+            "check_contradictions",
+            "stress_test_thesis",
+            "find_mispricing",
+            "sync_account",
+            "start_watchlist_stream",
+            "stop_watchlist_stream",
+        }
+    )
+    | _WORLD_TOOLS
+)
 
 # JSON schema for the strategic planner's create_plan tool (native tool_use).
 _PLAN_SCHEMA: dict = {
@@ -569,8 +594,11 @@ class MotorCortexCluster:
         if tool == "recall_jobs":
             output = self._recall_jobs(args)
             last_result = {
-                "tool": tool, "args": args, "reason": reason,
-                "output": output, "success": not output.startswith("[error]"),
+                "tool": tool,
+                "args": args,
+                "reason": reason,
+                "output": output,
+                "success": not output.startswith("[error]"),
             }
             await self._bus.publish_dict("motor.result", last_result, source=CLUSTER)
             return output, last_result
@@ -927,8 +955,14 @@ class MotorCortexCluster:
 
         backoff = float(_brain_settings.get("job_defer_backoff_base_s") or 30.0)
         outcome = JobOutcome.deferred(
-            job_id, goal, reason=reason, backoff_s=backoff,
-            productive_steps=0, steps=steps, results=results, plan_steps=plan_steps,
+            job_id,
+            goal,
+            reason=reason,
+            backoff_s=backoff,
+            productive_steps=0,
+            steps=steps,
+            results=results,
+            plan_steps=plan_steps,
         )
         logger.info("[InternalJob] mid-flight DEFER (%s) job %s", reason.value, job_id)
         # Surface it WITHOUT clobbering the resumable checkpoint: if a done=False
@@ -1608,9 +1642,7 @@ class MotorCortexCluster:
                 # VERIFIED (the flow is untouched) but carry no hypothesis value —
                 # no reward, no dip. Stops the planner farming DA off its own
                 # rubber-stampable exam questions.
-                _eligible, _ctokens = self._criteria_reward_eligible(
-                    story_criteria, _criteria_seen
-                )
+                _eligible, _ctokens = self._criteria_reward_eligible(story_criteria, _criteria_seen)
                 _criteria_seen.append(_ctokens)
                 if story_criteria_verified:
                     predictions_confirmed += 1
@@ -1761,29 +1793,47 @@ class MotorCortexCluster:
             "predictions_confirmed": predictions_confirmed,
             "intrinsic_da_spent": round(_pred_reward_total, 4),
         }
-        _common = dict(
-            steps=steps_taken, results=results_log, plan_steps=stories_planned,
-            stories_completed=len(steps_taken), stories_total=len(stories_planned), extra=_extra,
-        )
+        _common = {
+            "steps": steps_taken,
+            "results": results_log,
+            "plan_steps": stories_planned,
+            "stories_completed": len(steps_taken),
+            "stories_total": len(stories_planned),
+            "extra": _extra,
+        }
         if clarification_question or awaiting_approval:
             outcome = JobOutcome.awaiting_approval(
-                job_id, goal,
+                job_id,
+                goal,
                 reason_human=clarification_question or "Waiting on your approval to proceed.",
-                clarification=clarification_question, productive_steps=productive_steps, **_common,
+                clarification=clarification_question,
+                productive_steps=productive_steps,
+                **_common,
             )
         elif productive_steps > 0:
-            _prov = (results_log[-1][:200] if results_log and results_log[-1]
-                     else f"Completed {productive_steps} step(s).")
+            _prov = (
+                results_log[-1][:200]
+                if results_log and results_log[-1]
+                else f"Completed {productive_steps} step(s)."
+            )
             outcome = JobOutcome.completed(
-                job_id, goal, productive_steps=productive_steps, summary=_prov, **_common,
+                job_id,
+                goal,
+                productive_steps=productive_steps,
+                summary=_prov,
+                **_common,
             )
         else:
             _why = "The job ran but produced no usable result."
             if stopped_early:
                 _why += f" ({stopped_early})"
             outcome = JobOutcome.failed(
-                job_id, goal, reason_code="no_productive_steps", reason_human=_why,
-                productive_steps=productive_steps, **_common,
+                job_id,
+                goal,
+                reason_code="no_productive_steps",
+                reason_human=_why,
+                productive_steps=productive_steps,
+                **_common,
             )
         success = outcome.success
         if stopped_early and not success:
@@ -1870,9 +1920,7 @@ class MotorCortexCluster:
         }
 
     @staticmethod
-    def _criteria_reward_eligible(
-        criteria: list, seen: list[frozenset]
-    ) -> tuple[bool, frozenset]:
+    def _criteria_reward_eligible(criteria: list, seen: list[frozenset]) -> tuple[bool, frozenset]:
         """Whether a story's acceptance criteria are substantive and novel enough to
         EARN DA when verified. The planner writes its own criteria and a same-family
         cell grades them (self-grading, per the premise audit), so trivially generic
@@ -2201,6 +2249,43 @@ class MotorCortexCluster:
             f"Entities: {features.get('entities', [])}",
             f"CWD: {self._dispatcher._allowed_paths[0] if self._dispatcher._allowed_paths else 'unknown'}",
         ]
+        # ── Committed approach: METHOD guidance from the pre-tool stage ──────
+        # This is the payoff of winning the approach competition — the planner
+        # receives the winning stance and method to plan BETTER with. It is
+        # intent, never a plan: the stage's output is structurally unable to
+        # carry tool names or step lists (approach_schema), no motor code
+        # branches on it, and this block sits ABOVE the step-result history so
+        # on every re-plan iteration the EVIDENCE is the most recent context.
+        # work_goal is never overwritten — a restated goal is a plan in disguise.
+        _ap = (features.get("_approach") or {}) if isinstance(features, dict) else {}
+        if _ap.get("stance"):
+            _lines = [
+                "Strategic context (from the approach stage). This is INTENT, NOT A PLAN.",
+                "It names no tools and no arguments by design — every tool and every "
+                "argument is yours to choose.",
+                f"  Stance: {_ap['stance']}",
+            ]
+            if _ap.get("framing"):
+                _lines.append(f"  Framing: {_ap['framing']}")
+            if _ap.get("external_kind"):
+                _lines.append(f"  Kind of external information expected: {_ap['external_kind']}")
+            for _q in (_ap.get("decomposition") or [])[:4]:
+                _lines.append(f"  Open question: {_q}")
+            _mid = _ap.get("method_id")
+            _sel = getattr(self, "_skill_selector", None)
+            if _mid and _sel is not None:
+                try:
+                    _body = _sel.stance_body(_mid)
+                except Exception:
+                    _body = ""
+                if _body:
+                    _lines.append(
+                        f"  Method ({_mid}) — apply this way of thinking when choosing "
+                        f"steps; never copy tool names or step order out of it:\n"
+                        f"{_body[:6000]}"
+                    )
+            _lines.append("  If step results contradict this stance, the step results win.")
+            parts.append("\n".join(_lines))
         # Current emotional state — lets the planner reason about whether
         # set_mood adds value (e.g. entity already feels curious → redundant;
         # entity feels anxious but topic calls for confident delivery → useful).
@@ -2364,8 +2449,10 @@ class MotorCortexCluster:
                 rows = []
         if topic:
             rows = [
-                r for r in rows
-                if topic in f"{r.get('goal', '')} {r.get('summary') or r.get('spoken_summary') or ''}".lower()
+                r
+                for r in rows
+                if topic
+                in f"{r.get('goal', '')} {r.get('summary') or r.get('spoken_summary') or ''}".lower()
             ]
         rows = rows[:limit]
         if not rows:
@@ -2374,7 +2461,9 @@ class MotorCortexCluster:
         for r in rows:
             st = r.get("state") or ("completed" if r.get("success") else "failed")
             goal = (r.get("goal") or "")[:90]
-            summ = (r.get("summary") or r.get("spoken_summary") or r.get("reason_human") or "")[:220]
+            summ = (r.get("summary") or r.get("spoken_summary") or r.get("reason_human") or "")[
+                :220
+            ]
             lines.append(f"- [{st}] {goal}: {summ}")
         return "Prior job results (reuse instead of re-running):\n" + "\n".join(lines)
 
@@ -2857,13 +2946,9 @@ class MotorCortexCluster:
                 )
                 if _cached:
                     _mins = int(_cached["age_s"] // 60)
-                    logger.info(
-                        "[Motor] Reusing cached fetch for %s (read ~%dm ago)", _url, _mins
-                    )
+                    logger.info("[Motor] Reusing cached fetch for %s (read ~%dm ago)", _url, _mins)
                     return f"[reused — already fetched ~{_mins} min ago]\n{_cached['content']}"
-                return await self._dispatcher._fetch_url(
-                    _url, int(args.get("max_chars", 8000))
-                )
+                return await self._dispatcher._fetch_url(_url, int(args.get("max_chars", 8000)))
             elif tool == "query_langfuse":
                 return await self._dispatcher._query_langfuse(
                     args.get("operation", ""),

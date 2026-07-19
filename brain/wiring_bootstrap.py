@@ -43,6 +43,28 @@ def bootstrap(wiring: Wiring) -> None:
     wiring.add("temporal.understanding_integrator", "hypothalamus", weight=1.0)
     wiring.add("temporal.understanding_integrator", "hippocampus.recall", weight=1.0)
 
+    # ── Frontal: pre-tool APPROACH stage ─────────────────────────────────
+    # Source is the UNDERSTANDING integrator, not the executive — the executive
+    # has not run yet when this stage fires; the approach is conditioned on
+    # parsed features. approach_critic → tool_planner is the strategy→planning
+    # handoff made visible in the graph (the boundary, auditable rather than a
+    # comment). Stance credit does NOT live on these edges — it lives on
+    # fragment.<sid> → frontal.approach_stage (the anchor; edges are created by
+    # learning, not bootstrapped).
+    for a in ("frontal.approach_A", "frontal.approach_B", "frontal.approach_C"):
+        wiring.add("temporal.understanding_integrator", a, weight=1.0, polarity="excitatory")
+        wiring.add(a, "frontal.approach_critic", weight=1.0, polarity="excitatory")
+    wiring.add("frontal.approach_critic", "frontal.executive", weight=1.0, polarity="excitatory")
+    wiring.add(
+        "frontal.approach_critic", "motor_cortex.tool_planner", weight=1.0, polarity="excitatory"
+    )
+    # The critic's verdict is what writes stance credit to the anchor — declared here so
+    # the anchor exists in the graph from boot (learning then hangs fragment.<sid> edges
+    # off it) and the registry reconcile stays exact.
+    wiring.add(
+        "frontal.approach_critic", "frontal.approach_stage", weight=1.0, polarity="excitatory"
+    )
+
     # ── Frontal: executive → drafters → critic ───────────────────────────
     for d in (
         "frontal.drafter_A",

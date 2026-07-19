@@ -123,6 +123,27 @@ class TurnTrace:
     # Empty unless fragment_wiring is on and a fragment was injected/explored.
     drafter_fragments: dict = field(default_factory=dict)
 
+    # Pre-tool APPROACH competition: candidate strategies proposed before tool
+    # selection, scored by the comparative approach critic. Each entry NAMES ITS
+    # STANCES directly (no ID round-trip — this field has no external consumers):
+    #   {"cell": "frontal.approach_A", "info_id": "stance-...", "method_id": "...",
+    #    "stance": "...", "information_need": "external", "overall": 0.82,
+    #    "selected": True, "vetoed": False, "critic_ran": True}
+    # Empty on turns where the stage was bypassed — every consumer no-ops.
+    approach_scores: list = field(default_factory=list)
+    selected_approach_id: str = ""  # winning cell id, "" when no competition ran
+    approach_stance: str = ""  # the committed one-sentence stance
+    approach_information_need: str = ""  # none | internal | external | both
+    approach_override: str = ""  # "" | "added_action" | "suppressed_action" | "advisory"
+    approach_bypassed: bool = False  # hard-skip or predictor skip fired
+    approach_permutation: list = field(default_factory=list)  # critic presentation order
+    approach_wall_ms: int = 0  # the stage's own wall-clock (latency-gate evidence)
+    approach_chem_effort: float = 0.0  # chem_effort at draw time (draw explainability)
+    # Grounded verdict on the approach, patched in a TURN LATE by the outcome
+    # verifier (external-grade patch pattern — a consolidated turn stays unpatched):
+    #   {"info": -1..1, "method": -1..1, "confirmed": bool, "signals": [...]}
+    approach_outcome: dict = field(default_factory=dict)
+
     # Structural (cross-domain) recall instrumentation. Gate firing is logged
     # separately from match success so threshold calibration (too-much/too-little
     # novelty) is observable independently of whether a match was found.
@@ -422,6 +443,22 @@ class ObservabilityLayer:
                                 else {}
                             ),
                             **({"draft_scores": trace.draft_scores} if trace.draft_scores else {}),
+                            # ── approach competition (pre-tool) ───────────
+                            **(
+                                {
+                                    "approach_scores": trace.approach_scores,
+                                    "selected_approach_id": trace.selected_approach_id,
+                                    "approach_stance": trace.approach_stance,
+                                    "approach_information_need": trace.approach_information_need,
+                                    "approach_override": trace.approach_override,
+                                    "approach_wall_ms": trace.approach_wall_ms,
+                                    "approach_chem_effort": trace.approach_chem_effort,
+                                }
+                                if trace.approach_scores
+                                else (
+                                    {"approach_bypassed": True} if trace.approach_bypassed else {}
+                                )
+                            ),
                             # ── token + cluster breakdown ─────────────────
                             **(
                                 {"cluster_tokens": trace.cluster_tokens}

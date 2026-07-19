@@ -39,6 +39,10 @@ EXPECTED_CELLS = {
     "frontal.critic",
     "frontal.empathy_critic",
     "frontal.stoic_reframer",
+    "frontal.approach_A",
+    "frontal.approach_B",
+    "frontal.approach_C",
+    "frontal.approach_critic",
 }
 EXPECTED_SWITCHES = {
     "temporal.template_match",
