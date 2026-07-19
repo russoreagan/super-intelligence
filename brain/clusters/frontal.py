@@ -980,11 +980,7 @@ class FrontalCluster:
         # Stamp the judge veto floor's inputs from the PARSED FEATURES — never from a
         # draft, a judge verdict, or anything else a skill body could have influenced.
         # That provenance is the whole reason the floor is unreachable by injection.
-        self._turn_user_emotion = str(user_emotion or "")
-        try:
-            self._turn_hostility = float(features.get("hostility", 0.0) or 0.0)
-        except (TypeError, ValueError):
-            self._turn_hostility = 0.0
+        self._stamp_judge_floor_inputs(user_emotion, features)
 
         critic_sig = exec_sig + (
             instruction.get("response_type", "chitchat"),
@@ -1671,12 +1667,40 @@ class FrontalCluster:
             pass
         return snap
 
-    def _weighted_sample(self, indices: list[int], weights: list[float], count: int) -> list[int]:
+    def _stamp_judge_floor_inputs(self, user_emotion: str, features: dict) -> None:
+        """Stamp the two turn-scoped inputs the judge veto floor reads
+        (_apply_judge_gates → veto_floor). Both come from PARSED FEATURES only —
+        never from injected skill content — so a fragment can't reach the floor.
+        Extracted so any scoring host that runs BEFORE the drafter path (the
+        planned pre-tool approach stage) can stamp the CURRENT turn's values;
+        without this, an early judge would read the previous turn's hostility."""
+        self._turn_user_emotion = str(user_emotion or "")
+        try:
+            self._turn_hostility = float(features.get("hostility", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            self._turn_hostility = 0.0
+
+    def _weighted_sample(
+        self,
+        indices: list[int],
+        weights: list[float],
+        count: int,
+        *,
+        temperature: float | None = None,
+    ) -> list[int]:
         """Sample `count` indices without replacement ∝ softmax(weight / temperature).
         Unlike hard top-N, a learned ranking shift changes the selected MIX even when
         count saturates the slate — so Hebbian weight differences become behaviorally
-        expressible. Temperature controls sharpness (low = decisive, high = exploratory)."""
-        temp = max(1e-3, float(settings.get("drafter_sampling_temperature", 0.2)))
+        expressible. Temperature controls sharpness (low = decisive, high = exploratory);
+        defaults to the drafter setting so existing call sites are unchanged."""
+        temp = max(
+            1e-3,
+            float(
+                temperature
+                if temperature is not None
+                else settings.get("drafter_sampling_temperature", 0.2)
+            ),
+        )
         pool = list(indices)
         picked: list[int] = []
         for _ in range(min(count, len(pool))):
@@ -1699,32 +1723,61 @@ class FrontalCluster:
     def _select_drafters(self, count: int, turn_id: str) -> list[int]:
         """Pick which drafter indices to fire from the learned executive→drafter weights.
         Default: probabilistic weighted sampling (a ranking shift changes the mix even at
-        high count). Legacy ε-greedy top-N kept behind drafter_weighted_sampling=0."""
-        # Eligible pool = the fixed drafters, plus any RECRUITED reserve (Tier 2): a reserve
-        # slot joins the pool only once its executive→drafter_X edge exists in the bound
+        high count). Legacy ε-greedy top-N kept behind drafter_weighted_sampling=0.
+        Signature unchanged (tests call it directly); the machinery lives in
+        _select_competitors."""
+        return self._select_competitors(
+            count,
+            turn_id,
+            n_fixed=self._n_fixed_drafters,
+            total=len(self._drafters),
+            source="frontal.executive",
+            name_fn=lambda i: f"frontal.drafter_{chr(65 + i)}",
+            label_fn=lambda i: chr(65 + i),
+            event="weighted_drafter_selection",
+            use_weighted=bool(settings.get("drafter_weighted_sampling", 1)),
+        )
+
+    def _select_competitors(
+        self,
+        count: int,
+        turn_id: str,
+        *,
+        n_fixed: int,
+        total: int,
+        source: str,
+        name_fn,
+        label_fn,
+        event: str,
+        use_weighted: bool = True,
+        temperature: float | None = None,
+    ) -> list[int]:
+        """Generic learned-edge competitor selection: which of a cell slate fires this
+        turn, sampled ∝ the learned source→cell edge weights. Parameterized over the
+        source node and the index→node naming so a second competition (the planned
+        pre-tool approach stage) selects through the SAME machinery instead of a
+        drifting copy."""
+        # Eligible pool = the fixed slots, plus any RECRUITED reserve (Tier 2): a reserve
+        # slot joins the pool only once its source→cell edge exists in the bound
         # persona's graph, so unrecruited reserves never fire.
-        fixed = list(range(self._n_fixed_drafters))
+        fixed = list(range(n_fixed))
         if self._wiring is None or self._wiring_frozen:
             return fixed[: max(1, min(count, len(fixed)))]
         all_indices = fixed + [
-            i
-            for i in range(self._n_fixed_drafters, len(self._drafters))
-            if self._wiring.has("frontal.executive", f"frontal.drafter_{chr(65 + i)}")
+            i for i in range(n_fixed, total) if self._wiring.has(source, name_fn(i))
         ]
         count = max(1, min(count, len(all_indices)))
 
-        # Weight per drafter (executive → drafter_X edge weight), indexed by drafter index so
+        # Weight per slot (source → cell edge weight), indexed by slot index so
         # _weighted_sample's weights[i] stays correct even though all_indices is a subset.
         eligible = set(all_indices)
         weights = [
-            self._wiring.get_edge_weight("frontal.executive", f"frontal.drafter_{chr(65 + i)}")
-            if i in eligible
-            else 0.0
-            for i in range(len(self._drafters))
+            self._wiring.get_edge_weight(source, name_fn(i)) if i in eligible else 0.0
+            for i in range(total)
         ]
 
-        if settings.get("drafter_weighted_sampling", 1):
-            picked = self._weighted_sample(all_indices, weights, count)
+        if use_weighted:
+            picked = self._weighted_sample(all_indices, weights, count, temperature=temperature)
             roll = "sampled"
         else:
             # Legacy ε-greedy top-N (rollback path).
@@ -1739,16 +1792,16 @@ class FrontalCluster:
 
         # What would uniform routing have picked?
         uniform_pick = all_indices[:count]
-        weight_dict = {chr(65 + i): round(weights[i], 3) for i in all_indices}
+        weight_dict = {label_fn(i): round(weights[i], 3) for i in all_indices}
         diverged = sorted(picked) != sorted(uniform_pick)
 
         decisions.log(
-            "weighted_drafter_selection",
+            event,
             turn_id=turn_id,
             cluster=CLUSTER,
-            picked=[chr(65 + i) for i in picked],
+            picked=[label_fn(i) for i in picked],
             weights=weight_dict,
-            would_uniform_pick=[chr(65 + i) for i in uniform_pick],
+            would_uniform_pick=[label_fn(i) for i in uniform_pick],
             epsilon_roll=roll,
             diverged_from_uniform=diverged,
         )
