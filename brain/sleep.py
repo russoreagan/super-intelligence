@@ -688,9 +688,12 @@ class SleepConsolidation:
             section_name = section_map.get(section_key)
             if not section_name or not content:
                 continue
-            pattern = rf"(## {re.escape(section_name)}\n)(.*?)(\n## |\Z)"
-            replacement = f"\\1{content.strip()}\n\\3"
-            existing = re.sub(pattern, replacement, existing, flags=re.DOTALL)
+            # _replace_section_body APPENDS the section when the doc lacks it.
+            # Seeded self-models carry no "## Stable preferences", so the old
+            # replace-only regex silently dropped that half of every update.
+            existing = self._schema._replace_section_body(
+                existing, section_name, str(content).strip()
+            )
 
         await self._schema.awrite("self.md", existing)
         logger.debug("[Memory consolidation] Self-model updated")
