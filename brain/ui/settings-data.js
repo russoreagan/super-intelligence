@@ -100,8 +100,8 @@ window.SETTINGS = {
     /* ========================= SENSE OF YOU ======================== */
     {
       id: 'you', name: 'Sense of You', icon: 'self',
-      blurb: "What this persona has learned about you — its working model of the person it talks to.",
-      summary: "The persona's model of you — the facts, preferences, and patterns it has gathered from your conversations, written to user.md during sleep consolidation. Each persona keeps its own. Read-only: the brain owns this document and revises it as the relationship develops.",
+      blurb: "What this persona has learned about the people it talks to — its working model of you and of every person it has met.",
+      summary: "The persona's model of the people it knows — the facts, preferences, and patterns gathered from conversations, written during sleep consolidation. One living document per identified person: companions it talks to here, and each end user it serves over the API. Each persona keeps its own set. Read-only: the brain owns these documents and revises them as the relationships develop.",
       sections: [],
     },
 
@@ -383,6 +383,8 @@ window.SETTINGS = {
             { type: 'toggle', key: 'node_self_authoring', label: 'Self-Authoring', hint: 'the brain drafts its own specialization skills. Each is screened before going live; anything the screener cannot auto-clear waits for your review in the Skills page.', def: 1 },
             { type: 'toggle', key: 'fragment_downshift', label: 'Local Downshift', hint: 'run a drafter whose attachment is well proven on the local model instead of cloud, keeping a cloud floor.', def: 1 },
             { type: 'toggle', key: 'stance_library', label: 'Stance Library', hint: 'drafters carry per-turn thinking stances (information posture + reasoning method) drawn by relevance, learning, and chemistry. Off = no stance injection or exploration.', def: 1 },
+            { type: 'toggle', key: 'approach_competition', label: 'Approach Competition', hint: 'before any tool runs, candidate approaches (stance pairs) compete and one commits — deliberation about HOW to attack the turn, not just how to word it. Off = turns behave exactly as before.', def: 1 },
+            { type: 'toggle', key: 'approach_authority', label: 'Approach Authority', hint: 'the winning approach may add or suppress tool use for the turn (confidence-gated, vetoable). Off = the approach shapes framing only.', def: 1 },
           ],
           advanced: [
             { type: 'group', label: 'Attachment learning' },

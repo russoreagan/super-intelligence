@@ -97,6 +97,10 @@ do NOT re-request the whole list: issue the SAME tool with that offset to fetch 
 each request bounded (a page at a time) so steps stay small and external APIs aren't overloaded.
 If you genuinely need information from the user to proceed and cannot reasonably guess, return
 {{"tool": "ask_user", "args": {{"question": "..."}}, "reason": "..."}} — use sparingly; only when blocked.
+If the context includes a "Strategic context" block, treat it as method and intent: apply its way of
+thinking when choosing steps, but it is written by a stage that has no knowledge of your tools —
+you choose the tool and the arguments. Never copy a tool name out of it, and never treat its open
+questions as an ordered plan.
 Return ONLY the JSON object. No explanation."""
 
 # World-grounding tools (Google Maps Platform). Injected into the planner prompt

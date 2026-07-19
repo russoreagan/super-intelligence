@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 
@@ -130,7 +131,9 @@ class _SetupMixin:
 
                     self.router._local_disabled = _agents.effective_tier(_tier_persona) == "lite"
             except Exception:
-                logger.debug("[setup] tier resolution skipped (agents table unavailable)", exc_info=True)
+                logger.debug(
+                    "[setup] tier resolution skipped (agents table unavailable)", exc_info=True
+                )
         self.brainstem = Brainstem(self.bus, self.router)
         self._proactive_idle_threshold = _brain_settings.get("proactive_idle_threshold") or float(
             os.environ.get("BRAIN_PROACTIVE_IDLE_THRESHOLD", "180")
@@ -249,10 +252,8 @@ class _SetupMixin:
             register_fragment_nodes(self.wiring, reg)
             # Register any RECRUITED reserve drafters (Tier 2) present in the boot persona's
             # graph, so their edges reconcile instead of showing as orphan.
-            try:
+            with contextlib.suppress(Exception):
                 self.frontal.register_recruited_reserves(reg)
-            except Exception:
-                pass
             report = audit_node_registry(self.wiring, reg, log=logger)
             decisions_log.log(
                 "node_registry_audit",
@@ -497,9 +498,7 @@ class _SetupMixin:
         if _executor_kind == "cma":
             from brain.clusters.cma_executor import CMAExecutor
 
-            cloud = CMAExecutor(
-                self.bus, schema_store=self.hippocampus._schema, router=self.router
-            )
+            cloud = CMAExecutor(self.bus, schema_store=self.hippocampus._schema, router=self.router)
             logger.info("Motor cortex: using Managed Agents executor (CMA)")
         elif _executor_kind == "generic":
             from brain.clusters.generic_executor import GenericExecutor
@@ -588,6 +587,10 @@ class _SetupMixin:
 
         self._pending_task = PendingTask()
         self.motor.set_pending_task(self._pending_task)
+        # The committed approach's METHOD body reaches _build_plan_prompt through
+        # stance_body() (winner-tier injection — the payoff of winning the approach
+        # competition). Selector may be absent when the skills index isn't built.
+        self.motor._skill_selector = getattr(self, "skill_selector", None)
         self.frontal.register_subsystem(FrontalTaskSubsystem(self._pending_task))
         self.motor.register_subsystem(MuscleMemorySubsystem())
         self.motor.register_subsystem(ChunkMemorySubsystem())
@@ -791,8 +794,7 @@ class _SetupMixin:
         self.dmn.set_sources_provider(
             lambda: (
                 self.motor.job_store.recent_sources()
-                if getattr(self, "motor", None) is not None
-                and hasattr(self.motor, "job_store")
+                if getattr(self, "motor", None) is not None and hasattr(self.motor, "job_store")
                 else []
             )
         )

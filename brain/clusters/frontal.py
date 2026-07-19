@@ -189,6 +189,54 @@ class FrontalCluster:
         self._empathy_critic.set_router(router)
         get_node_registry().register_object(self._empathy_critic, kind="cell")
 
+        # ── Pre-tool APPROACH stage: interchangeable strategist slots + one
+        # comparative critic. The cells share ONE strategy-neutral prompt — all
+        # differentiation arrives per turn as drawn stance directives, so a
+        # `source→approach_X` edge is deliberately meaningless and stance credit
+        # lives on the frontal.approach_stage anchor instead.
+        from brain.clusters.approach_prompts import (
+            APPROACH_CRITIC_SYSTEM,
+            APPROACH_GENERATOR_SYSTEM,
+        )
+
+        self._approachers = []
+        for i in range(3):
+            a = IntegratorCell(
+                name=f"approach_{chr(65 + i)}",
+                cluster=CLUSTER,
+                model="haiku",
+                system_prompt=APPROACH_GENERATOR_SYSTEM,
+                topics=["temporal.features"],
+                max_calls_per_turn=1,
+                locality="cloud",
+                max_tokens=384,
+            )
+            a.set_router(router)
+            get_node_registry().register_object(a, kind="cell")
+            self._approachers.append(a)
+        self._approach_critic = IntegratorCell(
+            name="approach_critic",
+            cluster=CLUSTER,
+            model="haiku",
+            system_prompt=APPROACH_CRITIC_SYSTEM,
+            topics=["temporal.features"],
+            max_calls_per_turn=1,
+            locality="cloud",
+            max_tokens=384,
+        )
+        self._approach_critic.set_router(router)
+        get_node_registry().register_object(self._approach_critic, kind="cell")
+        # Skip threshold ABOVE the executive's 0.7: a wrong skip here can suppress
+        # a tool call, which is worse than a mediocre draft. Both halves of the
+        # predictor contract are wired (record + record_outcome from the winning
+        # critic score) — omitting the outcome feed reproduces the executive's
+        # bypass-dead-on-arrival bug.
+        self._approach_predictor = CompositePredictor(
+            name="frontal_approach_predictor",
+            cluster=CLUSTER,
+            confidence_skip_threshold=0.80,
+        )
+
         # Switches (~12 total; 3 inhibitory = 25%). All are now wired into
         # real firing sites below — see process() for the gating call sites.
         # Modulator profiles encode each switch's biological identity.
@@ -317,6 +365,18 @@ class FrontalCluster:
         instruction = await self._run_executive(
             nm, chem, exec_sig, features, affect, memory, parietal_context, turn_id
         )
+
+        # Committed approach → the instruction dict, so the TASK SUBSYSTEM receives
+        # it through its existing argument (the deposit-goal path then carries the
+        # stance to motor via the goal, which is fine — the subsystem owns the goal
+        # from here). Only the stance and its open questions ride along; the raw
+        # approach dict never merges into `instruction` (drafters narrate their
+        # instructions — see the derived block in _build_drafter_prompt instead).
+        _ap = features.get("_approach") or {}
+        if _ap.get("stance"):
+            instruction["approach_stance"] = _ap["stance"]
+            if _ap.get("decomposition"):
+                instruction["approach_questions"] = list(_ap["decomposition"])[:4]
 
         # 3a. Skill selection — picks a reasoning/EI framework for the drafters.
         # Sticky across turns via parietal.active_skill_context. Gated by turn type
@@ -1481,8 +1541,11 @@ class FrontalCluster:
         except Exception:
             return None
         baseline = set(exclude)
+        adm_kind = "method" if axis == "method" else None
         entries = [
-            e for e in pool if e["name"] not in baseline and is_admissible(e["name"], host_node)
+            e
+            for e in pool
+            if e["name"] not in baseline and is_admissible(e["name"], host_node, adm_kind)
         ]
         if not entries:
             return None
@@ -1522,6 +1585,250 @@ class FrontalCluster:
             floor=float(settings.get("stance_draw_floor", 0.02)),
             seed=turn_seed(turn_id, seed_idx),
         )
+
+    # ── Pre-tool APPROACH competition ─────────────────────────────────────────
+
+    @staticmethod
+    def _scrubbable_tool_names() -> list[str]:
+        """Live tool names for the approach sanitizer — from motor's single source
+        of truth, never a hardcoded list. Names without an underscore ("none") are
+        excluded: they are ordinary English words and scrubbing them would mangle
+        normal prose (and "none" is itself a valid information_need value)."""
+        try:
+            from brain.clusters.motor_cortex import _DISPATCHABLE_TOOLS
+
+            return sorted(t for t in _DISPATCHABLE_TOOLS if "_" in t)
+        except Exception:
+            return []
+
+    def _approach_context(self, features: dict, affect: dict, parietal_context: str) -> str:
+        """Shared candidate-prompt prefix (identical across generators so calls 2..N
+        hit the prompt cache; per-candidate stance directives are appended LAST by
+        the caller). Compact by design — input tokens ×N dominate this stage's
+        cost, not the 384-token output."""
+        ctx = {
+            "intent": features.get("intent"),
+            "register": features.get("register"),
+            "salience": features.get("salience"),
+            "user_emotion": features.get("user_emotion"),
+            "requires_action_prior": bool(features.get("requires_action")),
+            "topic": features.get("topic_summary"),
+            "emotion": affect.get("emotion"),
+        }
+        parts = [f"Turn features: {json.dumps(ctx)}"]
+        if parietal_context:
+            parts.append(f"Recent conversation:\n{parietal_context[:1200]}")
+        parts.append(f"User message: {str(features.get('raw_text', ''))[:800]}")
+        return "\n\n".join(parts)
+
+    async def compete_approach(
+        self,
+        features: dict,
+        affect: dict,
+        recall_task,
+        parietal_context: str,
+        turn_id: str,
+    ) -> dict | None:
+        """Run the pre-tool approach competition: N composite candidates (an
+        information stance × a reasoning method, drawn off the frontal.approach_stage
+        anchor), generated in parallel, adjudicated by one comparative critic call
+        grounded against what recall returned.
+
+        LATENCY DESIGN: generators fire immediately and only the CRITIC awaits
+        `recall_task` — hypotheses form in parallel with retrieval; adjudication
+        waits for evidence. The caller launches this concurrently with recall and
+        awaits the whole thing before the motor gate.
+
+        Returns the committed approach dict (winner fields + bookkeeping), or None
+        when the stage abstains (flag off, predictor skip, empty pools, generator
+        failure, all candidates vetoed) — None must leave the turn exactly as it
+        is today."""
+        import time as _time
+
+        from brain.budget import chem_budget, chem_effort
+        from brain.clusters.approach_schema import sanitize_approach
+        from brain.fragment_pool import APPROACH_ANCHOR
+        from brain.stance_affinity import turn_seed
+
+        if not settings.get("approach_competition", 1):
+            return None
+        if getattr(self, "_skill_selector", None) is None or not self._approachers:
+            return None
+        t0 = _time.monotonic()
+        user_emotion = str(features.get("user_emotion", "") or "")
+        self._stamp_judge_floor_inputs(user_emotion, features)
+
+        # Predictor bypass — skip only on evidence, never on confidence alone
+        # (record_outcome below is what makes this gate reachable at all), and
+        # never on an emotionally non-routine turn.
+        sig = composite_signature(features, affect)
+        bypass_blocked, _ = should_bypass_gating(affect, features)
+        if settings.get("approach_predictor_bypass", 1) and not bypass_blocked:
+            predicted, conf = self._approach_predictor.predict(sig)
+            avg = self._approach_predictor.avg_recent_outcome(sig)
+            if (
+                predicted
+                and self._approach_predictor.should_skip_integrator(predicted, conf)
+                and avg is not None
+                and avg > 0.7
+            ):
+                decisions.log(
+                    "skip_approach_stage",
+                    turn_id=turn_id,
+                    cluster=CLUSTER,
+                    reason=f"predictor confidence {conf:.2f}",
+                    predicted=list(predicted),
+                )
+                return None
+
+        chem = self._chem_snapshot()
+        n = chem_budget(
+            chem,
+            base=int(settings.get("approach_candidate_base", 3)),
+            gain=2.0,
+            lo=1,
+            hi=len(self._approachers),
+        )
+
+        # Composite candidates: one info stance × one method stance each, drawn off
+        # the ANCHOR (its learned fragment weights are the stage's own marginals),
+        # excluding already-picked stances so candidates genuinely differ.
+        picked_info: list[str] = []
+        picked_method: list[str] = []
+        composites: list[tuple[str, str]] = []
+        for i in range(n):
+            info = self._draw_explore_stance("info", APPROACH_ANCHOR, picked_info, turn_id, 100 + i)
+            method = self._draw_explore_stance(
+                "method", APPROACH_ANCHOR, picked_method, turn_id, 200 + i
+            )
+            if not info or not method:
+                break
+            picked_info.append(info)
+            picked_method.append(method)
+            composites.append((info, method))
+        if not composites:
+            return None
+
+        shared = self._approach_context(features, affect, parietal_context)
+        tool_names = self._scrubbable_tool_names()
+
+        async def _one(i: int, info: str, method: str) -> dict | None:
+            cell = self._approachers[i]
+            cell.reset_turn(turn_id)
+            directive_block = (
+                "Your assigned stances for this deliberation:\n"
+                f"- Information posture: {self._skill_selector.stance_directive(info)}\n"
+                f"- Reasoning method: {self._skill_selector.stance_directive(method)}"
+            )
+            try:
+                raw = await cell.call(
+                    [{"role": "user", "content": f"{shared}\n\n{directive_block}"}]
+                )
+            except Exception:
+                return None
+            cand = sanitize_approach(safe_json_parse(raw), tool_names)
+            if cand is None:
+                return None
+            cand["cell"] = f"frontal.approach_{chr(65 + i)}"
+            cand["info_id"] = info
+            cand["method_id"] = method
+            return cand
+
+        results = await asyncio.gather(
+            *[_one(i, info, method) for i, (info, method) in enumerate(composites)],
+            return_exceptions=True,
+        )
+        candidates = [c for c in results if isinstance(c, dict)]
+        if not candidates:
+            return None
+
+        permutation: list[str] = []
+        if len(candidates) == 1:
+            # No competition to adjudicate — and an UNSCORED candidate never gets
+            # authority (no critic, no judge gates, no veto floor: stress is
+            # exactly when the floor matters). Advisory only.
+            winner = candidates[0]
+            winner["overall"] = 0.5
+            winner["advisory"] = True
+            scores = [dict(winner, selected=True, vetoed=False, critic_ran=False)]
+        else:
+            # Comparative critic, grounded on recall. Presentation order shuffled
+            # deterministically per turn (position-bias control), permutation kept
+            # for the trace.
+            try:
+                memory = await recall_task if recall_task is not None else {}
+            except Exception:
+                memory = {}
+            recall_summary = ""
+            if isinstance(memory, dict):
+                recall_summary = str(memory.get("episodes") or memory.get("known_facts") or "")[
+                    :800
+                ]
+            order = list(range(len(candidates)))
+            seed = turn_seed(turn_id, 7)
+            for k in range(len(order) - 1, 0, -1):
+                j = (seed >> (k * 7)) % (k + 1)
+                order[k], order[j] = order[j], order[k]
+            permutation = [candidates[k]["cell"] for k in order]
+            listing = "\n".join(
+                f"cand_{pos}: {json.dumps({f: candidates[k].get(f) for f in ('stance', 'information_need', 'external_kind', 'framing', 'risk', 'confidence')})}"
+                for pos, k in enumerate(order)
+            )
+            self._approach_critic.reset_turn(turn_id)
+            try:
+                raw = await self._approach_critic.call(
+                    [
+                        {
+                            "role": "user",
+                            "content": (
+                                f"User message: {str(features.get('raw_text', ''))[:800]}\n\n"
+                                f"What memory recall returned (evidence):\n"
+                                f"{recall_summary or '(nothing relevant recalled)'}\n\n"
+                                f"Candidates:\n{listing}\n\nAdjudicate."
+                            ),
+                        }
+                    ]
+                )
+            except Exception:
+                raw = ""
+            verdict = safe_json_parse(raw) or {}
+            raw_scores = verdict.get("scores") or {}
+            winner_key = str(verdict.get("winner", ""))
+            scores = []
+            best, best_overall = None, -1.0
+            for pos, k in enumerate(order):
+                cand = candidates[k]
+                v = raw_scores.get(f"cand_{pos}") or {}
+                gated = self._apply_judge_gates(
+                    "frontal.approach_critic",
+                    {
+                        "overall": float(v.get("overall", 0.5) or 0.5),
+                        "veto": bool(v.get("veto")),
+                        "veto_reason": str(v.get("veto_reason", "")),
+                    },
+                    "overall",
+                )
+                cand["overall"] = float(gated.get("overall", 0.5))
+                vetoed = bool(gated.get("veto"))
+                scores.append(dict(cand, selected=False, vetoed=vetoed, critic_ran=True))
+                if not vetoed:
+                    is_pick = winner_key == f"cand_{pos}"
+                    rank = cand["overall"] + (0.001 if is_pick else 0.0)
+                    if rank > best_overall:
+                        best, best_overall = len(scores) - 1, rank
+            if best is None:
+                return None  # every candidate vetoed — the stage abstains
+            scores[best]["selected"] = True
+            winner = dict(scores[best])
+            winner["advisory"] = False
+            self._approach_predictor.record(sig, (winner.get("information_need", "none"),))
+            self._approach_predictor.record_outcome(sig, float(winner.get("overall", 0.5)))
+
+        winner["scores"] = scores
+        winner["permutation"] = permutation
+        winner["chem_effort"] = round(chem_effort(chem), 3)
+        winner["wall_ms"] = int((_time.monotonic() - t0) * 1000)
+        return winner
 
     def _select_explore_drafters(self, firing_indices: list[int], turn_id: str) -> set[int]:
         """Which firing drafters explore this turn (bounded). Keeps at least one non-exploring
@@ -2189,6 +2496,17 @@ class FrontalCluster:
         manifest = getattr(self, "_skill_manifest", "")
         if manifest:
             ctx["available_skills"] = manifest
+        # Committed approach (pre-tool stage). Deliberately WITHOUT information_need/
+        # external_kind/risk: the tool decision is already committed and applied —
+        # the executive serves the approach via tone/key_points/length, it does not
+        # re-litigate it.
+        _ap = features.get("_approach") or {}
+        if _ap.get("stance"):
+            ctx["committed_approach"] = _ap["stance"]
+            if _ap.get("framing"):
+                ctx["approach_framing"] = _ap["framing"]
+            if _ap.get("success_criteria"):
+                ctx["success_criteria"] = list(_ap["success_criteria"])[:3]
         return json.dumps(ctx, indent=2)
 
     # Linguistic-style guidance keyed by emotion label. These tell drafters
@@ -2820,6 +3138,35 @@ class FrontalCluster:
                 )
                 self._disclosure_cooldown = int(settings.get("self_disclosure_cooldown_turns"))
                 _mark_trace_flag("disclosure_fired", True)
+
+        # Committed approach — DERIVED block, not the raw dict: drafters narrate
+        # their instructions, so risk/information_need/external_kind never reach
+        # them; the stance is framed as already-settled so it shapes the answer
+        # without appearing in it. The winner's INFO body (the posture's full
+        # guide) is injected once here, shared across all drafters — the method
+        # body went to the motor planner, where method most changes the outcome.
+        _ap = features.get("_approach") or {}
+        if _ap.get("stance"):
+            _lines = [
+                f"Approach (already committed — write to it, don't announce it): {_ap['stance']}"
+            ]
+            if _ap.get("success_criteria"):
+                _lines.append("A good answer here:")
+                _lines += [f"  - {c}" for c in list(_ap["success_criteria"])[:3]]
+            parts.append("\n".join(_lines))
+            if settings.get("stance_inject_winner_body", 1):
+                _iid = _ap.get("info_id")
+                _sel = getattr(self, "_skill_selector", None)
+                if _iid and _sel is not None:
+                    try:
+                        _ibody = _sel.stance_body(_iid)
+                    except Exception:
+                        _ibody = ""
+                    if _ibody:
+                        parts.append(
+                            f"The committed information posture ({_iid}) in full — apply "
+                            f"it, never mention it:\n{_ibody[:6000]}"
+                        )
 
         parts.append(f"\nDrafting instruction: {json.dumps(instruction)}")
 

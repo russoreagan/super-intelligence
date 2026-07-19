@@ -282,6 +282,7 @@ class HippocampusCluster:
         embedding_fn=None,
         novelty: bool = False,
         features: dict | None = None,
+        query_vec: list[float] | None = None,
     ) -> dict:
         """
         Recall from episodic + schema stores.
@@ -387,9 +388,12 @@ class HippocampusCluster:
         #   2. Deferred search: deferred_question episodes only, own budget of 2
         episodes = []
         deferred_episodes = []
-        if embedding_fn and query:
+        if (embedding_fn or query_vec) and query:
             try:
-                vec = await embedding_fn(query)
+                # Embed-first: the turn may have already embedded the input (the
+                # approach stage's stance draw needs the vector BEFORE recall) —
+                # reuse it instead of re-embedding; net embeds per turn go down.
+                vec = query_vec if query_vec else await embedding_fn(query)
                 episodes = self._episodic.recall(
                     vec,
                     limit=max(2, episode_k),

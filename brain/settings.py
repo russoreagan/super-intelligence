@@ -897,6 +897,21 @@ DEFAULTS: dict[str, float | int | str] = {
     "stance_draw_w_affinity": 0.4,
     "stance_draw_w_complexity": 0.35,
     "stance_draw_floor": 0.02,  # per-stance probability floor — chemistry biases, never gates
+    # ── Pre-tool APPROACH competition (deliberation before any tool runs) ────────
+    # N composite candidates (info stance × method stance) generated in parallel by
+    # interchangeable cells, adjudicated by one comparative critic grounded on recall.
+    # The winner commits, shapes framing downstream, and (with authority) owns
+    # requires_action. Launched concurrent with recall — see session_turn.
+    "approach_competition": 1,  # master gate for the stage (0 = off, turn byte-identical)
+    "approach_authority": 1,  # winner may flip requires_action (0 = advisory/shadow only)
+    "approach_authority_confidence_floor": 0.55,  # below this, framing only — no override
+    "approach_candidate_base": 3,  # chem_budget base; CORT collapses toward 1 (advisory)
+    "approach_predictor_bypass": 1,  # skip the stage on routine signatures w/ good outcomes
+    "approach_competition_credit": 1,  # sleep-time stance credit off the competition (0 = off)
+    "stance_inject_winner_body": 1,  # winner-tier: info body → shared drafter context
+    "stance_pair_ledger": 1,  # record (info, method) plays/wins per persona
+    "stance_pair_cap": 256,  # bounded_ledger cap, stalest-first eviction
+    "stance_pair_min_plays": 25,  # pair-learning gate before a residual is trusted
     "fragment_inject_threshold": 1.30,  # attachment weight ≥ this → injected into its host
     "fragment_max_per_host": 2,  # max fragments injected into any one host per turn
     "fragment_prune_floor": 1.05,  # fragment edges ≤ this are pruned (rest=1.0)

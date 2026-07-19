@@ -70,6 +70,14 @@ EXPLORE_HOSTS: frozenset[str] = _ALL_DRAFTERS
 # The safety ALLOWLIST: only these non-safety frontal cells may ever be attachment hosts.
 # Every one is a kind="cell" integrator (see brain/clusters/frontal.py) — never a
 # switch/inhibitor/motor node.
+# The approach stage's single stance-credit anchor. Crediting fragment.<sid> edges to
+# whichever interchangeable approach cell carried the winner would smear one stance's
+# signal across meaningless hosts (3× dilution, and the pair-ledger residuals compound
+# the damage) — so ALL approach-stage stance weight lives on this one bookkeeping node.
+# It is NOT a firing cell: registered as a non-object "subsystem", exempted by name from
+# the classify=="cell" check below, and it accepts ONLY the two stance classes.
+APPROACH_ANCHOR = "frontal.approach_stage"
+
 HOST_RECEPTORS: dict[str, frozenset[str]] = {
     # Drafters accept all three classes: they are the competitive substrate where both
     # procedural fragments and stances are explored and contrastively credited. The four
@@ -80,6 +88,7 @@ HOST_RECEPTORS: dict[str, frozenset[str]] = {
     "frontal.stoic_reframer": frozenset({DRAFT_SLOT}),
     "frontal.empathy_critic": frozenset({DRAFT_SLOT}),
     "frontal.executive": frozenset({DRAFT_SLOT}),
+    APPROACH_ANCHOR: frozenset({INFO_SLOT, METHOD_SLOT}),
 }
 
 # Defense-in-depth DENYLIST: nodes that must NEVER be hosts, even if a future edit adds one
@@ -125,25 +134,32 @@ def fragment_receptor(skill_id: str, kind: str | None = None) -> str:
     return DRAFT_SLOT
 
 
-def is_admissible(skill_id: str, host_node: str) -> bool:
+def is_admissible(skill_id: str, host_node: str, kind: str | None = None) -> bool:
     """True iff fragment `skill_id` may attach to `host_node`:
     host is on the allowlist AND accepts the fragment's receptor AND host is not a named
     safety node AND the node registry does not classify host as a non-cell.
 
+    `kind="method"` classifies a humanity leaf as a method stance (METHOD_SLOT) —
+    indistinguishable from the id alone; callers that drew from method_pool() pass it.
+
     The registry check is belt-and-suspenders: a *registered* switch/subsystem is rejected
     even if wrongly added to HOST_RECEPTORS, while an *unregistered* name (e.g. in a unit
     test that never built the frontal cluster) still passes the classify gate — the static
-    allowlist, which contains only the nine cells, remains the real boundary."""
+    allowlist remains the real boundary. The APPROACH_ANCHOR is the one deliberate
+    non-cell host: a bookkeeping node for stance credit, exempted by NAME (not by kind)
+    so no other subsystem can ride the exemption."""
     if host_node in SAFETY_NODES:
         return False
     accepted = HOST_RECEPTORS.get(host_node)
-    if not accepted or fragment_receptor(skill_id) not in accepted:
+    if not accepted or fragment_receptor(skill_id, kind) not in accepted:
         return False
+    if host_node == APPROACH_ANCHOR:
+        return True
     try:
         from brain.node_registry import get_node_registry
 
-        kind = get_node_registry().classify(host_node)
-        if kind is not None and kind != "cell":
+        reg_kind = get_node_registry().classify(host_node)
+        if reg_kind is not None and reg_kind != "cell":
             return False
     except Exception:
         # Registry unavailable (should not happen in a live brain) — the allowlist +

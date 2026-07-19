@@ -235,6 +235,85 @@ class HebbianUpdater:
                 )
         return updated
 
+    def _apply_approach_stance_credit(
+        self, trace, plasticity: float, gainers: list, losers: list
+    ) -> int:
+        """Stance credit for the pre-tool approach competition — attaches to the
+        STANCES, not the cells (the approach cells are interchangeable by design,
+        so a source→cell edge means nothing). Both winning axes earn fragment
+        edges on the single frontal.approach_stage anchor.
+
+        Credit is OUTCOME-FIRST: the verifier's grounded per-axis verdict
+        (trace.approach_outcome, patched a turn late) weighs heavily; absent
+        verification, the critic's margin contributes a small self-graded step.
+        Loser demotion is LIGHT and only on existing edges — a loser was never
+        executed, and the only thing against it is the critic's preference."""
+        if not settings.get("approach_competition_credit", 1):
+            return 0
+        scores = getattr(trace, "approach_scores", None) or []
+        real = [d for d in scores if d.get("critic_ran")]
+        if len(real) < 2:
+            return 0
+        selected = next((d for d in real if d.get("selected")), None)
+        if selected is None:
+            return 0
+        from brain.fragment_pool import APPROACH_ANCHOR, fragment_node_name, is_admissible
+        from brain.wiring import WEIGHT_REST as _REST
+
+        outcome = getattr(trace, "approach_outcome", None) or {}
+        gain = float(settings.get("fragment_gain", 0.2)) * plasticity
+        updated = 0
+        for d in real:
+            won = d is selected
+            for axis, sid_key, adm_kind in (
+                ("info", "info_id", None),
+                ("method", "method_id", "method"),
+            ):
+                sid = str(d.get(sid_key, "") or "")
+                if not sid or not is_admissible(sid, APPROACH_ANCHOR, adm_kind):
+                    continue
+                fnode = fragment_node_name(sid)
+                if won:
+                    verified = outcome.get(axis) if outcome else None
+                    if verified is not None:
+                        # Grounded evidence: full weight, and the edge is created
+                        # regardless of sign — the winner EXECUTED, so a refutation
+                        # is real ground truth worth remembering (unlike a loser's,
+                        # which is only the critic's preference).
+                        delta = float(verified) * gain
+                        verb = "approach_verified"
+                        self._wiring.add(fnode, APPROACH_ANCHOR, weight=_REST)
+                    else:
+                        margin = float(d.get("overall", 0.5)) - 0.5
+                        delta = margin * gain * 0.35  # self-graded: small step
+                        verb = "approach_critic"
+                        if delta > 0:
+                            self._wiring.add(fnode, APPROACH_ANCHOR, weight=_REST)
+                        elif not self._wiring.has(fnode, APPROACH_ANCHOR):
+                            continue  # never CREATE an edge just to self-demote
+                    n = self._wiring.hebbian_update([fnode, APPROACH_ANCHOR], delta)
+                else:
+                    if not self._wiring.has(fnode, APPROACH_ANCHOR):
+                        continue
+                    n = self._wiring.hebbian_update([fnode, APPROACH_ANCHOR], -(gain * 0.1))
+                    verb = "approach_loser"
+                if n:
+                    updated += n
+                    w = self._wiring.get_edge_weight(fnode, APPROACH_ANCHOR)
+                    (gainers if won and w > _REST else losers).append(
+                        (f"{fnode}→{APPROACH_ANCHOR}", round(w - _REST, 4))
+                    )
+                    decisions.log(
+                        "approach_stance_credit",
+                        turn_id=trace.turn_id,
+                        stance=sid,
+                        axis=axis,
+                        verb=verb,
+                        won=won,
+                        weight=round(w, 4),
+                    )
+        return updated
+
     @staticmethod
     def _drafter_node(entry: dict) -> str | None:
         """`draft_<idx>_<turn_id>` → `frontal.drafter_<LETTER>`. Non-drafter producers
@@ -852,6 +931,7 @@ class HebbianUpdater:
             total_updated += self._apply_drafter_competition(
                 trace, outcome, plasticity, gainers, losers
             )
+            total_updated += self._apply_approach_stance_credit(trace, plasticity, gainers, losers)
             total_updated += self._apply_switch_routing_credit(
                 trace, outcome, plasticity, turn_plast, gainers, losers
             )
