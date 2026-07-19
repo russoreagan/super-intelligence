@@ -175,16 +175,21 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
     async def health():
         # Aggregate tenant footprint only — this route is unauthenticated, so no
         # per-org detail here (that's in the reconcile-tick log lines).
+        # `commit` = the code this container is actually running (Railway injects
+        # RAILWAY_GIT_COMMIT_SHA) — the only external way to tell whether a push
+        # has reached prod, since tenant processes inherit the container's code.
+        commit = os.environ.get("RAILWAY_GIT_COMMIT_SHA", "")[:12]
         try:
             stats = provisioner.tenant_stats()
             return {
                 "status": "ok",
+                "commit": commit,
                 "tenants": len(stats),
                 "tenants_booting": sum(1 for s in stats if s["booting"]),
                 "rss_total_mb": round(sum(s["rss_mb"] or 0 for s in stats)),
             }
         except Exception:
-            return {"status": "ok"}
+            return {"status": "ok", "commit": commit}
 
     @app.post("/auth/logout")
     @app.get("/auth/logout")
