@@ -1449,14 +1449,11 @@ class HippocampusCluster:
                 logger.warning("[Relationship] Boot decay failed for %s: %s", schema_file, exc)
 
     def update_self_schema(self, updates: dict) -> None:
-        """Write updates to self.md (called at sleep consolidation)."""
+        """Write updates to self.md (section name -> new body). Sections the doc
+        doesn't have yet are appended, not silently dropped."""
         existing = self._schema.read("self.md")
+        if not existing:
+            return
         for section, content in updates.items():
-            if section in existing:
-                # Simple replace of section content — good enough for v0.1
-                import re
-
-                pattern = rf"(## {re.escape(section)}\n)(.*?)(\n## |\Z)"
-                replacement = f"\\1{content}\n\\3"
-                existing = re.sub(pattern, replacement, existing, flags=re.DOTALL)
+            existing = self._schema._replace_section_body(existing, section, str(content))
         self._schema.write("self.md", existing)
