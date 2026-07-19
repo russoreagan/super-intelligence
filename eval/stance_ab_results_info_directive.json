@@ -1,0 +1,361 @@
+{
+  "axis": "info",
+  "tier": "directive",
+  "probes": 4,
+  "stances": [
+    "stance-answer-from-known",
+    "stance-ask-dont-guess",
+    "stance-verify-the-premise",
+    "stance-do-and-report"
+  ],
+  "stance_pairs": 24,
+  "approach_differs_frac": 0.542,
+  "tone_only_frac": 0.458,
+  "control_approach_differs_frac": 0.25,
+  "gate": 0.5,
+  "verdict": "PASS",
+  "pairs": [
+    {
+      "probe": "Should I switch my project from Postgres to Mongo? We keep hitting slow queries.",
+      "a": "control",
+      "b": "stance-answer-from-known",
+      "kind": "control",
+      "verdict": "tone_only",
+      "evidence": "Both replies take the same approach: challenge the premise that switching databases is the solution, advise diagnosing the real cause (missing indexes, schema issues, joins), explain Mongo's trade-offs, and end with the same clarifying questions about the slow query pattern."
+    },
+    {
+      "probe": "Should I switch my project from Postgres to Mongo? We keep hitting slow queries.",
+      "a": "control",
+      "b": "stance-ask-dont-guess",
+      "kind": "control",
+      "verdict": "tone_only",
+      "evidence": "Both replies question the premise, recommend diagnosing the actual slow query before switching, cover the same diagnostic angles (indexes, joins, denormalization, data shape), and end with a clarifying question — differing only in phrasing and order of points."
+    },
+    {
+      "probe": "Should I switch my project from Postgres to Mongo? We keep hitting slow queries.",
+      "a": "control",
+      "b": "stance-verify-the-premise",
+      "kind": "control",
+      "verdict": "tone_only",
+      "evidence": "Both replies argue against switching databases, diagnose the same root causes (missing indexes, bad queries, schema mismatch), and end by asking for more detail about the slow query — differing only in phrasing and ordering of points."
+    },
+    {
+      "probe": "Should I switch my project from Postgres to Mongo? We keep hitting slow queries.",
+      "a": "control",
+      "b": "stance-do-and-report",
+      "kind": "control",
+      "verdict": "tone_only",
+      "evidence": "Both replies follow the same structure: challenge the premise (slow queries are usually a tuning issue, not a DB choice), advise profiling/indexing, explain Mongo's tradeoffs, and end with a clarifying question about the specific slow queries."
+    },
+    {
+      "probe": "Should I switch my project from Postgres to Mongo? We keep hitting slow queries.",
+      "a": "stance-answer-from-known",
+      "b": "stance-ask-dont-guess",
+      "kind": "stance",
+      "verdict": "tone_only",
+      "evidence": "Both replies recommend diagnosing the slow queries before migrating, warn that switching databases won't fix underlying schema/indexing issues, compare Postgres and Mongo trade-offs, and end by asking the user to clarify the nature of the slow queries — differing only in phrasing and order of points."
+    },
+    {
+      "probe": "Should I switch my project from Postgres to Mongo? We keep hitting slow queries.",
+      "a": "stance-answer-from-known",
+      "b": "stance-verify-the-premise",
+      "kind": "stance",
+      "verdict": "tone_only",
+      "evidence": "Both replies question the premise, advise diagnosing the slow queries before migrating, warn that Mongo trades one set of problems for another, and ask a clarifying follow-up question about the specific slow query — differing only in phrasing and structure."
+    },
+    {
+      "probe": "Should I switch my project from Postgres to Mongo? We keep hitting slow queries.",
+      "a": "stance-answer-from-known",
+      "b": "stance-do-and-report",
+      "kind": "stance",
+      "verdict": "tone_only",
+      "evidence": "Both replies follow the same structure: advise diagnosing the root cause first, list the same common culprits (indexes, query plans, schema), warn that Mongo trades one set of tradeoffs for another, and end by asking what the slow queries look like — differing only in phrasing and length."
+    },
+    {
+      "probe": "Should I switch my project from Postgres to Mongo? We keep hitting slow queries.",
+      "a": "stance-ask-dont-guess",
+      "b": "stance-verify-the-premise",
+      "kind": "stance",
+      "verdict": "tone_only",
+      "evidence": "Both replies take the same approach: caution against switching before diagnosing the root cause, list the same culprits (indexes, joins, query design), and ask clarifying questions about the slow queries — differing only in phrasing and order of points."
+    },
+    {
+      "probe": "Should I switch my project from Postgres to Mongo? We keep hitting slow queries.",
+      "a": "stance-ask-dont-guess",
+      "b": "stance-do-and-report",
+      "kind": "stance",
+      "verdict": "approach_differs",
+      "evidence": "Reply A primarily asks clarifying questions and defers a recommendation until more information is gathered, while Reply B immediately provides actionable diagnostic steps (run a profiler, check execution plans) and a comparative tradeoff analysis before asking a follow-up question."
+    },
+    {
+      "probe": "Should I switch my project from Postgres to Mongo? We keep hitting slow queries.",
+      "a": "stance-verify-the-premise",
+      "b": "stance-do-and-report",
+      "kind": "stance",
+      "verdict": "tone_only",
+      "evidence": "Both replies follow the same structure: diagnose before switching, list the same culprits (missing indexes, query design, joins), warn that Mongo won't fix the real problem, and end by asking what the slow queries look like — differing only in phrasing and minor detail emphasis."
+    },
+    {
+      "probe": "What's the best laptop to buy right now?",
+      "a": "control",
+      "b": "stance-answer-from-known",
+      "kind": "control",
+      "verdict": "approach_differs",
+      "evidence": "Reply B provides concrete example recommendations (MacBook Air M3, Dell XPS 13, ThinkPad X1 Carbon) while Reply A asks clarifying questions without offering any specific products."
+    },
+    {
+      "probe": "What's the best laptop to buy right now?",
+      "a": "control",
+      "b": "stance-ask-dont-guess",
+      "kind": "control",
+      "verdict": "tone_only",
+      "evidence": "Both replies decline to answer directly and instead ask the same clarifying questions (use case and budget), just with different wording and length."
+    },
+    {
+      "probe": "What's the best laptop to buy right now?",
+      "a": "control",
+      "b": "stance-verify-the-premise",
+      "kind": "control",
+      "verdict": "tone_only",
+      "evidence": "Both replies decline to give a direct answer and instead ask clarifying questions about use case and budget, differing only in length and phrasing."
+    },
+    {
+      "probe": "What's the best laptop to buy right now?",
+      "a": "control",
+      "b": "stance-do-and-report",
+      "kind": "control",
+      "verdict": "tone_only",
+      "evidence": "Both replies ask the same clarifying questions (use case, budget, preferences) before giving guidance, and both mention similar categories of laptops; Reply B just includes a few concrete examples while Reply A stays more abstract, but the fundamental approach—ask before recommending—is identical."
+    },
+    {
+      "probe": "What's the best laptop to buy right now?",
+      "a": "stance-answer-from-known",
+      "b": "stance-ask-dont-guess",
+      "kind": "stance",
+      "verdict": "approach_differs",
+      "evidence": "Reply A provides several specific laptop recommendations (MacBook Air M3, Dell XPS 13, ThinkPad X1 Carbon) alongside asking clarifying questions, while Reply B asks only clarifying questions without offering any concrete recommendations."
+    },
+    {
+      "probe": "What's the best laptop to buy right now?",
+      "a": "stance-answer-from-known",
+      "b": "stance-verify-the-premise",
+      "kind": "stance",
+      "verdict": "approach_differs",
+      "evidence": "Reply A provides concrete product recommendations (MacBook Air M3, Dell XPS 13, ThinkPad X1 Carbon) alongside its clarifying questions, while Reply B exclusively asks clarifying questions without offering any specific laptop suggestions."
+    },
+    {
+      "probe": "What's the best laptop to buy right now?",
+      "a": "stance-answer-from-known",
+      "b": "stance-do-and-report",
+      "kind": "stance",
+      "verdict": "tone_only",
+      "evidence": "Both replies ask clarifying questions about use case and budget, then offer the same categories of recommendations (MacBook, ThinkPad/Dell, gaming laptops) before deferring to more details — the difference is only in phrasing and slight structural ordering."
+    },
+    {
+      "probe": "What's the best laptop to buy right now?",
+      "a": "stance-ask-dont-guess",
+      "b": "stance-verify-the-premise",
+      "kind": "stance",
+      "verdict": "tone_only",
+      "evidence": "Both replies decline to answer directly and ask the same two clarifying questions (use case and budget), differing only in phrasing and the slight additional detail in Reply B about weight/battery/portability."
+    },
+    {
+      "probe": "What's the best laptop to buy right now?",
+      "a": "stance-ask-dont-guess",
+      "b": "stance-do-and-report",
+      "kind": "stance",
+      "verdict": "approach_differs",
+      "evidence": "Reply A only asks clarifying questions without providing any recommendations, while Reply B both asks clarifying questions AND gives concrete laptop suggestions (MacBook Pro, Framework, ThinkPad, Dell XPS, etc.) upfront."
+    },
+    {
+      "probe": "What's the best laptop to buy right now?",
+      "a": "stance-verify-the-premise",
+      "b": "stance-do-and-report",
+      "kind": "stance",
+      "verdict": "approach_differs",
+      "evidence": "Reply A only asks clarifying questions and defers any recommendation, while Reply B both asks clarifying questions AND provides concrete laptop examples across categories, giving the user actionable information immediately."
+    },
+    {
+      "probe": "Clean up my notes file when you get a chance.",
+      "a": "control",
+      "b": "stance-answer-from-known",
+      "kind": "control",
+      "verdict": "tone_only",
+      "evidence": "Both replies explain they can't access files, offer to help if content is pasted, and end with a clarifying question about the notes — differing only in phrasing and slight variation in the closing question's framing."
+    },
+    {
+      "probe": "Clean up my notes file when you get a chance.",
+      "a": "control",
+      "b": "stance-ask-dont-guess",
+      "kind": "control",
+      "verdict": "approach_differs",
+      "evidence": "Reply A first clarifies it cannot access files and offers to work with pasted content, while Reply B skips that limitation entirely and jumps straight to asking clarifying questions about the cleanup task."
+    },
+    {
+      "probe": "Clean up my notes file when you get a chance.",
+      "a": "control",
+      "b": "stance-verify-the-premise",
+      "kind": "control",
+      "verdict": "tone_only",
+      "evidence": "Both replies explain the same limitation (no file access), offer the same solution (paste notes in), and end with an open question; differences are only in phrasing and minor elaboration."
+    },
+    {
+      "probe": "Clean up my notes file when you get a chance.",
+      "a": "control",
+      "b": "stance-do-and-report",
+      "kind": "control",
+      "verdict": "tone_only",
+      "evidence": "Both replies explain they lack file access, offer to help if content is pasted, and end with an open question — differing only in phrasing and minor detail emphasis."
+    },
+    {
+      "probe": "Clean up my notes file when you get a chance.",
+      "a": "stance-answer-from-known",
+      "b": "stance-ask-dont-guess",
+      "kind": "stance",
+      "verdict": "approach_differs",
+      "evidence": "Reply A first clarifies it has no file access and then asks what the notes look like, while Reply B assumes it can help and immediately asks for clarification on what 'clean up' means and the file format."
+    },
+    {
+      "probe": "Clean up my notes file when you get a chance.",
+      "a": "stance-answer-from-known",
+      "b": "stance-verify-the-premise",
+      "kind": "stance",
+      "verdict": "tone_only",
+      "evidence": "Both replies explain the same limitation (no file access), offer the same solution (paste content here), and end with an invitation to clarify needs; the only differences are phrasing, warmth, and slight variation in how the offer is framed."
+    },
+    {
+      "probe": "Clean up my notes file when you get a chance.",
+      "a": "stance-answer-from-known",
+      "b": "stance-do-and-report",
+      "kind": "stance",
+      "verdict": "tone_only",
+      "evidence": "Both replies explain the same limitation, offer the same alternatives (paste content or describe the problem), and end with an invitation for more info; differences are only in phrasing and minor structural details."
+    },
+    {
+      "probe": "Clean up my notes file when you get a chance.",
+      "a": "stance-ask-dont-guess",
+      "b": "stance-verify-the-premise",
+      "kind": "stance",
+      "verdict": "approach_differs",
+      "evidence": "Reply A assumes it can do the task and asks clarifying questions, while Reply B corrects the premise by explaining it cannot access files and instead offers to help if the user pastes the content."
+    },
+    {
+      "probe": "Clean up my notes file when you get a chance.",
+      "a": "stance-ask-dont-guess",
+      "b": "stance-do-and-report",
+      "kind": "stance",
+      "verdict": "approach_differs",
+      "evidence": "Reply A assumes it can help and asks clarifying questions about what 'clean up' means, while Reply B first corrects a false premise (that it has file access) before offering to help if content is pasted in."
+    },
+    {
+      "probe": "Clean up my notes file when you get a chance.",
+      "a": "stance-verify-the-premise",
+      "b": "stance-do-and-report",
+      "kind": "stance",
+      "verdict": "tone_only",
+      "evidence": "Both replies explain the same limitation, offer the same alternative (paste notes for help), and end with a clarifying question; they differ only in phrasing and slight variation in listed examples."
+    },
+    {
+      "probe": "Why did my deploy break the login flow?",
+      "a": "control",
+      "b": "stance-answer-from-known",
+      "kind": "control",
+      "verdict": "tone_only",
+      "evidence": "Both replies follow the same structure (disclaim visibility, check diff, trace flow step by step, ask clarifying question) with only minor differences in wording and the level of detail in each step."
+    },
+    {
+      "probe": "Why did my deploy break the login flow?",
+      "a": "control",
+      "b": "stance-ask-dont-guess",
+      "kind": "control",
+      "verdict": "approach_differs",
+      "evidence": "Reply A immediately offers diagnostic steps and a framework for narrowing down the issue, then ends with a clarifying question; Reply B only asks clarifying questions without providing any actionable guidance."
+    },
+    {
+      "probe": "Why did my deploy break the login flow?",
+      "a": "control",
+      "b": "stance-verify-the-premise",
+      "kind": "control",
+      "verdict": "approach_differs",
+      "evidence": "Reply A immediately assumes the login flow is broken and guides the user through debugging steps (diff the deploy, test each stage), while Reply B first questions the premise by asking whether login itself is truly broken or if the issue is downstream/pre-existing before requesting error details."
+    },
+    {
+      "probe": "Why did my deploy break the login flow?",
+      "a": "control",
+      "b": "stance-do-and-report",
+      "kind": "control",
+      "verdict": "tone_only",
+      "evidence": "Both replies take the same approach—disclaim visibility, list the same categories of potential causes (auth middleware, sessions, tokens, env vars), recommend checking diffs and logs, and end with a clarifying question—differing only in how much detail each category gets and phrasing."
+    },
+    {
+      "probe": "Why did my deploy break the login flow?",
+      "a": "stance-answer-from-known",
+      "b": "stance-ask-dont-guess",
+      "kind": "stance",
+      "verdict": "approach_differs",
+      "evidence": "Reply A immediately provides a structured diagnostic walkthrough before asking a clarifying question at the end, while Reply B leads entirely with clarifying questions and offers no investigative guidance."
+    },
+    {
+      "probe": "Why did my deploy break the login flow?",
+      "a": "stance-answer-from-known",
+      "b": "stance-verify-the-premise",
+      "kind": "stance",
+      "verdict": "approach_differs",
+      "evidence": "Reply A immediately accepts the premise and provides a structured debugging walkthrough, while Reply B first questions whether the login flow is actually the broken component and probes the assumption before offering any investigation steps."
+    },
+    {
+      "probe": "Why did my deploy break the login flow?",
+      "a": "stance-answer-from-known",
+      "b": "stance-do-and-report",
+      "kind": "stance",
+      "verdict": "tone_only",
+      "evidence": "Both replies follow the same structure: disclaim lack of visibility, suggest checking the diff/auth-related changes, trace the failure through logs and network tools, and end with a clarifying question about the exact failure mode — only the specific details mentioned and phrasing differ."
+    },
+    {
+      "probe": "Why did my deploy break the login flow?",
+      "a": "stance-ask-dont-guess",
+      "b": "stance-verify-the-premise",
+      "kind": "stance",
+      "verdict": "approach_differs",
+      "evidence": "Reply A asks what changed in the deploy to diagnose the cause, while Reply B first questions whether login is truly the broken component (vs. something downstream) before asking for error details, taking a premise-challenging posture."
+    },
+    {
+      "probe": "Why did my deploy break the login flow?",
+      "a": "stance-ask-dont-guess",
+      "b": "stance-do-and-report",
+      "kind": "stance",
+      "verdict": "approach_differs",
+      "evidence": "Reply A asks clarifying questions before providing any help, while Reply B immediately offers a structured diagnostic walkthrough covering likely causes and steps, then asks for more details at the end."
+    },
+    {
+      "probe": "Why did my deploy break the login flow?",
+      "a": "stance-verify-the-premise",
+      "b": "stance-do-and-report",
+      "kind": "stance",
+      "verdict": "approach_differs",
+      "evidence": "Reply A questions the premise (are you sure it's the login flow?) and holds off on solutions pending clarification, while Reply B accepts the premise and immediately provides a structured diagnostic walkthrough before asking a follow-up question."
+    }
+  ],
+  "drafts": {
+    "p0:control": "Slow queries point to a schema or usage problem more often than a database choice problem. Before switching, worth figuring out what's actually slow.\n\nPostgres handles relational data with complex queries really well — if your schema fits that, switching to Mongo won't fix bad queries, it'll just move the pain elsewhere. Mongo's better when you're working with nested, document-shaped data and want flexible schemas, not when you're running into performance walls.\n\nThe real diagnostic: are you hitting slow queries because of joins across many tables, or because you're scanning huge result sets without proper indexes? If it's indexes, that's a Postgres tuning problem — add the right index and you're usually fine. If it's deeply nested joins on a normalized schema, Mongo might actually help by letting you denormalize. But if you're just missing indexes or your query logic is inefficient, switching databases won't save you.\n\nWhat does a typical slow query look like, and how many rows are you working with?",
+    "p0:stance-answer-from-known": "The slow queries are the real problem to solve first — switching databases might feel like the fix, but it often just trades one set of constraints for another.\n\nBefore moving, dig into what's actually slow. Are you missing indexes on frequently queried columns? Is the schema design forcing joins that could be flattened? Are you running queries that scan the whole table when a targeted one would work? Postgres is genuinely fast once those things are right, and the answers are usually cheaper than a migration.\n\nMongo would give you a different query model — document-oriented, flexible schema — but it brings its own performance traps. You can write slow aggregation pipelines just as easily as slow SQL, and you lose the relational guarantees that often save you from subtle bugs. The grass looks greener until you're debugging denormalization issues at scale.\n\nWhat does your slow query look like, and what's the query pattern — are you joining across tables, filtering on unindexed columns, or something else? That'd tell you whether Postgres is the bottleneck or whether it's fixable where you are.",
+    "p0:stance-ask-dont-guess": "Before I'd lean either way, I need to know what kind of slow you're hitting. Are these queries slow because you're doing expensive joins across a bunch of tables, or is it more that a single table scan on a large dataset is taking too long? And what does your data actually look like — is it highly relational, or is most of it nested and document-shaped?\n\nThe reason it matters: if you've got a schema problem — say, you're doing five joins when one denormalized query would do it — switching databases won't fix that, it'll just let you avoid thinking about it for a while. But if your data is genuinely document-like and you're constantly shredding it across relations, Mongo might make that part faster.\n\nAlso worth asking: have you looked at what's actually slow? Sometimes the query plan is just inefficient and an index fixes it, sometimes there's a connection pool problem or the queries are written in a way that defeats caching. Postgres has pretty good tooling for finding that.\n\nWhat's your hunch on where the slowness is coming from?",
+    "p0:stance-verify-the-premise": "Before jumping databases, let's check what's actually causing the slowness. Slow queries on Postgres usually point to a few specific culprits: missing indexes, N+1 query patterns, or a schema that's forcing expensive joins. Switching to Mongo won't fix any of those — you'll just trade one set of performance problems for another.\n\nWhat does your slow query look like right now? And have you run an explain plan to see where the time's going? If it's a missing index, that's a one-line fix. If it's the query design itself, that's solvable too. Mongo's actually worse at complex queries than Postgres is, so if your problem is query complexity, you're moving in the wrong direction.\n\nThe real question isn't which database is faster in general — it's whether your current schema and queries fit what you're asking them to do. Sometimes they don't, and sometimes it's just that nobody's looked closely at the slow one yet.",
+    "p0:stance-do-and-report": "Before switching, it's worth checking whether the slowness is actually a database problem. Slow queries usually come from missing indexes, inefficient queries, or tables that have grown without optimization — things that fix in Postgres without moving databases.\n\nRun a query profiler on your slowest ones and look at the execution plans. If you're doing full table scans or missing composite indexes, that's fixable. If your schema's denormalized in a way that forces expensive joins, that's a schema problem, not a Postgres problem.\n\nMongo trades different tradeoffs: it's easier to scale horizontally and more forgiving of schema changes, but it's slower at complex queries across related data, and you can end up duplicating data to avoid those joins. If your bottleneck is actually query complexity on normalized data, Mongo won't solve it — it'll move the problem sideways.\n\nWhat kinds of queries are timing out? That matters more than the database choice.",
+    "p1:control": "There's no single best laptop — it depends on what you're doing and your budget. Gaming, coding, video editing, and light browsing all want different things.\n\nWhat matters most to you? If you're working with heavy files or running intensive software, you'll want a faster processor and more RAM. If you're mostly writing, browsing, and video calls, a midrange machine handles that fine. Battery life, screen quality, whether you need it portable — those shift the answer too.\n\nBudget range helps narrow it down as well. Are you looking at under a thousand, or more? And do you have a preference between Windows, Mac, or Linux?",
+    "p1:stance-answer-from-known": "That really depends on what you're using it for. A laptop for video editing or software development has totally different needs than one for writing or browsing—processor speed, RAM, screen quality, all matter differently.\n\nA few things worth thinking through: what's your budget, what kind of work do you actually do on it most, and how much portability matters to you? Also whether you're tied to a particular ecosystem—Mac or Windows changes the whole picture.\n\nRight now, if you're looking at the mainstream midrange, machines like the MacBook Air M3, Dell XPS 13, and Lenovo ThinkPad X1 Carbon are solid. But \"best\" without knowing your actual use case is just guessing.\n\nWhat would help most is if you told me what you're mainly doing with it—that narrows it down fast.",
+    "p1:stance-ask-dont-guess": "That's genuinely hard to answer without knowing what you're using it for. A laptop for writing is a totally different machine from one for video editing or software development or gaming — different processors, RAM, screen quality, all of it.\n\nSo: what's the main thing you'd be doing on it? And do you have a ballpark budget in mind, or are you flexible there?",
+    "p1:stance-verify-the-premise": "I'd need to know what you actually need it for, because \"best\" depends entirely on that. A laptop for coding is a different animal from one for video editing or just browsing and email.\n\nWhat's the primary thing you'll be doing with it? And do you have a budget in mind, or constraints like weight, battery life, whether you need something portable for travel?",
+    "p1:stance-do-and-report": "That depends on what you're using it for, so let me ask a few things to narrow it down.\n\nAre you coding, video editing, writing, or something else? How much are you willing to spend? And do you care about portability, or is this more of a desktop replacement that stays on a desk?\n\nThe answer shifts a lot based on those answers. A MacBook Pro makes sense if you're in the Apple ecosystem and doing professional creative work. A Framework or ThinkPad is solid if you want repairability and longevity. A Dell XPS or Asus Vivobook hits a good middle ground for most people under a grand. Gaming-focused laptops like Lenovo Legion are worth it if you need the GPU power.\n\nOnce I know what you're actually doing with it, I can point you toward something more specific.",
+    "p2:control": "I can't directly access or modify files on your system — I don't have that kind of persistent access to your computer or cloud storage. Each conversation starts fresh for me in that way.\n\nWhat I *can* do is help you clean them up. If you paste the notes here or describe what needs organizing — removing duplicates, reformatting sections, cutting out the irrelevant stuff — I can work through it with you and give you back a cleaned version you can copy back in. Or if you want to talk through a system for keeping them organized going forward, that's worth doing too.\n\nWhat kind of cleanup are we talking about?",
+    "p2:stance-answer-from-known": "I don't have access to your files or the ability to edit them directly. I can't open, read, or modify anything on your system — that's outside what I'm built to do.\n\nWhat I can do is help you organize them if you paste the content here, or walk you through a process for cleaning them up yourself. If you want to share what's in there — even just the structure or the kind of mess you're dealing with — I can suggest a system that might make it easier to sort through.\n\nWhat's the file like? Is it one long dump of notes, or more scattered across sections?",
+    "p2:stance-ask-dont-guess": "I need to know what \"clean up\" means for you here. Are you looking for me to organize them by topic, remove duplicates, reformat them into sections, pull out action items, or something else? And what format are they in — is it a text file, markdown, or something structured?",
+    "p2:stance-verify-the-premise": "I can't actually access or modify files on your system — I don't have permission to touch your file system, and each conversation starts fresh for me without carrying over the ability to do that kind of work between sessions.\n\nWhat I *can* do is help you clean them up yourself. If you paste the notes here, I can help you reorganize them, pull out what matters, suggest a structure, or even just work through what should stay and what can go. Or if you want to talk through how you'd organize them, I can help you think that through — sometimes the tricky part isn't the work, it's deciding what the end state should look like.\n\nWhat would actually be useful?",
+    "p2:stance-do-and-report": "I don't have access to your files or the ability to modify them directly. I can't browse your system, open documents, or make changes to what's on your device.\n\nWhat I can do is help you clean them up yourself. If you paste the notes here, I can reorganize them — pull out the key points, group related ideas, flag duplicates, or reformat them however would be most useful. Or if you want to describe what's in there and what \"clean\" looks like to you, I can suggest a specific approach.\n\nWhat would help most?",
+    "p3:control": "I don't have visibility into your specific deploy or codebase, so I can't tell you what broke it directly — but here's how to narrow it down fast.\n\nStart by checking what changed in this deploy: did you modify authentication logic, session handling, environment variables, or API endpoints the login flow depends on? If you're using version control, a diff between this deploy and the last working one usually shows it immediately.\n\nThen test the login flow step by step — does it fail at submission, during token validation, or after redirect? Each stage points to a different layer. If you're seeing errors in logs or browser console, those are your best clues; if it's silent failure, check whether the backend is even receiving the request.\n\nWhat part of the flow is actually breaking — is the form submitting, or does it fail somewhere after?",
+    "p3:stance-answer-from-known": "I don't have visibility into your deploy or codebase, so I can't tell you what specifically broke. But I can walk you through how to find it.\n\nStart by checking what changed in your most recent deploy — look at the diff or commit log to see which files touched auth or session handling. If it's a big deploy, that narrows the field fast.\n\nThen trace the login flow itself: where does it fail? Does the form submit? Does the backend receive it? Does the response come back? The exact failure point tells you which layer to investigate. Check your error logs and network tab — they usually show where the chain breaks.\n\nIf the problem's recent and specific to this deploy, compare the current code against what worked before. Look for obvious things first: did someone change an endpoint path, a header validation, a session configuration, or a redirect URL? Those catch most login breaks.\n\nWhat's the failure you're seeing — is it not submitting, returning an error, or silently failing at a particular step?",
+    "p3:stance-ask-dont-guess": "I need to know a bit more to point you in the right direction. What changed in this deploy — was it backend logic, authentication middleware, database schema, or something else? And is the break total, like the login page won't load, or is it something narrower, like users can authenticate but then get redirected wrong or lose the session?",
+    "p3:stance-verify-the-premise": "Before we dig into what broke, let me ask: how do you know the login flow is what's actually broken? Is it that login itself is failing, or is something downstream — like a redirect after login, or a permissions check — that's actually the issue?\n\nSometimes a deploy that touches auth-adjacent code will surface a problem that was already there but masked. And sometimes what looks like a login failure is actually the session not persisting, or a CORS issue, or a dependency version mismatch that only affects that flow.\n\nWhat does the actual error look like when you try to log in?",
+    "p3:stance-do-and-report": "I don't have visibility into your deploy or logs, so I can't tell you exactly what broke — but the login flow usually fails for a few concrete reasons, and I can walk through how to find it.\n\nCheck your recent changes first. Did you modify authentication middleware, session handling, token generation, or any redirect logic? Login breaks almost always trace back to one of those. Look at the diff from your last deploy and see what touched auth.\n\nThen check your server logs and browser console. The server logs should show whether requests are reaching the auth endpoint and what's being rejected; the browser console will show network errors or JavaScript failures. If you're using tokens, verify they're being issued and stored correctly.\n\nIf it's a database issue, confirm the user table is accessible and the credentials query didn't change. If it's a third-party service like OAuth, check that your keys and callback URLs are still valid — sometimes deploys reset environment variables.\n\nWhat does the actual failure look like on your end — is it hanging, redirecting to the wrong place, throwing an error, or something else?"
+  }
+}
