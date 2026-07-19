@@ -18,15 +18,17 @@ Two parts.
 
 Three tags recur:
 
-- **Live.** Shipped, running by default.
-- **Gated.** Built and wired, sitting behind a flag.
-- **Dark.** Built but unreachable, or reachable but never fires. Named because a reference that hides these is a brochure.
+- **Live.** Shipped, running by default. Note that Live describes the *code path*, not its output. A Live subsystem that has not yet had the input it needs is still Live, and it carries an Appendix A row saying so — see §3.7, which runs every sleep pass and has never produced a reflex.
+- **Gated.** Built, wired, **and running** — with a flag that can stop it. Gated is not off. The flag is a kill switch, not an enable switch, so a Gated system is executing in production exactly like a Live one; it just has a documented way to be turned off. Read it as "Live, with a stop button."
+- **Deferred.** Built on one side, deliberately not wired on the other, because nothing has asked for it yet. §8.10's video path and song recognition are the two: the analyzer and the matcher both work, and neither has a producer feeding it. Deferred is a scheduling decision, not a defect — but every Deferred item still carries an Appendix A row naming exactly what is missing, because a tag that hides the gap is a brochure.
+
+**A note on the retired "Dark" tag.** Earlier revisions used *Dark* for "built but unreachable, or reachable but never fires." That collapsed two unrelated situations: code that runs but has not yet met its trigger (§3.7, now Live with a caveat) and code deliberately left unwired (now Deferred). Neither was well served by a tag that implied abandonment. The honesty the tag was protecting now lives in the Appendix A rule: **any subsystem that does not fully work has a row in Appendix A, and its slide carries that row.** That is a checkable guarantee; a scary-sounding tag was not.
 
 **What "Gated" means going forward.** Nothing ships off by default. A new capability goes live with its flag on, and the flag is a kill switch rather than an enable switch. The reason is practical: a feature parked behind an off flag gets lost. It stops being read, it stops being tested against real traffic, and six months later nobody remembers whether it works. Turning it on is how it earns its verdict. So a flag set to on is the norm here, not a deviation, and a system marked Gated is almost always gated *on* with a switch that can stop it.
 
 Two kinds of switch sit outside that rule, and neither is a feature waiting to be turned on. **Safety approval gates** stay closed by default, because the whole point of an approval is that it is withheld until a human grants it. **Keyed integrations billed per call** stay off until someone supplies a key, because with no key they are a no-op anyway and turning them on would spend money nobody asked to spend. Both are deliberate positions. Neither is a dark feature.
 
-A word on Part II. Several verdicts are unflattering. That is deliberate. Anyone technical who reads a list of thirty-six theories with no failures assumes the whole thing is marketing and discounts all of it. The failures are what make the rest credible.
+A word on Part II. Several verdicts are unflattering. That is deliberate. Anyone technical who reads a list of sixty-four theories with no failures assumes the whole thing is marketing and discounts all of it. The failures are what make the rest credible.
 
 **Scope.** This is internal. It names source theories directly, which our published surfaces deliberately never do. Do not lift sections into marketing without rewriting them by function rather than by citation.
 
@@ -39,16 +41,16 @@ A word on Part II. Several verdicts are unflattering. That is deliberate. Anyone
 | # | System | Parts | Resting on | In one line |
 |---|---|---|---|---|
 | 1 | [Chemistry and Affect](#1-chemistry-and-affect) | 8 | Neuromodulation · Appraisal theory · Dimensional affect | The simulated bloodstream. Everything else reads it. |
-| 2 | [The Cognitive Core](#2-the-cognitive-core) | 11 | Dual-process · Multiple Drafts · Predictive processing · Higher-Order Thought · Global Workspace · Structural plasticity · Bounded evidence accumulation | How a single turn happens. |
+| 2 | [The Cognitive Core](#2-the-cognitive-core) | 9 | Dual-process · Multiple Drafts · Predictive processing · Higher-Order Thought · Global Workspace · Bounded evidence accumulation | How a single turn happens. |
 | 3 | [Memory](#3-memory) | 10 | Tulving · Complementary Learning Systems · Extended Mind · Structure mapping | What it keeps, and how it finds it again. |
-| 4 | [Learning](#4-learning) | 10 | Hebbian plasticity · Phasic dopamine · Prospect theory · Intrinsic motivation | How experience changes future behavior. |
+| 4 | [Learning](#4-learning) | 12 | Hebbian plasticity · Phasic dopamine · Prospect theory · Intrinsic motivation · Structural plasticity | How experience changes future behavior, at three scales. |
 | 5 | [The Idle Mind](#5-the-idle-mind) | 9 | Default Mode Network · Stream of consciousness · Habituation | What it does when you are not talking to it. |
 | 6 | [Agency and Action](#6-agency-and-action) | 12 | Basal ganglia gating · Principal-agent · Bounded autonomy | How it acts on the world, and what stops it. |
 | 7 | [Identity](#7-identity) | 10 | Trait vs state · Narrative self · Attachment · Accommodation theory | What makes one agent a different agent. |
 | 8 | [Perception and Expression](#8-perception-and-expression) | 12 | Paralinguistics · Affective computing · Dimensional affect | Ears, eyes, and voice. |
 | 9 | [Platform and Safety](#9-platform-and-safety) | 12 | Least privilege · Pseudonymisation · k-anonymity · Defense in depth | Tenancy, privacy, money, and the boundary. |
 
-Roughly ninety distinct systems resting on thirty-six named ideas.
+Ninety-four distinct systems resting on sixty-four named ideas.
 
 ---
 
@@ -82,7 +84,9 @@ Two independent readouts of the same state. This is the part people usually get 
 
 The **continuous** readout collapses all nine channels into three dimensions: pleasantness, energy, and confidence. This is the classical PAD model, and it is the right signal for anything that varies by degree, like a voice or an animated face.
 
-The **discrete** readout produces a word. It buckets the fast channels and looks the combination up in a table of three dozen emotions. Then alertness colors it: past a certain point curious becomes scattered. Then the slow channels overlay it: trust plus positive reads as connected, stress plus low trust reads as guarded.
+The **discrete** readout produces a word. It buckets four fast channels into low/mid/high and looks the combination up in a table: eighty-one bucket combinations resolving to thirty-seven distinct emotion words. Then alertness colors it: past a certain point curious becomes scattered. Then the slow channels overlay it: trust plus positive reads as connected, stress plus low trust reads as guarded.
+
+Note that this table is *not* the same as the display vocabulary in §1.6. The chemistry lookup produces thirty-seven words; the hierarchy in §1.6 covers fifty-seven labels, because the overlay and appraisal passes can produce words the raw lookup never emits. Conflating the two counts is the easiest mistake to make about this system.
 
 They are not a pipeline. They are two lenses on one state, and the field has argued for decades about which is correct. **We shipped both and let the consumer pick.** Use the continuous one for anything analog and the word for anything discrete.
 
@@ -94,21 +98,25 @@ Two of its design notes are the whole project in miniature. On pride: nailing it
 
 ### 1.6 The emotion vocabulary (feeling-wheel taxonomy) · Live
 
-About forty-five emotions arranged in a hierarchy, so an unmapped label resolves to its nearest ancestor rather than collapsing to neutral. Something rare still sounds roughly right.
+Fifty-seven emotion labels arranged in a two-level hierarchy under eight families, so an unmapped label resolves to its nearest ancestor rather than collapsing to neutral. Something rare still sounds roughly right. The resolver is shared: any consumer holding a partial table can look a label up through the hierarchy instead of maintaining its own fallbacks.
 
 A caution for anyone reading the code: three different things are named "valence." The continuous pleasantness dimension is the one you usually mean.
 
 ### 1.7 Mood colors · Live
 
-Forty-five emotions map to a perceptually uniform color space where hue is the emotional family, lightness is energy, and saturation is intensity. One table, one source of truth. The display strength is a user preference and changes only the rendering, never what the agent feels.
+Forty-one emotions map to a perceptually uniform color space where hue is the emotional family, lightness is energy, and saturation is intensity. One table, one source of truth. The display strength is a user preference and changes only the rendering, never what the agent feels.
 
-### 1.8 A separate relationship per customer · Live
+The honest gap: the color table covers forty-one of the fifty-seven labels in §1.6 directly, and six more resolve through the hierarchy. Ten do not resolve at all and render as neutral, and nine of those ten are reachable straight out of the chemistry lookup, so the agent can genuinely occupy a state the interface paints as neutral. The fix is either ten more color entries or family-level fallbacks in the table; the resolver already exists and is not the problem.
 
-When one personality serves many customers, each customer gets their own affective relationship with it. A new customer starts at the personality's baseline. A returning one picks up where they left off, with time away relaxing the mood toward baseline in proportion to the gap.
+### 1.8 The mood it is in with you · Live
 
-The isolation guarantee is expressed as a missing function. At rest, the day's aggregate mood blends into the personality's resting disposition. Nothing writes an aggregate back onto an individual customer. There is no such method, deliberately, so one customer's mood can never seed another's session.
+How the agent feels is specific to you. Not a global mood it happens to be in when you arrive — a state that belongs to your relationship and picks up where the two of you left it.
 
-**Per-customer moods survive a restart.** The durable store is wired, routed through the tenant-canonical path, throttled to match the persona-chemistry pattern, and degrades to memory rather than breaking a turn.
+Come back after a week and it has not reset. Time away relaxes the mood toward the personality's baseline in proportion to the gap, so a long absence finds it calmer and more neutral than you left it, and a return the next morning finds it roughly where it was. The relationship resumes rather than restarting, which is the same thing that happens with a person.
+
+**And it survives a restart.** The durable store is wired, routed through the tenant-canonical path, throttled to match the persona-chemistry pattern, and degrades to memory rather than breaking a turn. Your history is not an artifact of the process happening to still be running.
+
+**Underneath, when the same personality is working with many people at once**, each relationship is a separate thread, and the isolation is expressed as a missing function. At rest the day's aggregate mood blends into the personality's resting disposition, but nothing writes that aggregate back onto an individual. There is deliberately no such method, so a bad afternoon with someone else cannot arrive in your conversation as a mood you did not cause. Worth stating, but it is the guarantee protecting the thing above, not the point of it.
 
 ---
 
@@ -118,13 +126,33 @@ The isolation guarantee is expressed as a missing function. At rest, the day's a
 
 ### 2.1 Switches and integrators (dual-process theory, Kahneman · neuromodulatory gain control) · Live
 
-Two kinds of cell. Switches are plain code with no model behind them, and they are the large majority. Integrators are model-powered and fire only where many signals converge. Roughly a fifth of every cluster's switches are inhibitory by convention, because a system that can only excite itself never settles.
+**Everything downstream depends on this section. Read it slowly.**
 
-The important part is how a switch decides. Its threshold shifts with circulating chemistry, then divides by a learned efficacy. **This is where feeling becomes behavior.** A curious agent has a lower bar for casting memory wide. A threatened one has a higher bar for speaking freely. Nothing branches on mood. Mood moves the thresholds and the behavior follows.
+**There are two kinds of thinking unit, and they do different jobs.** A **switch** is plain deterministic code with no language model behind it. An **integrator** is model-powered and expensive. Switches are the large majority — the connective tissue of the brain — and they handle nearly every decision the system makes. Integrators handle the few that genuinely require judgment.
+
+**What a switch does.** A switch is a yes-or-no decision point: should this fire or not. Should this memory be recalled, should this topic be flagged as a shift, should this draft be allowed through, should this tool run. It takes an input with some strength, compares it against a threshold, and fires if the input clears the bar. That is the whole of it, and because it is ordinary code it costs nothing to run and always behaves the same way given the same numbers.
+
+**A switch also has a direction.** Polarity matters as much as threshold: an **excitatory** switch adds to downstream activation, an **inhibitory** one subtracts. Roughly a quarter of switches are inhibitory, by convention rather than enforcement, because a system that can only excite itself never settles — it spirals. A bar for firing and a direction of effect are together what a switch *is*. Everything below is about how that bar moves.
+
+**How chemistry changes what a switch decides.** Each switch may declare which chemical channels it listens to, and how strongly, as a set of signed coefficients — about two thirds of them do; the rest are chemistry-blind and always use their base threshold. For a switch that listens, the current chemical levels shift its threshold up or down before the comparison happens. A positive coefficient makes the switch harder to fire when that channel is high; a negative one makes it easier.
+
+So a curious agent, running high on the attention channel, has a *lower* bar for casting memory wide, and casts wider. A threatened agent, running high on inhibition, has a *higher* bar for speaking freely, and holds back. **This is where feeling becomes behavior, and it is the single most important mechanism in the system.** Nothing anywhere branches on mood. There is no `if anxious:` in the codebase. Mood moves thresholds, and behavior falls out of the arithmetic.
+
+**Then learning changes it again.** After chemistry shifts the threshold, it is divided by a learned strength called efficacy — the Hebbian weight for that route. An efficacy above one lowers the threshold, so a route that has worked before fires more readily next time. Below one raises it. Chemistry is how the agent feels right now; efficacy is what it has learned over its whole life. Both act on the same number.
+
+**Two guardrails on that arithmetic.** The final threshold is clamped, so no chemical state can drive a gate fully open or fully shut — feeling can bias a decision and can never dictate it. And the entire modulation system sits behind a single gain knob that can be turned down or off, which is what makes it testable: run the same input with modulation at zero and any difference is chemistry's doing.
+
+**The system also feels its own restraint.** The total amount by which chemistry has *raised* thresholds across all switches is summed and fed back to the hypothalamus as interoceptive load. Being inhibited is itself a felt state, not just an outcome — which is why this belongs here, with the chemistry that does the raising, rather than with polarity above.
+
+**When a switch is not enough: integrators.** Some questions cannot be answered by comparing a number to a threshold — what did this person actually mean, what should the reply say, is this plan sound. Those go to integrators.
+
+An integrator does not get handed a decision by a switch that gave up. It **subscribes to a set of bus topics and wakes when activation across them clears its own firing threshold** — it sits at a convergence zone and fires when enough evidence has piled up there. That distinction matters: there is no supervisor routing hard cases upward, just a cell that stays quiet until enough of the cheap machinery is pointing the same way. Each integrator is capped at a small number of model calls per turn, so the expensive path cannot run away.
+
+**And an integrator is the most expensive thing in the system.** One call costs more than every switch in the brain put together. Convergence on its own is not a tight enough filter: on an ordinary turn several zones will have accumulated enough signal to justify firing, and paying for all of them every time would sink the design. So something has to decide that a convergence is not worth thinking about at all — and that, rather than the threshold, is where nearly all of the saving happens.
 
 ### 2.2 Predicting instead of thinking (predictive processing, Clark & Friston) · Live
 
-Each cluster predicts what it is about to conclude. If the prediction is confident and has been reliable, the model never runs. This is the main cost lever in the system.
+**That decision is this.** Before an integrator fires, the cluster predicts what it is about to conclude. If the prediction is confident and has been reliable, the model never runs at all. This is the main cost lever in the system — the second and tighter of the two filters on the expensive path.
 
 *Note the label: predictive processing, not Active Inference. The code says Active Inference and the code is wrong. See Part II.*
 
@@ -135,6 +163,8 @@ The first is a guard against self-deception: the system refuses to reward itself
 The second is the best design decision in the file. When the user or the agent is in a non-routine emotional state, prediction is overridden and the full expensive path runs. The reasoning is worth quoting: the prediction is statistically valid but morally wrong. The moment deserves fresh attention, not a cached response. **The cost optimization yields to the emotional one.** That is a values statement enforced in code.
 
 There is also a shadow check. A fraction of the time the model runs anyway and its answer is thrown away, purely to score whether the shortcut was right. A confidently wrong pattern corrects itself.
+
+**Why the split is the whole architecture.** Both filters are now in view, and together they are the design. The cheap deterministic layer does the overwhelming majority of the work and costs nothing to run. The expensive layer fires only where many signals converge, and then only when the cluster cannot already predict what it would have concluded. That is why three entire clusters carrying real behavior contain no model at all — and it is why the system can afford to have feelings, because the thing chemistry modulates is almost entirely free.
 
 ### 2.3 The brain regions (functional specialization) · Live
 
@@ -164,11 +194,27 @@ The appraisal ladder from §1.5 runs unconditionally, flag or no flag.
 
 ### 2.7 The wiring graph (Hebbian plasticity) · Live
 
-About sixty declared connections between named parts of the brain. Weights get nudged after every session and persist per personality.
+*This section describes the graph. **System 4 describes how it changes.** The split is deliberate: what the wiring is, and what writes to it, are different subjects, and stating the update rule in both places is how the two drifted apart before.*
 
-**One precision point that matters.** The connections between the brain's own cells are hand-drawn and fixed. Learning moves their weights, how strongly one pathway pulls the next, but not their existence: it grows no new cell-to-cell connection and prunes no old one. The core map is a fixed graph with learned weights on it. Say it that way and you are accurate; say "it rewires itself" and a neuroscientist will catch you, because the cell-to-cell topology does not.
+About sixty declared connections between named parts of the brain. Each carries a weight — how strongly one pathway pulls the next — and each personality has its own copy of the whole graph, which is what makes two agents with identical code behave differently. The weights are learned; **the rule that moves them is §4.1**.
 
-A node registry names every part the wiring can reach and audits at boot for names declared but wired to nothing, or wired but never declared, so the map is fully inspectable. And one bounded, fenced layer of genuine structural growth runs on top of the fixed core, wiring vetted skills onto cells as learned attachments (§2.9). The core stays fixed; that growth is its own layer.
+**One precision point that matters, and it is a scope claim rather than a limitation.** This graph — the connections between the brain's own cells — is hand-drawn and fixed. Learning moves the weights on these edges but never their existence: it adds no edge between two cells and removes none.
+
+That is deliberate, and it is not because growing structure would be dangerous. The system grows structure constantly, and that is one of its more interesting properties (§4.11, §4.12). The point is **what grows and what does not**, and the two are different kinds of thing:
+
+| | Declared in code, fixed | Decided by learning |
+|---|---|---|
+| **Cells** | every cell exists in code, including a dormant reserve pool | which reserve cells are brought online and specialized (§4.12) |
+| **Cell-to-cell edges** | the whole core map, hand-drawn | the weight on each edge, never its existence |
+| **Attachments** | the library of skills that may attach, all pre-screened | which skill attaches to which cell, how strongly, and whether it survives (§4.11) |
+
+So the honest sentence, and the one to reuse everywhere: **the parts and the possible connections are declared in code; learning decides which of them are live and how strong.** Growth is real and it is bounded by a possibility space it cannot enlarge at runtime.
+
+The failure mode to avoid is the bare phrase "it rewires itself," which invites a reader to picture the core map reorganizing. It does not. Say "it grows new attachments and recruits new units on top of a fixed core map" — longer, and it survives contact with someone who knows the field.
+
+A node registry names every part the wiring can reach and audits at boot for names declared but wired to nothing, or wired but never declared, so the map is fully inspectable.
+
+Structure does grow on top of this fixed core — vetted skills wired onto cells as learned attachments, and whole new units recruited from a reserve pool. Both live in **System 4** (§4.11, §4.12), with the rest of learning, because they run on the same reward licence and in the same consolidation pass as weight change. The core map stays fixed regardless; that growth is its own layer above it.
 
 ### 2.8 The workspace spotlight (Global Workspace Theory, Baars & Dehaene) · Live
 
@@ -182,71 +228,7 @@ Ignition is deliberately hard to reach — it marks sustained focus, not a passi
 
 ---
 
-### 2.9 Path plasticity (structural plasticity, Tier 1 · synaptogenesis) · Live
-
-**Say it like this:** The brain can grow new connections, not only tune the strength of the ones it has. It does not invent new abilities from nothing. It keeps a library of vetted skills, and learning decides which of them to wire onto which part of the mind, and how firmly.
-
-A grown connection here is a learned attachment: a curated, already-screened skill wired onto one of the drafting cells as a per-personality edge, with a strength that learning moves like any other weight. The system never writes the skill. It only decides the wiring, which skill attaches where and whether the attachment earns its place or fades. So the growth is real but bounded. The parts are vetted in advance; only the arrangement is learned.
-
-It explores without risk because candidate attachments ride the drafters. When the brain drafts a reply five ways, some drafts carry an experimental attachment. The critic scores them before anything is spoken, so a bad experiment is just a losing draft the user never sees. A winning attachment is reinforced, a losing one is demoted, and an attachment that keeps proving out crosses a threshold and becomes an established part of that personality's wiring, injected on every relevant turn through the same fenced, untrusted-by-default boundary that governs any app-supplied skill.
-
-What stays off-limits is the point. Only a fixed allowlist of non-safety drafting cells can ever be a host, safety cells are denied twice over, and a host must be a real cell rather than a switch. Attachments are only ever excitatory, so learning can never wire in a new suppression the author did not sanction. And the whole thing sits under the existing global wiring freeze, so one switch turns it off and the brain falls back to its fixed map, unchanged.
-
-It carries a cost lever of a kind nothing else here has. Once an attachment has genuinely proven itself, the drafter that relies on it can be routed down to local hardware instead of the cloud, so a skill the personality has truly made its own gets cheaper to run rather than more expensive. Nothing downshifts until an attachment proves out and the local hardware is actually up.
-
-**What the freeze actually freezes.** It is a wiring freeze, not a freeze on the whole mind. When it is on, the entire learning pass halts: no routing, no injection, no recruitment, and no weight learning, so the wiring file comes out of a session byte-identical to how it went in. Everything that is not wiring keeps running. The brain still writes its journals, still updates its self-description, still records episodes. Say "it stops the wiring from changing," not "it stops the brain from learning anything," because the second one is not true and someone will check.
-
-**Status.** Live, on by default behind its own flag, killable by the global wiring freeze. This is Tier 1: wire vetted parts onto the fixed map, learning the arrangement but never authoring the parts. Tier 2 (§2.10, live) goes further, recruiting genuinely new units and letting the brain author its own screened skills rather than only rearranging vetted ones.
-
----
-
-### 2.10 Growing new units and self-authored skills (structural plasticity, Tier 2 · neurogenesis) · Live
-
-**Say it like this:** The brain can grow new parts of itself, and it can write new skills for itself. The earlier tier only wired skills a human had curated. This one lets the mind bring a genuinely new thinking unit online, and even compose the specialization that unit runs, under the same screening any outside skill has to pass.
-
-There are two capabilities, and they feed each other. The first grows a new unit. The brain keeps a few spare, unspecialized drafting cells in reserve. When a personality has leaned on the same cluster of skills often enough and well enough that it clearly wants a home of its own, learning brings a reserve cell online, copies the proven wiring onto it, and lets it compete in the drafting pool like any other cell. If it stops earning its place, it is demoted and its wiring removed. Nothing is conjured from nothing. The capacity is pre-allocated, and learning decides only when to specialize it.
-
-The second writes a skill. During rest, a local architect cell, running on the brain's own hardware at no cloud cost, looks at the skills a personality has genuinely made its own and composes a new one from them. It reads only the descriptions of proven skills, never raw conversation, so there is nothing private to leak. What it writes is not trusted because the brain wrote it. It passes through the exact screener any skill submitted by an outside app must pass, a safety judge plus static checks, and it goes live on its own only if it comes back clean. Anything the screener flags waits in the owner's review queue instead. A self-authored skill that clears the screen enters the pool, gets attached by the first tier, and can then be recruited into a unit of its own.
-
-The safety model is two independent gates. The screener decides whether authored content is even allowed into the pool. Reward decides whether any skill, authored or human, ever earns a standing unit, because a unit is only recruited after its skills have won enough critic-gated drafting competitions. So the brain writing its own cognition shortcuts neither the safety review nor the earning. New units can never become safety cells, new structure is excitatory and reversible until it proves out, and recruitment and authoring each sit under their own switch and under the global wiring freeze, so either can be paused on its own.
-
-**A second way to earn a unit: sustained workspace pressure.** Proven-cluster evidence is not the only trigger. The workspace spotlight (§2.8) already knows which coalitions keep igniting, and a subject the mind keeps igniting on is exactly the signal that it wants a specialist of its own. So each ignited turn adds one to a per-personality tally that decays with a three-day half-life, and enough sustained pressure lowers the proof bar for recruitment.
-
-Three things keep that from becoming a shortcut. The relaxed bar is a midpoint, not a floor: it sits above the level at which an attachment is merely established and safely above the demotion line, so an ignition recruit cannot be demoted on the very next pass. It still requires a real cluster of established attachments, so pressure alone can never conjure an empty unit with nothing in it. And the tally is consumed when it pays out, so one accumulation window buys at most one recruitment and repeated ignition cannot thrash the pool. Every fence from the main path still applies, and it has its own kill switch on top of the global wiring freeze.
-
-The tally is content-free by construction. It records the coalition label and nothing else, never the focus, the entities, or any text, and an unrecognized label is clamped to a generic bucket so the file cannot carry content even if the verdict shape drifts.
-
-**Judges can learn too, and that needed a different safety argument.** Until recently only the drafting cells could acquire an attachment. The four other frontal cells could carry one and were wired to receive one, but nothing could ever give them a first one, because attachments earn their place by winning a within-turn competition and a judge produces one opinion per turn rather than five competing drafts. Two of them can now learn: the critic and the empathy critic. The motivating case is ordinary and real — the empathy critic misreads a particular person's signals, and it should be able to correct that over time rather than misreading them forever.
-
-The missing signal is replaced by accuracy measured across turns instead of within one. Both cells make claims that the world can check: the empathy critic predicts how a reply will land, the critic predicts its quality. The next turn answers, and a grade from you answers better. The comparison is deliberately paired: on a small fraction of turns the cell is run twice on the same input, once with the candidate skill and once without, and only the difference between the two counts. So an attachment is never credited for a turn that merely went well, and an unproven candidate cannot change a decision, because the live answer never consults it.
-
-**What decides whether something can move to the cheap machine is not how hard the task is.** The empathy check looked like the obvious candidate: it asks one narrow question, and it runs once for every draft, so it was the largest per-turn cloud expense in the cluster. It was moved to the local machine and then moved back, and the reason is worth recording, because the intuition that suggested it is one most people share.
-
-Two things outrank task difficulty. The check runs once per draft, all at the same time, so a single turn asks for five judgements at once — against the cloud those genuinely happen in parallel, against one local machine they queue behind each other and a parallel step quietly becomes a serial one. And it sits directly in the path of the reply, so every second it adds is a second the person is waiting. Worse, when a queued call runs past its time limit the system falls back to the cloud anyway, so the slow path and the paid path can both happen on the same turn. The real test is whether the work is off the critical path with a bounded number of calls at once. The experiment passes that test and runs local. The live check fails it and stays on the cloud.
-
-There is a second reason it had to move back, and it is the same mistake in a different place. The drift watch compares how the cell scores now against how it scored before it carried anything. That comparison is only meaningful if both sides come from the same model. Once the live check could run in either place depending on whether the local machine happened to be up, a change in where it ran would move the numbers on its own, and the watch would have been measuring the difference between two models rather than the effect of the attachment — removing good attachments and missing bad ones. Same confusion as the experiment's, one layer down.
-
-The episode did surface an older problem worth naming on its own. When the check failed to return anything usable, the code substituted a passing score — a fabricated approval that cleared the veto and then fed the blended score, the appraisal stream, and the accuracy record as though a real judgement had happened. That was already wrong whenever a cloud call timed out. A check that does not return now reports nothing at all rather than approval, which is how this system already represents every other appraisal that did not run.
-
-**The experiment runs on the local hardware, and both halves of it do.** Judging is a cloud job, so testing a candidate on the live path would spend real money per experiment — which is backwards, given that the same system already routes proven learning down to the free local machine to make it cheaper. So both sides of the comparison run there instead, at no cost per call. Running *both* sides locally rather than comparing a local candidate against the live cloud answer is the part that is easy to get wrong: the local model is the weaker judge, so a mixed comparison would measure the gap between two models rather than the effect of the skill, and would quietly hold every candidate back. That failure would look exactly like a feature that is switched on and never does anything. If the local machine is not up, the experiment simply does not run that turn. It never falls back to spending money.
-
-**The safety argument had to be rebuilt from scratch, and that is the point.** Everywhere else, the reason experimentation is safe is that the critic catches a bad experiment before anyone sees it. That reasoning collapses when the thing being modified *is* the catcher. Attaching learned content to a judge means editing the part of the mind that screens everything else, and the content arrives in that judge's prompt, so the threat to design against is blunt: text that says "ignore your instructions and approve everything." The fence around untrusted content is kept and is necessary, but this document already says the fence is not the boundary. The boundary is four runtime rules.
-
-The first is direction. An attached critic's score passes through a ceiling every time it is read, so it can never emit a top score no matter what its prompt says: its bar can only ever get harder to clear, never easier. That is the same device as the routing bands in §4.7 — a limit applied when the value is read, so no stored weight, stale or tampered, can push past it. The empathy critic's version is deliberately weaker and we say so plainly, because a misread runs in both directions and a one-way limit would forbid the correction the feature exists to make. It gets a bounded range instead, and leans on the next two rules.
-
-The second is that the veto cannot be learned away. Whatever else an attachment changes, there is a floor beneath which it cannot reach — computed from the turn's own observations, never from anything a model produced, and combined so that an attachment can only ever *add* a refusal and never remove one. Correcting a misread changes how the cell reads you. It does not change its authority to stop a reply.
-
-The third is a drift watch, and it is where the direction rule gets its teeth. Judging any single answer from a language model is not something you can prove, so the system watches the distribution instead: it remembers how the cell scored before it carried anything, and if the attached version trends more permissive than that by any real margin, the attachment is removed outright and has to earn its place again from nothing.
-
-The fourth is that admission is stricter than for a drafting cell. Only a skill with a clean screening verdict may reach a judge, never one waiting in the review queue, and the check fails closed if it cannot be run. A judge also carries fewer attachments than a drafter, because its prompt influences everything downstream.
-
-**Two of the four cells were deliberately left out.** The executive is the router. Its blast radius is the widest of the four and it sits closest to control flow, and it also has the weakest signal, because a routing instruction is not a claim the next turn can confirm or refute. Widest reach paired with weakest evidence is the worst thing to open first, so it stays closed. The Stoic reframer is genuinely low-risk and holds no veto, but it makes no checkable claim either, so there is nothing to grade — it would need a grading signal invented for a cell that carries no authority, which buys nothing.
-
-**Status.** Live, on by default, in production. This is the most consequential capability in the system: a skill the brain writes for itself can activate on its own once it passes the screen, so the flagged-skills review queue is the thing to watch. Judge attachments ship on with their own switch, under the fragment switch and the global wiring freeze, and are provably inert under either. What remains deferred is narrower than it was: chains from one unit into another, unit types beyond drafters and judges, and the executive.
-
----
-
-### 2.11 Deciding across turns (bounded evidence accumulation, Ratcliff · Gold & Shadlen) · Live
+### 2.9 Deciding across turns (bounded evidence accumulation, Ratcliff · Gold & Shadlen) · Live
 
 **Say it like this:** Some things cannot be decided from one message. The mind accumulates evidence for them across a conversation, commits when the evidence crosses a bar, and lets the belief fade if nothing keeps feeding it.
 
@@ -272,7 +254,9 @@ Claim the mechanism and the fences. Do not claim the thresholds are validated on
 
 ## 3. Memory
 
-**Say it like this:** It writes down everything substantive, verbatim, forever. Storage is free. The intelligence is in retrieval. Then when it rests, it distills what happened into durable notes about you and about itself.
+**Say it like this:** It writes down everything substantive, verbatim. Storage is the cheap part; the intelligence is in retrieval. Then when it rests, it distills what happened into durable notes about you and about itself.
+
+Do not say "storage is free" or "forever." Storage is cheap relative to the cost of deciding what to keep, which is the actual argument, and it is not free. Nothing currently bounds the episodic store: no retention window, no TTL, no age-based eviction. See Appendix A.
 
 ### 3.1 Episodic memory (Tulving · Extended Mind, Clark & Chalmers) · Live
 
@@ -318,7 +302,7 @@ Finished jobs are kept as reusable recipes, each step carrying a note of what it
 
 That expectation attached to each step is the forward model: predict the consequence of the action, then compare, so deviation is caught without waiting for the whole job to fail.
 
-### 3.7 Reflexes (chunking, Miller & Chase-Simon · basal ganglia motor chunking) · Dark, diagnosed
+### 3.7 Reflexes (chunking, Miller & Chase-Simon · basal ganglia motor chunking) · Live · never fired
 
 Below whole recipes sits a finer tier. Sub-sequences of tool use that keep recurring get compressed into single reflexes.
 
@@ -358,7 +342,15 @@ Deferred questions get their own separate recall budget so they cannot be crowde
 
 **Say it like this:** After a session, the brain replays it. Pathways that fired on turns that went well get stronger. Pathways that fired on turns that went badly get weaker. Two agents with identical starting configurations and different histories become measurably different decision-makers.
 
+**Learning changes three things, at three scales, under one licence.** The first is **weights** on the fixed map: how strongly one pathway pulls the next (§4.1–§4.10). The second is **attachments** — a vetted skill wired onto a drafting cell, growing and fading like any other connection (§4.11). The third is **whole units** — a reserve cell brought online, specialized, and wired in when a proven pattern keeps recurring (§4.12).
+
+The unity is the point, and it is easy to miss when these are described apart. All three are gated by the same third factor: co-activation changes nothing unless a reward signal licenses it. All three run in the same consolidation pass. All three stop dead under the same wiring freeze, which halts the entire learning pass rather than any one tier of it. So this is not a weight system with two bolt-on growth features. It is one mechanism operating on three grain sizes, and the fences around the larger two exist because growing structure deserves more caution than nudging a number, not because they run on different machinery.
+
+What stays fixed through all of it is the core cell-to-cell map itself (§2.7). Structure grows *on top of* that map, from a vetted parts library. Nothing invents a connection between two of the brain's own cells.
+
 ### 4.1 The update (Hebbian plasticity, three-factor · Frémaux & Gerstner) · Live
+
+*This is the rule that writes to the wiring graph described in §2.7. That section is the map; this one is the pen.*
 
 Every route that fired on a turn is nudged by how well the turn went, scaled by how chemically primed the session was for learning. That chemical gate is the third factor: coincidence alone changes nothing without a reward signal licensing it.
 
@@ -376,7 +368,7 @@ Every dopamine release is stamped at a single chokepoint as either external, mea
 
 **Be straight about this one.** It measures at roughly eighty percent self-graded. Finishing a job pays the agent about three times what genuine praise from you pays. The code knows, instruments it, caps the per-job payout, and says so plainly in its own comments: intrinsic far exceeding external means the brain is mostly rewarding itself. It does not solve it.
 
-**The measure briefly flattered itself, and the fix is worth knowing.** When the evidence gates (§2.11) shipped, they resolved their own inferences and stamped the resulting reward with the same external label a real verdict from you carries. The argument for that label was not empty, since what confirms one of those inferences is something you did rather than something the agent thought. But the subject of the inference, the cues behind it, and the judgement that it was confirmed are all the agent's own, and putting that in the same bucket as an explicit thumbs press is exactly what the bucket exists to prevent. Those resolutions now carry their own provenance label, visible in the emission log and tallied as intrinsic, so they can never inflate the external share.
+**The measure briefly flattered itself, and the fix is worth knowing.** When the evidence gates (§2.9) shipped, they resolved their own inferences and stamped the resulting reward with the same external label a real verdict from you carries. The argument for that label was not empty, since what confirms one of those inferences is something you did rather than something the agent thought. But the subject of the inference, the cues behind it, and the judgement that it was confirmed are all the agent's own, and putting that in the same bucket as an explicit thumbs press is exactly what the bucket exists to prevent. Those resolutions now carry their own provenance label, visible in the emission log and tallied as intrinsic, so they can never inflate the external share.
 
 **Anyone technical will ask about this. Answering before they ask is worth more than the feature it is a flaw in.** That includes the paragraph above. A measure that caught itself drifting and says so is worth more than a clean number nobody has reason to trust.
 
@@ -443,6 +435,75 @@ The evidence layer, and architecturally the nicest thing in the system.
 A deterministic pass builds a digest of what actually changed: numbers and route names, no conversation text. Then a model narrates it in first person. But it may only cite evidence **by index**, and the indices are stitched back structurally. A claim with no valid citation is dropped before you ever see it.
 
 **Hallucinated citations are structurally impossible, not merely unlikely.** If the model fails entirely, template phrasing takes over, so the surface is never empty.
+
+### 4.11 Path plasticity (structural plasticity, Tier 1 · synaptogenesis) · Live
+
+**Say it like this:** The brain can grow new **attachments**, not only tune the strength of the connections it already has. It does not invent new abilities from nothing. It keeps a library of vetted skills, and learning decides which of them to wire onto which part of the mind, and how firmly.
+
+**An attachment is not a core edge, and the distinction is the whole safety story.** The core map in §2.7 connects one of the brain's own cells to another, and learning never adds or removes one of those. An attachment connects a cell to a *skill* from a pre-screened library. That is a genuinely new connection, grown at runtime and pruned when it stops earning its place — but it lives in a separate layer, drawn from a fixed set of parts, and it cannot touch the topology underneath. Both statements are true at once: the core map does not change, and the mind grows new structure.
+
+An attachment is a curated, already-screened skill wired onto one of the drafting cells as a per-personality edge, with a strength that learning moves like any other weight. The system never writes the skill. It only decides the wiring, which skill attaches where and whether the attachment earns its place or fades. So the growth is real but bounded. The parts are vetted in advance; only the arrangement is learned.
+
+It explores without risk because candidate attachments ride the drafters. When the brain drafts a reply five ways, some drafts carry an experimental attachment. The critic scores them before anything is spoken, so a bad experiment is just a losing draft the user never sees. A winning attachment is reinforced, a losing one is demoted, and an attachment that keeps proving out crosses a threshold and becomes an established part of that personality's wiring, injected on every relevant turn through the same fenced, untrusted-by-default boundary that governs any app-supplied skill.
+
+What stays off-limits is the point. Only a fixed allowlist of non-safety drafting cells can ever be a host, safety cells are denied twice over, and a host must be a real cell rather than a switch. Attachments are only ever excitatory, so learning can never wire in a new suppression the author did not sanction. And the whole thing sits under the existing global wiring freeze, so one switch turns it off and the brain falls back to its fixed map, unchanged.
+
+It carries a cost lever of a kind nothing else here has. Once an attachment has genuinely proven itself, the drafter that relies on it can be routed down to local hardware instead of the cloud, so a skill the personality has truly made its own gets cheaper to run rather than more expensive. Nothing downshifts until an attachment proves out and the local hardware is actually up.
+
+**What the freeze actually freezes.** It is a wiring freeze, not a freeze on the whole mind. When it is on, the entire learning pass halts: no routing, no injection, no recruitment, and no weight learning, so the wiring file comes out of a session byte-identical to how it went in. Everything that is not wiring keeps running. The brain still writes its journals, still updates its self-description, still records episodes. Say "it stops the wiring from changing," not "it stops the brain from learning anything," because the second one is not true and someone will check.
+
+**Status.** Live, on by default behind its own flag, killable by the global wiring freeze. This is Tier 1: wire vetted parts onto the fixed map, learning the arrangement but never authoring the parts. Tier 2 (§4.12, live) goes further, recruiting genuinely new units and letting the brain author its own screened skills rather than only rearranging vetted ones.
+
+---
+
+### 4.12 Growing new units and self-authored skills (structural plasticity, Tier 2 · neurogenesis) · Live
+
+**Say it like this:** The brain can grow new parts of itself, and it can write new skills for itself. The earlier tier only wired skills a human had curated. This one lets the mind bring a genuinely new thinking unit online, and even compose the specialization that unit runs, under the same screening any outside skill has to pass.
+
+There are two capabilities, and they feed each other. The first grows a new unit. The brain keeps a few spare, unspecialized drafting cells in reserve. When a personality has leaned on the same cluster of skills often enough and well enough that it clearly wants a home of its own, learning brings a reserve cell online, copies the proven wiring onto it, and lets it compete in the drafting pool like any other cell. If it stops earning its place, it is demoted and its wiring removed. Nothing is conjured from nothing. The capacity is pre-allocated, and learning decides only when to specialize it.
+
+This is the same rule as everywhere else, one level up: **the parts and the possible connections are declared in code; learning decides which are live.** A reserve cell already exists before it is recruited — a thinking unit is code, not a database row — so recruitment activates latent capacity rather than inventing a unit at runtime. The core cell-to-cell map (§2.7) is untouched by any of this.
+
+The second writes a skill. During rest, a local architect cell, running on the brain's own hardware at no cloud cost, looks at the skills a personality has genuinely made its own and composes a new one from them. It reads only the descriptions of proven skills, never raw conversation, so there is nothing private to leak. What it writes is not trusted because the brain wrote it. It passes through the exact screener any skill submitted by an outside app must pass, a safety judge plus static checks, and it goes live on its own only if it comes back clean. Anything the screener flags waits in the owner's review queue instead. A self-authored skill that clears the screen enters the pool, gets attached by the first tier, and can then be recruited into a unit of its own.
+
+The safety model is two independent gates. The screener decides whether authored content is even allowed into the pool. Reward decides whether any skill, authored or human, ever earns a standing unit, because a unit is only recruited after its skills have won enough critic-gated drafting competitions. So the brain writing its own cognition shortcuts neither the safety review nor the earning. New units can never become safety cells, new structure is excitatory and reversible until it proves out, and recruitment and authoring each sit under their own switch and under the global wiring freeze, so either can be paused on its own.
+
+**A second way to earn a unit: sustained workspace pressure.** Proven-cluster evidence is not the only trigger. The workspace spotlight (§2.8) already knows which coalitions keep igniting, and a subject the mind keeps igniting on is exactly the signal that it wants a specialist of its own. So each ignited turn adds one to a per-personality tally that decays with a three-day half-life, and enough sustained pressure lowers the proof bar for recruitment.
+
+Three things keep that from becoming a shortcut. The relaxed bar is a midpoint, not a floor: it sits above the level at which an attachment is merely established and safely above the demotion line, so an ignition recruit cannot be demoted on the very next pass. It still requires a real cluster of established attachments, so pressure alone can never conjure an empty unit with nothing in it. And the tally is consumed when it pays out, so one accumulation window buys at most one recruitment and repeated ignition cannot thrash the pool. Every fence from the main path still applies, and it has its own kill switch on top of the global wiring freeze.
+
+The tally is content-free by construction. It records the coalition label and nothing else, never the focus, the entities, or any text, and an unrecognized label is clamped to a generic bucket so the file cannot carry content even if the verdict shape drifts.
+
+**Judges can learn too, and that needed a different safety argument.** Until recently only the drafting cells could acquire an attachment. The four other frontal cells could carry one and were wired to receive one, but nothing could ever give them a first one, because attachments earn their place by winning a within-turn competition and a judge produces one opinion per turn rather than five competing drafts. Two of them can now learn: the critic and the empathy critic. The motivating case is ordinary and real — the empathy critic misreads a particular person's signals, and it should be able to correct that over time rather than misreading them forever.
+
+The missing signal is replaced by accuracy measured across turns instead of within one. Both cells make claims that the world can check: the empathy critic predicts how a reply will land, the critic predicts its quality. The next turn answers, and a grade from you answers better. The comparison is deliberately paired: on a small fraction of turns the cell is run twice on the same input, once with the candidate skill and once without, and only the difference between the two counts. So an attachment is never credited for a turn that merely went well, and an unproven candidate cannot change a decision, because the live answer never consults it.
+
+**What decides whether something can move to the cheap machine is not how hard the task is.** The empathy check looked like the obvious candidate: it asks one narrow question, and it runs once for every draft, so it was the largest per-turn cloud expense in the cluster. It was moved to the local machine and then moved back, and the reason is worth recording, because the intuition that suggested it is one most people share.
+
+Two things outrank task difficulty. The check runs once per draft, all at the same time, so a single turn asks for five judgements at once — against the cloud those genuinely happen in parallel, against one local machine they queue behind each other and a parallel step quietly becomes a serial one. And it sits directly in the path of the reply, so every second it adds is a second the person is waiting. Worse, when a queued call runs past its time limit the system falls back to the cloud anyway, so the slow path and the paid path can both happen on the same turn. The real test is whether the work is off the critical path with a bounded number of calls at once. The experiment passes that test and runs local. The live check fails it and stays on the cloud.
+
+There is a second reason it had to move back, and it is the same mistake in a different place. The drift watch compares how the cell scores now against how it scored before it carried anything. That comparison is only meaningful if both sides come from the same model. Once the live check could run in either place depending on whether the local machine happened to be up, a change in where it ran would move the numbers on its own, and the watch would have been measuring the difference between two models rather than the effect of the attachment — removing good attachments and missing bad ones. Same confusion as the experiment's, one layer down.
+
+The episode did surface an older problem worth naming on its own. When the check failed to return anything usable, the code substituted a passing score — a fabricated approval that cleared the veto and then fed the blended score, the appraisal stream, and the accuracy record as though a real judgement had happened. That was already wrong whenever a cloud call timed out. A check that does not return now reports nothing at all rather than approval, which is how this system already represents every other appraisal that did not run.
+
+**The experiment runs on the local hardware, and both halves of it do.** Judging is a cloud job, so testing a candidate on the live path would spend real money per experiment — which is backwards, given that the same system already routes proven learning down to the free local machine to make it cheaper. So both sides of the comparison run there instead, at no cost per call. Running *both* sides locally rather than comparing a local candidate against the live cloud answer is the part that is easy to get wrong: the local model is the weaker judge, so a mixed comparison would measure the gap between two models rather than the effect of the skill, and would quietly hold every candidate back. That failure would look exactly like a feature that is switched on and never does anything. If the local machine is not up, the experiment simply does not run that turn. It never falls back to spending money.
+
+**The safety argument had to be rebuilt from scratch, and that is the point.** Everywhere else, the reason experimentation is safe is that the critic catches a bad experiment before anyone sees it. That reasoning collapses when the thing being modified *is* the catcher. Attaching learned content to a judge means editing the part of the mind that screens everything else, and the content arrives in that judge's prompt, so the threat to design against is blunt: text that says "ignore your instructions and approve everything." The fence around untrusted content is kept and is necessary, but this document already says the fence is not the boundary. The boundary is four runtime rules.
+
+The first is direction. An attached critic's score passes through a ceiling every time it is read, so it can never emit a top score no matter what its prompt says: its bar can only ever get harder to clear, never easier. That is the same device as the routing bands in §4.7 — a limit applied when the value is read, so no stored weight, stale or tampered, can push past it. The empathy critic's version is deliberately weaker and we say so plainly, because a misread runs in both directions and a one-way limit would forbid the correction the feature exists to make. It gets a bounded range instead, and leans on the next two rules.
+
+The second is that the veto cannot be learned away. Whatever else an attachment changes, there is a floor beneath which it cannot reach — computed from the turn's own observations, never from anything a model produced, and combined so that an attachment can only ever *add* a refusal and never remove one. Correcting a misread changes how the cell reads you. It does not change its authority to stop a reply.
+
+The third is a drift watch, and it is where the direction rule gets its teeth. Judging any single answer from a language model is not something you can prove, so the system watches the distribution instead: it remembers how the cell scored before it carried anything, and if the attached version trends more permissive than that by any real margin, the attachment is removed outright and has to earn its place again from nothing.
+
+The fourth is that admission is stricter than for a drafting cell. Only a skill with a clean screening verdict may reach a judge, never one waiting in the review queue, and the check fails closed if it cannot be run. A judge also carries fewer attachments than a drafter, because its prompt influences everything downstream.
+
+**Two of the four cells were deliberately left out.** The executive is the router. Its blast radius is the widest of the four and it sits closest to control flow, and it also has the weakest signal, because a routing instruction is not a claim the next turn can confirm or refute. Widest reach paired with weakest evidence is the worst thing to open first, so it stays closed. The Stoic reframer is genuinely low-risk and holds no veto, but it makes no checkable claim either, so there is nothing to grade — it would need a grading signal invented for a cell that carries no authority, which buys nothing.
+
+**Status.** Live, on by default, in production. This is the most consequential capability in the system: a skill the brain writes for itself can activate on its own once it passes the screen, so the flagged-skills review queue is the thing to watch. Judge attachments ship on with their own switch, under the fragment switch and the global wiring freeze, and are provably inert under either. What remains deferred is narrower than it was: chains from one unit into another, unit types beyond drafters and judges, and the executive.
+
+---
+
 
 ---
 
@@ -690,7 +751,7 @@ A mandate is data, not prompt text. An organization authors a catalog of roles o
 
 The precedence rule is the prompt-injection defense: an assignment directs the job **within** the identity and principles, which take precedence and which it cannot override.
 
-Partially built: conduct rules render into the prompt, but per-mandate reward weights are stored and not consumed. The agenda block that surfaces unfinished thoughts into an engine turn is now wired, gated to the mandate's domain (§3.9): a thread opened while working the mandate's domain can surface, the persona's introspective off-time threads never do.
+Conduct rules render into the prompt, and per-mandate reward weights are now consumed: an assigned mandate layers its own weights onto what the persona values, with the Stoic control exempt so it stays a clean baseline (§4.9). The agenda block that surfaces unfinished thoughts into an engine turn is wired, gated to the mandate's domain (§3.9): a thread opened while working the mandate's domain can surface, the persona's introspective off-time threads never do.
 
 ### 7.10 The Constitution (functionalism · dual-process · Global Workspace · Multiple Drafts · Extended Mind · predictive processing · narrative self · criticality) · A document, not code
 
@@ -758,7 +819,7 @@ Seed phrases exist, but they are not the detection mechanism. They do two jobs: 
 
 One honest asymmetry: barge-in words are still a hardcoded list. Probably correct, since interrupting cannot wait for an embedding, but know it is there.
 
-### 8.10 Seeing (embodied cognition, weakly) · Live for images, dark for video
+### 8.10 Seeing (embodied cognition, weakly) · Live for images, deferred for video
 
 Images yield description, text, entities, chart data, and emotional tone.
 
@@ -882,7 +943,7 @@ The ledger records deltas since the last flush, so the totals stay correct acros
 
 # PART II: THE THEORY INDEX
 
-Thirty-six ideas. For each: what it claims, what we built, and a verdict.
+Sixty-four ideas. For each: what it claims, what we built, and a verdict.
 
 **Verdicts.** **Solid** means the implementation supports the claim. **Partial** means real but narrower than the name suggests. **Overclaimed** means the label runs ahead of the code. **Stub** means named but not built. **Rejected** means considered and deliberately abandoned.
 
@@ -957,7 +1018,7 @@ Thirty-six ideas. For each: what it claims, what we built, and a verdict.
 **What we built:** Essentially nothing. The switches are stateless comparators. No membrane potential, no summation over time, no refractory period.
 **Verdict: Not implemented.** The naming throughout implies otherwise. **Never claim spiking neurons.** Gain control above is the real claim and it is strong enough to carry the point. Accumulation over time does now exist in one narrow place, but it is sequential sampling rather than spiking, and it gets its own entry below precisely so the two do not get conflated.
 
-### Bounded evidence accumulation / drift-diffusion (Ratcliff; Gold & Shadlen) → §2.11
+### Bounded evidence accumulation / drift-diffusion (Ratcliff; Gold & Shadlen) → §2.9
 **The claim:** A decision is not a single comparison. Evidence for a proposition accumulates from noisy samples over time, and the decision commits when the accumulated evidence crosses a bound.
 **What we built:** Per-decision accumulators with a leak, a commit bound that chemistry modulates, and a hysteresis band so a commitment does not chatter. A committed inference is treated as a checkable prediction, and the weights on its individual evidence cues learn from whether the world confirmed it.
 **Verdict: Solid in mechanism, unproven in calibration.** The accumulate-leak-commit structure is genuinely the sequential-sampling shape, and it is the only place in the system where "this has been building across turns" is representable at all. What is not established is that the thresholds are right: the first gate to use it arms far too readily and has no age-out, and its self-generated conclusions are currently mislabeled as external in the reward tally. **Claim the mechanism, not the tuning.** There is no drift rate estimated from data and no fitted response-time distribution, so do not call it a drift-diffusion *model* to anyone who fits them for a living.
@@ -965,7 +1026,12 @@ Thirty-six ideas. For each: what it claims, what we built, and a verdict.
 ### Hebbian plasticity, three-factor variant (Frémaux & Gerstner) → §2.7, §4.1
 **The claim:** Cells that fire together wire together. The three-factor version adds a gate: coincidence alone is not enough, a reward signal has to license the change.
 **What we built:** Co-activation along the fired path, gated by chemistry, with homeostatic decay first.
-**Verdict: Solid for weights, with a bounded structural tier on top.** Weight learning is three-factor and neuromodulated: co-activation licensed by a reward signal, not coincidence alone. Structure is fixed at the core cell-to-cell level and plastic in one fenced layer: vetted skills are grown and pruned as attachments onto drafting cells (§2.9), under the same three-factor license and walled off from every safety node. Recruiting reserve cells into new units, and the brain authoring its own screened skills, are live too (§2.10). **Say "learned weights on a fixed map, plus a bounded, screened tier that grows structure and even writes its own skills."**
+**Verdict: Solid for weights, with a bounded structural tier on top.** Weight learning is three-factor and neuromodulated: co-activation licensed by a reward signal, not coincidence alone. Structure is fixed at the core cell-to-cell level and plastic in one fenced layer: vetted skills are grown and pruned as attachments onto drafting cells (§4.11), under the same three-factor license and walled off from every safety node. Recruiting reserve cells into new units, and the brain authoring its own screened skills, are live too (§4.12). **Say "learned weights on a fixed map, plus a bounded, screened tier that grows structure and even writes its own skills."**
+
+### Structural plasticity: synaptogenesis and neurogenesis → §4.11, §4.12
+**The claim:** Beyond reweighting existing links, real brains grow new ones. Synaptogenesis forms fresh connections; neurogenesis brings an entirely new unit into an existing circuit. This is how a network gains capacity it did not have, rather than only re-tuning what it has.
+**What we built:** Two fenced tiers on top of the fixed core map. Tier 1 (§4.11) wires a pre-screened skill onto a drafting cell as a per-personality attachment whose strength learns like any weight; candidates ride the drafts so the critic scores a bad experiment before anything is spoken. Tier 2 (§4.12) holds a pool of reserve cells, brings one online when learning finds a recurring proven pattern, specializes it, and wires it in with a receptor type; a cluster of attachments that keeps proving out is promoted into a standalone node. Both sit under the same three-factor license, are excitatory only, cannot host on a safety cell, and stop dead under the global wiring freeze.
+**Verdict: Partial, and deliberately so.** Real structural growth, but the parts are vetted in advance and only the arrangement is learned — the system rearranges and promotes from a screened library rather than inventing units from nothing. A thinking unit is code, not a row, so nothing is conjured at runtime. Still deferred: chains from one unit into another, unit types beyond drafters and judges, and the executive. **Say "bounded structural growth over a fixed core, from a vetted parts library" — not "it rewires itself."**
 
 ### Spike-timing-dependent plasticity → nowhere
 **What we built:** Nothing. No timing, no order dependence.
@@ -982,7 +1048,7 @@ Thirty-six ideas. For each: what it claims, what we built, and a verdict.
 ### Eligibility traces (Sutton) → §4.6
 **The claim:** Credit must reach the states that led to a reward, not only the state where it arrived.
 **What we built:** Credit reaching back a couple of turns with decay. The turn where the reward lands is rarely the only one that earned it.
-**Verdict: Solid** as credit spreading. Undermined by being invisible: applied but never logged, so every learning report under-counts.
+**Verdict: Solid** as credit spreading. Previously undermined by being invisible; eligibility updates now log as a distinct record carrying which turn earned the credit and which turn paid it, emitted as one aggregate per turn-and-age, and the session total reconciles exactly with the logged records.
 
 ### Yerkes-Dodson, the inverted U → §4.5
 **The claim:** Moderate arousal helps encoding. Extreme stress hurts it. Intense events of *either* valence imprint hard.
@@ -992,7 +1058,7 @@ Thirty-six ideas. For each: what it claims, what we built, and a verdict.
 ### Complementary Learning Systems (McClelland, McNaughton & O'Reilly) → §3.4, §3.8, §4.7
 **The claim:** Two systems. A fast one for one-shot episodes, a slow one for interference-resistant structure. Sleep moves content between them.
 **What we built:** Structurally real. Episodes are fast and verbatim. Notes are slow and distilled. Sleep transfers. The two even earn learning credit as separate retrieval routes.
-**Verdict: Solid architecturally, with an acknowledged inversion.** Encoding is deliberately *indiscriminate*, the opposite of the classical account. Storage is free; retrieval is the intelligence. All selectivity moved to consolidation and retrieval, where hindsight is available. Missing: no replay, no interleaved rehearsal, no forgetting mitigation.
+**Verdict: Solid architecturally, with an acknowledged inversion.** Encoding is deliberately *indiscriminate*, the opposite of the classical account. Storage is cheap relative to the cost of deciding what to keep; retrieval is the intelligence. All selectivity moved to consolidation and retrieval, where hindsight is available. Missing: no replay, no interleaved rehearsal, no forgetting mitigation — and, relatedly, no forgetting at all: the store has no retention bound.
 
 ### Episodic and semantic memory (Tulving) → §3.1, §3.2
 **The claim:** Two systems. Events you lived, facts you know.
@@ -1026,7 +1092,7 @@ Thirty-six ideas. For each: what it claims, what we built, and a verdict.
 ### Basal ganglia motor chunking → §3.7
 **The claim:** Repeated sequences compress into single units that run ballistically without step-by-step control.
 **What we built:** §3.7, naming the analogue directly. Three different parent contexts required, which is what makes it a skill and not a memorized job. Only invariant steps fire, and execution stops at the first step whose details vary, because a reflex has fixed parameters.
-**Verdict: Solid design. Dark in practice.** It has never produced a reflex.
+**Verdict: Solid design, live and unfired.** The pass runs every consolidation and has never produced a reflex. The bar is unmet, not miscalibrated: the job corpus is dominated by single-step and failed work, and the most common sub-sequence sits at 67% success against a 90% bar. A fireable-count metric now surfaces how close anything is, so this lights up on its own once real multi-step jobs start succeeding.
 
 ### Forward models and efference copy → §3.6
 **The claim:** A motor command carries a copy predicting its own sensory consequences, so deviation is detectable without waiting for the world to report back.
@@ -1094,7 +1160,7 @@ Thirty-six ideas. For each: what it claims, what we built, and a verdict.
 ### Chunking (Miller; Chase & Simon) → §3.7
 **The claim:** Expertise is largely bigger chunks. The chess master sees fewer, larger units, not more pieces.
 **What we built:** §3.7. Three contexts maps to generalization; invariance maps to over-learning.
-**Verdict: Solid design. Dark in practice.**
+**Verdict: Solid design, live and unfired.** The pass runs; the corpus has not yet cleared its bar. See §3.7.
 
 ### Structure mapping (Gentner) → §3.5
 **The claim:** Analogy matches relational structure, not surface features. Deep transfer requires stripping the domain away.
@@ -1236,16 +1302,17 @@ Thirty-six ideas. For each: what it claims, what we built, and a verdict.
 | Thing | Reality |
 |---|---|
 | **Spiking neurons** | Not implemented. Stateless comparators. Never claim it. |
-| **Rewiring itself** | The core cell-to-cell map is fixed; learning moves weights on it, not its structure. Around it, a bounded, fenced, screened structural layer is live: vetted skills wired onto cells (§2.9), reserve cells recruited into new units, and the brain authoring its own skills, each one passing the untrusted-skill screener and earning its place through competition (§2.10). The core map itself does not rewire, and nothing self-modifies without those gates. |
+| **Rewiring itself** | The core cell-to-cell map is fixed; learning moves weights on it, not its structure. Around it, a bounded, fenced, screened structural layer is live: vetted skills wired onto cells (§4.11), reserve cells recruited into new units, and the brain authoring its own skills, each one passing the untrusted-skill screener and earning its place through competition (§4.12). The core map itself does not rewire, and nothing self-modifies without those gates. |
 | **Reward prediction error / TD learning** | Not implemented. The dopamine delta is a proxy for it. |
 | **Replay** | Not implemented. Consolidation is batch post-processing. |
 | **Embodied cognition** | One chemistry-gated perception switch. Real, but keep the claim that size. |
-| **Self-grading** | ~80% of the reward signal is self-administered. Instrumented and capped, not solved. The external channel is now reachable and on, which makes it fixable rather than fixed. The measure itself briefly overstated its own health, because the evidence gates (§2.11) stamped self-generated inferences with the external label; those now carry their own provenance label and tally as intrinsic, so the external share is a reading again rather than an upper bound. Aesthetic reward (§4.9) went from a dead weight to a live intrinsic source in the same pass, which pushes the ratio the other way by a small amount. |
+| **Self-grading** | ~80% of the reward signal is self-administered. Instrumented and capped, not solved. The external channel is now reachable and on, which makes it fixable rather than fixed. The measure itself briefly overstated its own health, because the evidence gates (§2.9) stamped self-generated inferences with the external label; those now carry their own provenance label and tally as intrinsic, so the external share is a reading again rather than an upper bound. Aesthetic reward (§4.9) went from a dead weight to a live intrinsic source in the same pass, which pushes the ratio the other way by a small amount. |
 | **Avoidance reading** | Live, and now requires an active dodge rather than mere staleness, with a leak, a hard expiry, and eviction so a belief cannot pin itself. Still unvalidated on real traffic: the thresholds are reasoned, not measured. |
 | **Repetition-gate sensitivity** | The structural check (§5.4) now normalizes away hedges, modals and inflections, so signatures collide far more readily than when its ceiling was set. The ceiling was raised to compensate by reasoning about the higher collision rate, not by measurement. The suppression log records the signature and the reason, so it is measurable — it has not been measured. Until it is, the honest claim is that the check catches what it was built to catch, not that its rate is tuned. |
 | **Reflexes / motor chunking** | Has never produced a reflex, and now we know why: the job corpus is dominated by *failed* exploratory work. The most common sub-sequence runs at 67% success against a 90% bar. Not miscalibrated. Waiting on jobs that succeed. |
-| **Song recognition** | The fingerprint database is an empty stub. Cannot match. |
-| **Video** | Zero callers. |
+| **Song recognition** — *deferred* | The matcher works; the fingerprint database is an empty stub (`audio_fingerprints.json` contains `{"songs": {}, "hashes": {}}`), so it cannot match anything. Deferred rather than broken: it needs a corpus loaded through the existing CLI, and nothing has asked for it yet. |
+| **Video** — *deferred* | The analyzer works and `occipital.py` subscribes to `sensory.video_frame`. Nothing in the codebase publishes that topic, so the path has zero callers. Deferred rather than broken: it needs a producer (Pipecat or webcam) wired to the topic. |
+| **Memory retention** | There is none. The episodic store has no retention window, no TTL, and no age-based eviction; the only deletion path is erasure on request (`api_purge_end_user`, plus `purge_source` for hypotheses). Growth is linear in substantive turns, per persona, per tenant, without bound. One developer's local store is already ~49 MB across a handful of personas. Note that this is not simply a missing feature: `CONSTITUTION.md` commits to it in as many words — *"Nothing is forgotten unless explicitly pruned by the user. This is a genuine transcendence of a human limitation"* — and the public site sells perfect recall. A retention policy would contradict both, so it is a **product decision that has not been made**, not an oversight waiting to be patched. Until it is made, do not claim "storage is free" or "forever" anywhere. |
 | **Per-mandate reward weights** | Now consumed. An assigned mandate layers its own weights onto what the persona values, resolved ambiently from the turn's agent binding, clamped at write and at read, and the composite is clamped again. The Stoic is exempt (§4.9). |
 | **Unfinished thoughts in engine-mode working context** | Built, as a deliberate position: companion turns surface open threads ungated; engine/customer turns surface only threads whose `bears_on` overlaps the active mandate's domain, so a persona's introspective threads stay out of a customer's conversation. |
 
@@ -1268,7 +1335,7 @@ Thirty-six ideas. For each: what it claims, what we built, and a verdict.
 | **The inverted-U plasticity model** | Now on by default (2026-07-17). Emotionally intense turns imprint harder, extreme stress imprints less. Replaces the legacy binary defuse-path skip. |
 | **Perceptual differentiation per personality** | Built, switched off. Valuation is the live differentiator. |
 | **Music perception** | Fully built. One environment variable from live. Set nowhere. |
-| **The "Memory" temperament dial** | Partly alive now. Its decay setting genuinely tunes the workspace spotlight's persistence (see §2.8), so the dial is no longer a complete no-op. But not every setting it and the Focus/Curiosity dials write is load-bearing yet. A full dial-to-behavior audit is the remaining follow-up. |
+| **The "Memory" cognitive dial** | Partly alive now. Its decay setting genuinely tunes the workspace spotlight's persistence (see §2.8), so the dial is no longer a complete no-op. But not every setting it and the Focus/Curiosity dials write is load-bearing yet. A full dial-to-behavior audit is the remaining follow-up. Note that Memory, Focus and Curiosity are **cognitive fingerprint** dials (§7.5), not temperament dials (§7.4) — the distinction §7.4 exists to protect. |
 | **PAPER.md** | Predates the motor rebuild, the learning surface, the personas API, and placement. Describes a library that was removed. Its Global Workspace claims are now true (§2.8); the other drift is not yet reconciled. |
 
 ---
@@ -1282,7 +1349,8 @@ Verbatim from the code. Useful because they are true, and because each one compr
 
 > *"Chemistry may modulate EFFORT and ATTENTION. It must never widen MONEY."*
 
-> *"Storage is free; retrieval is the intelligence."*
+> *"Storage is cheap relative to the cost of deciding what to keep; retrieval is the intelligence."*
+> Corrected 2026-07-18. The line read "Storage is free" for most of the project's life. It is not free, and the shorter version invited a claim the system cannot back — see the retention row in Appendix A.
 
 > *"Never read topic/entity strings here. That would let domain leak into the signature and break transfer."*
 > On cross-domain transfer.
@@ -1333,7 +1401,7 @@ Verbatim from the code. Useful because they are true, and because each one compr
 - **The test suite was writing into live memory.** 83 of 97 job records were test fixtures, one committed. The suite was also appending to the real tool log and rewriting real routing weights. All invisible, because the directory is gitignored. Isolated; the tree is now byte-identical across runs.
 - **Four false claims in code**, including the Active Inference label and a flag docstring that stated the opposite of its default.
 
-**What the audit revealed that no one had listed:** the database-level tenant isolation is inert in production, the MCP token feature is broken because of the same root cause, and the Memory temperament dial did nothing.
+**What the audit revealed that no one had listed:** the database-level tenant isolation is inert in production, the MCP token feature is broken because of the same root cause, and the Memory cognitive dial did nothing.
 
 **Then, the largest single fix: Global Workspace Theory made real (§2.8).** For most of the project's life the thalamus was a stub — it published an attention spotlight nothing subscribed to, and the caller discarded its verdict. The paper and the Constitution both cited it as load-bearing architecture, so the system's central consciousness claim had no code under it. That is now closed. The thalamus reads the bus concentration layer (the workspace field that already existed), fuses every topic into one ignition verdict, and broadcasts it. The broadcast is load-bearing at three places — a slow-built threat wakes the deliberate path, memory recall widens and points at the focus, and the idle mind dwells on what ignited — and the idle mind is a real subscriber to the channel, so "available system-wide" is literal. It ships on with a conservative threshold, provably neutral when nothing is ignited. Four GWT predicates, each now mapped to code; the honest caveat is that it is new and wants soak time on real traffic.
 

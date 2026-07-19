@@ -2,8 +2,13 @@
 Second brain store — episodic (LanceDB or Supabase pgvector) + schema (Markdown or Supabase).
 ONLY imported by brain/clusters/hippocampus.py. No other cluster touches this file.
 
-Design: encode every substantive turn. Storage is free; retrieval is the intelligence.
-The hippocampus indexes, not gatekeeps.
+Design: encode every substantive turn. Storage is cheap relative to the cost of deciding
+what to keep; retrieval is the intelligence. The hippocampus indexes, not gatekeeps.
+
+Storage is NOT free, and nothing here bounds it. There is no retention policy, no TTL, and
+no age-based eviction — the only deletion path is erasure on request (api_purge_end_user).
+Growth is linear in substantive turns per persona per tenant, forever. See docs/SYSTEMS.md
+Appendix A; a retention policy is an open product decision, not an oversight to patch here.
 
 Backend selection: BRAIN_STORAGE_BACKEND=local (default) | supabase
 When supabase, brain.second_brain.supabase_client must have user_id + persona set.
@@ -819,6 +824,33 @@ class SchemaStore:
                 logger.error("[Schema DB] Supabase list_files failed: %s", e)
                 return []
         return [p.name for p in SCHEMA_DIR.glob("*.md")]
+
+    def read_all(self) -> dict[str, str]:
+        """filename → content for every schema file in this persona's scope.
+        One query on Supabase — use this over list_files()+read() when you need
+        the contents of several files (e.g. all per-speaker user models)."""
+        if self._use_supabase:
+            try:
+                sb, uid = self._sb()
+                res = (
+                    sb.table("brain_schemas")
+                    .select("filename,content")
+                    .eq("org_id", uid)
+                    .eq("persona", self._sb_persona())
+                    .eq("end_user_id", "")
+                    .execute()
+                )
+                return {r["filename"]: r.get("content") or "" for r in (res.data or [])}
+            except Exception as e:
+                logger.error("[Schema DB] Supabase read_all failed: %s", e)
+                return {}
+        out: dict[str, str] = {}
+        for p in SCHEMA_DIR.glob("*.md"):
+            try:
+                out[p.name] = p.read_text()
+            except OSError:
+                continue
+        return out
 
     def grep(self, keyword: str) -> list[tuple[str, str]]:
         """Return (filename, matching_line) pairs."""

@@ -1010,41 +1010,51 @@
     });
   }
 
-  // "Sense of You" tab — read-only view of the persona's model of the user
-  // (user.md, written during sleep consolidation). Mirrors the Living page.
+  // "Sense of You" tab — read-only view of the persona's model of the people it
+  // talks to: user.md plus one living model per identified person (user_<slug>.md
+  // — voice-identified companions and every API end user), all written during
+  // sleep consolidation. Mirrors the Living page.
   function renderSenseOfYou() {
     const wrap = document.getElementById('tab-generic'); if (!wrap) return;
     wrap.innerHTML = ''; Object.keys(genReg).forEach(k => delete genReg[k]);
     const cat = SET.categories.find(c => c.id === 'you');
     if (cat && cat.summary) { const b = document.createElement('div'); b.className = 'es-cat-blurb'; b.textContent = cat.summary; wrap.appendChild(b); }
-    const ed = document.createElement('div'); ed.className = 'self-editor self-living';
-    ed.innerHTML =
-      `<div class="self-bar">` +
-        `<span class="self-file">${fileSvg}<b>user.md</b> · <span style="color:var(--ink-4)">living</span></span>` +
-        `<span class="self-ro">${lockSvg}read-only</span>` +
-        `<span class="spacer"></span>` +
-        `<span class="self-meta" id="you-meta"></span>` +
-      `</div>` +
-      `<div class="self-preview" id="you-body"><span style="opacity:.45">Loading…</span></div>`;
-    wrap.appendChild(ed);
+    const holder = document.createElement('div');
+    holder.innerHTML = `<div class="self-editor self-living"><div class="self-preview"><span style="opacity:.45">Loading…</span></div></div>`;
+    wrap.appendChild(holder);
     const foot = document.createElement('div'); foot.className = 'self-foot';
-    foot.innerHTML = `${moonSvg}<span>What this persona has learned about you — gathered from your conversations and revised over sleep passes. It's read here, not edited: the brain keeps this model for itself and updates it as it gets to know you.</span>`;
+    foot.innerHTML = `${moonSvg}<span>What this persona has learned about the people it talks to — one living model per person it has met, in conversation here or as an end user over the API. Gathered from conversations, revised over sleep passes. Read here, not edited: the brain keeps these models for itself.</span>`;
     wrap.appendChild(foot);
+    const modelBlock = (title, sub, content) => {
+      const words = (content.match(/\S+/g) || []).length;
+      return `<div class="self-editor self-living" style="margin-bottom:12px">` +
+        `<div class="self-bar">` +
+          `<span class="self-file">${fileSvg}<b>${mdEsc(title)}</b> · <span style="color:var(--ink-4)">${mdEsc(sub)}</span></span>` +
+          `<span class="self-ro">${lockSvg}read-only</span>` +
+          `<span class="spacer"></span>` +
+          `<span class="self-meta">${words} words</span>` +
+        `</div>` +
+        `<div class="self-preview">${mdToHtml(content)}</div>` +
+      `</div>`;
+    };
     fetch('/user-model?persona=' + encodeURIComponent(persona)).then(r => r.ok ? r.json() : null).then(data => {
-      const bodyEl = ed.querySelector('#you-body');
-      const metaEl = ed.querySelector('#you-meta');
-      if (!bodyEl) return; // tab switched away before the fetch resolved
+      if (!holder.isConnected) return; // tab switched away before the fetch resolved
       const content = (data && data.content) ? data.content.trim() : '';
-      if (content) {
-        const words = (content.match(/\S+/g) || []).length;
-        if (metaEl) metaEl.textContent = words + ' words';
-        bodyEl.innerHTML = mdToHtml(content);
-      } else {
-        bodyEl.innerHTML = `<span style="opacity:.45">No model of you yet — the persona builds one from your conversations during sleep consolidation.</span>`;
+      const speakers = (data && Array.isArray(data.speakers)) ? data.speakers : [];
+      let html = '';
+      if (content) html += modelBlock('user.md', 'living', content);
+      for (const s of speakers) {
+        const body = ((s && s.content) || '').trim(); if (!body) continue;
+        html += modelBlock(s.name || s.file, (s.file || '') + ' · living', body);
       }
+      if (!html) {
+        html = `<div class="self-editor self-living">` +
+          `<div class="self-bar"><span class="self-file">${fileSvg}<b>user.md</b> · <span style="color:var(--ink-4)">living</span></span><span class="self-ro">${lockSvg}read-only</span><span class="spacer"></span></div>` +
+          `<div class="self-preview"><span style="opacity:.45">No model of you yet — the persona builds one per person from your conversations (companion and API sessions alike) during sleep consolidation.</span></div></div>`;
+      }
+      holder.innerHTML = html;
     }).catch(() => {
-      const bodyEl = ed.querySelector('#you-body');
-      if (bodyEl) bodyEl.innerHTML = `<span style="opacity:.45">Could not load the user model.</span>`;
+      if (holder.isConnected) holder.innerHTML = `<div class="self-editor self-living"><div class="self-preview"><span style="opacity:.45">Could not load the user model.</span></div></div>`;
     });
   }
 
