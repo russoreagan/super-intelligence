@@ -875,6 +875,28 @@ DEFAULTS: dict[str, float | int | str] = {
     "fragment_wiring": 1,  # master gate for attachment learning + injection (0 = off)
     "fragment_explore_rate": 0.20,  # P(a given drafter explores a non-established fragment)
     "fragment_explore_max_drafters": 2,  # cap exploring drafters/turn (keeps a cloud/baseline floor)
+    # Relevance-ranked exploration: 1 = the explore candidate is drawn from the fragments
+    # most cosine-similar to the CURRENT input (rank → top-K → per-turn roll among those),
+    # so what a drafter tries is about this turn; 0 = legacy blind hash roll over the whole
+    # pool (rollback). The hash path also serves as the fallback whenever no query embedding
+    # exists for the turn (switch-only turns, embed failure).
+    "fragment_explore_relevance_ranked": 1,
+    "fragment_explore_top_k": 3,  # relevance ranking keeps this many before the per-turn roll
+    # ── Stance library (approach-competition Phase B) ────────────────────────────
+    # Two per-turn stance axes attach to drafters as fragments with their OWN slots:
+    # info posture (brain/skills/stance-*.md — how to treat information need) and
+    # reasoning method (humanity strategy leaves — how to attack the problem). Injected
+    # in DIRECTIVE form (~15 tokens); drawn by relevance + learned weight + chemistry.
+    "stance_library": 1,  # master gate for stance attachment/injection (0 = off)
+    "stance_info_max_per_host": 1,  # info-stance slots per drafter (separate from fragment_max_per_host)
+    "stance_method_max_per_host": 1,  # method-stance slots per drafter
+    "stance_chem_affinity": 1,  # chemistry→posture bias on the info draw (0 = off)
+    "stance_chem_complexity": 1,  # chemistry→method-depth congruence on the method draw (0 = off)
+    "stance_draw_w_relevance": 1.0,  # must stay > w_complexity: relevance dominates economy
+    "stance_draw_w_learned": 0.6,
+    "stance_draw_w_affinity": 0.4,
+    "stance_draw_w_complexity": 0.35,
+    "stance_draw_floor": 0.02,  # per-stance probability floor — chemistry biases, never gates
     "fragment_inject_threshold": 1.30,  # attachment weight ≥ this → injected into its host
     "fragment_max_per_host": 2,  # max fragments injected into any one host per turn
     "fragment_prune_floor": 1.05,  # fragment edges ≤ this are pruned (rest=1.0)

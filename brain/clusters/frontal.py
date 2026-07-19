@@ -1254,10 +1254,8 @@ class FrontalCluster:
                 content = content + [{"type": "text", "text": frag_block}]
             tr = self._record_trace_bypass()
             if tr is not None:
-                try:
+                with contextlib.suppress(Exception):
                     tr.drafter_fragments[host_node] = injected
-                except Exception:
-                    pass
         call_kwargs: dict = {"cached_context": cached_context}
         if downshift:
             # Route this drafter's PROVEN attachment to the free local RunPod model.
@@ -1286,8 +1284,7 @@ class FrontalCluster:
             or getattr(self, "_skill_selector", None) is None
         ):
             return "", []
-        from brain.fragment_pool import is_admissible
-
+        from brain.fragment_pool import EXPLORE_HOSTS, is_admissible
         from brain.judge_attachment import JUDGE_HOSTS
 
         inject_threshold = float(settings.get("fragment_inject_threshold", 1.3))
@@ -1308,17 +1305,63 @@ class FrontalCluster:
             key=lambda p: p[1],
             reverse=True,
         )
-        chosen_ids = [sid for sid, _ in established]
+        # Partition by stance axis — separate budgets, separate framing. Stances (info
+        # posture / reasoning method) never contend with procedural skills for the
+        # draft_slot cap. With stance_library off, everything falls to the procedural
+        # bucket where a stance renders nothing (native_skill_body returns "" for
+        # kind=="stance", humanity bodies are empty) and its edges decay out normally.
+        stance_on = bool(settings.get("stance_library", 1))
+        # Duck-typed selectors without the stance API behave as stance-off — degrade,
+        # never crash (also keeps the pre-stance test doubles byte-identical).
+        _kind_fn = getattr(self._skill_selector, "stance_kind", None) if stance_on else None
+        _directive_fn = getattr(self._skill_selector, "stance_directive", None)
+        proc_ids: list[str] = []
+        info_ids: list[str] = []
+        method_ids: list[str] = []
+        for sid, _w in established:
+            k = _kind_fn(sid) if _kind_fn else None
+            if k == "info":
+                info_ids.append(sid)
+            elif k == "method":
+                method_ids.append(sid)
+            else:
+                proc_ids.append(sid)
         if explore:
-            cand = self._explore_candidate(host_node, chosen_ids, turn_id, seed_idx)
+            cand = self._explore_candidate(host_node, proc_ids, turn_id, seed_idx)
             if cand:
-                chosen_ids.append(cand)
-        chosen_ids = chosen_ids[:cap]
-        if not chosen_ids:
+                proc_ids.append(cand)
+        proc_ids = proc_ids[:cap]
+        info_cap = int(settings.get("stance_info_max_per_host", 1))
+        method_cap = int(settings.get("stance_method_max_per_host", 1))
+        if explore and _kind_fn is not None and host_node in EXPLORE_HOSTS:
+            # An exploring drafter also tries ONE stance; axis alternates by drafter
+            # slot parity so both axes get explored across a turn's drafters.
+            axis = "info" if seed_idx % 2 == 0 else "method"
+            s_cand = self._draw_explore_stance(
+                axis, host_node, info_ids + method_ids, turn_id, seed_idx
+            )
+            if s_cand:
+                (info_ids if axis == "info" else method_ids).append(s_cand)
+        info_ids = info_ids[:info_cap]
+        method_ids = method_ids[:method_cap]
+        chosen_ids = proc_ids
+        if not chosen_ids and not info_ids and not method_ids:
             return "", []
         nonce = str(uuid.uuid4())[:8]
         parts: list[str] = []
         injected: list[str] = []
+        # Stances lead: the angle of attack frames whatever operational content follows.
+        # Directive form only (~15 tokens) — the body is deliberately NOT injected here;
+        # one line is what makes two drafters attack the same input differently.
+        for sid in info_ids + method_ids:
+            directive = _directive_fn(sid) if _directive_fn else ""
+            if not directive:
+                continue
+            parts.append(
+                "Approach stance — adopt this angle of attack for this reply "
+                f"(a thinking posture, not a tool): {directive}"
+            )
+            injected.append(sid)
         for sid in chosen_ids:
             body = self._skill_selector.native_skill_body(sid)
             if not body:
@@ -1369,13 +1412,101 @@ class FrontalCluster:
                 allids = self._skill_selector.attachable_fragment_ids()
             except Exception:
                 allids = []
-            pool = [
-                sid for sid in allids if sid not in baseline and is_admissible(sid, host_node)
-            ]
+            pool = [sid for sid in allids if sid not in baseline and is_admissible(sid, host_node)]
         if not pool:
             return None
+        pick_pool = sorted(pool)
+        # Relevance-ranked exploration: what a drafter tries should be ABOUT this
+        # input. Rank the pool by cosine against the turn's query embedding, keep
+        # the top K, and roll deterministically among those — topical spread
+        # rather than a blind roll over everything. Falls back to the legacy
+        # full-pool roll (byte-identical to the old path) whenever no query
+        # vector exists for the turn (switch-only turns, embed failure) or the
+        # flag is off.
+        if settings.get("fragment_explore_relevance_ranked", 1):
+            qv = getattr(self, "_current_query_vec", None)
+            if qv:
+                try:
+                    ranked = self._skill_selector.rank_fragments_by_relevance(pick_pool, qv)
+                except Exception:
+                    ranked = []
+                if ranked:
+                    top_k = max(1, int(settings.get("fragment_explore_top_k", 3)))
+                    pick_pool = [sid for sid, _ in ranked[:top_k]]
         seed = int.from_bytes(hashlib.sha1(f"{turn_id}:{seed_idx}".encode()).digest()[:8], "big")
-        return sorted(pool)[seed % len(pool)]
+        return pick_pool[seed % len(pick_pool)]
+
+    def _draw_explore_stance(
+        self, axis: str, host_node: str, exclude: list[str], turn_id: str, seed_idx: int
+    ) -> str | None:
+        """One stance for an exploring drafter, drawn by the four-term chemistry-
+        modulated draw:
+
+            logit = w_rel·cos(query)              relevance proposes
+                  + w_learn·(weight − REST)       learning disposes
+                  + w_aff·affinity(chem)          posture affinity      (info axis)
+                  − w_cplx·|complexity − effort|  cognitive economy     (method axis)
+
+        sampled through a floored softmax — chemistry and learning BIAS the draw but
+        can never zero a stance out (a stressed brain must stay ABLE to reach
+        freshness-check; temperament colors cognition, never disables it).
+        Deterministic per (turn, drafter slot)."""
+        from brain.budget import chem_effort
+        from brain.fragment_pool import fragment_node_name, is_admissible
+        from brain.stance_affinity import (
+            affinity_score,
+            complexity_congruence,
+            floored_softmax_pick,
+            turn_seed,
+        )
+
+        sel = self._skill_selector
+        try:
+            pool = sel.info_pool() if axis == "info" else sel.method_pool()
+        except Exception:
+            return None
+        baseline = set(exclude)
+        entries = [
+            e for e in pool if e["name"] not in baseline and is_admissible(e["name"], host_node)
+        ]
+        if not entries:
+            return None
+        qv = getattr(self, "_current_query_vec", None)
+        try:
+            chem = self._chem_snapshot()
+        except Exception:
+            chem = {}
+        w_rel = float(settings.get("stance_draw_w_relevance", 1.0))
+        w_learn = float(settings.get("stance_draw_w_learned", 0.6))
+        w_aff = float(settings.get("stance_draw_w_affinity", 0.4))
+        w_cplx = float(settings.get("stance_draw_w_complexity", 0.35))
+        rel: dict[str, float] = {}
+        if qv:
+            try:
+                rel = dict(sel.rank_fragments_by_relevance([e["name"] for e in entries], qv))
+            except Exception:
+                rel = {}
+        effort = chem_effort(chem)
+        ids: list[str] = []
+        logits: list[float] = []
+        for e in sorted(entries, key=lambda x: x["name"]):
+            sid = e["name"]
+            z = w_rel * rel.get(sid, 0.0)
+            z += w_learn * (
+                self._wiring.get_edge_weight(fragment_node_name(sid), host_node) - WEIGHT_REST
+            )
+            if axis == "info" and settings.get("stance_chem_affinity", 1):
+                z += w_aff * affinity_score(chem, e.get("affinity"))
+            if axis == "method" and settings.get("stance_chem_complexity", 1):
+                z += w_cplx * complexity_congruence(float(e.get("complexity", 0.5)), effort)
+            ids.append(sid)
+            logits.append(z)
+        return floored_softmax_pick(
+            ids,
+            logits,
+            floor=float(settings.get("stance_draw_floor", 0.02)),
+            seed=turn_seed(turn_id, seed_idx),
+        )
 
     def _select_explore_drafters(self, firing_indices: list[int], turn_id: str) -> set[int]:
         """Which firing drafters explore this turn (bounded). Keeps at least one non-exploring
@@ -1486,10 +1617,8 @@ class FrontalCluster:
             return prompt
         tr = self._record_trace_bypass()
         if tr is not None:
-            try:
+            with contextlib.suppress(Exception):
                 tr.drafter_fragments[host_node] = injected
-            except Exception:
-                pass
         return f"{prompt}\n\n{block}"
 
     def _record_trace_bypass(self):

@@ -33,9 +33,7 @@ Chemistry may modulate EFFORT and ATTENTION. It must never widen MONEY.
 from __future__ import annotations
 
 
-def chem_budget(
-    chem: dict[str, float] | None, *, base: int, gain: float, lo: int, hi: int
-) -> int:
+def chem_budget(chem: dict[str, float] | None, *, base: int, gain: float, lo: int, hi: int) -> int:
     """The canonical chemistry→effort curve: DA (motivated pursuit) raises the
     budget, CORT (stress) lowers it, symmetrically by `gain`, clamped to
     [lo, hi]. Missing/empty chemistry → `base` unchanged. Both neuromod values
@@ -46,3 +44,18 @@ def chem_budget(
     cort = float(chem.get("CORT", 0.5))
     shift = (da - 0.5) * gain - (cort - 0.5) * gain
     return max(lo, min(hi, int(base) + int(round(shift))))
+
+
+def chem_effort(chem: dict[str, float] | None, *, gain: float = 1.0) -> float:
+    """Float sibling of chem_budget: the same DA-up/CORT-down curve as a normalized
+    effort level in [0, 1] instead of a clamped integer. 0.5 at resting chemistry.
+
+    Consumed by the stance draw's cognitive-economy term: how DEEP a reasoning method
+    the current state can afford (a stressed brain reaches for the fast heuristic, a
+    motivated calm one can carry a contemplative protocol). Same file, same invariant:
+    chemistry modulates EFFORT and ATTENTION — never money."""
+    if not chem:
+        return 0.5
+    da = float(chem.get("DA", 0.5))
+    cort = float(chem.get("CORT", 0.5))
+    return max(0.0, min(1.0, 0.5 + (da - 0.5) * gain - (cort - 0.5) * gain))
