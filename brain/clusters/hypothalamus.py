@@ -6,6 +6,7 @@ Consumes temporal features, updates neuromod levels, names emotional state.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import time
 
@@ -183,6 +184,7 @@ class HypothalamusCluster:
     async def process(self, features: dict) -> dict:
         """Update neuromod levels from temporal features. Return affect summary."""
         nm = self._bus.neuromod
+        _nm_before = nm.snapshot()
 
         # Phase 8 (colony features): fold in the prior turn's aggregate cluster
         # activity before appraisal-driven updates (clamped, prior-turn → bounded).
@@ -657,11 +659,40 @@ class HypothalamusCluster:
             "emotion_override_reason": override_reason if override_emotion else None,
         }
 
+        self._record_coactivation(_nm_before, snap)
         await self._bus.publish_dict("affect.state", affect, source=CLUSTER)
         logger.debug(
             "Hypothalamus: emotion=%s DA=%.2f GABA=%.2f", emotion, snap["DA"], snap["GABA"]
         )
         return affect
+
+    # Channel each appraisal mapper writes to. The mappers were real StatefulSwitch
+    # objects until 2026-07-17; they are plain code now, so they never reach
+    # fired_path and the nine wired edges leaving them were credited by nothing.
+    _MAPPER_CHANNELS = {
+        "hypothalamus.threat_to_GABA": "GABA",
+        "hypothalamus.valence_to_DA": "DA",
+        "hypothalamus.novelty_to_ACh": "ACh",
+        "hypothalamus.arousal_homeostat": "NE",
+    }
+
+    def _record_coactivation(self, before: dict, after: dict) -> None:
+        """Record each appraisal mapper's participation, keyed to how far it actually
+        moved its channel this turn.
+
+        Recorded ONCE at the end of process() rather than at each of the ~25 nm.add
+        call sites — per-site instrumentation would be unmaintainable and would drift
+        the moment a mapper gained a branch. Level is |Δchannel| normalised by a full
+        swing, so a turn where threat barely moved credits the threat edges barely:
+        a flat 1.0 every turn would be a constant, and a constant teaches nothing."""
+        from brain.observability.firing_path import record_node_active
+
+        with contextlib.suppress(Exception):
+            record_node_active("hypothalamus", 1.0)
+            for node, channel in self._MAPPER_CHANNELS.items():
+                delta = abs(float(after.get(channel, 0.0)) - float(before.get(channel, 0.0)))
+                # A 0.25 swing in one turn is a strong move for these channels.
+                record_node_active(node, min(1.0, delta / 0.25))
 
     def _effective_emotion(self, snap: dict, hs, h_snap: dict) -> tuple[str, str]:
         """Name the emotion from hormonally-adjusted effective neuromod values.

@@ -101,6 +101,18 @@ class TurnTrace:
     #              "level", "tag", "ts"}
     fired_path: list[dict] = field(default_factory=list)
 
+    # Non-firing nodes that PARTICIPATED this turn: canonical name → level in [0,1].
+    # Bus channels, chemistry mappers, state holders and bookkeeping nodes have no
+    # SwitchNeuron/IntegratorCell, so they never reach fired_path — but they are
+    # co-active in the Hebbian sense, and 35 of the 72 wired edges have one as an
+    # endpoint and could otherwise never be credited at all.
+    #
+    # Deliberately a SEPARATE field, not entries on fired_path: that list is read as
+    # an ordered ADJACENCY sequence by path credit, eligibility replay, the colony
+    # trail and the criticality branching ratio, so inserting a node that did not
+    # actually fire would fabricate adjacencies and skew all four.
+    coactive: dict[str, float] = field(default_factory=dict)
+
     # Neuromod state at the start of the turn (before any processing).
     # Used by the Hebbian pass to compute per-turn DA delta rather than
     # comparing DA to an arbitrary neutral baseline.

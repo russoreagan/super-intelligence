@@ -234,17 +234,20 @@ def test_hebbian_pass_applies_updates_along_path(monkeypatch, tmp_path):
     from brain.sleep import SleepConsolidation
 
     w = _isolated_wiring(monkeypatch, tmp_path)
-    w.add("frontal.executive", "frontal.drafter_A", weight=1.0)
+    # A PLAIN path edge. executive→drafter_* is owned by the drafter competition and
+    # is deliberately excluded from path credit (see credit_purity), so using it here
+    # would test nothing.
+    w.add("temporal.understanding_integrator", "frontal.executive", weight=1.0)
     w.snapshot_baseline()
     sc = SleepConsolidation(_StubRouter(), _StubSchema(), _StubEpisodic(), wiring=w)
     # prior_DA=0.5 → positive delta; critic_ran=True so critic term contributes
     trace = _make_trace(DA=0.9, prior_DA=0.5, critic_overall=0.95)
     trace.fired_path = [
+        {"name": "temporal.understanding_integrator", "cluster": "temporal", "kind": "integrator"},
         {"name": "frontal.executive", "cluster": "frontal", "kind": "integrator"},
-        {"name": "frontal.drafter_A", "cluster": "frontal", "kind": "integrator"},
     ]
     sc._run_hebbian_pass("session_x", [trace])
-    new_weight = w.get_edge_weight("frontal.executive", "frontal.drafter_A")
+    new_weight = w.get_edge_weight("temporal.understanding_integrator", "frontal.executive")
     # Decay (1% toward 1.0, weight was already 1.0 so no change) + positive Hebbian
     assert new_weight > 1.0
 
@@ -253,16 +256,16 @@ def test_hebbian_pass_decreases_on_negative_outcome(monkeypatch, tmp_path):
     from brain.sleep import SleepConsolidation
 
     w = _isolated_wiring(monkeypatch, tmp_path)
-    w.add("frontal.executive", "frontal.drafter_C", weight=1.5)
+    w.add("temporal.understanding_integrator", "frontal.executive", weight=1.5)
     sc = SleepConsolidation(_StubRouter(), _StubSchema(), _StubEpisodic(), wiring=w)
     # prior_DA=0.7 → DA dropped to 0.1 → strong negative delta
     trace = _make_trace(DA=0.1, prior_DA=0.7, critic_overall=0.2)
     trace.fired_path = [
+        {"name": "temporal.understanding_integrator", "cluster": "temporal", "kind": "integrator"},
         {"name": "frontal.executive", "cluster": "frontal", "kind": "integrator"},
-        {"name": "frontal.drafter_C", "cluster": "frontal", "kind": "integrator"},
     ]
     sc._run_hebbian_pass("session_y", [trace])
-    new_weight = w.get_edge_weight("frontal.executive", "frontal.drafter_C")
+    new_weight = w.get_edge_weight("temporal.understanding_integrator", "frontal.executive")
     # Decay (1.5 → 1.495) + negative Hebbian push it further down
     assert new_weight < 1.495
 
@@ -276,7 +279,7 @@ def test_frozen_wiring_freezes_weight_learning(monkeypatch, tmp_path):
     from brain.sleep import SleepConsolidation
 
     w = _isolated_wiring(monkeypatch, tmp_path)
-    w.add("frontal.executive", "frontal.drafter_A", weight=1.0)
+    w.add("temporal.understanding_integrator", "frontal.executive", weight=1.0)
     w.save()
     wiring_path = Path(tmp_path / "wiring.json")
     before_bytes = wiring_path.read_bytes()
@@ -284,20 +287,21 @@ def test_frozen_wiring_freezes_weight_learning(monkeypatch, tmp_path):
     sc = SleepConsolidation(_StubRouter(), _StubSchema(), _StubEpisodic(), wiring=w)
     trace = _make_trace(DA=0.9, prior_DA=0.5, critic_overall=0.95)
     trace.fired_path = [
+        {"name": "temporal.understanding_integrator", "cluster": "temporal", "kind": "integrator"},
         {"name": "frontal.executive", "cluster": "frontal", "kind": "integrator"},
-        {"name": "frontal.drafter_A", "cluster": "frontal", "kind": "integrator"},
     ]
+    edge = ("temporal.understanding_integrator", "frontal.executive")
 
     # FROZEN: weights untouched and the file is byte-identical.
     monkeypatch.setenv("BRAIN_WIRING_FROZEN", "true")
     sc._run_hebbian_pass("s_frozen", [trace])
-    assert w.get_edge_weight("frontal.executive", "frontal.drafter_A") == pytest.approx(1.0)
+    assert w.get_edge_weight(*edge) == pytest.approx(1.0)
     assert wiring_path.read_bytes() == before_bytes
 
     # Control: same trace unfrozen DOES move the weight (proves the trace is potent).
     monkeypatch.setenv("BRAIN_WIRING_FROZEN", "false")
     sc._run_hebbian_pass("s_live", [trace])
-    assert w.get_edge_weight("frontal.executive", "frontal.drafter_A") > 1.0
+    assert w.get_edge_weight(*edge) > 1.0
 
 
 # ── New field coverage ───────────────────────────────────────────────────────
@@ -632,8 +636,10 @@ def _elig_session(monkeypatch, tmp_path, lookback=2):
     monkeypatch.setitem(settings._data, "eligibility_tau_turns", 2.0)
 
     w = _isolated_wiring(monkeypatch, tmp_path)
-    w.add("frontal.executive", "frontal.drafter_A", weight=1.0)
-    w.add("frontal.executive", "frontal.drafter_B", weight=1.0)
+    # Two DIFFERENT plain path edges — eligibility skips when the past path equals the
+    # current one, and executive→drafter_* is competition-owned (see credit_purity).
+    w.add("temporal.understanding_integrator", "frontal.executive", weight=1.0)
+    w.add("temporal.understanding_integrator", "hippocampus.recall", weight=1.0)
 
     cap = _CaptureDecisions()
     monkeypatch.setattr("brain.hebbian.decisions", cap)
@@ -641,13 +647,13 @@ def _elig_session(monkeypatch, tmp_path, lookback=2):
     sc = SleepConsolidation(_StubRouter(), _StubSchema(), _StubEpisodic(), wiring=w)
     t1 = _make_trace("turn_1", DA=0.9, prior_DA=0.5, critic_overall=0.95)
     t1.fired_path = [
+        {"name": "temporal.understanding_integrator", "cluster": "temporal", "kind": "integrator"},
         {"name": "frontal.executive", "cluster": "frontal", "kind": "integrator"},
-        {"name": "frontal.drafter_A", "cluster": "frontal", "kind": "integrator"},
     ]
     t2 = _make_trace("turn_2", DA=0.9, prior_DA=0.5, critic_overall=0.95)
     t2.fired_path = [
-        {"name": "frontal.executive", "cluster": "frontal", "kind": "integrator"},
-        {"name": "frontal.drafter_B", "cluster": "frontal", "kind": "integrator"},
+        {"name": "temporal.understanding_integrator", "cluster": "temporal", "kind": "integrator"},
+        {"name": "hippocampus.recall", "cluster": "hippocampus", "kind": "integrator"},
     ]
     sc._run_hebbian_pass("session_elig", [t1, t2])
     return w, cap
@@ -673,7 +679,7 @@ def test_eligibility_record_is_distinguishable_from_direct_credit(monkeypatch, t
     assert rec["decay"] == pytest.approx(__import__("math").exp(-1 / 2.0), abs=1e-3)
     # …and it names the edge it actually moved.
     moved = {(e["src"], e["tgt"]) for e in rec["edges"]}
-    assert ("frontal.executive", "frontal.drafter_A") in moved
+    assert ("temporal.understanding_integrator", "frontal.executive") in moved
 
 
 def test_eligibility_edges_updated_reconciles_with_logged_records(monkeypatch, tmp_path):
@@ -694,7 +700,7 @@ def test_eligibility_credit_reaches_top_gainers(monkeypatch, tmp_path):
     _, cap = _elig_session(monkeypatch, tmp_path)
     summary = cap.of("session_plasticity_summary")[0]
     gained = {g["edge"] for g in summary["top_gainers"]}
-    assert "frontal.executive→frontal.drafter_A" in gained
+    assert "temporal.understanding_integrator→frontal.executive" in gained
 
 
 def test_eligibility_lookback_zero_logs_nothing(monkeypatch, tmp_path):
@@ -817,14 +823,14 @@ def test_hebbian_pass_credits_each_traces_own_persona(monkeypatch, tmp_path):
     from brain.sleep import SleepConsolidation
 
     w = _isolated_wiring(monkeypatch, tmp_path)
-    edge = ("frontal.executive", "frontal.drafter_A")
+    edge = ("temporal.understanding_integrator", "frontal.executive")
     for p in ("persona_home", "persona_analyst"):
         with bind_persona(p):
             w.add(*edge, weight=1.0)
     sc = SleepConsolidation(_StubRouter(), _StubSchema(), _StubEpisodic(), wiring=w)
     fired = [
+        {"name": "temporal.understanding_integrator", "cluster": "temporal", "kind": "integrator"},
         {"name": "frontal.executive", "cluster": "frontal", "kind": "integrator"},
-        {"name": "frontal.drafter_A", "cluster": "frontal", "kind": "integrator"},
     ]
     home_trace = _make_trace("t_home", DA=0.9, prior_DA=0.5, critic_overall=0.95)
     home_trace.fired_path = fired
@@ -851,14 +857,14 @@ def test_hebbian_pass_unstamped_traces_use_ambient_binding(monkeypatch, tmp_path
     from brain.sleep import SleepConsolidation
 
     w = _isolated_wiring(monkeypatch, tmp_path)
-    edge = ("frontal.executive", "frontal.drafter_A")
+    edge = ("temporal.understanding_integrator", "frontal.executive")
     with bind_persona("persona_bound"):
         w.add(*edge, weight=1.0)
     sc = SleepConsolidation(_StubRouter(), _StubSchema(), _StubEpisodic(), wiring=w)
     trace = _make_trace("t_anon", DA=0.9, prior_DA=0.5, critic_overall=0.95)
     trace.fired_path = [
+        {"name": "temporal.understanding_integrator", "cluster": "temporal", "kind": "integrator"},
         {"name": "frontal.executive", "cluster": "frontal", "kind": "integrator"},
-        {"name": "frontal.drafter_A", "cluster": "frontal", "kind": "integrator"},
     ]
     with bind_persona("persona_bound"):
         sc._run_hebbian_pass("session_anon", [trace])
@@ -885,3 +891,232 @@ def test_file_backend_persona_save_does_not_clobber_boot_file(monkeypatch, tmp_p
     assert q_file.exists()
     assert (tmp_path / "wiring.json").read_text() == boot_bytes
     assert any(e["src"] == "a" and e["w"] > 1.0 for e in __import__("json").loads(q_file.read_text()))
+
+
+# ── Session-length-invariant decay ───────────────────────────────────────────
+#
+# Reinforcement accrues PER TURN but decay ran once per SESSION at a hardcoded
+# 0.01, so the equilibrium w_eq = 1 + n_turns·gain/rate depended on how long the
+# session happened to be: 1.15 for a 1-turn session against 3.92 (clamped at
+# weight_max) for a 20-turn one. Same brain, same settings, 26x spread.
+
+
+def test_batch_decay_scales_linearly_with_turns():
+    """LINEAR (n·r), not compounded. The batch adds the SUM of its turns' deltas,
+    so equilibrium is 1 + ΣG/E; for that to equal the per-turn 1 + ḡ/r at every n,
+    E must be exactly n·r. Compounding is sublinear and leaves long batches
+    settling ~10% high (measured 1.490/1.509/1.548 at n = 1/5/20)."""
+    from brain.hebbian import HebbianUpdater
+
+    r = 0.03
+    assert HebbianUpdater._batch_decay(r, 1) == pytest.approx(r)
+    assert HebbianUpdater._batch_decay(r, 5) == pytest.approx(5 * r)
+    assert HebbianUpdater._batch_decay(r, 20) == pytest.approx(20 * r)
+    # and it is strictly above the compounded form, which is the ~10% gap
+    assert HebbianUpdater._batch_decay(r, 20) > 1 - (1 - r) ** 20
+
+
+def test_batch_decay_capped_for_large_backlogs():
+    """The idle loop can consolidate a large backlog in one pass. Uncapped, a
+    linear rate exceeds 1.0 and would overshoot rest, inverting every edge's
+    deviation instead of relaxing it."""
+    from brain.hebbian import HebbianUpdater
+    from brain.settings import settings
+
+    assert 0.03 * 500 > 1.0  # what it would be without the cap
+    cap = float(settings.get("decay_batch_max", 0.90))
+    assert HebbianUpdater._batch_decay(0.03, 500) == pytest.approx(cap)
+    assert HebbianUpdater._batch_decay(0.03, 500) <= 1.0
+
+
+def test_equilibrium_is_session_length_invariant(monkeypatch, tmp_path):
+    """The property that actually matters, driven through the real pass: an edge
+    settles at the same weight whether its turns arrive one per batch or twenty.
+
+    The synthetic outcome is deliberately mild (ō ~= 0.16, matching production
+    traces) — a strong outcome saturates every configuration at weight_max and
+    makes the comparison vacuous."""
+    from brain.settings import settings
+    from brain.sleep import SleepConsolidation
+
+    monkeypatch.setitem(settings._data, "decay_toward_rest_rate_per_turn", 0.01)
+    monkeypatch.setitem(settings._data, "fragment_wiring", 0)
+
+    # Each config approaches its equilibrium with a time constant of 1/(n·r)
+    # BATCHES, so a fixed batch count would compare a converged run against an
+    # unconverged one (at 300 batches n=1 sits at 3τ ≈ 95%, reading 1.4747 against
+    # a true 1.4992). Give every config the same number of time constants instead.
+    def _settle(n_turns, tag, time_constants=15):
+        rate = float(settings.get("decay_toward_rest_rate_per_turn"))
+        batches = int(time_constants / (n_turns * rate))
+        w = _isolated_wiring(monkeypatch, tmp_path / tag)
+        w.add("temporal.understanding_integrator", "frontal.executive", weight=1.0)
+        sc = SleepConsolidation(_StubRouter(), _StubSchema(), _StubEpisodic(), wiring=w)
+        for _ in range(batches):
+            traces = []
+            for i in range(n_turns):
+                t = _make_trace(f"t{i}", DA=0.55, prior_DA=0.50, critic_overall=0.60)
+                t.fired_path = [
+                    {
+                        "name": "temporal.understanding_integrator",
+                        "cluster": "temporal",
+                        "kind": "integrator",
+                    },
+                    {"name": "frontal.executive", "cluster": "frontal", "kind": "integrator"},
+                ]
+                traces.append(t)
+            sc._run_hebbian_pass("s", traces)
+        return w.get_edge_weight("temporal.understanding_integrator", "frontal.executive")
+
+    settled = {n: _settle(n, f"n{n}") for n in (1, 5, 20)}
+    assert max(settled.values()) < 2.99, f"saturated at the cap, comparison is vacuous: {settled}"
+    spread = max(settled.values()) - min(settled.values())
+    assert spread < 1e-6, f"equilibrium still depends on session length: {settled}"
+
+
+def test_decay_rate_setting_is_actually_read(monkeypatch, tmp_path):
+    """Regression guard on the original defect: hebbian.py hardcoded rate=0.01 at
+    the call site, so the setting was never read on the production path and the
+    Learning-Rate dial's stability half controlled nothing. Changing it must
+    change the outcome."""
+    from brain.settings import settings
+    from brain.sleep import SleepConsolidation
+
+    def _settle(rate, tag):
+        w = _isolated_wiring(monkeypatch, tmp_path / tag)
+        w.add("temporal.understanding_integrator", "frontal.executive", weight=2.0)
+        monkeypatch.setitem(settings._data, "decay_toward_rest_rate_per_turn", rate)
+        sc = SleepConsolidation(_StubRouter(), _StubSchema(), _StubEpisodic(), wiring=w)
+        # Empty fired_path → the turn is skipped for reinforcement, so decay is
+        # observed in isolation (it runs before the trace loop either way).
+        t = _make_trace("t1")
+        t.fired_path = []
+        sc._run_hebbian_pass("s", [t])
+        return w.get_edge_weight("temporal.understanding_integrator", "frontal.executive")
+
+    slow = _settle(0.01, "slow")
+    fast = _settle(0.30, "fast")
+    assert slow == pytest.approx(2.0 - 0.01)  # 2.0*0.99 + 1.0*0.01
+    assert fast < slow, "a higher per-turn decay rate must pull further toward rest"
+
+
+def test_fragment_forget_also_compounds(monkeypatch, tmp_path):
+    """Fragment attachments had the identical per-session defect, masked only by
+    their 10x gain. They must compound over the batch too."""
+    from brain.settings import settings
+    from brain.sleep import SleepConsolidation
+
+    def _settle(n_turns, tag):
+        w = _isolated_wiring(monkeypatch, tmp_path / tag)
+        w.add("fragment.skill_x", "frontal.drafter_A", weight=2.0)
+        monkeypatch.setitem(settings._data, "fragment_forget_per_turn", 0.05)
+        monkeypatch.setitem(settings._data, "fragment_wiring", 1)
+        sc = SleepConsolidation(_StubRouter(), _StubSchema(), _StubEpisodic(), wiring=w)
+        traces = []
+        for i in range(n_turns):
+            t = _make_trace(f"t{i}")
+            t.fired_path = []
+            traces.append(t)
+        sc._run_hebbian_pass("s", traces)
+        return w.get_edge_weight("fragment.skill_x", "frontal.drafter_A")
+
+    one = _settle(1, "one")
+    ten = _settle(10, "ten")
+    assert ten < one, "a 10-turn batch must forget more than a 1-turn batch"
+    # linear scaling: E = min(cap, 10 * 0.05) = 0.5 → 2.0*(1-0.5) + 1.0*0.5
+    assert ten == pytest.approx(2.0 * 0.5 + 1.0 * 0.5, abs=1e-6)
+
+
+# ── Credit purity ────────────────────────────────────────────────────────────
+#
+# frontal.executive→drafter_X used to collect BOTH the contrastive competition
+# credit (winner-contingent, ~0.0012) and ordinary path credit (~0.024, twenty
+# times larger) — and path credit goes to whichever drafter fired FIRST, not to
+# whichever won. Observed in second_brain/wiring_history: executive→drafter_A
+# reached 1.0088 while drafter_B sat at 0.9999, and A is simply first-fired.
+
+
+def _purity_trace(turn_id="p1"):
+    """drafter_C WINS the competition, but drafter_A fires FIRST on the path."""
+    from brain.observability.timeline import TurnTrace
+
+    t = TurnTrace(turn_id=turn_id, session_id="s", user_input="x")
+    t.neuromod = {"DA": 0.9, "GABA": 0.0, "ACh": 0.3, "Glu": 0.3}
+    t.prior_neuromod = {"DA": 0.5, "ACh": 0.3, "Glu": 0.3}
+    t.emotion = "curious"
+    t.user_emotion = ""
+    t.draft_scores = [
+        {"draft_id": f"draft_0_{turn_id}", "overall": 0.40, "selected": False, "critic_ran": True},
+        {"draft_id": f"draft_2_{turn_id}", "overall": 0.90, "selected": True, "critic_ran": True},
+    ]
+    # A fires first — under unfiltered path credit this alone made A the winner.
+    t.fired_path = [
+        {"name": "frontal.executive", "cluster": "frontal", "kind": "integrator"},
+        {"name": "frontal.drafter_A", "cluster": "frontal", "kind": "integrator"},
+        {"name": "frontal.drafter_C", "cluster": "frontal", "kind": "integrator"},
+    ]
+    return t
+
+
+def _run_purity(monkeypatch, tmp_path, tag, purity, lookback=0):
+    from brain.settings import settings
+    from brain.sleep import SleepConsolidation
+
+    monkeypatch.setitem(settings._data, "credit_purity", purity)
+    monkeypatch.setitem(settings._data, "eligibility_lookback", lookback)
+    w = _isolated_wiring(monkeypatch, tmp_path / tag)
+    for label in ("A", "C"):
+        w.add("frontal.executive", f"frontal.drafter_{label}", weight=1.0)
+    sc = SleepConsolidation(_StubRouter(), _StubSchema(), _StubEpisodic(), wiring=w)
+    traces = [_purity_trace("p1")]
+    if lookback:
+        # a second turn on a different path, so eligibility replays p1's path
+        t2 = _purity_trace("p2")
+        t2.fired_path = [
+            {"name": "frontal.executive", "cluster": "frontal", "kind": "integrator"},
+            {"name": "frontal.drafter_C", "cluster": "frontal", "kind": "integrator"},
+        ]
+        traces.append(t2)
+    sc._run_hebbian_pass(f"s_{tag}", traces)
+    return (
+        w.get_edge_weight("frontal.executive", "frontal.drafter_A"),
+        w.get_edge_weight("frontal.executive", "frontal.drafter_C"),
+    )
+
+
+def test_credit_purity_lets_the_winner_beat_the_first_fired(monkeypatch, tmp_path):
+    """The regression this exists for: the drafter that WON must end heavier than
+    the drafter that merely fired first."""
+    a, c = _run_purity(monkeypatch, tmp_path, "on", purity=1)
+    assert c > a, f"winner C ({c}) must beat first-fired A ({a})"
+
+
+def test_credit_purity_off_reproduces_the_ordering_artifact(monkeypatch, tmp_path):
+    """Control: with the flag off, first-fired A wins despite losing the
+    competition. This is the pre-change behaviour, pinned so the fix can't be
+    quietly reverted."""
+    a, c = _run_purity(monkeypatch, tmp_path, "off", purity=0)
+    assert a > c, f"unfiltered path credit should let first-fired A ({a}) beat winner C ({c})"
+
+
+def test_credit_purity_also_filters_the_eligibility_replay(monkeypatch, tmp_path):
+    """Filtering only the main pass would let every past-path replay re-inject the
+    ordering artifact — the easiest way to ship this half-done."""
+    a, c = _run_purity(monkeypatch, tmp_path, "elig", purity=1, lookback=2)
+    assert c > a, f"winner C ({c}) must beat first-fired A ({a}) with eligibility on too"
+
+
+def test_competition_owned_covers_reserve_drafters():
+    """Recruited reserve drafters (Tier 2) are competitors too — the owned set must
+    grow with node_reserve_pool or a recruited node silently collects path credit."""
+    from brain.hebbian import _competition_owned
+
+    owned = _competition_owned(3)
+    for label in "ABCDEFGH":
+        assert ("frontal.executive", f"frontal.drafter_{label}") in owned
+    assert ("frontal.executive", "frontal.drafter_I") not in owned
+    # judges and approach cells too
+    assert ("frontal.drafter_A", "frontal.critic") in owned
+    assert ("temporal.understanding_integrator", "frontal.approach_A") in owned
+    # …but a plain path edge is NOT owned
+    assert ("temporal.understanding_integrator", "frontal.executive") not in owned

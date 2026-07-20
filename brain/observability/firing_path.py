@@ -65,6 +65,29 @@ def record_switch_fire(
         trace.fired_path.append(entry)
 
 
+def record_node_active(name: str, level: float = 1.0) -> None:
+    """Record that a NON-FIRING node participated this turn. No-op without a trace.
+
+    `name` is the canonical `cluster.node` name from the wiring graph. `level` is
+    how much it participated, in [0,1] — NOT merely whether it ran. The distinction
+    is load-bearing twice over: a constant 1.0 on every turn carries no information
+    for the sleep pass to learn from, and for the recall strategies specifically a
+    "it ran" level would close a positive loop (a strategy that returns nothing gains
+    weight → gets more budget → runs more → gains more).
+
+    Repeat records for one node keep the MAX: participating strongly once is the
+    honest summary of the turn.
+    """
+    trace = current_turn_trace.get()
+    if trace is None:
+        return
+    with contextlib.suppress(Exception):
+        lvl = max(0.0, min(1.0, float(level)))
+        prior = trace.coactive.get(name)
+        if prior is None or lvl > prior:
+            trace.coactive[name] = lvl
+
+
 def record_integrator_call(name: str, cluster: str) -> None:
     """Called from IntegratorCell.call() before LLM dispatch."""
     trace = current_turn_trace.get()

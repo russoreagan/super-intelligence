@@ -50,7 +50,11 @@ A word on Part II. Several verdicts are unflattering. That is deliberate. Anyone
 | 8 | [Perception and Expression](#8-perception-and-expression) | 12 | Paralinguistics · Affective computing · Dimensional affect | Ears, eyes, and voice. |
 | 9 | [Platform and Safety](#9-platform-and-safety) | 12 | Least privilege · Pseudonymisation · k-anonymity · Defense in depth | Tenancy, privacy, money, and the boundary. |
 
-Ninety-five distinct systems resting on sixty-five named ideas.
+Ninety-five numbered entries resting on sixty-five named ideas — but be precise about what they are, because "ninety-five systems" overstates it and the overstatement is easy to catch.
+
+Roughly **sixty-two are systems**: remove one and a capability disappears. The rest are the scaffolding around them — about **sixteen guards** (constraints and safety invariants that remove no capability, only a risk), **twelve properties** (configuration and vocabulary belonging to a system rather than standing beside it), and **five measurement surfaces** (instrumentation and reporting). Some entries are honest about this in their own text; §4.8 calls itself "the guards," §7.10 says "no code reads it," §1.7 says it "changes only the rendering, never what the agent feels."
+
+Say it that way. Sixty-two systems with a real safety layer and a real instrument panel is a better claim than ninety-five of anything, and it is the one that survives someone reading the list.
 
 ---
 
@@ -202,7 +206,9 @@ The appraisal ladder from §1.5 runs unconditionally, flag or no flag.
 
 *This section describes the graph. **System 4 describes how it changes.** The split is deliberate: what the wiring is, and what writes to it, are different subjects, and stating the update rule in both places is how the two drifted apart before.*
 
-About sixty declared connections between named parts of the brain. Each carries a weight — how strongly one pathway pulls the next — and each personality has its own copy of the whole graph, which is what makes two agents with identical code behave differently. The weights are learned; **the rule that moves them is §4.1**.
+About seventy declared connections between named parts of the brain. Each carries a weight — how strongly one pathway pulls the next — and each personality has its own copy of the whole graph, which is what makes two agents with identical code behave differently. The weights are learned; **the rule that moves them is §4.1**.
+
+**Every declared connection can be learned on.** That is worth stating because for a long time it was not true. Credit used to travel only between parts that fire in sequence, and about half the graph has an endpoint that never fires in that sense — an incoming signal, a chemistry reading, a piece of held context. Those connections were carried in the graph and displayed in the interface while being incapable of ever changing. They now earn credit from participating in a turn rather than from firing in sequence within it, which is closer to what the underlying idea always claimed: things that are active together strengthen together.
 
 **One precision point that matters, and it is a scope claim rather than a limitation.** This graph — the connections between the brain's own cells — is hand-drawn and fixed. Learning moves the weights on these edges but never their existence: it adds no edge between two cells and removes none.
 
@@ -376,7 +382,9 @@ What stays fixed through all of it is the core cell-to-cell map itself (§2.7). 
 
 Every route that fired on a turn is nudged by how well the turn went, scaled by how chemically primed the session was for learning. That chemical gate is the third factor: coincidence alone changes nothing without a reward signal licensing it.
 
-Homeostatic decay toward rest runs first, so a pathway has to keep earning its strength.
+Homeostatic decay toward rest runs first, so a pathway has to keep earning its strength. Fading is measured per turn and scaled to the number of turns being consolidated. That sounds like bookkeeping and is not: strengthening was already counted per turn, so when fading was counted per *session* instead, how strong a route could ever become depended on how long the conversation happened to run — the same route settling three times higher after a long session than a short one. Counting both the same way removes that.
+
+How fast a route can change is set deliberately. Too slow and nothing the agent learns ever surfaces in its behaviour within a usable number of conversations; too fast and one bad session rewrites how it thinks. It is currently tuned so a genuine shift in routing becomes visible after a couple of sessions and settles after about seven.
 
 Credit is grouped by which personality actually did the turn, not by whichever one happened to trigger the sleep pass. One process serves many, so without that grouping every personality's learning lands on whoever pulled the trigger.
 
@@ -420,19 +428,27 @@ Conversational payoff is usually late. The turn where the reward finally lands i
 
 Each update logs as a distinct record naming which turn earned the credit and which turn paid it, so a learning report reconciles exactly with what was applied.
 
-### 4.7 Other things that earn credit (competitive learning · Complementary Learning Systems) · Live
+### 4.7 What else learns, and how each is graded (competitive learning · Complementary Learning Systems) · Live
 
-Four pathways that the main pass structurally cannot reach.
+**Why this section exists.** The main pass (§4.1) nudges weights on the wiring graph. But several things in the system carry a learnable strength that is *not* a wiring edge — which drafter gets invited, which strategic stance is trusted, how eager a routing shortcut is, how the recall budget is split. The wiring pass structurally cannot reach any of them, so each has its own credit rule. The differences between the rules are the interesting part.
+
+**The contrast worth taking away:** credit for *phrasing* is contrastive and self-graded, credit for *strategy* is grounded in what actually happened, and credit for *routing* can only ever move in the safe direction.
 
 **Drafters compete.** The winner gains in proportion to how far it beat the others. Losers lose at half rate. Winner-take-most, which is competitive learning in its plainest form.
 
 **Stances earn credit from verified outcomes.** The approach competition (§2.10) is the one competition graded against ground truth rather than a critic's taste: a turn later the committed approach is checked against what actually happened, and the winning stances gain or lose durable per-personality weight accordingly — including losing it when an executed approach was refuted, because that refutation is real evidence. The critic's own preference contributes only a small step, and losing candidates barely move at all: they never ran, so nothing grounded exists against them. This is the deliberate inversion of the drafter rule above — where phrasing credit is contrastive and self-graded, strategy credit is outcome-first.
 
-**Routing switches earn credit inside a safety band**, and the band has a direction. A shortcut may only learn to be *less* eager. A self-reflection trigger may only learn to be *more* eager. The clamp applies when the value is read, so drift outside the band does nothing. **This is what makes "no amount of repetition can teach a safety gate to open" true rather than aspirational.**
+**Routing switches earn credit inside a safety band — and this one is not really a credit rule at all.** It is a safety invariant expressed as a constraint on learning, and it is the most important sentence in this section. The band has a direction: a shortcut may only ever learn to be *less* eager, a self-reflection trigger only ever *more* eager. The clamp is applied when the value is read rather than when it is written, so even a corrupted stored value cannot escape it, and drift outside the band does nothing. **This is what makes "no amount of repetition can teach a safety gate to open" true rather than aspirational.** Learning is allowed to make the system more cautious and is structurally incapable of making it less so.
 
-**Search strategies earn credit** by how many useful hits each produced, split along the fast-store/slow-store line that Complementary Learning Systems describes. The code is candid that hit count is a volume proxy for usefulness, not a measure of it.
+**Search strategies earn credit** by how many useful hits each produced, split along the fast-store/slow-store line that Complementary Learning Systems describes. The code is candid that hit count is a volume proxy for usefulness, not a measure of it. Crediting by share rather than by having run is not a refinement — it is what keeps the rule stable. These weights set how much of the memory budget each strategy gets, so paying a strategy merely for executing would let one that returns nothing earn a larger budget, run more often, and earn more still.
+
+**Everything else that was active earns credit in proportion to how much it participated**, which is the general rule the four above are special cases of. A part that barely engaged moves its connections barely; a part that carried the turn moves them fully. The proportionality is the entire point: crediting every co-active connection by the same amount would raise them all together, and since every consumer of these weights reads them *relative* to their neighbours, moving them in unison changes nothing while looking like learning.
+
+**One thing deliberately does not earn credit twice.** Where a competition already decides a winner, the connections it owns are excluded from the general rule. Otherwise both apply, and the general rule is roughly twenty times larger and rewards *whichever candidate happened to go first* rather than whichever won — so the ordering artifact simply drowns the judgment. This was real rather than theoretical: the first-listed drafter had accumulated the strongest connection in the entire graph, and it had done so by being first.
 
 ### 4.8 Refusing to be farmed (intrinsic motivation, Oudeyer & Kaplan · Schmidhuber) · Live
+
+*Read this with §4.3 and §4.4. Those two establish that roughly eighty percent of the reward signal is self-administered and open the channel that can shift it. This is the third leg: the guards that stop self-administered reward from being trivially farmable in the meantime. On its own it reads as a footnote; as the third part of the reward-integrity story it is the part that makes the other two credible.*
 
 The agent rewards itself for being right, so it is built to refuse payment for being right about the obvious. Three guards: it must have been confident, the outcome must have been genuinely uncertain, and being confidently wrong costs it, scaled by that personality's aversion to loss. Being right never gets that scaling. **The one-sidedness is the whole point.**
 

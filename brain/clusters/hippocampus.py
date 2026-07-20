@@ -6,6 +6,7 @@ Retrieval intelligence determines relevance; storage does not gate memory.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import time
@@ -562,6 +563,12 @@ class HippocampusCluster:
         # Cache for potential reuse next turn
         self._cache_recall(cache_key, result)
 
+        self._record_recall_coactivation(
+            schema_hits=len(schema_hits),
+            episode_hits=len(episodes),
+            structural_hits=len(structural_hits),
+        )
+
         if self._wiring is not None and not self._wiring_frozen:
             decisions.log(
                 "weighted_recall_fanout",
@@ -572,6 +579,45 @@ class HippocampusCluster:
                 weights={k: round(v, 3) for k, v in strategy_weights.items()},
             )
         return result
+
+    # Which strategies make up each recall pathway. Mirrors HebbianUpdater._RECALL_SIDES;
+    # these nodes are budget allocations rather than neurons, so they never reach
+    # fired_path and the ten edges around them are unreachable by path credit.
+    _COACTIVE_SIDES = {
+        "schema": ("hippocampus.schema_grep", "hippocampus.entity_tracker"),
+        "episode": ("hippocampus.cosine_recall", "hippocampus.time_filter"),
+        "structural": ("hippocampus.structural_recall",),
+    }
+
+    def _record_recall_coactivation(
+        self, *, schema_hits: int, episode_hits: int, structural_hits: int
+    ) -> None:
+        """Record the recall nodes' participation as CONTRIBUTION SHARE.
+
+        The share, not "did it run", is mandatory here — this is the one place a level
+        choice closes a feedback loop. `_recall_strategy_weights` reads these edges to
+        set the recall budget, so if a strategy earned credit merely for executing, a
+        strategy that runs and returns nothing would gain weight, win more budget, run
+        more, and gain more. Crediting by hits makes the loop self-correcting instead."""
+        from brain.observability.firing_path import record_node_active
+
+        with contextlib.suppress(Exception):
+            counts = {
+                "schema": float(schema_hits),
+                "episode": float(episode_hits),
+                "structural": float(structural_hits),
+            }
+            total = sum(counts.values())
+            # The channel and the aggregator participate whenever recall ran at all.
+            record_node_active("mem.recall", 1.0)
+            record_node_active("hippocampus.recall", 1.0)
+            if total <= 0:
+                return
+            record_node_active("hippocampus.recall_aggregator", 1.0)
+            for side, strategies in self._COACTIVE_SIDES.items():
+                share = counts[side] / total
+                for node in strategies:
+                    record_node_active(node, share)
 
     def _normalize_recall_key(self, query: str, entities: list[str]) -> str:
         """Cheap normalization for cache key — lowercase, dedupe whitespace, sort entities."""

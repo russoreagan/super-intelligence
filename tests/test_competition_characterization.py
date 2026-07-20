@@ -55,6 +55,13 @@ def rig(monkeypatch, tmp_path):
     w = _isolated_wiring(monkeypatch, tmp_path)
     for d in "ABC":
         w.add("frontal.executive", f"frontal.drafter_{d}", weight=1.0)
+    # PIN the input rather than restating the expected numbers whenever the live
+    # default is retuned. These characterize the FORMULA, so the constant they are
+    # derived from is part of the fixture; chasing the default would make them
+    # re-derive whatever the code currently does, which characterizes nothing.
+    from brain.settings import settings
+
+    monkeypatch.setitem(settings._data, "hebbian_outcome_delta", 0.02)
     from brain.hebbian import HebbianUpdater
 
     events: list[tuple[str, dict]] = []
