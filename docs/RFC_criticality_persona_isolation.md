@@ -1,6 +1,19 @@
-# Scope: per-persona isolation for the criticality controller
+# Per-persona isolation for the criticality controller
 
-**Status:** proposed, not implemented. Found 2026-07-19 while auditing the cognitive dials.
+**Status: IMPLEMENTED 2026-07-19.** Found while auditing the cognitive dials; built the
+same day. Kill switch `criticality_persona_scoped` (defaults 1).
+
+Confirmed before and after: with the fix disabled, persona B's effective threshold moved
+0.300 → 0.315 purely because persona A took ten turns. With it enabled, B stays at 0.300.
+
+One thing the scope did not anticipate. Moving the gain off `settings` removed the
+accidental isolation that `monkeypatch.setitem` had been providing in tests: the suite's
+own controller tests were leaving a gain behind and silently scaling every later test's
+thresholds (`test_flock_dynamics` was shifting `test_recruitment`'s expected 0.3 to 0.309).
+Fixed with an autouse `_isolate_criticality_gains` fixture, matching the several other
+global-state isolation fixtures already in `tests/conftest.py`. Worth noting because it is
+the same shape as the production bug — global state with no scoping — and it was hidden by
+a fixture rather than absent.
 
 ---
 

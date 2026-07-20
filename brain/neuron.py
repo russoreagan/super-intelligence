@@ -42,10 +42,13 @@ class SwitchNeuron:
     ) -> float:
         """Threshold shifted by the current neuromod+hormonal snapshot.
 
-        The total shift is multiplied by `settings.modulation_gain` so the
-        whole modulation system can be dialed up/down/off from one knob.
-        Imported lazily to keep neuron.py free of settings coupling at import
-        time (tests instantiate switches without booting settings).
+        The total shift is multiplied by the modulation gain in force for the
+        persona bound to this turn, so the whole modulation system can be dialed
+        up/down/off from one knob. That gain is per-persona: it comes from the
+        criticality controller when that is running, and falls back to the static
+        `modulation_gain` setting otherwise. Imported lazily to keep neuron.py free
+        of settings coupling at import time (tests instantiate switches without
+        booting settings).
 
         `efficacy` is a learned synaptic-route strength (Hebbian): >1 LOWERS the
         threshold (the route fires more readily), <1 raises it. Applied as
@@ -60,9 +63,9 @@ class SwitchNeuron:
                     continue
                 shift += coeff * (float(level) - 0.5)
             try:
-                from brain.settings import settings as _settings
+                from brain.observability.criticality import current_gain
 
-                gain = float(_settings.get("modulation_gain", 1.0))
+                gain = current_gain()
             except Exception:
                 gain = 1.0
             eff = self.threshold + shift * gain
