@@ -4,7 +4,7 @@ Instructions for restructuring the deck in Claude Design (`Elyceum Systems.dc.ht
 
 **Audience.** A potential co-founder: an engineer with his own platform that may merge with this one. He needs depth, and he needs the honest gaps — the status chips and the Appendix A caveats are what make the rest credible to a skeptical reader. An investor version will be derived from this later, so do not optimize for investors now.
 
-**Target length.** ~84 slides.
+**Target length.** ~85 slides.
 
 **Companion file.** `docs/DECK_GLOSSARY.md` is the definition of record for every recurring term, plus the disambiguation table for the words that carry more than one meaning. Read it before writing any detail slide.
 
@@ -81,7 +81,7 @@ So a slide is not finished when it is accurate. It is finished when someone who 
 
 | # | Slide | Instruction |
 |---|---|---|
-| 1 | Title | Keep. Correct the stat strip: **9 systems · 95 subsystems · 65 named theories · 11 brain clusters**. The current numbers are wrong (see Corrected facts). |
+| 1 | Title | Keep. **Do not say "95 systems"** — an audit of all 95 numbered entries found roughly 62 systems, 16 guards, 12 properties and 5 measurement surfaces. A reader who scans the list will catch the inflation, and this deck cannot afford that. Say **"62 systems, and the fences and instruments around them"** — a real safety layer counted honestly is a better claim than a bigger number. Correct the stat strip to **9 systems · 62 subsystems · 65 named theories · 11 brain clusters**. The current numbers are wrong in the other direction (see Corrected facts). |
 | 2 | **What Elyceum is, and why it is different** | **New.** Lead with the product positioning: "AI agents that learn and feel." / "It's not AGI. It's AEI: Artificial Emotional Intelligence." Then the differentiator: *"Most AI tries to copy human intelligence. We copied the biology that produced it."* Support with a 2×2, one line each: **instinct at the core** (it reacts before it reasons); **learns your domain** (a specialist, not a generalist); **cheaper with use** (cost per interaction trends down the more it runs); **no orchestrator, no central plan** (coordination emerges from shared chemistry). |
 | 3 | **Two ways to run it** | **New.** Left: embed the engine in your product over the API, which uniquely returns emotional state alongside every response. Right: run it from the Elyceum app. This is the integration surface, and it is the slide this particular reader cares most about. |
 | 4 | **Persona, mandate, agent** | **New, and load-bearing — nothing later parses without it.** A **persona** is a personality you can talk to; personas are cheap, make as many as you like. A **mandate** is a swappable job. A persona put to work under a mandate, with bounded permissions, is an **agent**. One diagram, three boxes, no prose beyond a caption. |
@@ -160,7 +160,7 @@ Chemistry first because it is the vocabulary every later system uses. Then the C
 | **A · Chemistry and Affect** | 8 | 6 | `1.2 + 1.3` → "What moves them, and what pulls them back" — rise and relax belong on one slide. `1.6 + 1.7` → "The vocabulary and its colors" — 1.7 is a rendering of 1.6's table. |
 | **B · The Cognitive Core** | 10 | 12 | **Split §2.1 into three slides — see "The §2.1 exception" below. It is the foundation for a dozen later slides and currently gets one dense paragraph.** Otherwise no merges. Structural plasticity has moved out to Learning (see above). **Add §2.9 "Deciding across turns"** — the EvidenceGate / drift-diffusion work, live, no slide exists. **Add §2.10 "Deliberating before acting"** — the newest system in the doc: before any tool runs, three candidate approaches (each an information posture × a reasoning method, drawn by relevance, learning, and chemistry) compete and the winner owns the decision to act. Carry its Appendix A caveats on the slide: thresholds reasoned not measured, pairing ledger does not survive a restart. This is also the slide that makes the two-level Multiple-Drafts story honest — deliberation on WHAT to do, then on what to say. |
 | **C · Memory** | 10 | 6 | `3.1 + 3.2 + 3.3` → "What it stores: episodes, notes, vectors" — all three are one-paragraph store descriptions and two share a citation pair. `3.6 + 3.7` → "Automatization: recipes and reflexes" — 3.7 literally opens "Below whole recipes sits a finer tier." `3.8 + 3.10` → "Sleep, and what it concludes." **Also: the "What it stores" slide must carry the retention caveat** (Appendix A, Memory retention). There is no retention window, TTL, or eviction; growth is unbounded and the only deletion path is erasure on request. This reader will ask, and the answer being "it's an open product decision, and here is why it is not trivial" is much stronger than being caught without one. |
-| **D · Learning** | 12 | 10 | **Open on the three scales** — weights, attachments, whole units — then walk them smallest to largest. Mention the fourth credited surface in §4.7: stances from the approach competition earn credit from VERIFIED outcomes (grounded, not critic-graded) — one line, it pays off the §2.10 slide. `4.1 + 4.2` → "The update and the reward signal" — 4.2 is 31 words and cannot hold a slide. `4.5 + 4.6` → "Intensity and timing" — both are modifiers on the same weight update. Do **not** merge 4.8 and 4.10; they rhyme thematically but the mechanisms are unrelated. **Split §4.12** (2,091 words, 14% of all Part I prose) into two slides: reserve-cell recruitment, then self-authored specializations. §4.11 stays whole. |
+| **D · Learning** | 12 | 10 | **Run §4.3 + §4.4 + §4.8 as one consecutive block titled "Can the reward signal be trusted?"** — they are the same story split by unrelated material. §4.3 admits ~80% of reward is self-administered and instruments it; §4.4 opens the external channel that can shift that number; §4.8 is the guards that stop self-reward being farmed in the meantime. Alone, §4.8 reads as a stray safety check, which is why it does not currently land. Together they are the most credibility-buying run in the deck for a skeptical engineer: a system that measures its own worst property, publishes the number, and says it is not solved. Do not let §4.5/§4.6 sit in the middle of them. **Split §4.7 into two slides** — see below. | **Open on the three scales** — weights, attachments, whole units — then walk them smallest to largest. Mention the fourth credited surface in §4.7: stances from the approach competition earn credit from VERIFIED outcomes (grounded, not critic-graded) — one line, it pays off the §2.10 slide. `4.1 + 4.2` → "The update and the reward signal" — 4.2 is 31 words and cannot hold a slide. `4.5 + 4.6` → "Intensity and timing" — both are modifiers on the same weight update. Do **not** merge 4.8 and 4.10; they rhyme thematically but the mechanisms are unrelated. **Split §4.12** (2,091 words, 14% of all Part I prose) into two slides: reserve-cell recruitment, then self-authored specializations. §4.11 stays whole. |
 | **E · Identity** | 10 | 7 | `7.1` folds into the section band (52 words duplicating the system intro). `7.4 + 7.5` → "The dials" — splitting them is exactly what creates the seven-versus-eight confusion the doc then has to correct in prose. |
 | **F · Agency and Action** | 12 | 7 | The biggest win: 11 of 12 subsections are thin, 963 words across 12 headings. `6.2 + 6.3 + 6.6` → "The permission ceiling" (one idea stated three ways). `6.4 + 6.5` → "Jobs and the queue." `6.7 + 6.9` → "Money and the hard no." `6.10 + 6.11` → "External surface: connectors and skills." Keep 6.1, 6.8 and 6.12 standalone. |
 | **G · The Idle Mind** | 9 | 6 | `5.1 + 5.3` → "The loop and its pacing." `5.6 + 5.7` → "Deciding to speak, and how it gets rewritten" — sequential, same pipeline. `5.9` is 24 words; append it to 5.5 Rumination. |
@@ -242,6 +242,77 @@ attachment candidates ride the drafts so the critic scores a bad experiment befo
 spoken — but that is how an attachment proves itself, which is part of the learning loop, not
 part of ordinary turn processing. It stays whole, in Learning.
 
+### Add a "Six rules that hold everywhere" slide — and stop restating them
+
+An audit of all 95 subsections found **six cross-cutting invariants restated roughly 23 times
+across different systems.** Each restatement reads as a fresh discovery, so the architecture
+looks accreted rather than designed, and the reader has to notice the pattern unaided.
+
+**Put them on one slide, immediately after the master map, and have every later slide reference
+rather than re-derive.** Six lines, no diagram needed:
+
+| Rule | Currently restated in |
+|---|---|
+| **Chemistry biases, never dictates.** No mood can drive a gate fully open or shut, make a stance unreachable, lower a safety floor, or widen a budget. | §2.1, §2.10, §6.1, §6.7 — four systems, same sentence with different nouns |
+| **Placement is a privacy control.** Work assigned to our hardware may never fall back to the cloud. Degradation can only ever move toward local. | §2.5, §9.9, §3.3, §5.7, §4.12 — five places |
+| **Clamp on read, not on write.** Bounds are applied when a value is used, so a stale or tampered stored value can never grant anything. | §4.7, §6.3, §4.12 |
+| **Fail closed.** If a check cannot run, the answer is no. | §6.9, §6.11, §9.1, §9.6, §9.11, §4.12 — six places |
+| **Parts are declared in code; learning decides which are live.** | §2.7, §4.11, §4.12 |
+| **Display never writes back to felt state.** Rendering and markup are cosmetic and touch no chemical channel. | §1.7, §8.12 |
+
+This is a strong slide on its own merits for this audience — six invariants, each enforced in
+code, is the shape of something designed. And it buys back roughly twenty slide-paragraphs.
+
+### Consolidate guards into the systems they guard
+
+The same audit classified every subsection. Roughly **62 are systems** — remove one and a
+capability disappears. The rest are **16 guards**, **12 properties**, and **5 measurement
+surfaces**. Several sections say so in their own text: §4.8 calls itself "the guards," §7.10 says
+"no code reads it," §1.7 says it "changes only the rendering, never what the agent feels."
+
+**A guard does not get a peer slide.** It becomes a labelled closing strip on the system it
+protects. Apply this everywhere; these are the worst offenders:
+
+| System | Problem | Consolidation |
+|---|---|---|
+| **§9 Platform and Safety** | Worst ratio in the doc — 5 systems to 5 guards, four of them under 140 words | §9.3 + §9.7 fold into §9.2 (the tenant process); §9.6 folds into §9.5 (the API surface); §9.9 merges into §2.5 (it restates the same routing asymmetry); §9.11 becomes a labelled sub-part of §3.8 (it is an admission gate on cross-customer learning, not a peer of it); §9.1 becomes the section preamble; §9.12 splits three ways with money returning to §6.7. Twelve entries become about five. |
+| **§6 Agency and Action** | §6.2, §6.3, §6.6, §6.7 and §6.9 are five headings describing **one thing** — the autonomy permission model — in 384 words total | One section of 384 words, far stronger than five of 77. This supersedes the earlier merge note for System 6. |
+| **§7 Identity** | Worst dilution — only 4 real systems out of 10 | §7.1 becomes the preamble; §7.2 restates §1.3 and should reference it; §7.4 + §7.5 are two halves of one dial set split on a cosmetic criterion, so merge; §7.3 is a catalog; §7.10 is a document no code reads. The genuine mechanisms are §7.6, §7.7, §7.8, §7.9 — and **§7.7 (affection and bond, "four functions") is the strongest of them and currently gets less space than the personality catalog.** Give it the room. |
+| **§1** | §1.6 is the label space of §1.4's discrete readout; §1.7 is a renderer | Both become sub-parts of §1.4, as already planned. |
+| **§4** | §4.3 and §4.10 are instrumentation, not architecture | Keep §4.3 in the reward-integrity block (it is the *measurement* that makes the honesty claim land) but present it as the instrument panel it is. §4.10 becomes a closing strip on §4.1. |
+
+### Promote what is buried — the reverse problem
+
+Two genuine systems are currently sub-bullets and should be slides:
+
+- **Interoceptive load** (one paragraph inside §2.1). This is **the only cognition-to-chemistry
+  feedback path in the entire document** — the loop that closes System 2 back into System 1. The
+  total amount chemistry has *raised* thresholds is summed and read as felt inhibitory load.
+  Everything else in the deck flows chemistry → behavior; this is the return leg, and it is
+  currently a bullet whose placement the source text apologises for. **Give it a slide** and put
+  it on the master map as an arrow going back.
+- **The lobe bridge** (three sentences inside §6.12). Other brain regions register themselves as
+  tools the planner calls by name; motor holds no direct reference to any of them. "Cognition as
+  an affordance of action" is an inverted dependency structure and one of the more consequential
+  design decisions in the system. It currently shares a 129-word heading with an unrelated
+  mechanism.
+
+### Split §4.7 — it is currently three unrelated things under a residual title
+
+"Other things that earn credit" is a leftovers label, and readers bounce off it because the
+section never says *why* these belong together. The reason: the main pass (§4.1) nudges weights
+on the wiring graph, but several things carry a learnable strength that is **not** a wiring edge
+— which drafter gets invited, which strategic stance is trusted, how eager a routing shortcut is,
+how the recall budget is split. The wiring pass structurally cannot reach any of them, so each
+needs its own rule. **State that first, or the section reads as a grab-bag.**
+
+Then split it, because it is not one kind of thing:
+
+| Slide | Content |
+|---|---|
+| **"Two kinds of competition"** | Drafters and stances, presented as a deliberate contrast — the source section itself calls one "the deliberate inversion" of the other. **Phrasing credit is contrastive and self-graded:** the winning draft gains in proportion to how far it beat the others, losers lose at half rate, and the judge is the critic's taste. **Strategy credit is outcome-grounded:** a turn later the committed approach is checked against what actually happened, and stances gain or lose durable weight accordingly — including losing it when an executed approach was refuted, because refutation is real evidence. Losing candidates barely move, since they never ran and nothing grounded exists against them. Fold the fourth item in as a closing line (search strategies earn credit by useful-hit count, split along the fast-store/slow-store line), keeping the code's own candour that hit count is a volume proxy for usefulness rather than a measure of it. |
+| **"Learning cannot open a safety gate"** | **Its own slide, and a strong one.** This is not a credit rule at all — it is a safety invariant expressed as a constraint on learning, and it is currently buried as the third bullet of a list. Routing switches learn inside a band with a *direction*: a shortcut may only ever learn to be less eager, a self-reflection trigger only ever more eager. The clamp is applied when the value is read rather than when it is written, so even a corrupted stored value cannot escape it. Headline it with the claim it earns: **learning is allowed to make the system more cautious and is structurally incapable of making it less so.** For this audience that is worth more than any three mechanism slides. |
+
 ### The §2.1 exception — three slides, and the word budget does not apply
 
 Switches and integrators are how the entire system works. A dozen later slides assume it —
@@ -285,7 +356,7 @@ means the information is in the wrong order, or a summary is sitting ahead of th
 summarizes.** Fix the order. Pointers are a patch over a sequencing problem, and a reader feels
 the seam every time.
 
-**Total: 5 framing + 12 app + 1 operator loop + 6 brain overview + 3 confidence + 2 vocabulary + 55 detail = 84 slides.**
+**Total: 5 framing + 12 app + 1 operator loop + 6 brain overview + 3 confidence + 2 vocabulary + 56 detail = 85 slides.**
 
 If the deck needs to come down, move Perception and Platform detail into an appendix. Do not cut the Cognitive Core, and do not cut the two vocabulary slides — they are what make the other 79 readable.
 
