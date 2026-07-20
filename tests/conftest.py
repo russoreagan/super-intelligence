@@ -177,6 +177,29 @@ def _isolate_dmn_novelty_state(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_criticality_gains():
+    """Clear the per-persona modulation gains between tests.
+
+    ``criticality._gain_by_persona`` is module-level and deliberately outlives any
+    one turn — it is what SwitchNeuron.effective_threshold reads. Without a reset a
+    test that drives the controller leaves a gain behind and every later test's
+    thresholds are silently scaled by it (test_flock_dynamics was shifting
+    test_recruitment's expected 0.3 to 0.309).
+
+    This did not bite before the gain moved off ``settings`` only because the tests
+    that drive the controller monkeypatch ``modulation_gain``, and monkeypatch
+    restores it on teardown — masking the same leak rather than preventing it.
+    """
+    try:
+        from brain.observability.criticality import reset_gains
+    except Exception:
+        return
+    reset_gains()
+    yield
+    reset_gains()
+
+
+@pytest.fixture(autouse=True)
 def _isolate_tool_log(tmp_path, monkeypatch):
     """Keep the executor audit trail out of the real ``second_brain/schema/``.
 

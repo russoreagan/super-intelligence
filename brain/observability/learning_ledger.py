@@ -38,6 +38,10 @@ LEDGER_TYPES = {
     # structurally cannot (an endpoint that never fires). Same reasoning as the two
     # per-family credits above — it moves real weights, so it must be readable.
     "coactivation_credit_applied",
+    # The criticality controller moves every switch's effective threshold for the
+    # bound persona. Same blind spot eligibility credit had: applied but unreadable,
+    # which is how the cross-persona leak in it went unnoticed.
+    "flock_criticality",
     "session_plasticity_summary",
     "reward_emission",
     "external_grade_recorded",

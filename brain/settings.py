@@ -1091,6 +1091,12 @@ DEFAULTS: dict[str, float | int | str] = {
     #   (3) closed loop — arousal sets a criticality setpoint σ* and the σ-error
     #       drives the global modulation_gain toward it (never super-critical).
     "flock_dynamics": 1,  # flock/criticality layer — production default (graduated 2026-06)
+    # Scope the criticality controller per persona. The gain it computes used to be
+    # written into the settings singleton, which has no persona dimension while one
+    # process serves many personas — so one persona's trim landed on every other
+    # persona's firing thresholds, and the σ window it steered on averaged their
+    # firing paths together. 0 = the old shared behaviour, byte-identical.
+    "criticality_persona_scoped": 1,
     # (1) chemistry trajectory — DMN rumination velocity weights
     "flock_rum_w_cort_vel": 0.60,  # positive CORT velocity (rising stress) → extra worry drive
     "flock_rum_w_ne_vel": 0.40,  # positive NE velocity (rising alertness) → extra worry drive
