@@ -34,6 +34,10 @@ LEDGER_TYPES = {
     "approach_outcome_verified",
     "switch_routing_credit_applied",
     "recall_routing_credit_applied",
+    # Co-activation credit: the generic surface that reaches the edges path credit
+    # structurally cannot (an endpoint that never fires). Same reasoning as the two
+    # per-family credits above — it moves real weights, so it must be readable.
+    "coactivation_credit_applied",
     "session_plasticity_summary",
     "reward_emission",
     "external_grade_recorded",

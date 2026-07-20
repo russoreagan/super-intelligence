@@ -27,6 +27,26 @@ FOCUS_HISTORY_SIZE = 8
 MAX_TRACKED_ENTITIES = 128
 
 
+def _record_active(node: str, level: float) -> None:
+    """Mark a parietal state holder as having participated this turn.
+
+    Recorded on READ rather than on update(), deliberately. These nodes have no
+    SwitchNeuron/IntegratorCell so they never reach fired_path, and the edge they
+    anchor is `parietal.X → frontal.executive` — whose meaning is "this state fed the
+    executive". update() runs unconditionally every turn, so recording there would
+    emit a constant, and a constant carries no signal for the sleep pass to learn
+    from. Recording on read makes the weight track whether the holder actually
+    contributed, which is what the edge is supposed to mean."""
+    if level <= 0:
+        return
+    try:
+        from brain.observability.firing_path import record_node_active
+
+        record_node_active(node, level)
+    except Exception:  # observability must never break a state read
+        pass
+
+
 @dataclass
 class UserStyleVector:
     """Per-modality style vector tracking user's communication register.
@@ -266,8 +286,10 @@ class ParietalCluster:
         turns = int(rec.get("sustained_turns", 0) or 0)
         held = f" (held {turns} turns)" if turns > 1 else ""
         if coalition and focus:
+            _record_active("parietal.topic_vector_holder", 1.0)
             return f"Workspace focus — the {coalition} coalition holds attention on {focus}{held}."
         if focus:
+            _record_active("parietal.topic_vector_holder", 1.0)
             return f"Workspace focus — attention is on {focus}{held}."
         return ""
 
@@ -288,7 +310,11 @@ class ParietalCluster:
             lines.append(f"User: {self._strip_role_tags(t['user'])}")
             if t.get("response"):
                 lines.append(f"Brain: {self._strip_role_tags(t['response'])}")
-        return "\n".join(lines)
+        out = "\n".join(lines)
+        # Scaled by how full the buffer is: an early turn with one line of history
+        # contributed less to the executive than a full window did.
+        _record_active("parietal.recent_turns_ringbuffer", len(turns) / max(1, n) if out else 0.0)
+        return out
 
     def session_summary(self) -> dict:
         return {
@@ -304,7 +330,9 @@ class ParietalCluster:
     def entity_last_seen(self) -> dict[str, int]:
         """entity → turn index it was last mentioned. Read-only copy; used by the
         avoidance gate to find stale (unre-engaged) entities."""
-        return dict(self._entities)
+        out = dict(self._entities)
+        _record_active("parietal.entity_tracker", 1.0 if out else 0.0)
+        return out
 
     def set_active_skill_context(self, ctx: ActiveSkillContext | None) -> None:
         """Selector writes back the updated context after each turn."""

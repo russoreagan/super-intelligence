@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import os
+from functools import lru_cache
 
 from brain.emotion_hierarchy import CORE_VALENCE, valence_of
 from brain.observability.decisions import decisions
@@ -12,6 +13,44 @@ from brain.settings import settings
 from brain.wiring import WEIGHT_REST, Wiring
 
 logger = logging.getLogger(__name__)
+
+
+@lru_cache(maxsize=8)
+def _competition_owned(n_reserve: int) -> frozenset[tuple[str, str]]:
+    """Edges OWNED by an explicit contrastive competition.
+
+    These must not also receive ordinary path credit. The competition credit is
+    winner-contingent and small (~margin × bonus_scale × 0.5); path credit is ~20x
+    larger and is awarded to whichever competitor happened to fire FIRST, so it
+    swamps the quality signal with an ordering artifact. Observed on two families
+    in second_brain/wiring_history: executive→drafter_A reached 1.0088 while
+    drafter_B sat at 0.9999 (A is first-fired), and drafter_B→critic moved while
+    drafter_A→critic never did (there, LAST-before-the-critic wins).
+
+    Derived from the same node-name constructors the competition helpers use rather
+    than tagged onto the edges themselves: a persisted `credit_owner` field would
+    assert that a crediting function exists, and would silently starve its edges the
+    day that function is renamed. A derived predicate cannot drift, because deleting
+    the helper deletes the constructor it is built from.
+    """
+    drafters = [f"frontal.drafter_{chr(65 + i)}" for i in range(5 + max(0, n_reserve))]
+    owned = {("frontal.executive", d) for d in drafters}
+    # Approach cells: _apply_approach_stance_credit documents them as "interchangeable
+    # by design, so a source→cell edge means nothing" — yet frontal._select_competitors
+    # samples on these weights, and today they quietly collect first-fired credit.
+    # Excluding them makes the runtime match the documented intent.
+    owned |= {
+        ("temporal.understanding_integrator", f"frontal.approach_{chr(65 + i)}") for i in range(3)
+    }
+    # Drafter→judge edges have no competition owner, so path credit here is pure
+    # ordering noise. The co-activation pass re-credits them by the drafter's own
+    # critic score, which tracks QUALITY instead of position in the path.
+    owned |= {
+        (d, judge)
+        for d in drafters
+        for judge in ("frontal.critic", "frontal.empathy_critic", "frontal.commitment_extractor")
+    }
+    return frozenset(owned)
 
 
 class HebbianUpdater:
@@ -77,6 +116,47 @@ class HebbianUpdater:
         if ext_grade is not None:
             breakdown["external"] = round(float(ext_grade), 3)
         return outcome, breakdown
+
+    @staticmethod
+    def _credit_pairs(path_names: list[str]) -> list[tuple[str, str]]:
+        """Consecutive pairs of a fired path, minus the competition-owned edges.
+
+        Used by BOTH the main pass and the eligibility replay. Filtering only the
+        main pass would let every past-path replay quietly re-inject the ordering
+        artifact this exists to remove."""
+        if len(path_names) < 2:
+            return []
+        pairs = [(path_names[i], path_names[i + 1]) for i in range(len(path_names) - 1)]
+        if not settings.get("credit_purity", 1):
+            return pairs
+        owned = _competition_owned(int(settings.get("node_reserve_pool", 3)))
+        return [p for p in pairs if p not in owned]
+
+    @staticmethod
+    def _batch_decay(rate_per_turn: float, n_turns: int) -> float:
+        """Scale a PER-TURN decay rate to the `n_turns` in a consolidation batch.
+
+        Consolidation runs once per batch but reinforcement accrues per turn, so the
+        two must be expressed in the same unit or equilibrium drifts with session
+        length (it was 1.15 for a 1-turn session against a clamped 3.92 for a 20-turn
+        one — a 26x spread on identical settings).
+
+        The scaling is LINEAR (n·r), not compounded (1-(1-r)^n), and that pairing is
+        forced by how gain is applied. The batch adds the sum of its turns' deltas, so
+        equilibrium is w* = 1 + ΣG/E; for that to equal the per-turn 1 + ḡ/r for every
+        n, E must be exactly n·r. Compounding is the correct decay-only answer but is
+        sublinear (1-(1-r)^n < n·r), which leaves longer batches settling ~10% higher —
+        measured at 1.490/1.509/1.548 for n = 1/5/20 before this was corrected.
+
+        Capped by `decay_batch_max` because n is unbounded in practice — the idle loop
+        can consolidate a large backlog in one pass, and an uncapped linear rate would
+        exceed 1.0, overshooting rest and inverting the deviation. Invariance therefore
+        holds while n·r <= the cap; beyond it a very large backlog forgets proportionally
+        less than a strict reading would demand, which is the safe direction to err.
+        """
+        r = max(0.0, min(1.0, rate_per_turn))
+        cap = float(settings.get("decay_batch_max", 0.90))
+        return min(cap, r * max(1, n_turns))
 
     def _plasticity_modulator(self, full_traces: list) -> float:
         """Session-averaged DA + ACh → plasticity scalar in [0.3, 1.2]."""
@@ -710,6 +790,112 @@ class HebbianUpdater:
                     updated += 1
         return updated
 
+    # Edges already owned by the two hand-written per-family helpers. Phase 1 keeps
+    # those helpers authoritative and has the co-activation pass step around them, so
+    # this change adds coverage WITHOUT touching any existing reward math. Once the
+    # ledger shows co-activation reproducing their deltas, they can be deleted — but
+    # in a separate change: folding that in would turn a coverage PR into a reward PR,
+    # and per the note on _apply_competition, drift in a REWARD rule is silent.
+    def _helper_owned_edges(self) -> set[tuple[str, str]]:
+        owned = {("sensory.text", f"temporal.{s}") for s in self._CREDITED_SWITCHES}
+        for strategies in self._RECALL_SIDES.values():
+            owned |= {("mem.recall", s) for s in strategies}
+        return owned
+
+    def _active_levels(self, trace) -> dict[str, float]:
+        """Every node that participated this turn → its level in [0,1].
+
+        Merges the nodes that actually FIRED (fired_path, where a switch carries its
+        own fire level and an integrator counts as full participation) with the ones
+        that only participated (trace.coactive), keeping the max where both apply."""
+        levels: dict[str, float] = {}
+        for entry in trace.fired_path or []:
+            name = entry.get("name")
+            if not name:
+                continue
+            lvl = 1.0 if entry.get("kind") == "integrator" else float(entry.get("level", 1.0) or 0.0)
+            lvl = max(0.0, min(1.0, lvl))
+            if lvl > levels.get(name, -1.0):
+                levels[name] = lvl
+        for name, lvl in (getattr(trace, "coactive", None) or {}).items():
+            lvl = max(0.0, min(1.0, float(lvl)))
+            if lvl > levels.get(name, -1.0):
+                levels[name] = lvl
+        return levels
+
+    def _apply_coactivation_credit(
+        self,
+        trace,
+        outcome: float,
+        plasticity: float,
+        turn_plast: float,
+        already_credited: set[tuple[str, str]],
+        gainers: list,
+        losers: list,
+    ) -> int:
+        """Credit any edge whose BOTH endpoints participated this turn.
+
+        Path credit only ever reaches CONSECUTIVE pairs of fired_path, and only
+        SwitchNeuron.fire()/IntegratorCell.call() reach that list — so 35 of the 72
+        wired edges could never be credited by it at all, because an endpoint is a bus
+        channel, a chemistry mapper, a state holder or a bookkeeping node. This closes
+        that gap generically instead of by adding a per-family helper each time.
+
+        Scaled by min(level_src, level_tgt) — the Hebbian pre×post product. That factor
+        is load-bearing, not decoration: a blanket "both endpoints active" delta would
+        land identically on ~50 edges every turn, and since every consumer reads
+        RELATIVE weight (evaluation order, sibling gap, budget ratio), a common-mode
+        delta carries exactly zero information. Grading is what makes the credit
+        differentiate."""
+        if not settings.get("coactivation_credit", 1):
+            return 0
+        levels = self._active_levels(trace)
+        if len(levels) < 2:
+            return 0
+        base = (
+            outcome
+            * settings.get("hebbian_outcome_delta")
+            * plasticity
+            * turn_plast
+            * float(settings.get("coactivation_credit_scale", 0.25))
+        )
+        if abs(base) < 1e-9:
+            return 0
+        skip = already_credited | self._helper_owned_edges()
+        if settings.get("credit_purity", 1):
+            skip = skip | _competition_owned(int(settings.get("node_reserve_pool", 3)))
+        allow_inhib = bool(settings.get("coactivation_credit_inhibitory", 1))
+
+        updated = 0
+        for src, tgt in self._wiring.edges_among(set(levels)):
+            if (src, tgt) in skip or src.startswith("fragment."):
+                continue  # fragments have their own gain/forget economy
+            if not allow_inhib and self._wiring.polarity(src, tgt) == "inhibitory":
+                continue
+            delta = base * min(levels[src], levels[tgt])
+            if abs(delta) < 1e-9:
+                continue
+            prev = self._wiring.get_edge_weight(src, tgt)
+            if not self._wiring.hebbian_update_pairs([(src, tgt)], delta):
+                continue
+            updated += 1
+            now = self._wiring.get_edge_weight(src, tgt)
+            edge_delta = now - prev
+            if abs(edge_delta) > 0.001:
+                (gainers if edge_delta > 0 else losers).append((f"{src}→{tgt}", edge_delta))
+                decisions.log(
+                    "coactivation_credit_applied",
+                    turn_id=trace.turn_id,
+                    src=src,
+                    tgt=tgt,
+                    from_weight=round(prev, 4),
+                    to_weight=round(now, 4),
+                    delta=round(edge_delta, 4),
+                    level=round(min(levels[src], levels[tgt]), 3),
+                    outcome=round(outcome, 3),
+                )
+        return updated
+
     def _apply_eligibility_credit(
         self,
         trace,
@@ -742,14 +928,11 @@ class HebbianUpdater:
         Returns the wiring's own updated-edge count, so the caller's
         `edges_updated` total stays reconcilable against what was logged.
         """
+        pairs = self._credit_pairs(past_path)
         before = {
-            (past_path[i], past_path[i + 1]): self._wiring.get_edge_weight(
-                past_path[i], past_path[i + 1]
-            )
-            for i in range(len(past_path) - 1)
-            if self._wiring.has(past_path[i], past_path[i + 1])
+            (s, t): self._wiring.get_edge_weight(s, t) for (s, t) in pairs if self._wiring.has(s, t)
         }
-        updated = self._wiring.hebbian_update(past_path, elig_delta)
+        updated = self._wiring.hebbian_update_pairs(pairs, elig_delta)
         if not updated:
             return 0
 
@@ -823,13 +1006,28 @@ class HebbianUpdater:
     def _run_for_persona(self, session_id: str, full_traces: list) -> None:
         """Decay + per-turn Hebbian updates along firing paths, for ONE persona's
         traces (the wiring resolves the bound persona's graph on every access)."""
-        self._wiring.decay_toward_rest(rest=1.0, rate=0.01)
-        # Fragment attachments forget faster than topology homeostasis (use-it-or-lose-it):
-        # decay first, so the trace loop's reinforcement can lift the productive ones back
-        # above the prune floor while unused ones fade toward removal.
+        # Decay is expressed PER TURN and compounded over the turns in this batch.
+        # Reinforcement accrues per turn, so a per-SESSION rate made the equilibrium
+        # w_eq = 1 + n_turns·gain/rate depend on how long the session happened to be:
+        # 1.15 for a 1-turn session against 3.92 (clamped at weight_max) for a 20-turn
+        # one — a 26x spread on identical settings. Compounding restores the invariant.
+        # This also connects the dial for the first time: the rate was hardcoded here
+        # and `decay_toward_rest_rate` was never read on the production path.
+        n_turns = max(1, len(full_traces))
+        _r_turn = float(settings.get("decay_toward_rest_rate_per_turn", 0.01))
+        eff = self._batch_decay(_r_turn, n_turns)
+        self._wiring.decay_toward_rest(rest=1.0, rate=eff)
+        # Fragment attachments decay first, so the trace loop's reinforcement can lift the
+        # productive ones back above the prune floor while unused ones fade toward removal.
+        # Their rate is tuned against their OWN thresholds (prune 1.05 / inject 1.30 /
+        # promote 2.20) rather than against the topology rate: gain is earned only on turns
+        # the host wins, so a rate that looks slow beside topology decay is what keeps a
+        # proven attachment clear of the promote threshold. See the settings comment.
         _frag_on = bool(settings.get("fragment_wiring", 1))
         if _frag_on:
-            self._wiring.decay_fragment_edges(float(settings.get("fragment_forget", 0.05)))
+            self._wiring.decay_fragment_edges(
+                self._batch_decay(float(settings.get("fragment_forget_per_turn", 0.01)), n_turns)
+            )
 
         plasticity = self._plasticity_modulator(full_traces)
         gainers: list[tuple[str, float]] = []
@@ -870,14 +1068,13 @@ class HebbianUpdater:
             turn_plasticities.append(turn_plast)
             delta = outcome * settings.get("hebbian_outcome_delta") * plasticity * turn_plast
             path_names = [n["name"] for n in trace.fired_path]
+            path_pairs = self._credit_pairs(path_names)
             before = {
-                (path_names[i], path_names[i + 1]): self._wiring.get_edge_weight(
-                    path_names[i], path_names[i + 1]
-                )
-                for i in range(len(path_names) - 1)
-                if self._wiring.has(path_names[i], path_names[i + 1])
+                (s, t): self._wiring.get_edge_weight(s, t)
+                for (s, t) in path_pairs
+                if self._wiring.has(s, t)
             }
-            updated = self._wiring.hebbian_update(path_names, delta)
+            updated = self._wiring.hebbian_update_pairs(path_pairs, delta)
             total_updated += updated
             for (src, tgt), prev in before.items():
                 now = self._wiring.get_edge_weight(src, tgt)
@@ -938,6 +1135,11 @@ class HebbianUpdater:
             total_updated += self._apply_recall_credit(
                 trace, outcome, plasticity, turn_plast, gainers, losers
             )
+            # Runs LAST and is told which pairs the main path pass already moved, so a
+            # co-active edge that also happened to be path-adjacent is credited once.
+            total_updated += self._apply_coactivation_credit(
+                trace, outcome, plasticity, turn_plast, set(path_pairs), gainers, losers
+            )
             total_updated += self._apply_attachment_credit(trace, outcome)
 
         # Prune faded fragment attachments after all reinforcement (topology never pruned).
@@ -989,6 +1191,11 @@ class HebbianUpdater:
             session_id=session_id,
             plasticity_modulator=round(plasticity, 3),
             graded_plasticity=int(settings.get("graded_plasticity", 0)),
+            # Decay actually applied this batch. Recorded because the per-turn rate is
+            # compounded over n_turns at the call site, so neither number alone explains
+            # an observed weight change — the calibration harness needs both to replay.
+            decay_turns=n_turns,
+            decay_effective=round(eff, 5),
             avg_turn_plasticity=(
                 round(sum(turn_plasticities) / len(turn_plasticities), 3)
                 if turn_plasticities

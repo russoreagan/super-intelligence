@@ -1828,6 +1828,12 @@ class FrontalCluster:
         winner["permutation"] = permutation
         winner["chem_effort"] = round(chem_effort(chem), 3)
         winner["wall_ms"] = int((_time.monotonic() - t0) * 1000)
+        # The stance-credit anchor is a bookkeeping node — it never fires, so the
+        # approach_critic→approach_stage edge is unreachable by path credit.
+        with contextlib.suppress(Exception):
+            from brain.observability.firing_path import record_node_active
+
+            record_node_active("frontal.approach_stage", 1.0)
         return winner
 
     def _select_explore_drafters(self, firing_indices: list[int], turn_id: str) -> set[int]:

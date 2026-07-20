@@ -92,7 +92,19 @@ DEFAULTS: dict[str, float | int | str] = {
     "satiation_inhibition_factor": 0.50,
     # ── Section 3: Plasticity & Learning ─────────────────────────────────────
     "hebbian_delta": 0.02,
-    "hebbian_outcome_delta": 0.02,
+    # Per-turn weight step = outcome × this × plasticity × turn_plasticity.
+    # Calibrated against measured inputs, not assumed ones (eval/weight_economy_sim.py):
+    # mean |outcome| on credited turns is 0.409 (97.5% positive — the self-grading bias),
+    # the credited fraction is 0.993, and both plasticity modulators sit at their ceilings
+    # for essentially all realistic chemistry, so their product is 1.56.
+    # Raised 0.02 → 0.06 in lockstep with decay_toward_rest_rate_per_turn 0.01 → 0.03,
+    # which holds every equilibrium EXACTLY where it was while cutting the time constant
+    # from 100 turns (~20 sessions) to 33 (~6.7). That is the whole point: the old
+    # equilibria were already adequate — nothing could reach them in a usable window.
+    # First behavioural change now lands at ~11 turns (~2 sessions) instead of ~31.
+    # Do NOT raise past ~0.079 without also raising decay: at the measured outcome that
+    # pins path edges at weight_max, and siblings equal at the cap is uniform routing.
+    "hebbian_outcome_delta": 0.06,
     # Composite outcome mix used when a turn carries an EXTERNAL grade (thumbs press,
     # validator verdict) — hebbian._composite_outcome. Ungraded turns keep their own
     # fixed self-appraisal blend; these dials apply only on the graded path, where the
@@ -108,7 +120,27 @@ DEFAULTS: dict[str, float | int | str] = {
     # appraisal. Keep this a float: an int default would coerce a fractional nudge to 0
     # on load and silently re-break the dial.
     "external_grade_da_nudge": 0.15,
+    # DEPRECATED (kept one release so existing settings.json overrides don't trip the
+    # unknown-key drop). Superseded by decay_toward_rest_rate_per_turn — it was never
+    # read on the production path anyway: hebbian.py hardcoded 0.01 at the call site.
     "decay_toward_rest_rate": 0.01,
+    # Homeostatic decay of topology weights toward rest, expressed PER TURN and
+    # compounded over the turns in a consolidation batch (hebbian._run_for_persona).
+    # Per-turn is the load-bearing part: gain accrues per turn, so a per-SESSION decay
+    # made equilibrium depend on session length — 1.15 for a 1-turn session vs 3.92
+    # (clamped at weight_max) for a 20-turn one, a 26x spread on the same settings.
+    # Time constant is 1/rate turns; 0.03 ≈ 33 turns ≈ 6.7 sessions at sleep_min_turns.
+    # Moves in lockstep with hebbian_outcome_delta — the RATIO sets every equilibrium,
+    # this rate alone sets how fast they are reached and how fast an edge that stops
+    # earning fades back. It is also the recovery mechanism for an edge driven low:
+    # it receives no credit but still relaxes toward rest at this rate.
+    "decay_toward_rest_rate_per_turn": 0.03,
+    # Ceiling on the per-batch decay (rate × turns, see HebbianUpdater._batch_decay).
+    # An idle-loop pass carrying a large trace backlog would otherwise scale past 1.0,
+    # overshooting rest and inverting every edge's deviation. Session-length invariance
+    # holds while rate × turns stays under this, i.e. 90 turns at 0.01 or 30 at 0.03 —
+    # comfortably above real sessions, which run 1-20 turns.
+    "decay_batch_max": 0.90,
     # Eligibility traces: a turn's outcome also credits the fired paths of the
     # previous N turns, decayed e^(-age/τ) — delayed conversational payoff
     # reaches the turns that set it up. lookback 0 restores instantaneous-only.
@@ -182,6 +214,30 @@ DEFAULTS: dict[str, float | int | str] = {
     # usefulness, the faithful granularity since the weights only gate the split.
     "recall_routing_credit": 1,
     "recall_routing_credit_scale": 0.5,
+    # Turn-level CO-ACTIVATION credit. Path credit only reaches CONSECUTIVE pairs of
+    # fired_path, and only SwitchNeuron.fire()/IntegratorCell.call() reach that list —
+    # so 35 of the 72 wired edges can never be a pair, because an endpoint is a bus
+    # channel, a chemistry mapper, a state holder or a bookkeeping node with no neuron
+    # object. Two hand-written helpers cover 8 of them; the rest were credited by
+    # nothing. Clusters now record participation via firing_path.record_node_active
+    # and this pass credits any edge whose BOTH endpoints participated.
+    # 0 = off (path credit + the per-family helpers only, exactly as before).
+    "coactivation_credit": 1,
+    # Quarter-scale, below the half-scale on switch/recall credit: this pass reaches
+    # far more edges per turn, and several of them feed routing that feeds firing that
+    # feeds credit.
+    "coactivation_credit_scale": 0.25,
+    # Credit inhibitory edges too (threat_to_GABA→drafter_*, integrator_inhibitor→
+    # understanding_integrator). Sign convention: hebbian_update moves MAGNITUDE and
+    # Edge.effective_weight() applies the sign, so a positive delta on an inhibitory
+    # edge means "that inhibition was appropriate, strengthen it". 0 = excitatory only.
+    "coactivation_credit_inhibitory": 1,
+    # CREDIT PURITY: edges owned by an explicit contrastive competition are excluded
+    # from ordinary path credit. Path credit is ~20x the competition bonus and is
+    # awarded by FIRING ORDER rather than by winning, so it swamps the quality signal
+    # (observed: executive→drafter_A 1.0088 vs drafter_B 0.9999 — A is simply first).
+    # 0 = legacy unfiltered path credit.
+    "credit_purity": 1,
     # Embedding-based intent detection for the fast-path gates (self_reference,
     # epistemic_action). A per-persona exemplar bank is matched by cosine against the
     # input embedding so paraphrases the seed list never anticipated still fire; the
@@ -915,7 +971,22 @@ DEFAULTS: dict[str, float | int | str] = {
     "fragment_inject_threshold": 1.30,  # attachment weight ≥ this → injected into its host
     "fragment_max_per_host": 2,  # max fragments injected into any one host per turn
     "fragment_prune_floor": 1.05,  # fragment edges ≤ this are pruned (rest=1.0)
+    # DEPRECATED (see decay_toward_rest_rate) — superseded by fragment_forget_per_turn.
     "fragment_forget": 0.05,  # per-sleep decay of fragment edges toward rest (use-it-or-lose-it)
+    # Use-it-or-lose-it forgetting for fragment attachments, PER TURN and scaled over the
+    # batch exactly like decay_toward_rest_rate_per_turn. The fragment economy had the
+    # identical session-length defect, masked only by its 10x gain. 0.01/turn reproduces
+    # the old 0.05/session at sleep_min_turns=5, so behaviour is preserved at that length
+    # and becomes length-INVARIANT everywhere else.
+    #
+    # DELIBERATELY LOWER than topology decay (0.03), which reads backwards next to the
+    # old "fragments forget faster" note but is load-bearing. Fragment gain is earned only
+    # on turns its host WINS, so the average per-turn gain is roughly a fifth of the
+    # nominal 0.20. At 0.01 an attachment on a drafter winning 1-in-5 settles near 2.64 —
+    # clear of node_promote_threshold 2.2, so Tier 2 can still recruit. At 0.03 it settles
+    # at 1.55: it would still inject, and structural plasticity would silently never fire
+    # again. Verified with eval/weight_economy_sim.py before changing the topology rate.
+    "fragment_forget_per_turn": 0.01,
     "fragment_gain": 0.20,  # reinforcement step = outcome × gain (one good win clears the floor)
     "fragment_explore_penalty": 0.02,  # decrement to an existing attachment explored on a loser
     "fragment_downshift": 1,  # 1 = route proven-attachment drafters to local RunPod (0 = off)

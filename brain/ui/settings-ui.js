@@ -113,13 +113,23 @@
     // plus live within-session learning + faster consolidation at the top end.
     { id: 'learning-rate', label: 'Learning Rate', sub: 'static ↔ fast-learning', glyph: 'spark',
       map: [
-        { key: 'hebbian_delta', dir: +1, span: 0.08 },          // online learning rate (→0.10 = ~5×)
-        { key: 'hebbian_outcome_delta', dir: +1, span: 0.08 },  // sleep/offline learning rate
-        { key: 'decay_toward_rest_rate', dir: -1, span: 0.008 },// retention: high intel forgets less
+        // Step and forgetting move TOGETHER, not against each other. Their RATIO sets
+        // every equilibrium and the rate alone sets how fast it is reached, so moving
+        // them in lockstep makes this dial mean "how fast does it adapt" — which is what
+        // static ↔ fast-learning promises. The old map drove them in OPPOSITE directions,
+        // which compounded: at the top it pinned path edges at weight_max, and siblings
+        // equal at the cap is uniform routing, i.e. the dial's fast end destroyed the
+        // very differentiation it was supposed to sharpen. Range: 33→17 turns to settle.
+        { key: 'hebbian_outcome_delta', dir: +1, span: 0.03 },
+        { key: 'decay_toward_rest_rate_per_turn', dir: +1, span: 0.015 },
         { key: 'plasticity_arousal_weight', dir: +1, span: 0.30 },
         { key: 'plasticity_intensity_weight', dir: +1, span: 0.30 },
         { key: 'plasticity_turn_max', dir: +1, span: 0.40 },    // deeper per-turn encoding
-        { key: 'weight_max', dir: +1, span: 1.50 },             // accumulation headroom
+        // Span was 1.50, which drove the ceiling to 1.50 at the LOW end — below the
+        // fragment inject threshold (1.30) and far below promote (2.20), silently
+        // clamping an economy this dial does not claim to touch. 0.50 keeps the floor
+        // at 2.50, clear of both.
+        { key: 'weight_max', dir: +1, span: 0.50 },
         { key: 'sleep_min_turns', dir: -1, span: 3 },           // consolidate more often
         { key: 'colony_trail_gain', dir: +1, span: 0.10 },      // strength of live trail reinforcement
       ],

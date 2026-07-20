@@ -251,25 +251,51 @@ class Wiring:
 
     def hebbian_update(self, fired_path: list[str], delta: float | None = None) -> int:
         """Nudge weights along a path that produced a good (or bad) outcome.
-        Returns the count of edges actually updated."""
+        Returns the count of edges actually updated.
+
+        Consecutive-pair convenience wrapper over hebbian_update_pairs. Callers that
+        need to credit a FILTERED or non-adjacent set of edges (credit purity, the
+        co-activation pass) should use that directly."""
+        if len(fired_path) < 2:
+            return 0
+        pairs = [(fired_path[i], fired_path[i + 1]) for i in range(len(fired_path) - 1)]
+        return self.hebbian_update_pairs(pairs, delta)
+
+    def hebbian_update_pairs(
+        self, pairs: list[tuple[str, str]] | set[tuple[str, str]], delta: float | None = None
+    ) -> int:
+        """Apply `delta` to an explicit set of edges. Missing edges are skipped.
+        Returns the count actually updated."""
         if delta is None:
             delta = _settings.get("hebbian_delta")
         w_min = _settings.get("weight_min")
         w_max = _settings.get("weight_max")
-        if abs(delta) < 1e-6 or len(fired_path) < 2:
+        if abs(delta) < 1e-6:
             return 0
         updated = 0
-        for i in range(len(fired_path) - 1):
-            key = (fired_path[i], fired_path[i + 1])
-            if key in self._edges:
-                e = self._edges[key]
+        for key in pairs:
+            e = self._edges.get(key)
+            if e is not None:
                 e.weight = max(w_min, min(w_max, e.weight + delta))
                 updated += 1
         return updated
 
+    def polarity(self, source: str, target: str) -> str:
+        """Edge polarity, or "excitatory" for a missing edge (the seeded default)."""
+        e = self._edges.get((source, target))
+        return e.polarity if e else "excitatory"
+
+    def edges_among(self, names: set[str]) -> list[tuple[str, str]]:
+        """Every edge with BOTH endpoints in `names`. Read-only; keeps the private
+        edge map out of the sleep pass. Order is insertion order (bootstrap order),
+        so credit application is deterministic across runs."""
+        return [(s, t) for (s, t) in self._edges if s in names and t in names]
+
     def decay_toward_rest(self, rest: float = WEIGHT_REST, rate: float | None = None) -> None:
         """Gentle synaptic homeostasis — every topology edge drifts toward rest by `rate`.
-        Applied once per session before the Hebbian pass. Fragment attachments are SKIPPED:
+        Called once per consolidation, but `rate` is a BATCH rate: the caller compounds a
+        per-turn rate over the turns being consolidated (HebbianUpdater._batch_decay), so
+        equilibrium does not depend on session length. Fragment attachments are SKIPPED:
         they have their own steeper use-it-or-lose-it forgetting (decay_fragment_edges) so
         unused attachments fade and prune rather than lingering near rest forever."""
         if rate is None:
@@ -283,7 +309,10 @@ class Wiring:
         """Use-it-or-lose-it forgetting for fragment attachments — `fragment.* → host` edges
         drift toward rest by `rate` each sleep pass (steeper than topology homeostasis so an
         attachment that stops earning reinforcement fades below the prune floor). Returns the
-        count decayed. Called only from the gated attachment-learning pass."""
+        count decayed. Called only from the gated attachment-learning pass.
+
+        Like decay_toward_rest, `rate` is a BATCH rate compounded from a per-turn setting by
+        the caller — fragments had the same session-length dependence, masked by their gain."""
         n = 0
         for e in self._edges.values():
             if e.source.startswith("fragment."):

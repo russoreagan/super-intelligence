@@ -404,13 +404,17 @@ PERSONA_COG_POSITIONS: dict[str, dict[str, float]] = {
 # major behavioral switches per persona is not something a style dial should do.
 _NONCHEM_DIAL_MAP: dict[str, list[tuple[str, int, float, float, float]]] = {
     "learning-rate": [
-        ("hebbian_delta", +1, 0.08, 0.0, 0.5),
-        ("hebbian_outcome_delta", +1, 0.08, 0.0, 0.5),
-        ("decay_toward_rest_rate", -1, 0.008, 0.0, 0.2),
+        # Step and forgetting move TOGETHER — see the matching note in settings-ui.js.
+        # Their ratio sets equilibrium, the rate alone sets speed, so lockstep makes the
+        # dial mean "how fast does it adapt" and makes both endpoints safe. `lo` on the
+        # step is deliberately non-zero: a hard 0 turns learning entirely OFF, which is a
+        # different claim from "learns slowly" and makes the dial discontinuous.
+        ("hebbian_outcome_delta", +1, 0.03, 0.005, 0.075),
+        ("decay_toward_rest_rate_per_turn", +1, 0.015, 0.005, 0.10),
         ("plasticity_arousal_weight", +1, 0.30, 0.0, 1.0),
         ("plasticity_intensity_weight", +1, 0.30, 0.0, 1.0),
         ("plasticity_turn_max", +1, 0.40, 1.0, 2.0),
-        ("weight_max", +1, 1.50, 0.5, 6.0),
+        ("weight_max", +1, 0.50, 2.50, 6.0),
         ("sleep_min_turns", -1, 3, 2, 40),
         ("colony_trail_gain", +1, 0.10, 0.0, 0.5),
     ],

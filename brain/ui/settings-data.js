@@ -264,9 +264,8 @@ window.SETTINGS = {
           id: 'sec-3', num: '03', title: 'Plasticity & Learning',
           desc: 'Hebbian weight changes — learning rate and stability are linked.',
           rows: [
-            { type: 'range', key: 'hebbian_delta', label: 'Learning Rate', hint: '↑ this nudges ↓ Weight Stability', min: 0.001, max: 0.1, step: 0.001, def: 0.02 },
-            { type: 'range', key: 'decay_toward_rest_rate', label: 'Weight Stability', hint: '↑ this nudges ↓ Learning Rate', min: 0.001, max: 0.05, step: 0.001, def: 0.01 },
-            { type: 'range', key: 'hebbian_outcome_delta', label: 'Sleep Learning Rate', hint: 'outcome × plasticity × this', min: 0.001, max: 0.1, step: 0.001, def: 0.02 },
+            { type: 'range', key: 'hebbian_outcome_delta', label: 'Learning Rate', hint: 'weight step = outcome × plasticity × this', min: 0.005, max: 0.075, step: 0.005, def: 0.06 },
+            { type: 'range', key: 'decay_toward_rest_rate_per_turn', label: 'Forgetting Rate', hint: 'per turn; 1/this = turns to settle', min: 0.005, max: 0.08, step: 0.005, def: 0.03 },
           ],
           advanced: [
             { type: 'range', key: 'weight_min', label: 'Weight Floor', min: 0.01, max: 0.5, step: 0.01, def: 0.10 },

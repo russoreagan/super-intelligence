@@ -521,7 +521,11 @@ class _TurnMixin:
         mandate_id: str | None = None,
         inline_tools: bool = False,
     ) -> tuple[str, dict]:
-        from brain.observability.firing_path import reset_current_trace, set_current_trace
+        from brain.observability.firing_path import (
+            record_node_active,
+            reset_current_trace,
+            set_current_trace,
+        )
         from brain.observability.timeline import TurnTrace
 
         if self.dmn:
@@ -569,6 +573,11 @@ class _TurnMixin:
         )
         trace.prior_neuromod = self.bus.neuromod.snapshot()
         _ctx_token = set_current_trace(trace)
+        # sensory.text is a bus channel with no neuron object, so it never reaches
+        # fired_path — yet six wired edges start there. Record it as co-active as soon
+        # as the trace is bound (NOT at the publish site in pns.py: the trace is not
+        # bound yet there, so the record would be silently dropped).
+        record_node_active("sensory.text", 1.0)
 
         if self._emitter:
             await self._emitter.emit_turn_start(turn_id, user_input, session_id=self.session_id)
