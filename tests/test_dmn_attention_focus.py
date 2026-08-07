@@ -161,8 +161,12 @@ def test_rumination_seed_biased_toward_spotlight_thread():
     """The rumination seed prefers the open thread matching the live focus over the
     most-advanced (finish-out) one. Without the spotlight, finish-out picks the
     high-advances revenue thread; WITH it, the low-advances glacier thread wins."""
-    revenue = ot.Thread(id="t-rev", summary="quarterly revenue forecast model", advances=9, last_ts=200.0)
-    glacier = ot.Thread(id="t-gla", summary="glacier melt and methane feedback", advances=1, last_ts=50.0)
+    revenue = ot.Thread(
+        id="t-rev", summary="quarterly revenue forecast model", advances=9, last_ts=200.0
+    )
+    glacier = ot.Thread(
+        id="t-gla", summary="glacier melt and methane feedback", advances=1, last_ts=50.0
+    )
 
     # Baseline (no spotlight) → finish-out picks the most-advanced thread.
     base = _seed_double(open_threads=[revenue, glacier], last_focus=None)
@@ -196,8 +200,12 @@ def test_no_ignition_is_a_strict_noop():
     assert "glacier" not in dmn2._memory_seed
 
     # Rumination seed: finish-out (most-advanced) with no spotlight influence.
-    revenue = ot.Thread(id="t-rev", summary="quarterly revenue forecast model", advances=9, last_ts=200.0)
-    glacier = ot.Thread(id="t-gla", summary="glacier melt and methane feedback", advances=1, last_ts=50.0)
+    revenue = ot.Thread(
+        id="t-rev", summary="quarterly revenue forecast model", advances=9, last_ts=200.0
+    )
+    glacier = ot.Thread(
+        id="t-gla", summary="glacier melt and methane feedback", advances=1, last_ts=50.0
+    )
     dmn3 = _seed_double(open_threads=[revenue, glacier], last_focus=None)
     assert dmn3._current_seed_thread().id == "t-rev"
 
@@ -245,7 +253,11 @@ def test_thalamus_gate_stops_bias_on_deignition():
     assert quiet._spotlight_terms() == ""
 
     # And the rumination selector falls back to finish-out under the closed gate.
-    revenue = ot.Thread(id="t-rev", summary="quarterly revenue forecast model", advances=9, last_ts=200.0)
-    glacier = ot.Thread(id="t-gla", summary="glacier melt and methane feedback", advances=1, last_ts=50.0)
+    revenue = ot.Thread(
+        id="t-rev", summary="quarterly revenue forecast model", advances=9, last_ts=200.0
+    )
+    glacier = ot.Thread(
+        id="t-gla", summary="glacier melt and methane feedback", advances=1, last_ts=50.0
+    )
     quiet._open_threads = [revenue, glacier]
     assert quiet._current_seed_thread().id == "t-rev"

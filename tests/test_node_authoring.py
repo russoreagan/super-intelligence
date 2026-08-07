@@ -83,7 +83,9 @@ def _wiring_with_cluster(monkeypatch, tmp_path):
     return w
 
 
-async def _author(monkeypatch, tmp_path, *, screener_status, out=_GOOD, trace_count=50, persona="p"):
+async def _author(
+    monkeypatch, tmp_path, *, screener_status, out=_GOOD, trace_count=50, persona="p"
+):
     import brain.node_authoring as na
 
     cap = _CaptureDecisions()

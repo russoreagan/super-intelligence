@@ -88,6 +88,8 @@ def publish_runpod_host(host: str) -> None:
         logger.info("[provisioner] shared pod host published: %s", host or "(off)")
     except Exception as e:
         logger.warning("[provisioner] failed to publish pod host: %s", e)
+
+
 # brain.run flags for tenant processes. Mirrors the shared deploy's set; override
 # via BRAIN_TENANT_ARGS.
 # --ears (AuditoryCluster: prosody / speaker-ID / fingerprinting) IS used on hosted:
@@ -313,7 +315,9 @@ def _org_default_agent(user_id: str) -> tuple[str | None, set[str]]:
         logger.warning("[provisioner] default-agent lookup for %s failed: %s", user_id[:8], e)
         return None, set()
     personas = {str(r.get("persona") or "") for r in rows if r.get("persona")}
-    default = next((str(r["persona"]) for r in rows if r.get("is_default") and r.get("persona")), None)
+    default = next(
+        (str(r["persona"]) for r in rows if r.get("is_default") and r.get("persona")), None
+    )
     return default, personas
 
 
@@ -402,9 +406,7 @@ class Provisioner:
         Tier is captured from /health at boot (default 'full' until known), so a brain
         still booting counts as full — conservative: we'd rather briefly keep a pod up
         for a brain that turns out lite than starve a real full brain of its pod."""
-        return sum(
-            1 for p in self._procs.values() if p.proc.poll() is None and p.tier != "lite"
-        )
+        return sum(1 for p in self._procs.values() if p.proc.poll() is None and p.tier != "lite")
 
     def keys_for_all(self) -> list[str]:
         """Every live process key (both 'org' and 'org::persona' forms)."""
@@ -530,8 +532,7 @@ class Provisioner:
                 proc.terminate()
             self._procs.pop(key, None)
             raise RuntimeError(
-                f"tenant {key[:16]} failed to become healthy on :{port} "
-                f"(exit code: {proc.poll()})"
+                f"tenant {key[:16]} failed to become healthy on :{port} (exit code: {proc.poll()})"
             )
         entry.tier = tier
         logger.info("[provisioner] %s healthy on :%d (tier=%s)", key[:16], port, tier)

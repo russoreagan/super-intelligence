@@ -66,7 +66,9 @@ def test_reward_weight_mandate_layer_shifts_output(monkeypatch):
 
     monkeypatch.setattr(
         "brain.mandates.catalog",
-        lambda: {"coach": {"text": "", "conduct": None, "weights": {"levity": 3.0, "correctness": 0.1}}},
+        lambda: {
+            "coach": {"text": "", "conduct": None, "weights": {"levity": 3.0, "correctness": 0.1}}
+        },
     )
     baseline_levity = reward_weight("The Analyst", "levity")
     baseline_correctness = reward_weight("The Analyst", "correctness")
@@ -436,6 +438,7 @@ def test_aesthetic_reward_scales_with_how_much_a_persona_values_beauty():
     """The whole point of the dial: the Poet earns materially more than the Analyst
     from the SAME well-made reply, and the Stoic — the flat experimental control —
     sits between them at the unweighted amount."""
+
     def _earns(persona: str) -> float:
         # Bind, then reward — the persona resolves at emit time, so constructing all
         # three first would score every one of them as whoever was set last.

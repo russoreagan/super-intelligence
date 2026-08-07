@@ -31,8 +31,7 @@ def bus() -> Bus:
 @pytest.fixture(autouse=True)
 def _restore_settings():
     keep = {
-        k: settings.get(k)
-        for k in ("thalamus_workspace_enabled", "workspace_ignition_threshold")
+        k: settings.get(k) for k in ("thalamus_workspace_enabled", "workspace_ignition_threshold")
     }
     yield
     settings.update(keep)
@@ -79,7 +78,10 @@ def test_sustained_turns_accumulates_then_resets(bus):
             v = await th.route({"salience": 0.3}, {"emotion": "calm"})
             streaks.append(v["sustained_turns"])
         # let it go cold: a long-enough silence decays it below threshold
-        v_cold = await th.route({"salience": 0.3}, {"emotion": "calm"}, )
+        v_cold = await th.route(
+            {"salience": 0.3},
+            {"emotion": "calm"},
+        )
         return streaks, v_cold
 
     streaks, _ = asyncio.run(scenario())

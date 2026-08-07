@@ -283,8 +283,11 @@ def test_resolution_da_capped_per_turn_not_per_gate():
     cap = float(settings.get("prediction_reward_turn_cap"))
     for i in range(5):
         g = EvidenceGate(
-            name=f"gate{i}", cluster="test", arm_threshold=1.0,
-            half_life_s=1e9, cue_names=("c",),
+            name=f"gate{i}",
+            cluster="test",
+            arm_threshold=1.0,
+            half_life_s=1e9,
+            cue_names=("c",),
         )
         g.observe({"c": 1.2}, now=0.0)
         assert g.armed

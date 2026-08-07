@@ -153,8 +153,13 @@ class TestAvailability:
     def test_compose_task_appends_connectors_note(self):
         exe = _make_exec(
             mcp_servers=[
-                {"name": "trading", "url": "u", "description": "quotes, movers", "identity": True,
-                 "access_token": "t"},
+                {
+                    "name": "trading",
+                    "url": "u",
+                    "description": "quotes, movers",
+                    "identity": True,
+                    "access_token": "t",
+                },
             ]
         )
         note = exe._connectors_note()
@@ -421,8 +426,7 @@ class TestToolScoping:
         cfgs = {c["name"]: c for c in tools[0].get("configs", [])}
         assert {"write", "edit", "bash"} <= set(cfgs)
         assert all(
-            cfgs[n]["permission_policy"]["type"] == "always_ask"
-            for n in ("write", "edit", "bash")
+            cfgs[n]["permission_policy"]["type"] == "always_ask" for n in ("write", "edit", "bash")
         )
 
     def test_mcp_servers_added_as_toolsets(self):
@@ -437,7 +441,12 @@ class TestToolScoping:
 
 
 class TestIdentityConnectorScoping:
-    _IDENT = {"name": "trading", "url": "https://mcp/trading", "identity": True, "access_token": "s"}
+    _IDENT = {
+        "name": "trading",
+        "url": "https://mcp/trading",
+        "identity": True,
+        "access_token": "s",
+    }
     _PLAIN = {"name": "gmail", "url": "https://mcp/gmail", "access_token": "x"}
 
     def test_no_end_user_drops_identity_connectors(self):
@@ -451,9 +460,7 @@ class TestIdentityConnectorScoping:
 
     def test_no_identity_agent_tools_exclude_identity_connector(self):
         exe = _make_exec(mcp_servers=[self._IDENT, self._PLAIN])
-        names = {
-            t.get("mcp_server_name") for t in exe._agent_tools(False, include_identity=False)
-        }
+        names = {t.get("mcp_server_name") for t in exe._agent_tools(False, include_identity=False)}
         assert "trading" not in names and "gmail" in names
 
     async def test_no_end_user_call_uses_no_identity_agent(self, monkeypatch):
@@ -797,8 +804,11 @@ class TestCMAUsageMetering:
         exe._router = router = _FakeRouter()
         cc = SN(ephemeral_5m_input_tokens=300, ephemeral_1h_input_tokens=200)
         client.beta.sessions.retrieve = AsyncMock(
-            return_value=SN(id="sesn_1", status="idle",
-                            usage=_usage(1000, 200, cache_read=400, cache_creation=cc))
+            return_value=SN(
+                id="sesn_1",
+                status="idle",
+                usage=_usage(1000, 200, cache_read=400, cache_creation=cc),
+            )
         )
         await exe.execute_read("task", [])
         # input 1000 + cache_creation (300+200) = 1500; cache_read passed through.

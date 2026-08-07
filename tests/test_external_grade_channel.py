@@ -65,7 +65,9 @@ def _nudge_at_default(monkeypatch):
     set back to 0, the DA-moves assertions below fail rather than silently pass."""
     from brain.settings import settings
 
-    monkeypatch.setitem(settings._data, "external_grade_da_nudge", DEFAULTS["external_grade_da_nudge"])
+    monkeypatch.setitem(
+        settings._data, "external_grade_da_nudge", DEFAULTS["external_grade_da_nudge"]
+    )
     return DEFAULTS["external_grade_da_nudge"]
 
 

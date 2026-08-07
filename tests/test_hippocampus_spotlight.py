@@ -101,9 +101,7 @@ async def test_ignited_seeds_hot_entities_into_cue():
 
 async def test_ignited_widens_fanout_budget():
     base = await _capture_recall({}, entities=["mercury", "venus"])
-    ignited = await _capture_recall(
-        _ignited(salience=10.0), entities=["mercury", "venus"]
-    )
+    ignited = await _capture_recall(_ignited(salience=10.0), entities=["mercury", "venus"])
     assert ignited["budget"] >= base["budget"]
     # At neutral chemistry the base is 8 and max salience nudges it strictly up.
     assert ignited["budget"] > base["budget"]

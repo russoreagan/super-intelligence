@@ -107,9 +107,7 @@ class SkillScreener:
         judge is unavailable or its output can't be parsed (→ caller flags)."""
         try:
             content = (
-                f"Skill id: {skill_id}\n"
-                f"Description: {description[:500]}\n\n"
-                f"Body:\n{body[:8000]}"
+                f"Skill id: {skill_id}\nDescription: {description[:500]}\n\nBody:\n{body[:8000]}"
             )
             self._cell.reset_turn(f"skill_screen_{skill_id}")
             raw = await self._cell.call([{"role": "user", "content": content}])

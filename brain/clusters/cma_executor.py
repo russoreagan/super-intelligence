@@ -132,8 +132,7 @@ def is_env_managed() -> bool:
         return False
     owner = os.environ.get("BRAIN_CMA_MCP_OWNER_ORG", "").strip()
     this_org = (
-        os.environ.get("BRAIN_ORG_ID", "").strip()
-        or os.environ.get("BRAIN_USER_ID", "").strip()
+        os.environ.get("BRAIN_ORG_ID", "").strip() or os.environ.get("BRAIN_USER_ID", "").strip()
     )
     return not (owner and this_org and owner != this_org)
 
@@ -317,26 +316,96 @@ _READ_TOOLS = {"read", "glob", "grep", "web_search", "web_fetch", "view", "ls", 
 # Read-only verb prefixes (covers MCP connector reads: get_quote, scan_watchlist,
 # review_journal, check_contradictions, find_mispricing, …).
 _READ_PREFIXES = (
-    "get_", "list_", "read_", "search_", "scan_", "review_", "find_", "check_", "fetch_", "view_",
+    "get_",
+    "list_",
+    "read_",
+    "search_",
+    "scan_",
+    "review_",
+    "find_",
+    "check_",
+    "fetch_",
+    "view_",
 )
 _CODE_EXTS = (
-    ".py", ".js", ".ts", ".tsx", ".jsx", ".go", ".rs", ".java", ".kt", ".c", ".cc", ".cpp",
-    ".h", ".hpp", ".cs", ".rb", ".php", ".sh", ".bash", ".zsh", ".sql", ".html", ".css",
-    ".scss", ".vue", ".swift", ".yml", ".yaml", ".toml", ".ini", ".cfg", ".env",
+    ".py",
+    ".js",
+    ".ts",
+    ".tsx",
+    ".jsx",
+    ".go",
+    ".rs",
+    ".java",
+    ".kt",
+    ".c",
+    ".cc",
+    ".cpp",
+    ".h",
+    ".hpp",
+    ".cs",
+    ".rb",
+    ".php",
+    ".sh",
+    ".bash",
+    ".zsh",
+    ".sql",
+    ".html",
+    ".css",
+    ".scss",
+    ".vue",
+    ".swift",
+    ".yml",
+    ".yaml",
+    ".toml",
+    ".ini",
+    ".cfg",
+    ".env",
 )
 # Token-based matching (robust to snake_case / camelCase) rather than regex word
 # boundaries, which miss compound names like `buy_stock` or `placeOrder`.
 _MONEY_WORDS = {
-    "buy", "sell", "order", "trade", "transfer", "withdraw", "deposit", "wire",
-    "liquidate", "purchase", "sweep", "remit",
+    "buy",
+    "sell",
+    "order",
+    "trade",
+    "transfer",
+    "withdraw",
+    "deposit",
+    "wire",
+    "liquidate",
+    "purchase",
+    "sweep",
+    "remit",
 }
 _COMMS_WORDS = {
-    "send", "email", "mail", "message", "dm", "sms", "post", "publish", "tweet",
-    "slack", "notify", "broadcast", "reply", "share", "comment",
+    "send",
+    "email",
+    "mail",
+    "message",
+    "dm",
+    "sms",
+    "post",
+    "publish",
+    "tweet",
+    "slack",
+    "notify",
+    "broadcast",
+    "reply",
+    "share",
+    "comment",
 }
 _DESTRUCTIVE_WORDS = {
-    "delete", "remove", "destroy", "drop", "truncate", "wipe", "purge", "reset",
-    "revoke", "cancel", "clear",
+    "delete",
+    "remove",
+    "destroy",
+    "drop",
+    "truncate",
+    "wipe",
+    "purge",
+    "reset",
+    "revoke",
+    "cancel",
+    "clear",
 }
 
 
@@ -405,6 +474,7 @@ def _classify_action(tool: str, args, write_allowed: bool) -> tuple[str, str]:
         return ("allow", "")
     # Anything unrecognized is treated as sensitive.
     return ("ask", f"{tool} needs review")
+
 
 # Standing guidance — the per-call task + facts go in the user message; this is
 # the equivalent of CloudExecutor._build_prompt's standing instructions.
@@ -1070,11 +1140,7 @@ class CMAExecutor(ExecutorCommon):
         _empty = (not (raw or "").strip()) or output == "(no output)" or not output.strip()
         if _empty and not raw.startswith("[error]"):
             output = "[error] The managed agent produced no output."
-        success = (
-            not _empty
-            and not raw.startswith("[error]")
-            and not output.startswith("[error]")
-        )
+        success = not _empty and not raw.startswith("[error]") and not output.startswith("[error]")
         logger.info(
             "[CMAExecutor] Completed in %.1fs (success=%s, %d chars)",
             time.time() - start,
@@ -1086,9 +1152,7 @@ class CMAExecutor(ExecutorCommon):
 
     # ── Task composition + session drive loop ──────────────────────────────────
 
-    def _compose_task(
-        self, task: str, context_facts: list[str], connectors_note: str = ""
-    ) -> str:
+    def _compose_task(self, task: str, context_facts: list[str], connectors_note: str = "") -> str:
         parts = [task]
         if context_facts:
             facts_str = "; ".join(f.strip() for f in context_facts if f.strip())
@@ -1299,9 +1363,7 @@ class CMAExecutor(ExecutorCommon):
         if self._session_id == sid:
             self._session_id = None
         with contextlib.suppress(Exception):
-            self._user_sessions = {
-                k: v for k, v in (self._user_sessions or {}).items() if v != sid
-            }
+            self._user_sessions = {k: v for k, v in (self._user_sessions or {}).items() if v != sid}
 
     async def _consume(self, sid: str, message: str, write_allowed: bool = False) -> str:
         """Stream-first event loop with bounded reconnect-and-replay."""
@@ -1339,7 +1401,9 @@ class CMAExecutor(ExecutorCommon):
                             stop = await self._budget_stop_check()
                             if stop:
                                 await self._stop_session(sid)
-                                return f"[error] budget-stop: {stop} — cloud action stopped mid-task."
+                                return (
+                                    f"[error] budget-stop: {stop} — cloud action stopped mid-task."
+                                )
                         done, err, pending = self._handle_event(ev, seen, buf, tools)
                         if err is not None:
                             return err
@@ -1349,7 +1413,9 @@ class CMAExecutor(ExecutorCommon):
                             stop = await self._budget_stop_check()
                             if stop:
                                 await self._stop_session(sid)
-                                return f"[error] budget-stop: {stop} — cloud action stopped mid-task."
+                                return (
+                                    f"[error] budget-stop: {stop} — cloud action stopped mid-task."
+                                )
                             # Agent paused on tool calls that need our go-ahead.
                             # Classify each: reads + small data writes auto-approve,
                             # money is blocked, and anything sensitive is routed to

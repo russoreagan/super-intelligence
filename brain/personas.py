@@ -147,8 +147,7 @@ def _resolve_baseline(existing: dict | None, patch: dict | None) -> dict[str, fl
     from brain import persona_chem
 
     base = dict(
-        (existing or {}).get("baseline")
-        or persona_chem.PERSONA_CHEMISTRY[_DEFAULT_BASELINE_KEY]
+        (existing or {}).get("baseline") or persona_chem.PERSONA_CHEMISTRY[_DEFAULT_BASELINE_KEY]
     )
     for ch, v in (patch or {}).items():
         if ch not in persona_chem.CHANNELS:
@@ -241,9 +240,7 @@ def upsert(slug: str, body: dict) -> dict:
     fields replace stored ones, omitted fields keep their stored value)."""
     slug = valid_slug(slug)
     if is_builtin(slug):
-        raise PersonaError(
-            f"{slug!r} is a built-in persona — only custom personas can be authored"
-        )
+        raise PersonaError(f"{slug!r} is a built-in persona — only custom personas can be authored")
     body = body or {}
     existing = read_spec(slug)
     spec: dict = existing or {"slug": slug, "version": 0, "created": _now()}
@@ -374,9 +371,7 @@ def delete(slug: str) -> bool:
             if supabase_client.is_enabled():
                 sb = supabase_client.get_client()
                 org = supabase_client.get_org_id()
-                sb.table("brain_schemas").delete().eq("org_id", org).eq(
-                    "persona", slug
-                ).execute()
+                sb.table("brain_schemas").delete().eq("org_id", org).eq("persona", slug).execute()
         except Exception as e:
             logger.warning("[personas] brain_schemas cleanup failed for %s: %s", slug, e)
     else:

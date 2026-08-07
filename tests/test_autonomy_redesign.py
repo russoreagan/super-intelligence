@@ -63,10 +63,20 @@ def _caps(monkeypatch):
     import brain.autonomy.budget as bud
 
     monkeypatch.setattr(
-        bud, "_settings",
-        type("S", (), {"get": staticmethod(
-            lambda k, d=None: {"autonomous_soft_usd": 30.0, "autonomous_hard_usd": 50.0}.get(k, d)
-        )})(),
+        bud,
+        "_settings",
+        type(
+            "S",
+            (),
+            {
+                "get": staticmethod(
+                    lambda k, d=None: {
+                        "autonomous_soft_usd": 30.0,
+                        "autonomous_hard_usd": 50.0,
+                    }.get(k, d)
+                )
+            },
+        )(),
     )
     yield
 
@@ -101,8 +111,12 @@ def test_every_terminal_state_has_nonempty_reason_and_summary():
 # ── Budget tiers + soft-pause continue-approval ────────────────────────────
 @pytest.mark.parametrize(
     "usd,expected",
-    [(29, BudgetTier.UNDER_SOFT), (31, BudgetTier.SOFT_EXCEEDED),
-     (49, BudgetTier.SOFT_EXCEEDED), (51, BudgetTier.HARD_EXCEEDED)],
+    [
+        (29, BudgetTier.UNDER_SOFT),
+        (31, BudgetTier.SOFT_EXCEEDED),
+        (49, BudgetTier.SOFT_EXCEEDED),
+        (51, BudgetTier.HARD_EXCEEDED),
+    ],
 )
 def test_budget_tiers(usd, expected):
     assert AutonomousBudget(FakeRouter(usd)).tier() is expected
@@ -142,9 +156,22 @@ def test_rate_bucket_empty_defers():
 def test_cloud_health_trips_after_consecutive_timeouts(monkeypatch):
     import brain.autonomy.gate as g
 
-    monkeypatch.setattr(g, "_settings", type("S", (), {"get": staticmethod(
-        lambda k, d=None: {"bg_cloud_timeout_trip": 3, "cloud_unreachable_cooldown_s": 60}.get(k, d)
-    )})())
+    monkeypatch.setattr(
+        g,
+        "_settings",
+        type(
+            "S",
+            (),
+            {
+                "get": staticmethod(
+                    lambda k, d=None: {
+                        "bg_cloud_timeout_trip": 3,
+                        "cloud_unreachable_cooldown_s": 60,
+                    }.get(k, d)
+                )
+            },
+        )(),
+    )
     router = FakeRouter()
     gate = SpendRiskGate(AutonomousBudget(router), FakeApprovals(), router)
     gate.note_cloud_timeout()
@@ -277,9 +304,18 @@ def test_jobstore_synthesizes_state_from_legacy(monkeypatch, tmp_path):
     (tmp_path / "jobs").mkdir(parents=True, exist_ok=True)
     import json
 
-    (tmp_path / "jobs" / "old.json").write_text(json.dumps({
-        "job_id": "old", "goal": "g", "success": True, "done": True, "steps": [], "results": [],
-    }))
+    (tmp_path / "jobs" / "old.json").write_text(
+        json.dumps(
+            {
+                "job_id": "old",
+                "goal": "g",
+                "success": True,
+                "done": True,
+                "steps": [],
+                "results": [],
+            }
+        )
+    )
     rec = store.get("old")
     assert rec["state"] == "completed"
 

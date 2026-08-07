@@ -103,7 +103,9 @@ def test_lite_keeps_hard_backstop_when_budget_disabled(monkeypatch):
     monkeypatch.setattr(model_router, "_LITE_DEFAULT_DAILY_USD_CAP", 25.0)
     with pytest.raises(CloudBudgetExceeded):
         _budget_router(local_disabled=True, spent=30.0)._enforce_cloud_budget("api", "x")
-    assert _budget_router(local_disabled=True, spent=10.0)._enforce_cloud_budget("api", "x") is False
+    assert (
+        _budget_router(local_disabled=True, spent=10.0)._enforce_cloud_budget("api", "x") is False
+    )
 
 
 def test_full_brain_unbounded_when_budget_disabled(monkeypatch):

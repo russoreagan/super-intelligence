@@ -411,8 +411,12 @@ def test_fetch_gpu_types_prices_any_cloud_without_volume(monkeypatch):
 
 
 def _gpu(id_, vram, price):
-    return {"id": id_, "displayName": id_, "memoryInGb": vram,
-            "lowestPrice": {"uninterruptablePrice": price}}
+    return {
+        "id": id_,
+        "displayName": id_,
+        "memoryInGb": vram,
+        "lowestPrice": {"uninterruptablePrice": price},
+    }
 
 
 def test_create_candidates_secure_first_then_community_in_netvol_mode(monkeypatch):
@@ -462,9 +466,9 @@ def test_create_pod_community_fallback_does_not_attach_volume(monkeypatch):
         return {"podFindAndDeployOnDemand": {"id": "podCOMM"}}
 
     m._gql = fake_gql  # type: ignore[assignment]
-    assert asyncio.run(
-        m._create_pod("3090", cloud_type="COMMUNITY", attach_volume=False)
-    ) == "podCOMM"
+    assert (
+        asyncio.run(m._create_pod("3090", cloud_type="COMMUNITY", attach_volume=False)) == "podCOMM"
+    )
     v = captured["variables"]
     assert v["networkVolumeId"] is None
     assert v["volumeInGb"] == rm._VOLUME_GB
@@ -505,13 +509,15 @@ def test_rank_gpus_excludes_too_small_for_32b(monkeypatch):
     monkeypatch.delenv("RUNPOD_MIN_VRAM_GB", raising=False)
     monkeypatch.setenv("RUNPOD_MODEL", "qwen2.5:32b")
     m = _mgr()
-    ranked = m._rank_gpus([
-        _gpu("A6000", 48, 0.33),
-        _gpu("A40", 48, 0.35),
-        _gpu("4090", 24, 0.34),   # too small for 32B
-        _gpu("L4", 24, 0.44),     # too small for 32B
-        _gpu("L40S", 48, 0.79),   # over the $0.50 ceiling
-    ])
+    ranked = m._rank_gpus(
+        [
+            _gpu("A6000", 48, 0.33),
+            _gpu("A40", 48, 0.35),
+            _gpu("4090", 24, 0.34),  # too small for 32B
+            _gpu("L4", 24, 0.44),  # too small for 32B
+            _gpu("L40S", 48, 0.79),  # over the $0.50 ceiling
+        ]
+    )
     ids = [g["id"] for g in ranked]
     assert ids == ["A6000", "A40"], "only affordable 48GB cards qualify for 32B"
 

@@ -728,11 +728,26 @@ class PNS:
     # Twin of brain/api/audio.py's _GOOGLE_TTS_RATE — keep the two in sync.
     # Chirp3-HD honors speakingRate (not pitch), so mood maps to pace only.
     _GOOGLE_TTS_RATE = {
-        "excited": 1.10, "enthusiastic": 1.08, "happy": 1.06, "playful": 1.06,
-        "surprised": 1.08, "anxious": 1.08, "angry": 1.05, "frustrated": 1.04,
-        "confident": 1.03, "proud": 1.03, "warm": 0.98, "curious": 1.02,
-        "calm": 0.94, "thoughtful": 0.95, "sad": 0.90, "disappointed": 0.92,
-        "resigned": 0.92, "deadpan": 0.97, "dry": 0.97, "sarcastic": 0.98,
+        "excited": 1.10,
+        "enthusiastic": 1.08,
+        "happy": 1.06,
+        "playful": 1.06,
+        "surprised": 1.08,
+        "anxious": 1.08,
+        "angry": 1.05,
+        "frustrated": 1.04,
+        "confident": 1.03,
+        "proud": 1.03,
+        "warm": 0.98,
+        "curious": 1.02,
+        "calm": 0.94,
+        "thoughtful": 0.95,
+        "sad": 0.90,
+        "disappointed": 0.92,
+        "resigned": 0.92,
+        "deadpan": 0.97,
+        "dry": 0.97,
+        "sarcastic": 0.98,
     }
 
     @staticmethod
@@ -914,9 +929,7 @@ class PNS:
                 logger.info("[I/O] ELEVENLABS_API_KEY not set — using Google TTS")
                 _tts_provider = "google"
             else:
-                logger.warning(
-                    "[I/O] No TTS key set (ELEVENLABS / OPENAI / GOOGLE) — skipping TTS"
-                )
+                logger.warning("[I/O] No TTS key set (ELEVENLABS / OPENAI / GOOGLE) — skipping TTS")
                 return
         try:
             from elevenlabs import AsyncElevenLabs
@@ -1254,7 +1267,9 @@ class PNS:
                                         and not self._interrupt_event.is_set()
                                         and i < len(chunked) - 1
                                     ):
-                                        await audio_queue.put(b"\x00" * (22050 * 2 * _gap_ms // 1000))
+                                        await audio_queue.put(
+                                            b"\x00" * (22050 * 2 * _gap_ms // 1000)
+                                        )
                                     continue
                                 if _tts_provider == "openai":
                                     # Sentence-buffered fetch + resample; sliced into

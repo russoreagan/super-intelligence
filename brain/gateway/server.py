@@ -1024,9 +1024,7 @@ def main() -> None:
                 f"{'(booting)' if s['booting'] else ''}"
                 for s in stats
             )
-            logger.info(
-                "[gateway] tenants=%d rss_total=%.0fMB %s", len(stats), total, detail
-            )
+            logger.info("[gateway] tenants=%d rss_total=%.0fMB %s", len(stats), total, detail)
         except Exception as e:
             logger.debug("[gateway] tenant stats failed: %s", e)
 

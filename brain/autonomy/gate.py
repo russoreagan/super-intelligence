@@ -38,22 +38,68 @@ CONTINUE_SPEND_TOOL = "__continue_autonomous_spend__"
 # mutation (not a read) leaves the tenant, so it needs owner approval. Mirrors the
 # comms/money word-lists the CMA executor used, unified in one place.
 _EXTERNAL_VERBS = (
-    "send", "email", "mail", "message", "sms", "text", "call", "notify", "dm",
-    "post", "tweet", "publish", "share", "reply", "comment",
-    "order", "trade", "buy", "sell", "transfer", "pay", "payment", "invoice",
-    "checkout", "purchase", "wire", "withdraw", "deposit", "webhook",
+    "send",
+    "email",
+    "mail",
+    "message",
+    "sms",
+    "text",
+    "call",
+    "notify",
+    "dm",
+    "post",
+    "tweet",
+    "publish",
+    "share",
+    "reply",
+    "comment",
+    "order",
+    "trade",
+    "buy",
+    "sell",
+    "transfer",
+    "pay",
+    "payment",
+    "invoice",
+    "checkout",
+    "purchase",
+    "wire",
+    "withdraw",
+    "deposit",
+    "webhook",
     # Irreversible destructive actions are gated too (align with cma_executor._classify_action).
-    "delete", "remove", "destroy", "wipe", "purge", "drop", "erase",
+    "delete",
+    "remove",
+    "destroy",
+    "wipe",
+    "purge",
+    "drop",
+    "erase",
 )
 # Read verbs that are always safe even if a side-effect verb also appears.
 _READ_HINTS = ("get_", "list_", "search_", "read_", "fetch_", "query_", "lookup", "view_", "show_")
 # Motor's own tools are internal by construction (sandboxed FS / shell / local grounding).
 _INTERNAL_TOOLS = frozenset(
     {
-        "read_file", "write_file", "append_file", "list_files", "search_files",
-        "run_command", "set_mood", "recall_memory", "recall_jobs", "analyze_image", "none",
-        "world_geocode", "world_places", "world_directions", "world_weather",
-        "world_air_quality", "world_timezone", "fetch_url", "query_langfuse",
+        "read_file",
+        "write_file",
+        "append_file",
+        "list_files",
+        "search_files",
+        "run_command",
+        "set_mood",
+        "recall_memory",
+        "recall_jobs",
+        "analyze_image",
+        "none",
+        "world_geocode",
+        "world_places",
+        "world_directions",
+        "world_weather",
+        "world_air_quality",
+        "world_timezone",
+        "fetch_url",
+        "query_langfuse",
     }
 )
 
@@ -129,7 +175,9 @@ class SpendRiskGate:
         return GateDecision(RunOutcome.RUN)
 
     # ── Axis B: is this action safe to run unattended? ────────────────────────
-    def classify_action(self, tool: str, tool_input, *, write_allowed: bool = False) -> GateDecision:
+    def classify_action(
+        self, tool: str, tool_input, *, write_allowed: bool = False
+    ) -> GateDecision:
         """External side-effect → ASK; everything internal → RUN. Honors the
         `autonomy_approve_external_only` flag: when it's off, callers keep their old
         (broader) classifier — this method always implements the external-only policy."""

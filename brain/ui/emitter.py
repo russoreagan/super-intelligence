@@ -280,9 +280,7 @@ class ActivationEmitter:
             import httpx
 
             async with httpx.AsyncClient(timeout=httpx.Timeout(5.0, connect=3.0)) as client:
-                await client.post(
-                    url, json=payload, headers={"Authorization": f"Bearer {secret}"}
-                )
+                await client.post(url, json=payload, headers={"Authorization": f"Bearer {secret}"})
 
     async def emit_cell(self, cluster: str, cell: str, model: str, turn_id: str = "") -> None:
         with contextlib.suppress(asyncio.QueueFull):

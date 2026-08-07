@@ -118,12 +118,18 @@ def test_placeholder_is_a_barrier_between_real_tools():
     assert all("none" not in k for k in keys), f"no chunk may contain a placeholder: {keys}"
     # The genuine adjacent pair before the barrier still mines and promotes.
     real = _chunk_key(
-        [{"tool": "list_files", "args": {"path": "."}}, {"tool": "read_file", "args": {"path": "a"}}]
+        [
+            {"tool": "list_files", "args": {"path": "."}},
+            {"tool": "read_file", "args": {"path": "a"}},
+        ]
     )
     assert data["chunks"][real]["state"] == "active"
     # Nothing bridges across the barrier (read_file → write_file were not adjacent).
     bridged = _chunk_key(
-        [{"tool": "read_file", "args": {"path": "a"}}, {"tool": "write_file", "args": {"path": "b"}}]
+        [
+            {"tool": "read_file", "args": {"path": "a"}},
+            {"tool": "write_file", "args": {"path": "b"}},
+        ]
     )
     assert bridged not in data["chunks"]
 

@@ -52,11 +52,26 @@ _MODEL_ALIASES = {"flash": "eleven_flash_v2_5", "v3": "eleven_v3"}
 # to raw PCM so it concatenates like the other PCM formats.
 _GOOGLE_TTS_DEFAULT_VOICE = "en-US-Chirp3-HD-Charon"
 _GOOGLE_TTS_RATE: dict[str, float] = {
-    "excited": 1.10, "enthusiastic": 1.08, "happy": 1.06, "playful": 1.06,
-    "surprised": 1.08, "anxious": 1.08, "angry": 1.05, "frustrated": 1.04,
-    "confident": 1.03, "proud": 1.03, "warm": 0.98, "curious": 1.02,
-    "calm": 0.94, "thoughtful": 0.95, "sad": 0.90, "disappointed": 0.92,
-    "resigned": 0.92, "deadpan": 0.97, "dry": 0.97, "sarcastic": 0.98,
+    "excited": 1.10,
+    "enthusiastic": 1.08,
+    "happy": 1.06,
+    "playful": 1.06,
+    "surprised": 1.08,
+    "anxious": 1.08,
+    "angry": 1.05,
+    "frustrated": 1.04,
+    "confident": 1.03,
+    "proud": 1.03,
+    "warm": 0.98,
+    "curious": 1.02,
+    "calm": 0.94,
+    "thoughtful": 0.95,
+    "sad": 0.90,
+    "disappointed": 0.92,
+    "resigned": 0.92,
+    "deadpan": 0.97,
+    "dry": 0.97,
+    "sarcastic": 0.98,
 }
 
 
@@ -417,9 +432,7 @@ async def _iter_google(chunks: list[tuple[str, str | None]], affect: dict, voice
                     "speakingRate": rate,
                 },
             }
-            resp = await client.post(
-                url, params={"key": os.environ["GOOGLE_API_KEY"]}, json=body
-            )
+            resp = await client.post(url, params={"key": os.environ["GOOGLE_API_KEY"]}, json=body)
             if resp.status_code != 200:
                 detail = resp.text[:200]
                 raise AudioError(f"Google TTS failed ({resp.status_code}): {detail}", status=502)
@@ -472,10 +485,10 @@ async def transcribe(
         raise AudioError("audio (non-empty) is required")
     provider = (provider or os.environ.get("STT_PROVIDER") or "deepgram").strip().lower()
     if provider == "google":
-        return await _transcribe_google(audio_bytes, mimetype=mimetype, diarize=diarize, model=model)
-    return await _transcribe_deepgram(
-        audio_bytes, mimetype=mimetype, diarize=diarize, model=model
-    )
+        return await _transcribe_google(
+            audio_bytes, mimetype=mimetype, diarize=diarize, model=model
+        )
+    return await _transcribe_deepgram(audio_bytes, mimetype=mimetype, diarize=diarize, model=model)
 
 
 async def _transcribe_deepgram(

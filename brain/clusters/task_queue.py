@@ -358,7 +358,10 @@ class PersistentTaskQueue:
                 t.started_at = None
                 self._save()
                 logger.info(
-                    "[TaskQueue] Task [%s] deferred %.0fs (%s)", task_id, t.not_before - now, reason[:60]
+                    "[TaskQueue] Task [%s] deferred %.0fs (%s)",
+                    task_id,
+                    t.not_before - now,
+                    reason[:60],
                 )
                 return
         logger.warning("[TaskQueue] mark_deferred: task %r not found", task_id)

@@ -155,7 +155,13 @@ def _sq(s: str) -> str:  # single-quote for embedding in SQL literal
 
 def test_service_role_can_store_and_read_with_explicit_org(db):
     # Store for org A as a service-role request (no auth.uid()).
-    assert db(f"select public.t_set('u1','jira','https://x','tok-A',{_sq(ORG_A)}::uuid);", SERVICE_ROLE) == "OK"
+    assert (
+        db(
+            f"select public.t_set('u1','jira','https://x','tok-A',{_sq(ORG_A)}::uuid);",
+            SERVICE_ROLE,
+        )
+        == "OK"
+    )
     # Read it back scoped to A → token present.
     got = db(f"select public.t_get('u1',{_sq(ORG_A)}::uuid);", SERVICE_ROLE)
     assert got.startswith("OK:") and "tok-A" in got and "jira" in got
@@ -179,9 +185,9 @@ def test_real_org_jwt_overrides_spoofed_param(db):
 def test_no_identity_fails_closed(db):
     # No JWT claims AND no p_org_id → still 'not authenticated'.
     assert db("select public.t_get('u1', null);").startswith("RAISE:not authenticated")
-    assert db(
-        "select public.t_set('u1','jira','https://x','tok', null);"
-    ).startswith("RAISE:not authenticated")
+    assert db("select public.t_set('u1','jira','https://x','tok', null);").startswith(
+        "RAISE:not authenticated"
+    )
 
 
 def test_cross_org_delete_cannot_touch_another_org(db):

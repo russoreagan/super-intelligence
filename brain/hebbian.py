@@ -813,7 +813,9 @@ class HebbianUpdater:
             name = entry.get("name")
             if not name:
                 continue
-            lvl = 1.0 if entry.get("kind") == "integrator" else float(entry.get("level", 1.0) or 0.0)
+            lvl = (
+                1.0 if entry.get("kind") == "integrator" else float(entry.get("level", 1.0) or 0.0)
+            )
             lvl = max(0.0, min(1.0, lvl))
             if lvl > levels.get(name, -1.0):
                 levels[name] = lvl

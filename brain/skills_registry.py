@@ -181,7 +181,11 @@ def stage_skill(
     tools = _valid_str_list("allowed_tools", allowed_tools, MAX_ALLOWED_TOOLS)
 
     existing = (
-        sb.table("skills").select("version, approved_body").eq("org_id", org).eq("id", sid).execute()
+        sb.table("skills")
+        .select("version, approved_body")
+        .eq("org_id", org)
+        .eq("id", sid)
+        .execute()
     )
     prior = existing.data or []
     row = {
@@ -276,9 +280,7 @@ def set_skill_agents(skill_id: str, agent_ids: list[str]) -> dict:
     pairs = [_split_agent(a) for a in (agent_ids or [])]
     sb.table("agent_skills").delete().eq("org_id", org).eq("skill_id", sid).execute()
     if pairs:
-        rows = [
-            {"org_id": org, "persona": p, "mandate_id": m, "skill_id": sid} for (p, m) in pairs
-        ]
+        rows = [{"org_id": org, "persona": p, "mandate_id": m, "skill_id": sid} for (p, m) in pairs]
         sb.table("agent_skills").insert(rows).execute()
     return {"id": sid, "agents": [f"{p}.{m}" for (p, m) in pairs]}
 

@@ -970,9 +970,7 @@ class SleepConsolidation:
             len(history),
         )
 
-        self._angle_synonym_cell.reset_turn(
-            f"sleep_{session_id}_synonyms_{persona_slug(persona)}"
-        )
+        self._angle_synonym_cell.reset_turn(f"sleep_{session_id}_synonyms_{persona_slug(persona)}")
         raw = await self._angle_synonym_cell.call([{"role": "user", "content": prompt}])
         result: dict = safe_json_parse(raw) or {}
 
@@ -1165,10 +1163,15 @@ class SleepConsolidation:
                         f"(net {net:+.3f}), mean outcome {sum(outcomes) / len(outcomes):+.2f}"
                     ),
                     "subsystem": "routing",
-                    "edges": [{"edge": edge, "from_w": first_w, "to_w": last_w, "delta": round(net, 4)}],
+                    "edges": [
+                        {"edge": edge, "from_w": first_w, "to_w": last_w, "delta": round(net, 4)}
+                    ],
                     "decision_types": ["hebbian_update_applied"],
                     "turn_ids": [r.get("turn_id", "") for r in rows if r.get("turn_id")][:8],
-                    "metrics": {"n_updates": len(rows), "mean_outcome": round(sum(outcomes) / len(outcomes), 3)},
+                    "metrics": {
+                        "n_updates": len(rows),
+                        "mean_outcome": round(sum(outcomes) / len(outcomes), 3),
+                    },
                 }
             )
 
@@ -1288,7 +1291,7 @@ class SleepConsolidation:
                     existing = [ln for ln in f.read().splitlines() if ln.strip()]
             lines = existing + [json.dumps(s, default=str) for s in stories]
             with open(path + ".tmp", "w", encoding="utf-8") as f:
-                f.write("\n".join(lines[-self._STORIES_KEEP:]) + "\n")
+                f.write("\n".join(lines[-self._STORIES_KEEP :]) + "\n")
             os.replace(path + ".tmp", path)
         except Exception as e:
             logger.warning("[LearningNarrator] could not persist stories: %s", e)
@@ -1358,7 +1361,9 @@ class SleepConsolidation:
             now = time.time()
             stories: list[dict] = []
 
-            def _mk(claim: str, subsystem: str, refs: list[int], generator: str, confidence: float = 0.0) -> dict:
+            def _mk(
+                claim: str, subsystem: str, refs: list[int], generator: str, confidence: float = 0.0
+            ) -> dict:
                 cited = [evidence[i] for i in refs]
                 return {
                     "id": f"st_{int(now)}_{slug}_{len(stories)}",
@@ -1392,7 +1397,9 @@ class SleepConsolidation:
                     if not claim or not refs:
                         continue
                     subsystem = str(s.get("subsystem") or evidence[refs[0]]["subsystem"])
-                    stories.append(_mk(claim, subsystem, refs, "llm", float(s.get("confidence") or 0)))
+                    stories.append(
+                        _mk(claim, subsystem, refs, "llm", float(s.get("confidence") or 0))
+                    )
             except Exception as e:
                 logger.debug("[LearningNarrator] LLM pass failed (%s) — template fallback", e)
 

@@ -78,8 +78,15 @@ _STATS_MAX = 200.0
 # _DEFLECTION_OVERRIDES; a local copy keeps this a leaf module).
 DISCOMFORT_EMOTIONS = frozenset(
     {
-        "embarrassed", "ashamed", "humiliated", "anxious", "uncomfortable",
-        "guilty", "apologetic", "sad", "hurt",
+        "embarrassed",
+        "ashamed",
+        "humiliated",
+        "anxious",
+        "uncomfortable",
+        "guilty",
+        "apologetic",
+        "sad",
+        "hurt",
     }
 )
 
@@ -232,9 +239,7 @@ class AvoidanceTracker:
                 # An abrupt shift fires once, at the moment the entity crosses stale off
                 # a live thread while the user is actively on other topics — not on every
                 # later turn it happens to remain unmentioned.
-                abrupt_shift = (
-                    1.0 if (turns_stale == stale_after and current_entities) else 0.0
-                )
+                abrupt_shift = 1.0 if (turns_stale == stale_after and current_entities) else 0.0
                 if not (surfaced_dodge or abrupt_shift):
                     continue  # no dodge → not evidence; the leak keeps winning
                 cues = {
@@ -297,7 +302,7 @@ class AvoidanceTracker:
         floor = float(settings.get("avoidance_evict_floor", 0.05))
         release = self._scalar.arm_threshold * self._scalar.release_ratio
         for key in [k for k in store if k.startswith("avoid:")]:
-            ent = key[len("avoid:"):]
+            ent = key[len("avoid:") :]
             v = store.get(key)
             if not isinstance(v, dict):
                 store.pop(key, None)
@@ -324,7 +329,7 @@ class AvoidanceTracker:
                     store.pop(f"avoidmeta:{ent}", None)
         # bare surfacing records (no accumulator) are consumable for exactly one turn
         for key in [k for k in store if k.startswith("avoidmeta:")]:
-            ent = key[len("avoidmeta:"):]
+            ent = key[len("avoidmeta:") :]
             if f"avoid:{ent}" in store:
                 continue
             if not self._fresh_surfacing(store.get(key) or {}, turn_count):
@@ -333,8 +338,15 @@ class AvoidanceTracker:
     # ── learning ──────────────────────────────────────────────────────────────
 
     def _confirm(
-        self, entity: str, correct: bool, bus, persona: str, weights: dict, store: dict,
-        *, external: bool = True,
+        self,
+        entity: str,
+        correct: bool,
+        bus,
+        persona: str,
+        weights: dict,
+        store: dict,
+        *,
+        external: bool = True,
     ) -> float:
         """Grade an armed belief the user's behaviour confirmed (correct=True) or refuted
         (correct=False) and learn. The live signals (re-engagement / continued dodging)
@@ -356,7 +368,9 @@ class AvoidanceTracker:
         self._record_resolution(persona, reengaged=not correct)
         self._log(
             "avoidance_confirmed" if correct else "avoidance_refuted",
-            entity=entity, correct=correct, da=round(da, 4),
+            entity=entity,
+            correct=correct,
+            da=round(da, 4),
         )
         return da
 
@@ -371,8 +385,15 @@ class AvoidanceTracker:
         return 0.0
 
     def _reward_and_learn(
-        self, correct: bool, confidence: float, cues: dict, bus, persona: str,
-        weights: dict, *, external: bool,
+        self,
+        correct: bool,
+        confidence: float,
+        cues: dict,
+        bus,
+        persona: str,
+        weights: dict,
+        *,
+        external: bool,
     ) -> float:
         """Reuse neuron.prediction_reward for the anti-farm-gated reward, emit the audited
         DA (only when avoidance_gate steers), and nudge this persona's cue weights.
@@ -386,7 +407,8 @@ class AvoidanceTracker:
         if not pr:
             return 0.0
         ext_w = (
-            float(settings.get("evidence_external_weight", 1.0)) if external
+            float(settings.get("evidence_external_weight", 1.0))
+            if external
             else float(settings.get("evidence_self_weight", 0.35))
         )
         delta = 0.0
@@ -399,9 +421,11 @@ class AvoidanceTracker:
             delta = consume_turn_resolution_budget(bus.neuromod, delta, cap)
             if delta:
                 bus.neuromod.add(
-                    "DA", delta,
+                    "DA",
+                    delta,
                     source="self_inference" if external else "intrinsic",
-                    reward_source="correctness", reason="avoidance_resolve",
+                    reward_source="correctness",
+                    reason="avoidance_resolve",
                 )
         # learn this persona's cue weights (bounded); persist so it survives restart
         lr = float(settings.get("evidence_cue_lr", 0.05))
@@ -424,7 +448,9 @@ class AvoidanceTracker:
         if not (isinstance(v, dict) and v.get("armed")):
             return False
         if aged_out(
-            float(v.get("armed_at", now)), now, float(settings.get("avoidance_max_armed_s", 86400.0))
+            float(v.get("armed_at", now)),
+            now,
+            float(settings.get("avoidance_max_armed_s", 86400.0)),
         ):
             return False
         release = self._scalar.arm_threshold * self._scalar.release_ratio
@@ -433,7 +459,7 @@ class AvoidanceTracker:
     def _armed_entities(self, store: dict, now: float | None = None) -> list[str]:
         now = time.time() if now is None else now
         return [
-            k[len("avoid:"):]
+            k[len("avoid:") :]
             for k, v in store.items()
             if k.startswith("avoid:") and self._slice_armed(v, now)
         ]

@@ -439,12 +439,7 @@ class EpisodicStore:
             pred = f"topic_tags LIKE '%{_sql_quote(tag)}%'"
             if end_user_id is not None:
                 pred += f" AND end_user_id = '{_sql_quote(end_user_id)}'"
-            results = (
-                self._table.search(query_vector)
-                .where(pred)
-                .limit(limit)
-                .to_list()
-            )
+            results = self._table.search(query_vector).where(pred).limit(limit).to_list()
             return self._parse_rows(results)
         except Exception as e:
             logger.error("[Episode DB] Tag-scoped recall failed (tag=%r): %s", tag, e)

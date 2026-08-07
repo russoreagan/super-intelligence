@@ -190,7 +190,7 @@ def read(
             ):
                 continue
             out.append(r)
-        return out[-max(1, limit):]
+        return out[-max(1, limit) :]
     except Exception as e:
         logger.debug("[learning_ledger] read failed: %s", e)
         return []

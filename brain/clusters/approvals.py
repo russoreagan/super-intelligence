@@ -210,7 +210,11 @@ class PendingApprovals:
         With end_user_id set, only that end-user's own item can be approved — plus
         the autonomous/owner lane when include_autonomous is set."""
         for a in self._items:
-            if a.id == approval_id and a.status == "pending" and self._scoped(a, end_user_id, include_autonomous):
+            if (
+                a.id == approval_id
+                and a.status == "pending"
+                and self._scoped(a, end_user_id, include_autonomous)
+            ):
                 a.status = "approved"
                 a.resolved_at = time.time()
                 self._save()
@@ -222,7 +226,11 @@ class PendingApprovals:
         self, approval_id: str, end_user_id: str | None = None, include_autonomous: bool = False
     ) -> bool:
         for a in self._items:
-            if a.id == approval_id and a.status == "pending" and self._scoped(a, end_user_id, include_autonomous):
+            if (
+                a.id == approval_id
+                and a.status == "pending"
+                and self._scoped(a, end_user_id, include_autonomous)
+            ):
                 a.status = "skipped"
                 a.resolved_at = time.time()
                 self._save()
@@ -337,7 +345,9 @@ class PendingApprovals:
             self._save()
         return n
 
-    def pending(self, end_user_id: str | None = None, include_autonomous: bool = False) -> list[dict]:
+    def pending(
+        self, end_user_id: str | None = None, include_autonomous: bool = False
+    ) -> list[dict]:
         self.expire_stale()
         return [
             a.to_dict()

@@ -19,9 +19,13 @@ from brain.api import audio
 def _fake_wav(pcm: bytes = b"\x01\x02" * 200, rate: int = 24000) -> bytes:
     n = len(pcm)
     return (
-        b"RIFF" + struct.pack("<I", 36 + n) + b"WAVEfmt "
+        b"RIFF"
+        + struct.pack("<I", 36 + n)
+        + b"WAVEfmt "
         + struct.pack("<IHHIIHH", 16, 1, 1, rate, rate * 2, 2, 16)
-        + b"data" + struct.pack("<I", n) + pcm
+        + b"data"
+        + struct.pack("<I", n)
+        + pcm
     )
 
 

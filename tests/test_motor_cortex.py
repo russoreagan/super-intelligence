@@ -474,9 +474,7 @@ class TestMotorInlineDepth:
         f.write_text("content")
         plan = {"tool": "read_file", "args": {"path": str(f)}, "reason": "reading"}
         m, _ = _make_motor(tmp_path, tool_plan=plan)
-        result = await m.execute(
-            {"raw_text": "read it and then do more"}, "t1", inline_step_cap=1
-        )
+        result = await m.execute({"raw_text": "read it and then do more"}, "t1", inline_step_cap=1)
         assert result is not None
         assert result.get("more_pending") is True
         assert result.get("remaining_goal")
@@ -2654,7 +2652,9 @@ class TestFetchUrlHardening:
 
         monkeypatch.setattr(_socket, "getaddrinfo", fake_getaddrinfo)
 
-    def _install_fake_client(self, monkeypatch, status_sequence, body="<html><body>hello world</body></html>"):
+    def _install_fake_client(
+        self, monkeypatch, status_sequence, body="<html><body>hello world</body></html>"
+    ):
         """Replace httpx.AsyncClient with a fake yielding real httpx.Response
         objects (so .raise_for_status() behaves exactly as in production).
         Records the headers and the number of GETs."""
@@ -2676,9 +2676,7 @@ class TestFetchUrlHardening:
             async def get(self, url):
                 captured["gets"] += 1
                 code = seq[min(captured["gets"] - 1, len(seq) - 1)]
-                return httpx.Response(
-                    code, request=httpx.Request("GET", url), text=body
-                )
+                return httpx.Response(code, request=httpx.Request("GET", url), text=body)
 
         monkeypatch.setattr(httpx, "AsyncClient", _FakeClient)
         return captured

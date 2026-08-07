@@ -19,7 +19,10 @@ from brain.api.sessions import ApiSessionRegistry
 class _FakeRunner:
     async def __call__(self, message, end_user_id, mandate_id=None, persona=None):
         # affect now carries turn_id (process_turn stamps it); the route surfaces it.
-        return (f"echo: {message}", {"emotion": "warm", "user_emotion": "curious", "turn_id": "turn_xyz"})
+        return (
+            f"echo: {message}",
+            {"emotion": "warm", "user_emotion": "curious", "turn_id": "turn_xyz"},
+        )
 
 
 class _FakeGrader:
@@ -39,7 +42,9 @@ class _FakeGrader:
 def _ok(authorization, keys):
     if not authorization:
         return False
-    tok = authorization[7:].strip() if authorization.lower().startswith("bearer ") else authorization
+    tok = (
+        authorization[7:].strip() if authorization.lower().startswith("bearer ") else authorization
+    )
     return tok in keys
 
 
@@ -177,7 +182,9 @@ def test_grade_turn_from_another_session_maps_denied_to_404():
     )
     c = _client(_FakeRunner(), grader)
     sid = _open_session(c)
-    r = c.post(f"/v1/sessions/{sid}/turns/turn_of_partner_B/grade", json={"grade": 1}, headers=_AUTH)
+    r = c.post(
+        f"/v1/sessions/{sid}/turns/turn_of_partner_B/grade", json={"grade": 1}, headers=_AUTH
+    )
     assert r.status_code == 404
     # The runner WAS consulted (it holds the trace buffer) but the denial never
     # leaks as a 200.

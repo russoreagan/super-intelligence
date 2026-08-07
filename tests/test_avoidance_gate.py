@@ -52,8 +52,14 @@ def _arm(t, bus, store, entity="secret", tc=5, now=T0):
     """One visible dodge with discomfort: the entity just crossed stale off a live
     thread (abrupt_shift) while the user shows discomfort → drift 2.0 ≥ 1.5 → arms."""
     return _turn(
-        t, bus, store, current={"weather"}, stale={entity: tc - 2}, tc=tc,
-        emotion="embarrassed", now=now,
+        t,
+        bus,
+        store,
+        current={"weather"},
+        stale={entity: tc - 2},
+        tc=tc,
+        emotion="embarrassed",
+        now=now,
     )
 
 
@@ -95,11 +101,27 @@ def test_visible_dodge_twice_arms():
     t = AvoidanceTracker()
     store: dict = {}
     bus = Bus()
-    _turn(t, bus, store, current={"weather"}, stale={"secret": 1}, tc=5,
-          agent_text="want to talk about the secret?")
-    assert _turn(t, bus, store, current={"news"}, stale={"secret": 1}, tc=6) == []  # one dodge: not yet
-    _turn(t, bus, store, current={"news"}, stale={"secret": 1}, tc=7,
-          agent_text="circling back to the secret")
+    _turn(
+        t,
+        bus,
+        store,
+        current={"weather"},
+        stale={"secret": 1},
+        tc=5,
+        agent_text="want to talk about the secret?",
+    )
+    assert (
+        _turn(t, bus, store, current={"news"}, stale={"secret": 1}, tc=6) == []
+    )  # one dodge: not yet
+    _turn(
+        t,
+        bus,
+        store,
+        current={"news"},
+        stale={"secret": 1},
+        tc=7,
+        agent_text="circling back to the secret",
+    )
     assert "secret" in _turn(t, bus, store, current={"sports"}, stale={"secret": 1}, tc=8)
     assert t.is_avoided("secret", store, now=T0)
 
@@ -202,8 +224,15 @@ def test_agent_surfaces_and_user_keeps_dodging_confirms_and_strengthens():
     bus = Bus()
     _arm(t, bus, store, tc=5)
     # turn 6: the agent's own reply surfaces the flagged entity
-    _turn(t, bus, store, current={"news"}, stale={"secret": 3}, tc=6,
-          agent_text="we could talk about the secret if you want")
+    _turn(
+        t,
+        bus,
+        store,
+        current={"news"},
+        stale={"secret": 3},
+        tc=6,
+        agent_text="we could talk about the secret if you want",
+    )
     before = t.cue_weights()
     # turn 7: user still not engaging it → the avoidance was real → confirm+strengthen
     _turn(t, bus, store, current={"news"}, stale={"secret": 3}, tc=7)
@@ -219,8 +248,13 @@ def test_cue_weights_persist_across_tracker_instances():
     t1 = AvoidanceTracker()
     _arm(t1, bus, store)
     t1.observe_turn(  # refute → weakens + persists to disk
-        current_entities={"secret"}, stale_entities={"secret": 3}, turn_count=6,
-        user_emotion="neutral", bus=bus, store=store, now=T0,
+        current_entities={"secret"},
+        stale_entities={"secret": 3},
+        turn_count=6,
+        user_emotion="neutral",
+        bus=bus,
+        store=store,
+        now=T0,
     )
     learned = t1.cue_weights()["abrupt_shift"]
     assert learned < 1.0
@@ -240,9 +274,11 @@ def test_self_graded_is_discounted_bounded_and_never_external():
     _arm(t_self, bus, s_s := {})
     t_ext.confirm("secret", correct=True, bus=bus, external=True, store=s_e)
     t_self.confirm("secret", correct=True, bus=bus, external=False, store=s_s)
-    assert (t_ext.cue_weights()["abrupt_shift"] - 1.0) > (
-        t_self.cue_weights()["abrupt_shift"] - 1.0
-    ) > 0  # self nudges, external moves it more
+    assert (
+        (t_ext.cue_weights()["abrupt_shift"] - 1.0)
+        > (t_self.cue_weights()["abrupt_shift"] - 1.0)
+        > 0
+    )  # self nudges, external moves it more
 
     # farming: hammering a self-graded "correct" is clamped and only ever intrinsic.
     t_farm = AvoidanceTracker()
@@ -324,8 +360,15 @@ def test_da_capped_per_turn_across_entities(monkeypatch):
     store: dict = {}
     ents = {f"topic{i}" for i in range(5)}
     # one visible-dodge turn arms all five (each just crossed stale, discomfort riding)
-    _turn(t, bus, store, current={"weather"}, stale=dict.fromkeys(ents, 3), tc=5,
-          emotion="embarrassed")
+    _turn(
+        t,
+        bus,
+        store,
+        current={"weather"},
+        stale=dict.fromkeys(ents, 3),
+        tc=5,
+        emotion="embarrassed",
+    )
     assert all(t.is_avoided(e, store, now=T0) for e in ents)
     # user re-engages all five at once → five refute resolutions in one turn
     _turn(t, bus, store, current=ents, stale=dict.fromkeys(ents, 3), tc=6)

@@ -186,7 +186,9 @@ def test_v1_ignores_persona_header_when_flag_off(monkeypatch):
     app = gw.build_gateway_app(prov, [_FakeRunpod()])
     monkeypatch.setattr(gw, "_proxy_http_stream", _fake_stream)
 
-    r = asyncio.run(_post_v1(app, {"authorization": "Bearer good", "x-brain-persona": "the_adversary"}))
+    r = asyncio.run(
+        _post_v1(app, {"authorization": "Bearer good", "x-brain-persona": "the_adversary"})
+    )
     assert r.status_code == 200
     assert prov.status_calls[-1] == ("org-1", None)  # persona dropped
 
@@ -198,7 +200,9 @@ def test_v1_routes_by_persona_header_when_flag_on(monkeypatch):
     app = gw.build_gateway_app(prov, [_FakeRunpod()])
     monkeypatch.setattr(gw, "_proxy_http_stream", _fake_stream)
 
-    r = asyncio.run(_post_v1(app, {"authorization": "Bearer good", "x-brain-persona": "the_adversary"}))
+    r = asyncio.run(
+        _post_v1(app, {"authorization": "Bearer good", "x-brain-persona": "the_adversary"})
+    )
     assert r.status_code == 200
     assert prov.status_calls[-1] == ("org-1", "the_adversary")
     assert prov.touched[-1] == ("org-1", "the_adversary")

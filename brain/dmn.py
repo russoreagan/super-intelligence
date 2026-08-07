@@ -99,8 +99,12 @@ DMN_MEMORY_SEED_EVERY = int(os.environ.get("BRAIN_DMN_MEMORY_SEED_EVERY", "3"))
 # threshold in one place and all gates follow. COOLING/DEEP are constants here; WANDERING
 # tracks the runtime `dmn_rumination_idle_threshold_s` setting so the rumination gate and
 # everything else cross into "mind-wandering" at the same instant.
-DMN_IDLE_COOLING_S = float(os.environ.get("BRAIN_DMN_IDLE_COOLING_S", "30"))  # memory seeds, silence recall
-DMN_IDLE_DEEP_S = float(os.environ.get("BRAIN_DMN_IDLE_DEEP_S", "90"))  # mind-wandering context reframe
+DMN_IDLE_COOLING_S = float(
+    os.environ.get("BRAIN_DMN_IDLE_COOLING_S", "30")
+)  # memory seeds, silence recall
+DMN_IDLE_DEEP_S = float(
+    os.environ.get("BRAIN_DMN_IDLE_DEEP_S", "90")
+)  # mind-wandering context reframe
 
 # How many times a self-directed job result may chain into a follow-up job before
 # the reflex loop is forced to terminate (surface to the user or stop). Bounds the
@@ -662,9 +666,8 @@ class DefaultModeNetwork:
                 # know is merely bland; invented shared history is a lie.
                 self._startup_first_meeting = True
                 try:
-                    if (
-                        self._hippocampus is not None
-                        and self._hippocampus._episodic.sample_random(1)
+                    if self._hippocampus is not None and self._hippocampus._episodic.sample_random(
+                        1
                     ):
                         self._startup_first_meeting = False
                 except Exception as _fm_err:
@@ -773,9 +776,7 @@ class DefaultModeNetwork:
         focus = self._current_focus()
         if not focus:
             return ""
-        return " ".join(
-            [*(focus.get("hot_entities") or []), str(focus.get("focus") or "")]
-        ).strip()
+        return " ".join([*(focus.get("hot_entities") or []), str(focus.get("focus") or "")]).strip()
 
     def _inherited_skill_names(self) -> list[str]:
         """Skill names from parietal.active_skill_context, if any."""
@@ -1918,7 +1919,9 @@ class DefaultModeNetwork:
 
             seen = {_persona_key(home)}
             rows = agents.list_agents()
-            for p in sorted({str(r.get("persona") or "") for r in (rows or []) if r.get("enabled")}):
+            for p in sorted(
+                {str(r.get("persona") or "") for r in (rows or []) if r.get("enabled")}
+            ):
                 key = _persona_key(p)
                 if not p or key in seen:
                     continue
@@ -1944,7 +1947,9 @@ class DefaultModeNetwork:
             if promoted:
                 home_key = _persona_key(home)
                 roster = [
-                    p for p in roster if _persona_key(p) == home_key or _persona_key(p) not in promoted
+                    p
+                    for p in roster
+                    if _persona_key(p) == home_key or _persona_key(p) not in promoted
                 ]
         except Exception as e:
             logger.debug("[DMN] placement filter failed — full roster: %s", e)
@@ -2666,9 +2671,7 @@ class DefaultModeNetwork:
             return None
         terms = self._spotlight_terms()
         if terms:
-            matched = [
-                (t, _content_word_overlap(t.summary, terms)) for t in open_threads
-            ]
+            matched = [(t, _content_word_overlap(t.summary, terms)) for t in open_threads]
             matched = [(t, s) for (t, s) in matched if s > 0]
             if matched:
                 return max(matched, key=lambda ts: (ts[1], ts[0].advances, ts[0].last_ts))[0]
@@ -3942,13 +3945,16 @@ class DefaultModeNetwork:
 
         _persona = self._reward_persona()
         _w = reward_weight(_persona, "correctness")
-        _la = loss_aversion(_persona)  # λ: weights the verified-wrong sting, never the affirm reward
+        _la = loss_aversion(
+            _persona
+        )  # λ: weights the verified-wrong sting, never the affirm reward
         _er = float(settings.get("emotional_reactivity_scale"))
         _nm = getattr(getattr(self, "_bus", None), "neuromod", None)  # best-effort; None in tests
         if verdict == "affirm":
             if _nm:
                 _nm.add(
-                    "DA", float(settings.get("correctness_reward_base")) * _w * _er,
+                    "DA",
+                    float(settings.get("correctness_reward_base")) * _w * _er,
                     source="external",
                 )
             text = thread.pending_conclusion or thread.summary
@@ -3972,7 +3978,8 @@ class DefaultModeNetwork:
             # chemistry decides whether that reads as brooding (Poet) or bristling (Analyst).
             if _nm:
                 _nm.add(
-                    "DA", -float(settings.get("correctness_penalty_base")) * _w * _er * _la,
+                    "DA",
+                    -float(settings.get("correctness_penalty_base")) * _w * _er * _la,
                     source="external",
                 )
                 _nm.add("5HT", -float(settings.get("correctness_5ht_drain")) * _w * _er * _la)
@@ -3983,7 +3990,8 @@ class DefaultModeNetwork:
         # correction → partially wrong: a softer penalty (half), then re-open the thread.
         if _nm:
             _nm.add(
-                "DA", -0.5 * float(settings.get("correctness_penalty_base")) * _w * _er * _la,
+                "DA",
+                -0.5 * float(settings.get("correctness_penalty_base")) * _w * _er * _la,
                 source="external",
             )
         thread.status = ot.STATUS_OPEN

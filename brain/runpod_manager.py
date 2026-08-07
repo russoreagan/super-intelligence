@@ -609,9 +609,7 @@ class RunPodManager:
                         # call against the dead pod's proxy host.
                         if str(settings.get("runpod_host") or "") not in ("", "off"):
                             settings.update({"runpod_host": "off", "runpod_pod_ready": 0})
-                            logger.info(
-                                "[RunPod] consumer host refreshed → off (pod terminated)"
-                            )
+                            logger.info("[RunPod] consumer host refreshed → off (pod terminated)")
             except Exception as e:
                 logger.debug("[RunPod] consumer host refresh error: %s", e)
             await asyncio.sleep(interval)

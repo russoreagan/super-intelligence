@@ -70,7 +70,12 @@ class PodScheduler:
 
     # ── pool registration (called by the executor after real provisioning) ──
     def register_pod(
-        self, pod_id: str, *, model: str = DEFAULT_MODEL, host: str | None = None, capacity: int | None = None
+        self,
+        pod_id: str,
+        *,
+        model: str = DEFAULT_MODEL,
+        host: str | None = None,
+        capacity: int | None = None,
     ) -> Pod:
         pod = self._pods.get(pod_id)
         if pod is None:

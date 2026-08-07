@@ -164,9 +164,7 @@ def test_upsert_section_reads_and_writes_the_same_bound_persona(monkeypatch):
     monkeypatch.delenv("BRAIN_MULTITENANT", raising=False)
     monkeypatch.setenv("BRAIN_PERSONA_NAME", "The Visionary")
     docs = {
-        "the_adversary": (
-            "# Self-Model — The Adversary\n\n## Current mood signature\nbaseline\n"
-        ),
+        "the_adversary": ("# Self-Model — The Adversary\n\n## Current mood signature\nbaseline\n"),
         "the_visionary": "# Self-Model — The Visionary\n",
     }
     store, fake = _supabase_schema_store(monkeypatch, docs)

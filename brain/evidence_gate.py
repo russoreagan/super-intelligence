@@ -257,9 +257,7 @@ class EvidenceGate:
 
         edge_payload = None
         if not self._armed:
-            in_refractory = (
-                self.refractory_s > 0 and (now - self._armed_at) < self.refractory_s
-            )
+            in_refractory = self.refractory_s > 0 and (now - self._armed_at) < self.refractory_s
             if self._level >= arm_bound and not in_refractory:
                 self._armed = True
                 self._armed_at = now
@@ -393,8 +391,10 @@ class EvidenceGate:
             cap = float(_s.get("prediction_reward_turn_cap"))
             # External confirmation is the gold signal; self/critic is discounted so
             # it can nudge but never dominate (keeps the DA tally honest).
-            ext_w = float(_s.get("evidence_external_weight", 1.0)) if external else float(
-                _s.get("evidence_self_weight", 0.35)
+            ext_w = (
+                float(_s.get("evidence_external_weight", 1.0))
+                if external
+                else float(_s.get("evidence_self_weight", 0.35))
             )
             delta = pr * base * reward_weight(persona, reward_source) * ext_w
             delta = max(-cap, min(cap, delta))

@@ -227,7 +227,9 @@ class ResultReporter:
         """Return a 1-2 sentence summary suitable for TTS. NEVER empty — falls back to a
         deterministic template built from the job outcome, so a completed (or deferred/
         stopped/failed) job always has a retrievable, non-empty summary."""
-        state = job_summary.get("state") or ("completed" if job_summary.get("success") else "failed")
+        state = job_summary.get("state") or (
+            "completed" if job_summary.get("success") else "failed"
+        )
 
         # Non-completed terminal states are narrated deterministically from the outcome —
         # more accurate (and cheaper) than asking a model to describe a pause/stop.

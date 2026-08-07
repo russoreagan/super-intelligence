@@ -495,11 +495,26 @@ _PERSONA_REWARD_WEIGHTS: dict[str, dict[str, float]] = {
 # purpose as the experimental control. Values are the innate baseline; the settings dials
 # loss_aversion_scale / uncertainty_aversion_scale (centred 1.0) tune them per deployment.
 _PERSONA_RISK_POSTURE: dict[str, dict[str, float]] = {
-    "the_analyst": {"loss_aversion": 2.0, "uncertainty_aversion": 1.25},  # craves certainty; hates being wrong most
-    "the_empath": {"loss_aversion": 1.7, "uncertainty_aversion": 0.6},  # feels potential pain harder
-    "the_visionary": {"loss_aversion": 0.6, "uncertainty_aversion": 0.05},  # bold; actively underweights downside
-    "the_poet": {"loss_aversion": 2.4, "uncertainty_aversion": 0.25},  # Tortured Artist: losses loom largest; ambiguity-tolerant
-    "the_sage": {"loss_aversion": 1.1, "uncertainty_aversion": 0.1},  # even-keeled; barely reactive to either
+    "the_analyst": {
+        "loss_aversion": 2.0,
+        "uncertainty_aversion": 1.25,
+    },  # craves certainty; hates being wrong most
+    "the_empath": {
+        "loss_aversion": 1.7,
+        "uncertainty_aversion": 0.6,
+    },  # feels potential pain harder
+    "the_visionary": {
+        "loss_aversion": 0.6,
+        "uncertainty_aversion": 0.05,
+    },  # bold; actively underweights downside
+    "the_poet": {
+        "loss_aversion": 2.4,
+        "uncertainty_aversion": 0.25,
+    },  # Tortured Artist: losses loom largest; ambiguity-tolerant
+    "the_sage": {
+        "loss_aversion": 1.1,
+        "uncertainty_aversion": 0.1,
+    },  # even-keeled; barely reactive to either
     "the_cynic": {"loss_aversion": 2.0, "uncertainty_aversion": 0.75},  # braces hard for the worst
 }
 

@@ -108,7 +108,9 @@ def test_inline_motor_pending_write_is_left_parked():
 
 def test_inline_motor_no_tool_returns_empty():
     # Planner said "none" (or tool produced nothing) → no tool_result; turn proceeds.
-    assert asyncio.run(_TurnMixin._run_motor_inline(_FakeSelf(None), {"raw_text": "hi"}, "t3")) == ""
+    assert (
+        asyncio.run(_TurnMixin._run_motor_inline(_FakeSelf(None), {"raw_text": "hi"}, "t3")) == ""
+    )
 
 
 def test_api_turn_transport_routing():

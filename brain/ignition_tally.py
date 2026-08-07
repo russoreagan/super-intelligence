@@ -105,9 +105,7 @@ def flush(persona: str = "") -> None:
         data = _load(who)
         for c, ts in items:
             entry = data.get(c) or {}
-            score = _decayed(
-                float(entry.get("score", 0.0)), float(entry.get("last_ts", ts)), ts
-            )
+            score = _decayed(float(entry.get("score", 0.0)), float(entry.get("last_ts", ts)), ts)
             data[c] = {"score": score + 1.0, "last_ts": ts}
         _save(who, data)
     except Exception:
@@ -126,9 +124,7 @@ def pressure(persona: str = "") -> tuple[float, str]:
         total = 0.0
         dominant, best = "", 0.0
         for c, entry in _load(who).items():
-            s = _decayed(
-                float(entry.get("score", 0.0)), float(entry.get("last_ts", now)), now
-            )
+            s = _decayed(float(entry.get("score", 0.0)), float(entry.get("last_ts", now)), now)
             total += s
             if s > best:
                 dominant, best = c, s

@@ -422,9 +422,7 @@ def test_approvals_list_and_resolve_route_to_runner():
     assert r.status_code == 200 and r.json()["approvals"][0]["id"] == "ap1"
     # Scoped to the session's end-user; owner-key caller also gets the autonomous lane.
     assert seen["list"] == ("c1", True)
-    r2 = c.post(
-        f"/v1/sessions/{sid}/approvals/ap1/resolve", json={"approve": True}, headers=_AUTH
-    )
+    r2 = c.post(f"/v1/sessions/{sid}/approvals/ap1/resolve", json={"approve": True}, headers=_AUTH)
     assert r2.status_code == 200 and r2.json()["approved"] is True and r2.json()["ok"] is True
     assert seen["resolve"] == ("ap1", "c1", True, True)  # end_user enforced; owner sees autonomous
 
@@ -760,7 +758,9 @@ def test_extract_validates_input_and_schema():
     obj = {"type": "object"}
     assert c.post("/v1/extract", json={"schema": obj}, headers=_AUTH).status_code == 400
     assert c.post("/v1/extract", json={"input": "x"}, headers=_AUTH).status_code == 400
-    assert c.post("/v1/extract", json={"input": "  ", "schema": obj}, headers=_AUTH).status_code == 400
+    assert (
+        c.post("/v1/extract", json={"input": "  ", "schema": obj}, headers=_AUTH).status_code == 400
+    )
 
 
 def test_extract_501_when_unwired():

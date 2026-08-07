@@ -795,9 +795,7 @@ def test_sleep_evidence_does_not_double_count_eligibility(monkeypatch, tmp_path)
         },
     ]
     led.write_text("\n".join(_json.dumps(r) for r in rows) + "\n", encoding="utf-8")
-    monkeypatch.setattr(
-        "brain.observability.learning_ledger.ledger_path", lambda persona="": led
-    )
+    monkeypatch.setattr("brain.observability.learning_ledger.ledger_path", lambda persona="": led)
 
     ev = sc._learning_evidence("s9", "")
     routing = [e for e in ev if "hebbian_update_applied" in e["decision_types"]]
@@ -890,7 +888,9 @@ def test_file_backend_persona_save_does_not_clobber_boot_file(monkeypatch, tmp_p
     q_file = tmp_path / "personas" / "persona_q" / "wiring.json"
     assert q_file.exists()
     assert (tmp_path / "wiring.json").read_text() == boot_bytes
-    assert any(e["src"] == "a" and e["w"] > 1.0 for e in __import__("json").loads(q_file.read_text()))
+    assert any(
+        e["src"] == "a" and e["w"] > 1.0 for e in __import__("json").loads(q_file.read_text())
+    )
 
 
 # ── Session-length-invariant decay ───────────────────────────────────────────

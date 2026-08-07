@@ -66,9 +66,7 @@ def test_dmn_roster_drops_promoted_never_home(monkeypatch, tmp_path):
     from brain.dmn import DefaultModeNetwork
 
     f = tmp_path / ".placement.json"
-    f.write_text(
-        json.dumps({"promoted": ["the_analyst", "home_persona"]}), encoding="utf-8"
-    )
+    f.write_text(json.dumps({"promoted": ["the_analyst", "home_persona"]}), encoding="utf-8")
     _reset(monkeypatch, f)
 
     dmn = DefaultModeNetwork.__new__(DefaultModeNetwork)

@@ -121,16 +121,18 @@ def aggregate_all(since_iso: str | None = None, until_iso: str | None = None) ->
         aid = r.get("agent_id") or ""
         if not aid or aid == "owner":
             continue
-        out.append({
-            "org_id": str(r.get("org_id") or ""),
-            "org_name": r.get("org_name") or "",
-            "agent_id": aid,
-            "calls": int(r.get("calls") or 0),
-            "cloud_calls": int(r.get("cloud_calls") or 0),
-            "in_tok": int(r.get("in_tok") or 0),
-            "out_tok": int(r.get("out_tok") or 0),
-            "cloud_usd": float(r.get("cloud_usd") or 0.0),
-            "pod_s": float(r.get("pod_s") or 0.0),
-            "last_ts": r.get("last_ts") or "",
-        })
+        out.append(
+            {
+                "org_id": str(r.get("org_id") or ""),
+                "org_name": r.get("org_name") or "",
+                "agent_id": aid,
+                "calls": int(r.get("calls") or 0),
+                "cloud_calls": int(r.get("cloud_calls") or 0),
+                "in_tok": int(r.get("in_tok") or 0),
+                "out_tok": int(r.get("out_tok") or 0),
+                "cloud_usd": float(r.get("cloud_usd") or 0.0),
+                "pod_s": float(r.get("pod_s") or 0.0),
+                "last_ts": r.get("last_ts") or "",
+            }
+        )
     return out

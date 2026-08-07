@@ -157,9 +157,11 @@ class ThalamusCluster:
         # bus quorum (which mobilises recruitment) — ignition marks sustained focus,
         # so the threshold sits above the quorum level.
         ignition_threshold = settings.get("workspace_ignition_threshold", 2.0)
-        ignited = bool(focus) and top_level >= ignition_threshold and self._bus.topic_status(
-            focus
-        ) == "armed"
+        ignited = (
+            bool(focus)
+            and top_level >= ignition_threshold
+            and self._bus.topic_status(focus) == "armed"
+        )
 
         coalition = _COALITION.get(focus) if focus else None
 

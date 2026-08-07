@@ -46,7 +46,5 @@ def cap_evict(
     excess = len(pool) - int(cap)
     if excess <= 0:
         return []
-    candidates = sorted(
-        (x for x in pool if evictable is None or evictable(x)), key=staleness
-    )
+    candidates = sorted((x for x in pool if evictable is None or evictable(x)), key=staleness)
     return candidates[:excess]

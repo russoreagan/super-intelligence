@@ -361,7 +361,9 @@ def test_consumer_neutral_when_off(monkeypatch, tmp_path):
     w.add("fragment.alpha", "frontal.drafter_A", weight=1.9)
     sel = _FakeSelector({"alpha": "ALPHA BODY"}, partners=["alpha"])
     f = _frontal(w, selector=sel)
-    assert f._fragment_block_for_host("frontal.drafter_A", explore=False, turn_id="t", seed_idx=0) == (
+    assert f._fragment_block_for_host(
+        "frontal.drafter_A", explore=False, turn_id="t", seed_idx=0
+    ) == (
         "",
         [],
     )
@@ -372,9 +374,7 @@ def test_exploration_creates_cross_drafter_variance(monkeypatch, tmp_path):
 
     monkeypatch.setitem(settings._data, "fragment_explore_rate", 1.0)  # force rolls true
     w = _isolated_wiring(monkeypatch, tmp_path)
-    sel = _FakeSelector(
-        {"c1": "BODY1", "c2": "BODY2", "c3": "BODY3"}, partners=["c1", "c2", "c3"]
-    )
+    sel = _FakeSelector({"c1": "BODY1", "c2": "BODY2", "c3": "BODY3"}, partners=["c1", "c2", "c3"])
     f = _frontal(w, selector=sel)
     firing = [0, 1, 2, 3, 4]
     explore_set = f._select_explore_drafters(firing, "turn7")
@@ -479,7 +479,9 @@ async def test_end_to_end_learn_then_inject_then_downshift(monkeypatch, tmp_path
         )
     weight = dict(w.attached_fragments("frontal.drafter_C"))["alpha"]
     assert weight >= float(settings.get("fragment_inject_threshold"))  # injectable
-    assert weight >= float(settings.get("fragment_downshift_threshold"))  # proven enough to downshift
+    assert weight >= float(
+        settings.get("fragment_downshift_threshold")
+    )  # proven enough to downshift
 
     # consumer injects the now-established attachment (fenced)
     sel = _FakeSelector({"alpha": "ALPHA BODY"}, partners=["alpha"])
@@ -505,7 +507,9 @@ async def test_cell_model_override_forwarded():
             captured["locality"] = kw.get("locality")
             return "ok"
 
-    c = IntegratorCell(name="drafter_A", cluster="frontal", model="haiku", system_prompt="x", topics=[])
+    c = IntegratorCell(
+        name="drafter_A", cluster="frontal", model="haiku", system_prompt="x", topics=[]
+    )
     c.set_router(RecRouter())
     c.reset_turn("t")
     await c.call(

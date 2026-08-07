@@ -18,12 +18,12 @@ from brain.autonomy.reasons import DeferReason, StopReason
 
 
 class JobState(str, Enum):
-    RUNNING = "running"                      # in-progress checkpoint (partial results persisted)
-    COMPLETED = "completed"                  # produced real, verified-enough work
-    DEFERRED = "deferred"                    # paused; will resume (carries a DeferReason)
+    RUNNING = "running"  # in-progress checkpoint (partial results persisted)
+    COMPLETED = "completed"  # produced real, verified-enough work
+    DEFERRED = "deferred"  # paused; will resume (carries a DeferReason)
     AWAITING_APPROVAL = "awaiting_approval"  # external side-effect pending owner approval
-    FAILED = "failed"                        # ran but produced nothing usable (carries a reason)
-    STOPPED_BUDGET = "stopped_budget"        # hard budget cap; not retried today
+    FAILED = "failed"  # ran but produced nothing usable (carries a reason)
+    STOPPED_BUDGET = "stopped_budget"  # hard budget cap; not retried today
 
 
 @dataclass
@@ -31,9 +31,9 @@ class JobOutcome:
     state: JobState
     job_id: str = ""
     goal: str = ""
-    reason_code: str = ""           # machine token (DeferReason/StopReason/failure class)
-    reason_human: str = ""          # ALWAYS non-empty owner-facing sentence
-    summary: str = ""               # ALWAYS non-empty (falls back to reason_human)
+    reason_code: str = ""  # machine token (DeferReason/StopReason/failure class)
+    reason_human: str = ""  # ALWAYS non-empty owner-facing sentence
+    summary: str = ""  # ALWAYS non-empty (falls back to reason_human)
     productive_steps: int = 0
     steps: list = field(default_factory=list)
     results: list = field(default_factory=list)
@@ -61,51 +61,84 @@ class JobOutcome:
 
     # ── factory constructors (one per terminal path) ─────────────────────────
     @classmethod
-    def completed(cls, job_id: str, goal: str, *, productive_steps: int, summary: str, **kw) -> JobOutcome:
+    def completed(
+        cls, job_id: str, goal: str, *, productive_steps: int, summary: str, **kw
+    ) -> JobOutcome:
         """COMPLETED requires real work AND a non-empty summary. If either is missing
         this coerces to FAILED('no_productive_output') — so a `"(no output)"` path can
         never masquerade as success."""
         if productive_steps <= 0 or not (summary or "").strip():
             return cls.failed(
-                job_id, goal,
+                job_id,
+                goal,
                 reason_code="no_productive_output",
                 reason_human="The job ran but produced no usable output.",
-                productive_steps=productive_steps, **kw,
+                productive_steps=productive_steps,
+                **kw,
             )
         return cls(
-            state=JobState.COMPLETED, job_id=job_id, goal=goal,
-            reason_code="completed", reason_human="Completed.",
-            summary=summary, productive_steps=productive_steps, **kw,
+            state=JobState.COMPLETED,
+            job_id=job_id,
+            goal=goal,
+            reason_code="completed",
+            reason_human="Completed.",
+            summary=summary,
+            productive_steps=productive_steps,
+            **kw,
         )
 
     @classmethod
-    def failed(cls, job_id: str, goal: str, *, reason_code: str, reason_human: str, **kw) -> JobOutcome:
+    def failed(
+        cls, job_id: str, goal: str, *, reason_code: str, reason_human: str, **kw
+    ) -> JobOutcome:
         return cls(
-            state=JobState.FAILED, job_id=job_id, goal=goal,
-            reason_code=reason_code, reason_human=reason_human, **kw,
+            state=JobState.FAILED,
+            job_id=job_id,
+            goal=goal,
+            reason_code=reason_code,
+            reason_human=reason_human,
+            **kw,
         )
 
     @classmethod
-    def deferred(cls, job_id: str, goal: str, *, reason: DeferReason, backoff_s: float = 0.0, **kw) -> JobOutcome:
+    def deferred(
+        cls, job_id: str, goal: str, *, reason: DeferReason, backoff_s: float = 0.0, **kw
+    ) -> JobOutcome:
         return cls(
-            state=JobState.DEFERRED, job_id=job_id, goal=goal,
-            reason_code=reason.value, reason_human=reason.human(),
-            backoff_s=backoff_s, **kw,
+            state=JobState.DEFERRED,
+            job_id=job_id,
+            goal=goal,
+            reason_code=reason.value,
+            reason_human=reason.human(),
+            backoff_s=backoff_s,
+            **kw,
         )
 
     @classmethod
-    def stopped_budget(cls, job_id: str, goal: str, *, reason: StopReason = StopReason.BUDGET_HARD_STOP, **kw) -> JobOutcome:
+    def stopped_budget(
+        cls, job_id: str, goal: str, *, reason: StopReason = StopReason.BUDGET_HARD_STOP, **kw
+    ) -> JobOutcome:
         return cls(
-            state=JobState.STOPPED_BUDGET, job_id=job_id, goal=goal,
-            reason_code=reason.value, reason_human=reason.human(), **kw,
+            state=JobState.STOPPED_BUDGET,
+            job_id=job_id,
+            goal=goal,
+            reason_code=reason.value,
+            reason_human=reason.human(),
+            **kw,
         )
 
     @classmethod
-    def awaiting_approval(cls, job_id: str, goal: str, *, reason_human: str, clarification: str | None = None, **kw) -> JobOutcome:
+    def awaiting_approval(
+        cls, job_id: str, goal: str, *, reason_human: str, clarification: str | None = None, **kw
+    ) -> JobOutcome:
         return cls(
-            state=JobState.AWAITING_APPROVAL, job_id=job_id, goal=goal,
-            reason_code="awaiting_approval", reason_human=reason_human,
-            clarification=clarification, **kw,
+            state=JobState.AWAITING_APPROVAL,
+            job_id=job_id,
+            goal=goal,
+            reason_code="awaiting_approval",
+            reason_human=reason_human,
+            clarification=clarification,
+            **kw,
         )
 
     # ── persistence projection ───────────────────────────────────────────────

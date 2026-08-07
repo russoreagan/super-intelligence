@@ -353,7 +353,13 @@ class HypothalamusCluster:
                 nm.add("NE", settings.get("ne_prosody_stressed") * ps)
             elif prosody_tone == "energetic":
                 nm.add("Glu", 0.06 * ps)
-                nm.add("DA", 0.04 * ps, source="external", reward_source="user_emotion", reason="prosody")
+                nm.add(
+                    "DA",
+                    0.04 * ps,
+                    source="external",
+                    reward_source="user_emotion",
+                    reason="prosody",
+                )
             elif prosody_tone == "whisper":
                 nm.add("ACh", 0.10 * ps)
             # "calm" and "monotone" need no correction
@@ -385,7 +391,13 @@ class HypothalamusCluster:
                 nm.add("NE", settings.get("ne_rush_increment") * pace_scale)
             elif pace == "brisk":
                 nm.add("Glu", 0.04 * pace_scale)
-                nm.add("DA", 0.02 * pace_scale, source="external", reward_source="user_emotion", reason="pace")  # mild positive valence — animated
+                nm.add(
+                    "DA",
+                    0.02 * pace_scale,
+                    source="external",
+                    reward_source="user_emotion",
+                    reason="pace",
+                )  # mild positive valence — animated
             elif pace == "halting":
                 nm.add("ACh", 0.06 * pace_scale)  # uncertainty → pay attention
             elif pace == "measured":
@@ -455,9 +467,21 @@ class HypothalamusCluster:
                     # and the resulting DA swing feeds the Hebbian funnel, so
                     # what earned laughs gets reinforced.
                     _levity_value = reward_weight(_persona, "levity")
-                    nm.add("DA", laughter * settings.get("text_para_laughter_DA") * _levity_value, source="external", reward_source="levity", reason="laughter")
+                    nm.add(
+                        "DA",
+                        laughter * settings.get("text_para_laughter_DA") * _levity_value,
+                        source="external",
+                        reward_source="levity",
+                        reason="laughter",
+                    )
                 if warmth > 0.0:
-                    nm.add("DA", warmth * settings.get("text_para_warmth_DA"), source="external", reward_source="connection", reason="warmth")
+                    nm.add(
+                        "DA",
+                        warmth * settings.get("text_para_warmth_DA"),
+                        source="external",
+                        reward_source="connection",
+                        reason="warmth",
+                    )
                 if negativity > 0.0:
                     nm.add("GABA", negativity * settings.get("text_para_negativity_GABA"))
                 if excitement > 0.0:

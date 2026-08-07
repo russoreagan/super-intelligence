@@ -215,8 +215,7 @@ def fireable_chunk_count(chunks: dict) -> int:
             continue
         seq = c.get("sequence", [])
         if any(
-            seq[j].get("invariant") and seq[j].get("args") is not None
-            for j in range(1, len(seq))
+            seq[j].get("invariant") and seq[j].get("args") is not None for j in range(1, len(seq))
         ):
             n += 1
     return n
@@ -271,12 +270,15 @@ class ChunkMemorySubsystem(MotorSubsystem):
 
             return persona_state_root(active_persona() or "") / "chunks.json"
         except Exception:
-            return Path(
-                os.environ.get(
-                    "SECOND_BRAIN_PATH",
-                    str(Path(__file__).parent.parent.parent / "second_brain"),
+            return (
+                Path(
+                    os.environ.get(
+                        "SECOND_BRAIN_PATH",
+                        str(Path(__file__).parent.parent.parent / "second_brain"),
+                    )
                 )
-            ) / "chunks.json"
+                / "chunks.json"
+            )
 
     # Legacy attribute names — method bodies and tests address the ACTIVE
     # persona's state through these, exactly as before the per-persona split.

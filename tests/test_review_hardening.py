@@ -499,7 +499,9 @@ def test_reward_weight_uses_bound_persona_not_home(monkeypatch):
     from brain.second_brain.store import bind_persona
     from brain.settings import settings
 
-    monkeypatch.setattr(settings, "get", lambda k, d=None: "the_analyst" if k == "persona_name" else d)
+    monkeypatch.setattr(
+        settings, "get", lambda k, d=None: "the_analyst" if k == "persona_name" else d
+    )
     analyst_w = _PERSONA_REWARD_WEIGHTS["the_analyst"]["connection"]
     empath_w = _PERSONA_REWARD_WEIGHTS["the_empath"]["connection"]
     assert analyst_w != empath_w, "test personas must differ on this source"
@@ -636,7 +638,9 @@ def test_accomplishment_respects_per_job_intrinsic_cap(monkeypatch):
         "accomplishment_fail_ratio": 0.40,
         "correctness_5ht_drain": 0.02,
     }
-    monkeypatch.setattr(settings, "get", lambda k, d=None: values.get(k, d if d is not None else 1.0))
+    monkeypatch.setattr(
+        settings, "get", lambda k, d=None: values.get(k, d if d is not None else 1.0)
+    )
 
     class FakeNM:
         def __init__(self):
@@ -657,8 +661,13 @@ def test_accomplishment_respects_per_job_intrinsic_cap(monkeypatch):
     s.bus = FakeBus()
     # Job already paid itself 0.08 mid-run; cap 0.10 → at most 0.02 more.
     s._emit_accomplishment_reward(
-        {"success": True, "complexity": "medium", "productive_steps": 6,
-         "predictions_confirmed": 2, "intrinsic_da_spent": 0.08}
+        {
+            "success": True,
+            "complexity": "medium",
+            "productive_steps": 6,
+            "predictions_confirmed": 2,
+            "intrinsic_da_spent": 0.08,
+        }
     )
     das = [v for ch, v in s.bus.neuromod.adds if ch == "DA"]
     assert das and das[0] <= 0.02 + 1e-9
@@ -666,8 +675,13 @@ def test_accomplishment_respects_per_job_intrinsic_cap(monkeypatch):
     s2 = S.__new__(S)
     s2.bus = FakeBus()
     s2._emit_accomplishment_reward(
-        {"success": True, "complexity": "medium", "productive_steps": 6,
-         "predictions_confirmed": 2, "intrinsic_da_spent": 0.0}
+        {
+            "success": True,
+            "complexity": "medium",
+            "productive_steps": 6,
+            "predictions_confirmed": 2,
+            "intrinsic_da_spent": 0.0,
+        }
     )
     das2 = [v for ch, v in s2.bus.neuromod.adds if ch == "DA"]
     assert das2 and das2[0] > das[0]

@@ -109,9 +109,10 @@ def rotate_inflight() -> None:
                 # A prior inflight survived (a crash between two passes that boot
                 # replay hasn't cleaned up yet) — merge rather than clobber, so no
                 # batch is silently dropped.
-                with inflight.open("a", encoding="utf-8") as dst, pending.open(
-                    "r", encoding="utf-8"
-                ) as src:
+                with (
+                    inflight.open("a", encoding="utf-8") as dst,
+                    pending.open("r", encoding="utf-8") as src,
+                ):
                     dst.write(src.read())
                 pending.unlink()
             else:

@@ -169,7 +169,9 @@ async def test_reject_penalty_scales_with_loss_aversion():
     """Equal correctness valuation (Sage & Stoic both reward_weight 1.0), but the Sage's λ=1.1
     makes the verified-wrong sting deeper than the Stoic control's λ=1.0 — isolating loss
     aversion from reward sensitivity."""
-    assert reward_weight("The Sage", "correctness") == reward_weight("The Stoic", "correctness") == 1.0
+    assert (
+        reward_weight("The Sage", "correctness") == reward_weight("The Stoic", "correctness") == 1.0
+    )
 
     dmn_s, nm_s, ot = _make_dmn_with_bus("The Sage")
     dmn_s._open_threads, ts = ot.open_thread([], "q?")

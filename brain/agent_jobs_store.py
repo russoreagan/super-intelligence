@@ -124,9 +124,7 @@ def reconcile(job_store, limit: int = 50) -> int:
         jid = str(meta.get("job_id") or "")
         if not jid:
             continue
-        local_state = str(
-            meta.get("state") or ("completed" if meta.get("success") else "failed")
-        )
+        local_state = str(meta.get("state") or ("completed" if meta.get("success") else "failed"))
         remote_state = remote.get(jid)
         if remote_state is not None and not (
             remote_state == "running" and local_state != "running"

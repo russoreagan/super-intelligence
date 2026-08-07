@@ -15,18 +15,18 @@ from enum import Enum
 class RunOutcome(str, Enum):
     """What the gate decided to do with a job or a step."""
 
-    RUN = "run"      # proceed on cloud
+    RUN = "run"  # proceed on cloud
     DEFER = "defer"  # requeue with backoff; carries a DeferReason
-    ASK = "ask"      # external side-effect → route to the approval ledger
-    STOP = "stop"    # hard budget; do not requeue today
+    ASK = "ask"  # external side-effect → route to the approval ledger
+    STOP = "stop"  # hard budget; do not requeue today
 
 
 class DeferReason(str, Enum):
     """Why an autonomous job was paused instead of run (all recoverable)."""
 
-    BUDGET_SOFT_PAUSE = "budget_soft_pause"   # soft cap hit; awaiting owner 'continue'
-    RATE_BUCKET_EMPTY = "rate_bucket_empty"   # background cloud token bucket <= 0
-    CLOUD_UNREACHABLE = "cloud_unreachable"   # repeated cloud timeouts / transport down
+    BUDGET_SOFT_PAUSE = "budget_soft_pause"  # soft cap hit; awaiting owner 'continue'
+    RATE_BUCKET_EMPTY = "rate_bucket_empty"  # background cloud token bucket <= 0
+    CLOUD_UNREACHABLE = "cloud_unreachable"  # repeated cloud timeouts / transport down
 
     def human(self) -> str:
         return {

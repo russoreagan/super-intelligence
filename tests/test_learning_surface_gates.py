@@ -87,10 +87,22 @@ def test_gate_view_never_surfaces_entity_text(root):
 
 
 def test_recruitment_grouped_by_trigger(root):
-    _log("node_recruited", node="drafter_5", source="drafter_1",
-         fragments=["s1", "s2"], trigger="proven_cluster")
-    _log("node_recruited", node="drafter_6", source="drafter_2", fragments=["s3", "s4"],
-         trigger="workspace_ignition", coalition="memory", ignition_score=4.2)
+    _log(
+        "node_recruited",
+        node="drafter_5",
+        source="drafter_1",
+        fragments=["s1", "s2"],
+        trigger="proven_cluster",
+    )
+    _log(
+        "node_recruited",
+        node="drafter_6",
+        source="drafter_2",
+        fragments=["s3", "s4"],
+        trigger="workspace_ignition",
+        coalition="memory",
+        ignition_score=4.2,
+    )
     s = learning_reader._structure_view("the_companion")
     assert s["recruited_total"] == 2
     assert s["by_trigger"] == {"proven_cluster": 1, "workspace_ignition": 1}
@@ -101,16 +113,28 @@ def test_recruitment_grouped_by_trigger(root):
 
 
 def test_summary_exposes_both_new_views(root):
-    _log("node_recruited", node="drafter_5", source="drafter_1",
-         fragments=["s1"], trigger="proven_cluster")
+    _log(
+        "node_recruited",
+        node="drafter_5",
+        source="drafter_1",
+        fragments=["s1"],
+        trigger="proven_cluster",
+    )
     out = learning_reader.summary("the_companion")
     assert out["gates"]["commits_total"] == 0
     assert out["structure"]["recruited_total"] == 1
 
 
 def test_recruitment_becomes_a_story(root):
-    _log("node_recruited", node="drafter_6", source="drafter_2", fragments=["s3", "s4"],
-         trigger="workspace_ignition", coalition="memory", ignition_score=4.2)
+    _log(
+        "node_recruited",
+        node="drafter_6",
+        source="drafter_2",
+        fragments=["s3", "s4"],
+        trigger="workspace_ignition",
+        coalition="memory",
+        ignition_score=4.2,
+    )
     claims = [s["claim"] for s in learning_reader.stories("the_companion")["stories"]]
     assert any("drafter_6" in c and "igniting" in c for c in claims)
 
@@ -119,8 +143,7 @@ def test_avoidance_learning_becomes_a_story(root):
     _log("avoidance_armed", entity="the layoff", confidence=0.9)
     _log("avoidance_confirmed", entity="the layoff", correct=True, da=0.02, steer=1)
     story = next(
-        s for s in learning_reader.stories("the_companion")["stories"]
-        if s["subsystem"] == "gates"
+        s for s in learning_reader.stories("the_companion")["stories"] if s["subsystem"] == "gates"
     )
     assert "1 of 1" in story["claim"]
     assert "layoff" not in story["claim"]

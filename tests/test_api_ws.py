@@ -31,7 +31,9 @@ class _FakeTurnRunner:
     # Mirrors BrainSession.api_turn: the WS transport passes inline_tools=False so
     # reactive tools keep the non-blocking defer→proactive loop (request/response
     # transports default to True / inline). Recorded so tests can assert the contract.
-    async def __call__(self, message, end_user_id, mandate_id=None, persona=None, inline_tools=True):
+    async def __call__(
+        self, message, end_user_id, mandate_id=None, persona=None, inline_tools=True
+    ):
         self.calls.append((message, end_user_id, mandate_id, inline_tools))
         return self._text, self._affect
 

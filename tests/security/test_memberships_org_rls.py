@@ -77,7 +77,7 @@ def db(tmp_path_factory):
             body = (
                 "\\pset tuples_only on\n\\pset format unaligned\n"
                 "begin;\n"
-                f"set local request.jwt.claims = '{{\"sub\":\"{sub}\"}}';\n"
+                f'set local request.jwt.claims = \'{{"sub":"{sub}"}}\';\n'
                 "set local role authenticated;\n"
                 "select count(*) from public.memberships;\n"
                 "commit;"

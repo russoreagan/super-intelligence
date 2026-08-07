@@ -317,8 +317,12 @@ class ToolDispatcher:
             return f"[error] Permission denied: {resolved}"
 
     def _list_files(
-        self, path: str, pattern: str = "*", recursive: bool = False,
-        limit: int | None = None, offset: int = 0,
+        self,
+        path: str,
+        pattern: str = "*",
+        recursive: bool = False,
+        limit: int | None = None,
+        offset: int = 0,
     ) -> str:
         safe, resolved = self._validate_path(path)
         if not safe:
@@ -334,7 +338,7 @@ class ToolDispatcher:
             # ~one page at a time (small, fast, easy-to-process) and pages for the rest.
             page_size = _page_size(limit)
             off = max(0, int(offset or 0))
-            page = matches[off:off + page_size]
+            page = matches[off : off + page_size]
             result = "\n".join(str(m.relative_to(p)) for m in page)
             end = off + len(page)
             if len(matches) > end:
@@ -399,8 +403,12 @@ class ToolDispatcher:
             return f"[error] {e}"
 
     def _search_files(
-        self, path: str, query: str, file_pattern: str = "*",
-        limit: int | None = None, offset: int = 0,
+        self,
+        path: str,
+        query: str,
+        file_pattern: str = "*",
+        limit: int | None = None,
+        offset: int = 0,
     ) -> str:
         safe, resolved = self._validate_path(path)
         if not safe:
@@ -511,7 +519,7 @@ class ToolDispatcher:
                             delay = 0.0
                         if delay <= 0:
                             # 0.75, 1.5, 3.0, … + jitter derived from attempt (no RNG).
-                            delay = 0.75 * (2 ** attempt) + (attempt * 0.13)
+                            delay = 0.75 * (2**attempt) + (attempt * 0.13)
                         await asyncio.sleep(min(delay, 10.0))
                         continue
                     break
@@ -688,7 +696,11 @@ class ToolDispatcher:
 
         import httpx
 
-        body = {"origin": _waypoint(origin), "destination": _waypoint(destination), "travelMode": mode}
+        body = {
+            "origin": _waypoint(origin),
+            "destination": _waypoint(destination),
+            "travelMode": mode,
+        }
         try:
             async with httpx.AsyncClient(timeout=self._WORLD_TIMEOUT) as client:
                 r = await client.post(

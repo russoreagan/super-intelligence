@@ -143,7 +143,6 @@ def test_sequence_predictor_routes_per_persona(home_root, monkeypatch):
     analyst_file = home_root.parent / "the_analyst" / "sequence_weights.json"
     assert analyst_file.exists()
 
-
     assert "gamma-three" not in (home_root / "sequence_weights.json").read_text()
     assert "alpha-one" not in analyst_file.read_text()
 
@@ -173,8 +172,12 @@ def test_chunk_mining_groups_jobs_by_persona_stamp(home_root, monkeypatch):
             {"tool": "fetch_url", "args": {"url": f"https://x/{i}"}},
             {"tool": "write_file", "args": {"path": "out.md", "content": "c"}},
         ]
-        rec = {"job_id": f"j_{persona or 'home'}_{i}", "goal": f"goal {i}",
-               "steps": steps, "results": ["ok", "ok"]}
+        rec = {
+            "job_id": f"j_{persona or 'home'}_{i}",
+            "goal": f"goal {i}",
+            "steps": steps,
+            "results": ["ok", "ok"],
+        }
         if persona:
             rec["persona"] = persona
         (jobs_dir / f"{rec['job_id']}.json").write_text(json.dumps(rec))
@@ -265,8 +268,10 @@ def test_chunk_memory_reads_bound_personas_file(home_root):
                 {
                     "chunks": {
                         f"{tool}|a→{tool}|b": {
-                            "sequence": [{"tool": tool, "arg_keys": ["a"]},
-                                         {"tool": tool, "arg_keys": ["b"]}],
+                            "sequence": [
+                                {"tool": tool, "arg_keys": ["a"]},
+                                {"tool": tool, "arg_keys": ["b"]},
+                            ],
                             "occurrences": 5,
                             "state": "active",
                         }

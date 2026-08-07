@@ -101,7 +101,9 @@ def test_include_autonomous_surfaces_owner_lane_to_a_scoped_query(approvals):
 
     # And it can resolve the autonomous-lane item, which a plain scoped resolve cannot.
     assert approvals.approve(auto.id, end_user_id="russ:trading") is None
-    assert approvals.approve(auto.id, end_user_id="russ:trading", include_autonomous=True) is not None
+    assert (
+        approvals.approve(auto.id, end_user_id="russ:trading", include_autonomous=True) is not None
+    )
 
 
 def test_approved_expires_after_ttl(approvals, monkeypatch):
@@ -215,8 +217,12 @@ def test_one_approval_clears_the_whole_task(approvals):
     # The re-run holds the token: every ask is allowed, however it's phrased,
     # and the grant is NOT consumed between calls.
     stub._job_approval_token = token
-    assert asyncio.run(stub._gate_action({"tool": "cloud_write", "input": {"task": "x"}})) == "allow"
-    assert asyncio.run(stub._gate_action({"tool": "cloud_write", "input": {"task": "y"}})) == "allow"
+    assert (
+        asyncio.run(stub._gate_action({"tool": "cloud_write", "input": {"task": "x"}})) == "allow"
+    )
+    assert (
+        asyncio.run(stub._gate_action({"tool": "cloud_write", "input": {"task": "y"}})) == "allow"
+    )
 
     # Job ends → grant revoked → the next ask gates again.
     approvals.revoke_token(token)

@@ -293,9 +293,7 @@ def test_ignition_respects_admissibility(monkeypatch, tmp_path):
     bootstrap(w)
     _proven(w, "frontal.drafter_A", ["evil", "alpha"], weight=1.9)
     _arm_ignition()
-    monkeypatch.setattr(
-        "brain.fragment_pool.is_admissible", lambda sid, host: sid != "evil"
-    )
+    monkeypatch.setattr("brain.fragment_pool.is_admissible", lambda sid, host: sid != "evil")
     # Admissible cluster shrinks to 1 < node_promote_min_cluster → no recruit.
     HebbianUpdater(w)._maybe_recruit_nodes("s")
     assert not w.has("frontal.executive", "frontal.drafter_F")

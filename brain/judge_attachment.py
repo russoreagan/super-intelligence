@@ -205,9 +205,21 @@ _GATE_PREFIX = "judgeatt:"  # per-(host, candidate) EvidenceGate accumulator sli
 # a local copy keeps this a leaf module (same reasoning as avoidance_gate).
 NEGATIVE_EMOTIONS = frozenset(
     {
-        "embarrassed", "ashamed", "humiliated", "anxious", "uncomfortable",
-        "guilty", "apologetic", "sad", "hurt", "angry", "frustrated",
-        "irritated", "annoyed", "dismissive", "defensive",
+        "embarrassed",
+        "ashamed",
+        "humiliated",
+        "anxious",
+        "uncomfortable",
+        "guilty",
+        "apologetic",
+        "sad",
+        "hurt",
+        "angry",
+        "frustrated",
+        "irritated",
+        "annoyed",
+        "dismissive",
+        "defensive",
     }
 )
 
@@ -329,9 +341,9 @@ def veto_floor(host: str, *, user_emotion: str, hostility: float, raw_score: flo
     try:
         if float(hostility) >= float(settings.get("judge_veto_floor_hostility", 0.7)):
             return True
-        if (user_emotion or "").strip().lower() in NEGATIVE_EMOTIONS and float(
-            raw_score
-        ) < float(settings.get("judge_veto_floor_score", 0.25)):
+        if (user_emotion or "").strip().lower() in NEGATIVE_EMOTIONS and float(raw_score) < float(
+            settings.get("judge_veto_floor_score", 0.25)
+        ):
             return True
     except (TypeError, ValueError):
         return False
@@ -683,9 +695,13 @@ class JudgeAttachmentTracker:
             else float(settings.get("evidence_self_weight", 0.35))
         )
         sign = 1.0 if shadow_right else -1.0
-        drift = sign * ext_w * (
-            weights.get("shadow_better" if shadow_right else "shadow_worse", 1.0)
-            + weights.get("grounded", 1.0) * (1.0 if grounded else 0.0)
+        drift = (
+            sign
+            * ext_w
+            * (
+                weights.get("shadow_better" if shadow_right else "shadow_worse", 1.0)
+                + weights.get("grounded", 1.0) * (1.0 if grounded else 0.0)
+            )
         )
         key = f"{_GATE_PREFIX}{host}:{sid}"
         payload = self._gate.observe(drift, now=now_ts, store=store, key=key)

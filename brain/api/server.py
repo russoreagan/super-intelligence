@@ -70,6 +70,8 @@ def _log_agent_turn(s, prompt: str, response: str, turn_id: str = "") -> None:
                 response=response,
             )
         )
+
+
 # (reason) -> consolidation status dict. Runs the session-end Hebbian/sleep pass on
 # demand (checkpoint; does not tear down). Used by the debate consolidation barrier
 # and by long-running agents to persist learning before a crash can lose it.
@@ -526,7 +528,9 @@ def build_api_router(
         if not _owns(ctx, s):
             raise HTTPException(status_code=403, detail="session belongs to another partner")
         if consolidate_runner is None:
-            raise HTTPException(status_code=501, detail="consolidation is not available on this server")
+            raise HTTPException(
+                status_code=501, detail="consolidation is not available on this server"
+            )
         reason = (body or {}).get("reason") or "api"
         # Bind the SESSION's persona for the consolidation so the Hebbian wiring update lands on
         # THAT persona's graph (wiring resolves the active persona from this contextvar). Without
@@ -773,7 +777,9 @@ def build_api_router(
         """Approve (run it) or skip a pending action, on behalf of this end-user."""
         ctx = _require(authorization)
         if approval_resolve_runner is None:
-            raise HTTPException(status_code=501, detail="approvals are not available on this server")
+            raise HTTPException(
+                status_code=501, detail="approvals are not available on this server"
+            )
         s = registry.get(session_id)
         if s is None:
             raise HTTPException(status_code=404, detail="unknown session_id")
@@ -781,7 +787,10 @@ def build_api_router(
             raise HTTPException(status_code=403, detail="session belongs to another partner")
         approve = bool((body or {}).get("approve", True))
         # Owner-key callers may also resolve autonomous/owner-lane items (see GET above).
-        res = approval_resolve_runner(approval_id, s.end_user_id, approve, bool(ctx.get("owner"))) or {}
+        res = (
+            approval_resolve_runner(approval_id, s.end_user_id, approve, bool(ctx.get("owner")))
+            or {}
+        )
         return {"session_id": session_id, "end_user_id": s.end_user_id, "approved": approve, **res}
 
     # ── Autonomous job history (durable; gate-independent) ─────────────────────
@@ -809,7 +818,9 @@ def build_api_router(
         server."""
         _require(authorization)
         if job_get_runner is None:
-            raise HTTPException(status_code=501, detail="job history is not available on this server")
+            raise HTTPException(
+                status_code=501, detail="job history is not available on this server"
+            )
         rec = job_get_runner(job_id)
         if rec is None:
             raise HTTPException(status_code=404, detail="unknown job_id")
@@ -834,7 +845,9 @@ def build_api_router(
         ctx = _require(authorization)
         if learning_runner is None:
             raise HTTPException(status_code=501, detail="learning surface not available")
-        return learning_runner("stories", persona=_learning_persona(ctx, persona), limit=int(limit or 50))
+        return learning_runner(
+            "stories", persona=_learning_persona(ctx, persona), limit=int(limit or 50)
+        )
 
     @router.get("/learning/wiring")
     async def learning_wiring(
@@ -1218,9 +1231,7 @@ def build_api_router(
         return _run_persona(lambda: _p.upsert(persona, body or {}))
 
     @router.delete("/personas/{persona}")
-    async def delete_persona_route(
-        persona: str, authorization: str | None = Header(default=None)
-    ):
+    async def delete_persona_route(persona: str, authorization: str | None = Header(default=None)):
         """Delete a custom persona's spec, chemistry and identity document
         (built-ins can't be deleted). Its learned state stays keyed under the
         slug and simply goes dormant; delete its agents separately via
@@ -1343,7 +1354,9 @@ def build_api_router(
                 lambda: sr.set_status(
                     skill_id,
                     "flagged",
-                    screen_notes={"judge": {"verdict": None, "reasons": ["screener_not_configured"]}},
+                    screen_notes={
+                        "judge": {"verdict": None, "reasons": ["screener_not_configured"]}
+                    },
                 )
             )
         st = result.get("status")

@@ -137,8 +137,9 @@ async def test_rotation_isolates_recent_thoughts_and_threads():
     # Two distinct bundles exist, keyed by canonical slug; neither leaked into the other.
     assert _persona_key("the_analyst") in dmn._pstate
     assert _persona_key("the_trader") in dmn._pstate
-    assert dmn._pstate[_persona_key("the_analyst")]["_recent_thoughts"] is not (
-        dmn._pstate[_persona_key("the_trader")]["_recent_thoughts"]
+    assert (
+        dmn._pstate[_persona_key("the_analyst")]["_recent_thoughts"]
+        is not (dmn._pstate[_persona_key("the_trader")]["_recent_thoughts"])
     )
 
 
@@ -147,7 +148,9 @@ async def test_thought_count_is_per_persona():
     dmn = _make_dmn()
     with bind_persona("the_analyst"):
         for i in range(3):
-            await dmn._process_thought(f"analyst musing number {i} about evidence", _meta(), f"a{i}")
+            await dmn._process_thought(
+                f"analyst musing number {i} about evidence", _meta(), f"a{i}"
+            )
         a_count = dmn._thought_count
     with bind_persona("the_trader"):
         await dmn._process_thought("trader musing about the tape", _meta(), "b0")

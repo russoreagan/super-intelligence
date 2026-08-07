@@ -49,9 +49,7 @@ def test_both_stt_paths_use_shared_resolver():
     two defaults diverged); both must import the shared resolver."""
     for path in STT_PATHS:
         src = path.read_text()
-        code = "\n".join(
-            line for line in src.splitlines() if not line.lstrip().startswith("#")
-        )
+        code = "\n".join(line for line in src.splitlines() if not line.lstrip().startswith("#"))
         assert 'environ.get("BRAIN_STT_KEYWORDS"' not in code, (
             f"{path.name} reads BRAIN_STT_KEYWORDS directly — use "
             f"brain.stt_config so both STT paths share one default"

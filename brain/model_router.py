@@ -39,7 +39,8 @@ MODEL_MAP = {
     # explicitly names one of these keys.
     "vertex-gemini-flash": "vertex-gemini-2.5-flash",
     "vertex-gemini-pro": "vertex-gemini-2.5-pro",
-    "vertex-claude": "vertex-" + os.environ.get("VERTEX_CLAUDE_MODEL", "claude-sonnet-4-5@20250929"),
+    "vertex-claude": "vertex-"
+    + os.environ.get("VERTEX_CLAUDE_MODEL", "claude-sonnet-4-5@20250929"),
     "vertex-claude-haiku": "vertex-"
     + os.environ.get("VERTEX_CLAUDE_HAIKU_MODEL", "claude-haiku-4-5@20251001"),
 }
@@ -110,7 +111,9 @@ def _remap_cloud_provider(model_id: str, cluster: str) -> str:
     # selected AND Vertex is enabled — the SAME Claude models, billed/authed through
     # Google. Otherwise leave it on the Anthropic API.
     if _cp == "vertex" and int(_settings.get("enable_vertex", 0) or 0):
-        return MODEL_MAP["vertex-claude-haiku"] if "haiku" in model_id else MODEL_MAP["vertex-claude"]
+        return (
+            MODEL_MAP["vertex-claude-haiku"] if "haiku" in model_id else MODEL_MAP["vertex-claude"]
+        )
     return model_id
 
 
@@ -503,8 +506,13 @@ class ModelRouter:
         u = usage.get(aid)
         if u is None:
             u = usage[aid] = {
-                "calls": 0, "cloud_calls": 0, "in_tok": 0, "out_tok": 0,
-                "cloud_usd": 0.0, "pod_s": 0.0, "last_ts": 0.0,
+                "calls": 0,
+                "cloud_calls": 0,
+                "in_tok": 0,
+                "out_tok": 0,
+                "cloud_usd": 0.0,
+                "pod_s": 0.0,
+                "last_ts": 0.0,
             }
         u["calls"] += 1
         u["in_tok"] += int(in_tok or 0)
@@ -526,8 +534,10 @@ class ModelRouter:
             if not aid or aid == "owner":
                 continue
             prev = self._usage_flushed.get(aid, {})
-            delta = {k: cur.get(k, 0) - prev.get(k, 0) for k in
-                     ("calls", "cloud_calls", "in_tok", "out_tok", "cloud_usd", "pod_s")}
+            delta = {
+                k: cur.get(k, 0) - prev.get(k, 0)
+                for k in ("calls", "cloud_calls", "in_tok", "out_tok", "cloud_usd", "pod_s")
+            }
             if all(v <= 0 for v in delta.values()):
                 continue
             rows.append({"agent_id": aid, "persona": aid.split(".", 1)[0], **delta})
@@ -1028,7 +1038,9 @@ class ModelRouter:
                     logger.warning(
                         "[Resource] Background cloud call %s/%s timed out after %.0fs — deferring "
                         "(cloud-only; no local fallback for autonomous work).",
-                        cluster, cell, bg_timeout,
+                        cluster,
+                        cell,
+                        bg_timeout,
                     )
                     self._note_cloud_timeout()
                     self._bg_defer_reason = DeferReason.CLOUD_UNREACHABLE
@@ -1093,7 +1105,9 @@ class ModelRouter:
                     logger.warning(
                         "[Resource] Background cloud call %s/%s timed out after %.0fs — deferring "
                         "(cloud-only; no local fallback for autonomous work).",
-                        cluster, cell, bg_timeout,
+                        cluster,
+                        cell,
+                        bg_timeout,
                     )
                     self._note_cloud_timeout()
                     self._bg_defer_reason = DeferReason.CLOUD_UNREACHABLE
@@ -1125,7 +1139,9 @@ class ModelRouter:
                     logger.warning(
                         "[Resource] Background cloud call %s/%s timed out after %.0fs — deferring "
                         "(cloud-only; no local fallback for autonomous work).",
-                        cluster, cell, bg_timeout,
+                        cluster,
+                        cell,
+                        bg_timeout,
                     )
                     self._note_cloud_timeout()
                     self._bg_defer_reason = DeferReason.CLOUD_UNREACHABLE
@@ -1176,7 +1192,9 @@ class ModelRouter:
                     logger.warning(
                         "[Resource] Background cloud call %s/%s timed out after %.0fs — deferring "
                         "(cloud-only; no local fallback for autonomous work).",
-                        cluster, cell, bg_timeout,
+                        cluster,
+                        cell,
+                        bg_timeout,
                     )
                     self._note_cloud_timeout()
                     self._bg_defer_reason = DeferReason.CLOUD_UNREACHABLE
@@ -1801,7 +1819,12 @@ class ModelRouter:
         )
 
     async def _gemini_generate(
-        self, client, model_id: str, system_prompt: str, messages: list[dict], max_tokens: int = 1024
+        self,
+        client,
+        model_id: str,
+        system_prompt: str,
+        messages: list[dict],
+        max_tokens: int = 1024,
     ) -> tuple[str, int, int]:
         from google.genai import types
 

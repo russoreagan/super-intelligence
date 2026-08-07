@@ -55,7 +55,9 @@ def test_owner_lane_delivers_and_speaks():
 def test_agent_lane_delivers_to_partner_but_stays_silent():
     fake = _fake_session()
     with bind_turn("agent", session_id="A", agent_id="x.y", end_user_id="cust-1"):
-        asyncio.run(_deliver(fake, "done with that", {"emotion": "pleased"}, partner_target="cust-1"))
+        asyncio.run(
+            _deliver(fake, "done with that", {"emotion": "pleased"}, partner_target="cust-1")
+        )
     # Partner still hears about it; local TTS is suppressed on the agent lane.
     assert fake._emitter.partner_calls == [("done with that", {"emotion": "pleased"}, "cust-1")]
     assert fake.pns.spoke == []

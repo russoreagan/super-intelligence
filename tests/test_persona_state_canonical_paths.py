@@ -60,9 +60,7 @@ def test_persona_state_root_is_placement_agnostic(tmp_path, monkeypatch):
     a = _case_a_root(monkeypatch, org_root)
     b = _case_b_root(monkeypatch, tmp_path, org_root)
 
-    assert a == b, (
-        f"persona state forks across instance types:\n  shared:    {a}\n  dedicated: {b}"
-    )
+    assert a == b, f"persona state forks across instance types:\n  shared:    {a}\n  dedicated: {b}"
     assert a.endswith(f"personas{'/' if '/' in a else chr(92)}the_analyst")
 
 

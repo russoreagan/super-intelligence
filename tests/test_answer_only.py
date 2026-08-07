@@ -234,8 +234,7 @@ class _FakeTable:
         match = [
             r
             for r in self._rows.values()
-            if r["org_id"] == self._f.get("org_id")
-            and r["session_id"] == self._f.get("session_id")
+            if r["org_id"] == self._f.get("org_id") and r["session_id"] == self._f.get("session_id")
         ]
         return type("R", (), {"data": match})()
 

@@ -237,9 +237,9 @@ def set_tier(agent_id: str, tier: str) -> dict:
         raise MandateError(f"tier must be one of {VALID_TIERS}, got '{tier}'")
     sb, org = _sb()
     persona_slug, mandate_id = _split(agent_id)
-    sb.table("agents").update({"tier": tier}).eq("org_id", org).eq(
-        "persona", persona_slug
-    ).eq("mandate_id", mandate_id).execute()
+    sb.table("agents").update({"tier": tier}).eq("org_id", org).eq("persona", persona_slug).eq(
+        "mandate_id", mandate_id
+    ).execute()
     return get(agent_id) or {}
 
 

@@ -53,9 +53,7 @@ def test_cap_evict_removes_stalest_first_down_to_cap():
 
 def test_cap_evict_respects_evictable_even_if_still_over_cap():
     items = [("pinned", 0), ("also-pinned", 1), ("free", 2)]
-    victims = cap_evict(
-        items, 1, staleness=lambda kv: kv[1], evictable=lambda kv: kv[0] == "free"
-    )
+    victims = cap_evict(items, 1, staleness=lambda kv: kv[1], evictable=lambda kv: kv[0] == "free")
     assert victims == [("free", 2)]  # never selects a non-evictable item
 
 

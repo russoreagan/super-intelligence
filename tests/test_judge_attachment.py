@@ -44,9 +44,7 @@ class _FakeWiring:
         self.edges[(src, tgt)] = weight
 
     def prune_fragment_edges(self, floor: float) -> int:
-        victims = [
-            k for k, w in self.edges.items() if k[0].startswith("fragment.") and w <= floor
-        ]
+        victims = [k for k, w in self.edges.items() if k[0].startswith("fragment.") and w <= floor]
         for k in victims:
             self.edges.pop(k)
         return len(victims)
@@ -276,12 +274,17 @@ def test_a_half_pair_is_discarded_not_backfilled(clean_screener):
     tracker = ja.JudgeAttachmentTracker()
     store: dict = {}
     tracker.record_prediction(
-        store, HOST_EMPATHY, score=0.9, veto=False, turn_count=1,
-        shadow_sid="skill_a", shadow_score=0.2, shadow_baseline=None,
+        store,
+        HOST_EMPATHY,
+        score=0.9,
+        veto=False,
+        turn_count=1,
+        shadow_sid="skill_a",
+        shadow_score=0.2,
+        shadow_baseline=None,
     )
     assert "shadow" not in store[ja._PRED_KEY]["hosts"][HOST_EMPATHY]
-    tracker.observe_turn(store, _FakeBus(), user_emotion="hurt", turn_count=2,
-                         wiring=_FakeWiring())
+    tracker.observe_turn(store, _FakeBus(), user_emotion="hurt", turn_count=2, wiring=_FakeWiring())
     assert not [k for k in store if k.startswith(ja._GATE_PREFIX)]
 
 
@@ -303,8 +306,9 @@ def test_agreeing_verdicts_contribute_no_evidence(clean_screener):
     tracker = ja.JudgeAttachmentTracker()
     store: dict = {}
     _shadow_turn(tracker, store, live=0.9, shadow=0.85, turn=1)
-    tracker.observe_turn(store, _FakeBus(), user_emotion="grateful", turn_count=2,
-                         wiring=_FakeWiring())
+    tracker.observe_turn(
+        store, _FakeBus(), user_emotion="grateful", turn_count=2, wiring=_FakeWiring()
+    )
     assert not [k for k in store if k.startswith(ja._GATE_PREFIX)]
 
 
@@ -315,8 +319,7 @@ def test_shadow_beating_live_accumulates_evidence(clean_screener):
     tracker = ja.JudgeAttachmentTracker()
     store: dict = {}
     _shadow_turn(tracker, store, live=0.9, shadow=0.2, turn=1)
-    tracker.observe_turn(store, _FakeBus(), user_emotion="hurt", turn_count=2,
-                         wiring=_FakeWiring())
+    tracker.observe_turn(store, _FakeBus(), user_emotion="hurt", turn_count=2, wiring=_FakeWiring())
     slices = [k for k in store if k.startswith(ja._GATE_PREFIX)]
     assert slices, "a disagreement the candidate won must leave accumulated evidence"
     assert store[slices[0]]["level"] > 0
@@ -508,8 +511,9 @@ def test_resolution_da_is_stamped_self_inference_not_external(clean_screener):
     store: dict = {}
     for turn in (1, 3, 5):
         _shadow_turn(tracker, store, live=0.9, shadow=0.2, turn=turn)
-        tracker.observe_turn(store, bus, user_emotion="hurt", turn_count=turn + 1,
-                             wiring=_FakeWiring())
+        tracker.observe_turn(
+            store, bus, user_emotion="hurt", turn_count=turn + 1, wiring=_FakeWiring()
+        )
     for e in bus.neuromod.emissions:
         assert e["source"] in ("self_inference", "intrinsic")
         assert e["source"] not in ("external", "external_grader")
@@ -536,8 +540,9 @@ def test_resolution_draws_from_the_shared_per_turn_budget(clean_screener, monkey
     store: dict = {}
     for turn in range(1, 30, 2):
         _shadow_turn(tracker, store, live=0.9, shadow=0.2, turn=turn)
-        tracker.observe_turn(store, bus, user_emotion="hurt", turn_count=turn + 1,
-                             wiring=_FakeWiring())
+        tracker.observe_turn(
+            store, bus, user_emotion="hurt", turn_count=turn + 1, wiring=_FakeWiring()
+        )
     spent = sum(abs(e["delta"]) for e in bus.neuromod.emissions)
     assert spent <= 0.02 + 1e-9, f"resolutions paid {spent}, past the shared turn cap"
 
@@ -614,8 +619,9 @@ def test_exploration_is_sampled_and_stops_at_the_cap(clean_screener, monkeypatch
     assert tracker.explore_candidate(_FakeWiring(), HOST_EMPATHY, rng=_AlwaysExplore) == "skill_a"
     # At cap → a judge that has found its skill stops experimenting on itself.
     monkeypatch.setitem(ja.settings._data, "judge_max_per_host", 1)
-    assert tracker.explore_candidate(_attached(HOST_EMPATHY), HOST_EMPATHY,
-                                     rng=_AlwaysExplore) is None
+    assert (
+        tracker.explore_candidate(_attached(HOST_EMPATHY), HOST_EMPATHY, rng=_AlwaysExplore) is None
+    )
 
 
 def test_exploration_never_offers_a_flagged_candidate(monkeypatch):

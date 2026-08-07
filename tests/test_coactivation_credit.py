@@ -105,7 +105,9 @@ def _full_trace(w, turn_id="cov"):
         {
             "name": n,
             "cluster": n.split(".")[0],
-            "kind": "switch" if n.startswith("temporal.") and "integrator" not in n else "integrator",
+            "kind": "switch"
+            if n.startswith("temporal.") and "integrator" not in n
+            else "integrator",
             "level": 1.0,
         }
         for n in sorted(nodes & _FIREABLE)
@@ -125,7 +127,7 @@ def _edge_pairs(w):
 
 
 def test_every_bootstrap_edge_is_creditable(monkeypatch, tmp_path):
-    """"All edges should be possible for learning" — enforced, not aspirational.
+    """ "All edges should be possible for learning" — enforced, not aspirational.
 
     Every seeded edge must either move under a turn in which all its endpoints
     participated, or appear in the ONE documented exclusion set (edges owned by an

@@ -631,7 +631,9 @@ class UIServer:
                             {},
                         )
                 except Exception as _ce:
-                    logger.warning("[settings] config chem write failed for %s: %s", _config_persona, _ce)
+                    logger.warning(
+                        "[settings] config chem write failed for %s: %s", _config_persona, _ce
+                    )
                 if "persona_store" in body:
                     settings.save({"persona_store": str(body["persona_store"])})
                 _csm = body.get("config_self_md")
@@ -1695,7 +1697,13 @@ class UIServer:
                 )
             except Exception as _lsm_err:
                 logger.warning("[learning] summary failed: %s", _lsm_err)
-                return {"plasticity": [], "reward_mix": {}, "switches": [], "chunks": {}, "predictor": {}}
+                return {
+                    "plasticity": [],
+                    "reward_mix": {},
+                    "switches": [],
+                    "chunks": {},
+                    "predictor": {},
+                }
 
         @app.post("/restart")
         async def restart_brain():

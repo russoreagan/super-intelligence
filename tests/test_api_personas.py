@@ -77,9 +77,7 @@ def test_persona_crud_roundtrip(persona_fs):
 
     # spec + chemistry + self.md landed on disk
     assert (persona_fs / "personas" / "captain_ahab" / "persona.json").exists()
-    chem = json.loads(
-        (persona_fs / "personas" / "captain_ahab" / "chemistry.json").read_text()
-    )
+    chem = json.loads((persona_fs / "personas" / "captain_ahab" / "chemistry.json").read_text())
     assert chem["resting"]["NE"] == 0.55
     assert chem["current"]["NE"] == 0.55  # fresh persona: mood starts at baseline
 
@@ -161,9 +159,7 @@ def test_self_md_composed_with_character_sections(persona_fs):
     # chemistry-only update must NOT rewrite the identity document
     doc_before = doc
     c.put("/v1/personas/test_character", json={"baseline": {"NE": 0.9}}, headers=_AUTH)
-    doc_after = (
-        persona_fs / "personas" / "test_character" / "schema" / "self.md"
-    ).read_text()
+    doc_after = (persona_fs / "personas" / "test_character" / "schema" / "self.md").read_text()
     assert doc_after == doc_before
 
 

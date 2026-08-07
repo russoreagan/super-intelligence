@@ -887,7 +887,9 @@ class _LoopsMixin:
         approvals = getattr(self, "_approvals", None)
         if approvals is None:
             return {"ok": False, "error": "approvals unavailable"}
-        item = approvals.approve(approval_id, end_user_id=end_user_id, include_autonomous=include_autonomous)
+        item = approvals.approve(
+            approval_id, end_user_id=end_user_id, include_autonomous=include_autonomous
+        )
         if item is None:
             return {"ok": False, "error": "no such pending approval"}
         # Soft-pause sentinel: approving "continue autonomous spending" lifts the pause
@@ -915,9 +917,7 @@ class _LoopsMixin:
         superseded = approvals.resolve_siblings(item.turn_id, exclude_id=item.id)
         queued = None
         if self._task_queue:
-            queued = self._task_queue.enqueue(
-                goal, source="user", priority=1, approval_token=token
-            )
+            queued = self._task_queue.enqueue(goal, source="user", priority=1, approval_token=token)
         if queued is None:
             # Deduplicated against an already-queued twin (or no queue) — that twin
             # carries its own grant or re-asks; don't leave this one dangling live.
@@ -932,14 +932,22 @@ class _LoopsMixin:
         approvals = getattr(self, "_approvals", None)
         if approvals is None:
             return {"ok": False, "error": "approvals unavailable"}
-        ok = approvals.skip(approval_id, end_user_id=end_user_id, include_autonomous=include_autonomous)
+        ok = approvals.skip(
+            approval_id, end_user_id=end_user_id, include_autonomous=include_autonomous
+        )
         if ok:
             self._emit_approvals_resolved([approval_id])
         return {"ok": ok}
 
-    def list_approvals(self, end_user_id: str | None = None, include_autonomous: bool = False) -> list[dict]:
+    def list_approvals(
+        self, end_user_id: str | None = None, include_autonomous: bool = False
+    ) -> list[dict]:
         approvals = getattr(self, "_approvals", None)
-        return approvals.pending(end_user_id=end_user_id, include_autonomous=include_autonomous) if approvals else []
+        return (
+            approvals.pending(end_user_id=end_user_id, include_autonomous=include_autonomous)
+            if approvals
+            else []
+        )
 
     # ── Engine-API relay (tenant apps; scoped to the caller's end-user) ─────────
     # `include_autonomous` is set by the route for OWNER-key callers so a single-tenant
@@ -947,7 +955,9 @@ class _LoopsMixin:
     # unattended (the "" autonomous lane), which otherwise surface only in the owner UI.
     # Non-owner partners never set it, so cross-tenant isolation is preserved.
     def api_list_approvals(self, end_user_id: str, include_autonomous: bool = False) -> list[dict]:
-        return self.list_approvals(end_user_id=end_user_id or "", include_autonomous=include_autonomous)
+        return self.list_approvals(
+            end_user_id=end_user_id or "", include_autonomous=include_autonomous
+        )
 
     def api_resolve_approval(
         self, approval_id: str, end_user_id: str, approve: bool, include_autonomous: bool = False
@@ -957,8 +967,12 @@ class _LoopsMixin:
         autonomous/owner lane when include_autonomous is set, for owner-key callers)."""
         euid = end_user_id or ""
         if approve:
-            return self.approve_action(approval_id, end_user_id=euid, include_autonomous=include_autonomous)
-        return self.skip_action(approval_id, end_user_id=euid, include_autonomous=include_autonomous)
+            return self.approve_action(
+                approval_id, end_user_id=euid, include_autonomous=include_autonomous
+            )
+        return self.skip_action(
+            approval_id, end_user_id=euid, include_autonomous=include_autonomous
+        )
 
     # ── Autonomous job history (durable results surface) ────────────────────────
     def api_list_jobs(self, limit: int = 20, state: str | None = None) -> list[dict]:
@@ -1015,13 +1029,13 @@ class _LoopsMixin:
                 break
         with contextlib.suppress(Exception):
             if self._eval_logger is not None:
-                self._eval_logger.patch_turn(turn_id, external_grade=g, external_grade_source=source)
+                self._eval_logger.patch_turn(
+                    turn_id, external_grade=g, external_grade_source=source
+                )
         with contextlib.suppress(Exception):
             from brain.observability.decisions import decisions
 
-            decisions.log(
-                "external_grade_recorded", turn_id=turn_id, grade=g, source=source
-            )
+            decisions.log("external_grade_recorded", turn_id=turn_id, grade=g, source=source)
         if applied_live:
             with contextlib.suppress(Exception):
                 nudge = float(_brain_settings.get("external_grade_da_nudge", 0) or 0)
@@ -1143,9 +1157,7 @@ class _LoopsMixin:
             return learning_reader.stories(persona=persona, limit=limit, live_wiring=self.wiring)
         if view == "wiring":
             return learning_reader.wiring_view(persona=persona, edge=edge, live_wiring=self.wiring)
-        return learning_reader.summary(
-            persona=persona, live_wiring=self.wiring, live_bus=self.bus
-        )
+        return learning_reader.summary(persona=persona, live_wiring=self.wiring, live_bus=self.bus)
 
     def api_get_job(self, job_id: str) -> dict | None:
         """Full record for one job — agent_jobs table first, then the JSON JobStore."""

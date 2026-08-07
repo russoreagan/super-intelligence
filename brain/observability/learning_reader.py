@@ -144,7 +144,9 @@ def _decisions(persona: str = "", kinds: set[str] | None = None) -> list[dict]:
         sparse = bool(kinds) and kinds <= _SPARSE_KINDS
         recs = [
             r
-            for r in _read_jsonl_tail(_eval_log_path(), max_bytes=_TAIL_BYTES * (8 if sparse else 1))
+            for r in _read_jsonl_tail(
+                _eval_log_path(), max_bytes=_TAIL_BYTES * (8 if sparse else 1)
+            )
             if r.get("type") == "decision"
         ]
     if kinds:
@@ -237,9 +239,7 @@ def wiring_view(persona: str = "", edge: str = "", live_wiring=None) -> dict:
     if edge:
         out["edge"] = edge
         out["edge_series"] = _edge_series(persona, edge)
-        recs = _decisions(
-            persona, kinds={"hebbian_update_applied", "hebbian_eligibility_applied"}
-        )
+        recs = _decisions(persona, kinds={"hebbian_update_applied", "hebbian_eligibility_applied"})
         src, _, tgt = edge.partition("→")
         out["edge_records"] = _edge_records(recs, src.strip(), tgt.strip())[-50:]
     return out
@@ -335,7 +335,9 @@ def _chunks_view(persona: str = "") -> dict:
         data = json.loads(path.read_text())
         raw = data.get("chunks", data) if isinstance(data, dict) else data
         # chunks.json keys chunks by signature (mine_chunks); tolerate a list too.
-        chunks = list(raw.values()) if isinstance(raw, dict) else (raw if isinstance(raw, list) else [])
+        chunks = (
+            list(raw.values()) if isinstance(raw, dict) else (raw if isinstance(raw, list) else [])
+        )
         chunks = [c for c in chunks if isinstance(c, dict)]
     except Exception:
         chunks = []
@@ -399,7 +401,9 @@ def _reward_mix(persona: str = "", live_bus=None) -> dict:
             key = str(n) if n < 5 else "5+"
             hist[key] = hist.get(key, 0) + 1
         out["by_signal_type"] = by_type
-        out["self_graded_pct"] = round(100.0 * by_type.get("self_graded", 0) / total, 1) if total else None
+        out["self_graded_pct"] = (
+            round(100.0 * by_type.get("self_graded", 0) / total, 1) if total else None
+        )
         out["emissions_per_turn_hist"] = hist
     elif live_bus is not None:
         try:
@@ -447,9 +451,7 @@ def _gates_view(persona: str = "") -> dict:
             "refuted": len(refuted),
             "resolved": resolved,
             # The honest headline: of the beliefs that got graded, how many held up.
-            "precision_pct": (
-                round(100.0 * len(confirmed) / resolved, 1) if resolved else None
-            ),
+            "precision_pct": (round(100.0 * len(confirmed) / resolved, 1) if resolved else None),
             # Whether the most recent resolution ran with steering on (flag state at
             # the time), so a reader can tell learning-only from learning-and-acting.
             "steering": bool(resolutions[-1].get("steer")) if resolved else False,
@@ -611,7 +613,11 @@ def _template_stories(persona: str = "", live_wiring=None) -> list[dict]:
                 "subsystem": "gates",
                 "evidence": {
                     "edges": [],
-                    "decision_types": ["avoidance_armed", "avoidance_confirmed", "avoidance_refuted"],
+                    "decision_types": [
+                        "avoidance_armed",
+                        "avoidance_confirmed",
+                        "avoidance_refuted",
+                    ],
                     "metrics": _g,
                 },
                 "generator": "template",
@@ -642,7 +648,9 @@ def _template_stories(persona: str = "", live_wiring=None) -> list[dict]:
     return stories
 
 
-def stories(persona: str = "", limit: int = 50, before_ts: float | None = None, live_wiring=None) -> dict:
+def stories(
+    persona: str = "", limit: int = 50, before_ts: float | None = None, live_wiring=None
+) -> dict:
     """Newest-first learning stories: persisted (narrator) first, template
     synthesis when none exist yet."""
     recs = _own_persona_only(_read_jsonl_tail(_stories_path(persona)), persona)
@@ -652,7 +660,9 @@ def stories(persona: str = "", limit: int = 50, before_ts: float | None = None, 
         generated = True
     if before_ts:
         recs = [r for r in recs if float(r.get("ts") or 0) < before_ts]
-    recs = sorted(recs, key=lambda r: float(r.get("ts") or 0), reverse=True)[: max(1, min(limit, 200))]
+    recs = sorted(recs, key=lambda r: float(r.get("ts") or 0), reverse=True)[
+        : max(1, min(limit, 200))
+    ]
     return {
         "stories": recs,
         "generated_on_read": generated,
