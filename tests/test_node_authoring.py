@@ -10,9 +10,6 @@ from __future__ import annotations
 
 import importlib
 
-import pytest
-
-from brain.wiring import Wiring
 from brain.wiring_bootstrap import bootstrap
 
 

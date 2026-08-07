@@ -135,7 +135,7 @@ def placement_file(user_id: str) -> Path:
 _placement_last: dict[str, str] = {}
 
 
-def write_placement_files(provisioner: "Provisioner") -> None:
+def write_placement_files(provisioner: Provisioner) -> None:
     """Derive and publish every org's placement file. Best-effort; never raises."""
     import time as _time
 

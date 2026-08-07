@@ -13,7 +13,8 @@ state, so every substrate keeps its own storage and serialization.
 
 from __future__ import annotations
 
-from typing import Callable, Iterable, TypeVar
+from collections.abc import Callable, Iterable
+from typing import TypeVar
 
 T = TypeVar("T")
 

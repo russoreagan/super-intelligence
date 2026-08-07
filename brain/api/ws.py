@@ -437,5 +437,5 @@ class WsSession:
 
 # Curated public affect/mood views live in brain.api._affect — one definition shared
 # with the SSE transport (server.py) so the chemistry-not-exposed contract can't drift.
-from brain.api._affect import affect_view as _affect_view
-from brain.api._affect import mood_from_affect as _mood_from_affect
+from brain.api._affect import affect_view as _affect_view  # noqa: E402
+from brain.api._affect import mood_from_affect as _mood_from_affect  # noqa: E402

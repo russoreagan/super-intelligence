@@ -19,7 +19,6 @@ from brain.persona_context import mandate_domain_tags
 # Reuse the routing test's DMN skeleton so this differs only in the domain gate.
 from tests.test_dmn_routing import _make_dmn
 
-
 # ── mandate_domain_tags derivation ───────────────────────────────────────────
 
 

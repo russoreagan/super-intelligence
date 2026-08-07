@@ -13,8 +13,6 @@ a stale/tampered stored weight is re-clamped at read; a frozen brain is neutral.
 
 from __future__ import annotations
 
-import importlib
-
 import pytest
 
 import brain.judge_attachment as ja
@@ -173,7 +171,7 @@ def test_veto_floor_ignores_model_derived_signals(monkeypatch):
     """The floor's inputs are the parsed features only. Its answer must not change
     when the judge's own score is manipulated upward past the floor's band — that
     is the difference between a floor and something an attachment can argue with."""
-    hostile = dict(user_emotion="neutral", hostility=0.99)
+    hostile = {"user_emotion": "neutral", "hostility": 0.99}
     assert ja.veto_floor(HOST_EMPATHY, raw_score=0.0, **hostile) is True
     assert ja.veto_floor(HOST_EMPATHY, raw_score=1.0, **hostile) is True
 
@@ -654,7 +652,7 @@ class _RecordingJudgeCell:
     async def call(self, messages, **kw):
         self.calls.append({"content": messages[0]["content"], **kw})
         score = self._scores[(len(self.calls) - 1) % len(self._scores)]
-        return '{"%s": %s, "veto": false}' % (self._field, score)
+        return f'{{"{self._field}": {score}, "veto": false}}'
 
 
 class _FakeFrontal:

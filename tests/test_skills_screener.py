@@ -18,7 +18,6 @@ from brain.skills_screener import (
     _static_findings,
 )
 
-
 # ── static checks ──────────────────────────────────────────────────────────────
 
 

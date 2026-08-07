@@ -12,6 +12,7 @@ re-created it, and the reaper killed brains without stopping the pod.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import time
 
@@ -101,10 +102,8 @@ def test_consumer_host_refresh_adopts_new_host_without_respawn(tmp_path, monkeyp
         task = asyncio.create_task(m._consumer_host_refresh())
         await asyncio.sleep(0.1)
         task.cancel()
-        try:
+        with contextlib.suppress(asyncio.CancelledError):
             await task
-        except asyncio.CancelledError:
-            pass
 
     asyncio.run(_run())
     assert captured.get("runpod_host") == "https://newpod-11434.proxy.runpod.net"

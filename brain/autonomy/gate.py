@@ -21,6 +21,7 @@ resets the streak.
 
 from __future__ import annotations
 
+import contextlib
 import time
 from dataclasses import dataclass
 
@@ -160,15 +161,13 @@ class SpendRiskGate:
     def _record_continue_approval(self) -> None:
         if self._approvals is None:
             return
-        try:
+        with contextlib.suppress(Exception):
             self._approvals.record(
                 CONTINUE_SPEND_TOOL,
                 {"soft_cap": self._budget.soft_cap()},
                 reason="autonomous daily soft budget reached — approve to keep spending today",
                 end_user_id="",
             )
-        except Exception:
-            pass
 
     def _bg_bucket_empty(self) -> bool:
         fn = getattr(self._router, "bg_bucket_empty", None)

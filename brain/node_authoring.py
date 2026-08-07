@@ -21,6 +21,7 @@ no-op in companion/local mode.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import re
@@ -213,10 +214,8 @@ async def author_and_admit(
         if status == "enabled":
             # Org-scoped and live on next warm. (Per-persona agent mapping is a later refinement;
             # org-wide is safe — skills are keyed by org_id, so no cross-tenant leak.)
-            try:
+            with contextlib.suppress(Exception):
                 sr.set_skill_all_agents(sid, True)
-            except Exception:
-                pass
         decisions.log(
             "node_self_authored",
             session_id=session_id,

@@ -9,7 +9,6 @@ import pytest
 
 from brain.bounded_ledger import aged_out, cap_evict, decay
 
-
 # ── decay ──────────────────────────────────────────────────────────────────────
 
 

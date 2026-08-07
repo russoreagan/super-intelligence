@@ -23,10 +23,10 @@ import logging
 import os
 import shutil
 import subprocess
+import threading
 import time
 from html import escape as html_escape
 from pathlib import Path
-import threading
 
 import httpx
 from fastapi import FastAPI, Request, WebSocket

@@ -16,9 +16,9 @@ import time
 import pytest
 
 from brain.autonomy import (
+    CONTINUE_SPEND_TOOL,
     AutonomousBudget,
     BudgetTier,
-    CONTINUE_SPEND_TOOL,
     DeferReason,
     JobOutcome,
     JobState,

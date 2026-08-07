@@ -2,8 +2,8 @@
 updates under one persona must not bleed into another's graph (the fix that lets each
 forecasting-council member learn independently)."""
 
-from brain.wiring import Wiring
 from brain.second_brain.store import bind_persona
+from brain.wiring import Wiring
 
 
 def test_hebbian_update_is_persona_scoped():

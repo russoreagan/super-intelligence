@@ -363,7 +363,7 @@ def _sb():
 
 
 def _now() -> str:
-    return _dt.datetime.now(_dt.timezone.utc).isoformat()
+    return _dt.datetime.now(_dt.UTC).isoformat()
 
 
 def _valid_id(skill_id: str) -> str:

@@ -22,7 +22,7 @@ from __future__ import annotations
 import pytest
 
 from brain.bus import Bus
-from brain.evidence_gate import MODE_FIRE_RESET, MODE_LATCH, EvidenceGate
+from brain.evidence_gate import MODE_FIRE_RESET, EvidenceGate
 
 
 def _gate(**kw):

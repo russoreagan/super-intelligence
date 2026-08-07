@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 TurnRunner = Callable[[str, str, "str | None", "str | None"], Awaitable[tuple[str, dict]]]
 
 
-def _session_persona(s) -> "str | None":
+def _session_persona(s) -> str | None:
     """The persona a session's agent_id names (multi-persona Path B), e.g.
     'the_visionary.trading_bull' → 'the_visionary'. None when the session has no
     agent or an unscoped id → the process persona, unchanged."""

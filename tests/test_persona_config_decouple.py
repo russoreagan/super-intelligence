@@ -16,10 +16,10 @@ import brain.persona_chem as pc
 def test_config_save_persists_target_persona_chem(tmp_path, monkeypatch):
     monkeypatch.setattr(pc, "_PERSONAS_ROOT", tmp_path)
     # Mirror the server's config_persona branch: write resting + boot for a persona.
-    resting = {ch: 0.40 for ch in pc.CHANNELS}
+    resting = dict.fromkeys(pc.CHANNELS, 0.4)
     resting["OXT"] = 0.77  # a distinctive edit
     pc.save_resting("The Empath", resting)
-    pc.save_current("The Empath", {ch: 0.33 for ch in pc.CHANNELS}, {})
+    pc.save_current("The Empath", dict.fromkeys(pc.CHANNELS, 0.33), {})
 
     assert pc.exists("The Empath")
     loaded = pc.load("The Empath")
@@ -31,7 +31,7 @@ def test_config_save_persists_target_persona_chem(tmp_path, monkeypatch):
 
 def test_config_save_does_not_leak_to_other_personas(tmp_path, monkeypatch):
     monkeypatch.setattr(pc, "_PERSONAS_ROOT", tmp_path)
-    pc.save_resting("The Empath", {ch: 0.5 for ch in pc.CHANNELS})
+    pc.save_resting("The Empath", dict.fromkeys(pc.CHANNELS, 0.5))
     # Configuring one persona must never write another's file (persona isolation).
     assert pc.exists("The Empath")
     assert not pc.exists("The Analyst")

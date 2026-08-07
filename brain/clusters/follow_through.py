@@ -29,7 +29,6 @@ logger = logging.getLogger(__name__)
 # and can't drift. Re-exported here for existing callers (e.g. session_turn).
 from brain.text_guards import looks_like_json_blob  # noqa: E402
 
-
 SYSTEM = """You read a single utterance an AI assistant just spoke aloud and
 decide whether it committed to an immediate action it should now carry out.
 

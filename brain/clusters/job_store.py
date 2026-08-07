@@ -22,6 +22,7 @@ import os
 import re
 import time
 from datetime import UTC, datetime
+from pathlib import Path
 
 from brain.second_brain.store import SECOND_BRAIN_ROOT
 

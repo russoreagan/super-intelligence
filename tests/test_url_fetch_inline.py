@@ -19,7 +19,6 @@ import asyncio
 from brain.clusters.temporal import _looks_like_tool_request
 from brain.session_turn import _TurnMixin
 
-
 # ── 1. A bare/pasted URL is itself a fetch request ────────────────────────────
 
 

@@ -396,7 +396,6 @@ def test_exploration_creates_cross_drafter_variance(monkeypatch, tmp_path):
 
 
 def test_downshift_gates_on_proven_attachment_and_availability(monkeypatch, tmp_path):
-    from brain.settings import settings
 
     _pod_ready(monkeypatch)  # confirmed pod → available
     w = _isolated_wiring(monkeypatch, tmp_path)
@@ -410,7 +409,6 @@ def test_downshift_gates_on_proven_attachment_and_availability(monkeypatch, tmp_
 
 
 def test_downshift_noop_on_lite_tier_and_pod_off(monkeypatch, tmp_path):
-    from brain.settings import settings
 
     w = _isolated_wiring(monkeypatch, tmp_path)
     w.add("fragment.alpha", "frontal.drafter_A", weight=2.5)
@@ -454,7 +452,6 @@ def test_downshift_liveness_flag_expires(monkeypatch, tmp_path):
 
 
 def test_downshift_respects_cloud_floor(monkeypatch, tmp_path):
-    from brain.settings import settings
 
     _pod_ready(monkeypatch)
     w = _isolated_wiring(monkeypatch, tmp_path)

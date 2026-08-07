@@ -417,7 +417,7 @@ class JudgeAttachmentTracker:
                 return {c: float(data.get(c, 1.0)) for c in CUES}
         except Exception:
             pass
-        return {c: 1.0 for c in CUES}
+        return dict.fromkeys(CUES, 1.0)
 
     def _save(self, key: str) -> None:
         try:

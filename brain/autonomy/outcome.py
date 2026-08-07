@@ -61,7 +61,7 @@ class JobOutcome:
 
     # ── factory constructors (one per terminal path) ─────────────────────────
     @classmethod
-    def completed(cls, job_id: str, goal: str, *, productive_steps: int, summary: str, **kw) -> "JobOutcome":
+    def completed(cls, job_id: str, goal: str, *, productive_steps: int, summary: str, **kw) -> JobOutcome:
         """COMPLETED requires real work AND a non-empty summary. If either is missing
         this coerces to FAILED('no_productive_output') — so a `"(no output)"` path can
         never masquerade as success."""
@@ -79,14 +79,14 @@ class JobOutcome:
         )
 
     @classmethod
-    def failed(cls, job_id: str, goal: str, *, reason_code: str, reason_human: str, **kw) -> "JobOutcome":
+    def failed(cls, job_id: str, goal: str, *, reason_code: str, reason_human: str, **kw) -> JobOutcome:
         return cls(
             state=JobState.FAILED, job_id=job_id, goal=goal,
             reason_code=reason_code, reason_human=reason_human, **kw,
         )
 
     @classmethod
-    def deferred(cls, job_id: str, goal: str, *, reason: DeferReason, backoff_s: float = 0.0, **kw) -> "JobOutcome":
+    def deferred(cls, job_id: str, goal: str, *, reason: DeferReason, backoff_s: float = 0.0, **kw) -> JobOutcome:
         return cls(
             state=JobState.DEFERRED, job_id=job_id, goal=goal,
             reason_code=reason.value, reason_human=reason.human(),
@@ -94,14 +94,14 @@ class JobOutcome:
         )
 
     @classmethod
-    def stopped_budget(cls, job_id: str, goal: str, *, reason: StopReason = StopReason.BUDGET_HARD_STOP, **kw) -> "JobOutcome":
+    def stopped_budget(cls, job_id: str, goal: str, *, reason: StopReason = StopReason.BUDGET_HARD_STOP, **kw) -> JobOutcome:
         return cls(
             state=JobState.STOPPED_BUDGET, job_id=job_id, goal=goal,
             reason_code=reason.value, reason_human=reason.human(), **kw,
         )
 
     @classmethod
-    def awaiting_approval(cls, job_id: str, goal: str, *, reason_human: str, clarification: str | None = None, **kw) -> "JobOutcome":
+    def awaiting_approval(cls, job_id: str, goal: str, *, reason_human: str, clarification: str | None = None, **kw) -> JobOutcome:
         return cls(
             state=JobState.AWAITING_APPROVAL, job_id=job_id, goal=goal,
             reason_code="awaiting_approval", reason_human=reason_human,

@@ -189,7 +189,7 @@ class EvidenceGate:
             min_threshold=0.01,
             max_threshold=max(self.cap, self.arm_threshold),
         )
-        self._cue_w = {c: 1.0 for c in self.cue_names}
+        self._cue_w = dict.fromkeys(self.cue_names, 1.0)
 
     # ── core accumulate / leak / commit ───────────────────────────────────────
 

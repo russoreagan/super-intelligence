@@ -25,7 +25,6 @@ import contextlib
 import json
 import logging
 import os
-import re
 import threading
 from datetime import UTC, datetime
 from pathlib import Path

@@ -8,6 +8,7 @@ on-Vertex is verified out of band (needs ADC + an enabled project).
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 import pytest
 
@@ -94,7 +95,7 @@ def test_materialize_vertex_credentials_writes_file(monkeypatch):
     S._materialize_vertex_credentials()
     path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
     assert path and os.path.exists(path)
-    assert '"service_account"' in open(path, encoding="utf-8").read()
+    assert '"service_account"' in Path(path).read_text(encoding="utf-8")
     os.unlink(path)
 
 

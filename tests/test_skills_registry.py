@@ -13,7 +13,6 @@ import pytest
 
 import brain.skills_registry as sr
 
-
 # ── minimal in-memory fake of the supabase-py query builder ──────────────────────
 # Table-aware: each table is a list of row dicts, so it handles both `skills`
 # (upsert by org_id,id) and `agent_skills` (insert/delete, composite key).

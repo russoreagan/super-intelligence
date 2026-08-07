@@ -536,8 +536,8 @@ def _template_stories(persona: str = "", live_wiring=None) -> list[dict]:
                     "generator": "template",
                 }
             )
-        for l in (s.get("top_losers") or [])[:1]:
-            edge, delta = l.get("edge", ""), float(l.get("delta", 0) or 0)
+        for loser in (s.get("top_losers") or [])[:1]:
+            edge, delta = loser.get("edge", ""), float(loser.get("delta", 0) or 0)
             if not edge or abs(delta) < 1e-4:
                 continue
             stories.append(

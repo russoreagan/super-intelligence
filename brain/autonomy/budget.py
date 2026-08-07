@@ -16,6 +16,7 @@ Every router call is defensive so a minimally-constructed router (tests) can't b
 
 from __future__ import annotations
 
+import contextlib
 from enum import Enum
 
 from brain.settings import settings as _settings
@@ -75,7 +76,5 @@ class AutonomousBudget:
         fn = getattr(self._router, "clear_autonomous_soft_pause", None)
         if fn is None:
             return
-        try:
+        with contextlib.suppress(Exception):
             fn()
-        except Exception:
-            pass

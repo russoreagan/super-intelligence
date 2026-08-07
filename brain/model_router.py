@@ -667,18 +667,14 @@ class ModelRouter:
     def _note_cloud_timeout(self) -> None:
         g = getattr(self, "_spend_gate", None)
         if g is not None:
-            try:
+            with contextlib.suppress(Exception):
                 g.note_cloud_timeout()
-            except Exception:
-                pass
 
     def _notify_cloud_ok(self) -> None:
         g = getattr(self, "_spend_gate", None)
         if g is not None:
-            try:
+            with contextlib.suppress(Exception):
                 g.note_cloud_success()
-            except Exception:
-                pass
 
     # ── Background mode controls ──────────────────────────────────────────────
 

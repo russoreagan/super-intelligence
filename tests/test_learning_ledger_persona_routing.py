@@ -143,7 +143,6 @@ def test_sequence_predictor_routes_per_persona(home_root, monkeypatch):
     analyst_file = home_root.parent / "the_analyst" / "sequence_weights.json"
     assert analyst_file.exists()
 
-    import json
 
     assert "gamma-three" not in (home_root / "sequence_weights.json").read_text()
     assert "alpha-one" not in analyst_file.read_text()

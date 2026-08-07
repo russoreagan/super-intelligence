@@ -152,8 +152,8 @@ def test_zero_nudge_records_grade_but_moves_no_chemistry(monkeypatch):
     """When the nudge is 0 (a tenant that explicitly opts out), the grade is still
     RECORDED on the trace and in the log — observability survives — but chemistry
     is untouched. This pins the exact boundary the default crossed."""
-    from brain.settings import settings
     from brain.session_loops import _LoopsMixin
+    from brain.settings import settings
 
     monkeypatch.setitem(settings._data, "external_grade_da_nudge", 0.0)
     stub, trace = _loops_stub()

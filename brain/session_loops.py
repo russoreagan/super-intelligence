@@ -1094,18 +1094,21 @@ class _LoopsMixin:
             if getattr(t, "turn_id", "") == turn_id:
                 trace = t
                 break
-        if api_session_id and trace is not None:
-            if getattr(trace, "api_session_id", "") != api_session_id:
-                # Another session's turn (another partner, another session of the
-                # same partner, or an owner turn). Deny before ANY write. The route
-                # maps this to 404 so it's indistinguishable from a turn that never
-                # existed — no cross-partner turn-id oracle.
-                return {
-                    "ok": False,
-                    "denied": True,
-                    "applied_live": False,
-                    "error": "unknown turn_id for this session",
-                }
+        if (
+            api_session_id
+            and trace is not None
+            and getattr(trace, "api_session_id", "") != api_session_id
+        ):
+            # Another session's turn (another partner, another session of the
+            # same partner, or an owner turn). Deny before ANY write. The route
+            # maps this to 404 so it's indistinguishable from a turn that never
+            # existed — no cross-partner turn-id oracle.
+            return {
+                "ok": False,
+                "denied": True,
+                "applied_live": False,
+                "error": "unknown turn_id for this session",
+            }
         if trace is not None:
             # Bind what the turn bound. Stamps are authoritative; the caller's
             # session-derived values only fill in for pre-stamp traces (journal

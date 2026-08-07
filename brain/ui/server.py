@@ -483,10 +483,8 @@ class UIServer:
             # (the provisioner records it off this response). Default 'full' if unknown.
             tier = "full"
             if self._tier_fn is not None:
-                try:
+                with contextlib.suppress(Exception):
                     tier = self._tier_fn()
-                except Exception:
-                    pass
             return {"status": "ok", "tier": tier}
 
         @app.get("/")
