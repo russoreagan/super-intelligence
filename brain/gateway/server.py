@@ -146,6 +146,51 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
             ui_auth.set_session_cookies(response, refreshed, remember=ui_auth.remembered(request))
         return response
 
+    # ── API-host gate ─────────────────────────────────────────────────────
+    # BRAIN_API_HOST names a dedicated hostname for the engine API (e.g.
+    # api.elyceum.app) pointed at THIS service. Routing here is path-based and
+    # never inspects Host, so merely attaching a second domain would also serve
+    # the login page and the cookie-authed UI proxy on it — a partner who typos a
+    # path would get an HTML login redirect instead of JSON. This gate makes the
+    # API host serve /v1 (+ /health) and nothing else.
+    #
+    # It narrows ONE hostname; the app host is untouched and keeps serving /v1 for
+    # backwards compatibility, so existing integrations never break. Unset (the
+    # default) → no host is special and behaviour is byte-for-byte unchanged.
+    #
+    # Registered BETWEEN the auth gate and the HTTPS layer, so the final wrapping
+    # is: https/HSTS (outermost) → host gate → cookie auth → routes. An http
+    # request is still upgraded before anything else runs, and a rejected path on
+    # the API host never reaches the cookie gate.
+    #
+    # HTTP only: Starlette does not run http middleware for WebSocket scopes. The
+    # one WS route is /v1/... — allowed on the API host anyway — so there is
+    # nothing to gate.
+    _API_HOST = os.environ.get("BRAIN_API_HOST", "").strip().lower()
+    if _API_HOST:
+        logger.info("[gateway] engine API host: %s (serves /v1 only)", _API_HOST)
+
+    def _is_api_host(request: Request) -> bool:
+        if not _API_HOST:
+            return False
+        # Strip the port: a Host header legitimately carries one (localhost:8080),
+        # and Railway's edge does not, so compare on the name alone.
+        host = (request.headers.get("host") or "").split(":")[0].strip().lower()
+        return host == _API_HOST
+
+    @app.middleware("http")
+    async def _api_host_gate(request: Request, call_next):
+        if _is_api_host(request):
+            path = request.url.path
+            # /health stays reachable so the API hostname can be probed on its own
+            # (Railway's own healthcheck is internal and never sees this).
+            if path != "/health" and not (path == "/v1" or path.startswith("/v1/")):
+                return JSONResponse(
+                    {"detail": f"not found — {_API_HOST} serves the /v1 engine API only"},
+                    status_code=404,
+                )
+        return await call_next(request)
+
     # ── HTTPS upgrade + HSTS ──────────────────────────────────────────────
     # Mirrors the brain UI server: registered after the auth gate so it wraps
     # OUTERMOST — an http request redirects to https before auth runs, and

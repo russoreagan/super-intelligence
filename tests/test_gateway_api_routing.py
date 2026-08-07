@@ -285,6 +285,89 @@ def test_v1_status_reports_cost_state(monkeypatch):
     assert d["pod"]["state"] == "ready"
 
 
+# ── dedicated API host (BRAIN_API_HOST) ─────────────────────────────────────
+# The gateway routes by PATH and never inspects Host, so attaching a second domain
+# to the service would serve the login page and the cookie-authed UI proxy on it
+# too. BRAIN_API_HOST narrows that one hostname to /v1 (+ /health). Unset must be
+# byte-for-byte unchanged.
+
+
+def _api_host_app(monkeypatch, prov=None, host="api.elyceum.app"):
+    monkeypatch.setenv("BRAIN_API_HOST", host)
+    return gw.build_gateway_app(prov or _FakeProv(), [_FakeRunpod()])
+
+
+async def _get(app, path, *, host, headers=None):
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url=f"http://{host}") as c:
+        return await c.get(path, headers=headers or {})
+
+
+def test_api_host_unset_leaves_every_path_reachable(monkeypatch):
+    """Default deployment: no host is special, nothing changes."""
+    monkeypatch.delenv("BRAIN_API_HOST", raising=False)
+    app = gw.build_gateway_app(_FakeProv(), [_FakeRunpod()])
+    r = asyncio.run(_get(app, "/login", host="api.elyceum.app"))
+    assert r.status_code == 200, "with the gate off, the API hostname is just another host"
+
+
+def test_api_host_serves_v1(monkeypatch):
+    _patch(monkeypatch, "org-1")
+    prov = _FakeProv(status={"port": 9001, "api_port": 9777, "booting": False, "pid": 1})
+    app = _api_host_app(monkeypatch, prov)
+    monkeypatch.setattr(gw, "_proxy_http_stream", _fake_stream)
+
+    async def run():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://api.elyceum.app") as c:
+            return await c.post(
+                "/v1/sessions", headers={"authorization": "Bearer good"}, json={"end_user_id": "u"}
+            )
+
+    assert asyncio.run(run()).status_code == 200
+
+
+def test_api_host_404s_non_v1_paths(monkeypatch):
+    """A partner who typos a path gets JSON, not an HTML login redirect."""
+    app = _api_host_app(monkeypatch)
+    for path in ("/login", "/settings", "/", "/v2/sessions"):
+        r = asyncio.run(_get(app, path, host="api.elyceum.app"))
+        assert r.status_code == 404, f"{path} must not be served on the API host"
+        assert r.json()["detail"].startswith("not found"), f"{path} must return JSON"
+
+
+def test_api_host_allows_health(monkeypatch):
+    app = _api_host_app(monkeypatch)
+    r = asyncio.run(_get(app, "/health", host="api.elyceum.app"))
+    assert r.status_code == 200 and r.json()["status"] == "ok"
+
+
+def test_api_host_gate_ignores_port_in_host_header(monkeypatch):
+    app = _api_host_app(monkeypatch, host="localhost")
+    r = asyncio.run(_get(app, "/login", host="localhost:8080"))
+    assert r.status_code == 404, "the port must not defeat the host match"
+
+
+def test_app_host_is_untouched_by_the_gate(monkeypatch):
+    """The app hostname keeps serving everything, /v1 included — existing
+    integrations pointed at elyceum.app must not break."""
+    _patch(monkeypatch, "org-1")
+    prov = _FakeProv(status={"port": 9001, "api_port": 9777, "booting": False, "pid": 1})
+    app = _api_host_app(monkeypatch, prov)
+    monkeypatch.setattr(gw, "_proxy_http_stream", _fake_stream)
+
+    assert asyncio.run(_get(app, "/login", host="elyceum.app")).status_code == 200
+
+    async def run():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://elyceum.app") as c:
+            return await c.post(
+                "/v1/sessions", headers={"authorization": "Bearer good"}, json={"end_user_id": "u"}
+            )
+
+    assert asyncio.run(run()).status_code == 200, "/v1 must keep working on the app host"
+
+
 # ── auth helpers (mocked Supabase) ──────────────────────────────────────────
 
 

@@ -260,6 +260,7 @@ directly by brain code, so it has no row here.
 | `BRAIN_ADMIN_EMAILS` | `""` | call | Break-glass comma-separated admin email allowlist. `brain/ui/auth.py:131` |
 | `BRAIN_GW_WATCHDOG_S` | `60` | import ⚠ | Gateway event-loop heartbeat watchdog threshold (process exits → Railway restarts). `brain/gateway/server.py:598` |
 | `BRAIN_HSTS_MAX_AGE` | `31536000` (1 y) | call | HSTS max-age when behind TLS. `brain/ui/server.py:329`, `brain/gateway/server.py:153` |
+| `BRAIN_API_HOST` | unset (off) | app build | Dedicated hostname for the engine API (e.g. `api.elyceum.app`), pointed at the same service. That one host serves `/v1` + `/health` and 404s everything else, so the login page and cookie-authed UI proxy aren't exposed on it. The app host is untouched and keeps serving `/v1`. Unset → no host is special. `brain/gateway/server.py:_api_host_gate` |
 | `BRAIN_SLEEP_CONSOLIDATE_WAIT_S` | `90` | import ⚠ | Gateway: how long a brain may consolidate on Sleep before force-reap. `brain/gateway/server.py:61` |
 | `ADMISSION_NOTIFY_EMAIL` | `""` → `admin@thegaim.app` | call | Recipient of request-access admission emails. `brain/ui/server.py:418`, `brain/gateway/server.py:235` |
 | `EMAIL_FROM` | `""` → module default | call | From-address for outbound mail (Resend). `brain/ui/mailer.py:28` |
