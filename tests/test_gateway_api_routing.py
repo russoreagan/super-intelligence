@@ -372,6 +372,77 @@ def test_app_host_is_untouched_by_the_gate(monkeypatch):
     assert asyncio.run(run()).status_code == 200, "/v1 must keep working on the app host"
 
 
+# ── public OpenAPI schema + Swagger UI ──────────────────────────────────────
+# Swagger never worked through the gateway: the engine app's schema lives at
+# /openapi.json on the origin root, which the cookie-authed catch-all bounces to
+# login. The gateway now builds the document itself from the route table, with no
+# tenant process involved.
+
+
+def _openapi(app):
+    async def run():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+            return await c.get("/v1/openapi.json")
+
+    return asyncio.run(run())
+
+
+def test_openapi_served_without_a_key_or_a_tenant():
+    """Swagger UI can't attach a bearer to its own schema fetch, so the document is
+    public — and it must not spawn a brain or touch the pod to answer."""
+    prov, runpod = _FakeProv(status=None), _FakeRunpod()
+    r = _openapi(gw.build_gateway_app(prov, [runpod]))
+    assert r.status_code == 200
+    assert prov.ensured == [], "serving the schema must not spawn a tenant"
+    assert runpod.ensured is False, "serving the schema must not kick the pod"
+
+
+def test_openapi_covers_every_http_route():
+    """Drift guard: a new HTTP route must show up in the published schema."""
+    from starlette.routing import WebSocketRoute
+
+    from brain.api.server import build_api_router
+
+    async def _dummy(*a, **k):
+        return {}
+
+    real = {
+        (m.lower(), r.path)
+        for r in build_api_router(_dummy).routes
+        if not isinstance(r, WebSocketRoute)
+        for m in (r.methods or [])
+        if m not in ("HEAD", "OPTIONS")
+    }
+    doc = _openapi(gw.build_gateway_app(_FakeProv(), [_FakeRunpod()])).json()
+    published = {(m, p) for p, ops in doc["paths"].items() for m in ops}
+    assert not (real - published), (
+        f"routes missing from the OpenAPI schema: {sorted(real - published)}"
+    )
+
+
+def test_swagger_ui_points_at_the_gateway_schema_url():
+    """The whole bug was Swagger fetching a schema URL the gateway wouldn't serve."""
+
+    async def run():
+        transport = httpx.ASGITransport(app=gw.build_gateway_app(_FakeProv(), [_FakeRunpod()]))
+        async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+            return await c.get("/v1/docs")
+
+    r = asyncio.run(run())
+    assert r.status_code == 200
+    assert "/v1/openapi.json" in r.text
+
+
+def test_public_api_docs_kill_switch(monkeypatch):
+    """BRAIN_PUBLIC_API_DOCS=0 removes the routes; they then fall through to the
+    bearer-authed /v1 proxy, which 401s an unkeyed request."""
+    monkeypatch.setenv("BRAIN_PUBLIC_API_DOCS", "0")
+    monkeypatch.setattr(api_auth, "resolve_partner_org", lambda _auth: None)
+    r = _openapi(gw.build_gateway_app(_FakeProv(), [_FakeRunpod()]))
+    assert r.status_code == 401
+
+
 # ── auth helpers (mocked Supabase) ──────────────────────────────────────────
 
 

@@ -110,9 +110,23 @@ for the org.
 
 ### OpenAPI
 
-The engine app serves Swagger UI at `/v1/docs` on the API port. Behind the hosted gateway the schema
-document itself is served at the origin root and is not proxied with your bearer key, so Swagger is
-reliable only on a direct connection. Treat this document as the reference.
+A machine-readable schema and a live Swagger UI are served on the hosted gateway:
+
+```
+https://api.elyceum.app/v1/openapi.json     # OpenAPI 3.1 document
+https://api.elyceum.app/v1/docs             # Swagger UI
+```
+
+Both are public — no bearer key needed to read them (Swagger UI cannot attach one to its own schema
+fetch, and the document contains no tenant data). They're generated from the live route table, so
+they can't drift from what the server actually serves, and they're answered by the gateway without
+spawning a brain, so hitting them never triggers a cold start.
+
+Use the schema to generate a client. **One gap by construction:** OpenAPI has no WebSocket concept,
+so `WS /v1/sessions/{session_id}/stream` does not appear in it. [§10](#10-streaming-websocket) is its
+reference.
+
+The engine also serves Swagger at `/v1/docs` on its own port for direct/self-hosted connections.
 
 ---
 

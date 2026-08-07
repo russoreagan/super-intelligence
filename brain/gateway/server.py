@@ -581,6 +581,72 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
             }
         )
 
+    # ── OpenAPI schema + Swagger UI (no tenant needed) ───────────────────────
+    # The engine app serves Swagger at /v1/docs on its own port, but the schema it
+    # fetches lives at /openapi.json on the origin ROOT — which the gateway's
+    # cookie-authed catch-all bounces to login (and, on a dedicated API host, 404s).
+    # So Swagger has never actually worked through the gateway.
+    #
+    # Serve both HERE instead. build_api_router takes any callable as its turn
+    # runner, so the route table can be introspected with a dummy and NO tenant
+    # process — the same trick brain/api/reference.py uses. The schema is identical
+    # for every tenant (routes are static), so one cached document serves everyone
+    # and this path never spawns a brain or touches the pod.
+    #
+    # Deliberately unauthenticated: this is the partner-facing surface already
+    # published in docs/API.md, it contains no tenant data, and Swagger UI cannot
+    # attach a bearer key to its own schema fetch — requiring one would just put
+    # the page back to broken. Kill with BRAIN_PUBLIC_API_DOCS=0.
+    #
+    # Registered BEFORE the /v1 catch-all so the proxy doesn't swallow them.
+    #
+    # Caveat: OpenAPI has no WebSocket concept, so WS /v1/sessions/{id}/stream is
+    # absent from the schema by construction. docs/API.md §10 is its reference.
+    _PUBLIC_API_DOCS = os.environ.get("BRAIN_PUBLIC_API_DOCS", "1").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+    )
+    _openapi_cache: dict = {}
+
+    def _engine_openapi() -> dict:
+        """The engine API's OpenAPI document, built once per process."""
+        if "doc" not in _openapi_cache:
+            from fastapi.openapi.utils import get_openapi
+
+            from brain.api.server import build_api_router
+
+            async def _dummy(*a, **k):  # never called — we only read the route table
+                return {}
+
+            probe = FastAPI(openapi_url=None, docs_url=None, redoc_url=None)
+            probe.include_router(build_api_router(_dummy))
+            _openapi_cache["doc"] = get_openapi(
+                title="Elyceum Engine API",
+                version="v1",
+                description=(
+                    "Bearer-authed engine API. Full developer reference — request/response "
+                    "shapes, the SSE and WebSocket transports, error semantics and quotas — "
+                    "lives in docs/API.md."
+                ),
+                routes=probe.routes,
+            )
+        return _openapi_cache["doc"]
+
+    if _PUBLIC_API_DOCS:
+
+        @app.get("/v1/openapi.json")
+        async def engine_openapi():
+            return JSONResponse(_engine_openapi())
+
+        @app.get("/v1/docs")
+        async def engine_docs():
+            from fastapi.openapi.docs import get_swagger_ui_html
+
+            return get_swagger_ui_html(
+                openapi_url="/v1/openapi.json", title="Elyceum Engine API — v1"
+            )
+
     # ── Engine API (/v1) → partner-key routing + on-demand spawn + pod kick ──
     # Bearer key → org (cross-org lookup), then spawn the org's brain (which runs
     # its API server) and warm the pod, exactly like the UI path does. This is what
