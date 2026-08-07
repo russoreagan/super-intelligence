@@ -10,11 +10,22 @@ the generator depends on; these tests make that unmergeable:
   - every route must map to a SECTIONS entry (new path prefix → add a section),
   - every section must be described and actually used,
   - every BODY_EXAMPLES key must match a real route (no phantom examples).
+
+The hand-written developer guide (docs/API.md) documents what the generated page
+cannot — bodies, response shapes, error semantics, transports. Its endpoint index
+is the one part that CAN silently rot, so it is drift-tested here too: add a route,
+document it.
 """
 
 from __future__ import annotations
 
 import inspect
+import re
+from pathlib import Path
+
+# Gateway-level routes (brain/gateway/server.py). Documented in docs/API.md but not
+# served by build_api_router, so they're exempt from the "must be a real route" check.
+_GATEWAY_ROUTES = {("GET", "/v1/status"), ("POST", "/v1/sleep")}
 
 
 def _routes():
@@ -81,3 +92,28 @@ def test_build_reference_output_complete():
     owner = [e for e in ref["endpoints"] if e.get("scope") == "owner"]
     assert len(owner) >= 7, "owner-scope chips missing"
     assert any(e["m"] == "ws" for e in ref["endpoints"]), "WS route missing"
+
+
+# ── docs/API.md (the hand-written developer guide) ────────────────────────────
+
+
+def _documented_routes() -> set[tuple[str, str]]:
+    """(METHOD, path) pairs from the endpoint-index tables in docs/API.md."""
+    doc = (Path(__file__).resolve().parent.parent / "docs" / "API.md").read_text(encoding="utf-8")
+    return {
+        (m, p) for m, p in re.findall(r"\|\s*`(GET|POST|PUT|DELETE|WS)`\s*\|\s*`(/v1/[^`]*)`", doc)
+    }
+
+
+def test_api_md_documents_every_route():
+    """A new endpoint must be added to the docs/API.md index, not just shipped."""
+    real = {(m, p) for m, p, _d in _routes()}
+    missing = sorted(real - _documented_routes())
+    assert not missing, f"routes absent from docs/API.md: {missing}"
+
+
+def test_api_md_has_no_phantom_routes():
+    """A path renamed or removed in code must not linger in the guide."""
+    real = {(m, p) for m, p, _d in _routes()}
+    phantom = sorted(_documented_routes() - real - _GATEWAY_ROUTES)
+    assert not phantom, f"docs/API.md documents routes that don't exist: {phantom}"
