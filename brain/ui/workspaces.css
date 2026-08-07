@@ -208,6 +208,48 @@
 .workspace .pt-head span { font-family: var(--mono); font-size: 8px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink-4); }
 .workspace .pt-row { border-top: 1px solid var(--line-faint); }
 .workspace .ep-item .ri-name .data { font-size: 10.5px; }
+
+/* Documentation section — prose rendered server-side from brain/api/api_guide.md
+   by brain/api/markdown.py, so these style tags the converter emits (h2/h3/p/ul/
+   table/pre) rather than classed markup. */
+.workspace .doc-body { font-family: var(--serif); font-size: 14.5px; line-height: 1.62; color: var(--ink-2); }
+.workspace .doc-body > :first-child { margin-top: 0; }
+.workspace .doc-body h1, .workspace .doc-h1 { font-family: var(--serif); font-size: 25px; font-weight: 600; color: var(--ink); margin: 0 0 14px; letter-spacing: -0.01em; }
+.workspace .doc-body h2 { font-family: var(--serif); font-size: 19px; font-weight: 600; color: var(--ink); margin: 30px 0 10px; }
+.workspace .doc-body h3 { font-family: var(--serif); font-size: 15.5px; font-weight: 600; color: var(--ink); margin: 24px 0 8px; }
+.workspace .doc-body p { margin: 0 0 12px; }
+.workspace .doc-body strong { color: var(--ink); font-weight: 600; }
+.workspace .doc-body a { color: var(--signal-deep); text-decoration: none; border-bottom: 1px solid color-mix(in oklch, var(--signal) 35%, transparent); }
+.workspace .doc-body a:hover { border-bottom-color: var(--signal-deep); }
+.workspace .doc-body ul, .workspace .doc-body ol { margin: 0 0 12px; padding-left: 20px; }
+.workspace .doc-body li { margin: 4px 0; }
+.workspace .doc-body hr { border: 0; border-top: 1px solid var(--line-faint); margin: 26px 0; }
+.workspace .doc-body code { font-family: var(--mono); font-size: 11.5px; background: var(--paper-2); border: 1px solid var(--line-faint);
+  padding: 1px 5px; border-radius: 4px; color: var(--ink); }
+.workspace .doc-body pre { background: #1f2530; border-radius: var(--r-2); padding: 14px 16px; overflow-x: auto; margin: 14px 0; }
+.workspace .doc-body pre code { font-size: 11.5px; line-height: 1.7; color: #d6d3cc; background: none; border: 0; padding: 0; }
+.workspace .doc-body table { border-collapse: collapse; width: 100%; margin: 14px 0; font-family: var(--sans); font-size: 12.5px; }
+.workspace .doc-body th, .workspace .doc-body td { border: 1px solid var(--line-soft); padding: 8px 11px; text-align: left; vertical-align: top; line-height: 1.5; }
+.workspace .doc-body th { background: var(--paper-2); font-weight: 600; color: var(--ink); font-size: 11.5px; }
+.workspace .doc-body td code { font-size: 11px; }
+
+/* Endpoint cards appended under the prose of the page that documents them. */
+.workspace .ep-sec-lab { margin: 34px 0 4px; }
+.workspace .ep-card { border: 1px solid var(--line-soft); border-radius: var(--r-2); padding: 16px 18px; margin-top: 14px; scroll-margin-top: 16px; }
+.workspace .ep-desc { font-family: var(--serif); font-size: 13px; line-height: 1.55; color: var(--ink-3); margin: 10px 0 0; }
+.workspace .ep-lab { display: flex; align-items: center; justify-content: space-between; margin: 16px 0 7px; }
+.workspace .ep-copy { font-family: var(--mono); font-size: 8.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-3);
+  background: none; border: 1px solid var(--line-soft); border-radius: 4px; padding: 3px 8px; cursor: pointer; }
+.workspace .ep-copy:hover { color: var(--ink); border-color: var(--line); }
+/* The generated "All endpoints" index. Modifier on .param-table (which nothing
+   else uses) so the shared grid stays available unchanged: method column sized to
+   its chip, path given the room it needs, everything left-aligned. */
+.workspace .param-table.ep-index .pt-head, .workspace .param-table.ep-index .pt-row { grid-template-columns: 62px minmax(0, 2fr) minmax(0, 1.3fr); }
+.workspace .param-table.ep-index .pt-row > span { justify-self: start; text-align: left; min-width: 0; }
+.workspace .param-table.ep-index .pt-row .data { word-break: break-all; line-height: 1.45; }
+.workspace .doc-xref { color: var(--signal-deep); text-decoration: none; font-size: 12px; }
+.workspace .doc-xref:hover { text-decoration: underline; }
+.workspace .doc-item .ri-name { font-size: 12.5px; }
 .workspace .token-box { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-top: 14px; padding: 13px 15px; background: var(--plate); border: 1px solid var(--signal-deep); border-radius: var(--r-2); }
 .workspace .mint-reveal { display: none; margin-top: 22px; padding: 18px 20px; border-radius: var(--r-3); background: var(--signal-soft); border: 1px solid color-mix(in oklch, var(--signal) 28%, transparent); }
 .workspace .mint-reveal.on { display: block; }

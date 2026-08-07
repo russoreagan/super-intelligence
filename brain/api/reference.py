@@ -108,6 +108,13 @@ SECTIONS: list[tuple[str, str, tuple[str, ...]]] = [
 # Routes gated on the owner credential (matched by prefix; rendered as a chip).
 OWNER_PREFIXES = ("/v1/admin", "/v1/partner_keys", "/v1/end_users", "/v1/dmn")
 
+# Routes served by the GATEWAY (brain/gateway/server.py), not by this router — the
+# cost-control pair a partner calls without the brain being up. They belong in the
+# docs and the endpoint index, but build_reference() cannot see them because they
+# are not on the engine router. Defined here once so the docs builder and the drift
+# tests share a single list instead of each keeping their own copy.
+GATEWAY_ROUTES: tuple[tuple[str, str], ...] = (("GET", "/v1/status"), ("POST", "/v1/sleep"))
+
 # Extra transport tags the route object can't express.
 _TRANSPORT_TAGS = {"/v1/sessions/{session_id}/turns/stream": "SSE"}
 

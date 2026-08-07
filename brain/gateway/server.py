@@ -594,14 +594,15 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
     # and this path never spawns a brain or touches the pod.
     #
     # Deliberately unauthenticated: this is the partner-facing surface already
-    # published in docs/API.md, it contains no tenant data, and Swagger UI cannot
+    # published in the app's API docs, it contains no tenant data, and Swagger UI cannot
     # attach a bearer key to its own schema fetch — requiring one would just put
     # the page back to broken. Kill with BRAIN_PUBLIC_API_DOCS=0.
     #
     # Registered BEFORE the /v1 catch-all so the proxy doesn't swallow them.
     #
     # Caveat: OpenAPI has no WebSocket concept, so WS /v1/sessions/{id}/stream is
-    # absent from the schema by construction. docs/API.md §10 is its reference.
+    # absent from the schema by construction. The Documentation section of the API
+    # workspace (brain/api/api_guide.md §10) is its reference.
     _PUBLIC_API_DOCS = os.environ.get("BRAIN_PUBLIC_API_DOCS", "1").strip().lower() not in (
         "0",
         "false",
@@ -627,7 +628,7 @@ def build_gateway_app(provisioner: Provisioner, runpod_holder: list | None = Non
                 description=(
                     "Bearer-authed engine API. Full developer reference — request/response "
                     "shapes, the SSE and WebSocket transports, error semantics and quotas — "
-                    "lives in docs/API.md."
+                    "is the Documentation section of the API workspace."
                 ),
                 routes=probe.routes,
             )

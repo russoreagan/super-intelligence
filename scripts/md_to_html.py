@@ -1,11 +1,13 @@
 """
-Minimal, dependency-free Markdown → standalone HTML converter for PAPER_PUBLIC.md.
+Markdown → standalone HTML document CLI (PAPER.md, PAPER_PUBLIC.md, …).
 
-Handles the subset of Markdown this paper uses: ATX headings, paragraphs,
-bold/italic/inline-code, fenced code blocks, pipe tables, ordered/unordered
-lists, images, links, hard line breaks (two trailing spaces), and horizontal
-rules. Emits a single self-contained HTML file with embedded CSS and an
-auto-generated table of contents.
+The CONVERTER itself now lives in ``brain/api/markdown.py`` — it is imported at
+runtime by ``brain.api.docs`` to render the API guide inside the app, and only
+``brain`` is packaged. This module keeps what is specific to producing a
+standalone document: the page shell, the embedded CSS, and the table of contents.
+
+``convert`` / ``_inline`` / ``_slug`` are re-exported so existing importers
+(``scripts/md_to_html_private.py``) keep working unchanged.
 
 Usage:  python scripts/md_to_html.py PAPER_PUBLIC.md PAPER_PUBLIC.html
 """
@@ -17,151 +19,9 @@ import re
 import sys
 from pathlib import Path
 
-
-def _slug(text: str) -> str:
-    s = re.sub(r"<[^>]+>", "", text)
-    s = s.lower()
-    s = re.sub(r"[^\w\s-]", "", s)
-    s = re.sub(r"\s+", "-", s).strip("-")
-    return s
-
-
-def _inline(text: str) -> str:
-    """Escape HTML, then apply inline Markdown. Inline code is protected first."""
-    placeholders: list[str] = []
-
-    def _stash(m: re.Match) -> str:
-        placeholders.append(m.group(1))
-        return f"\x00{len(placeholders) - 1}\x00"
-
-    text = re.sub(r"`([^`]+)`", _stash, text)
-    text = html.escape(text, quote=False)
-
-    # images  ![alt](src)
-    text = re.sub(
-        r"!\[([^\]]*)\]\(([^)]+)\)",
-        lambda m: f'<img src="{m.group(2)}" alt="{m.group(1)}">',
-        text,
-    )
-    # links  [text](href)
-    text = re.sub(
-        r"\[([^\]]+)\]\(([^)]+)\)",
-        lambda m: f'<a href="{m.group(2)}">{m.group(1)}</a>',
-        text,
-    )
-    # bold then italic
-    text = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", text)
-    text = re.sub(r"(?<!\*)\*(?!\*)([^*]+)\*(?!\*)", r"<em>\1</em>", text)
-
-    # restore inline code
-    def _unstash(m: re.Match) -> str:
-        code = html.escape(placeholders[int(m.group(1))], quote=False)
-        return f"<code>{code}</code>"
-
-    text = re.sub(r"\x00(\d+)\x00", _unstash, text)
-    return text
-
-
-def _render_table(rows: list[str]) -> str:
-    cells = [[c.strip() for c in r.strip().strip("|").split("|")] for r in rows]
-    header, body = cells[0], cells[2:]  # row 1 is the --- separator
-    out = ["<table>", "<thead><tr>"]
-    out += [f"<th>{_inline(c)}</th>" for c in header]
-    out.append("</tr></thead>")
-    out.append("<tbody>")
-    for row in body:
-        out.append("<tr>" + "".join(f"<td>{_inline(c)}</td>" for c in row) + "</tr>")
-    out.append("</tbody></table>")
-    return "\n".join(out)
-
-
-def convert(md: str) -> tuple[str, list[tuple[int, str, str]]]:
-    lines = md.split("\n")
-    out: list[str] = []
-    toc: list[tuple[int, str, str]] = []
-    i = 0
-    n = len(lines)
-
-    while i < n:
-        line = lines[i]
-
-        # fenced code block
-        if line.startswith("```"):
-            buf = []
-            i += 1
-            while i < n and not lines[i].startswith("```"):
-                buf.append(lines[i])
-                i += 1
-            i += 1
-            code = html.escape("\n".join(buf), quote=False)
-            out.append(f"<pre><code>{code}</code></pre>")
-            continue
-
-        # horizontal rule
-        if line.strip() == "---":
-            out.append("<hr>")
-            i += 1
-            continue
-
-        # headings
-        m = re.match(r"^(#{1,6})\s+(.*)$", line)
-        if m:
-            level = len(m.group(1))
-            content = _inline(m.group(2))
-            slug = _slug(m.group(2))
-            if level in (2, 3):
-                toc.append((level, m.group(2), slug))
-            out.append(f'<h{level} id="{slug}">{content}</h{level}>')
-            i += 1
-            continue
-
-        # table (pipe line followed by a separator line)
-        if line.lstrip().startswith("|") and i + 1 < n and re.match(r"^\s*\|?[\s:|-]+\|", lines[i + 1]):
-            tbl = []
-            while i < n and lines[i].lstrip().startswith("|"):
-                tbl.append(lines[i])
-                i += 1
-            out.append(_render_table(tbl))
-            continue
-
-        # unordered list
-        if re.match(r"^\s*[-*]\s+", line):
-            items = []
-            while i < n and re.match(r"^\s*[-*]\s+", lines[i]):
-                items.append(re.sub(r"^\s*[-*]\s+", "", lines[i]))
-                i += 1
-            out.append("<ul>" + "".join(f"<li>{_inline(t)}</li>" for t in items) + "</ul>")
-            continue
-
-        # ordered list
-        if re.match(r"^\s*\d+\.\s+", line):
-            items = []
-            while i < n and re.match(r"^\s*\d+\.\s+", lines[i]):
-                items.append(re.sub(r"^\s*\d+\.\s+", "", lines[i]))
-                i += 1
-            out.append("<ol>" + "".join(f"<li>{_inline(t)}</li>" for t in items) + "</ol>")
-            continue
-
-        # blank line
-        if not line.strip():
-            i += 1
-            continue
-
-        # paragraph: gather until blank / block start
-        para = []
-        while i < n and lines[i].strip() and not re.match(
-            r"^(#{1,6}\s|```|\s*[-*]\s|\s*\d+\.\s|\|)", lines[i]
-        ) and lines[i].strip() != "---":
-            para.append(lines[i])
-            i += 1
-        # hard line breaks: trailing two spaces → <br>
-        joined = "<br>\n".join(
-            _inline(p.rstrip()) if p.endswith("  ") else _inline(p) for p in para
-        )
-        out.append(f"<p>{joined}</p>")
-
-    return "\n".join(out), toc
-
+# Re-exported for scripts/md_to_html_private.py, which renders PAPER.md in its
+# own serif style but reuses this engine.
+from brain.api.markdown import _inline, _slug, convert, slug  # noqa: F401
 
 CSS = """
 :root { --ink:#1a1a1a; --muted:#666; --rule:#e2e2e2; --accent:#3a5a8c;
@@ -224,9 +84,9 @@ def main() -> None:
     body, toc = convert(md)
 
     toc_html = ['<nav class="toc"><h2>Contents</h2><ul>']
-    for level, text, slug in toc:
+    for level, text, heading_slug in toc:
         cls = "lvl3" if level == 3 else "lvl2"
-        toc_html.append(f'<li class="{cls}"><a href="#{slug}">{html.escape(text)}</a></li>')
+        toc_html.append(f'<li class="{cls}"><a href="#{heading_slug}">{html.escape(text)}</a></li>')
     toc_html.append("</ul></nav>")
     toc_block = "\n".join(toc_html)
 

@@ -1632,6 +1632,23 @@ class UIServer:
                 logger.warning("[api] reference build failed: %s", _ref_err)
                 return {"sections": [], "endpoints": []}
 
+        @app.get("/api_docs")
+        async def api_docs():
+            """The API workspace's Documentation section: the hand-written guide
+            (brain/api/api_guide.md) rendered to HTML, with each page carrying the
+            live endpoint cards for the routes it documents.
+
+            build_docs() is a pure function of the guide + the route table — no
+            request or session state — so the same payload can back a public
+            gateway route later without changing anything here."""
+            try:
+                from brain.api.docs import build_docs
+
+                return build_docs()
+            except Exception as _docs_err:
+                logger.warning("[api] docs build failed: %s", _docs_err)
+                return {"base_url": "", "pages": [], "anchors": {}, "index": []}
+
         @app.get("/learning/stories")
         async def learning_stories(request: Request):
             from brain.observability import learning_reader

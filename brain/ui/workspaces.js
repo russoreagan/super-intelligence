@@ -1582,7 +1582,7 @@
   }
 
   // ══════════════════════════════════════════════════════════ API ═════════
-  let apiView = 'reference';
+  let apiView = 'docs';
   let skillsData = null;       // { enabled, is_admin, skills:[], flagged:[] }
   function ensureApi() { renderApi(); if (apiView === 'partner') loadPartnerKeys(); }
   function renderApi() {
@@ -1591,7 +1591,7 @@
       <div class="ws-rail">
         <div class="rail-head"><h2>API</h2><span class="n">integration</span></div>
         <div class="rail-sect">
-          <button class="rail-item api-nav ${apiView==='reference'?'on':''}" data-view="reference"><span class="ri-name">API Reference</span><span class="ri-meta">engine endpoints</span></button>
+          <button class="rail-item api-nav ${apiView==='docs'?'on':''}" data-view="docs"><span class="ri-name">Documentation</span><span class="ri-meta">guide &amp; endpoints</span></button>
           <button class="rail-item api-nav ${apiView==='partner'?'on':''}" data-view="partner"><span class="ri-name">Partner Keys</span><span class="ri-meta">customer-facing tokens</span></button>
         </div>
       </div>
@@ -1600,16 +1600,18 @@
     host.querySelectorAll('.api-nav').forEach(n => n.addEventListener('click', () => { apiView = n.dataset.view; ensureApi(); }));
     const main = host.querySelector('#api-main');
     if (apiView === 'partner') renderPartnerKeys(main);
-    else renderReference(main);
+    else renderDocs(main);
   }
-  // The Reference data is GENERATED from the live route table + docstrings
-  // (brain/api/reference.py, served at /api_reference) — the page cannot drift
-  // from the code. Shape: { sections:[{name,description}], endpoints:[{m,p,t,
-  // grp,tag?,scope?,body?}] }.
-  let refData = null;
-  async function loadReference() {
-    try { const r = await fetch('/api_reference'); refData = r.ok ? await r.json() : { sections: [], endpoints: [] }; }
-    catch (e) { refData = { sections: [], endpoints: [] }; }
+  // The Documentation payload is built server-side (brain/api/docs.py, served at
+  // /api_docs): the hand-written guide rendered to HTML, each page carrying the
+  // live endpoint cards for the routes it documents. Shape: { base_url,
+  // pages:[{id,title,slug,html,endpoints:[{method,path,anchor,description,scope,
+  // tag,body,curl,gateway}]}], anchors:{slug:pageId}, index:[...] }.
+  let docsData = null;
+  async function loadDocs() {
+    const empty = { base_url: '', pages: [], anchors: {}, index: [] };
+    try { const r = await fetch('/api_docs'); docsData = r.ok ? await r.json() : empty; }
+    catch (e) { docsData = empty; }
   }
   // Pretty-print a JS object as syntax-highlighted JSON for the example blocks.
   const hlJson = (v, ind = 0) => {
@@ -1622,53 +1624,118 @@
     if (typeof v === 'string') return `<span class="s">"${esc(v)}"</span>`;
     return `<span class="p">${esc(String(v))}</span>`;
   };
-  function renderReference(main) {
-    if (refData === null) {
-      main.innerHTML = '<div class="main-pad"><div class="empty"><h3>Loading reference…</h3></div></div>';
-      loadReference().then(() => renderReference(main));
+  // reference.py's compact method tokens are the CSS class names for the chips.
+  const METHOD_CLASS = { GET: 'get', POST: 'post', PUT: 'put', DELETE: 'del', WS: 'ws' };
+  const INDEX_PAGE = 'index';   // sentinel for the generated "All endpoints" page
+  let docsPage = 0;
+
+  // One endpoint card: the generated facts (method, path, description, scope)
+  // plus the copy-ready snippet. `anchor` is the id the guide's own cross-links
+  // and the index page jump to.
+  function docCard(e) {
+    const cls = METHOD_CLASS[e.method] || 'get';
+    const chips = (e.tag ? `<span class="chip">${esc(e.tag)}</span>` : '')
+      + (e.scope === 'owner' ? '<span class="chip role">owner</span>' : '')
+      + (e.gateway ? '<span class="chip">gateway</span>' : '');
+    return `<div class="ep-card" id="${esc(e.anchor)}">
+      <div class="row" style="gap:12px;"><span class="method ${cls}">${esc(e.method)}</span><span class="data" style="font-size:14px; color:var(--ink);">${esc(e.path)}</span>${chips}</div>
+      ${e.description ? `<p class="ep-desc">${esc(e.description)}</p>` : ''}
+      ${e.curl ? `<div class="label ep-lab">${e.method === 'WS' ? 'Connect' : 'Try it'}<button class="ep-copy" data-copy="${esc(e.curl)}">Copy</button></div>
+      <div class="code">${esc(e.curl)}</div>` : ''}
+      ${e.body ? `<div class="label ep-lab">Request body</div><div class="code">${hlJson(e.body)}</div>` : ''}
+    </div>`;
+  }
+
+  function renderDocs(main) {
+    if (docsData === null) {
+      main.innerHTML = '<div class="main-pad"><div class="empty"><h3>Loading documentation…</h3></div></div>';
+      loadDocs().then(() => renderDocs(main));
       return;
     }
-    const EP = refData.endpoints || [];
-    const SECTION_DESC = {};
-    (refData.sections || []).forEach(s => { SECTION_DESC[s.name] = s.description || ''; });
-    // Build the rail grouped by section, preserving server order.
-    const groups = [];
-    EP.forEach((e, i) => {
-      let g = groups.find(x => x.name === (e.grp || ''));
-      if (!g) { g = { name: e.grp || '', items: [] }; groups.push(g); }
-      g.items.push({ e, i });
-    });
-    const railHtml = groups.map(g =>
-      `<div class="rail-sect-lab">${esc(g.name)}</div>` +
-      (SECTION_DESC[g.name] ? `<div style="padding:2px 14px 8px 22px; font-size:10.5px; line-height:1.45; color:var(--ink-3);">${esc(SECTION_DESC[g.name])}</div>` : '') +
-      g.items.map(({ e, i }) => `<button class="rail-item ep-item ${i===0?'on':''}" data-i="${i}" style="padding:9px 14px;"><span class="ri-name" style="font-size:12px; gap:9px;"><span class="method ${e.m}">${e.m.toUpperCase()}</span><span class="data" style="font-size:11px;">${esc(e.p)}</span></span>${e.tag?`<span class="ri-meta" style="margin-left:auto;">${e.tag}</span>`:''}</button>`).join('')
-    ).join('');
+    const pages = docsData.pages || [];
+    const index = docsData.index || [];
+    if (!pages.length) {
+      main.innerHTML = '<div class="main-pad"><div class="empty"><h3>Documentation unavailable</h3><p>The guide could not be rendered — check the brain logs.</p></div></div>';
+      return;
+    }
+    const railHtml = pages.map((p, i) =>
+      `<button class="rail-item doc-item ${docsPage === i ? 'on' : ''}" data-i="${i}"><span class="ri-name">${esc(p.title)}</span>${p.endpoints.length ? `<span class="ri-meta" style="margin-left:auto;">${p.endpoints.length}</span>` : ''}</button>`
+    ).join('')
+      + '<div class="rail-div"></div>'
+      + `<button class="rail-item doc-item ${docsPage === INDEX_PAGE ? 'on' : ''}" data-i="${INDEX_PAGE}"><span class="ri-name">All endpoints</span><span class="ri-meta" style="margin-left:auto;">${index.length}</span></button>`;
+
     main.innerHTML = `<div style="display:grid; grid-template-columns:320px 1fr; grid-template-rows:minmax(0,1fr); height:100%;">
       <div class="ws-rail" style="border-right:1px solid var(--line-soft); overflow-y:auto;">
-        <div class="rail-head"><h2>Reference</h2><span class="n">v1 · ${EP.length} endpoints</span></div>
-        <div class="rail-sect" id="ep-list" style="padding-top:0;">${railHtml}</div>
+        <div class="rail-head"><h2>Documentation</h2><span class="n">v1 · ${index.length} endpoints</span></div>
+        <div class="rail-sect" id="doc-list" style="padding-top:0;">${railHtml}</div>
       </div>
-      <div class="ws-main"><div class="main-pad" style="max-width:680px;" id="ep-detail"></div></div></div>`;
-    const detail = main.querySelector('#ep-detail');
-    const show = (i) => {
-      const e = EP[i];
-      if (!e) { detail.innerHTML = '<div class="empty"><h3>No endpoints</h3><p>The reference could not be generated — check the brain logs.</p></div>'; return; }
-      const owner = e.scope === 'owner';
-      const authNote = owner
-        ? 'This route requires the <b>owner credential</b> (the org/superadmin key set via <span class="data" style="font-size:11px;">BRAIN_API_KEYS</span>), not a partner key.'
-        : 'Authenticated with a <b>partner key</b> (<span class="data" style="font-size:11px;">Authorization: Bearer sk_…</span>). Mint one under <b>Partner Keys</b>. The owner credential works on every route too.';
-      const example = e.m === 'ws'
-        ? `<span class="k">GET</span> ${esc(e.p)}\n<span class="k">Upgrade</span>: websocket\n<span class="k">Authorization</span>: Bearer <span class="p">sk_•••</span>`
-        : `<span class="k">${e.m.toUpperCase()}</span> ${esc(e.p)}\n<span class="k">Authorization</span>: Bearer <span class="p">sk_•••</span>${e.body?`\n\n${hlJson(e.body)}`:''}`;
-      detail.innerHTML = `${e.grp ? `<div class="label" style="margin-bottom:10px;">${esc(e.grp)}${SECTION_DESC[e.grp] ? ` <span style="text-transform:none; letter-spacing:0; font-weight:400; color:var(--ink-3);">— ${esc(SECTION_DESC[e.grp])}</span>` : ''}</div>` : ''}
-        <div class="row" style="gap:12px;"><span class="method ${e.m}">${e.m.toUpperCase()}</span><span class="data" style="font-size:15px; color:var(--ink);">${esc(e.p)}</span>${e.tag?`<span class="chip">${e.tag}</span>`:''}${owner?'<span class="chip role">owner</span>':''}</div>
-        <p class="page-lede">${esc(e.t)}</p>
-        <div class="note" style="margin-top:18px;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 16v-4M12 8h.01"/><circle cx="12" cy="12" r="10"/></svg><p>${authNote}</p></div>
-        <div class="label" style="margin:22px 0 8px;">Example ${e.m==='ws'?'handshake':'request'}</div>
-        <div class="code">${example}</div>`;
+      <div class="ws-main" id="doc-scroll"><div class="main-pad" style="max-width:760px;" id="doc-detail"></div></div></div>`;
+
+    const detail = main.querySelector('#doc-detail');
+    const scroller = main.querySelector('#doc-scroll');
+
+    const paint = () => {
+      if (docsPage === INDEX_PAGE) {
+        detail.innerHTML = `<h2 class="doc-h1">All endpoints</h2>
+          <p class="page-lede">Generated from the live route table, so this list is always what the server actually serves. ${esc(docsData.base_url || '')} is your base URL.</p>
+          <div class="param-table ep-index"><div class="pt-head"><span>Method</span><span>Path</span><span>Documented in</span></div>
+          ${index.map(e => `<div class="pt-row"><span><span class="method ${METHOD_CLASS[e.method] || 'get'}">${esc(e.method)}</span></span><span class="data" style="font-size:11px;">${esc(e.path)}</span><span><a href="#${esc(e.anchor)}" class="doc-xref">${esc((pages[e.page] || {}).title || '')}</a>${e.scope === 'owner' ? ' <span class="chip role">owner</span>' : ''}</span></div>`).join('')}
+          </div>`;
+      } else {
+        const p = pages[docsPage] || pages[0];
+        // The page's own `## ` line was consumed as its title by the splitter, so
+        // render it here — and carry the page slug as the id, so a cross-link to
+        // the section (`#10-streaming-websocket`) has something to scroll to.
+        // p.html is server-rendered by brain/api/markdown.py, which escapes all
+        // source text and allowlists URL schemes (see its security contract) —
+        // the ONE place this file injects HTML it did not escape itself. Every
+        // other value below still goes through esc().
+        detail.innerHTML = `<h1 class="doc-h1" id="${esc(p.slug)}">${esc(p.title)}</h1>`
+          + `<div class="doc-body">${p.html}</div>`
+          + (p.endpoints.length ? `<div class="label ep-sec-lab">Endpoints</div>${p.endpoints.map(docCard).join('')}` : '');
+      }
+      detail.querySelectorAll('.ep-copy').forEach(b => b.addEventListener('click', () => {
+        // Hand the clipboard the UNESCAPED text — dataset already decoded it.
+        navigator.clipboard?.writeText(b.dataset.copy);
+        const was = b.textContent; b.textContent = 'Copied'; setTimeout(() => { b.textContent = was; }, 1200);
+      }));
+      main.querySelectorAll('.doc-item').forEach(x => x.classList.toggle('on', x.dataset.i === String(docsPage)));
     };
-    main.querySelectorAll('.ep-item').forEach(b => b.addEventListener('click', () => { main.querySelectorAll('.ep-item').forEach(x => x.classList.remove('on')); b.classList.add('on'); show(+b.dataset.i); }));
-    show(0);
+
+    const goTo = (page, slug) => {
+      if (docsPage !== page) { docsPage = page; paint(); }
+      const el = slug ? detail.querySelector('[id="' + slug.replace(/["\\]/g, '') + '"]') : null;
+      // Position the scroller directly rather than via scrollIntoView: inside a
+      // nested scroll container its smooth behaviour is unreliable, and a missed
+      // jump strands the reader mid-page on a section they didn't ask for.
+      // No slug, or a slug this page doesn't contain → top of the page.
+      if (el) {
+        scroller.scrollTop += el.getBoundingClientRect().top - scroller.getBoundingClientRect().top - 8;
+      } else {
+        scroller.scrollTop = 0;
+      }
+    };
+
+    // The guide cross-links between its own sections (`[§10](#10-streaming-websocket)`).
+    // Now that it is paginated those targets usually live on another page, so a
+    // plain hash jump would land nowhere. Resolve through the server's anchors
+    // map; an unknown slug is left alone rather than swallowed.
+    detail.addEventListener('click', (ev) => {
+      const a = ev.target.closest && ev.target.closest('a[href^="#"]');
+      if (!a) return;
+      let slug = a.getAttribute('href').slice(1);
+      try { slug = decodeURIComponent(slug); } catch (e) { /* keep raw */ }
+      const target = docsData.anchors[slug];
+      if (target === undefined) return;
+      ev.preventDefault();
+      goTo(target, slug);
+    });
+
+    main.querySelectorAll('.doc-item').forEach(b => b.addEventListener('click', () => {
+      const v = b.dataset.i;
+      goTo(v === INDEX_PAGE ? INDEX_PAGE : +v, null);
+    }));
+    paint();
   }
 
   // ─────────────────────────────────────────────────────────── Skills ──

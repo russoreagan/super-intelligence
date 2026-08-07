@@ -1,49 +1,14 @@
-# Elyceum Engine API — Developer Reference
+# Elyceum Engine API
 
-Version `v1`. This document is the full developer reference for the engine API: authentication, the
-cold-start contract, every endpoint's request and response shape, the SSE and WebSocket event
-vocabularies, error codes, and quotas.
+Version `v1`. The full developer reference for the engine API: authentication, the cold-start
+contract, every endpoint's request and response shape, the SSE and WebSocket event vocabularies,
+error codes, and quotas.
 
-The Reference page in the API workspace lists endpoints and is generated from the route code
-(`brain/api/reference.py` introspects the real router). This document covers everything that page
-cannot: bodies, response fields, error semantics, transport protocols, and the operational contracts
-you must handle in a client.
-
-**Source of truth.** Endpoint paths and one-line descriptions are generated from
-`brain/api/server.py` docstrings. If this document ever disagrees with the Reference page on a path
-or method, the Reference page wins and this document is stale.
-
----
-
-## Contents
-
-1. [Concepts](#1-concepts)
-2. [Base URL and transport](#2-base-url-and-transport)
-3. [Authentication](#3-authentication)
-4. [The cold-start contract](#4-the-cold-start-contract)
-5. [Quickstart](#5-quickstart)
-6. [Errors](#6-errors)
-7. [Quotas, budgets, and metering](#7-quotas-budgets-and-metering)
-8. [Sessions and turns](#8-sessions-and-turns)
-9. [Streaming: SSE](#9-streaming-sse)
-10. [Streaming: WebSocket](#10-streaming-websocket)
-11. [Approvals and confirmations](#11-approvals-and-confirmations)
-12. [Grading and consolidation](#12-grading-and-consolidation)
-13. [Utility: structured extraction](#13-utility-structured-extraction)
-14. [Jobs](#14-jobs)
-15. [Learning surface](#15-learning-surface)
-16. [Audio: TTS and STT](#16-audio-tts-and-stt)
-17. [Mandates (roles)](#17-mandates-roles)
-18. [Personas](#18-personas)
-19. [Agents](#19-agents)
-20. [Skills](#20-skills)
-21. [Admin: skill review](#21-admin-skill-review)
-22. [Brain controls: DMN](#22-brain-controls-dmn)
-23. [Keys and end-user lifecycle](#23-keys-and-end-user-lifecycle)
-24. [MCP tokens](#24-mcp-tokens)
-25. [Lifecycle: sleep and status](#25-lifecycle-sleep-and-status)
-26. [Multi-persona routing](#26-multi-persona-routing)
-27. [Appendix: full endpoint index](#appendix-full-endpoint-index)
+**How this stays accurate.** Every endpoint card on these pages — method, path, description — is
+generated from the live route table at render time (`brain/api/reference.py` introspects the real
+router), so it cannot drift from what the server actually serves. The surrounding prose is written
+by hand and lives in `brain/api/api_guide.md`. A test fails the build if a route ships without a
+section here documenting it.
 
 ---
 
@@ -584,7 +549,9 @@ carries:
 {"confirmation": {"required": true, "description": "Send the summary email to the client list"}}
 ```
 
-**`POST /v1/sessions/{session_id}/confirm`** — body `{"approve": true}` (defaults to `true`).
+### `POST /v1/sessions/{session_id}/confirm`
+
+Body `{"approve": true}` (defaults to `true`).
 
 ```json
 {
@@ -602,7 +569,7 @@ path — the write already ran.
 
 ### Approvals — a queue of sensitive actions, per end user
 
-**`GET /v1/sessions/{session_id}/approvals`**
+### `GET /v1/sessions/{session_id}/approvals`
 
 ```json
 {
@@ -627,7 +594,9 @@ path — the write already ran.
 
 Returns `{"approvals": []}` rather than `501` when the runner is not wired.
 
-**`POST /v1/sessions/{session_id}/approvals/{approval_id}/resolve`** — body `{"approve": true}`.
+### `POST /v1/sessions/{session_id}/approvals/{approval_id}/resolve`
+
+Body `{"approve": true}`.
 
 ```json
 {"session_id": "...", "end_user_id": "u_8821", "approved": true}
@@ -927,13 +896,13 @@ returns the same shape. `duration_s` is the STT quota meter.
 The org's role library. All mandate routes require the Supabase backend and return
 `503 mandates require the Supabase storage backend` without it.
 
-| Endpoint | Notes |
-| --- | --- |
-| `GET /v1/mandates` | `?include_inactive=true` includes deactivated roles. Returns `{"mandates": [...]}`. |
-| `PUT /v1/mandates/{mandate_id}` | Create or update. Idempotent. |
-| `DELETE /v1/mandates/{mandate_id}` | Soft-delete. Assignments stop resolving; the record survives so `?include_inactive=true` still lists it. `404` if unknown. |
+### `GET /v1/mandates`
 
-**`PUT` body**
+Query: `?include_inactive=true` includes deactivated roles. Returns `{"mandates": [...]}`.
+
+### `PUT /v1/mandates/{mandate_id}`
+
+Create or update a role. Idempotent.
 
 | Field | Type | Required |
 | --- | --- | --- |
@@ -945,18 +914,28 @@ The org's role library. All mandate routes require the Supabase backend and retu
 in their own app can sync full rows, but **the brain does not consume them yet**. Do not expect them
 to change behaviour.
 
-`DELETE` returns `{"ok": true, "mandate_id": "...", "active": false}`.
+### `DELETE /v1/mandates/{mandate_id}`
+
+Soft-delete. Assignments stop resolving; the record survives so `?include_inactive=true` still lists
+it. `404` if unknown. Returns `{"ok": true, "mandate_id": "...", "active": false}`.
 
 ### Assignments
 
-| Endpoint | Notes |
-| --- | --- |
-| `GET /v1/personas/{persona}/mandates` | `{"persona": "...", "assignments": [...]}`, in order. |
-| `PUT /v1/personas/{persona}/mandates/{mandate_id}` | Assign. Idempotent. Body: `{"sort_order": 0}`. |
-| `DELETE /v1/personas/{persona}/mandates/{mandate_id}` | Unassign. `404` if no such assignment. |
+These three are the low-level primitive behind agents. Most callers should use `/v1/agents` instead —
+same underlying pairing, but it speaks in agent ids and lets you set a name, permissions, and tier in
+one call.
 
-These are the low-level primitive. Most callers should use `/v1/agents` instead — same underlying
-pairing, but it speaks in agent ids and lets you set a name, permissions, and tier in one call.
+### `GET /v1/personas/{persona}/mandates`
+
+Returns `{"persona": "...", "assignments": [...]}`, in order.
+
+### `PUT /v1/personas/{persona}/mandates/{mandate_id}`
+
+Assign a role to a persona. Idempotent. Body: `{"sort_order": 0}`.
+
+### `DELETE /v1/personas/{persona}/mandates/{mandate_id}`
+
+Unassign. `404` if no such assignment.
 
 ---
 
@@ -1140,13 +1119,19 @@ time — a pin cannot bypass the screener.
 
 **Owner credential required.** `403` for a partner key.
 
-| Endpoint | Notes |
-| --- | --- |
-| `GET /v1/admin/skills/flagged` | `{"skills": [...]}` awaiting review. |
-| `POST /v1/admin/skills/{skill_id}/approve` | Goes live; triggers a rewarm. Returns `{"id", "status"}`. |
-| `POST /v1/admin/skills/{skill_id}/reject` | Body `{"reason": "..."}`, recorded in `screen_notes.review`. Never goes live. |
+### `GET /v1/admin/skills/flagged`
 
-Both `404` on an unknown skill id.
+Returns `{"skills": [...]}` awaiting review.
+
+### `POST /v1/admin/skills/{skill_id}/approve`
+
+The skill goes live and a rewarm is triggered. Returns `{"id", "status"}`. `404` on an unknown skill
+id.
+
+### `POST /v1/admin/skills/{skill_id}/reject`
+
+Body `{"reason": "..."}`, recorded in `screen_notes.review`. The skill never goes live. `404` on an
+unknown skill id.
 
 ---
 
@@ -1156,12 +1141,13 @@ Both `404` on an unknown skill id.
 
 The DMN is the idle-thought loop — the brain's inner life when nobody is talking to it.
 
-| Endpoint | Body | Response |
-| --- | --- | --- |
-| `GET /v1/dmn` | — | `{"enabled": true}` |
-| `PUT /v1/dmn` | `{"enabled": false}` | `{"enabled": false}` |
+### `GET /v1/dmn`
 
-`400` when `enabled` is missing or not a boolean.
+Returns `{"enabled": true}`.
+
+### `PUT /v1/dmn`
+
+Body `{"enabled": false}` → `{"enabled": false}`. `400` when `enabled` is missing or not a boolean.
 
 This is a **kill switch, not an enable switch.** The loop checks the setting each cycle, so a `PUT`
 takes effect on the next tick and re-enabling needs no restart. But it can only stop a running loop —
@@ -1251,9 +1237,9 @@ globally unique, so the same string legitimately exists in other orgs — every 
 
 ## 25. Lifecycle: sleep and status
 
-These two live on the **gateway**, not the brain router, so they do not appear in the generated
-Reference page. They are hosted-only and authenticate with a partner key. Both are `/v1` paths, so
-they are served on the API host alongside everything else.
+These two live on the **gateway**, not the brain router, so they are absent from the generated
+OpenAPI schema and carry a `gateway` chip here. They are hosted-only and authenticate with a partner
+key. Both are `/v1` paths, so they are served on the API host alongside everything else.
 
 ### `GET /v1/status`
 
@@ -1312,128 +1298,3 @@ personas are refused.
 **Cross-process agents.** If you open a session with an `agent_id` whose persona lives in a different
 process than the one handling the request, you get `409`. Route the request with the right
 `X-Brain-Persona` header instead.
-
----
-
-## Appendix: full endpoint index
-
-47 routes. `owner` marks routes requiring the owner credential.
-
-### Sessions
-
-| Method | Path | Scope |
-| --- | --- | --- |
-| `POST` | `/v1/sessions` | |
-| `POST` | `/v1/sessions/{session_id}/turns` | |
-| `POST` | `/v1/sessions/{session_id}/turns/stream` | SSE |
-| `WS` | `/v1/sessions/{session_id}/stream` | WebSocket |
-| `POST` | `/v1/sessions/{session_id}/turns/{turn_id}/grade` | |
-| `POST` | `/v1/sessions/{session_id}/consolidate` | |
-| `POST` | `/v1/sessions/{session_id}/confirm` | |
-| `GET` | `/v1/sessions/{session_id}/approvals` | |
-| `POST` | `/v1/sessions/{session_id}/approvals/{approval_id}/resolve` | |
-
-### Utility
-
-| Method | Path |
-| --- | --- |
-| `POST` | `/v1/extract` |
-
-### Jobs
-
-| Method | Path |
-| --- | --- |
-| `GET` | `/v1/jobs` |
-| `GET` | `/v1/jobs/{job_id}` |
-
-### Learning
-
-| Method | Path |
-| --- | --- |
-| `GET` | `/v1/learning/stories` |
-| `GET` | `/v1/learning/summary` |
-| `GET` | `/v1/learning/wiring` |
-
-### Audio
-
-| Method | Path |
-| --- | --- |
-| `POST` | `/v1/tts` |
-| `POST` | `/v1/stt` |
-
-### Mandates
-
-| Method | Path |
-| --- | --- |
-| `GET` | `/v1/mandates` |
-| `PUT` | `/v1/mandates/{mandate_id}` |
-| `DELETE` | `/v1/mandates/{mandate_id}` |
-
-### Personas
-
-| Method | Path |
-| --- | --- |
-| `GET` | `/v1/personas` |
-| `GET` | `/v1/personas/{persona}` |
-| `PUT` | `/v1/personas/{persona}` |
-| `DELETE` | `/v1/personas/{persona}` |
-| `GET` | `/v1/personas/{persona}/mandates` |
-| `PUT` | `/v1/personas/{persona}/mandates/{mandate_id}` |
-| `DELETE` | `/v1/personas/{persona}/mandates/{mandate_id}` |
-
-### Agents
-
-| Method | Path |
-| --- | --- |
-| `GET` | `/v1/agents` |
-| `GET` | `/v1/agents/{agent_id}` |
-| `PUT` | `/v1/agents/{agent_id}` |
-| `DELETE` | `/v1/agents/{agent_id}` |
-
-### Skills
-
-| Method | Path |
-| --- | --- |
-| `GET` | `/v1/skills` |
-| `GET` | `/v1/skills/{skill_id}` |
-| `PUT` | `/v1/skills/{skill_id}` |
-| `DELETE` | `/v1/skills/{skill_id}` |
-
-### Admin
-
-| Method | Path | Scope |
-| --- | --- | --- |
-| `GET` | `/v1/admin/skills/flagged` | owner |
-| `POST` | `/v1/admin/skills/{skill_id}/approve` | owner |
-| `POST` | `/v1/admin/skills/{skill_id}/reject` | owner |
-
-### Brain controls
-
-| Method | Path | Scope |
-| --- | --- | --- |
-| `GET` | `/v1/dmn` | owner |
-| `PUT` | `/v1/dmn` | owner |
-
-### Keys and end users
-
-| Method | Path | Scope |
-| --- | --- | --- |
-| `GET` | `/v1/partner_keys` | owner |
-| `POST` | `/v1/partner_keys` | owner |
-| `DELETE` | `/v1/partner_keys/{key_id}` | owner |
-| `DELETE` | `/v1/end_users/{end_user_id}` | owner |
-
-### MCP tokens
-
-| Method | Path |
-| --- | --- |
-| `POST` | `/v1/mcp/tokens` |
-| `GET` | `/v1/mcp/tokens/{end_user_id}` |
-| `DELETE` | `/v1/mcp/tokens/{end_user_id}/{server_name}` |
-
-### Gateway (hosted only, not in the generated reference)
-
-| Method | Path |
-| --- | --- |
-| `GET` | `/v1/status` |
-| `POST` | `/v1/sleep` |
